@@ -238,3 +238,53 @@ def test_only_stdio_tools_are_bound_to_a_persistent_session(monkeypatch):
         "remote", {"transport": "streamable_http", "url": "http://x"}, raw
     )
     assert captured[-1] is None, "a remote server was pinned to a persistent session"
+
+
+# ── Shutdown ────────────────────────────────────────────────────────────────
+#
+# main.py ends in os._exit(), which runs no finally blocks and no atexit
+# handlers. MCP stdio servers are child processes (a node/npx tree for
+# playwright, a python one for serena), so anything not explicitly reaped in
+# action_quit survives the exit. Measured on this machine after a day of runs:
+# 20 orphaned chrome-headless-shell plus 21 node, holding ~4.0 GB — on 16 GB
+# with 2 GB free. Two Nova instances leak twice as fast.
+
+
+def test_quit_closes_the_mcp_sessions():
+    """Without this every Nova exit orphans its MCP servers."""
+    import inspect
+
+    from novacode_cli.tui.app import NovaApp
+
+    src = inspect.getsource(NovaApp.action_quit)
+    assert "_session_pool" in src, "action_quit does not close MCP sessions"
+    assert "aclose" in src
+
+
+@pytest.mark.asyncio
+async def test_aclose_releases_every_server(factory):
+    pool = mw._PersistentSessionPool()
+    for server in ("playwright", "serena", "other"):
+        await mw._SessionProxy(pool, server, STDIO).call_tool("x", {})
+    assert len(factory.created) == 3
+
+    await pool.aclose()
+    assert pool._sessions == {}
+    assert pool._owners == {}
+    # Every session context was exited, which is what terminates the child.
+    assert factory.closed == 3, f"only {factory.closed} of 3 servers were closed"
+
+
+@pytest.mark.asyncio
+async def test_aclose_is_safe_to_call_twice(factory):
+    """Quit paths can run more than once; a second close must not raise."""
+    pool = mw._PersistentSessionPool()
+    await mw._SessionProxy(pool, "s", STDIO).call_tool("x", {})
+    await pool.aclose()
+    await pool.aclose()
+    assert pool._sessions == {}
+
+
+@pytest.mark.asyncio
+async def test_aclose_with_nothing_open_is_a_no_op():
+    await mw._PersistentSessionPool().aclose()

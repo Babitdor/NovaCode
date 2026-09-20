@@ -4090,6 +4090,19 @@ class NovaApp(App):
         if sup is not None:
             with contextlib.suppress(Exception):
                 await sup.close_all(timeout=5.0)
+        # Same reason, and the bigger leak: MCP stdio servers are child
+        # processes (a node/npx tree for playwright, a python one for serena).
+        # os._exit() reaps none of them, so every Nova that exited without this
+        # left its servers — and their browsers — running forever. Two Nova
+        # instances leak twice as fast, which is how a 16 GB machine ends up
+        # swapping.
+        with contextlib.suppress(Exception):
+            from novacode_cli.mcp import get_shared_mcp_middleware
+
+            middleware = get_shared_mcp_middleware()
+            pool = getattr(middleware, "_session_pool", None)
+            if pool is not None:
+                await asyncio.wait_for(pool.aclose(), timeout=5.0)
         await self._save_session()
         await self._consolidate_learning()
         self.exit()
