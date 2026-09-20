@@ -90,3 +90,67 @@ def test_other_openai_compatible_providers_do_not_get_the_header(
     monkeypatch.setenv("OPENAI_API_KEY", "sk-oa")
     assert _session_header(mc.build_chat_model("openrouter", "openai/gpt-4o")) is None
     assert _session_header(mc.build_chat_model("openai", "gpt-4o")) is None
+
+
+# ── message `name` ──────────────────────────────────────────────────────────
+#
+# OpenCode Go is a gateway and routes each model to a different upstream. Some
+# of those reject a `name` on a message outright:
+#   400 invalid_request_error — messages[2]: "name" is not supported by this
+#   endpoint
+# which kills the turn. Nova never sets `name`; LangChain puts it there from the
+# agent/subagent name, so it is traceability metadata, not meaning. Stripping it
+# is scoped to this client — `name` is legal for OpenAI itself.
+
+
+def _payload_messages(model, messages):
+    return model._get_request_payload(messages)["messages"]
+
+
+def test_opencode_strips_the_name_field(_clean_env, monkeypatch):
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    monkeypatch.setenv("OPENCODE_API_KEY", "sk-test")
+    model = mc.build_chat_model("opencode", "glm-5.3")
+    sent = _payload_messages(
+        model,
+        [
+            HumanMessage("a"),
+            AIMessage("b", name="nova"),
+            HumanMessage("c", name="babit"),
+        ],
+    )
+    assert not any("name" in m for m in sent), f"name reached the wire: {sent}"
+    # The content and roles must be untouched.
+    assert [m["role"] for m in sent] == ["user", "assistant", "user"]
+    assert [m["content"] for m in sent] == ["a", "b", "c"]
+
+
+def test_stripping_name_leaves_tool_calls_intact(_clean_env, monkeypatch):
+    """tool_call_id is what pairs a result to its call — it must survive."""
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    monkeypatch.setenv("OPENCODE_API_KEY", "sk-test")
+    model = mc.build_chat_model("opencode", "glm-5.3")
+    ai = AIMessage(
+        content="",
+        tool_calls=[{"name": "f", "args": {}, "id": "call_1", "type": "tool_call"}],
+    )
+    sent = _payload_messages(
+        model,
+        [HumanMessage("x"), ai, ToolMessage(content="r", tool_call_id="call_1", name="f")],
+    )
+    assert sent[1]["tool_calls"], "tool calls were lost"
+    assert sent[2]["tool_call_id"] == "call_1"
+
+
+def test_other_providers_keep_name(_clean_env, monkeypatch):
+    """The strictness is OpenCode's; OpenAI accepts name and may use it."""
+    from langchain_core.messages import HumanMessage
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-oa")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or")
+    for provider, model_name in (("openai", "gpt-4o"), ("openrouter", "openai/gpt-4o")):
+        model = mc.build_chat_model(provider, model_name)
+        sent = _payload_messages(model, [HumanMessage("c", name="babit")])
+        assert sent[0].get("name") == "babit", f"{provider} lost its name field"

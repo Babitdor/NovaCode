@@ -15,6 +15,37 @@ PROVIDER_KEY_ENV: dict[str, str] = {
 }
 
 
+def _opencode_chat_class() -> type:
+    """A ChatOpenAI that drops message fields OpenCode Go's upstreams reject.
+
+    OpenCode Go is a gateway: it routes each model to a different upstream, and
+    some of those refuse a ``name`` on a message with
+
+        400 invalid_request_error — messages[2]: "name" is not supported by
+        this endpoint
+
+    which kills the turn outright. Nova never sets ``name`` itself; LangChain
+    puts it there from the agent/subagent name, where it is traceability
+    metadata rather than anything the model needs. Dropping it costs nothing
+    and removes a whole class of hard failures.
+
+    Scoped to this client, via the one hook that sees the finished payload, so
+    no other provider's requests change — the strictness is OpenCode's, and
+    ``name`` is perfectly legal for OpenAI itself.
+    """
+    from langchain_openai import ChatOpenAI
+
+    class _OpenCodeChat(ChatOpenAI):  # type: ignore[misc]
+        def _get_request_payload(self, input_, *, stop=None, **kwargs):  # noqa: ANN001, ANN202
+            payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+            for message in payload.get("messages", []):
+                if isinstance(message, dict):
+                    message.pop("name", None)
+            return payload
+
+    return _OpenCodeChat
+
+
 #: Stable for the life of the process — see :func:`opencode_session_id`.
 _OPENCODE_SESSION_ID: str | None = None
 
@@ -163,6 +194,10 @@ def build_chat_model(provider: str, model_name: str) -> BaseChatModel:
                 # demands one; send a placeholder so it doesn't refuse to start.
                 openai_kwargs.setdefault("api_key", "not-needed")
 
+        if provider == "opencode":
+            return _opencode_chat_class()(
+                model=model_name, max_retries=5, **openai_kwargs
+            )
         return ChatOpenAI(model=model_name, max_retries=5, **openai_kwargs)
 
     if provider == "nvidia":
