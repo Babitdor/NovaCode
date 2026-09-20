@@ -38,6 +38,157 @@ from novacode_cli.prompts import render_template
 logger = logging.getLogger(__name__)
 
 
+class _PersistentSessionPool:
+    """One long-lived MCP session per stdio server, shared by every tool call.
+
+    Without this, tools are built with ``session=None`` and
+    ``langchain_mcp_adapters`` opens a *fresh* session per call — for a stdio
+    server that means spawning the server process again and throwing away
+    everything the last call did. Stateful servers are then broken in a way
+    that looks intermittent: one-shot calls work, sequences never do.
+    Measured against Playwright MCP: ``browser_navigate`` reached
+    example.com, and the very next ``browser_snapshot`` reported
+    ``about:blank`` because it was talking to a different browser.
+
+    A session is owned by its own background task rather than by whichever
+    tool call happened to open it. The stdio transport is an anyio task group
+    holding the child's pipes: if it were entered inside a tool call, those
+    pipes would close the moment that call returned, which is the very bug
+    this exists to fix.
+    """
+
+    def __init__(self) -> None:
+        self._sessions: dict[str, ClientSession] = {}
+        self._owners: dict[str, asyncio.Task] = {}
+        self._closers: dict[str, asyncio.Event] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def _lock_for(self, server: str) -> asyncio.Lock:
+        lock = self._locks.get(server)
+        if lock is None:
+            lock = self._locks[server] = asyncio.Lock()
+        return lock
+
+    async def _own(
+        self,
+        server: str,
+        connection: dict[str, Any],
+        ready: asyncio.Future,
+        closing: asyncio.Event,
+    ) -> None:
+        """Hold one session open until asked to close. Runs as its own task."""
+        from langchain_mcp_adapters.sessions import create_session
+
+        try:
+            async with create_session(connection) as session:  # type: ignore[arg-type]
+                await session.initialize()
+                if not ready.done():
+                    ready.set_result(session)
+                await closing.wait()
+        # BaseException, not Exception: a failing stdio spawn surfaces as an
+        # anyio BaseExceptionGroup, and the waiter must hear about it rather
+        # than block until timeout. Always re-raised.
+        except BaseException as exc:
+            if not ready.done():
+                ready.set_exception(
+                    exc if isinstance(exc, Exception) else RuntimeError(str(exc))
+                )
+            raise
+        finally:
+            self._sessions.pop(server, None)
+
+    async def get(self, server: str, connection: dict[str, Any]) -> ClientSession:
+        """Return the live session for *server*, starting one if needed."""
+        loop = asyncio.get_running_loop()
+        if self._loop is not None and self._loop is not loop:
+            # A different event loop (a fresh TUI run, a test). Sessions are
+            # bound to the loop that created them, so start over.
+            await self.aclose(_from_dead_loop=True)
+        self._loop = loop
+
+        async with self._lock_for(server):
+            session = self._sessions.get(server)
+            owner = self._owners.get(server)
+            if session is not None and owner is not None and not owner.done():
+                return session
+            # Dead or missing — drop the remains and start a fresh one.
+            await self._stop(server)
+
+            ready: asyncio.Future = loop.create_future()
+            closing = asyncio.Event()
+            task = loop.create_task(self._own(server, connection, ready, closing))
+            self._owners[server] = task
+            self._closers[server] = closing
+            try:
+                session = await ready
+            except BaseException:
+                await self._stop(server)
+                raise
+            self._sessions[server] = session
+            return session
+
+    async def _stop(self, server: str) -> None:
+        """Tear one session down, tolerating a half-started one."""
+        self._sessions.pop(server, None)
+        closing = self._closers.pop(server, None)
+        if closing is not None:
+            closing.set()
+        task = self._owners.pop(server, None)
+        if task is not None and not task.done():
+            task.cancel()
+            with contextlib.suppress(BaseException):
+                await task
+
+    async def drop(self, server: str) -> None:
+        """Discard a session so the next call reconnects.
+
+        Called when a tool errors: the failure may have been the transport
+        dying, and a cached dead session would fail every later call too.
+        """
+        async with self._lock_for(server):
+            await self._stop(server)
+
+    async def aclose(self, *, _from_dead_loop: bool = False) -> None:
+        """Close every session (process shutdown, or a new event loop)."""
+        for server in list(self._owners):
+            if _from_dead_loop:
+                # The owning loop is gone; awaiting its tasks would hang.
+                self._sessions.pop(server, None)
+                self._closers.pop(server, None)
+                self._owners.pop(server, None)
+            else:
+                await self._stop(server)
+        self._locks.clear()
+
+
+class _SessionProxy:
+    """What the adapter is handed instead of ``None``.
+
+    ``convert_mcp_tool_to_langchain_tool`` only ever calls ``call_tool`` on the
+    session it is given, so resolving the real one here defers connection to
+    the first actual use — on the loop that will use it — rather than at
+    discovery time.
+    """
+
+    def __init__(
+        self, pool: _PersistentSessionPool, server: str, connection: dict[str, Any]
+    ) -> None:
+        self._pool = pool
+        self._server = server
+        self._connection = connection
+
+    async def call_tool(self, name: str, arguments: Any, **kwargs: Any) -> Any:
+        session = await self._pool.get(self._server, self._connection)
+        try:
+            return await session.call_tool(name, arguments, **kwargs)
+        except BaseException:
+            # The transport may have died with it; force a reconnect next time
+            # rather than pinning every later call to a corpse.
+            await self._pool.drop(self._server)
+            raise
+
+
 def _wrap_tool_error_handling(tool: BaseTool) -> BaseTool:
     """Make an MCP tool failure non-fatal to the agent run.
 
@@ -198,9 +349,10 @@ class MCPMiddleware(AgentMiddleware):
         self._client: MultiServerMCPClient | None = None
         self._tools_cache: list[dict[str, Any]] = []
         self.tools: list[BaseTool] = []
-        # Track persistent sessions for stateful servers
-        self._sessions: dict[str, ClientSession] = {}
-        self._session_contexts: list[contextlib.AbstractAsyncContextManager[Any]] = []
+        # One reused session per stdio server. Stateful servers (a browser, an
+        # indexed project) are unusable without this — see
+        # _PersistentSessionPool.
+        self._session_pool = _PersistentSessionPool()
 
         # Lazy discovery - tools are discovered on first use
         self._tools_discovered = False
@@ -268,6 +420,15 @@ class MCPMiddleware(AgentMiddleware):
         """
         from langchain_mcp_adapters.tools import convert_mcp_tool_to_langchain_tool
 
+        # stdio servers get ONE session reused across calls. They are the ones
+        # that hold state (a browser, an indexed project) and the ones where a
+        # per-call session also means respawning the whole server process.
+        # Remote transports reconnect cheaply and are left on the original
+        # stateless path, so this change cannot regress them.
+        session: Any = None
+        if str(connection.get("transport", "stdio")) == "stdio":
+            session = _SessionProxy(self._session_pool, server_name, connection)
+
         server_tools = [
             # Make tool failures non-fatal: an MCP/anyio error (e.g. a
             # playwright ERR_CONNECTION_REFUSED) can surface as a
@@ -276,7 +437,7 @@ class MCPMiddleware(AgentMiddleware):
             # returns the error as a string lets the model recover instead.
             _wrap_tool_error_handling(
                 convert_mcp_tool_to_langchain_tool(
-                    None,  # Stateless - creates fresh session per invocation
+                    session,
                     raw,
                     connection=connection,  # type: ignore[arg-type]
                     server_name=server_name,
