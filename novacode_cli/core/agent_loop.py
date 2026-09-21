@@ -126,6 +126,58 @@ def default_interrupt_response(kind: str) -> Any:
     return {}
 
 
+#: Written into the conversation when the user cancels a turn.
+_CANCEL_NOTICE = "[The previous request was cancelled by the system]"
+
+
+async def _record_cancellation(agent: Any, config: Any) -> None:
+    """Record a cancelled turn in the agent's history, leaving it well-formed.
+
+    Cancelling while a tool runs is the common case: the model's tool-calling
+    message is already committed, but the tool never reports back. Appending
+    the cancel notice straight after it left an assistant message whose
+    ``tool_calls`` were followed by a *user* message — which OpenAI-strict
+    endpoints reject ("An assistant message with 'tool_calls' must be followed
+    by tool messages responding to each 'tool_call_id'"), killing every later
+    turn in that conversation until something repaired it.
+
+    Found in real history: of 514 saved conversations, 5 broke that rule, and
+    4 of the 5 were followed by exactly this notice. So each unanswered call
+    now gets an honest "cancelled" result first, then the notice.
+
+    Only the final message is patched: that is precisely the cancel-mid-tool
+    shape, and appending directly after it keeps each result adjacent to its
+    call. A dangling call anywhere else is left to RepairToolCallsEachStep,
+    which rewrites in place rather than appending.
+    """
+    from langchain_core.messages import AIMessage
+
+    messages: list[Any] = [HumanMessage(content=_CANCEL_NOTICE)]
+    try:
+        snapshot = await agent.aget_state(config)
+        history = (getattr(snapshot, "values", None) or {}).get("messages", []) or []
+    except Exception:  # noqa: BLE001 — recording the notice must not depend on this
+        history = []
+
+    last = history[-1] if history else None
+    if isinstance(last, AIMessage) and last.tool_calls:
+        answered = {
+            getattr(m, "tool_call_id", None) for m in history if getattr(m, "type", "") == "tool"
+        }
+        results = [
+            ToolMessage(
+                content="Cancelled by the user before it finished; no result.",
+                tool_call_id=call["id"],
+                name=call.get("name") or "unknown",
+            )
+            for call in last.tool_calls
+            if call.get("id") and call["id"] not in answered
+        ]
+        messages = [*results, *messages]
+
+    await agent.aupdate_state(config=config, values={"messages": messages}, as_node="model")
+
+
 async def _safe_stream(stream_gen: AsyncIterator[Any]) -> AsyncIterator[Any]:
     """Wraps an async generator and swallows GraphInterrupt.
 
@@ -846,17 +898,7 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
         try:
             await asyncio.wait_for(
                 asyncio.shield(
-                    agent.aupdate_state(
-                        config=config,
-                        values={
-                            "messages": [
-                                HumanMessage(
-                                    content="[The previous request was cancelled by the system]"
-                                )
-                            ]
-                        },
-                        as_node="model",
-                    )
+                    _record_cancellation(agent, config)
                 ),
                 timeout=3.0,
             )

@@ -1629,6 +1629,15 @@ This file stores your preferences and context that persist across sessions.
     except ImportError:
         pass
 
+    # Repair unanswered tool calls before EVERY model call. deepagents' own
+    # PatchToolCalls only runs once per invocation, so a call left unanswered
+    # mid-turn reached the next model call as-is — which OpenAI-strict
+    # endpoints reject outright ("An assistant message with 'tool_calls' must
+    # be followed by tool messages..."). See agents/tool_call_repair.py.
+    from novacode_cli.agents.tool_call_repair import RepairToolCallsEachStep
+
+    agent_middleware.append(RepairToolCallsEachStep())
+
     # Caller-injected middleware (e.g. Cowork's WorkspacePolicy broker) goes last
     # so it wraps tool calls closest to execution — a denied call never runs.
     if extra_middleware:
