@@ -927,18 +927,25 @@ class Settings:
         return self.project_root is not None
 
     def get_workspace_root(self) -> Path:
-        """Get the active workspace root.
+        """The project directory — THE root every part of Nova works in.
 
-        If project_root is set and the current working directory is a subdirectory
-        of project_root, returns Path.cwd(). Otherwise, returns project_root or Path.cwd().
+        The git repository root whenever Nova is launched anywhere inside one,
+        otherwise the (resolved) launch directory.
+
+        This used to return the launch directory when it was a subfolder of the
+        repo, which split Nova in two: NOVA.md and the system prompt described
+        the whole repository while the file tools could only reach the
+        subfolder, so ``write_file("/tests/test_x.py")`` landed in
+        ``<subfolder>/tests/``. Launching from the repo root and from a
+        subfolder now mean the same project, as they do in Claude Code.
+
+        Always returns a resolved path, so callers can compare roots directly;
+        comparing an unresolved cwd to a resolved root broke on ``subst``
+        drives and junctions.
         """
         if self.project_root:
-            try:
-                Path.cwd().relative_to(self.project_root)
-                return Path.cwd()
-            except ValueError:
-                return self.project_root
-        return Path.cwd()
+            return Path(self.project_root)
+        return Path.cwd().resolve()
 
     @property
     def has_graph(self) -> bool:

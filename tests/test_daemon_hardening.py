@@ -169,7 +169,10 @@ def test_concurrent_processes_do_not_lose_each_others_daemons(tmp_path):
     script = tmp_path / "writer.py"
     script.write_text(
         "import sys, time\n"
-        f"sys.path.insert(0, {str(Path.cwd())!r})\n"
+        # The package's own location, not cwd: another test in the same run can
+        # leave the working directory elsewhere, and then the child process
+        # cannot import novacode_cli at all.
+        f"sys.path.insert(0, {str(Path(reg.__file__).resolve().parents[2])!r})\n"
         "from pathlib import Path\n"
         "import novacode_cli.daemons.registry as reg\n"
         f"reg.DAEMONS_DIR = Path({str(tmp_path)!r})\n"

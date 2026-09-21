@@ -309,16 +309,16 @@ def discover_mcp_configs() -> list[Path]:
     Returns:
         List of existing config file paths, ordered lowest-to-highest precedence.
     """
-    from novacode_cli.config.config import HOME_DIR
+    from novacode_cli.config.config import HOME_DIR, settings
 
     user_dir = Path(HOME_DIR)
-    project_root = Path.cwd()
-
-    # Try to find project root
-    for parent in project_root.parents:
-        if (parent / ".git").exists() or (parent / "pyproject.toml").exists():
-            project_root = parent
-            break
+    # The same project root the rest of Nova uses. This used to run its own
+    # walk over ``cwd.parents`` — which skips cwd itself, so launched from the
+    # repo root it inspected the folders ABOVE the repo — and accepted
+    # pyproject.toml as a marker where everything else wants .git. A parent
+    # folder holding either would have claimed the project, and the repo's own
+    # .nova/mcp.json would have been silently ignored.
+    project_root = settings.get_workspace_root()
 
     candidates = [
         user_dir / "mcp.json",

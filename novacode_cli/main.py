@@ -1021,7 +1021,7 @@ async def _run_agent_session(
                     messages=_crash_messages,
                     assistant_id=assistant_id,
                     model_name=_crash_model,
-                    project_root=Path.cwd(),
+                    project_root=settings.get_workspace_root(),
                     task_status="crashed",
                     sandbox_id=(getattr(sandbox_backend, "id", None) if sandbox_backend else None),
                     sandbox_type=sandbox_type,
@@ -1206,7 +1206,10 @@ async def main(
             scan_workspace,
         )
 
-        project_root = Path.cwd()
+        # The project root, matching how sessions are saved. Keyed on cwd, a
+        # session saved from the repo root was not found when resuming from a
+        # subfolder (and vice versa).
+        project_root = settings.get_workspace_root()
         session_id = continue_session if isinstance(continue_session, str) else None
 
         result = restore_session(session_manager, session_id, project_root)

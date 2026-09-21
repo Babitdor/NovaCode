@@ -5,7 +5,7 @@ from prompt_toolkit import PromptSession
 
 from novacode_cli.commands import CommandContext
 from novacode_cli.commands.menu_helper import MenuOption, run_interactive_menu
-from novacode_cli.config.config import COLORS, console
+from novacode_cli.config.config import COLORS, console, settings
 from novacode_cli.ui.ui_elements import TokenTracker
 
 
@@ -166,8 +166,8 @@ async def handle_save_command(
             console.print()
             return True
 
-        # Get project root
-        project_root = Path.cwd()
+        # The project root, so /save and --continue agree from any subfolder.
+        project_root = settings.get_workspace_root()
 
         # Save the session (session_id is always set in SessionState.__init__)
         session_dir = session_manager.save_session(

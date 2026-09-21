@@ -29,11 +29,13 @@ import fnmatch
 import json
 import logging
 from dataclasses import dataclass, field
-from pathlib import Path
 from re import Pattern
 from re import compile as _re_compile
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlparse
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from novacode_cli.config.config import HOME_DIR
 from novacode_cli.git_safety import (
@@ -362,7 +364,14 @@ def load_policy(project_root: Path | None = None) -> ApprovalPolicy:
         A compiled policy. Always succeeds — config errors are logged and skipped.
     """
     if project_root is None:
-        project_root = Path.cwd()
+        # The project root, not the launch directory. With Path.cwd() here, a
+        # project's own .nova/approval-policy.json silently stopped applying
+        # the moment Nova was started from a subfolder — its deny rules became
+        # "ask", with nothing to say so. Every get_policy() caller (the live
+        # HITL gate among them) passes no root, so this default is the gate.
+        from novacode_cli.config.config import settings
+
+        project_root = settings.get_workspace_root()
 
     tool_tiers: dict[str, Tier] = dict(_DEFAULT_TOOL_TIERS)
     shell_allow = list(_DEFAULT_SHELL_ALLOW)
