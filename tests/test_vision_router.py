@@ -39,9 +39,11 @@ def _reset_vision_globals() -> Iterator[None]:
     """Isolate the process-wide vision-model cache between tests."""
     vr._vision_model_instance = None
     vr._vision_model_errored = False
+    vr._vision_cooldown_remaining = 0
     yield
     vr._vision_model_instance = None
     vr._vision_model_errored = False
+    vr._vision_cooldown_remaining = 0
 
 
 # =========================================================================
@@ -72,8 +74,9 @@ class TestCaptionImages:
         monkeypatch.setattr(vr, "get_vision_model", lambda: model)
         out = await caption_images(["data:image/png;base64,abc"], "")
         assert "failed" in out
-        # hard failure disables vision for the session
-        assert vr._vision_model_errored is True
+        # A hard failure starts a cooldown (not a permanent session disable).
+        assert vr._vision_cooldown_remaining == vr._VISION_FAILURE_COOLDOWN
+        assert vr._vision_model_errored is False
 
 
 # =========================================================================
@@ -316,6 +319,84 @@ class TestVisionCaptionModelHook:
 
 
 # =========================================================================
+# Capability-aware pass-through — multimodal main model
+# =========================================================================
+
+
+class TestMultimodalPassThrough:
+    """When the main model is multimodal, images flow straight through."""
+
+    async def test_tool_call_returns_image_unchanged(self, monkeypatch: pytest.MonkeyPatch):
+        # caption_images must NOT be called — the image goes to the main model.
+        caption = AsyncMock(return_value="should not be used")
+        monkeypatch.setattr(vr, "caption_images", caption)
+        mw = VisionCaptionMiddleware(main_model_supports_images=True)
+        image_tm = ToolMessage(
+            content="",
+            name="read_file",
+            tool_call_id="tc1",
+            content_blocks=[{"type": "image", "base64": "abc", "mime_type": "image/png"}],
+        )
+        handler = AsyncMock(return_value=image_tm)
+        out = await mw.awrap_tool_call(
+            _tool_request("read_file", {"file_path": "/a.png"}), handler
+        )
+        assert out is image_tm  # unchanged — image preserved
+        assert _collect_image_urls(out) == ["data:image/png;base64,abc"]
+        caption.assert_not_called()
+
+    async def test_model_call_does_not_strip(self):
+        mw = VisionCaptionMiddleware(main_model_supports_images=True)
+        req = MagicMock()
+        req.messages = [
+            HumanMessage(
+                content=[
+                    {"type": "text", "text": "x"},
+                    {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+                ]
+            )
+        ]
+        handler = AsyncMock(return_value="ok")
+        out = await mw.awrap_model_call(req, handler)
+        assert out == "ok"
+        req.override.assert_not_called()  # no stripping
+        assert _collect_image_urls(req.messages[0]) == ["data:image/png;base64,abc"]
+
+    async def test_default_is_text_only_behaviour(self):
+        # Default (False) must preserve caption-and-strip.
+        mw = VisionCaptionMiddleware()
+        assert mw.main_model_supports_images is False
+
+
+# =========================================================================
+# Vision failure cooldown — one failure must not kill the session
+# =========================================================================
+
+
+class TestVisionCooldown:
+    async def test_failure_starts_cooldown_not_permanent(self, monkeypatch: pytest.MonkeyPatch):
+        model = MagicMock()
+        model.ainvoke = AsyncMock(side_effect=RuntimeError("boom"))
+        monkeypatch.setattr(vr, "get_vision_model", lambda: model)
+        out = await caption_images(["data:image/png;base64,abc"], "")
+        assert "failed" in out
+        # Cooldown armed, but NOT a permanent disable.
+        assert vr._vision_cooldown_remaining == vr._VISION_FAILURE_COOLDOWN
+        assert vr._vision_model_errored is False
+
+    async def test_cooldown_skips_then_retries(self, monkeypatch: pytest.MonkeyPatch):
+        model = MagicMock()
+        model.ainvoke = AsyncMock(return_value=SimpleNamespace(content="a caption"))
+        monkeypatch.setattr(vr, "get_vision_model", lambda: model)
+        vr._vision_cooldown_remaining = 2
+        # First two calls are skipped (cooldown), third retries and succeeds.
+        assert "failed" in await caption_images(["data:image/png;base64,abc"], "")
+        assert "failed" in await caption_images(["data:image/png;base64,abc"], "")
+        assert await caption_images(["data:image/png;base64,abc"], "") == "a caption"
+        model.ainvoke.assert_awaited_once()
+
+
+# =========================================================================
 # Paste ingestion captioning — prepare_input_content
 # =========================================================================
 
@@ -367,3 +448,19 @@ class TestVisionModelConfig:
         nc.clear_vision_model_config()
         cfg = nc.get_vision_model_config()
         assert cfg["provider"] == "ollama"
+
+
+class TestMainModelMultimodalOverride:
+    def test_default_is_none(self):
+        nc = NovaConfig()
+        nc.set_main_model_multimodal(None)
+        assert nc.get_main_model_multimodal() is None
+
+    def test_set_true_and_false(self):
+        nc = NovaConfig()
+        nc.set_main_model_multimodal(True)
+        assert nc.get_main_model_multimodal() is True
+        nc.set_main_model_multimodal(False)
+        assert nc.get_main_model_multimodal() is False
+        nc.set_main_model_multimodal(None)
+        assert nc.get_main_model_multimodal() is None

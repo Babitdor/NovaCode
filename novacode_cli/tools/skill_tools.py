@@ -208,8 +208,9 @@ async def skill_manage(
             existing = skill_md.read_text(encoding="utf-8")
             frontmatter, _ = _split_frontmatter(existing)
             if description:
-                safe_desc = description.replace("\n", " ").replace('"', "'")
-                frontmatter = f'---\nname: {name}\ndescription: "{safe_desc}"\n---\n'
+                from novacode_cli.skills.schema import yaml_str
+
+                frontmatter = f"---\nname: {name}\ndescription: {yaml_str(description)}\n---\n"
             elif not frontmatter:
                 frontmatter = f'---\nname: {name}\ndescription: "Reusable workflow: {name}"\n---\n'
             versioning.snapshot(skill_dir, reason="edit", source="agent")

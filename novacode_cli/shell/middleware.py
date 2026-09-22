@@ -18,7 +18,8 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
 from langchain.agents.middleware.types import AgentMiddleware, AgentState
-from langchain.tools import ToolRuntime, tool
+from langchain.tools import ToolRuntime
+from langchain_core.tools import StructuredTool
 from langchain_core.messages import ToolMessage
 from langchain_core.tools.base import ToolException
 
@@ -131,14 +132,6 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
         # OS-level shell confinement (Pattern A). Sets self._os_confined and
         # self._os_policy; probes the backend once, at build time.
         self._init_os_sandbox(exec_sandbox, allow_network)
-
-        # Track background processes for cleanup
-        self._background_processes: list[asyncio.subprocess.Process] = []
-
-        # Register cleanup on exit
-        import atexit
-
-        atexit.register(self._cleanup_background_processes)
 
         # Let the background-task registry restart jobs through this middleware
         # (re-run a job's command as a fresh background task). Last instance wins;
@@ -275,19 +268,42 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
                     background=background,
                 )
 
-            return _impl
+            async def _aimpl(
+                command: str,
+                runtime: ToolRuntime[None, AgentState],
+                interactive: bool = False,  # noqa: FBT001, FBT002
+                background: bool = False,  # noqa: FBT001, FBT002
+            ) -> ToolMessage | str:
+                """Execute a command (see the tool description for which shell + syntax)."""
+                if is_bash and prog is None and not self._supports_sandbox_execution():
+                    return _impl(command, runtime, interactive, background)
+                return await self._adispatch_local(
+                    command,
+                    tool_call_id=runtime.tool_call_id,
+                    prog=prog,
+                    interactive=interactive,
+                    background=background,
+                )
 
-        self._shell_tool = tool(self._tool_name, description=description)(
-            _make_impl(self._native_prog)
-        )
+            return _impl, _aimpl
+
+        def _make_tool(name: str, desc: str, prog: list[str] | None, *, is_bash: bool = False):
+            # Both bodies: the async agent awaits ``_aimpl``, which holds no
+            # thread while the command runs. A sync-only tool made LangChain
+            # park one pooled thread per running command (16 here, shared with
+            # every other sync tool), so parallel shells could stall them all.
+            sync_impl, async_impl = _make_impl(prog, is_bash=is_bash)
+            return StructuredTool.from_function(
+                func=sync_impl, coroutine=async_impl, name=name, description=desc
+            )
+
+        self._shell_tool = _make_tool(self._tool_name, description, self._native_prog)
         self.tools = [self._shell_tool]
         # `bash` is a real, separate tool (not a same-behavior alias) so Claude's
         # reflexive bash calls run actual bash. We intentionally do NOT register
         # `execute` — deepagents already provides one and a duplicate breaks build.
         if self._tool_name != "bash":
-            self._bash_alias = tool("bash", description=bash_description)(
-                _make_impl(self._bash_prog, is_bash=True)
-            )
+            self._bash_alias = _make_tool("bash", bash_description, self._bash_prog, is_bash=True)
             self.tools.append(self._bash_alias)
 
     def _alternate_prog(self, prog: "list[str] | None") -> "list[str] | None":
@@ -357,39 +373,6 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
         self._os_confined = True
         net = "network on" if allow_network else "network blocked"
         boot_status(f"sandbox: shell confined to workspace via {detected} ({net})", "ok")
-
-    def _cleanup_background_processes(self) -> None:
-        """Clean up background processes before exit to prevent asyncio errors."""
-        for process in self._background_processes:
-            try:
-                if process.returncode is None:
-                    # Process is still running, terminate it
-                    process.terminate()
-                    # Try to wait for it to finish (with timeout)
-                    try:
-                        import time
-
-                        start = time.time()
-                        while process.returncode is None and time.time() - start < 1.0:
-                            time.sleep(0.1)
-                    except Exception:
-                        pass
-            except Exception:
-                # Ignore errors during cleanup
-                pass
-        self._background_processes.clear()
-
-    def _remove_completed_process(self, process: asyncio.subprocess.Process) -> None:
-        """Remove a completed process from tracking.
-
-        Args:
-            process: The process to remove from tracking
-        """
-        try:
-            if process in self._background_processes:
-                self._background_processes.remove(process)
-        except Exception:
-            pass
 
     @staticmethod
     def _preprocess_command(command: str) -> str:
@@ -493,8 +476,7 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
         if cmd is None:
             return await handler(request)
         args = request.tool_call.get("args") or {}
-        return await asyncio.to_thread(
-            self._dispatch_local,
+        return await self._adispatch_local(
             cmd,
             tool_call_id=request.tool_call.get("id"),
             prog=None,
@@ -626,6 +608,25 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
         Returns:
             A ToolMessage with the command output or an error message.
         """
+        prepared = self._prepare_foreground(command, tool_call_id=tool_call_id, prog=prog)
+        if isinstance(prepared, ToolMessage):
+            return prepared
+        command = prepared
+
+        # If sandbox backend is available, execute in sandbox
+        if self._supports_sandbox_execution():
+            return self._run_sandbox_command(command, tool_call_id=tool_call_id)
+
+        # Local execution (original behavior)
+        return self._run_local_command(command, tool_call_id=tool_call_id, prog=prog)
+
+    def _prepare_foreground(
+        self, command: str, *, tool_call_id: str | None, prog: list[str] | None
+    ) -> str | ToolMessage:
+        """Validate + convert a foreground command; a ToolMessage means "blocked".
+
+        Shared by the sync and async paths so the checks can never drift apart.
+        """
         if not command or not isinstance(command, str):
             msg = "Shell tool expects a non-empty command string."
             raise ToolException(msg)
@@ -662,13 +663,137 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
                         mgr.snapshot(target, reason="rm-command", command=command)
             except Exception:
                 pass  # never block execution due to snapshot failure
+        return command
 
-        # If sandbox backend is available, execute in sandbox
-        if self._supports_sandbox_execution():
-            return self._run_sandbox_command(command, tool_call_id=tool_call_id)
+    # ── async twins: await the command without holding a thread ─────────────
 
-        # Local execution (original behavior)
-        return self._run_local_command(command, tool_call_id=tool_call_id, prog=prog)
+    async def _adispatch_local(
+        self,
+        command: str,
+        *,
+        tool_call_id: str | None,
+        prog: list[str] | None,
+        interactive: bool = False,
+        background: bool = False,
+    ) -> ToolMessage | str:
+        """Async :meth:`_dispatch_local`: same routing, no thread held while a
+        foreground command runs (it drains on the shared background loop)."""
+        if not interactive and is_interactive_command(command):
+            interactive = True
+        if background or is_long_running_command(command) or self._supports_sandbox_execution():
+            # Short, bounded waits (<=8s startup poll) or a sandbox round-trip.
+            return await asyncio.to_thread(
+                self._dispatch_local,
+                command,
+                tool_call_id=tool_call_id,
+                prog=prog,
+                interactive=interactive,
+                background=background,
+            )
+        if interactive:
+            return await self._arun_local(
+                command, tool_call_id=tool_call_id, prog=prog, interactive=True
+            )
+        result = await self._arun_foreground(command, tool_call_id=tool_call_id, prog=prog)
+        if not self._native_is_pwsh or not _looks_like_shell_rejection(result):
+            return result
+        alt = self._alternate_prog(prog)
+        if alt is None or alt is prog:
+            return result
+        retry = await self._arun_foreground(command, tool_call_id=tool_call_id, prog=alt)
+        return retry if not _looks_like_shell_rejection(retry) else result
+
+    async def _arun_foreground(
+        self, command: str, *, tool_call_id: str | None, prog: list[str] | None
+    ) -> ToolMessage:
+        prepared = self._prepare_foreground(command, tool_call_id=tool_call_id, prog=prog)
+        if isinstance(prepared, ToolMessage):
+            return prepared
+        return await self._arun_local(prepared, tool_call_id=tool_call_id, prog=prog)
+
+    async def _arun_local(
+        self,
+        command: str,
+        *,
+        tool_call_id: str | None,
+        prog: list[str] | None,
+        interactive: bool = False,
+    ) -> ToolMessage:
+        """Async :meth:`_run_local_command` / :meth:`_run_interactive_shell_command`."""
+        import concurrent.futures
+
+        if interactive:
+            if not command or not isinstance(command, str):
+                msg = "Shell tool expects a non-empty command string."
+                raise ToolException(msg)
+            if prog is None:
+                command = _convert_unix_command_to_windows(command)
+            dangerous, reason = is_dangerous_command(command)
+            if dangerous:
+                return ToolMessage(
+                    content=(
+                        f"Command blocked: matches dangerous pattern `{reason}`. "
+                        "If intentional, run it manually in your terminal."
+                    ),
+                    tool_call_id=tool_call_id,
+                    name=self._tool_name,
+                    status="error",
+                )
+        command = self._preprocess_command(command)
+        detach_future: concurrent.futures.Future = concurrent.futures.Future()
+        try:
+            return await self._arun_on_bg_loop(
+                lambda: self._async_local_shell(
+                    command,
+                    tool_call_id=tool_call_id,
+                    prog=prog,
+                    detach_future=detach_future,
+                    **({"prompt_window": self._timeout} if interactive else {}),
+                ),
+                timeout=self._timeout + 15,
+                detach_future=detach_future,
+            )
+        except TimeoutError:
+            return ToolMessage(
+                content=f"Error: Command timed out after {self._timeout:.0f} seconds.",
+                tool_call_id=tool_call_id,
+                name=self._tool_name,
+                status="error",
+            )
+        except OSError as e:
+            return ToolMessage(
+                content=f"Error running command: {e}",
+                tool_call_id=tool_call_id,
+                name=self._tool_name,
+                status="error",
+            )
+
+    async def _arun_on_bg_loop(
+        self,
+        make_coro: Callable[[], Awaitable[ToolMessage]],
+        *,
+        timeout: float,
+        detach_future: Any,
+    ) -> ToolMessage:
+        """Async :meth:`_run_async` (detach path): await instead of blocking.
+
+        The command still runs on the shared background loop, so a Ctrl+B detach
+        returns at once while the drain carries on there. Cancelling the caller
+        (Esc ends the turn) does not cancel the command: Esc stops it through
+        ``request_kill``, and a detached command must outlive its turn.
+        """
+        from novacode_cli.shell.jobs import get_background_loop
+
+        main = asyncio.run_coroutine_threadsafe(make_coro(), get_background_loop())
+        waiters = {asyncio.wrap_future(main), asyncio.wrap_future(detach_future)}
+        await asyncio.wait(
+            waiters, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
+        )
+        if detach_future.done():
+            return detach_future.result()
+        if main.done():
+            return main.result()
+        raise TimeoutError
 
     def _run_sandbox_command(
         self,
@@ -869,37 +994,41 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
         return await asyncio.create_subprocess_shell(command, **kwargs)
 
     async def _terminate_tree(self, proc: asyncio.subprocess.Process, *, grace: float = 3.0) -> None:
-        """Gracefully stop a process and its children, then force-kill the tree.
+        """Stop a process and its children: terminate, wait ``grace``, force-kill.
 
-        Uses the process group created in ``_spawn`` so child processes die too.
+        Uses the process group created in ``_spawn`` so child processes die too
+        (``proc.kill()`` alone kills only the shell: `npm run dev` left node
+        running). ``grace=0`` force-kills at once (Esc, timeout). Fully async:
+        it runs on the shared background loop that every running command and
+        background task drains on, so nothing here may block that thread.
         """
         if proc.returncode is not None:
             return
         import os
         import signal
 
-        try:
-            if sys.platform == "win32":
-                proc.terminate()
-            else:
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-        except (ProcessLookupError, OSError):
-            pass
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=grace)
-            return
-        except (TimeoutError, asyncio.TimeoutError):
-            pass
+        if grace > 0:
+            try:
+                if sys.platform == "win32":
+                    proc.terminate()
+                else:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except (ProcessLookupError, OSError):
+                pass
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=grace)
+                return
+            except (TimeoutError, asyncio.TimeoutError):
+                pass
         # Still alive → force-kill the whole tree.
         try:
             if sys.platform == "win32":
-                import subprocess as _sp
-
-                _sp.run(
-                    ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
-                    capture_output=True,
-                    timeout=5,
+                killer = await asyncio.create_subprocess_exec(
+                    "taskkill", "/PID", str(proc.pid), "/T", "/F",
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
                 )
+                await asyncio.wait_for(killer.wait(), timeout=5)
             else:
                 os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
         except Exception:  # noqa: BLE001 — last resort
@@ -1015,7 +1144,7 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
         try:
             while True:
                 if _ctl.kill.is_set():
-                    proc.kill()
+                    await self._terminate_tree(proc, grace=0)
                     status = "error"
                     note = "\n\n[Command killed by user (Esc).]"
                     break
@@ -1081,7 +1210,7 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
                                 )
                             )
                         continue  # keep draining as a background task
-                    proc.kill()
+                    await self._terminate_tree(proc, grace=0)
                     status = "error"
                     note = f"\n\n[Command exceeded {self._timeout:.0f}s and was terminated.]"
                     break
@@ -1107,7 +1236,7 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
                             except (OSError, ConnectionResetError):
                                 pass
                         else:
-                            proc.kill()
+                            await self._terminate_tree(proc, grace=0)
                             status = "error"
                             note = (
                                 "\n\n[This command is waiting for interactive input, which "
@@ -1130,7 +1259,7 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
                         from novacode_cli.events import emit_tool_output
                         emit_tool_output(tool_call_id, text)
         except asyncio.CancelledError:
-            proc.kill()
+            await asyncio.shield(self._terminate_tree(proc, grace=0))
             raise
         finally:
             _jobs.clear_current(_ctl)
@@ -1138,7 +1267,7 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
                 try:
                     await asyncio.wait_for(proc.wait(), timeout=2.0)
                 except TimeoutError:
-                    proc.kill()
+                    await self._terminate_tree(proc, grace=0)
             try:
                 if proc.stdin:
                     proc.stdin.close()
@@ -1375,236 +1504,6 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
             tool_call_id=tool_call_id,
             name=self._tool_name,
             status="success",
-        )
-
-    async def _async_background_shell(  # noqa: PLR0912, PLR0915
-        self,
-        command: str,
-        *,
-        tool_call_id: str | None,
-        startup_timeout: float = 60.0,
-        prog: list[str] | None = None,
-    ) -> ToolMessage:
-        """Async implementation of background shell execution.
-
-        Starts the command and waits for a "server ready" signal in the output.
-        Returns when the server is ready, leaving the process running.
-
-        Args:
-            command: The shell command to execute.
-            tool_call_id: The tool call ID for creating a ToolMessage.
-            prog: argv prefix used to exec the command (e.g. PowerShell / bash); ``None`` runs it in the platform default shell.
-            startup_timeout: Maximum time to wait for server to be ready.
-
-        Returns:
-            A ToolMessage with the startup output.
-        """
-        import time
-
-        from novacode_cli.process_manager import ProcessManager, ProcessStatus
-
-        output_lines: list[str] = []
-        status = "success"
-        server_ready = False
-        start_time = time.time()
-
-        # Start the subprocess.
-        # stdin=DEVNULL is critical: prevents the background process from
-        # inheriting the terminal's stdin handle. On Windows, a subprocess
-        # that holds the console handle locks the terminal entirely —
-        # the user cannot type or Ctrl+C until the process exits.
-        # Confine the background command to the workspace via the OS sandbox
-        # (no-op when disabled/unavailable). --die-with-parent in the bwrap recipe
-        # ties the server's sandbox to Nova so it isn't orphaned on exit.
-        command = wrap_command(command, self._os_policy)
-
-        process = await self._spawn(
-            command,
-            prog,
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-
-        # Track background process for cleanup
-        self._background_processes.append(process)
-
-        # Register with ProcessManager for proper cleanup on exit
-        manager = ProcessManager.get_instance()
-        from novacode_cli.process_manager import ProcessInfo
-
-        process_info = ProcessInfo(
-            pid=process.pid,
-            name=f"bg-{process.pid}",
-            command=command,
-            status=ProcessStatus.RUNNING,
-            working_dir=self._workspace_root,
-            _process=process,
-        )
-        manager.register_process(process_info)
-
-        try:
-            while time.time() - start_time < startup_timeout:
-                # Check if process has ended unexpectedly
-                if process.returncode is not None:
-                    # Process ended - this is usually a failure for long-running commands
-                    status = "error"
-                    break
-
-                # Read available data with timeout
-                try:
-                    chunk = await asyncio.wait_for(
-                        process.stdout.read(1024),  # type: ignore[union-attr]
-                        timeout=1.0,
-                    )
-                except TimeoutError:
-                    continue
-
-                if not chunk:
-                    # Process ended
-                    break
-
-                # Decode and process the chunk
-                decoded = chunk.decode("utf-8", errors="replace")
-                if tool_call_id:
-                    from novacode_cli.events import emit_tool_output
-                    emit_tool_output(tool_call_id, decoded)
-
-                # Collect each line into output_lines — do NOT stream to stdout
-                # (that corrupts the Textual TUI; the agent loop renders the
-                # returned ToolMessage instead).
-                for line in decoded.split("\n"):
-                    if line:
-                        output_lines.append(line)
-                        if is_server_ready(line):
-                            server_ready = True
-                            break
-
-                if server_ready:
-                    break
-
-            # Wait a brief moment to capture any additional startup output
-            if server_ready:
-                await asyncio.sleep(0.5)
-                # Read any remaining output
-                try:
-                    remaining = await asyncio.wait_for(
-                        process.stdout.read(4096),  # type: ignore[union-attr]
-                        timeout=0.5,
-                    )
-                    if remaining:
-                        decoded = remaining.decode("utf-8", errors="replace")
-                        for line in decoded.split("\n"):
-                            if line:
-                                output_lines.append(line)
-                except TimeoutError:
-                    pass
-
-        except asyncio.CancelledError:
-            output_lines.append("\n[yellow]Background task cancelled[/yellow]")
-            status = "error"
-            try:
-                process.terminate()
-                try:
-                    await asyncio.wait_for(process.wait(), timeout=2.0)
-                except TimeoutError:
-                    process.kill()
-                    await process.wait()
-            except OSError:
-                pass
-            finally:
-                try:
-                    if process.stdin:
-                        process.stdin.close()
-                except Exception:
-                    pass
-            raise
-        except OSError as e:
-            output_lines.append(f"\nError during startup: {e}")
-            status = "error"
-
-        # If process failed (exited), clean up stdin (StreamWriter) to prevent
-        # ResourceWarning on Windows. stdout/stderr are StreamReader and don't need closing.
-        # For running background processes, stdin stays open for potential input.
-        if process.returncode is not None:
-            try:
-                if process.stdin:
-                    process.stdin.close()
-                # Remove from tracking since it's completed
-                self._remove_completed_process(process)
-            except Exception:
-                pass
-
-        # If the server is still running, drain its stdout pipe in a background
-        # daemon thread. Without this, the pipe buffer (~64 KB) fills up as the
-        # server keeps logging, causing the server process to block on write and
-        # appear frozen. The daemon thread exits automatically when the process ends.
-        if process.returncode is None and process.stdout is not None:
-            import threading
-
-            def _drain_stdout(proc_stdout: asyncio.StreamReader) -> None:
-                """Read and discard server output to keep the pipe from filling."""
-                import asyncio as _asyncio
-
-                loop = _asyncio.new_event_loop()
-                try:
-
-                    async def _drain() -> None:
-                        while True:
-                            try:
-                                chunk = await _asyncio.wait_for(proc_stdout.read(4096), timeout=1.0)
-                                if not chunk:
-                                    break
-                            except (TimeoutError, Exception):
-                                if proc_stdout.at_eof():
-                                    break
-
-                    loop.run_until_complete(_drain())
-                finally:
-                    loop.close()
-
-            drain_thread = threading.Thread(
-                target=_drain_stdout,
-                args=(process.stdout,),
-                daemon=True,
-                name=f"stdout-drain-{process.pid}",
-            )
-            drain_thread.start()
-
-        # Build output message
-        output = "\n".join(output_lines) if output_lines else "<no output>"
-
-        # Truncate if needed
-        if len(output) > self._max_output_bytes:
-            output = output[: self._max_output_bytes]
-            output += f"\n\n... Output truncated at {self._max_output_bytes} bytes."
-
-        # Determine final status and message
-        if server_ready:
-            output = (
-                f"{output}\n\n"
-                f"✓ Server started successfully (PID: {process.pid})\n"
-                f"The server is running in the background."
-            )
-            status = "success"
-        elif process.returncode is not None:
-            output = f"{output}\n\n✗ Process exited with code {process.returncode}"
-            status = "error"
-        else:
-            # Timeout without server ready signal
-            output = (
-                f"{output}\n\n"
-                f"⚠ Server may be running (PID: {process.pid}) but no ready signal detected.\n"
-                f"The process is still running in the background."
-            )
-            # Consider it success since the process is still running
-            status = "success"
-
-        return ToolMessage(
-            content=output,
-            tool_call_id=tool_call_id,
-            name=self._tool_name,
-            status=status,
         )
 
 

@@ -75,6 +75,10 @@ class SessionPickerApp(App[str | None]):
         age = format_session_age(meta.last_active)
         project = Path(meta.project_root).name if meta.project_root else "(no project)"
         model = meta.model_name or "unknown"
+        # Legacy sessions (no recorded provider) cannot have their model rebuilt
+        # on resume — mark them so the label never promises a restore.
+        if meta.model_name and not getattr(meta, "model_provider", None):
+            model = f"{model} (not restored)"
         task = _truncate(getattr(meta, "current_task", None), 40) or "—"
         t = Text()
         t.append(f"{meta.session_id[:8]}  ", style="bold cyan")

@@ -189,6 +189,73 @@ class _SessionProxy:
             raise
 
 
+#: Cap on the structured-result text folded into a tool result.
+_STRUCTURED_MAX_CHARS = 12_000
+
+
+def _compact(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, separators=(",", ":"), ensure_ascii=False, default=str)
+
+
+def _render_structured(structured: Any, text: str) -> str:
+    """``structuredContent`` as compact text, minus what ``text`` already says.
+
+    MCP servers may put their machine-readable result ONLY in
+    ``structuredContent``, which langchain-mcp-adapters files as an artifact the
+    model never sees. cua-driver does exactly that with the element tokens and
+    ``snapshot_id`` its ``click`` requires: the model saw an indexed tree,
+    could not click by element ("bare element_index is not accepted"), and fell
+    back to guessing pixel coordinates from a screenshot caption.
+    """
+    if not isinstance(structured, dict):
+        return _compact(structured)[:_STRUCTURED_MAX_CHARS]
+    lines: list[str] = []
+    for key, value in structured.items():
+        if key.startswith("_") or value in (None, "", [], {}):
+            continue  # private / deprecated fields, empties
+        if isinstance(value, str) and value.strip() and value.strip() in text:
+            continue  # already in the text part (e.g. tree_markdown)
+        if isinstance(value, list) and value and all(isinstance(v, dict) for v in value):
+            lines.append(f"{key}:")
+            lines += [
+                "- " + " ".join(f"{k}={_compact(v)}" for k, v in item.items()) for item in value
+            ]
+        else:
+            lines.append(f"{key}: {_compact(value)}")
+    out = "\n".join(lines)
+    if len(out) > _STRUCTURED_MAX_CHARS:
+        out = out[:_STRUCTURED_MAX_CHARS] + "\n… (structured result truncated)"
+    return out
+
+
+def _with_structured(result: Any) -> Any:
+    """Append an MCP result's structured part to the content the model sees."""
+    if not (isinstance(result, tuple) and len(result) == 2):
+        return result
+    content, artifact = result
+    structured = (artifact or {}).get("structured_content") if isinstance(artifact, dict) else None
+    if structured is None:
+        return result
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list):
+        text = "\n".join(
+            b.get("text", "") if isinstance(b, dict) else str(b) for b in content
+        )
+    else:
+        return result
+    extra = _render_structured(structured, text)
+    if not extra:
+        return result
+    block = f"structured result:\n{extra}"
+    if isinstance(content, str):
+        return (f"{content}\n\n{block}" if content.strip() else block), artifact
+    return [*content, {"type": "text", "text": block}], artifact
+
+
+
 def _wrap_tool_error_handling(tool: BaseTool) -> BaseTool:
     """Make an MCP tool failure non-fatal to the agent run.
 
@@ -223,7 +290,7 @@ def _wrap_tool_error_handling(tool: BaseTool) -> BaseTool:
 
         async def _safe_coroutine(*args: Any, **kwargs: Any) -> Any:
             try:
-                return await orig_coroutine(*args, **kwargs)
+                return _with_structured(await orig_coroutine(*args, **kwargs))
             except (KeyboardInterrupt, SystemExit):
                 raise
             except BaseException as exc:  # noqa: BLE001
@@ -240,7 +307,7 @@ def _wrap_tool_error_handling(tool: BaseTool) -> BaseTool:
 
         def _safe_func(*args: Any, **kwargs: Any) -> Any:
             try:
-                return orig_func(*args, **kwargs)
+                return _with_structured(orig_func(*args, **kwargs))
             except (KeyboardInterrupt, SystemExit):
                 raise
             except BaseException as exc:  # noqa: BLE001
@@ -698,19 +765,13 @@ class MCPMiddleware(AgentMiddleware):
             server_tools = tools_by_server.get(name, [])
 
             if server_tools:
-                lines.append(f"  Tools ({len(server_tools)}):")
-                for tool in server_tools:
-                    # Format tool with parameters
-                    tool_line = f"    - {tool['name']}: {tool['description']}"
-                    lines.append(tool_line)
-
-                    # Show required parameters from input schema
-                    input_schema = tool.get("input_schema", {})
-                    if input_schema:
-                        param_names = list(input_schema.keys())
-                        if param_names:
-                            params_str = ", ".join(param_names)
-                            lines.append(f"      Parameters: {params_str}")
+                # Names only. Each bound tool already carries its own description
+                # and parameter schema, so repeating them here cost ~25k chars a
+                # turn for zero extra signal. What the schema does NOT say, and
+                # what this list is for, is which server a tool came from.
+                names = ", ".join(t["name"] for t in server_tools)
+                lines.append(f"  Tools ({len(server_tools)}): {names}")
+                # ponytail: names also appear under "More tools" when deferred; ~1.5k dup chars
             else:
                 lines.append("  (No tools available)")
 
@@ -764,8 +825,21 @@ class MCPMiddleware(AgentMiddleware):
             has_playwright = any(
                 str(t.get("name", "")).endswith("browser_navigate") for t in mcp_tools
             )
+            # Same keying for the cua-driver computer-use guidance: the prefix is
+            # whatever the user named the server ("cua-driver_" by default).
+            cua_prefix = next(
+                (
+                    str(t["name"])[: -len("get_window_state")]
+                    for t in mcp_tools
+                    if str(t.get("name", "")).endswith("get_window_state")
+                ),
+                "",
+            )
             mcp_section = render_template(
-                "mcp.jinja", servers_list=servers_list, has_playwright=has_playwright
+                "mcp.jinja",
+                servers_list=servers_list,
+                has_playwright=has_playwright,
+                cua_prefix=cua_prefix,
             )
 
             self._mcp_section_cache = mcp_section

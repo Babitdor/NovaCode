@@ -219,7 +219,7 @@ def code_search(query: str, top_k: int = 5) -> str:
     Do NOT use this tool when:
     - You need the full file for extensive edits (use read_file instead)
     - You need exhaustive/exact string matches (use grep instead)
-    - You need architectural/structural info (use query_project_graph instead)
+    - You need a filename match rather than a code match (use glob instead)
 
     Args:
         query: Natural-language description or symbol name to search for.

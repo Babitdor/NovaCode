@@ -330,6 +330,50 @@ def create_model_from_config(provider: str, model_name: str) -> BaseChatModel | 
         return None  # unknown provider
 
 
+def create_model_for_session(
+    provider: str | None,
+    model_name: str | None,
+) -> tuple[BaseChatModel | None, str | None]:
+    """Rebuild the model a resumed session was using.
+
+    A session records the provider and model it ran on, so resuming should
+    restore that model rather than silently adopting whatever the global config
+    says now. This tries the exact recorded pair and reports why it could not be
+    rebuilt, so the caller can warn and fall back instead of failing to resume.
+
+    Args:
+        provider: Provider recorded on the session, or None for sessions saved
+            before the provider was recorded.
+        model_name: Model recorded on the session.
+
+    Returns:
+        ``(model, warning)``:
+        - ``(None, None)`` — nothing to restore (a legacy session, or no model
+          recorded). The caller should use :func:`create_model` silently.
+        - ``(model, None)`` — the session's model was rebuilt.
+        - ``(None, warning)`` — the session's model could not be rebuilt; the
+          caller should surface ``warning`` and fall back to :func:`create_model`.
+    """
+    if not provider or not model_name:
+        # Legacy session: the provider was not recorded, so the exact model
+        # cannot be rebuilt. Not an error — fall back without warning.
+        return None, None
+
+    model = create_model_from_config(provider, model_name)
+    if model is not None:
+        return model, None
+
+    key_var = PROVIDER_KEY_ENV.get(provider)
+    if key_var and not (os.environ.get(key_var) or getattr(settings, f"{provider}_api_key", None)):
+        reason = f"{key_var} is not set"
+    else:
+        reason = f"provider '{provider}' is unavailable"
+    return None, (
+        f"This session used {provider}:{model_name}, but it could not be restored "
+        f"({reason}). Falling back to the configured default model."
+    )
+
+
 def create_model() -> BaseChatModel:
     """Create the appropriate model based on available API keys.
 
@@ -399,7 +443,9 @@ def create_model() -> BaseChatModel:
             return build_chat_model(provider, model_name)
 
     # Default to Ollama if no API keys are configured
-    model_name = os.environ.get("OLLAMA_MODEL", "qwen3-coder:480b-cloud")
+    from novacode_cli.config.model_manager import DEFAULT_OLLAMA_MODEL
+
+    model_name = os.environ.get("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
     console.print(f"[dim]No API keys configured. Defaulting to Ollama model: {model_name}[/dim]")
     return build_chat_model("ollama", model_name)
 
@@ -533,4 +579,6 @@ def get_current_model_name() -> str:
         return os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
     if settings.has_google:
         return os.environ.get("GOOGLE_MODEL", "gemini-3-pro-preview")
-    return os.environ.get("OLLAMA_MODEL", "qwen3-coder:480b-cloud")
+    from novacode_cli.config.model_manager import DEFAULT_OLLAMA_MODEL
+
+    return os.environ.get("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)

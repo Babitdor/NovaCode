@@ -77,14 +77,37 @@ def _choose_variant(name: str) -> str:
     return choice
 
 
+def _is_fresh(override: Path, name: str) -> bool:
+    """True unless the packaged template changed after ``override`` was written.
+
+    An override is a full COPY of the template as it was when evolution ran, so
+    once the packaged file is edited the override silently reverts that edit
+    for every session it serves (a month-old candidate was undoing prompt
+    fixes for half of all sessions). A deliberate edit to the package wins; the
+    evolution loop can propose a new candidate against the new text.
+    """
+    try:
+        package = Path(_env.loader.searchpath[0]) / name  # type: ignore[union-attr]
+        package_mtime = package.stat().st_mtime
+    except (AttributeError, IndexError, OSError):
+        return True  # nothing to compare against: keep the override
+    try:
+        fresh = override.stat().st_mtime >= package_mtime
+    except OSError:
+        return False
+    if not fresh:
+        logger.warning("Ignoring stale prompt override %s (package template is newer)", override)
+    return fresh
+
+
 def current_variant(name: str) -> str | None:
     """Return the active A/B variant for ``name``, or ``None`` if no candidate.
 
     Used by the evolution engine to attribute a turn's quality to the variant
     that produced this session's prompts.
     """
-    override_dir = PROMPT_HISTORY_DIR / _stem(name)
-    if not (override_dir / "candidate.jinja").exists():
+    candidate = PROMPT_HISTORY_DIR / _stem(name) / "candidate.jinja"
+    if not candidate.exists() or not _is_fresh(candidate, name):
         return None
     return _choose_variant(name)
 
@@ -110,8 +133,9 @@ def render_template(name: str, **kwargs: Any) -> str:
         return _env.get_template(name).render(**kwargs)
 
     stem = _stem(name)
-    has_candidate = (override_dir / "candidate.jinja").exists()
-    has_active = (override_dir / "active.jinja").exists()
+    candidate, active = override_dir / "candidate.jinja", override_dir / "active.jinja"
+    has_candidate = candidate.exists() and _is_fresh(candidate, name)
+    has_active = active.exists() and _is_fresh(active, name)
 
     use_candidate = has_candidate and _choose_variant(name) == "candidate"
     try:

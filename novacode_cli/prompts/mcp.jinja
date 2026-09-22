@@ -44,6 +44,29 @@ Notes:
 - Still prefer `fetch_url` for plain static pages, APIs, and raw files — it is
   much faster and does not start a browser.
 {% endif %}
-{% if mcp_instruction %}
-{{ mcp_instruction }}
+{% if cua_prefix %}
+### Desktop apps and your real browser: `{{ cua_prefix }}*`
+
+- **Inspect, then act on elements, not guesses.** `{{ cua_prefix }}get_window_state(pid, window_id)`
+  lists the window's elements; its structured result gives each an `element_token`
+  and the `snapshot_id`. Click with `element_token` (or `snapshot_id` + `element_index`):
+  a bare `element_index` is refused. Tokens die with the next snapshot of that window,
+  so re-inspect after anything changes it.
+- **Narrow, don't dump:** pass `query` ("Reject", "Accept", "Sign in") instead of reading
+  a whole tree. Pages may be localized: try the local word too ("Alle ablehnen").
+- **Obey the diagnostics.** When the result is `degraded` or carries an `escalation`,
+  do what it recommends. Chromium page content often has no accessibility tree.
+- **Web pages: use the DOM path.** `{{ cua_prefix }}get_browser_state(pid, window_id)` binds the
+  window; `get_browser_state(target_id, tab_id)` then returns a snapshot with element refs
+  for `{{ cua_prefix }}browser_click(ref)` / `browser_type`. A `browser_requires_setup` reply means
+  `{{ cua_prefix }}browser_prepare` first (the user's own Chrome profile needs a grant only the
+  user can give; an isolated profile needs `allow_launch=true`).
+- **Pixels are a last resort, and never estimated.** `x, y` are window-local pixels of the
+  screenshot `get_window_state` returned. Derive them from an element's `frame`
+  (`frame.x - window_bounds.x + frame.w/2`, same for y). An image *description* is not a
+  measurement: never click coordinates guessed from one.
+- **Background first:** leave `delivery_mode` unset; switch to `"foreground"` only after the
+  driver answers `background_unavailable`.
+- **Verify every action** with a fresh read (the consent dialog is gone, the page changed).
+  Two failed tries on the same target: change the path (element / DOM / pixel), don't repeat.
 {% endif %}

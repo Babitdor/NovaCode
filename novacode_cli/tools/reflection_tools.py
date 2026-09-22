@@ -10,33 +10,25 @@ from langchain.tools import tool
 
 @tool
 def think(reflection: str) -> str:
-    """Tool for strategic reflection on code exploration and task progress.
+    """Pause and reason about what you just learned before acting on it.
 
-    Use this tool to pause and analyze your findings, assess what you've learned,
-    and make deliberate decisions about next steps in code analysis and exploration.
+    Use it between tool calls, where it pays off most: after a tool result that
+    changes the picture, and before an action that is costly to get wrong. Skip
+    it for routine steps. (Models with built-in thinking already reason before
+    each response; this is for reasoning over new tool output mid-task.)
 
-    This creates a checkpoint for quality decision-making before continuing.
-
-    When to use:
-    - After exploring codebase sections: What key patterns did I discover?
-    - Before deciding next exploration targets: Do I understand the architecture enough?
-    - When assessing code understanding: What crucial details am I still missing?
-    - When planning refactoring/fixes: Is my analysis complete and correct?
-    - Before recommending changes: Have I considered all implications?
-    - When context is complex: Am I on the right track?
-
-    Reflection should address:
-    1. Key findings - What concrete code patterns, dependencies, or issues did I discover?
-    2. Current understanding - What have I learned about the architecture/functionality?
-    3. Knowledge gaps - What critical information is still missing?
-    4. Quality assessment - Do I have sufficient evidence to proceed with recommendations?
-    5. Strategic decision - Should I explore further or am I ready to make recommendations?
+    Good moments, with the question to answer:
+    - A test or command failed: what does the error actually say, and which
+      hypothesis does it rule in or out?
+    - Search results came back: which hit is the real definition or call site?
+    - About to edit: is this the root cause, or a symptom? What else calls it?
+    - A todo is about to be marked done: which check proves it?
+    - Two attempts at a step failed: what assumption is wrong?
 
     Args:
-        reflection: Your detailed reflection on code findings, understanding gaps,
-                   analysis quality, and decision about next steps
+        reflection: The evidence, what it implies, and the decision it leads to.
 
     Returns:
-        Confirmation that reflection was recorded for decision-making
+        Confirmation that the reflection was recorded.
     """
     return f"Reflection recorded: {reflection}"

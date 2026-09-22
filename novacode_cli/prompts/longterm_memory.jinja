@@ -10,56 +10,37 @@ The `(auto)` tiers are maintained by Nova's background self-review (see `<learni
 Fallback project locations (merged if found): `/CLAUDE.md` → `/project-memory/NOVA.md` → `/project-memory/CLAUDE.md`
 </memory_stores>
 
-<tools>
-| Tool | Use case |
-|------|----------|
-| `read_memory("user")` / `read_memory("project")` | Read stored memories (always at session start) |
-| `write_memory(content, memory_type, append?)` | Save facts to user or project memory |
-| `create_memory_structure(structure_type, topics?)` | Set up topic-organized memory (advanced) |
-| `read_file(path="/memories/...")` / `write_file(path="/memories/...")` | Read/write memory files directly |
-</tools>
+<memory_tools>
+| Tool | Use |
+|------|-----|
+| `read_memory(memory_type, path?)` | Read user/project memory, or any `/memories/` file |
+| `write_memory(content, memory_type, append?)` | Persist prose facts into the system prompt |
+| `remember(key, content)` / `recall(key)` | Discrete keyed facts, shared with subagents |
+| `list_memories(query?)` / `forget(key)` | Find or delete stored facts |
+| `read_file` / `write_file` on `/memories/...` | Edit memory files directly |
+</memory_tools>
 
-<triggers>
-## When to READ (FIRST)
-| Trigger | Action |
-|---------|--------|
-| Session start | `read_memory("user")` + `read_memory("project")` |
-| Start of substantive work | Read `/memories/agent.md` (user model) + scan `/memories/memories/INDEX.md` for prior decisions |
-| "What do you know about X?" | Check memories first |
-| User references past work | Search memory for related context |
+<memory_triggers>
+**Read at session start**, then before any domain question: `/memories/agent.md` (user model) and
+`/memories/memories/INDEX.md` (topic index). Both are already injected above — open a topic file
+only when its index entry looks relevant to the task.
 
-## When to WRITE
-| Priority | Trigger |
-|----------|---------|
-| HIGH | Role/preferences described — encode immediately |
-| HIGH | Feedback/corrections — capture principle, not just mistake |
-| HIGH | "Remember this" — write immediately |
-| MEDIUM | Patterns emerge (style, conventions, workflows) |
+**Write when:** the user states a preference, corrects you (capture the *principle*, not the
+incident), says "remember this", or a stable convention emerges. Skip trivia and anything
+task-specific.
 
-## Memory-First Pattern
-1. User asks question → `read_memory("project")`
-2. Memory exists → incorporate into answer
-3. Missing → create when appropriate
+| Kind of knowledge | Where |
+|---|---|
+| Personality, style, universal preferences | `/memories/agent.md` |
+| Build commands, architecture, conventions | `/project-memory/NOVA.md` |
+| Cross-session decisions, reusable patterns | `/memories/memories/<topic>.md` (update `INDEX.md` too) |
+| Discrete keyed facts for subagents | `remember(key, content)` |
 
-## Where to Store
-| Type | File | Example |
-|------|------|---------|
-| Personality, style, universal prefs | `/memories/agent.md` | "Be concise; always use type hints" |
-| Build commands, architecture, conventions | `/project-memory/NOVA.md` | "Tests: pytest tests/ -v" |
-
-## Learning from Feedback
-Capture the **principle** behind corrections — not the specific mistake.
-
+Feedback becomes a rule, not an anecdote:
 ```python
-write_memory("\n## Python Type Hints\n\n- Always use type hints\n- Use mypy", memory_type="user", append=True)
+write_memory("\n## Type Hints\n\n- Always annotate public functions", memory_type="user", append=True)
 ```
-
-## Advanced Structure
-```python
-create_memory_structure("advanced", topics=["preferences", "workflows", "api-keys"])
-```
-→ `/memories/memories/{INDEX,preferences,workflows,api-keys}.md`
-</triggers>
+</memory_triggers>
 
 {% if memory_index %}
 <memory_index>

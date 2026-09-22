@@ -84,8 +84,28 @@ def build_continuation_prompt(
     # backward compatibility but no longer embedded to avoid duplication.)
 
     # 3. memory.md contents (session memory - declarative facts)
+    #
+    # Labelled as DERIVED: memory.md is produced by a lossy LLM summarization of
+    # the previous session, so it must not read as ground truth. Unlabelled, a
+    # summary that drifted or omitted a detail is indistinguishable from fact
+    # after resume — the model then acts on a stale claim it has no reason to
+    # doubt. The marker tells it to prefer observed reality on any conflict.
     if session_data.memory:
-        system_parts.append("\n\n## Session Memory\n\n" + session_data.memory)
+        # The heading MUST stay exactly "## Session Memory": leak suppression
+        # matches continuation headings by EXACT string (see
+        # core/streaming.py::looks_like_continuation_briefing and
+        # _CONTINUATION_SECTIONS), so annotating the heading silently stops the
+        # guard from catching the briefing when a model echoes it back. The
+        # derived-artifact framing therefore lives in the body prose instead.
+        system_parts.append(
+            "\n\n## Session Memory\n\n"
+            "The block below is a *derived* summary generated from a previous "
+            "session's transcript, not a verified record. Treat it as a hint: if "
+            "it conflicts with anything you observe (files, git state, tests, the "
+            "user), the observation wins. Regenerate it from the transcript "
+            "rather than trusting it verbatim.\n\n"
+            + session_data.memory
+        )
     else:
         system_parts.append(
             "\n\n## Session Memory\n\n(No session memory available - this is a fresh start)"

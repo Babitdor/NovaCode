@@ -90,7 +90,9 @@ async def _send_via_websocket(url: str, message: str) -> None:
     if not _HAS_WEBSOCKETS:
         return
     try:
-        async with websockets.connect(url, close_timeout=2) as ws:
+        # Local socket: fail fast when the pet is busy or absent (default open
+        # timeout is 10s, and every tool call spawns one of these).
+        async with websockets.connect(url, open_timeout=2, close_timeout=2) as ws:
             await ws.send(message)
     except (ConnectionRefusedError, OSError):
         pass

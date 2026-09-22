@@ -13,16 +13,12 @@ from novacode_cli.prompts import render_template
 def extract_agent_description(agent_md: Path) -> str:
     """Extract description from agent.md file."""
     try:
-        content = agent_md.read_text(encoding="utf-8")
+        from novacode_cli.agents.agent_file import _split
 
-        if content.startswith("---"):
-            parts = content.split("---", 2)
-            if len(parts) >= 3:
-                front_matter = parts[1]
-                for line in front_matter.splitlines():
-                    line = line.strip()
-                    if line.startswith("description:"):
-                        return line.split(":", 1)[1].strip()[:80]
+        content = agent_md.read_text(encoding="utf-8")
+        description = _split(content)[0].get("description")
+        if description:
+            return str(description).strip()[:80]
 
         for line in content.splitlines():
             line = line.strip()

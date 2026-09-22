@@ -104,10 +104,25 @@ def get_model_info() -> Tuple[str, str, str]:
         if available_models:
             model_name = available_models[0]
         else:
-            model_name = "qwen3-coder:480b-cloud"  # Fallback default
+            model_name = "deepseek-v4.1-flash:cloud"  # Fallback default
     
     display_name = _get_display_name(provider, model_name)
     return provider, model_name, display_name
+
+
+def get_current_provider() -> str | None:
+    """Provider of the model currently in effect, or None if undeterminable.
+
+    Used when saving a session so a later resume can rebuild the exact model
+    rather than falling back to whatever the global config says at that time.
+    Reads the same precedence chain as :func:`get_model_info` (saved config,
+    then env keys) so the recorded provider always matches the live model.
+    """
+    try:
+        provider, _model_name, _display = get_model_info()
+    except Exception:  # noqa: BLE001 — a save must never fail on this
+        return None
+    return provider or None
 
 
 def _get_display_name(provider: str, model_name: str) -> str:

@@ -235,17 +235,54 @@ def reset_session_tracker() -> None:
 # Tool Result Truncation
 # ============================================================================
 
+# deepagents' FilesystemMiddleware offloads a tool result to the backend once it
+# exceeds ``tool_token_limit_before_evict`` (default 20k tokens) and replaces it
+# with a file path plus a head/tail preview — a RECOVERABLE eviction, unlike
+# truncation, which destroys the tail outright.
+#
+# Crucially, that eviction does NOT apply to every tool. deepagents ships
+#
+#     TOOLS_EXCLUDED_FROM_EVICTION = ("ls", "glob", "grep", "read_file",
+#                                     "edit_file", "write_file", "delete")
+#
+# with a deliberate rationale: read_file's failure mode is single very long lines
+# (e.g. a jsonl with huge payloads), and truncating it makes the agent re-read the
+# truncated file and get nowhere. So for `read_file` there is NO offload safety
+# net, and Nova's own char cap is the ONLY bound on what enters context.
+#
+# Caps are therefore set PER TOOL, not uniformly:
+#   * Never-evicted tools (`read_file`) — keep a TIGHT cap, because nothing else
+#     will stop the result. Raising it lets a huge tool result into context
+#     permanently, which is strictly worse than truncating it.
+#   * Evictable tools (`execute`, `shell`, `fetch_url`) — cap ABOVE the offload
+#     threshold so the recoverable path fires instead of losing the content here.
+#   * Self-truncating tools (`ls`, `glob`, `grep`) — tight caps; their own
+#     truncation already fired, and a pointer to noise is not worth the round trip.
+# Mirrors deepagents' TOOLS_EXCLUDED_FROM_EVICTION (deepagents/middleware/filesystem.py).
+OFFLOAD_THRESHOLD_CHARS = 80_000
+
+# Tools deepagents never offloads — for these Nova's cap is the only bound, so
+# it must stay tight. Keep in sync with deepagents' TOOLS_EXCLUDED_FROM_EVICTION.
+TOOLS_EXCLUDED_FROM_EVICTION = frozenset(
+    {"ls", "glob", "grep", "read_file", "edit_file", "write_file", "delete"}
+)
+
 # Maximum characters for different tool result types
 RESULT_LIMITS = {
-    "read_file": 50000,  # ~12.5k tokens
+    # Above OFFLOAD_THRESHOLD_CHARS: these ARE evicted by deepagents, so let the
+    # result reach the threshold and be offloaded with a recovery pointer.
+    "shell": 160_000,  # ~40k tokens — reaches eviction
+    "execute": 160_000,
+    "fetch_url": 160_000,
+    "default": 160_000,
+    # read_file is in TOOLS_EXCLUDED_FROM_EVICTION: no offload will ever happen,
+    # so this cap is the only thing bounding it. Kept tight on purpose.
+    "read_file": 50_000,  # ~12.5k tokens — the sole guard
+    # Self-truncating / cheap to re-derive; no pointer is worth them.
     "grep": 20000,  # ~5k tokens
     "glob": 10000,  # ~2.5k tokens
     "ls": 8000,  # ~2k tokens
-    "shell": 30000,  # ~7.5k tokens
-    "execute": 30000,  # ~7.5k tokens
     "web_search": 15000,  # ~3.75k tokens
-    "fetch_url": 40000,  # ~10k tokens
-    "default": 20000,  # ~5k tokens
 }
 
 
@@ -305,6 +342,19 @@ def truncate_tool_result(
 - Use glob to find specific files"""
 
     return truncated + truncation_msg, True
+
+def _has_offload_pointer(content: str) -> bool:
+    """True when ``content`` is an offload notice rather than a raw tool result.
+
+    deepagents' eviction message opens with a fixed sentence and names the file
+    the payload was written to. Truncating it would strip the path and destroy
+    the only route back to the content, so truncation must stand down.
+    """
+    head = content[:400]
+    return (
+        "was saved in the filesystem at this path" in head
+        or "<large_tool_result" in head
+    ) and "/large_tool_results/" in content[:1000]
 
 
 # ============================================================================
@@ -565,8 +615,12 @@ class FileTrackerMiddleware(AgentMiddleware):
                     old_content=args.get("old_string"),
                 )
 
-        # Truncate large results
-        if self.truncate_results and isinstance(content, str):
+        # Truncate large results — but NEVER when the result already carries a
+        # recovery pointer. deepagents' FilesystemMiddleware replaces an
+        # oversized result with a path + head/tail preview; truncating that
+        # string would cut the path off and turn a *recoverable* offload into a
+        # dead end. The pointer is strictly more useful than a truncation.
+        if self.truncate_results and isinstance(content, str) and not _has_offload_pointer(content):
             truncated_content, was_truncated = truncate_tool_result(tool_name, content)
             if was_truncated and isinstance(result, ToolMessage):
                 return ToolMessage(

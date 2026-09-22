@@ -15,7 +15,7 @@ def _mw(agent_dir: Path) -> AgentMemoryMiddleware:
     mw = object.__new__(AgentMemoryMiddleware)
     mw.agent_dir = agent_dir
     mw._corpus_cache = None
-    mw._corpus_mtime = None
+    mw._corpus_sig = None
     mw._retrieval_cache = None
     return mw
 

@@ -126,7 +126,6 @@ class CompactionNotice:
 
 
 @dataclass
-@dataclass
 class SubagentActivity:
     """A subagent status change (dispatched / progress / completed).
 

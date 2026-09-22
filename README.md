@@ -31,6 +31,7 @@ An open-source, terminal-based AI coding assistant built on LangGraph and the `d
 - **Rich Console REPL**: Full-featured interactive shell with `prompt-toolkit` — syntax highlighting, tab completion, command history
 - **Textual TUI**: Modern terminal UI with chat messages, modals, animations, keyboard shortcuts, condensed tool groups, and click-to-copy
 - **Condensed Tool UI**: Consecutive tool calls grouped into collapsible sections — full diffs shown for code edits; reads, searches, and other calls stay compact
+- **Syntax-Highlighted Diffs**: Diff previews are syntax-highlighted per line (Pygments, keyed off the file extension) in both the Rich console and the Textual TUI — token colours overlay the `+`/`-` marker colour, so added/removed lines stay visually distinct
 - **Modal Animations**: Entrance effects (fade/slide/zoom) for all modal dialogs, pulsing borders, and a shimmer status bar
 - **Web Chat UI**: Launch a local browser-based chat interface via `/chat` — dark-themed, Claude-inspired, with Markdown rendering and code highlighting
 - **Local Voice I/O** (optional): Speak prompts and hear Nova's prose replies, fully offline — Faster-Whisper (STT), Silero VAD (utterance endpointing), and Piper (TTS). Push-to-talk (`ctrl+g`) or hands-free always-listening (`ctrl+l`); code blocks are stripped before speaking. One-command install: `uv tool install -e .[voice]`, or `uv pip install -e '.[voice]'` for uv run; manage with `/voice`. Swappable TTS/STT providers: cloud (ElevenLabs / Deepgram), **Orpheus** — an optional, very natural LLM-based local TTS (`/voice settings tts orpheus`; `uv pip install -e '.[voice-orpheus]'` + the CPU `llama-cpp-python` wheel; ~2GB model, slower than Piper), or **Parakeet** — NVIDIA's local STT via sherpa-onnx (`/voice settings stt parakeet`; `uv pip install -e '.[voice-parakeet]'`)
@@ -293,6 +294,7 @@ mypy novacode_cli/
 | `/prompt` | Manage evolving system-prompt templates — status, rollback, accept, reject |
 | `/voice` | Local voice I/O — status, on/off, mode ptt\|listen, test (ctrl+g talk, ctrl+l listen) |
 | `/effort` | Set reasoning effort level — `low`, `medium`, `high`, or `off` (hot-swaps model) |
+| `/vision` | Configure image handling — status, set the auxiliary vision model, or force the main model multimodal/text-only |
 | `/evolution` | View the self-evolution log — skills unlocked (🧬) and levelled up (⬆️) |
 | `/ingest` | Ingest captured sources (Obsidian Web Clipper) into synthesized wiki pages |
 | `/ask` | Ask a question informed by wiki context — searches wiki and answers with relevant knowledge |
@@ -437,7 +439,7 @@ Every model call passes through this middleware chain (in order):
 | Layer | Module | Purpose |
 |-------|--------|---------|
 | `ModelRetryMiddleware` | `deepagents` | Retry transient model failures (rate limits, 429) with exponential backoff |
-| `VisionCaptionMiddleware` | `bootstrap/vision_router.py` | Convert images to text so text-only models never receive image blocks |
+| `VisionCaptionMiddleware` | `bootstrap/vision_router.py` | Convert images to text for a text-only main model; pass-through when the main model is multimodal |
 | `NovaLearningMiddleware` | `hermes/middleware.py` | Hermes learning system — tool usage tracking, review cycles, memory tiers |
 | `SecurityMiddleware` | `security/` | URL sanitization, unicode attack prevention |
 | `MCPMiddleware` | `mcp/middleware.py` | MCP tool provisioning (inserted dynamically when MCP servers configured) |
@@ -908,7 +910,7 @@ User Input → CLI Entry (main.py) → Agent Loop (core/agent_loop.py) → UI Re
 - `init/` — Project initialization (detect → extract → generate → graph)
 - `skills/` — Skill loading, creation, locking, system prompt generation
 - `hitl/` — Human-in-the-loop interrupt configuration
-- `bootstrap/vision_router.py` — Vision captioning middleware (converts images to text for text-only models)
+- `bootstrap/vision_router.py` — Vision captioning middleware (converts images to text for a text-only main model; passes images straight through when the main model is multimodal — see `config/model_capabilities.py` and the `/vision` command)
 - `vixie/` — Desktop companion server (notifications, system tray)
 - `plugins/` — Plugin system
 - `wiki/` — Persistent project wiki: ingest, ask, file, and vault management

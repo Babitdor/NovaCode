@@ -24,6 +24,12 @@ class AgentRuntimeState:
         self._model: Any = None          # Current model instance
         self._sandbox_type: str | None = None  # Sandbox type
         self._sandbox_id: str | None = None   # Sandbox/container ID
+        # The REAL sandbox backend (None in local mode). Never the composite:
+        # a rebuild that passed the composite as `sandbox` wrapped the local
+        # filesystem as a `/workspace` sandbox after every /model switch or MCP
+        # reload — reads failed with "unexpected server response: <no output>"
+        # and writes landed in a stray <project>/workspace/ folder.
+        self._sandbox: Any = None
         self.token_tracker: Any = None   # TokenTracker for toolbar context display
         self.plan_agent: Any = None      # Plan agent for planning phase
         self.plan_backend: Any = None    # Plan backend
@@ -50,6 +56,7 @@ class AgentRuntimeState:
         model: Any,
         sandbox_type: str | None = None,
         sandbox_id: str | None = None,
+        sandbox: Any = None,
     ) -> None:
         """Set the agent context for dynamic model switching."""
         self._agent = agent
@@ -61,6 +68,7 @@ class AgentRuntimeState:
         self._model = model
         self._sandbox_type = sandbox_type
         self._sandbox_id = sandbox_id
+        self._sandbox = sandbox
 
     async def switch_model(
         self,
@@ -91,11 +99,13 @@ class AgentRuntimeState:
             model=new_model,
             assistant_id=self._assistant_id,
             tools=self._tools,
-            sandbox=self._backend if hasattr(self._backend, "default") else None,
+            sandbox=self._sandbox,
             sandbox_type=self._sandbox_type,
+            # Same rule as the first build in main.py: Pattern A confines the
+            # local shell. Omitting it dropped confinement on every rebuild.
+            exec_sandbox=self._sandbox is None and self._sandbox_type == "os",
             store=self._store,
             checkpointer=self._checkpointer,
-            is_continuation=True,  # Mark as continuation to preserve state
             steering_instructions=steering_instructions or [],
             session_id=session_id or getattr(self, "session_id", None),
         )
@@ -154,11 +164,13 @@ class AgentRuntimeState:
             model=self._model,
             assistant_id=self._assistant_id,
             tools=self._tools,
-            sandbox=self._backend if hasattr(self._backend, "default") else None,
+            sandbox=self._sandbox,
             sandbox_type=self._sandbox_type,
+            # Same rule as the first build in main.py: Pattern A confines the
+            # local shell. Omitting it dropped confinement on every rebuild.
+            exec_sandbox=self._sandbox is None and self._sandbox_type == "os",
             store=self._store,
             checkpointer=self._checkpointer,
-            is_continuation=True,  # Mark as continuation to preserve state
             steering_instructions=steering_instructions or [],
             session_id=getattr(self, "session_id", None),
         )

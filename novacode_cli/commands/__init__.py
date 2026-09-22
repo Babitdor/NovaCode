@@ -149,6 +149,7 @@ def build_command_registry() -> CommandRegistry:
     from novacode_cli.commands.wiki_commands import register_commands as _r22
     from novacode_cli.commands.effort_handler import register_commands as _r24
     from novacode_cli.commands.plugin_install_handler import register_commands as _r25
+    from novacode_cli.commands.vision_handler import register_commands as _r26
 
     for _r in (
         _r1,
@@ -176,6 +177,7 @@ def build_command_registry() -> CommandRegistry:
         _r23,
         _r24,
         _r25,
+        _r26,
     ):
         _r(registry)
 

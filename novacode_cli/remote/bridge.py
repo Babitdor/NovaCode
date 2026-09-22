@@ -86,6 +86,14 @@ class RemoteMessage:
     react_fn: Callable[[str], Awaitable[None]] | None = None
     edit_fn: Callable[..., Awaitable[None]] | None = None
     user_mention: str | None = None
+    #: Forum topic the message was posted in (Telegram), or None.
+    thread_id: int | None = None
+    #: The session that sent the message this one replies to, if known.
+    reply_to_owner: str | None = None
+    #: Set by the router before replying: ``{"sid": ..., "label": ...}``. The
+    #: bridge reads it when sending, to remember which session each outgoing
+    #: message belongs to (so replying to it reaches that session).
+    route: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -372,6 +380,17 @@ class RemoteBridgeManager:
             }
             info.append(entry_info)
         return info
+
+    def bridges(self, platform: RemotePlatform | None = None) -> list[Any]:
+        """Live bridge objects, optionally of one platform."""
+        return [
+            e["bridge"]
+            for e in self._bridges.values()
+            if e.get("bridge") is not None
+            and (platform is None or e["config"].platform == platform)
+            and e.get("task") is not None
+            and not e["task"].done()
+        ]
 
     def _make_bridge_id(self, platform: RemotePlatform, chat_id: str | int) -> str:
         return f"{platform.value}:{chat_id}"

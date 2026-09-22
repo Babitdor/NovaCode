@@ -126,7 +126,9 @@ def test_recording_a_cancel_survives_an_unreadable_state():
 
 def _patched(result):
     msgs = result["messages"]
-    return getattr(msgs, "value", msgs)
+    msgs = list(getattr(msgs, "value", msgs))  # Overwrite (older) or a plain list
+    # deepagents 0.6.11 and 0.7.x both lead with a REMOVE_ALL marker.
+    return [m for m in msgs if m.type != "remove"]
 
 
 def test_repair_runs_before_each_model_call():

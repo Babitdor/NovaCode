@@ -21,11 +21,15 @@ from novacode_cli.prompts import render_template
 
 import asyncio
 import contextlib
+import logging
 import re
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from rich.markdown import Markdown
 from rich.markup import escape as _esc
@@ -60,12 +64,14 @@ from novacode_cli.tui.animations import (
 # keeps working for tests, main.py, and remote code.
 from novacode_cli.tui.widgets import (
     DEFAULT_THEME,
+    NOVA_MATRIX,
     NOVA_TOKYO_NIGHT,
     ChatMessage,
     MatrixRain,
     NovaStatusBar,
     PromptInput,
     SessionHeader,
+    TranscriptScroll,
     TuiInitRenderer,
 )
 from novacode_cli.tui.screens import (
@@ -134,6 +140,217 @@ _DETAILED_TOOL_NAMES = frozenset(
         "apply_patch",
     }
 )
+
+
+# Tool calls are grouped under a category heading in the condensed tool panel
+# (e.g. "Explored — 3 reads"), so a long run of tools reads as a few labelled
+# sections instead of one flat list. Order here drives the section order.
+#
+# Coverage: every tool the agent can call — the @tool functions in
+# novacode_cli/tools/, deepagents' built-in filesystem/subagent/todo tools, and
+# MCP tools (which arrive prefixed as "<server>_<tool>", matched by prefix
+# below). A tool matching nothing falls into "Other".
+_TOOL_CATEGORIES: tuple[tuple[str, str, frozenset[str]], ...] = (
+    (
+        "Explored",
+        "→",
+        frozenset(
+            {
+                # Filesystem reads (deepagents built-ins + aliases)
+                "read_file",
+                "read",
+                "view",
+                "ls",
+                "list_dir",
+                "glob",
+                "grep",
+                "search",
+                # Semantic / symbol search
+                "code_search",
+                "find_related_code",
+                "find_file",
+                "search_for_pattern",
+                "get_symbols_overview",
+                "find_symbol",
+                "find_referencing_symbols",
+                "find_implementations",
+                "find_declaration",
+                # Web / docs research
+                "web_search",
+                "fetch_url",
+                "duckduckgo_search",
+                "docs_search",
+                "github_trending",
+                "hacker_news",
+                "reddit_posts",
+                "twitter_search",
+                "twitter_trending",
+                "linkedin_jobs",
+                "package_info",
+                "oracle",
+            }
+        ),
+    ),
+    (
+        "Edited",
+        "✎",
+        frozenset(
+            {
+                # Filesystem writes (deepagents built-ins + aliases)
+                "write_file",
+                "edit_file",
+                "create_file",
+                "multi_edit",
+                "str_replace",
+                "apply_patch",
+                "delete",
+                # Symbol-level edits
+                "rename_symbol",
+                "replace_symbol_body",
+                "insert_after_symbol",
+                "insert_before_symbol",
+                "replace_content",
+                "replace_in_files",
+                "create_text_file",
+                "safe_delete_symbol",
+            }
+        ),
+    ),
+    (
+        "Ran",
+        "$",
+        frozenset(
+            {
+                "execute",
+                "shell",
+                "bash",
+                "execute_bash",
+                "run_command",
+                "run_tests",
+                "start_dev_server",
+                "python_kernel",
+                "daemon",
+                "kill_process",
+                "restart_task",
+                "terminate_task",
+            }
+        ),
+    ),
+    (
+        "Delegated",
+        "⟐",
+        frozenset(
+            {
+                "task",
+                "start_async_task",
+                "check_async_task",
+                "update_async_task",
+                "cancel_async_task",
+                "list_async_tasks",
+                "send_agent_message",
+                "read_agent_messages",
+            }
+        ),
+    ),
+    (
+        "Planned",
+        "☰",
+        frozenset(
+            {
+                "write_todos",
+                "enter_plan_mode",
+                "exit_plan_mode",
+                "ask_user_question",
+                "plan",
+                "think",
+                "compact_conversation",
+            }
+        ),
+    ),
+    (
+        "Remembered",
+        "◈",
+        frozenset(
+            {
+                "remember",
+                "recall",
+                "forget",
+                "write_memory",
+                "read_memory",
+                "list_memories",
+                "create_memory_structure",
+                "wiki_write",
+                "wiki_read",
+                "wiki_search",
+                "wiki_update_index",
+            }
+        ),
+    ),
+    (
+        "Produced",
+        "◆",
+        frozenset(
+            {
+                "create_artifact",
+                "update_artifact",
+                "list_artifacts",
+                "skill_manage",
+                "speak",
+            }
+        ),
+    ),
+    (
+        "Tasks",
+        "⚙",
+        frozenset(
+            {
+                "get_task_status",
+                "get_task_logs",
+                "list_background_tasks",
+            }
+        ),
+    ),
+)
+
+#: Category name → (glyph, member tool names), for O(1) lookup.
+_TOOL_CATEGORY_INDEX: dict[str, tuple[str, frozenset[str]]] = {
+    name: (glyph, members) for name, glyph, members in _TOOL_CATEGORIES
+}
+
+#: Fallback category for a tool not named in any group above.
+_OTHER_CATEGORY = "Other"
+
+#: MCP tools arrive as "<server>_<tool>" (langchain-mcp-adapters prefixes the
+#: server name). These server prefixes route them into a sensible category
+#: instead of "Other", so a Playwright or Serena burst reads as one section.
+_MCP_SERVER_CATEGORY: tuple[tuple[str, str], ...] = (
+    ("playwright", "Explored"),
+    ("chrome-devtools", "Explored"),
+    ("cua-driver", "Ran"),
+    ("serena", "Explored"),
+    ("apify", "Explored"),
+    ("context7", "Explored"),
+    ("langsmith", "Explored"),
+)
+
+
+def _tool_category(name: str) -> str:
+    """The category heading a tool call belongs under (``"Other"`` if unknown)."""
+    for cat_name, _glyph, members in _TOOL_CATEGORIES:
+        if name in members:
+            return cat_name
+    # MCP tools: "<server>_<tool>" — match on the server prefix.
+    lowered = name.lower()
+    for prefix, cat in _MCP_SERVER_CATEGORY:
+        if lowered.startswith(prefix):
+            return cat
+    return _OTHER_CATEGORY
+
+
+def _category_glyph(cat: str) -> str:
+    """The leading glyph for a category heading."""
+    entry = _TOOL_CATEGORY_INDEX.get(cat)
+    return entry[0] if entry else "•"
 
 
 # The @mention token immediately before the cursor (start-of-line or after
@@ -328,6 +545,27 @@ def _approval_details(action_requests: list[dict]) -> Text:
 #: Characters of in-progress prose kept in the live (pre-commit) preview.
 _LIVE_PREVIEW_CHARS = 20_000
 
+#: Percentage thresholds at which a usage meter turns amber, then red.
+_PCT_WARN = 75
+_PCT_CRITICAL = 90
+
+
+def _pct_color(percent: float, base: str) -> str:
+    """Recolor a usage percentage green→amber→red as it approaches the cap.
+
+    Args:
+        percent: The usage percentage (0-100).
+        base: The color to use below the warning threshold.
+
+    Returns:
+        A hex color string.
+    """
+    if percent >= _PCT_CRITICAL:
+        return "#f7768e"
+    if percent >= _PCT_WARN:
+        return "#e0af68"
+    return base
+
 
 class NovaApp(App):
     """Phase-1 Nova chat TUI."""
@@ -338,6 +576,29 @@ class NovaApp(App):
     CSS = """
     /* --- App chrome --- */
     Screen { background: $background; }
+
+    /* Scrollbars are hidden cosmetically across the app (transcript, embedded
+       terminal, tool/subagent logs, modals, lists). Scrolling still works via
+       the wheel, keys, and drag; only the bar is not painted.
+       A transparent scrollbar color makes ScrollBar.render() emit blanks while
+       keeping the bar's size, so layout is untouched. Do NOT instead set
+       `scrollbar-size-vertical: 0`: a zero scrollbar size on a scroll container
+       breaks Textual's content-width calculation and collapses its children to
+       zero width (verified: the transcript's message bodies went 69 -> 0 cols).
+       These must be set on the SCROLL CONTAINERS, not on Screen: ScrollBar
+       reads `self.parent.styles.scrollbar_background`, so a Screen-level rule
+       never reaches the bar and it still paints (as a black column).
+       The `scrollbar-gutter: stable` rules below keep the reserved column so
+       content width does not shift when a scrollable region appears. */
+    VerticalScroll, RichLog, OptionList, TextArea, Collapsible, SelectionList,
+    Select, DataTable, Log, Markdown, Tree, DirectoryTree, TabbedContent {
+        scrollbar-color: transparent;
+        scrollbar-background: transparent;
+        scrollbar-color-hover: transparent;
+        scrollbar-background-hover: transparent;
+        scrollbar-color-active: transparent;
+        scrollbar-background-active: transparent;
+    }
 
     /* Session panes. The ContentSwitcher wrapping the transcript must be fully
        transparent to layout: without these it defaults to auto sizing, the
@@ -359,7 +620,7 @@ class NovaApp(App):
         border-left: thick $accent; padding: 0 2;
         margin: 1 0; background: $surface;
     }
-    #transcript > .tool { color: $warning; padding: 0 2; margin: 1 0; background: $surface; }
+    #transcript > .tool { color: $warning; padding: 0 2; margin: 1 0; background: $background; }
     .toolbody { color: $text-muted; margin: 0; height: auto; }
     .terminal-log {
         /* Scale with terminal height; floor at the old fixed 5 rows so small
@@ -407,14 +668,16 @@ class NovaApp(App):
         background: $surface; margin: 1 0;
         border-left: thick $accent;
     }
+    /* Theme variables, not hardcoded hex: these bars must recolor with /theme
+       like every other accent bar. */
     #transcript > .nova-event.nova-review-start {
-        border-left: thick #00d4ff;
+        border-left: thick $primary;
     }
     #transcript > .nova-event.nova-review-complete {
-        border-left: thick #00ff88;
+        border-left: thick $success;
     }
     #transcript > .nova-event.nova-skill-refinement {
-        border-left: thick #ffcc00;
+        border-left: thick $warning;
     }
     #cmdpalette {
         width: 100%;
@@ -514,7 +777,8 @@ class NovaApp(App):
         overflow-y: auto;
         padding: 0 2;
         background: $surface;
-        border-left: thick $secondary;
+        /* No accent bar: the checklist reads as plain transcript chrome. The
+           "Todos" word in the header carries the theme color instead. */
     }
     #todo-dock.active { display: block; }
     #todo-dock:hover { background: $boost; }
@@ -528,6 +792,34 @@ class NovaApp(App):
         color: $accent;
     }
     #tasks-bar.active { display: block; }
+    /* "Jump to latest" — shown only while the transcript is scrolled away from
+       the bottom, so a long scrollback never traps the user. Sits at the
+       top-right of the footer, directly above the status/skills bar.
+       The row is transparent and right-aligns its child; the child shrinks to
+       its text (width: auto), so ONLY the words are a click target — the empty
+       space to their left is not part of the button. */
+    #jump-latest-row {
+        display: none;
+        height: 1;
+        align: right middle;
+        background: transparent;
+    }
+    #jump-latest-row.active { display: block; }
+    /* Shrink to the text: the box is only as wide as the label, so the row is
+       not a full-width bar. */
+    #jump-latest-box {
+        width: auto;
+        height: 1;
+        background: transparent;
+    }
+    #jump-latest {
+        width: auto;
+        height: 1;
+        padding: 0 2;
+        background: transparent;
+        color: $accent;
+    }
+    #jump-latest:hover { color: $foreground; text-style: bold; }
     .info-col {
         height: 2;
         padding: 0 1;
@@ -622,6 +914,22 @@ class NovaApp(App):
     #modal-hint { padding: 0 1; color: $text-muted; }
     Collapsible { margin: 0; }
     Collapsible > .collapsible--title { padding: 0 1; background: $surface; }
+    /* The condensed tool group reads as plain transcript, not a raised card:
+       its background matches the screen's, and it must not shift color on hover
+       or when focus lands inside it (Collapsible's default :focus-within tint,
+       and CollapsibleTitle's own :hover/:focus backgrounds). */
+    #transcript > .tool, #transcript > .tool > CollapsibleTitle {
+        background: $background;
+    }
+    #transcript > .tool:hover, #transcript > .tool:focus-within {
+        background: $background;
+        background-tint: transparent;
+    }
+    #transcript > .tool > CollapsibleTitle:hover,
+    #transcript > .tool > CollapsibleTitle:focus {
+        background: $background;
+        color: $warning;
+    }
     .btw-card { margin: 1 0; border-left: thick $accent-muted; }
     .btw-card > .collapsible--title { color: $accent-muted; background: $surface; }
     .btw-body { padding: 0 2; color: $text-muted; }
@@ -635,7 +943,10 @@ class NovaApp(App):
     .bgagent-card > .collapsible--title { color: $success; background: $surface; }
     .bgagent-done > .collapsible--title { color: $success; }
     .bgagent-failed > .collapsible--title { color: $error; }
-    VerticalScroll { scrollbar-gutter: stable; }
+    /* No reserved scrollbar column: the bar is hidden (see the transparent
+       scrollbar colors above), so keeping the gutter would waste 2 columns and
+       stop the home banner's rain from reaching the right edge. */
+    VerticalScroll { scrollbar-gutter: auto; }
     #remote-status-container {
         height: auto; max-height: 12;
         background: $boost;
@@ -667,6 +978,7 @@ class NovaApp(App):
         # shadowed by Textual's Input editing bindings while #prompt has focus
         # (the normal state).
         ("alt+t", "toggle_todos", "Todos"),
+        ("ctrl+end", "jump_latest", "Jump to latest"),
         ("ctrl+n", "new_session", "New session"),
         ("alt+right", "next_session", "Next session"),
         ("alt+left", "prev_session", "Prev session"),
@@ -700,6 +1012,17 @@ class NovaApp(App):
         # back to full text on submit. Shared helpers with the legacy input.
         self.paste_tracker = PasteTracker()
         self.model_name = model_name or "unknown"
+        # Provider of the live model, recorded on save so a resume can rebuild
+        # the exact model instead of falling back to the global config. Derived
+        # from the same precedence chain that built the model; kept in sync by
+        # the model-switch path. None means "unknown", which resume treats as
+        # "nothing to restore".
+        try:
+            from novacode_cli.utils.model_info import get_current_provider
+
+            self._model_provider: str | None = get_current_provider()
+        except Exception:  # noqa: BLE001 — never block app construction
+            self._model_provider = None
         self.session_manager = session_manager
         # Sandbox identity for session persistence (so --continue can reconnect).
         self._sandbox_id = sandbox_id
@@ -718,6 +1041,17 @@ class NovaApp(App):
         # is only repainted on a ~50ms timer (see _flush_stream) so a fast token
         # stream doesn't trigger a full re-render + scroll per token.
         self._stream_flush_scheduled = False
+        # "Follow the tail" intent: True while the user wants new content to
+        # auto-scroll into view. It is NOT the same as being geometrically at the
+        # bottom — content growth raises max_scroll_y without the user moving, so
+        # geometry alone cannot tell "the user scrolled away" from "the answer got
+        # longer". Only a scroll that moves the viewport *up* clears this flag;
+        # reaching the bottom (or clicking jump-to-latest) sets it again.
+        self._follow_tail = True
+        # Last label rendered into #jump-latest. _update_jump_latest runs on every
+        # scroll event and every ~100ms streaming flush, so re-rendering the same
+        # text would churn the footer layout ~10x/sec while thinking streams.
+        self._jump_latest_label = ""
         # Cached singleton widget refs (resolved once in on_mount) to avoid a
         # query_one DOM walk on every delta / keystroke / status tick.
         self._w_cache: dict[str, Any] = {}
@@ -744,6 +1078,11 @@ class NovaApp(App):
         self._subagent_tool_to_task: dict[str, str] = {}
         self._remote_msg: Any = None  # current RemoteMessage during remote turn
         self._remote_question_future: asyncio.Future | None = None
+        # Live tool output arrives on the shell's background loop thread, one
+        # ~1KB chunk at a time. It is buffered here and painted in batches.
+        self._tool_out_lock = threading.Lock()
+        self._tool_out_pending: dict[str, list[str]] = {}
+        self._tool_out_scheduled = False
         # Voice I/O (lazy: only built when first used; None when deps absent).
         self._voice_pipeline: Any = None
         self._voice_listening: bool = False
@@ -845,16 +1184,39 @@ class NovaApp(App):
         # there is only one session.
         # Hidden until a second session exists, so a single-session run looks
         # exactly as it did before.
-        yield Tabs(id="session-tabs")
+        # Tooltips: Textual shows a widget's tooltip on hover after
+        # TOOLTIP_DELAY, walking up the ancestor chain — so setting one on a
+        # container covers all of its children. They document the clickable
+        # footer components and the info-bar columns, which are otherwise
+        # unlabelled beyond a one-word heading.
+        yield Tabs(id="session-tabs").with_tooltip(
+            "Session tabs — alt+←/→ to switch, ctrl+n for a new session"
+        )
         with ContentSwitcher(initial="transcript", id="panes"):
-            yield VerticalScroll(id="transcript")
+            yield TranscriptScroll(id="transcript").with_tooltip(
+                "Transcript — drag to select, ctrl+c to copy"
+            )
         yield OptionList(id="cmdpalette")
         with Vertical(id="prompt-dock"):
             # Todos live INSIDE the prompt dock, not as a second
             # dock:bottom sibling: two bottom-docked siblings both claim the
             # same rows, so the checklist rendered on top of the input and
             # only appeared after a resize forced a reflow.
-            yield Static("", id="todo-dock")
+            yield Static("", id="todo-dock").with_tooltip(
+                "Todo checklist — click (or alt+t) to collapse/expand"
+            )
+            # "Jump to latest" sits at the top-right of the footer, directly above
+            # the status/skills bar. The outer row is a transparent, right-aligning
+            # strip; the inner Horizontal shrinks to the text (width: auto) and the
+            # Static inside it is the only click target — the empty space to the
+            # left of the words is not part of the button.
+            with (
+                Horizontal(id="jump-latest-row"),
+                Horizontal(id="jump-latest-box"),
+            ):
+                yield Static("", id="jump-latest").with_tooltip(
+                    "Jump to the latest message — click (or ctrl+end)"
+                )
             yield Static("", id="prompt-hint-bar")
             with Horizontal(id="prompt-row"):
                 yield Static("> ", id="prompt-prefix")
@@ -863,39 +1225,60 @@ class NovaApp(App):
                     id="prompt",
                     paste_tracker=self.paste_tracker,
                     on_large_paste=self._on_large_paste,
+                ).with_tooltip(
+                    "Enter to send · shift+enter for a new line · "
+                    "/ for commands · @ for files/agents · ! for bash"
                 )
-            yield Static("", id="mode-badge")
+            yield Static("", id="mode-badge").with_tooltip(
+                "Active input mode (normal / bash / plan)"
+            )
             # Persistent background-tasks indicator (hidden until a task runs).
             # Click it (or Ctrl+B with nothing running) to open the tasks panel.
-            yield Static("", id="tasks-bar")
+            yield Static("", id="tasks-bar").with_tooltip(
+                "Background tasks — click (or ctrl+b) to open the tasks panel"
+            )
             with Horizontal(id="info-bar"):
-                with Vertical(id="col-workspace", classes="info-col"):
+                with Vertical(id="col-workspace", classes="info-col").with_tooltip(
+                    "Workspace root — the directory Nova reads and writes"
+                ):
                     yield Static("workspace (/directory)", classes="info-label")
                     yield Static("", id="info-workspace", classes="info-value")
-                with Vertical(classes="info-col"):
+                with Vertical(classes="info-col").with_tooltip(
+                    "Current git branch of the workspace"
+                ):
                     yield Static("branch", classes="info-label")
                     yield Static("", id="info-branch", classes="info-value")
-                with Vertical(id="col-sandbox", classes="info-col"):
+                with Vertical(id="col-sandbox", classes="info-col").with_tooltip(
+                    "Sandbox backend running the agent's shell commands"
+                ):
                     yield Static("sandbox", classes="info-label")
                     yield Static("", id="info-sandbox", classes="info-value")
-                with Vertical(classes="info-col"):
+                with Vertical(classes="info-col").with_tooltip(
+                    "Active model — /model to switch"
+                ):
                     yield Static("/model", classes="info-label")
                     yield Static("", id="info-model", classes="info-value")
-                with Vertical(classes="info-col"):
-                    yield Static("usage", classes="info-label")
+                with Vertical(classes="info-col").with_tooltip(
+                    "Context window fill, then cumulative session usage — "
+                    "/context for the full breakdown"
+                ):
+                    yield Static("context", classes="info-label")
                     yield Static("", id="info-quota", classes="info-value")
                 # Persistent artifacts component — fixed in the footer, click (or
                 # /artifacts) to open the list. Updates live via a registry observer.
-                with Vertical(id="col-artifacts", classes="info-col"):
+                with Vertical(id="col-artifacts", classes="info-col").with_tooltip(
+                    "Artifacts — click (or /artifacts) to open the list"
+                ):
                     yield Static("artifacts", classes="info-label")
                     yield Static("", id="info-artifacts", classes="info-value")
 
     def _apply_saved_theme(self) -> None:
-        """Register Nova's palette and apply the persisted theme (or default)."""
-        try:
-            self.register_theme(NOVA_TOKYO_NIGHT)
-        except Exception:  # noqa: BLE001
-            pass
+        """Register Nova's palettes and apply the persisted theme (or default)."""
+        for theme in (NOVA_TOKYO_NIGHT, NOVA_MATRIX):
+            try:
+                self.register_theme(theme)
+            except Exception:  # noqa: BLE001
+                pass
         name = DEFAULT_THEME
         try:
             from novacode_cli.config.nova_config import NovaConfig
@@ -914,6 +1297,19 @@ class NovaApp(App):
         import threading
 
         self._thread_id = threading.get_ident()
+        # Log what the loop was running whenever the UI freezes for >1s
+        # (~/.nova/logs/freeze.log). The UI and the agent share this loop, so
+        # the stack is the culprit, wherever it lives.
+        try:
+            from novacode_cli.tui.stall_watch import StallWatch
+
+            self._stall_watch = StallWatch(asyncio.get_running_loop())
+            self._stall_watch.start()
+        except Exception:  # noqa: BLE001 — diagnostics must never stop the app
+            self._stall_watch = None
+        # Build the slash-autocomplete skill list off the loop now: built lazily
+        # on the first "/" keystroke it scans ~750 SKILL.md files on the loop.
+        threading.Thread(target=self._get_skill_names, name="nova-skill-names", daemon=True).start()
         # Register Nova's palette and apply the saved (or default) theme first,
         # so the whole UI renders with the right colors from the first frame.
         self._apply_saved_theme()
@@ -925,6 +1321,9 @@ class NovaApp(App):
             ("#mode-badge", Static),
             ("#cmdpalette", OptionList),
             ("#prompt-hint-bar", Static),
+            ("#jump-latest-row", Horizontal),
+            ("#jump-latest-box", Horizontal),
+            ("#jump-latest", Static),
             ("#info-workspace", Static),
             ("#info-branch", Static),
             ("#info-sandbox", Static),
@@ -984,8 +1383,6 @@ class NovaApp(App):
         self.query_one("#prompt", PromptInput).focus()
         # Show ASCII art banner on home screen
         self._show_home_banner()
-        # Native startup panel (model / cwd / sandbox / memory / web-search).
-        self._render_startup_info()
         # If voice is enabled in config, pre-download models at startup
         # so the first push-to-talk or spoken reply is instant.
         self._eager_voice_warmup()
@@ -1013,49 +1410,82 @@ class NovaApp(App):
         except Exception:
             pass
 
-    def _on_tool_output(self, call_id: str, text: str) -> None:
-        """Schedules a thread-safe update to the terminal log body for a running tool."""
+    def _post_to_ui(self, callback: Any, *args: Any) -> None:
+        """Run ``callback(*args)`` on the UI thread WITHOUT waiting for it.
 
-        def update_ui() -> None:
-            if call_id in self._tool_components:
-                comp, body, base = self._tool_components[call_id]
-                if isinstance(body, RichLog):
-                    body.write(text)
-                    body.scroll_end(animate=False)
-            elif call_id in self._subagent_tool_to_task:
-                subagent_cid = self._subagent_tool_to_task[call_id]
-                if subagent_cid in self._subagent_widgets:
-                    comp, body, stype, start_time = self._subagent_widgets[subagent_cid]
-                    try:
-                        log_widget = body.query_one("#subagent-log", RichLog)
-                        if not log_widget.has_class("active"):
-                            log_widget.add_class("active")
-                        log_widget.write(text)
-                        log_widget.scroll_end(animate=False)
-                        comp._log_lines = getattr(comp, "_log_lines", 0) + text.count("\n")
-                        log_widget.styles.height = min(max(comp._log_lines + 2, 5), 8)
-                    except Exception:
-                        pass
-            elif self._tool_group_body is not None:
+        Textual's ``call_from_thread`` blocks the calling thread until the UI has
+        run the callback. The callers here are the shell's shared background
+        loop and tool threads: blocking them on the UI paced every running
+        command and background task to the UI's speed, and stalled them all
+        whenever the UI was busy. Order is preserved (FIFO scheduling). During
+        shutdown the update is dropped rather than run off the UI thread.
+        """
+        if getattr(self, "_thread_id", None) == threading.get_ident():
+            callback(*args)
+            return
+        loop = getattr(self, "_loop", None)
+        if loop is None or loop.is_closed():
+            return
+
+        async def run() -> None:
+            try:
+                with self._context():
+                    callback(*args)
+            except Exception:  # noqa: BLE001 — a UI update must never kill the caller
+                logger.debug("UI update failed", exc_info=True)
+
+        try:
+            asyncio.run_coroutine_threadsafe(run(), loop)
+        except RuntimeError:  # loop closed between the check and the call
+            pass
+
+    def _on_tool_output(self, call_id: str, text: str) -> None:
+        """Queue a chunk of live tool output; it is painted in batches (<=20/s)."""
+        with self._tool_out_lock:
+            self._tool_out_pending.setdefault(call_id, []).append(text)
+            if self._tool_out_scheduled:
+                return
+            self._tool_out_scheduled = True
+        self._post_to_ui(self.set_timer, 0.05, self._flush_tool_output)
+
+    def _flush_tool_output(self) -> None:
+        with self._tool_out_lock:
+            pending, self._tool_out_pending = self._tool_out_pending, {}
+            self._tool_out_scheduled = False
+        for call_id, parts in pending.items():
+            self._write_tool_output(call_id, "".join(parts))
+
+    def _write_tool_output(self, call_id: str, text: str) -> None:
+        """Append live output to the widget showing ``call_id`` (UI thread)."""
+        if call_id in self._tool_components:
+            comp, body, base = self._tool_components[call_id]
+            if isinstance(body, RichLog):
+                body.write(text)
+                body.scroll_end(animate=False)
+        elif call_id in self._subagent_tool_to_task:
+            subagent_cid = self._subagent_tool_to_task[call_id]
+            if subagent_cid in self._subagent_widgets:
+                comp, body, stype, start_time = self._subagent_widgets[subagent_cid]
                 try:
-                    log_widget = self._tool_group_body.query_one("#tool-group-log", RichLog)
-                    if log_widget.has_class("active"):
-                        log_widget.write(text)
-                        log_widget.scroll_end(animate=False)
-                        self._tool_group_log_lines += text.count("\n")
-                        log_widget.styles.height = min(max(self._tool_group_log_lines + 2, 5), 8)
+                    log_widget = body.query_one("#subagent-log", RichLog)
+                    if not log_widget.has_class("active"):
+                        log_widget.add_class("active")
+                    log_widget.write(text)
+                    log_widget.scroll_end(animate=False)
+                    comp._log_lines = getattr(comp, "_log_lines", 0) + text.count("\n")
+                    log_widget.styles.height = min(max(comp._log_lines + 2, 5), 8)
                 except Exception:
                     pass
-
-        import threading
-
-        if getattr(self, "_thread_id", None) == threading.get_ident():
-            update_ui()
-        else:
+        elif self._tool_group_body is not None:
             try:
-                self.call_from_thread(update_ui)
-            except RuntimeError:
-                update_ui()
+                log_widget = self._tool_group_body.query_one("#tool-group-log", RichLog)
+                if log_widget.has_class("active"):
+                    log_widget.write(text)
+                    log_widget.scroll_end(animate=False)
+                    self._tool_group_log_lines += text.count("\n")
+                    log_widget.styles.height = min(max(self._tool_group_log_lines + 2, 5), 8)
+            except Exception:
+                pass
 
     # -- OS focus handlers ----------------------------------------------------
     # Pause/resume the MatrixRain animation when the terminal window gains or
@@ -1160,6 +1590,7 @@ class NovaApp(App):
         authoritative text arrives as ``AssistantMessage``, so replaying a
         thousand keystroke-sized fragments on switch would be pure cost.
         """
+        self._feed_remote(pane, event)
         if pane is None:  # before panes exist (early mount) — render directly
             await self._render(event)
             return
@@ -1499,6 +1930,7 @@ class NovaApp(App):
             return
 
         pane.child = child
+        await self._open_remote_topics(pane)
         self._pending_task_for = getattr(self, "_pending_task_for", {})
         if task:
             self._pending_task_for[sid] = task
@@ -1534,7 +1966,10 @@ class NovaApp(App):
         elif kind == "interrupt":
             pane.status = "needs-approval"
             pane.pending_interrupt = msg
-            if pane is self._active_pane:
+            # A turn started from Telegram runs with auto-approve (as the main
+            # session's remote turns do), so settle it even in a hidden tab.
+            remote_tool = pane.remote_turns and str(msg.get("kind") or "tool") == "tool"
+            if pane is self._active_pane or remote_tool:
                 # @work: returns a Worker, not an awaitable. The handler shows
                 # approval modals via push_screen_wait, which Textual only
                 # permits inside a worker — child interrupts arrive on the
@@ -1555,12 +1990,15 @@ class NovaApp(App):
 
         elif kind == "turn_done":
             pane.status = "idle"
+            await self._finish_remote_turn(pane)
 
         elif kind == "error":
             await self._deliver(pane, ev.Error(message=str(msg.get("message") or "")))
 
         elif kind == "exited":
             pane.status = "crashed" if msg.get("crashed") else "exited"
+            while pane.remote_turns:
+                await self._finish_remote_turn(pane, error=f"✖ Session “{pane.title}” ended.")
 
         self._refresh_tabs()
 
@@ -1607,6 +2045,9 @@ class NovaApp(App):
             return
 
         await self._supervisor().close(pane.sid)
+        while pane.remote_turns:
+            await self._finish_remote_turn(pane, error=f"✖ Session “{pane.title}” was closed.")
+        await self._close_remote_topics(pane)
 
         # Worktree cleanup runs only after the process is gone: on Windows a
         # directory a live process holds open cannot be removed. Work is never
@@ -1685,11 +2126,92 @@ class NovaApp(App):
         except Exception:  # noqa: BLE001 — pruning must never break rendering
             pass
 
-    def _scroll_end(self) -> None:
+    def _scroll_end(self, *, force: bool = True) -> None:
+        """Scroll the transcript to the newest content.
+
+        Args:
+            force: When True (the default) always jump to the bottom. Pass False
+                for *automatic* scrolling (new content arriving, a streaming
+                repaint) so a user who has scrolled up to read is not yanked back
+                down mid-sentence.
+        """
+        if force or self._follow_tail:
+            try:
+                self._transcript().scroll_end(animate=False)
+            except NoMatches:
+                pass
+        self._update_jump_latest()
+
+    def _update_jump_latest(self, *, measure: bool = False) -> None:
+        """Show the "jump to latest" affordance only while not following the tail.
+
+        Driven by the ``_follow_tail`` intent flag rather than the instantaneous
+        scroll geometry: content growth moves the bottom without the user moving,
+        so geometry alone would flash the button on every streaming repaint.
+
+        Args:
+            measure: Recompute the "N lines below" count. Only pass True from a
+                real user scroll. Automatic calls (streaming flushes, new content)
+                leave the label alone: the count is measured from the bottom, so
+                it would otherwise climb on every flush while the user sits still,
+                re-rendering the footer ~10x/sec and reading as the scrollbar
+                being pushed toward the button.
+        """
         try:
-            self._transcript().scroll_end(animate=False)
+            tr = self._transcript()
+        except NoMatches:
+            return
+        try:
+            # The row owns visibility (it is the full-width, transparent strip);
+            # the inner Static owns the text and is the only click target.
+            row = self._w("#jump-latest-row", Horizontal)
+            if not self._follow_tail and measure:
+                # Show how far back the user is, so the affordance is informative.
+                rows = max(0, int(tr.max_scroll_y - tr.scroll_y))
+                label = f"↓ Jump to latest  ({rows} lines below)"
+                # Only touch the widget when the text actually changes.
+                if label != self._jump_latest_label:
+                    self._jump_latest_label = label
+                    self._w("#jump-latest", Static).update(Text(label, style="bold"))
+            row.set_class(not self._follow_tail, "active")
         except NoMatches:
             pass
+
+    def on_transcript_scroll_at_end_changed(
+        self, _event: TranscriptScroll.AtEndChanged
+    ) -> None:
+        """Toggle the jump-to-latest button when the transcript reaches/leaves the end."""
+        self._update_jump_latest(measure=True)
+
+    def on_transcript_scroll_scrolled(self, event: TranscriptScroll.Scrolled) -> None:
+        """Track scroll intent: moving up stops following, reaching the end resumes.
+
+        Only the active pane's scroll region counts — a background session
+        scrolling must not change what the visible transcript is doing.
+        """
+        try:
+            if event.scroll is not self._transcript():
+                return
+        except NoMatches:
+            return
+        if event.new_y < event.old_y - 1:
+            # The viewport moved up: the user is reading history, so stop
+            # auto-scrolling. (Content growth never moves scroll_y, so this can
+            # only be a real user scroll.)
+            self._follow_tail = False
+        elif event.scroll.is_vertical_scroll_end or (
+            event.scroll.max_scroll_y - event.new_y
+        ) <= 1:
+            # Back at the bottom (by wheel, key, or the jump button): resume.
+            self._follow_tail = True
+        # A real user scroll: recompute the distance readout.
+        self._update_jump_latest(measure=True)
+
+    def action_jump_latest(self) -> None:
+        """Scroll the transcript to the newest message (ctrl+end / button click)."""
+        self._follow_tail = True
+        self._jump_latest_label = ""
+        self._scroll_end(force=True)
 
     async def _mount(self, widget) -> None:
         # Any non-tool content closes the current tool group so transcript order
@@ -1697,14 +2219,16 @@ class NovaApp(App):
         self._close_tool_group()
         await self._transcript().mount(widget)
         self._prune_transcript()
-        self._scroll_end()
+        # Automatic scroll: new content follows the tail only if the user is
+        # still following it (see _follow_tail).
+        self._scroll_end(force=False)
 
     def _remote_send(self, text: str) -> None:
         """Send a one-off status line to the remote platform during a remote turn.
 
-        Reserved for low-frequency notices. Per-tool / per-subagent activity must
-        go through :meth:`_remote_record` instead so it's condensed into a single
-        digest rather than flooding the chat.
+        Reserved for low-frequency notices. Per-tool / per-subagent activity goes
+        to the session's live status message (see :meth:`_feed_remote`) rather
+        than flooding the chat.
         """
         msg = self._remote_msg
         if msg is None:
@@ -1720,17 +2244,224 @@ class NovaApp(App):
         except Exception:  # noqa: BLE001
             pass
 
-    def _remote_record(self, name: str | None) -> None:
-        """Record one tool/subagent name for this remote turn's live status line.
+    # ── remote: one chat, several sessions ───────────────────────────────
 
-        No network call — the name feeds the compact status line (condensed
-        counts, edited in place) which the pump flushes on its own timer.
+    def _remote_sessions(self) -> dict[str, str]:
+        """sid -> name of every live session ("main" is the in-process one)."""
+        from novacode_cli.remote.routing import ROOT
+
+        out = {ROOT: "main"}
+        for pane in getattr(self, "_panes", []):
+            if pane.kind == "child" and pane.status not in ("crashed", "exited"):
+                out[pane.sid] = pane.title
+        return out
+
+    def _remote_label(self, pane) -> str:
+        """The session's name for remote messages, or "" when it is the only one."""
+        if len(self._remote_sessions()) < 2:
+            return ""
+        return "main" if pane is None or pane.kind == "root" else pane.title
+
+    def _feed_remote(self, pane, event) -> None:
+        """Feed a stream event to the remote status of the session it belongs to."""
+        from novacode_cli.remote.status import feed
+
+        try:
+            if pane is None or pane.kind == "root":
+                if self._remote_status is not None:
+                    feed(self._remote_status, event)
+                return
+            if pane.remote_turns:
+                turn = pane.remote_turns[0]
+                if turn.status is not None:
+                    feed(turn.status, event)
+                if isinstance(event, ev.AssistantMessage) and (event.text or "").strip():
+                    turn.answer = event.text  # the last one is the answer
+        except Exception:  # noqa: BLE001 — the chat mirror must never break rendering
+            pass
+
+    async def _remote_route(self, msg: Any) -> bool:
+        """Send ``msg`` to its session. True when it was handled here (another
+        session, or a session command); False when it is for the main session.
         """
-        if self._remote_msg is None or not name:
+        from novacode_cli.remote.routing import ROOT, RemoteRouter
+
+        router = getattr(self, "_remote_router", None)
+        if router is None:
+            router = self._remote_router = RemoteRouter()
+        sessions = self._remote_sessions()
+        text = (getattr(msg, "text", "") or "").strip()
+        low = text.lower()
+        route_ctx = getattr(msg, "route", None)
+        if not isinstance(route_ctx, dict):
+            route_ctx = {}
+
+        async def reply(body: str) -> None:
+            route_ctx["sid"] = route_ctx.get("sid") or ROOT
+            with contextlib.suppress(Exception):
+                await msg.reply_fn(body)
+
+        if low in ("/sessions", "/session"):
+            await reply(self._remote_sessions_text(msg))
+            return True
+        if low.startswith("/use"):
+            name = text[4:].strip()
+            sid = router.match(name, sessions) if name else None
+            if sid is None:
+                await reply(f"No session “{name}”. {self._remote_sessions_text(msg)}")
+                return True
+            router.default[msg.chat_id] = sid
+            await reply(f"✓ Plain messages here now go to **{sessions[sid]}**.")
+            return True
+        if low.startswith("/new"):
+            name, _, task = text[4:].strip().partition(":")
+            if not name.strip():
+                await reply("Usage: `/new <name>` or `/new <name>: <task>`")
+                return True
+            await reply(f"⏳ Starting session **{name.strip()}**…")
+            await self.spawn_session(name.strip(), task.strip())
+            return True
+
+        route = router.resolve(msg, sessions)
+        if route is None:
+            await reply("This topic's session has ended. Send /sessions to see what is running.")
+            return True
+        msg.text = route.text
+        route_ctx["sid"] = route.sid
+        if route.sid == ROOT:
+            return False
+        pane = self._pane_for(route.sid)
+        if pane is None:
+            return False
+        await self._remote_child_turn(pane, msg)
+        return True
+
+    def _remote_sessions_text(self, msg: Any) -> str:
+        from novacode_cli.remote.routing import ROOT
+
+        router = getattr(self, "_remote_router", None)
+        chat = getattr(msg, "chat_id", None)
+        current = router.default.get(chat, ROOT) if router else ROOT
+        lines = ["**Sessions**"]
+        for pane in getattr(self, "_panes", []):
+            sid = ROOT if pane.kind == "root" else pane.sid
+            name = "main" if pane.kind == "root" else pane.title
+            where = " · has its own topic" if router and router.topic_of(chat, sid) else ""
+            mark = " ← default here" if sid == current else ""
+            lines.append(f"- **{name}** · {pane.status}{where}{mark}")
+        lines.append(
+            "\nTalk to one: post in its topic, reply to its message, "
+            "`@name <text>`, or `/use <name>`. Start one: `/new <name>: <task>`."
+        )
+        return "\n".join(lines)
+
+    async def _remote_child_turn(self, pane, msg: Any) -> None:
+        """Run a remote prompt in a spawned session; answer at its turn_done."""
+        from types import SimpleNamespace
+
+        from novacode_cli.remote.status import RemoteStatusLine
+
+        if pane.child is None or pane.status in ("crashed", "exited"):
+            with contextlib.suppress(Exception):
+                await msg.reply_fn(f"✖ Session “{pane.title}” is not running.")
             return
-        self._remote_activity.append(str(name))
-        if self._remote_status is not None:
-            self._remote_status.note(str(name))
+        with contextlib.suppress(Exception):
+            await self._add_message(
+                Text(f"📡 {msg.user_name} → {pane.title}", style="bold cyan"), "user", Text(msg.text)
+            )
+        proxy = pane.state.get("session_state")
+        turn = SimpleNamespace(
+            msg=msg,
+            status=None,
+            answer="",
+            prev_auto=getattr(proxy, "auto_approve", False),
+        )
+        if getattr(msg, "edit_fn", None) is not None:
+            turn.status = RemoteStatusLine(msg.edit_fn, label=self._remote_label(pane))
+        pane.remote_turns.append(turn)
+        if proxy is not None:
+            proxy.auto_approve = True  # remote turns have no one to ask
+        if await self._supervisor().send_prompt(pane.sid, msg.text) is None:
+            pane.remote_turns.remove(turn)
+            with contextlib.suppress(Exception):
+                await msg.reply_fn(f"✖ Session “{pane.title}” is no longer running.")
+            return
+        if turn.status is not None:
+            turn.status.start()
+        if len(pane.remote_turns) > 1:
+            with contextlib.suppress(Exception):
+                await msg.reply_fn(
+                    f"⏳ Queued for **{pane.title}** behind {len(pane.remote_turns) - 1} more."
+                )
+        self._remote_react("🤔", msg)
+        pane.status = "running"
+        self._refresh_tabs()
+
+    async def _finish_remote_turn(self, pane, error: str | None = None) -> None:
+        """Settle the oldest remote turn of a spawned session and send its answer."""
+        if not pane.remote_turns:
+            return
+        turn = pane.remote_turns.popleft()
+        if turn.status is not None:
+            with contextlib.suppress(Exception):
+                await turn.status.finalize()
+        reply = error or turn.answer or "✅ Task completed."
+        if self._remote_label(pane) and not error:
+            reply = f"**[{pane.title}]** {reply}"
+        with contextlib.suppress(Exception):
+            await turn.msg.reply_fn(reply)
+        self._remote_react("✖" if error else "✅", turn.msg)
+        if not pane.remote_turns:
+            proxy = pane.state.get("session_state")
+            if proxy is not None:
+                proxy.auto_approve = turn.prev_auto
+
+    def _remote_telegram_bridges(self) -> list:
+        from novacode_cli.remote.bridge import RemotePlatform
+
+        mgr = getattr(self.session_state, "_remote_bridge_manager", None)
+        if mgr is None:
+            root = getattr(self, "_root_pane", None)
+            state = root.state.get("session_state") if root is not None else None
+            mgr = getattr(state, "_remote_bridge_manager", None)
+        try:
+            return mgr.bridges(RemotePlatform.TELEGRAM) if mgr is not None else []
+        except Exception:  # noqa: BLE001
+            return []
+
+    async def _open_remote_topics(self, pane) -> None:
+        """Give a new session its own topic in every Telegram forum group."""
+        from novacode_cli.remote.routing import RemoteRouter
+
+        router = getattr(self, "_remote_router", None)
+        if router is None:
+            router = self._remote_router = RemoteRouter()
+        for bridge in self._remote_telegram_bridges():
+            try:
+                tid = await bridge.open_topic(f"🔀 {pane.title}")
+                if tid is None:
+                    continue
+                router.topics[(bridge._config.chat_id, pane.sid)] = tid
+                await bridge.post(
+                    f"◆ Session **{pane.title}** started. Messages in this topic go to it.",
+                    thread_id=tid,
+                    sid=pane.sid,
+                )
+            except Exception:  # noqa: BLE001 — a missing topic must not block the session
+                continue
+
+    async def _close_remote_topics(self, pane) -> None:
+        router = getattr(self, "_remote_router", None)
+        if router is None:
+            return
+        gone = router.forget(pane.sid)
+        for bridge in self._remote_telegram_bridges():
+            for chat, tid in gone:
+                if chat != bridge._config.chat_id:
+                    continue
+                with contextlib.suppress(Exception):
+                    await bridge.post(f"○ Session **{pane.title}** closed.", thread_id=tid)
+                    await bridge.close_topic(tid)
 
     async def _remote_steer_drain(self, queue: Any) -> None:
         """While a remote turn runs, treat further remote messages as live steers.
@@ -1747,6 +2478,9 @@ class NovaApp(App):
             except asyncio.CancelledError:
                 return
             try:
+                # Another session's message, or a session command: not a steer.
+                if await self._remote_route(m):
+                    continue
                 if (
                     self._remote_question_future is not None
                     and not self._remote_question_future.done()
@@ -1821,7 +2555,8 @@ class NovaApp(App):
         self._close_tool_group()
         self._transcript().mount(Static(renderable, classes="logline"))
         self._prune_transcript()
-        self._scroll_end()
+        # Automatic scroll: don't yank a user who is reading history.
+        self._scroll_end(force=False)
 
     # _init step-tracker widget removed — /init progress is now shown via _log only.
 
@@ -1863,125 +2598,14 @@ class NovaApp(App):
         breadcrumb = "/".join(parts[-2:])
         return f".../{breadcrumb}"
 
-    def _render_startup_info(self) -> None:
-        """Render a compact native session-info panel (replaces the legacy
-        pre-TUI Rich panels, which never appeared in TUI mode)."""
-        from rich.text import Text
-
-        try:
-            from novacode_cli.config.config import settings
-        except Exception:  # noqa: BLE001
-            return
-
-        sandbox_type = getattr(self.session_state, "_sandbox_type", None)
-        meta = self._sandbox_meta
-
-        if sandbox_type and meta:
-            # ── Heroku-style TUI list for LangSmith ──
-            lines: list[tuple[str, str]] = []
-
-            if snapshot := meta.get("snapshot"):
-                lines.append(("snapshot", str(snapshot)))
-
-            specs = []
-            if v := meta.get("vcpus"):
-                specs.append(f"{v} vCPU")
-            if g := meta.get("mem_gb"):
-                specs.append(str(g))
-            if g := meta.get("fs_capacity_gb"):
-                specs.append(str(g))
-            if specs:
-                lines.append(("specs", " · ".join(specs)))
-
-            if tunnels := meta.get("tunnels"):
-                for tn in tunnels:  # type: ignore[union-attr]
-                    lines.append(("tunnel", f"localhost:{tn['host']} → sandbox:{tn['container']}"))
-
-            t = Text()
-            t.append("● session\n", style="bold yellow")
-            t.append("  sandbox : ", style="dim")
-            t.append(f"{sandbox_type}", style="yellow")
-            t.append(f" ({self._sandbox_id or '?'})\n", style="dim")
-
-            for label, value in lines:
-                t.append(f"  {label.ljust(8)}: ", style="dim")
-                t.append(f"{value}\n", style="white")
-
-            if t.plain.endswith("\n"):
-                t = t[:-1]
-
-            self._log(t)
-        else:
-            # ── Premium Minimalist Session Details (Pi Coding Agent Style) ──
-            t = Text()
-            t.append("● session\n", style="bold cyan")
-
-            # model
-            t.append("  model   : ", style="dim")
-            t.append(f"{self.model_name}\n", style="white")
-
-            # sandbox
-            t.append("  sandbox : ", style="dim")
-            if sandbox_type:
-                try:
-                    from novacode_cli.integrations.sandbox_factory import (
-                        get_default_working_dir,
-                    )
-
-                    wd = get_default_working_dir(sandbox_type)
-                except Exception:
-                    wd = "?"
-                t.append(f"{sandbox_type}", style="yellow")
-                t.append(f" (default wd: {wd})\n", style="dim")
-            else:
-                t.append("local\n", style="green")
-
-            # cwd
-            t.append("  cwd     : ", style="dim")
-            t.append(f"{settings.get_workspace_root()}\n", style="white")
-
-            # memory
-            try:
-                aid = self.assistant_id
-                has_user = bool(aid) and settings.get_user_agent_md_path(aid).exists()
-                proj = settings.get_project_agent_md_paths()
-                if has_user or proj:
-                    parts = []
-                    if has_user:
-                        parts.append(f"~/.nova/agents/{aid}/agent.md")
-                    if proj:
-                        parts.append("project: " + ", ".join(p.name for p in proj))
-                    t.append("  memory  : ", style="dim")
-                    t.append(f"{' · '.join(parts)}\n", style="white")
-                else:
-                    t.append("  memory  : ", style="dim")
-                    t.append("none (use /init to create project memory)\n", style="dim italic")
-            except Exception:
-                pass
-
-            # search
-            try:
-                t.append("  search  : ", style="dim")
-                if not settings.has_tavily:
-                    t.append("disabled — set TAVILY_API_KEY to enable\n", style="yellow dim")
-                else:
-                    t.append("enabled via Tavily\n", style="green")
-            except Exception:
-                pass
-
-            # Strip trailing newline
-            if t.plain.endswith("\n"):
-                t = t[:-1]
-
-            self._log(t)
-
     @work
     async def _replay_history(self) -> None:
         """Replay restored conversation turns into the transcript on resume.
 
-        Renders the prior Human/AI turns (skipping system + tool noise) so a
-        resumed session *shows* its history. The agent's own state is restored
-        separately via the checkpointer / continuation prompt.
+        Renders the prior Human/AI turns *and* the tool calls they made (with
+        their results) so a resumed session shows the same transcript it had
+        before. The agent's own state is restored separately via the
+        checkpointer / continuation prompt.
         """
         msgs = self._restored_messages
         if not msgs:
@@ -1989,24 +2613,38 @@ class NovaApp(App):
         from novacode_cli.compaction import is_compaction_summary
         from novacode_cli.core.streaming import is_internal_context_text
 
+        # Tool results arrive as separate ToolMessages; index them by call id so
+        # an AIMessage's tool_calls can be paired with their output.
+        results: dict[str, Any] = {}
+        for m in msgs:
+            if getattr(m, "type", "") == "tool":
+                cid = getattr(m, "tool_call_id", None)
+                if cid:
+                    results[cid] = m
+
         # Only render real conversation turns, oldest first.
         shown = 0
         for m in msgs:
             role = getattr(m, "type", "") or ""
             text = self._message_text(m).strip()
-            if not text:
-                continue
             # /compact rewrites history into a single synthetic HumanMessage
             # holding the summary (compaction.py). Replaying it verbatim shows
             # the whole summarized context as though the USER had typed it.
-            if is_compaction_summary(text) or is_internal_context_text(text):
+            if text and (is_compaction_summary(text) or is_internal_context_text(text)):
                 continue
             if role == "human":
+                if not text:
+                    continue
                 await self._add_message(Text("You", style="bold cyan"), "user", Markdown(text))
                 shown += 1
             elif role == "ai":
-                await self._add_message(Text("Nova", style="green"), "nova", Markdown(text))
-                shown += 1
+                # Tool calls ride on the AIMessage; replay them into the
+                # condensed tool group before the (possibly empty) prose.
+                for tc in getattr(m, "tool_calls", None) or []:
+                    await self._replay_tool_call(tc, results)
+                if text:
+                    await self._add_message(Text("Nova", style="green"), "nova", Markdown(text))
+                    shown += 1
         if shown:
             self._log(
                 Text(
@@ -2014,6 +2652,34 @@ class NovaApp(App):
                     style="dim",
                 )
             )
+
+    async def _replay_tool_call(self, tc: dict, results: dict[str, Any]) -> None:
+        """Render one restored tool call (and its result) into the tool group.
+
+        Mirrors the live path: a condensed line per call under its category
+        heading, marked done/failed from the paired ToolMessage.
+        """
+        name = tc.get("name", "") or "tool"
+        args = tc.get("args", {}) or {}
+        call_id = tc.get("id") or None
+        try:
+            from novacode_cli.ui.ui_elements import format_tool_display
+
+            base = format_tool_display(name, args)
+        except Exception:  # noqa: BLE001 — a display helper must never break replay
+            base = name
+        await self._ensure_tool_group()
+        self._add_tool_group_call(call_id, base, name)
+        result = results.get(call_id) if call_id else None
+        if result is None:
+            # No paired result (e.g. the turn was interrupted) — leave it done
+            # rather than showing a perpetual spinner.
+            self._mark_tool_group_result(call_id, is_error=False, detail="")
+            return
+        status = getattr(result, "status", "success")
+        is_error = status != "success"
+        detail = self._oneline(self._message_text(result))
+        self._mark_tool_group_result(call_id, is_error=is_error, detail=detail)
 
     def _reset_streaming(self) -> None:
         """Drop any in-progress streaming/reasoning widgets at a turn boundary."""
@@ -2061,7 +2727,9 @@ class NovaApp(App):
             self._reason_msg.update_body(Text(self._reasoning_buf[-2000:], style="dim italic"))
             painted = True
         if painted:
-            self._scroll_end()
+            # Automatic scroll: a user who scrolled up to read must not be
+            # dragged back to the bottom by the next ~100ms repaint.
+            self._scroll_end(force=False)
 
     def _schedule_stream_flush(self) -> None:
         """Ensure a flush happens soon, coalescing bursts of deltas into one."""
@@ -2070,9 +2738,28 @@ class NovaApp(App):
         self._stream_flush_scheduled = True
         self.set_timer(0.1, self._flush_stream)
 
-    @staticmethod
+    def _theme_color(self, name: str, fallback: str) -> str:
+        """Resolve a theme variable to a hex string for a Rich ``Text`` style.
+
+        Rich styles are built as plain strings, so a Textual ``$variable``
+        cannot be used directly; this reads the active theme instead. Falls
+        back to *fallback* if the theme (or the variable) is unavailable.
+        """
+        raw = None
+        try:
+            raw = getattr(self.app.current_theme, name, None)
+        except Exception:  # noqa: BLE001 — never break rendering on a theme read
+            raw = None
+        if not raw:
+            try:
+                raw = self.app.theme_variables.get(name)
+            except Exception:  # noqa: BLE001
+                raw = None
+        raw = (raw or fallback).strip()
+        return raw.removeprefix("ansi_")
+
     def _render_todos(
-        todos: list, agent_name: str | None, *, collapsed: bool = False
+        self, todos: list, agent_name: str | None, *, collapsed: bool = False
     ) -> Text:
         """Native todo list: status glyphs + content (no legacy panel).
 
@@ -2093,7 +2780,12 @@ class NovaApp(App):
         t = Text()
         name = f"{agent_name} · Todos" if agent_name else "Todos"
         caret = "▸" if collapsed else "▾"
-        t.append(f"{caret} {name} ", style="bold")
+        # The "Todos" word carries the theme's accent color (the dock itself has
+        # no accent bar), so the header still reads as themed and recolors with
+        # /theme.
+        t.append(f"{caret} ", style="bold")
+        t.append(name, style=f"bold {self._theme_color('accent', '#bb9af7')}")
+        t.append(" ", style="bold")
         t.append(
             f"{done}/{len(items)}",
             style="green" if items and done == len(items) else "dim",
@@ -2167,8 +2859,16 @@ class NovaApp(App):
         return entry
 
     @staticmethod
-    def _render_diff_text(diff: str, max_lines: int = 500) -> Text:
-        """Render a unified diff natively with +/- coloring (no legacy capture)."""
+    def _render_diff_text(diff: str, max_lines: int = 500, path: str | None = None) -> Text:
+        """Render a unified diff natively with +/- coloring (no legacy capture).
+
+        When ``path`` resolves to a known language, syntax token colours are
+        overlaid on the diff-marker colour (foreground only), so added/removed
+        lines stay visually distinct.
+        """
+        from novacode_cli.ui.diff_highlight import highlight_line, lexer_for_path
+
+        lexer = lexer_for_path(path)
         t = Text()
         lines = diff.splitlines()
         for line in lines[:max_lines]:
@@ -2176,12 +2876,22 @@ class NovaApp(App):
                 t.append(line + "\n", style="dim")
             elif line.startswith("@@"):
                 t.append(line + "\n", style="cyan")
-            elif line.startswith("+"):
-                t.append(line + "\n", style="green")
-            elif line.startswith("-"):
-                t.append(line + "\n", style="red")
+            elif line.startswith(("+", "-")):
+                # Use an explicit background so the add/remove signal is a
+                # filled block (matching the Rich path's "white on dark_green"
+                # / "white on dark_red"), not just coloured text. Syntax token
+                # colours overlay the foreground only.
+                bg = "dark_green" if line.startswith("+") else "dark_red"
+                base = f"white on {bg}"
+                marker, code = line[0], line[1:]
+                t.append(marker, style=base)
+                for text, style in highlight_line(code, lexer):
+                    t.append(text, style=f"{style} on {bg}" if style else base)
+                t.append("\n")
             else:
-                t.append(line + "\n", style="dim")
+                for text, style in highlight_line(line, lexer):
+                    t.append(text, style=style or "dim")
+                t.append("\n")
         if len(lines) > max_lines:
             t.append(f"… {len(lines) - max_lines} more lines\n", style="dim italic")
         return t
@@ -2189,11 +2899,14 @@ class NovaApp(App):
     def _fileop_body(self, rec, full_output: str) -> Text:
         """Native body for a file-op component: diff for writes/edits, content for reads."""
         diff = getattr(rec, "diff", None) if rec is not None else None
+        path = getattr(rec, "display_path", None) if rec is not None else None
         if diff:
-            return self._render_diff_text(diff)
+            return self._render_diff_text(diff, path=path)
         after = getattr(rec, "after_content", None) if rec is not None else None
         if after:  # write with no diff — show the new content as additions
-            return self._render_diff_text("\n".join("+" + ln for ln in after.splitlines()))
+            return self._render_diff_text(
+                "\n".join("+" + ln for ln in after.splitlines()), path=path
+            )
         out = (
             full_output
             or (getattr(rec, "read_output", None) if rec is not None else None)
@@ -2212,7 +2925,9 @@ class NovaApp(App):
         added = getattr(m, "lines_added", 0) or 0
         removed = getattr(m, "lines_removed", 0) or 0
         if tn == "read_file":
-            n = getattr(m, "lines_written", 0) or added
+            # Reads populate `lines_read` (file_ops.py), never `lines_written`;
+            # reading the wrong field made every read summarize as bare "Read".
+            n = getattr(m, "lines_read", 0) or 0
             return f"Read {n} lines" if n else "Read"
         return f"+{added} / -{removed}"
 
@@ -2305,6 +3020,11 @@ class NovaApp(App):
     def _refresh_tool_group(self, *, running: str | None = None) -> None:
         """Repaint the group body + title from the current entries.
 
+        Entries are grouped under a category heading (``Explored``, ``Edited``,
+        ``Ran``, …) with a count, so a long run of tools reads as a few labelled
+        sections rather than one flat list. Categories keep the order they first
+        appear in, so the panel mirrors the order the agent actually worked.
+
         Each line is rendered once and cached on its entry: this runs on EVERY
         tool call and every tool result, and re-rendering all ~100 lines each
         time made tool events O(n) — measured at 4.4 ms per call at 20 calls
@@ -2315,15 +3035,34 @@ class NovaApp(App):
         """
         if self._tool_group is None or self._tool_group_body is None:
             return
+        entries = self._tool_group_entries[-100:]
+
+        # Bucket by category, preserving first-seen order.
+        sections: dict[str, list[dict]] = {}
+        for entry in entries:
+            sections.setdefault(entry.get("category") or _OTHER_CATEGORY, []).append(entry)
+
         body = Text()
-        for i, entry in enumerate(self._tool_group_entries[-100:]):
-            if i:
+        first_section = True
+        for cat, items in sections.items():
+            if not first_section:
                 body.append("\n")
-            line = entry.get("_line")
-            if line is None:
-                line = self._render_tool_line(entry)
-                entry["_line"] = line
-            body.append_text(line)
+            first_section = False
+            # Heading: "→ Explored — 3 reads"
+            body.append(f"{_category_glyph(cat)} ", style="bold #7aa2f7")
+            body.append(cat, style="bold #7aa2f7")
+            body.append(f" — {len(items)} {self._category_noun(cat, len(items))}\n", style="dim")
+            for entry in items:
+                line = entry.get("_line")
+                if line is None:
+                    line = self._render_tool_line(entry)
+                    entry["_line"] = line
+                body.append_text(line)
+                body.append("\n")
+        # Drop the trailing newline from the last line.
+        if body.plain.endswith("\n"):
+            body = body[:-1]
+
         try:
             self._tool_group_body.query_one("#tool-group-list", Static).update(body)
         except Exception:
@@ -2334,6 +3073,23 @@ class NovaApp(App):
             title += f"  · running {running}…"
         self._tool_group.title = title
 
+    @staticmethod
+    def _category_noun(cat: str, count: int) -> str:
+        """A pluralised noun for a category heading (``3 reads``, ``1 edit``)."""
+        nouns = {
+            "Explored": ("read", "reads"),
+            "Edited": ("edit", "edits"),
+            "Ran": ("command", "commands"),
+            "Delegated": ("task", "tasks"),
+            "Planned": ("step", "steps"),
+            "Remembered": ("memory", "memories"),
+            "Produced": ("artifact", "artifacts"),
+            "Tasks": ("check", "checks"),
+            _OTHER_CATEGORY: ("call", "calls"),
+        }
+        singular, plural = nouns.get(cat, ("call", "calls"))
+        return singular if count == 1 else plural
+
     def _add_tool_group_call(self, call_id: str | None, base: str, name: str) -> None:
         """Append a 'running' line for a new tool call."""
         entry = {
@@ -2341,6 +3097,7 @@ class NovaApp(App):
             "mark": "⏳",
             "detail": "",
             "error": False,
+            "category": _tool_category(name),
         }
         idx = len(self._tool_group_entries)
         self._tool_group_entries.append(entry)
@@ -2476,8 +3233,6 @@ class NovaApp(App):
                 e.subagent_type or "subagent",
                 time.time(),
             )
-            # Record the subagent for the end-of-turn remote footer.
-            self._remote_record("task")
 
         elif e.kind == "completed":
             # Try matching by call_id first, then fallback to subagent_type
@@ -2619,10 +3374,22 @@ class NovaApp(App):
             pass
 
     async def _remove_reasoning(self) -> None:
+        """Finalize the reasoning trace: collapse it and keep it in the transcript.
+
+        The trace used to be deleted at the end of the turn, so the model's
+        thinking vanished the moment the answer arrived. It is now retained as a
+        collapsed one-line card the user can expand, which keeps the transcript
+        honest about what the model did without letting a long trace dominate it.
+        """
         if self._reason_msg is not None:
             try:
-                await self._reason_msg.remove()
-            except Exception:  # noqa: BLE001
+                # Commit the full trace (the live view only showed a tail) and
+                # fold it to its header.
+                self._reason_msg.update_body(
+                    Text(self._reasoning_buf, style="dim italic")
+                )
+                self._reason_msg.set_collapsed(collapsed=True)
+            except Exception:  # noqa: BLE001 — finalizing must never break the turn
                 pass
             self._reason_msg = None
         self._reasoning_buf = ""
@@ -2880,24 +3647,48 @@ class NovaApp(App):
         return str(n)
 
     def _refresh_quota(self) -> None:
-        """Cumulative session-usage refresh (called from _tick during active turns).
+        """Context + session-usage refresh (called from _tick during active turns).
 
-        Shows session usage as a percentage of the token budget — input+output
-        summed over every turn ÷ budget. Monotonic (unlike the bounded context
-        gauge) and recolors green→amber→red as it approaches the cap.
+        Shows two numbers, because they answer different questions and move
+        independently:
+
+        * **ctx** — how full the context window is right now. Bounded, and it
+          DROPS when /compact summarizes the conversation.
+        * **session** — cumulative input+output over every turn ÷ budget.
+          Monotonic: it tracks total spend, so /compact deliberately leaves it
+          alone (see ``TokenTracker.reset``).
+
+        Showing only the cumulative number made /compact look like a no-op, so
+        both are rendered side by side.
         """
-        usage_text = Text("—", style="dim")
+        parts: list[tuple[str, str]] = []
+
+        # Context-window fill (bounded; drops on compaction).
+        try:
+            bd = self.token_tracker.get_breakdown() if self.token_tracker else None
+        except Exception:  # noqa: BLE001 — a display read must never break the bar
+            bd = None
+        if bd is not None and getattr(bd, "context_window_size", 0):
+            ctx_pct = bd.usage_percentage
+            parts.append((f"ctx {ctx_pct:.0f}%", f"bold {_pct_color(ctx_pct, '#9ece6a')}"))
+
+        # Cumulative session usage (monotonic; survives compaction).
         tot = getattr(self.token_tracker, "session_total_tokens", 0)
         if tot:
             pct = getattr(self.token_tracker, "session_pct", 0.0)
             budget = getattr(self.token_tracker, "session_token_budget", 0)
-            if pct >= 90:
-                c = "#f7768e"
-            elif pct >= 75:
-                c = "#e0af68"
-            else:
-                c = "#7aa2f7"
-            usage_text = Text(f"{pct:.0f}% of {self._fmt_tokens(budget)}", style=f"bold {c}")
+            parts.append(
+                (f"{pct:.0f}% of {self._fmt_tokens(budget)}", f"bold {_pct_color(pct, '#7aa2f7')}")
+            )
+
+        if not parts:
+            usage_text = Text("—", style="dim")
+        else:
+            usage_text = Text()
+            for i, (label, style) in enumerate(parts):
+                if i:
+                    usage_text.append(" · ", style="dim")
+                usage_text.append(label, style=style)
         try:
             self._w("#info-quota", Static).update(usage_text)
         except NoMatches:
@@ -3382,6 +4173,9 @@ class NovaApp(App):
             return
         event.input.value = ""
         self._hide_palette()
+        # Submitting is an explicit act: resume following the tail so the user
+        # always sees their own message, even if they had scrolled up to read.
+        self._follow_tail = True
         # While the agent is working, a submitted prompt steers the current run
         # (injected for its next step) instead of cancelling it or starting a new
         # turn. Esc still cancels. Empty turns route normally.
@@ -3832,20 +4626,12 @@ class NovaApp(App):
     def _on_task_event_threadsafe(self, event: str, job: Any) -> None:
         """Registry observer — fires on the background loop thread. Marshal to the
         UI thread (Textual widgets aren't thread-safe)."""
-        import threading
-
         # "output" fires on every log chunk; the indicator shows only
         # command/runtime/count (runtime advances via the 1s timer), so ignore it
         # here to avoid flooding the UI thread. The panel reads logs directly.
         if event == "output":
             return
-        if getattr(self, "_thread_id", None) == threading.get_ident():
-            self._on_task_event(event, job)
-            return
-        try:
-            self.call_from_thread(self._on_task_event, event, job)
-        except Exception:  # noqa: BLE001
-            pass
+        self._post_to_ui(self._on_task_event, event, job)
 
     def _on_task_event(self, event: str, job: Any) -> None:
         self._refresh_tasks_bar()
@@ -3984,15 +4770,7 @@ class NovaApp(App):
     def _on_artifact_event_threadsafe(self, event: str, art: Any) -> None:
         """Registry observer — fires on whichever thread created/updated the
         artifact (tools run in worker threads). Marshal to the UI thread."""
-        import threading
-
-        if getattr(self, "_thread_id", None) == threading.get_ident():
-            self._on_artifact_event(event, art)
-            return
-        try:
-            self.call_from_thread(self._on_artifact_event, event, art)
-        except Exception:  # noqa: BLE001
-            pass
+        self._post_to_ui(self._on_artifact_event, event, art)
 
     def _on_artifact_event(self, event: str, art: Any) -> None:
         if event == "created":
@@ -4034,8 +4812,8 @@ class NovaApp(App):
     def on_click(self, event: Any) -> None:
         """Handle clicks on the persistent footer components.
 
-        Artifacts list, background-tasks panel, and the todo checklist
-        (click anywhere on it to collapse/expand).
+        Artifacts list, background-tasks panel, the todo checklist (click
+        anywhere on it to collapse/expand), and jump-to-latest.
         """
         try:
             w = getattr(event, "widget", None)
@@ -4049,6 +4827,13 @@ class NovaApp(App):
                     return
                 if wid == "todo-dock":
                     self.action_toggle_todos()
+                    return
+                if wid == "jump-latest":
+                    self.action_jump_latest()
+                    return
+                # A retained reasoning card folds/unfolds on click.
+                if isinstance(w, ChatMessage) and w.has_class("reason"):
+                    w.toggle_collapsed()
                     return
                 w = getattr(w, "parent", None)
         except Exception:  # noqa: BLE001
@@ -4158,6 +4943,7 @@ class NovaApp(App):
                 assistant_id=self.assistant_id,
                 todos=todos,
                 model_name=self.model_name,
+                model_provider=self._model_provider,
                 project_root=settings.get_workspace_root(),
                 sandbox_id=self._sandbox_id,
                 sandbox_type=self._sandbox_type,
@@ -4330,7 +5116,13 @@ class NovaApp(App):
             state = await ag.aget_state(config)
             msgs = state.values.get("messages", []) if state else []
             if msgs:
-                tracker.set_breakdown(ContextManager(tracker.model_name).breakdown(msgs))
+                # Off the loop: it can shell out to `ollama show`, which hangs
+                # while the local daemon is busy (a 42s UI freeze was measured).
+                model = tracker.model_name
+                breakdown = await asyncio.to_thread(
+                    lambda: ContextManager(model).breakdown(msgs)
+                )
+                tracker.set_breakdown(breakdown)
         except Exception:  # noqa: BLE001
             pass
 
@@ -4439,82 +5231,53 @@ class NovaApp(App):
         if not bd:
             return
         pct = getattr(bd, "usage_percentage", 0.0)
-        # Auto-compact fires at AUTO_COMPACT_THRESHOLD (0.82), deliberately below
-        # deepagents' 0.85 summarization backstop, so Nova's own compaction wins
-        # the race and the library only catches mid-turn overflow. Falls back to
-        # is_critical for breakdown objects that predate the property.
-        _due = getattr(bd, "should_auto_compact", None)
-        if _due is None:
-            _due = getattr(bd, "is_critical", False)
-        if _due:
-            if self._auto_compact:
-                # Loop guard: if we ALSO auto-compacted on the previous turn and
-                # are still critical, compaction isn't winning (a too-small window,
-                # or the agent keeps re-filling context — e.g. re-reading the saved
-                # conversation_history to "recover the task"). Repeating just spams
-                # the summary. Stop and hand control back to the user.
-                if getattr(self, "_compacted_last_turn", False):
-                    self._auto_compact = False
-                    self._compacted_last_turn = False
-                    self._log(
-                        Text(
-                            "⚠ Repeated auto-compaction isn't freeing space (likely a "
-                            "context-window loop). Auto-compact disabled — use /clear to "
-                            "start fresh, or switch to a larger-context model.",
-                            style="bold #f7768e",
-                        )
-                    )
-                    return
-                self._log(
-                    Text(
-                        f"⚠ Context {pct:.0f}% — auto-compacting to free space…",
-                        style="bold #f7768e",
-                    )
+        # Policy lives in novacode_cli/context/pressure.py so the Rich REPL and
+        # this TUI cannot drift. Auto-compact fires at AUTO_COMPACT_THRESHOLD
+        # (0.82), deliberately below deepagents' 0.85 summarization backstop, so
+        # Nova's own compaction wins the race and the library only catches
+        # mid-turn overflow.
+        from novacode_cli.context import PressureAction, assess_pressure
+
+        decision = assess_pressure(
+            pct,
+            compacted_last_turn=getattr(self, "_compacted_last_turn", False),
+            auto_compact_enabled=self._auto_compact,
+        )
+        self._compacted_last_turn = decision.compacted_last_turn
+
+        if decision.disable_auto_compact:
+            self._auto_compact = False
+
+        if decision.action is PressureAction.COMPACT:
+            self._log(Text(f"⚠ {decision.reason}", style="bold #f7768e"))
+            await self._run_compact("")
+            self._compacted_last_turn = True
+            # Floor: if compaction couldn't get us back under the critical line,
+            # further auto-compaction is futile (the summary itself is near the
+            # window — usually a too-small model). Stop the per-turn loop and
+            # tell the user how to recover.
+            try:
+                bd2 = self.token_tracker.get_breakdown()
+            except Exception:  # noqa: BLE001
+                bd2 = None
+            if bd2 is not None:
+                from novacode_cli.context import post_compaction_still_critical
+
+                after = post_compaction_still_critical(
+                    getattr(bd2, "usage_percentage", 0.0),
+                    auto_compact_enabled=self._auto_compact,
                 )
-                await self._run_compact("")
-                self._compacted_last_turn = True
-                # Floor: if compaction couldn't get us back under the critical
-                # line, further auto-compaction is futile (the summary itself is
-                # near the window — usually a too-small model). Stop the per-turn
-                # loop and tell the user how to recover.
-                try:
-                    bd2 = self.token_tracker.get_breakdown()
-                except Exception:  # noqa: BLE001
-                    bd2 = None
-                _still_due = None
-                if bd2 is not None:
-                    _still_due = getattr(bd2, "should_auto_compact", None)
-                    if _still_due is None:
-                        _still_due = getattr(bd2, "is_critical", False)
-                if _still_due:
+                if after.disable_auto_compact:
                     self._auto_compact = False
-                    self._log(
-                        Text(
-                            "⚠ Auto-compact couldn't free enough space (context window "
-                            "too small for this conversation). Auto-compact disabled — "
-                            "use /clear to start fresh or switch to a larger-context model.",
-                            style="bold #f7768e",
-                        )
-                    )
-            else:
-                self._log(
-                    Text(
-                        f"⚠ Context critical: {pct:.0f}% — run /compact now to avoid errors.",
-                        style="bold #f7768e",
-                    )
-                )
+                    self._log(Text(f"⚠ {after.reason}", style="bold #f7768e"))
             self._ctx_warned = True
-        elif getattr(bd, "is_warning", False):
-            # Below critical — a compaction did free space, so the loop guard resets.
-            self._compacted_last_turn = False
-            if not self._ctx_warned:
-                self._ctx_warned = True
-                self._log(
-                    Text(
-                        f"⚠ Context usage high: {pct:.0f}% — consider /compact soon.",
-                        style="#e0af68",
-                    )
-                )
+        elif decision.action is PressureAction.WARN:
+            if decision.disable_auto_compact or not self._auto_compact:
+                # Critical-but-disabled: the user must act. Always shown.
+                self._log(Text(f"⚠ {decision.reason}", style="bold #f7768e"))
+            elif not self._ctx_warned:
+                self._log(Text(f"⚠ {decision.reason}", style="#e0af68"))
+            self._ctx_warned = True
         else:
             # Dropped back below the warning line (e.g. after /compact) — re-arm.
             self._ctx_warned = False
@@ -4555,6 +5318,14 @@ class NovaApp(App):
             except asyncio.CancelledError:
                 return
             try:
+                if await self._remote_route(msg):
+                    queue.task_done()
+                    continue
+                # The main session runs in this process and streams into the
+                # visible tab: bring it on screen before its turn starts.
+                root = getattr(self, "_root_pane", None)
+                if root is not None and getattr(self, "_active_pane", root) is not root:
+                    await self._switch_to(root)
                 lock = getattr(self.session_state, "_remote_message_lock", None)
                 if self._turn_active or (lock is not None and lock.locked()):
                     try:
@@ -4676,7 +5447,9 @@ class NovaApp(App):
                         if getattr(msg, "edit_fn", None) is not None:
                             from novacode_cli.remote.status import RemoteStatusLine
 
-                            self._remote_status = RemoteStatusLine(msg.edit_fn)
+                            self._remote_status = RemoteStatusLine(
+                                msg.edit_fn, label=self._remote_label(None)
+                            )
                             self._remote_status.start()
                         # While the turn runs, drain further remote messages as
                         # live steers so the user can "add to the previous prompt".
@@ -4720,6 +5493,8 @@ class NovaApp(App):
                             await self._remote_status.finalize()
                         post = await self.agent.aget_state(config)
                         reply = _extract_response(post, pre_count) or "✅ Task completed."
+                        if self._remote_label(None):
+                            reply = f"**[main]** {reply}"
                         try:
                             await msg.reply_fn(reply)
                         except Exception:  # noqa: BLE001
@@ -4796,8 +5571,13 @@ class NovaApp(App):
             "• /evolution — view self-evolution logs\n"
             "• /dream — consolidate memory from previous sessions\n"
             "• /<skill> (e.g. /graphify) — run a skill\n"
+            "Sessions (several at once):\n"
+            "• /sessions — list them · /new <name>: <task> — start one\n"
+            "• /use <name> — where plain messages go (main = the first one)\n"
+            "• @name <text> — send to one session, or reply to its message\n"
+            "• In a group with Topics on, each session gets its own topic\n"
             "Anything without a leading / is sent to the agent. Interactive "
-            "panels (/model picker, /sessions, /mcp, /theme…) are local-only."
+            "panels (/model picker, /mcp, /theme…) are local-only."
         )
 
     async def _remote_slash(self, text: str) -> "tuple[str | None, Any]":
@@ -5424,7 +6204,10 @@ class NovaApp(App):
         )
 
     async def _run_theme(self) -> None:
-        await self.push_screen_wait(ThemeScreen())
+        # Fire-and-forget: the theme screen's result is unused, and awaiting it
+        # with push_screen_wait would hold the exclusive "turn" worker open for
+        # as long as the modal is on screen, blocking every later command.
+        self.push_screen(ThemeScreen())
 
     def _run_token_view(self) -> None:
         self._log(self._token_text())
@@ -5865,6 +6648,10 @@ class NovaApp(App):
             self.model_name = getattr(new_model, "model_name", None) or getattr(
                 new_model, "model", "unknown"
             )
+            # Keep the recorded provider in step with the live model, so the
+            # next save records what the user actually switched to and a later
+            # resume restores it rather than the pre-switch model.
+            self._model_provider = provider
             if self.token_tracker is not None:
                 try:
                     self.token_tracker.set_model(self.model_name)
@@ -5932,7 +6719,8 @@ class NovaApp(App):
             current_id = getattr(self.session_state, "session_id", None)
             sessions = [
                 s
-                for s in sm.list_sessions(limit=200)
+                # Reads every session's metadata file: off the UI loop.
+                for s in await asyncio.to_thread(sm.list_sessions, limit=200)
                 if s.project_root == ws and s.session_id != current_id
             ][:20]
             if not sessions:
@@ -6127,7 +6915,6 @@ class NovaApp(App):
             store=getattr(ss, "_store", None),
             checkpointer=getattr(ss, "_checkpointer", None),
             auto_approve=True,  # ← no HITL anywhere (see docstring #1)
-            is_continuation=True,
             session_id=getattr(ss, "session_id", None) or getattr(ss, "thread_id", None),
         )
 
@@ -6389,7 +7176,7 @@ class NovaApp(App):
 
         sm = self.session_manager or SessionManager()
         try:
-            sessions = sm.list_sessions(limit=20)
+            sessions = await asyncio.to_thread(sm.list_sessions, limit=20)
         except Exception:  # noqa: BLE001
             sessions = []
         t = Text()
@@ -8635,14 +9422,11 @@ class NovaApp(App):
             # The actual repaint is coalesced (~20fps) via _schedule_stream_flush.
             self._reasoning_buf += e.text
             if self._reason_msg is None:
-                self._reason_msg = ChatMessage(Text("💭 reasoning", style="dim italic"), "reason")
+                self._reason_msg = ChatMessage(
+                    Text("💭 thinking", style="dim italic"), "reason", collapsible=True
+                )
                 await self._mount(self._reason_msg)
             self._schedule_stream_flush()
-            # Mirror the thinking trace to the remote live message so a
-            # Telegram/Discord user sees Nova reason in real time instead of
-            # only a tool-count summary and a final answer.
-            if self._remote_status is not None:
-                self._remote_status.note_text(e.text, kind="reasoning")
             if self._activity != "thinking…":
                 self._set_status("thinking…")
         elif isinstance(e, ev.TextDelta):
@@ -8656,12 +9440,6 @@ class NovaApp(App):
             self._schedule_stream_flush()
             if self._activity != "responding…":
                 self._set_status("responding…")
-            # Mirror prose into the remote live message as it streams, so the
-            # user sees progress. finalize() drops it again — the complete
-            # answer is sent as its own chat message, and leaving it here too
-            # showed the answer twice, back to back.
-            if self._remote_status is not None:
-                self._remote_status.note_text(e.text, kind="text")
         elif isinstance(e, ev.TextDiscard):
             self._stream_flush_scheduled = False
             if self._stream_msg is not None:
@@ -8671,11 +9449,6 @@ class NovaApp(App):
                     pass
                 self._stream_msg = None
             self._live_buf = ""
-            # Text suppressed locally (internal scratchpad / deduplicated
-            # buffer) must vanish remotely too, or the discarded preview stays
-            # frozen on screen in the chat.
-            if self._remote_status is not None:
-                self._remote_status.reset_text()
         elif isinstance(e, ev.AssistantMessage):
             # Commit: finalize the streaming widget as rendered markdown. Cancel
             # any pending coalesced flush so it can't repaint a finalized widget.
@@ -8734,8 +9507,6 @@ class NovaApp(App):
                 # the shared tool group — one compact line per call.
                 await self._ensure_tool_group()
                 self._add_tool_group_call(e.call_id, f"{e.icon} {e.display_str}", e.name)
-            # Record for the end-of-turn remote footer (not sent per-event).
-            self._remote_record(e.name)
         elif isinstance(e, ev.ToolResult):
             if e.call_id and e.call_id in self._tool_components:
                 # Dedicated panel (write/edit) — finalize with full output body.
@@ -8773,10 +9544,6 @@ class NovaApp(App):
             self._todos = list(e.todos or [])
             self._todos_agent = e.agent_name
             self._paint_todos(self._todos, e.agent_name)
-            # Mirror the plan into the remote status line (one message edited in
-            # place, throttled) so the remote user watches the checklist update.
-            if self._remote_status is not None:
-                self._remote_status.note_todos(e.todos)
         elif isinstance(e, ev.ErrorOutput):
             self._log(Text(e.text, style="red"))
         elif isinstance(e, ev.CompactionNotice):

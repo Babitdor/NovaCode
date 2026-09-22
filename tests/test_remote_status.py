@@ -1,4 +1,4 @@
-"""Tests for the remote status line — compact, throttled, edit-in-place counts."""
+"""Tests for the remote status line — a throttled, edit-in-place activity log."""
 
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ class TestStatusLine:
         await asyncio.sleep(0.12)  # ~2 intervals
         # A burst of notes is one (or few) coalesced edits — not one per note.
         assert 1 <= len(edit.working) <= 3, edit.working
-        assert "read×2" in edit.working[-1] and "subagent" in edit.working[-1]
+        assert "read_file" in edit.working[-1] and "subagent" in edit.working[-1]
         assert edit.working[-1].startswith("⚙️")
 
     async def test_finalize_settles_to_done_summary(self):
@@ -74,14 +74,15 @@ class TestStatusLine:
         assert edit.final, "a final edit was sent"
         last = edit.final[-1]
         assert last.startswith("✅") and "2 tools" in last
-        assert "edit" in last and "run" in last
+        assert "edit_file" in last and "execute" in last
 
     async def test_no_tools_finalizes_to_done(self):
         edit = _FakeEdit()
         s = RemoteStatusLine(edit, interval=0.02)
         s.start()
         await s.finalize()
-        assert edit.final and edit.final[-1] == "✅ done"
+        assert edit.final and edit.final[-1].startswith("✅ **Done**")
+        assert "tool" not in edit.final[-1]
 
     async def test_todos_shown_as_live_checklist(self):
         edit = _FakeEdit()
@@ -100,8 +101,8 @@ class TestStatusLine:
         assert "Read config" in content
         assert "Add endpoint" in content
         assert "Write tests" in content
-        # ...with the condensed tool counts beneath.
-        assert "⚙️" in content and "edit" in content
+        # ...with the tool log beneath.
+        assert "⚙️" in content and "edit_file" in content
         # The plan is kept (with the done summary) on finalize.
         await s.finalize()
         last = edit.final[-1]
@@ -112,7 +113,7 @@ class TestStatusLine:
         s = RemoteStatusLine(edit, interval=0.05)
         s.start()
         await asyncio.sleep(0.02)  # let the immediate first paint run
-        assert edit.working and edit.working[0] == "⚙️ working…"
+        assert edit.working and edit.working[0].startswith("⚙️ **Working**")
         await s.finalize()
 
 
@@ -183,3 +184,40 @@ async def test_processor_prepends_user_mention():
     # Assert that the final reply starts with the user mention
     assert len(replies) == 1
     assert replies[0].startswith("<@123456>\n")
+
+
+class TestActivityLog:
+    """Tool calls show what they did and how they ended; reasoning is kept."""
+
+    async def test_tool_lines_carry_detail_and_result(self):
+        s = RemoteStatusLine(_FakeEdit(), interval=1)
+        s.note("read_file", "read_file(process.py)", "c1")
+        s.note("shell", 'shell("pytest -q")', "c2")
+        s.note_result("c1")
+        live = s._content()
+        assert "✓ `read_file(process.py)`" in live
+        assert '⏳ `shell("pytest -q")`' in live
+        s.note_result("c2", error=True)
+        assert '✗ `shell("pytest -q")`' in s._content()
+
+    async def test_the_same_call_reported_twice_is_one_line(self):
+        s = RemoteStatusLine(_FakeEdit(), interval=1)
+        s.note("task", "task(...)", "c1")
+        s.note("task", "🤖 reviewer", "c1")
+        assert s._content().count("reviewer") == 1 and "task(...)" not in s._content()
+
+    async def test_reasoning_is_folded_into_the_final_message_and_prose_is_not(self):
+        edit = _FakeEdit()
+        s = RemoteStatusLine(edit, interval=1)
+        s.note_text("the loop drops the last row", kind="reasoning")
+        s.note_text("Fixed it.", kind="text")
+        await s.finalize()
+        final = edit.final[-1]
+        assert "**💭 Reasoning**" in final and "the loop drops the last row" in final
+        assert "Fixed it." not in final, "the answer is its own message"
+
+    async def test_prose_before_a_tool_call_is_narration(self):
+        s = RemoteStatusLine(_FakeEdit(), interval=1)
+        s.note_text("Let me read the file", kind="text")
+        s.note("read_file", "read_file(a.py)", "c1")
+        assert "Let me read the file" not in s._content()

@@ -193,7 +193,6 @@ def _create_server_agent(
         sandbox_type=None,
         store=store,
         checkpointer=checkpointer,
-        is_continuation=False,
         steering_instructions=None,
         exec_sandbox=False,
         session_id="server",

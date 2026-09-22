@@ -251,14 +251,15 @@ class TestResolution:
 class TestRenderRouting:
     @pytest.fixture
     def routed(self, tmp_path, monkeypatch):
-        history = tmp_path / "history"
-        (history / "demo").mkdir(parents=True)
-        (history / "demo" / "candidate.jinja").write_text("CANDIDATE {{ x }}", encoding="utf-8")
-        (history / "demo" / "active.jinja").write_text("ACTIVE {{ x }}", encoding="utf-8")
         pkg = tmp_path / "pkg"
         pkg.mkdir()
         (pkg / "demo.jinja").write_text("PACKAGE {{ x }}", encoding="utf-8")
         (pkg / "other.jinja").write_text("OTHER {{ x }}", encoding="utf-8")
+        # Overrides written AFTER the package template: fresh, so they apply.
+        history = tmp_path / "history"
+        (history / "demo").mkdir(parents=True)
+        (history / "demo" / "candidate.jinja").write_text("CANDIDATE {{ x }}", encoding="utf-8")
+        (history / "demo" / "active.jinja").write_text("ACTIVE {{ x }}", encoding="utf-8")
 
         def _new_env(root):
             return Environment(
@@ -281,6 +282,20 @@ class TestRenderRouting:
     def test_active_variant_used(self, routed):
         P._AB_CHOICE["demo.jinja"] = "active"
         assert P.render_template("demo.jinja", x=1) == "ACTIVE 1"
+
+    def test_a_package_edit_retires_stale_overrides(self, routed):
+        """An override is a full copy of the OLD template; serving it after the
+        package was edited silently reverts that edit."""
+        import os
+        import time
+
+        future = time.time() + 60
+        pkg = P._env.loader.searchpath[0]
+        os.utime(os.path.join(pkg, "demo.jinja"), (future, future))
+        for variant in ("candidate", "active"):
+            P._AB_CHOICE["demo.jinja"] = variant
+            assert P.render_template("demo.jinja", x=1) == "PACKAGE 1"
+        assert P.current_variant("demo.jinja") is None
 
     def test_no_override_uses_package(self, routed):
         # 'other' has no override dir → fast path to the packaged template.

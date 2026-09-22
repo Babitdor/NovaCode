@@ -61,6 +61,9 @@ _SHELL_METACHARACTERS = set("`$|;&")
 _API_KEY_SUFFIXES = frozenset({"_API_KEY", "_API_TOKEN", "_TOKEN", "_SECRET"})
 
 
+
+_HOOK_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="nova-hook")
+
 def _validate_command(command: list[str]) -> str | None:
     """Validate a hook command tuple.
 
@@ -260,7 +263,13 @@ async def dispatch_hook(event: str, payload: dict[str, Any]) -> None:
             return
 
         payload_bytes = json.dumps({"event": event, **payload}).encode()
-        await asyncio.to_thread(_dispatch_hook_sync, event, payload_bytes, hooks)
+        # A dedicated pool, not asyncio's default: hooks fire on every tool
+        # call/result and each can take its full 5s timeout, so on the shared
+        # default pool (16 threads) a busy turn starved everything else that
+        # uses it (context breakdown, session listing, skill lookup...).
+        await asyncio.get_running_loop().run_in_executor(
+            _HOOK_POOL, _dispatch_hook_sync, event, payload_bytes, hooks
+        )
     except Exception:
         logger.warning(
             "Unexpected error in dispatch_hook for event %s",

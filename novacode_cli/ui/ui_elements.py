@@ -1075,7 +1075,25 @@ def render_diff(record: FileOperationRecord) -> None:
     """Render diff for a file operation."""
     if not record.diff:
         return
-    render_diff_block(record.diff, f"Diff {record.display_path}")
+    render_diff_block(record.diff, f"Diff {record.display_path}", path=record.display_path)
+
+
+def _styled_chunk(spans: list[tuple[str, str]]) -> str:
+    """Render ``(text, style)`` spans as Rich markup.
+
+    The caller wraps the result in the diff-marker colour, so syntax token
+    styles overlay foreground only and the add/remove signal is preserved.
+    """
+    out: list[str] = []
+    for text, style in spans:
+        escaped = escape(text)
+        if not escaped:
+            continue
+        if style:
+            out.append(f"[{style}]{escaped}[/{style}]")
+        else:
+            out.append(escaped)
+    return "".join(out)
 
 
 def _wrap_diff_line(
@@ -1085,39 +1103,49 @@ def _wrap_diff_line(
     line_num: int | None,
     width: int,
     term_width: int,
+    spans: list[tuple[str, str]] | None = None,
 ) -> list[str]:
     """Wrap long diff lines with proper indentation.
 
     Args:
-        code: Code content to wrap
+        code: Code content to wrap (plain text, used for width measurement)
         marker: Diff marker ('+', '-', ' ')
-        color: Color for the line
+        color: Base color for the line (diff-marker colour)
         line_num: Line number to display (None for continuation lines)
         width: Width for line number column
         term_width: Terminal width
+        spans: Optional ``(text, style)`` syntax spans for ``code``. When
+            provided, each wrapped chunk is rendered with per-token styles
+            overlaid on ``color``.
 
     Returns:
         List of formatted lines (may be multiple if wrapped)
     """
-    # Escape Rich markup in code content
-    code = escape(code)
-
     prefix_len = width + 4  # line_num + space + marker + 2 spaces
     available_width = term_width - prefix_len
 
+    def render(chunk: str, chunk_spans: list[tuple[str, str]] | None) -> str:
+        if chunk_spans is not None:
+            return _styled_chunk(chunk_spans)
+        return escape(chunk)
+
     if len(code) <= available_width:
+        body = render(code, spans)
         if line_num is not None:
-            return [f"[dim]{line_num:>{width}}[/dim] [{color}]{marker}  {code}[/{color}]"]
-        return [f"{' ' * width} [{color}]{marker}  {code}[/{color}]"]
+            return [f"[dim]{line_num:>{width}}[/dim] [{color}]{marker}  {body}[/{color}]"]
+        return [f"{' ' * width} [{color}]{marker}  {body}[/{color}]"]
 
     lines = []
     remaining = code
+    remaining_spans = spans
     first = True
 
     while remaining:
         if len(remaining) <= available_width:
             chunk = remaining
+            chunk_spans = remaining_spans
             remaining = ""
+            remaining_spans = None
         else:
             # Try to break at a good point (space, comma, etc.)
             chunk = remaining[:available_width]
@@ -1128,35 +1156,76 @@ def _wrap_diff_line(
                 chunk.rfind("("),
                 chunk.rfind(")"),
             )
-            if break_point > available_width - 20:
-                # Found a good break point
-                chunk = remaining[: break_point + 1]
-                remaining = remaining[break_point + 1 :]
-            else:
-                # No good break point, just split
-                chunk = remaining[:available_width]
-                remaining = remaining[available_width:]
+            # Break at a good point if one is near the edge, else hard-split.
+            split_at = break_point + 1 if break_point > available_width - 20 else available_width
+            chunk = remaining[:split_at]
+            remaining = remaining[split_at:]
+            chunk_spans = _slice_spans(remaining_spans, split_at)
+            remaining_spans = _slice_spans(remaining_spans, split_at, drop=True)
 
+        body = render(chunk, chunk_spans)
         if first and line_num is not None:
-            lines.append(f"[dim]{line_num:>{width}}[/dim] [{color}]{marker}  {chunk}[/{color}]")
+            lines.append(f"[dim]{line_num:>{width}}[/dim] [{color}]{marker}  {body}[/{color}]")
             first = False
         else:
-            lines.append(f"{' ' * width} [{color}]{marker}  {chunk}[/{color}]")
+            lines.append(f"{' ' * width} [{color}]{marker}  {body}[/{color}]")
 
     return lines
 
 
-def format_diff_rich(diff_lines: list[str]) -> str:
+def _slice_spans(
+    spans: list[tuple[str, str]] | None,
+    n: int,
+    *,
+    drop: bool = False,
+) -> list[tuple[str, str]] | None:
+    """Take (or drop) the first ``n`` characters of ``spans``.
+
+    Args:
+        spans: ``(text, style)`` spans, or ``None``.
+        n: Character count to take (or drop).
+        drop: When True, return the remainder after ``n`` characters.
+
+    Returns:
+        The sliced spans, or ``None`` if ``spans`` was ``None``.
+    """
+    if spans is None:
+        return None
+    out: list[tuple[str, str]] = []
+    consumed = 0
+    for text, style in spans:
+        if consumed >= n:
+            if drop:
+                out.append((text, style))
+            continue
+        take = min(len(text), n - consumed)
+        if drop:
+            if take < len(text):
+                out.append((text[take:], style))
+        elif take:
+            out.append((text[:take], style))
+        consumed += take
+    return out
+
+
+def format_diff_rich(diff_lines: list[str], path: str | None = None) -> str:
     """Format diff lines with line numbers and colors.
 
     Args:
         diff_lines: Diff lines from unified diff
+        path: Optional filename/path used to pick a syntax lexer. When the
+            extension is unknown, plain diff colouring is used.
 
     Returns:
         Rich-formatted diff string with line numbers
     """
     if not diff_lines:
         return "[dim]No changes detected[/dim]"
+
+    # Resolve a syntax lexer from the path (None -> no highlighting).
+    from .diff_highlight import highlight_line, lexer_for_path
+
+    lexer = lexer_for_path(path)
 
     # Get terminal width
     term_width = shutil.get_terminal_size().columns
@@ -1190,18 +1259,45 @@ def format_diff_rich(diff_lines: list[str]) -> str:
         elif m := re.match(r"@@ -(\d+)(?:,\d+)? \+(\d+)", line):
             old_num, new_num = int(m.group(1)), int(m.group(2))
         elif line.startswith("-"):
+            code = line[1:]
             formatted_lines.extend(
-                _wrap_diff_line(line[1:], "-", deletion_color, old_num, width, term_width)
+                _wrap_diff_line(
+                    code,
+                    "-",
+                    deletion_color,
+                    old_num,
+                    width,
+                    term_width,
+                    spans=highlight_line(code, lexer),
+                )
             )
             old_num += 1
         elif line.startswith("+"):
+            code = line[1:]
             formatted_lines.extend(
-                _wrap_diff_line(line[1:], "+", addition_color, new_num, width, term_width)
+                _wrap_diff_line(
+                    code,
+                    "+",
+                    addition_color,
+                    new_num,
+                    width,
+                    term_width,
+                    spans=highlight_line(code, lexer),
+                )
             )
             new_num += 1
         elif line.startswith(" "):
+            code = line[1:]
             formatted_lines.extend(
-                _wrap_diff_line(line[1:], " ", context_color, old_num, width, term_width)
+                _wrap_diff_line(
+                    code,
+                    " ",
+                    context_color,
+                    old_num,
+                    width,
+                    term_width,
+                    spans=highlight_line(code, lexer),
+                )
             )
             old_num += 1
             new_num += 1
@@ -1209,12 +1305,18 @@ def format_diff_rich(diff_lines: list[str]) -> str:
     return "\n".join(formatted_lines)
 
 
-def render_diff_block(diff: str, title: str) -> None:
-    """Render a diff string with line numbers and colors."""
+def render_diff_block(diff: str, title: str, path: str | None = None) -> None:
+    """Render a diff string with line numbers, colors, and syntax highlighting.
+
+    Args:
+        diff: Unified diff text.
+        title: Header title for the block.
+        path: Optional filename/path used to pick a syntax lexer.
+    """
     try:
         # Parse diff into lines and format with line numbers
         diff_lines = diff.splitlines()
-        formatted_diff = format_diff_rich(diff_lines)
+        formatted_diff = format_diff_rich(diff_lines, path=path)
 
         # Print with a simple header
         console.print()

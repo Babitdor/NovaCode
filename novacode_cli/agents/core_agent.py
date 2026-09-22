@@ -76,7 +76,14 @@ _original_psr = _dab_utils.perform_string_replacement
 def _patched_perform_string_replacement(content, old_string, new_string, replace_all=False):  # noqa: ANN001, ANN201, FBT002
     if content.startswith(_BOM) and not old_string.startswith(_BOM):
         content = content.lstrip(_BOM)
-    return _original_psr(content, old_string, new_string, replace_all)
+    result = _original_psr(content, old_string, new_string, replace_all)
+    if isinstance(result, str) and result.startswith("Error: String not found") and not replace_all:
+        from novacode_cli.agents.edit_fallback import indent_tolerant_replace
+
+        recovered = indent_tolerant_replace(content, old_string, new_string)
+        if recovered is not None:
+            return recovered, 1
+    return result
 
 
 _dab_utils.perform_string_replacement = _patched_perform_string_replacement
@@ -137,7 +144,10 @@ from deepagents.backends.protocol import BackendProtocol, SandboxBackendProtocol
 from deepagents.backends.store import StoreBackend
 from deepagents.middleware.subagents import SubAgent
 
-from novacode_cli.agents.default_subagents.subagents import retrieve_core_subagents
+from novacode_cli.agents.default_subagents.subagents import (
+    _tool_name,
+    retrieve_core_subagents,
+)
 from novacode_cli.backends import ConversationHistoryBackend
 from novacode_cli.backends import OptimizedFilesystemBackend as FilesystemBackend
 from novacode_cli.backends import OptimizedLocalShellBackend
@@ -157,7 +167,18 @@ from novacode_cli.hitl.interrupts import get_interrupt_configs
 from novacode_cli.integrations.sandbox_factory import get_default_working_dir
 from novacode_cli.prompts import render_template
 from novacode_cli.skills.curation_middleware import SkillCurationMiddleware
-from novacode_cli.skills.refreshing_middleware import RefreshingSkillsMiddleware
+from novacode_cli.skills.refreshing_middleware import (
+    RefreshingSkillsMiddleware,
+    SubagentSkillsMiddleware,
+    listing_budget,
+)
+
+# deepagents builds each subagent's SkillsMiddleware itself, which would put the
+# full ~200k-char skill listing in every subagent call. Swap in the tiered one
+# (no listing; suggestions from the task description + skill_search).
+import deepagents.graph as _dgraph  # noqa: E402
+
+_dgraph.SkillsMiddleware = SubagentSkillsMiddleware
 
 
 def get_shared_store() -> "BaseStore":
@@ -187,7 +208,12 @@ def _extract_agent_description(agent_md_content: str) -> str:
     Returns:
         A brief description extracted from the file, or a default message
     """
-    lines = agent_md_content.strip().split("\n")
+    from novacode_cli.agents.agent_file import _split
+
+    front, body = _split(agent_md_content)
+    if front.get("description"):
+        return str(front["description"]).strip()[:150]
+    lines = body.strip().split("\n")
 
     for line in lines[:10]:  # Check first 10 lines
         line = line.strip()
@@ -290,6 +316,11 @@ def build_named_subagents(
         if result is None:
             continue
         agent_name, agent_dir, scope, system_prompt = result
+        # ~/.nova/agents/<assistant_id>/ also holds each assistant's MEMORY
+        # (seeded with the "# Agent Memory" template). That is not an agent
+        # definition; offering it as a subagent adds a useless `task` entry.
+        if system_prompt.lstrip().startswith("# Agent Memory"):
+            continue
 
         description = _extract_agent_description(system_prompt)
 
@@ -298,12 +329,20 @@ def build_named_subagents(
         if agent_color:
             set_agent_color(agent_name, agent_color)
 
+        # A `tools:` list in the frontmatter narrows the agent to those tools
+        # (MCP ones are granted in _grant_mcp_tools); absent means all of them.
+        from novacode_cli.agents.agent_file import _split, agent_tools
+
+        chosen = agent_tools(system_prompt)
         subagent: SubAgent = {
             "name": agent_name,
             "description": f"[{scope}] {description}",
-            "system_prompt": system_prompt,
-            "tools": tools,
+            # The body only: the frontmatter is config, not instructions.
+            "system_prompt": _split(system_prompt)[1] or system_prompt,
+            "tools": tools if chosen is None else [t for t in tools if _tool_name(t) in chosen],
         }
+        if chosen is not None:
+            subagent["_nova_tool_names"] = chosen  # type: ignore[typeddict-unknown-key]
         if agent_color:
             subagent["color"] = agent_color  # type: ignore
 
@@ -515,38 +554,16 @@ def get_system_prompt(
     Returns:
         The system prompt string (without NOVA.md content)
     """
-    agent_dir_path = f"~/.nova/{assistant_id}"
-
-    if sandbox_type:
-        working_dir = get_default_working_dir(sandbox_type)
-    else:
-        # In local mode with virtual_mode=True, the FilesystemBackend maps
-        # virtual paths (starting with /) to the workspace root directory.
-        # The LLM must use virtual paths like /file.txt, not Windows absolute
-        # paths like B:\path\file.txt, because FilesystemMiddleware.validate_path
-        # rejects Windows paths with:
-        #   "Windows absolute paths are not supported: B:\... Please use virtual
-        #    paths starting with / (e.g., /workspace/file.txt)"
-        # Since root_dir == workspace_root, the virtual path "/" maps to the
-        # project root, so we present "/" as the working directory.
-        working_dir = "/"
-
-    has_tavily = getattr(settings, "has_tavily", False)
-    has_graph = getattr(settings, "has_graph", False)
     shell_info = _get_shell_platform_info(sandbox_type, exec_sandbox=exec_sandbox)
 
-    return render_template(
-        "core_agent_system.jinja",
-        working_dir=working_dir,
-        sandbox_type=sandbox_type,
-        skills_directory=agent_dir_path,
-        has_tavily=has_tavily,
-        has_graph=has_graph,
-        **shell_info,
-    )
+    return render_template("core_agent_system.jinja", **shell_info)
 
 
-def _harden_subagent_specs(specs: list, skill_sources: list[str] | None = None) -> list:
+def _harden_subagent_specs(
+    specs: list,
+    skill_sources: list[str] | None = None,
+    main_model_supports_images: bool = False,
+) -> list:
     """Return resilient, unattended copies of the subagent specs.
 
     Returns a NEW list of NEW spec dicts — it must NOT mutate the inputs, because
@@ -667,7 +684,11 @@ def _harden_subagent_specs(specs: list, skill_sources: list[str] | None = None) 
                 )
             )
         if not has_vision:
-            mw_to_add.append(VisionCaptionMiddleware())
+            mw_to_add.append(
+                VisionCaptionMiddleware(
+                    main_model_supports_images=main_model_supports_images
+                )
+            )
         if not has_security:
             mw_to_add.append(SecurityMiddleware())
         # Break identical-repeat tool loops inside subagents too. Only the MAIN
@@ -693,7 +714,9 @@ def _harden_subagent_specs(specs: list, skill_sources: list[str] | None = None) 
     return out
 
 
-def _seed_summarization_profile(model: object, model_name: str) -> None:
+def _seed_summarization_profile(
+    model: object, model_name: str, window: int | None = None
+) -> None:
     """Seed ``model.profile['max_input_tokens']`` so deepagents' built-in
     ``SummarizationMiddleware`` triggers on OUR context budget.
 
@@ -717,13 +740,24 @@ def _seed_summarization_profile(model: object, model_name: str) -> None:
     the library's 0.85 — so this middleware only fires as a mid-turn backstop.
 
     No-op when the model isn't a chat-model instance. Never raises.
+
+    Args:
+        model: The resolved chat model whose profile is seeded.
+        model_name: The bound model's name, used to resolve the window when the
+            caller does not already have it.
+        window: The bound model's effective window, if the caller already
+            resolved it. Supplying it avoids a second probe — for local Ollama
+            models that means a second ``ollama ps`` subprocess (uncached, 10s
+            timeout), since ``create_agent_with_config`` needs the same window
+            for the context-editing trigger.
     """
     try:
         if not isinstance(model, BaseChatModel):
             return
-        from novacode_cli.context import ContextManager
+        if window is None:
+            from novacode_cli.context import ContextManager
 
-        window = ContextManager(model_name).window_size()
+            window = ContextManager(model_name).window_size()
         if window and window > 0:
             existing = getattr(model, "profile", None)
             profile = dict(existing) if isinstance(existing, dict) else {}
@@ -1023,8 +1057,9 @@ def _build_composite_backend(
     # These routes sort SHORTEST, so every "/…" virtual route above still wins;
     # only a drive-letter path reaches them. Remote/sandbox mode is skipped —
     # there the host filesystem is not the agent's filesystem.
+    _drive_routes = _host_drive_roots(workspace_root) if sandbox is None else []
     if sandbox is None:
-        for _drive in _host_drive_roots(workspace_root):
+        for _drive in _drive_routes:
             _routes.setdefault(
                 _drive, FilesystemBackend(root_dir=_drive, virtual_mode=True)
             )
@@ -1033,8 +1068,90 @@ def _build_composite_backend(
         default=_default_backend,
         routes=_routes,
     )
+    # A grep/glob with no path (or "/") fans out to every entry in `.routes` —
+    # which made each path-less search walk entire drives (B:\, C:\) and time
+    # out, and a route's timeout fails the WHOLE search even when the project
+    # part succeeded. `.routes` feeds only that fan-out; explicit paths route
+    # through `.sorted_routes`, so a real absolute path still resolves.
+    composite_backend.routes = {
+        prefix: backend for prefix, backend in _routes.items() if prefix not in _drive_routes
+    }
 
     return composite_backend, _default_backend
+
+
+# What an old, cleared tool result reads as. A bare "[cleared]" left the model
+# guessing whether the tool failed; saying how to recover is what makes
+# clearing safe (the file or command can simply be run again).
+CLEARED_TOOL_RESULT = (
+    "[Old tool result cleared to save context. Re-run the tool if you need it again.]"
+)
+
+
+def _tool_result_clearing(context_window: int):  # noqa: ANN202 — lazy import
+    """The ``ClearToolUsesEdit`` Nova runs before whole-history compaction."""
+    from langchain.agents.middleware import ClearToolUsesEdit
+
+    return ClearToolUsesEdit(
+        trigger=_context_edit_trigger(context_window),
+        keep=5,  # keep last 5 tool results
+        clear_tool_inputs=False,
+        # read_file is NOT excluded: file reads are the largest results in a
+        # coding session, and an old one is exactly the observation masking
+        # should drop (Anthropic's context editing, JetBrains' "Complexity
+        # Trap"). The file is still on disk, and the read-before-edit guard
+        # checks the tracker, not message content, so a re-read is the fix.
+        exclude_tools=["think", "web_search"],
+        placeholder=CLEARED_TOOL_RESULT,
+    )
+
+
+def _context_edit_trigger(context_window: int, *, fallback: int = 60_000) -> int:
+    """Resolve ``ClearToolUsesEdit.trigger`` (absolute tokens) from a window.
+
+    The library's trigger is an ``int`` token count, so a fraction cannot be
+    passed through directly — it is resolved here, once, at agent-build time.
+    Floored so a tiny window still leaves room for the retained recent results,
+    and falls back to the legacy fixed count when the window is unknown.
+    """
+    if not context_window or context_window <= 0:
+        return fallback
+    from novacode_cli.context import CONTEXT_EDIT_TRIGGER_FRACTION
+
+    return max(5_000, int(context_window * CONTEXT_EDIT_TRIGGER_FRACTION))
+
+
+def _resolve_main_model_multimodal(model: str | BaseChatModel) -> bool:
+    """Whether the main model can accept image input (see model_capabilities).
+
+    Combines the static pattern registry with the user's explicit
+    ``main_model_multimodal`` override in ``~/.nova/Nova.config.json``. When the
+    main model is multimodal, images are passed straight to it instead of being
+    captioned by the auxiliary vision model — the fix for "read_file on an image
+    returns ``[image: vision model unavailable]`` even though my model is
+    multimodal".
+    """
+    try:
+        from novacode_cli.config.model_capabilities import model_supports_images
+        from novacode_cli.config.nova_config import NovaConfig
+
+        model_name = (
+            model
+            if isinstance(model, str)
+            else getattr(model, "model_name", getattr(model, "model", ""))
+        )
+        provider = ""
+        try:
+            cfg = NovaConfig().get_model_config()
+            if isinstance(cfg, dict):
+                provider = cfg.get("provider", "")
+        except Exception:  # noqa: BLE001 — provider is only a hint
+            provider = ""
+        return model_supports_images(
+            provider, str(model_name), override=NovaConfig().get_main_model_multimodal()
+        )
+    except Exception:  # noqa: BLE001 — never break agent construction over this
+        return False
 
 
 def _build_middleware_stack(
@@ -1050,15 +1167,24 @@ def _build_middleware_stack(
     sandbox: SandboxBackendProtocol | None,
     sandbox_type: str | None,
     exec_sandbox: bool,  # noqa: FBT001
+    context_window: int = 0,
+    main_model_supports_images: bool = False,
 ) -> list:
     """Build the core agent middleware stack.
 
     The ORDER of this list is load-bearing — see the inline comments on each
     entry. Callers may append/insert further middleware (plugins, MCP, skills)
     around this base stack.
+
+    Args:
+        context_window: The bound model's effective context window in tokens,
+            used to size the window-relative context-editing trigger. 0 (or
+            negative) falls back to the legacy fixed trigger.
     """
     # Lazy imports for middleware (speeds up startup)
     from langchain.agents.middleware import ModelRetryMiddleware
+
+    from novacode_cli.agents.task_discipline import TaskDisciplineMiddleware
     from novacode_cli.errors import is_retryable_model_error
     from novacode_cli.bootstrap import (
         BootstrapMiddleware,
@@ -1072,7 +1198,6 @@ def _build_middleware_stack(
     from novacode_cli.tracking.file_tracker import FileTrackerMiddleware
     from novacode_cli.tracking.loop_guard import LoopGuardMiddleware
     from langchain.agents.middleware import (
-        ClearToolUsesEdit,
         ContextEditingMiddleware,
     )
 
@@ -1104,12 +1229,16 @@ def _build_middleware_stack(
             backoff_factor=2.0,
             initial_delay=1.0,
         ),
-        # Vision captioning — converts images to TEXT so the main (text-only)
-        # model never receives image blocks. A read_file on an image is captioned
-        # by the vision model at the tool-result layer (awrap_tool_call); pasted
-        # images are captioned upstream at ingestion. awrap_model_call here is a
-        # pure safety net that strips any residual image blocks from history.
-        VisionCaptionMiddleware(),
+        # Vision captioning — converts images to TEXT so a text-only main model
+        # never receives image blocks. A read_file on an image is captioned by the
+        # vision model at the tool-result layer (awrap_tool_call); pasted images
+        # are captioned upstream at ingestion. awrap_model_call here is a pure
+        # safety net that strips any residual image blocks from history.
+        #
+        # When the MAIN model is multimodal (main_model_supports_images), this
+        # middleware is a pass-through: images go straight to the main model,
+        # which reads them directly — no auxiliary vision model required.
+        VisionCaptionMiddleware(main_model_supports_images=main_model_supports_images),
         # Nova — autonomous learning middleware that tracks tool usage,
         # triggers periodic review cycles, and manages memory tiers.
         # Positioned after ModelRetryMiddleware so retried tool calls don't
@@ -1163,17 +1292,15 @@ def _build_middleware_stack(
         # Placed after FileTracker (which needs full history) and before
         # ShellMiddleware/AgentMemoryMiddleware so it operates on the final
         # message list that will be sent to the model.
-        ContextEditingMiddleware(
-            edits=[
-                ClearToolUsesEdit(
-                    trigger=60_000,  # ~60k tokens triggers cleanup
-                    keep=5,  # keep last 5 tool results
-                    clear_tool_inputs=False,
-                    exclude_tools=["read_file", "think", "web_search"],
-                    placeholder="[cleared]",
-                ),
-            ],
-        ),
+        #
+        # The trigger is WINDOW-RELATIVE: the library takes an absolute token
+        # count, so the fraction is resolved here against the bound model's
+        # window. A fixed count was window-independent — it never fired on the
+        # ~40K Ollama windows in MODEL_CONTEXT_WINDOWS (leaving those models
+        # with no tool-result reducer at all) while clearing needlessly early
+        # on 200K models. Kept below AUTO_COMPACT_THRESHOLD so the cheap
+        # reducer always gets its chance before whole-history compaction.
+        ContextEditingMiddleware(edits=[_tool_result_clearing(context_window)]),
         ShellMiddleware(
             workspace_root=str(workspace_root),
             env=dict(os.environ),
@@ -1197,9 +1324,79 @@ def _build_middleware_stack(
             skip_project_memory=False,
             backend=composite_backend,  # Route through CompositeBackend for /memories/ etc.
         ),
+        # Last, so its todo recitation is appended to the FINAL system message
+        # (AgentMemoryMiddleware rebuilds it) and sits after the cache breakpoint.
+        TaskDisciplineMiddleware(),
     ]
 
+    # deepagents 0.7 dropped its built-in todo list (0.6 installed one inside
+    # create_deep_agent). Without it `write_todos` silently disappears: the
+    # workflow prompt, the todo recitation and the done gate all assume it.
+    # Placed before AgentMemoryMiddleware so its prompt joins the cached base.
+    import deepagents.graph as _deepagents_graph
+
+    if not hasattr(_deepagents_graph, "TodoListMiddleware"):
+        from langchain.agents.middleware import TodoListMiddleware
+
+        agent_middleware.insert(
+            agent_middleware.index(agent_middleware[-2]),  # before AgentMemoryMiddleware
+            TodoListMiddleware(
+                system_prompt="## `write_todos`\n\nRules for the todo list are in <todo_management>."
+            ),
+        )
+
     return agent_middleware
+
+
+#: MCP servers each subagent may use, keyed by subagent name. A subagent absent
+#: from this map gets NO MCP tools. Keep this list short and deliberate: every
+#: tool schema granted here is serialized into the ``task`` tool schema on every
+#: turn, and a subagent that cannot use a tool will still try to call it.
+MCP_TOOLS_BY_SUBAGENT: dict[str, tuple[str, ...]] = {
+    # Its whole purpose is driving a real browser; without playwright it can only
+    # fetch HTML and had to disclaim the work in its own description.
+    "browser-automation-agent": ("playwright",),
+    # Semantic code navigation (LSP-backed symbol search) for repo exploration.
+    "code-explorer": ("serena",),
+}
+
+
+def _grant_mcp_tools(subagents: list, mcp_tools: list[BaseTool]) -> None:
+    """Append the opted-in MCP tools to each subagent's ``tools`` list, in place.
+
+    MCP tool names are prefixed with the server name (``serena_read_file``,
+    ``playwright_browser_click``), so a server is matched by prefix. Subagents
+    that are not in :data:`MCP_TOOLS_BY_SUBAGENT`, and specs that are compiled
+    runnables or remote agents (no ``tools`` key), are left untouched.
+
+    Idempotent by construction. The spec dicts handed back by
+    ``retrieve_core_subagents``/``build_named_subagents`` are **cached and reused**
+    across every ``create_agent_with_config`` call (the session agent, then
+    /init's dedicated agent, …), so appending blindly accumulated a duplicate
+    copy of every granted tool on the second build — the same failure mode that
+    made /init fall back to the shared agent (see :func:`_harden_subagent_specs`).
+    Tools already present are therefore skipped, and the list is rebuilt rather
+    than mutated so the cached spec is never left holding a longer list.
+    """
+    for spec in subagents:
+        if not isinstance(spec, dict):
+            continue
+        servers = MCP_TOOLS_BY_SUBAGENT.get(spec.get("name", "")) or ()
+        chosen = set(spec.get("_nova_tool_names") or ())  # picked in /agents
+        if not servers and not chosen:
+            continue
+        existing = list(spec.get("tools") or [])
+        present = {_tool_name(t) for t in existing}
+        granted = [
+            t
+            for t in mcp_tools
+            if (name := _tool_name(t))
+            and name not in present
+            and (name in chosen or any(name.startswith(f"{server}_") for server in servers))
+        ]
+        if not granted:
+            continue
+        spec["tools"] = [*existing, *granted]
 
 
 def _build_subagent_roster(
@@ -1208,18 +1405,33 @@ def _build_subagent_roster(
     tools: list[BaseTool],
     plugin_specs: list,
     skill_sources: list[str],
+    mcp_tools: list[BaseTool] | None = None,
+    main_model_supports_images: bool = False,
 ) -> list:
     """Assemble the final subagent roster for ``create_deep_agent``.
 
     Core + named + plugin + general-purpose subagents, hardened via
     :func:`_harden_subagent_specs`, then the async subagents (which own their
     own config and are left untouched).
+
+    ``mcp_tools`` are the tools discovered by ``MCPMiddleware``. They are NOT
+    added to every subagent: each opted-in subagent receives only the servers
+    named for it in ``MCP_TOOLS_BY_SUBAGENT``, because every tool schema handed
+    to a subagent is serialized into the ``task`` tool schema on every turn.
     """
     Nova_SubAgent: list[SubAgent] = []
 
     # Load pre-defined default and user defined subagents
     Nova_SubAgent.extend(retrieve_core_subagents(tools=tools))  # type: ignore
     Nova_SubAgent.extend(build_named_subagents(assistant_id=assistant_id, tools=tools))  # type: ignore
+
+    # Opt-in MCP tools: give a subagent the MCP servers it is actually built to
+    # use. Without this, MCP tools are reachable only from the main agent (they
+    # attach via MCPMiddleware.tools, while subagent specs are built from the
+    # plain tool list) — which is why browser-automation-agent used to accept
+    # browser tasks it had no way to perform.
+    if mcp_tools:
+        _grant_mcp_tools(Nova_SubAgent, mcp_tools)
 
     # Plugin subagents — delegate agents contributed by enabled plugins. Added
     # after the built-ins so they go through the same _harden_subagent_specs pass
@@ -1278,7 +1490,9 @@ def _build_subagent_roster(
     # otherwise lack entirely) so a transient provider 5xx/429 no longer kills a
     # subagent mid-run — see _harden_subagent_specs. Returns fresh copies (never
     # mutates the cached specs, which would accumulate middleware across builds).
-    Nova_SubAgent = _harden_subagent_specs(Nova_SubAgent, skill_sources)
+    Nova_SubAgent = _harden_subagent_specs(
+        Nova_SubAgent, skill_sources, main_model_supports_images
+    )
 
     return Nova_SubAgent + async_subagents
 
@@ -1294,7 +1508,6 @@ def create_agent_with_config(
     auto_approve: bool = False,
     store: BaseStore | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
-    is_continuation: bool = False,
     steering_instructions: list | None = None,
     exec_sandbox: bool = False,
     session_id: str | None = None,
@@ -1320,8 +1533,6 @@ def create_agent_with_config(
         store: Optional durable store (BaseStore). If None, the caller is
                expected to pass the shared store from get_shared_store() so
                subagents can also access it.
-        is_continuation: If True, skip project memory paths (NOVA.md/CLAUDE.md)
-               from AgentMemoryMiddleware since they're already in the continuation prompt.
 
     Returns:
         2-tuple of (graph, backend)
@@ -1483,6 +1694,25 @@ This file stores your preferences and context that persist across sessions.
         else getattr(model, "model_name", getattr(model, "model", "unknown"))
     )
 
+    # Whether the main model can see images. When it can, images are passed
+    # straight through instead of being captioned by the auxiliary vision model
+    # (see _resolve_main_model_multimodal). Computed once and shared by the main
+    # stack and every subagent — subagents inherit the main model.
+    _main_model_supports_images = _resolve_main_model_multimodal(model)
+
+    # Resolve the bound model's effective window exactly ONCE per build and pass
+    # it to both consumers: the window-relative context-editing trigger below and
+    # deepagents' summarization trigger (via _seed_summarization_profile), so both
+    # reducers measure the same budget the ctx% indicator displays. Resolving it
+    # twice would be a real cost — for a local Ollama model the probe shells out
+    # to an uncached `ollama ps` (10s timeout) on every build.
+    try:
+        from novacode_cli.context import ContextManager
+
+        _context_window = ContextManager(_model_name).window_size()
+    except Exception:  # noqa: BLE001 — an unknown window falls back to fixed triggers
+        _context_window = 0
+
     # Core middleware stack (retry → vision → learning → security → bootstrap →
     # steering → file tracker → loop guard → rubric → context editing → shell →
     # agent memory). Ordering is load-bearing — see _build_middleware_stack.
@@ -1498,6 +1728,8 @@ This file stores your preferences and context that persist across sessions.
         sandbox=sandbox,
         sandbox_type=sandbox_type,
         exec_sandbox=exec_sandbox,
+        context_window=_context_window,
+        main_model_supports_images=_main_model_supports_images,
     )
 
     # Plugin middleware injection — discover and inject user-enabled plugins
@@ -1535,6 +1767,7 @@ This file stores your preferences and context that persist across sessions.
     # MCP middleware: only add when servers are actually configured.
     # Insert after GraphContext (index 3 now that ModelRetryMiddleware leads the
     # stack) so MCP tools keep their original position relative to the others.
+    mcp_tools: list[BaseTool] = []
     if _has_mcp:
         from novacode_cli.mcp import get_shared_mcp_middleware
 
@@ -1551,6 +1784,7 @@ This file stores your preferences and context that persist across sessions.
             except Exception as exc:  # noqa: BLE001
                 boot_status(f"mcp: some servers are still at large ({type(exc).__name__})", "warn")
         agent_middleware.insert(3, mcp_middleware)
+        mcp_tools = list(mcp_middleware.tools)
 
     # NOTE: automatic context-window summarization is provided by
     # create_deep_agent's built-in SummarizationMiddleware (part of its tail
@@ -1559,11 +1793,18 @@ This file stores your preferences and context that persist across sessions.
 
     # Final subagent roster: core + named + plugin + general-purpose + async,
     # hardened for unattended dispatch — see _build_subagent_roster.
+    #
+    # ``mcp_tools`` is passed separately from ``tools``: subagent specs are built
+    # from the plain tool list, so MCP tools (which attach via
+    # ``MCPMiddleware.tools``) would otherwise be unreachable from any subagent.
+    # Only the subagents that opt in via ``MCP_TOOLS_BY_SUBAGENT`` receive them.
     subagents = _build_subagent_roster(
         assistant_id=assistant_id,
         tools=tools,
+        mcp_tools=mcp_tools,
         plugin_specs=_plugin_specs,
         skill_sources=skill_sources,
+        main_model_supports_images=_main_model_supports_images,
     )
 
     # Get the system prompt (sandbox-aware and with skills)
@@ -1580,8 +1821,10 @@ This file stores your preferences and context that persist across sessions.
         interrupt_on = get_interrupt_configs()
 
     # Make deepagents' built-in SummarizationMiddleware actually fire on OUR
-    # context budget (see _seed_summarization_profile).
-    _seed_summarization_profile(wrapped_model, _model_name)
+    # context budget (see _seed_summarization_profile). Reuse the window already
+    # resolved above for the context-editing trigger — for a local Ollama model a
+    # second resolve would re-run the uncached `ollama ps` probe.
+    _seed_summarization_profile(wrapped_model, _model_name, window=_context_window)
 
     # Pass named_subagents directly to create_deep_agent
     # It will create the SubAgentMiddleware internally
@@ -1601,6 +1844,7 @@ This file stores your preferences and context that persist across sessions.
             backend=composite_backend,
             sources=skill_sources,
             watch_dirs=skill_watch_dirs,
+            listing_chars=listing_budget(_context_window),
         )
     )
     # Skill curation — clamp the loaded skills to the user-enabled set. MUST be
@@ -1637,6 +1881,23 @@ This file stores your preferences and context that persist across sessions.
     from novacode_cli.agents.tool_call_repair import RepairToolCallsEachStep
 
     agent_middleware.append(RepairToolCallsEachStep())
+
+    # Bind only core / frequent / already-loaded tools; `tool_search` loads the
+    # rest (MCP servers alone are ~75 schemas). Plugin subagents leave the
+    # `task` description the same way. Innermost, so it filters the final list.
+    from novacode_cli.agents.tool_search import ToolSearchMiddleware
+    from novacode_cli.plugins.claude_plugins import plugin_agent_specs
+
+    _plugin_agents = {s["name"] for s in plugin_agent_specs()}
+    agent_middleware.append(
+        ToolSearchMiddleware(
+            deferred_subagents={
+                s["name"]: s.get("description", "")
+                for s in subagents
+                if isinstance(s, dict) and s.get("name") in _plugin_agents
+            }
+        )
+    )
 
     # Caller-injected middleware (e.g. Cowork's WorkspacePolicy broker) goes last
     # so it wraps tool calls closest to execution — a denied call never runs.

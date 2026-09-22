@@ -195,10 +195,11 @@ class AgentMemoryMiddleware(AgentMiddleware):
 
         # Per-turn memory RETRIEVAL: the INDEX only injects topic pointers, so
         # learned lesson bodies never reach the model unless it chooses to read
-        # them. These cache the scored topic corpus (by dir mtime) and the last
-        # query's retrieved block (so tool-loop iterations don't re-scan).
+        # them. These cache the scored topic corpus (keyed on the full file
+        # signature) and the last query's retrieved block (so tool-loop
+        # iterations don't re-scan).
         self._corpus_cache: dict[str, tuple[frozenset[str], str, frozenset[str]]] | None = None
-        self._corpus_mtime: float | None = None
+        self._corpus_sig: tuple[int, float] | None = None
         self._retrieval_cache: tuple[str, str] | None = None
 
     def _get_file_mtime(self, path: Path) -> float | None:
@@ -586,12 +587,15 @@ class AgentMemoryMiddleware(AgentMiddleware):
         add/update files), so scoring doesn't re-read 58 files every turn.
         """
         mem_dir = self.agent_dir / "memories"
-        try:
-            mtime = mem_dir.stat().st_mtime
-        except OSError:
-            self._corpus_cache, self._corpus_mtime = {}, None
+        signature = self._corpus_signature(mem_dir)
+        if signature is None:
+            self._corpus_cache, self._corpus_sig = {}, None
             return {}
-        if self._corpus_cache is not None and self._corpus_mtime == mtime:
+        # Compare the WHOLE signature. Comparing only the newest mtime (the old
+        # ``signature[1]``) discarded the file count, so deleting a topic file
+        # that was not the newest left its lessons in the cached corpus — and
+        # therefore injected — for the rest of the session.
+        if self._corpus_cache is not None and self._corpus_sig == signature:
             return self._corpus_cache
 
         corpus: dict[str, tuple[frozenset[str], str, frozenset[str]]] = {}
@@ -606,8 +610,25 @@ class AgentMemoryMiddleware(AgentMiddleware):
                 continue
             title_toks = _tokens(path.stem.replace("-", " ").replace("_", " "))
             corpus[path.stem] = (title_toks, body, _tokens(body))
-        self._corpus_cache, self._corpus_mtime = corpus, mtime
+        self._corpus_cache, self._corpus_sig = corpus, signature
         return corpus
+
+    @staticmethod
+    def _corpus_signature(mem_dir: Path) -> tuple[int, float] | None:
+        """Return ``(file_count, newest_file_mtime)`` for the topic dir, or None.
+
+        Keyed on the newest *file* mtime, NOT the directory's own mtime: on NTFS
+        rewriting a file in place does not bump the parent directory's mtime
+        (only create/delete/rename do), and the review/dream passes rewrite topic
+        files in place — so a dir-mtime key served a stale corpus all session.
+        """
+        try:
+            mtimes = [p.stat().st_mtime for p in mem_dir.glob("*.md")]
+        except OSError:
+            return None
+        if not mtimes:
+            return (0, 0.0)
+        return (len(mtimes), max(mtimes))
 
     def _relevant_memories(self, request: ModelRequest) -> str:
         """Retrieve topic bodies relevant to this turn's user message, formatted
@@ -669,14 +690,35 @@ class AgentMemoryMiddleware(AgentMiddleware):
         except Exception:  # noqa: BLE001 — overview is best-effort, never fatal
             return ""
 
-    def _build_system_prompt(self, request: ModelRequest) -> str:
-        """Build the complete system prompt with memory sections.
+    def _build_system_prompt_parts(self, request: ModelRequest) -> tuple[str, str]:
+        """Build the system prompt as (stable, volatile) parts.
 
-        Args:
-            request: The model request containing state and base system prompt.
+        The split is the whole point: Anthropic's cache hierarchy is
+        ``tools → system → messages`` and a change at any level invalidates that
+        level and everything after it. Nova's per-turn memory RETRIEVAL block
+        varies with the user's exact wording, so if it sits *ahead* of the base
+        system prompt every distinctly-worded turn diverges the prefix and the
+        entire base prompt is re-billed at full input price — the cache never hits.
+
+        Keeping the volatile block last lets ``_make_system_message`` place the
+        breakpoint on the stable tail, so the memory section + base prompt stay
+        cached across turns regardless of how the user phrases a request.
 
         Returns:
-            Complete system prompt with memory sections injected.
+            2-tuple of (stable_prompt, volatile_prompt). ``volatile_prompt`` is
+            "" when no lessons were retrieved for this turn.
+        """
+        stable = self._build_system_prompt(request)
+        volatile = self._relevant_memories(request)
+        return stable, volatile
+
+    def _build_system_prompt(self, request: ModelRequest) -> str:
+        """Build the STABLE part of the system prompt (memory sections + base).
+
+        Deliberately excludes the per-turn retrieval block so the result is
+        stable across turns and therefore cacheable — see
+        :meth:`_build_system_prompt_parts`, which is what the model-call
+        wrappers use.
         """
         import time
 
@@ -760,11 +802,11 @@ class AgentMemoryMiddleware(AgentMiddleware):
         assert memory_section is not None
         system_prompt: str = memory_section
 
-        # Per-turn retrieval: surface the lesson BODIES relevant to this request.
-        # Kept OUT of the cached memory_section above because it varies by query.
-        relevant = self._relevant_memories(request)
-        if relevant:
-            system_prompt += "\n\n" + relevant
+        # NOTE: the per-turn retrieval block is deliberately NOT appended here.
+        # It varies with the user's wording, so including it would put volatile
+        # content ahead of the base system prompt and defeat the prompt cache on
+        # every distinctly-worded turn. _build_system_prompt_parts adds it as a
+        # separate trailing block, after the cache breakpoint.
 
         if base_system_prompt:
             system_prompt += "\n\n" + base_system_prompt
@@ -772,32 +814,41 @@ class AgentMemoryMiddleware(AgentMiddleware):
         return system_prompt
 
     @staticmethod
-    def _make_system_message(request: ModelRequest, system_prompt: str) -> "SystemMessage":
-        """Build a SystemMessage, using Anthropic prompt caching when available.
+    def _make_system_message(
+        request: ModelRequest, stable_prompt: str, volatile_prompt: str = ""
+    ) -> "SystemMessage":
+        """Build a SystemMessage, marking only the STABLE prefix as cached.
 
-        Marks the entire system prompt as ephemeral so Anthropic caches it
-        server-side between turns, cutting TTFT by 40-60% on repeat calls.
-        Falls back to a plain SystemMessage for non-Anthropic models.
+        Anthropic caches a *prefix*: the ``cache_control`` breakpoint belongs on
+        the last block that is byte-identical across requests. The stable block
+        (memory sections + base system prompt) qualifies; the per-turn retrieval
+        block does not, so it is emitted after the breakpoint and never
+        invalidates the cached prefix.
 
-        Uses module-name inspection instead of an isinstance check to avoid
-        importing langchain_anthropic on every call (and to stay safe when
+        Falls back to a plain concatenated SystemMessage for non-Anthropic
+        models. Uses module-name inspection instead of an isinstance check to
+        avoid importing langchain_anthropic on every call (and to stay safe when
         the package is absent or partially installed).
         """
         from langchain_core.messages import SystemMessage
 
         model_module = type(request.model).__module__.lower()
         if "anthropic" in model_module:
-            return SystemMessage(
-                content=[
-                    {
-                        "type": "text",
-                        "text": system_prompt,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ]
-            )
+            content: list[Any] = [
+                {
+                    "type": "text",
+                    "text": stable_prompt,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
+            if volatile_prompt:
+                # After the breakpoint on purpose: varying content must not sit
+                # inside the cached prefix, or every turn is a cache miss.
+                content.append({"type": "text", "text": volatile_prompt})
+            return SystemMessage(content=content)
 
-        return SystemMessage(content=system_prompt)
+        combined = stable_prompt + ("\n\n" + volatile_prompt if volatile_prompt else "")
+        return SystemMessage(content=combined)
 
     def wrap_model_call(
         self,
@@ -813,8 +864,8 @@ class AgentMemoryMiddleware(AgentMiddleware):
         Returns:
             The model response from the handler.
         """
-        system_prompt = self._build_system_prompt(request)
-        system_message = self._make_system_message(request, system_prompt)
+        stable, volatile = self._build_system_prompt_parts(request)
+        system_message = self._make_system_message(request, stable, volatile)
         return handler(request.override(system_message=system_message))
 
     async def awrap_model_call(
@@ -831,6 +882,6 @@ class AgentMemoryMiddleware(AgentMiddleware):
         Returns:
             The model response from the handler.
         """
-        system_prompt = self._build_system_prompt(request)
-        system_message = self._make_system_message(request, system_prompt)
+        stable, volatile = self._build_system_prompt_parts(request)
+        system_message = self._make_system_message(request, stable, volatile)
         return await handler(request.override(system_message=system_message))

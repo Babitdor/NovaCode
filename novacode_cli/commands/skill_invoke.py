@@ -53,6 +53,25 @@ async def _try_skill_invocation(
     session_state: Any,
     assistant_id: str,
 ) -> SkillInvocation | None:
+    """Resolve ``/cmd`` to a skill without blocking the event loop.
+
+    The lookup scans every skill directory (hundreds of SKILL.md files, plus a
+    heavy first import) and may run an executable skill: done on the UI loop
+    it froze the whole TUI for seconds on any unrecognised slash command.
+    """
+    import asyncio
+
+    return await asyncio.to_thread(
+        _resolve_skill_invocation, cmd, cmd_args, session_state, assistant_id
+    )
+
+
+def _resolve_skill_invocation(
+    cmd: str,
+    cmd_args: str | None,
+    session_state: Any,
+    assistant_id: str,
+) -> SkillInvocation | None:
     """Try to resolve a skill by name (presentation-free).
 
     Checks if ``cmd`` matches a known skill name (from user-skills or

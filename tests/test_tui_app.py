@@ -628,6 +628,14 @@ def test_tui_agents_skills_screens():
 
 async def _drive_create_agent_and_skill(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    # Never write test agents into the user's real ~/.nova/agents.
+    from novacode_cli.config.config import settings
+
+    monkeypatch.setattr(settings, "get_agents_root_dir", lambda: tmp_path / "agents")
+    monkeypatch.setattr(settings, "get_project_agents_dir", lambda: None)
+    _skills = tmp_path / "skills"
+    _skills.mkdir()
+    monkeypatch.setattr(settings, "ensure_user_skills_dir", lambda *a, **k: _skills)
     from textual.widgets import Button, Input
     from novacode_cli.tui.widgets import PromptInput
     from novacode_cli.tui.app import NovaApp, AgentsScreen, AgentCreateModal, SkillsScreen, SkillCreateModal
@@ -666,25 +674,29 @@ async def _drive_create_agent_and_skill(tmp_path, monkeypatch):
         inp.value = "/agents"
         inp.focus()
         await pilot.press("enter")
-        await pilot.pause()
+        for _ in range(4):
+            await pilot.pause(0.05)
         assert isinstance(app.screen, AgentsScreen)
 
         # Click Create
         app.screen.query_one("#create", Button).press()
-        await pilot.pause()
+        for _ in range(4):
+            await pilot.pause(0.05)
         assert isinstance(app.screen, AgentCreateModal)
 
         # Fill inputs
         app.screen.query_one("#agent-name", Input).value = "test-reviewer"
         app.screen.query_one("#agent-desc", Input).value = "Reviews code"
         app.screen.query_one("#do-create", Button).press()
-        await pilot.pause()
+        for _ in range(4):
+            await pilot.pause(0.05)
         # Modal should be dismissed, back to AgentsScreen
         assert isinstance(app.screen, AgentsScreen)
 
         # Close AgentsScreen
         app.screen.query_one("#close", Button).press()
-        await pilot.pause()
+        for _ in range(4):
+            await pilot.pause(0.05)
         assert app.screen == app.screen_stack[0] # back to main screen
 
         # 2. Test Skill creation
@@ -692,25 +704,29 @@ async def _drive_create_agent_and_skill(tmp_path, monkeypatch):
         inp.value = "/skills"
         inp.focus()
         await pilot.press("enter")
-        await pilot.pause()
+        for _ in range(4):
+            await pilot.pause(0.05)
         assert isinstance(app.screen, SkillsScreen)
 
         # Click Create
         app.screen.query_one("#create", Button).press()
-        await pilot.pause()
+        for _ in range(4):
+            await pilot.pause(0.05)
         assert isinstance(app.screen, SkillCreateModal)
 
         # Fill inputs
         app.screen.query_one("#skill-name", Input).value = "test-skill"
         app.screen.query_one("#skill-desc", Input).value = "Does testing"
         app.screen.query_one("#do-create", Button).press()
-        await pilot.pause()
+        for _ in range(4):
+            await pilot.pause(0.05)
         # Modal dismissed, back to SkillsScreen
         assert isinstance(app.screen, SkillsScreen)
 
         # Close SkillsScreen
         app.screen.query_one("#close", Button).press()
-        await pilot.pause()
+        for _ in range(4):
+            await pilot.pause(0.05)
         assert app.screen == app.screen_stack[0]
 
 
@@ -1005,7 +1021,9 @@ async def _drive_home_banner():
             size = _Size()
 
         app.on_resize(_Resize())
-        assert rain._col_count == min(max(140 - 6, 60), 200)
+        # Only the transcript's horizontal padding (2 cells each side) is
+        # subtracted; the scrollbar no longer reserves a column.
+        assert rain._col_count == min(max(140 - 4, 60), 200)
 
         # Pause the rain when the terminal loses OS focus; resume on focus.
         timer = rain._timer
@@ -3310,6 +3328,66 @@ def test_tui_copy_response():
     if not _HAS_TEXTUAL:
         return
     asyncio.run(_drive_copy_response())
+
+
+async def _drive_message_text_selection():
+    """A committed (Markdown) message body must be text-selectable.
+
+    Regression: ``Widget.get_selection`` only handles a ``Text``/``Content``
+    visual. A ``Static`` holding a Rich ``Markdown`` renderable produces a
+    ``RichVisual``, so selection returned nothing and drag-selecting a message
+    copied an empty string. ``SelectableStatic`` falls back to the rendered
+    strips, so both whole-widget and partial selections work.
+    """
+    from rich.markdown import Markdown
+    from rich.text import Text
+    from textual.selection import SELECT_ALL, Offset, Selection
+
+    from novacode_cli.tui.app import NovaApp, NovaStatusBar
+    from novacode_cli.tui.widgets import SelectableStatic
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    app = NovaApp(
+        agent=_FakeAgent(),
+        assistant_id="nova-agent",
+        session_state=_SS(),
+        backend=None,
+        token_tracker=TokenTracker(),
+        image_tracker=None,
+        model_name="m",
+    )
+
+    async with app.run_test() as pilot:
+        user = await app._add_message(Text("You"), "user", Markdown("What does **this** do?"))
+        nova = await app._add_message(Text("Nova"), "nova", Markdown("It renders `markdown`."))
+        await pilot.pause()
+
+        # The body must be the selectable subclass, not a plain Static.
+        for msg in (user, nova):
+            body = msg.query_one(".body")
+            assert isinstance(body, SelectableStatic), type(body)
+
+        # Whole-widget selection returns the rendered text (no trailing padding).
+        user_body = user.query_one(".body")
+        app.screen.selections = {user_body: SELECT_ALL}
+        assert app.screen.get_selected_text() == "What does this do?"
+
+        # A partial selection maps to the right characters.
+        app.screen.selections = {user_body: Selection(Offset(0, 0), Offset(9, 0))}
+        assert app.screen.get_selected_text() == "What does"
+
+        # A plain-Text body (the streaming case) still works.
+        nova.update_body(Text("streaming plain text"))
+        await pilot.pause()
+        nova_body = nova.query_one(".body")
+        app.screen.selections = {nova_body: SELECT_ALL}
+        assert app.screen.get_selected_text() == "streaming plain text"
+
+
+def test_tui_message_text_selection():
+    if not _HAS_TEXTUAL:
+        return
+    asyncio.run(_drive_message_text_selection())
 
 
 async def _drive_plan_shares_conversation():

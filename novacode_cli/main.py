@@ -125,7 +125,8 @@ from novacode_cli.config.config import (
     format_version_banner,
     settings,
 )
-from novacode_cli.config.model_create import create_model
+from novacode_cli.config.model_create import create_model, create_model_for_session
+from novacode_cli.utils.model_info import get_current_provider
 from novacode_cli.hooks import HookEvent, dispatch_hook_fire_and_forget
 from novacode_cli.ui.ui_elements import show_help
 from novacode_cli.tracking.tracing import auto_configure as _auto_configure_tracing
@@ -762,7 +763,6 @@ async def _run_agent_session(
             sandbox_type=sandbox_type,
             store=store,
             checkpointer=checkpointer,
-            is_continuation=bool(initial_messages),
             steering_instructions=session_state.steering_instructions,
             exec_sandbox=exec_sandbox,
             session_id=session_state.session_id or session_state.thread_id,
@@ -783,6 +783,7 @@ async def _run_agent_session(
             model=model,
             sandbox_type=sandbox_type,
             sandbox_id=getattr(sandbox_backend, "id", None) if sandbox_backend else None,
+            sandbox=sandbox_backend,
         )
 
         # Eagerly preload voice models at the boot banner whenever voice will be
@@ -1021,6 +1022,7 @@ async def _run_agent_session(
                     messages=_crash_messages,
                     assistant_id=assistant_id,
                     model_name=_crash_model,
+                    model_provider=get_current_provider(),
                     project_root=settings.get_workspace_root(),
                     task_status="crashed",
                     sandbox_id=(getattr(sandbox_backend, "id", None) if sandbox_backend else None),
@@ -1122,6 +1124,15 @@ async def main(
     from novacode_cli.session.session_persistence import SessionManager
     from novacode_cli.session.session_restore import restore_session
 
+    # Bound the other unbounded store: session dirs each keep a full
+    # archive.jsonl plus large_tool_results/ and conversation_history/.
+    # _cleanup_old_checkpoints only prunes checkpoint DBs, so without this the
+    # session tree was the largest thing on disk and never shrank.
+    try:
+        SessionManager().cleanup_old_sessions(max_age_days=180)
+    except Exception:  # noqa: BLE001 — retention must never block startup
+        logging.getLogger(__name__).debug("Session retention sweep failed", exc_info=True)
+
     # Durable, SQLite-backed store at ~/.nova/store.db so structured memory
     # written via the LangGraph store survives restarts (falls back to
     # in-memory if SQLite is unavailable). See novacode_cli/memory/store.py.
@@ -1166,21 +1177,13 @@ async def main(
                 pass  # non-fatal — default journal mode still works
             return saver
 
-        # Run model creation (heavy SDK imports) and checkpointer setup (SQLite I/O)
-        # concurrently — saves ~1-2s on cold start.
-        model, checkpointer = await asyncio.gather(
-            asyncio.to_thread(create_model),
-            _setup_sqlite_checkpointer(),
-        )
-    else:
-        checkpointer = InMemorySaver()
-        model = await asyncio.to_thread(create_model)
-
     # Initialize session manager for persistence
     session_manager = SessionManager()
     initial_messages: list | None = None
 
-    # Handle --resume: interactive session picker
+    # Resolve WHICH session we are resuming BEFORE building the model, so the
+    # session's own recorded model can be restored. This is filesystem-only
+    # (a picker prompt plus a meta.json read), so it costs nothing to hoist.
     if resume:
         from novacode_cli.session.session_restore import select_session_interactive
 
@@ -1190,6 +1193,39 @@ async def main(
             return
         # Convert resume selection into a continue_session with the selected ID
         continue_session = selected_id
+
+    # Rebuild the resumed session's model when it recorded one. A session saved
+    # before the provider was recorded yields (None, None) and falls through to
+    # the global config silently; an unavailable model yields a warning that is
+    # surfaced with the other resume warnings.
+    session_model = None
+    session_model_warning: str | None = None
+    # continue_session is True for the bare --continue flag (meaning "latest"),
+    # so only a concrete id can be looked up here. The bare-flag case is resolved
+    # later by restore_session, which falls back to the global model.
+    if isinstance(continue_session, str):
+        _resume_meta = session_manager.load_session_meta(continue_session)
+        if _resume_meta is not None:
+            session_model, session_model_warning = create_model_for_session(
+                getattr(_resume_meta, "model_provider", None),
+                getattr(_resume_meta, "model_name", None),
+            )
+
+    if _SQLITE_CHECKPOINTER_AVAILABLE:
+        # Run model creation (heavy SDK imports) and checkpointer setup (SQLite
+        # I/O) concurrently — saves ~1-2s on cold start. A restored session model
+        # is already built, so only the checkpointer is awaited in that case.
+        if session_model is not None:
+            model = session_model
+            checkpointer = await _setup_sqlite_checkpointer()
+        else:
+            model, checkpointer = await asyncio.gather(
+                asyncio.to_thread(create_model),
+                _setup_sqlite_checkpointer(),
+            )
+    else:
+        checkpointer = InMemorySaver()
+        model = session_model or await asyncio.to_thread(create_model)
 
     # Sandbox identity recovered from a resumed session (for reconnect).
     restored_sandbox_id: str | None = None
@@ -1215,6 +1251,11 @@ async def main(
         result = restore_session(session_manager, session_id, project_root)
         if result:
             session_data, warnings = result
+
+            # Surface a failed model restore alongside the other resume warnings,
+            # so the user learns why they are not on the session's model.
+            if session_model_warning:
+                warnings.append(session_model_warning)
 
             from novacode_cli.config.config import get_default_coding_instructions
 

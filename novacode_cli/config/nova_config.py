@@ -3,6 +3,7 @@
 Manages persistent settings stored in ~/.nova/Nova.config.json
 """
 
+import copy
 import json
 import os
 from typing import Any
@@ -19,20 +20,24 @@ class NovaConfig:
         self.config_dir = settings.user_deepagents_dir
         self.config_path = self.config_dir / "Nova.config.json"
         self._config: dict[str, Any] = {}
+        self._loaded: dict[str, Any] = {}  # what _config held when last synced with disk
         self._load()
+
+    def _read_disk(self) -> dict[str, Any]:
+        if not self.config_path.exists():
+            return {}
+        try:
+            with open(self.config_path, encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            # If config is corrupted, start fresh
+            console.print(f"[yellow]Warning: Could not load config: {e}[/yellow]")
+            return {}
 
     def _load(self) -> None:
         """Load configuration from disk."""
-        if self.config_path.exists():
-            try:
-                with open(self.config_path, encoding="utf-8") as f:
-                    self._config = json.load(f)
-            except (json.JSONDecodeError, OSError) as e:
-                # If config is corrupted, start fresh
-                console.print(f"[yellow]Warning: Could not load config: {e}[/yellow]")
-                self._config = {}
-        else:
-            self._config = {}
+        self._config = self._read_disk()
+        self._loaded = copy.deepcopy(self._config)
 
     def _save(self) -> None:
         """Save configuration to disk atomically (temp file + rename)."""
@@ -43,6 +48,21 @@ class NovaConfig:
         # Use Path.replace (os.replace), not rename: on Windows rename raises
         # FileExistsError when the target exists, whereas replace overwrites
         # atomically on both Windows and POSIX.
+        # Write back only the keys THIS instance changed, on top of what is on
+        # disk now. Writing the whole in-memory snapshot let any instance loaded
+        # earlier (a long-lived ModelManager, another Nova process) put back a
+        # model the user had since switched away from, the moment it saved an
+        # unrelated setting such as the theme: the "always nemotron" bug.
+        merged = self._read_disk()
+        for key in set(self._config) | set(self._loaded):
+            if key not in self._config:
+                if key in self._loaded:
+                    merged.pop(key, None)
+            elif self._config[key] != self._loaded.get(key):
+                merged[key] = copy.deepcopy(self._config[key])
+        self._config = merged
+        self._loaded = copy.deepcopy(merged)
+
         tmp_path = self.config_path.with_suffix(".tmp." + str(os.getpid()))
         try:
             tmp_path.write_text(json.dumps(self._config, indent=2), encoding="utf-8")
@@ -60,6 +80,7 @@ class NovaConfig:
         Returns:
             Dict with 'provider' and 'model' keys, or None if not configured
         """
+        self._load()  # fresh: another instance or process may have switched it
         return self._config.get("model")
 
     def set_model_config(
@@ -130,6 +151,28 @@ class NovaConfig:
         if "vision_model" in self._config:
             del self._config["vision_model"]
             self._save()
+
+    # ── Main-model multimodal override ──────────────────────────────────────
+
+    def get_main_model_multimodal(self) -> bool | None:
+        """Explicit override for whether the MAIN model accepts images.
+
+        Returns ``None`` (auto-detect via the pattern registry), ``True``
+        (force multimodal — images go straight to the main model), or ``False``
+        (force text-only — images are captioned by the auxiliary vision model).
+        """
+        value = self._config.get("main_model_multimodal")
+        if isinstance(value, bool):
+            return value
+        return None
+
+    def set_main_model_multimodal(self, value: bool | None) -> None:
+        """Persist the main-model multimodal override (``None`` clears it)."""
+        if value is None:
+            self._config.pop("main_model_multimodal", None)
+        else:
+            self._config["main_model_multimodal"] = bool(value)
+        self._save()
 
     # ── Learning / self-improvement loop (Hermes) ───────────────────────────
 

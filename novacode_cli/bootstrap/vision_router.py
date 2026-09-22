@@ -1,12 +1,19 @@
-"""Vision captioning — convert images to text before the main model ever sees them.
+"""Vision captioning — convert images to text for a text-only main model.
 
-When the agent ``read_file``s an image, or the user pastes a clipboard image, the
-raw image must NOT enter the main (text-only) model's conversation — that raises
-"this model does not support image input". Instead, a vision-capable model
-(gemma, configured under ``"vision_model"`` in ``~/.nova/Nova.config.json``)
-**captions** the image once, and only that text flows on.
+When the main model **cannot** see images, a raw image must NOT enter its
+conversation — that raises "this model does not support image input". Instead, a
+vision-capable model (configured under ``"vision_model"`` in
+``~/.nova/Nova.config.json``) **captions** the image once, and only that text
+flows on.
 
-Two entry points are captioned:
+When the main model **can** see images (a multimodal model — see
+:mod:`novacode_cli.config.model_capabilities`), captioning is skipped entirely:
+the image is passed straight through to the main model, which reads it directly.
+This is the fix for the long-standing "read_file on an image returns
+``[image: vision model unavailable]`` even though my model is multimodal" bug —
+the capable model was being bypassed in favour of an auxiliary one.
+
+Two entry points are captioned (text-only main model only):
 
 - **disk reads** — :class:`VisionCaptionMiddleware.awrap_tool_call` rewrites a
   ``read_file`` ``ToolMessage`` that carries image blocks into a text description.
@@ -14,10 +21,10 @@ Two entry points are captioned:
   ``ui/input_preparation.prepare_input_content`` (once, persisted as text), via
   the module-level :func:`caption_images`.
 
-:meth:`VisionCaptionMiddleware.awrap_model_call` is a pure **safety net**: it
-strips any residual image blocks from history (e.g. a restored session) before
-forwarding to the main model. There is no model swapping — the source of the old
-"image input" crash class.
+:meth:`VisionCaptionMiddleware.awrap_model_call` is a pure **safety net**: for a
+text-only main model it strips any residual image blocks from history (e.g. a
+restored session) before forwarding. There is no model swapping — the source of
+the old "image input" crash class.
 """
 
 from __future__ import annotations
@@ -56,13 +63,21 @@ _MIME_BY_SUFFIX: dict[str, str] = {
 # Placeholder captions returned (instead of leaking an image) when vision fails.
 _VISION_UNAVAILABLE = (
     "[image: vision model unavailable — set a multimodal `vision_model` in "
-    "~/.nova/Nova.config.json]"
+    "~/.nova/Nova.config.json, or run `/vision` to configure it. If your main "
+    "model is multimodal, run `/vision on` to send images to it directly]"
 )
 _VISION_FAILED = (
     "[image: vision captioning failed — the configured vision_model rejected the "
     "image or is unavailable]"
 )
 _VISION_EMPTY = "[image: vision model returned no description]"
+
+#: How many consecutive images to skip captioning for after a hard failure.
+#: A single transient failure (a cold Ollama model, a momentary network blip)
+#: must not disable image reading for the rest of the session — the old
+#: permanent latch did exactly that. After this many skips the vision model is
+#: retried, so a recovered provider starts working again without a restart.
+_VISION_FAILURE_COOLDOWN = 3
 
 
 def _suffix_to_mime_type(suffix: str | None) -> str:
@@ -76,13 +91,19 @@ def _suffix_to_mime_type(suffix: str | None) -> str:
 
 _vision_model_instance: BaseChatModel | None = None
 _vision_model_errored: bool = False
+#: Remaining images to skip before retrying the vision model after a failure.
+#: Decremented on each caption attempt while > 0; when it reaches 0 the model is
+#: retried. Replaces the old permanent latch (one failure killed vision for the
+#: whole session).
+_vision_cooldown_remaining: int = 0
 
 
 def get_vision_model() -> BaseChatModel | None:
     """Lazily create the configured vision model (cached process-wide).
 
-    Returns ``None`` when creation fails or the provider is unavailable; the
-    failure is cached so we don't retry on every image.
+    Returns ``None`` when creation fails or the provider is unavailable. A
+    failure starts a short cooldown (see :data:`_VISION_FAILURE_COOLDOWN`) rather
+    than disabling vision permanently, so a transient problem self-heals.
     """
     global _vision_model_instance, _vision_model_errored  # noqa: PLW0603
     if _vision_model_errored:
@@ -109,10 +130,24 @@ def get_vision_model() -> BaseChatModel | None:
 
 
 def _mark_vision_errored() -> None:
-    """Disable vision for the rest of the session after a hard failure."""
-    global _vision_model_instance, _vision_model_errored  # noqa: PLW0603
-    _vision_model_errored = True
+    """Start a short cooldown after a hard failure (not a permanent disable).
+
+    The vision model is dropped and skipped for the next
+    :data:`_VISION_FAILURE_COOLDOWN` images, then retried — so a transient
+    failure (cold model, network blip) recovers without a Nova restart.
+    """
+    global _vision_model_instance, _vision_cooldown_remaining  # noqa: PLW0603
     _vision_model_instance = None
+    _vision_cooldown_remaining = _VISION_FAILURE_COOLDOWN
+
+
+def _vision_in_cooldown() -> bool:
+    """True while the vision model is being skipped after a recent failure."""
+    global _vision_cooldown_remaining  # noqa: PLW0603
+    if _vision_cooldown_remaining > 0:
+        _vision_cooldown_remaining -= 1
+        return True
+    return False
 
 
 async def caption_images(image_urls: list[str], task_hint: str = "") -> str:
@@ -127,6 +162,8 @@ async def caption_images(image_urls: list[str], task_hint: str = "") -> str:
     """
     if not image_urls:
         return ""
+    if _vision_in_cooldown():
+        return _VISION_FAILED
     model = get_vision_model()
     if model is None:
         return _VISION_UNAVAILABLE
@@ -320,7 +357,13 @@ def _latest_user_text(messages: list[AnyMessage]) -> str:
 
 
 class VisionCaptionMiddleware(AgentMiddleware):
-    """Convert images to text so the main (text-only) model never sees an image.
+    """Convert images to text so a text-only main model never sees an image.
+
+    When ``main_model_supports_images`` is ``True`` (a multimodal main model),
+    this middleware is a **pass-through**: images flow straight to the main
+    model, which reads them directly. Captioning and stripping are skipped.
+
+    When it is ``False`` (the default — a text-only main model):
 
     - ``awrap_tool_call``: a ``read_file`` result carrying image blocks is
       captioned by the vision model and returned as a text ``ToolMessage``.
@@ -331,6 +374,18 @@ class VisionCaptionMiddleware(AgentMiddleware):
     ``ui/input_preparation.prepare_input_content``), so they never reach here as
     images either.
     """
+
+    def __init__(self, main_model_supports_images: bool = False) -> None:  # noqa: FBT001, FBT002
+        """Create the middleware.
+
+        Args:
+            main_model_supports_images: ``True`` when the main model can accept
+                image input, in which case images are passed through untouched.
+                ``False`` (default) preserves the caption-and-strip behaviour for
+                text-only models.
+        """
+        super().__init__()
+        self.main_model_supports_images = main_model_supports_images
 
     @staticmethod
     def get_vision_model() -> BaseChatModel | None:
@@ -344,8 +399,14 @@ class VisionCaptionMiddleware(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]],
     ) -> ToolMessage | Command:
-        """Caption images returned by ``read_file`` into a text ToolMessage."""
+        """Caption images returned by ``read_file`` into a text ToolMessage.
+
+        Pass-through when the main model is multimodal — the image is returned
+        unchanged so the main model reads it directly.
+        """
         result = await handler(request)
+        if self.main_model_supports_images:
+            return result
         try:
             tool_call = getattr(request, "tool_call", None) or {}
             if tool_call.get("name") != "read_file" or not isinstance(result, ToolMessage):
@@ -390,7 +451,13 @@ class VisionCaptionMiddleware(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        """Strip any residual image blocks before the main (text-only) model."""
+        """Strip residual image blocks before a text-only main model.
+
+        Pass-through when the main model is multimodal — images are left intact
+        for the model to read.
+        """
+        if self.main_model_supports_images:
+            return await handler(request)
         return await handler(
             request.override(messages=_strip_all_images(request.messages))
         )
@@ -401,6 +468,8 @@ class VisionCaptionMiddleware(AgentMiddleware):
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse:
         """Synchronous variant of the strip safety net."""
+        if self.main_model_supports_images:
+            return handler(request)
         return handler(request.override(messages=_strip_all_images(request.messages)))
 
 

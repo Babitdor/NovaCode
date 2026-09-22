@@ -159,7 +159,7 @@ async def test_a_failed_download_is_reported_not_swallowed():
 
     bridge._download_file = _dl
     sent: list[str] = []
-    bridge._send_message = lambda cid, text: sent.append(text) or asyncio.sleep(0)
+    bridge._send_message = lambda cid, text, **_kw: sent.append(text) or asyncio.sleep(0)
 
     out = await bridge._transcribe_voice(99, {"file_id": "F", "duration": 2})
     assert out == ""
@@ -178,7 +178,7 @@ async def test_an_overlong_note_tells_the_sender_the_limit(monkeypatch):
     bridge._download_file = _dl
     sent: list[str] = []
 
-    async def _send(cid, text):
+    async def _send(cid, text, **_kw):
         sent.append(text)
 
     bridge._send_message = _send
@@ -204,7 +204,7 @@ async def test_silence_is_reported_rather_than_queued_as_an_empty_prompt(monkeyp
     monkeypatch.setattr("novacode_cli.remote.voice_notes.transcribe_voice_note", _tx)
     sent: list[str] = []
 
-    async def _send(cid, text):
+    async def _send(cid, text, **_kw):
         sent.append(text)
 
     bridge._send_message = _send
@@ -228,7 +228,7 @@ async def test_an_unexpected_transcription_error_does_not_kill_the_bridge(monkey
     monkeypatch.setattr("novacode_cli.remote.voice_notes.transcribe_voice_note", _boom)
     sent: list[str] = []
 
-    async def _send(cid, text):
+    async def _send(cid, text, **_kw):
         sent.append(text)
 
     bridge._send_message = _send
@@ -274,7 +274,7 @@ async def test_end_to_end_real_ogg_through_the_bridge(monkeypatch):
     bridge._download_file = _dl
     sent: list[str] = []
 
-    async def _send(cid, text):
+    async def _send(cid, text, **_kw):
         sent.append(text)
 
     bridge._send_message = _send

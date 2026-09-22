@@ -25,6 +25,22 @@ class EmbeddedTerminal(Widget):
         padding: 1 4;
         display: block;
     }
+    /* Hide the scrollbar cosmetically (wheel/keys still scroll). The app-level
+       rule covers this too, but the widget is also usable standalone.
+       Make the bar transparent rather than zeroing `scrollbar-size-vertical`:
+       a zero scrollbar size on a scroll container breaks Textual's
+       content-width calculation and collapses its children to zero width.
+       A transparent scrollbar color makes ScrollBar.render() emit blanks while
+       keeping the bar's size, so layout is untouched. ScrollBar reads
+       `self.parent.styles`, so this must be set on the scroll container. */
+    #term-log {
+        scrollbar-color: transparent;
+        scrollbar-background: transparent;
+        scrollbar-color-hover: transparent;
+        scrollbar-background-hover: transparent;
+        scrollbar-color-active: transparent;
+        scrollbar-background-active: transparent;
+    }
     #term-header {
         height: 3;
         background: $panel;

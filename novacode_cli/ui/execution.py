@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from pathlib import Path
+from typing import Any
 
 from langchain_core.messages import HumanMessage
 from rich.markdown import Markdown
@@ -35,6 +36,109 @@ from novacode_cli.ui.ui_elements import (
     render_todo_list,
     render_tool_panel,
 )
+
+
+async def _react_to_context_pressure(agent, session_state, token_tracker, breakdown) -> None:
+    """Warn about — and where appropriate auto-compact — high context usage.
+
+    The Rich console REPL had no equivalent of the TUI's context check, so a
+    long session neither warned the user nor compacted and ran straight into the
+    provider's limit. The decision itself is shared
+    (:func:`novacode_cli.context.assess_pressure`) so both surfaces agree.
+
+    Never raises: a warning is not worth failing a completed turn.
+    """
+    try:
+        from novacode_cli.context import (
+            PressureAction,
+            assess_pressure,
+            post_compaction_still_critical,
+        )
+
+        pct = getattr(breakdown, "usage_percentage", 0.0)
+        decision = assess_pressure(
+            pct,
+            compacted_last_turn=bool(getattr(session_state, "_compacted_last_turn", False)),
+            auto_compact_enabled=bool(getattr(session_state, "_auto_compact", True)),
+        )
+        if decision.disable_auto_compact:
+            session_state._auto_compact = False
+        # A COMPACT decision is only a plan: the flag flips to True below, on a
+        # compaction that actually succeeded. Setting it here would trip the loop
+        # guard next turn after a compaction that never ran.
+        session_state._compacted_last_turn = (
+            False if decision.action is PressureAction.COMPACT else decision.compacted_last_turn
+        )
+
+        if decision.action is PressureAction.COMPACT:
+            # compact_conversation needs a real BaseChatModel (it calls
+            # get_num_tokens_from_messages and drives the summary LLM), so a bare
+            # model *name* is not usable. Prefer the session's live model object;
+            # if none is reachable, warn instead of attempting a broken call.
+            from langchain_core.language_models import BaseChatModel
+
+            model = getattr(session_state, "model", None) or getattr(agent, "model", None)
+            if not isinstance(model, BaseChatModel):
+                console.print(
+                    f"[bold #f7768e]⚠ {decision.reason} "
+                    "Auto-compact is unavailable on this surface — run /compact.[/]"
+                )
+                return
+
+            console.print(f"[bold #f7768e]⚠ {decision.reason}[/]")
+            from novacode_cli.compaction import compact_conversation
+
+            result = await compact_conversation(
+                agent,
+                model,
+                getattr(session_state, "session_id", "") or "",
+                agent_dir=getattr(session_state, "agent_dir", None),
+            )
+            if result.success:
+                token_tracker.reset()
+                console.print(
+                    f"[dim]Compacted: {result.tokens_saved:,} tokens freed "
+                    f"({result.messages_before} → {result.messages_after} messages).[/]"
+                )
+                session_state._compacted_last_turn = True
+                after = post_compaction_still_critical(
+                    getattr(token_tracker.get_breakdown(), "usage_percentage", 0.0),
+                    auto_compact_enabled=bool(getattr(session_state, "_auto_compact", True)),
+                )
+                if after.disable_auto_compact:
+                    session_state._auto_compact = False
+                    console.print(f"[bold #f7768e]⚠ {after.reason}[/]")
+            else:
+                console.print(f"[#e0af68]Could not compact: {result.error}[/]")
+        elif decision.action is PressureAction.WARN:
+            console.print(f"[#e0af68]⚠ {decision.reason}[/]")
+    except Exception:  # noqa: BLE001 — a notice must never break the turn
+        return
+
+
+def _bound_tools(agent: Any) -> list[Any] | None:
+    """Best-effort extraction of the agent's bound tool definitions.
+
+    Tool schemas ship on every request and are a permanent slice of the
+    baseline, but they live on the compiled graph, not in the message list.
+
+    Prefers the live ``ToolNode.tools_by_name`` mapping (a documented attribute)
+    over reaching into ``PregelNode.bound``, whose shape is an implementation
+    detail. Purely cosmetic accounting: any failure yields ``None``, which just
+    leaves ``tool_definitions_tokens`` at 0.
+    """
+    try:
+        from langgraph.prebuilt import ToolNode
+
+        for node in (getattr(agent, "nodes", None) or {}).values():
+            bound = getattr(node, "bound", None)
+            if isinstance(bound, ToolNode):
+                mapping = getattr(bound, "tools_by_name", None)
+                if mapping:
+                    return list(mapping.values())
+    except Exception:  # noqa: BLE001 — accounting only, never fatal
+        return None
+    return None
 
 
 async def _capture_fallback_usage(agent, config, token_tracker: TokenTracker) -> None:
@@ -1187,9 +1291,20 @@ async def execute_task(  # type: ignore
 
                 if _bd_msgs and token_tracker.model_name:
 
-                    breakdown = ContextManager(token_tracker.model_name).breakdown(_bd_msgs)
+                    _bd_tools = getattr(session_state, "_tools", None) or _bound_tools(agent)
+                    breakdown = ContextManager(token_tracker.model_name).breakdown(
+                        _bd_msgs, tools=_bd_tools
+                    )
 
                     token_tracker.set_breakdown(breakdown)
+
+                    # Same policy the TUI applies (context/pressure.py) — the
+                    # REPL previously recorded the breakdown and then did
+                    # NOTHING, so a long session sailed into the provider's
+                    # limit with no warning and no compaction.
+                    await _react_to_context_pressure(
+                        agent, session_state, token_tracker, breakdown
+                    )
 
             except Exception:
 

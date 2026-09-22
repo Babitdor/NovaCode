@@ -36,6 +36,10 @@ class SessionMeta:
         repo_hash: Hash of git HEAD for compatibility checking
         Nova_md_checksum: Checksum of NOVA.md for change detection
         model_name: Name of the model used
+        model_provider: Provider of the model used ("anthropic", "ollama", ...).
+            Recorded alongside model_name so a resume can rebuild the exact model
+            rather than guessing from the global config. None on sessions saved
+            before this field existed.
         assistant_id: Agent identifier
         message_count: Number of messages in conversation
         current_task: Current task description
@@ -55,6 +59,7 @@ class SessionMeta:
     Nova_md_checksum: str | None
     model_name: str | None
     assistant_id: str
+    model_provider: str | None = None
     message_count: int = 0
     current_task: str | None = None
     task_status: str = "active"  # active | blocked | complete
@@ -85,6 +90,10 @@ class SessionMeta:
             "sandbox_type": None,
             "storage_version": 1,  # Old sessions default to v1
             "cleared": False,
+            # Sessions saved before the provider was recorded. None means "we
+            # cannot rebuild this session's exact model" — resume falls back to
+            # the global config silently rather than warning.
+            "model_provider": None,
         }
         # Merge defaults with provided data (data takes precedence)
         merged = {**defaults, **data}
@@ -132,6 +141,87 @@ class SessionManager:
         self.sessions_dir = sessions_dir or Path.home() / ".nova" / "sessions"
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
 
+    def cleanup_old_sessions(
+        self,
+        *,
+        max_age_days: int = 180,
+        keep_session_id: str | None = None,
+    ) -> int:
+        """Delete session dirs whose newest activity is older than the cutoff.
+
+        Bounds the OTHER unbounded store: ``_cleanup_old_checkpoints`` prunes
+        checkpoint DBs, but nothing pruned session dirs — each holding a full
+        ``archive.jsonl`` plus ``large_tool_results/`` and
+        ``conversation_history/``, so the largest on-disk store grew forever.
+
+        Age is the newest mtime anywhere in the dir (not the dir's own mtime),
+        so an actively-resumed session is never reaped. The caller's own session
+        is always skipped even if stale.
+
+        DESTRUCTIVE. Session dirs are not 1:1 with checkpoints (the checkpointer
+        is one shared DB, pruned by its own mtime), so an old session dir can
+        still hold the only copy of a resumable transcript. A caller that knows
+        which session it is about to resume MUST pass ``keep_session_id``;
+        startup has no such id, which is why the default window is deliberately
+        long rather than the 30 days used for checkpoint DBs.
+
+        Args:
+            max_age_days: Reap dirs untouched for longer than this.
+            keep_session_id: Session to spare unconditionally (the live one).
+
+        Returns:
+            Number of session dirs removed.
+        """
+        import shutil
+        import time
+
+        if max_age_days <= 0 or not self.sessions_dir.exists():
+            return 0
+        cutoff = time.time() - max_age_days * 86_400
+        removed = 0
+        for entry in self.sessions_dir.iterdir():
+            if not entry.is_dir() or entry.name == keep_session_id:
+                continue
+            newest = self._newest_mtime(entry)
+            if newest is None or newest >= cutoff:
+                continue
+            try:
+                shutil.rmtree(entry)
+                removed += 1
+            except OSError:
+                logger.debug("Could not remove stale session dir %s", entry, exc_info=True)
+        if removed:
+            logger.info("Reaped %d session dir(s) older than %d days", removed, max_age_days)
+        return removed
+
+    @staticmethod
+    def _newest_mtime(directory: Path) -> float | None:
+        """Newest mtime of any file under ``directory``, or None when empty.
+
+        Walks one level of nesting (``large_tool_results/``,
+        ``conversation_history/``) — enough to catch real activity without a
+        full recursive walk on every startup.
+        """
+        newest: float | None = None
+        try:
+            candidates = list(directory.iterdir())
+        except OSError:
+            return None
+        for path in candidates:
+            try:
+                if path.is_dir():
+                    for child in path.iterdir():
+                        mtime = child.stat().st_mtime
+                        if newest is None or mtime > newest:
+                            newest = mtime
+                else:
+                    mtime = path.stat().st_mtime
+                    if newest is None or mtime > newest:
+                        newest = mtime
+            except OSError:
+                continue
+        return newest
+
     def save_session(
         self,
         session_id: str,
@@ -142,6 +232,7 @@ class SessionManager:
         todos: list[dict] | None = None,
         tool_state: dict | None = None,
         model_name: str | None = None,
+        model_provider: str | None = None,
         project_root: Path | None = None,
         current_task: str | None = None,
         task_status: str = "active",
@@ -164,6 +255,9 @@ class SessionManager:
             todos: Optional todo list state
             tool_state: Optional tool state
             model_name: Name of the model being used
+            model_provider: Provider of the model being used. Recorded so a
+                resume can rebuild the exact model instead of falling back to
+                the global config.
             project_root: Path to project root (for repo hash)
 
         Returns:
@@ -199,6 +293,7 @@ class SessionManager:
             repo_hash=repo_hash,
             Nova_md_checksum=Nova_md_checksum,
             model_name=model_name,
+            model_provider=model_provider,
             assistant_id=assistant_id,
             message_count=len(messages),
             current_task=current_task,
@@ -442,6 +537,28 @@ class SessionManager:
         sessions.sort(key=lambda s: s.last_active, reverse=True)
 
         return sessions[:limit]
+
+    def load_session_meta(self, session_id: str) -> SessionMeta | None:
+        """Read just one session's ``meta.json``, without loading its messages.
+
+        Used at startup to learn which model a session was using *before* the
+        model is built — :meth:`load_session` would also read the whole
+        transcript, which is wasted work at that point.
+
+        Args:
+            session_id: Session to read.
+
+        Returns:
+            The session's ``SessionMeta``, or None if it is missing/unreadable.
+        """
+        meta_path = self.sessions_dir / session_id / "meta.json"
+        if not meta_path.exists():
+            return None
+        try:
+            with open(meta_path) as f:
+                return SessionMeta.from_dict(json.load(f))
+        except (json.JSONDecodeError, TypeError, KeyError, OSError):
+            return None
 
     def get_latest_session(self, project_root: Path | None = None) -> SessionMeta | None:
         """Get the most recent session, optionally filtered by project.

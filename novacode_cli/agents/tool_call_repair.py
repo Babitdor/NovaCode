@@ -24,6 +24,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
+from langchain_core.messages import AnyMessage, RemoveMessage, ToolMessage
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 if TYPE_CHECKING:
     from langchain.agents.middleware.types import AgentState
@@ -42,9 +44,38 @@ class RepairToolCallsEachStep(PatchToolCallsMiddleware):
     def before_model(
         self, state: AgentState, runtime: Runtime[Any]
     ) -> dict[str, Any] | None:
-        return self.before_agent(state, runtime)
+        patched = self.before_agent(state, runtime)
+        messages = patched["messages"][1:] if patched else list(state["messages"])
+        filled = [_fill_empty_result(m) for m in messages]
+        if patched is None and all(a is b for a, b in zip(filled, messages, strict=True)):
+            return None
+        return {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES), *filled]}
 
     async def abefore_model(
         self, state: AgentState, runtime: Runtime[Any]
     ) -> dict[str, Any] | None:
-        return self.before_agent(state, runtime)
+        return self.before_model(state, runtime)
+
+
+# DeepSeek rejects an empty tool result outright:
+#     Message {'role': 'tool', 'content': None, ...} has no content.
+# Tools return one legitimately — Serena's read_file on an empty file returns a
+# single empty text block — and once it is in history every later request of
+# the session fails. The repair is persisted, so saved sessions heal too.
+EMPTY_TOOL_RESULT = "(no output)"
+
+
+def _fill_empty_result(msg: AnyMessage) -> AnyMessage:
+    if not isinstance(msg, ToolMessage):
+        return msg
+    content = msg.content
+    if isinstance(content, str):
+        empty = not content.strip()
+    else:
+        empty = all(
+            isinstance(block, dict)
+            and block.get("type") == "text"
+            and not str(block.get("text", "")).strip()
+            for block in content
+        )
+    return msg.model_copy(update={"content": EMPTY_TOOL_RESULT}) if empty else msg

@@ -1,150 +1,20 @@
-"""Session summarization for creating declarative memory.md files.
+"""RETIRED — session summarization is superseded; kept only as a marker.
 
-This module generates long-term declarative memory from conversation history,
-focusing on outcomes rather than dialogue.
+This module previously produced a declarative ``memory.md`` from conversation
+history (``summarize_messages_to_memory``) and gated it behind
+``should_trigger_summarization``. Neither had any caller: the live paths are
+
+* :mod:`novacode_cli.compaction` — ``compact_conversation`` / ``summarize_conversation``
+  (the ``/compact`` and auto-compact path), and
+* deepagents' built-in ``SummarizationMiddleware`` (the mid-turn backstop),
+
+so the dead trigger and its summarizer were removed.
+
+The whole file, and ``novacode_cli/prompts/session_summarization.jinja``
+(referenced only by the deleted function), can be deleted outright — this stub
+exists only because the file could not be removed in-place.
 """
 
-from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from __future__ import annotations
 
-from novacode_cli.prompts import render_template
-
-# Session summarization system prompt loaded from: NovaCode_cli/prompts/session_summarization.jinja
-
-
-def summarize_messages_to_memory(
-    messages: list[BaseMessage],
-    model: BaseChatModel,
-    current_task: str | None = None,
-) -> str:
-    """Summarize conversation messages into declarative memory.md content.
-
-    Args:
-        messages: List of conversation messages to summarize
-        model: LLM to use for summarization
-        current_task: Optional current task description
-
-    Returns:
-        memory.md content as a string
-    """
-    if not messages:
-        return "# Session Memory\n\n(No activity yet)\n"
-
-    # Build conversation summary for the LLM
-    conversation_summary = _build_conversation_summary(messages)
-
-    # Create prompt for summarization using Jinja template
-    system_prompt = render_template("session_summarization.jinja")
-    user_prompt = f"""Summarize this conversation into a declarative memory.md file.
-
-Current task: {current_task or "No specific task set"}
-
-Conversation summary:
-{conversation_summary}
-
-Generate the memory.md content following the format specified in your instructions."""
-
-    # Call the LLM
-    summary_messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=user_prompt),
-    ]
-
-    try:
-        response = model.invoke(summary_messages)
-        memory_content = response.content if hasattr(response, "content") else str(response)
-        return memory_content.strip()  # type: ignore
-    except Exception as e:
-        # Fallback to basic summary if LLM fails
-        return f"""# Session Memory
-
-## Error
-Failed to generate summary: {e}
-
-## Message Count
-{len(messages)} messages in conversation
-
-## Current Task
-{current_task or "Not specified"}
-"""
-
-
-def _build_conversation_summary(messages: list[BaseMessage], max_length: int = 10000) -> str:
-    """Build a textual summary of the conversation for the summarizer.
-
-    Args:
-        messages: Messages to summarize
-        max_length: Maximum character length
-
-    Returns:
-        Formatted conversation summary
-    """
-    lines = []
-
-    for i, msg in enumerate(messages):
-        msg_type = msg.__class__.__name__
-        content = str(msg.content) if msg.content else "(empty)"
-
-        # Truncate very long messages
-        if len(content) > 500:
-            content = content[:497] + "..."
-
-        # Format based on message type
-        if msg_type == "HumanMessage":
-            lines.append(f"[{i + 1}] User: {content}")
-        elif msg_type == "AIMessage":
-            # Check for tool calls
-            if hasattr(msg, "tool_calls") and msg.tool_calls:  # type: ignore
-                tool_names = [tc.get("name", "unknown") for tc in msg.tool_calls]  # type: ignore
-                lines.append(f"[{i + 1}] Assistant: (called tools: {', '.join(tool_names)})")
-            if content and not content.startswith("[") and len(content) > 10:
-                lines.append(f"[{i + 1}] Assistant: {content}")
-        elif msg_type == "ToolMessage":
-            tool_name = getattr(msg, "name", "unknown")
-            # Include tool result if it's not too long
-            if len(content) < 200:
-                lines.append(f"[{i + 1}] Tool({tool_name}): {content}")
-            else:
-                lines.append(f"[{i + 1}] Tool({tool_name}): (output length: {len(content)} chars)")
-
-    summary = "\n".join(lines)
-
-    # Truncate if too long
-    if len(summary) > max_length:
-        summary = summary[:max_length] + "\n...(truncated)"
-
-    return summary
-
-
-def should_trigger_summarization(
-    message_count: int = 0,
-    recent_limit: int = 8,
-    task_status: str | None = None,
-    context_usage_percentage: float | None = None,
-    context_threshold: float = 80.0,
-) -> bool:
-    """Determine if summarization should be triggered.
-
-    Triggers when:
-    - Context usage percentage exceeds threshold (default 80%)
-    - Task status changed to 'complete'
-
-    Args:
-        message_count: Total number of messages in session (deprecated, kept for compatibility)
-        recent_limit: Number of recent messages to keep (deprecated, kept for compatibility)
-        task_status: Current task status
-        context_usage_percentage: Current context window usage percentage (0-100)
-        context_threshold: Threshold percentage to trigger summarization (default 80%)
-
-    Returns:
-        True if summarization should be triggered
-    """
-    # Trigger when context usage exceeds threshold
-    if context_usage_percentage is not None and context_usage_percentage >= context_threshold:
-        return True
-
-    # Trigger when task is marked complete
-    if task_status == "complete":
-        return True
-
-    return False
+__all__: list[str] = []

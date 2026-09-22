@@ -77,43 +77,26 @@ The next step directly aligned with the user's most recent explicit requests.
 
 ## Output Format
 
-```
-## Conversation Summary
+Output exactly the nine sections above, in order, as `### 1. Primary Request and Intent` … `### 9. Optional Next Step`, under a single `## Conversation Summary` heading. Write "None" under a section with nothing to record rather than dropping it.
 
-### Files Modified
-- [List of files with brief description of changes]
-
-### Key Decisions
-- [Important architectural/design decisions with rationale]
-
-### Work Completed
-- [Summary of what was accomplished]
-
-### Outstanding Items
-- [Any pending tasks or unresolved issues]
-
-### Important Context
-- [Key information that should be preserved for future reference]
-
-### User Preferences & Conventions
-- [Any user preferences, coding style, or workflow patterns established]
-- [Active working directory and key file paths referenced]
-```
+{% if tail_kept %}
+The most recent messages are kept VERBATIM after this summary, so they are not in the conversation below. Summarize only what you are given; "Current Work" is where the conversation below stops, not the latest state.
+{% endif %}
 
 ## Quality Check
 Before outputting, verify:
 - [ ] User messages section captures every user request (condensed, not verbatim)
-- [ ] Files Modified includes line-level change descriptions
-- [ ] Key Decisions includes rationale (not just the decision itself)
+- [ ] Files and Code Sections includes line-level change descriptions
+- [ ] Decisions carry their rationale (not just the decision itself)
 - [ ] Active working branch/state is recorded
 - [ ] No fabricated changes, decisions, or user intents
 - [ ] All file paths are absolute (e.g., `/src/main.py`)
 
 ## Constraints
 - Keep under 5000 tokens
-- Prioritize completeness for Files Modified and Outstanding Items
+- Prioritize completeness for Files and Code Sections and Pending Tasks
 - If you hit the token limit, truncate bottom-up by priority table above
-- This summary WILL replace the full conversation — nothing is preserved outside it
+- This summary WILL replace the conversation below — nothing in it survives outside the summary
 
 ---
 

@@ -16,7 +16,7 @@ independently testable.  Owns four durable-store namespaces:
   ``{skill_name: {"invocations","successes","failures","last_used"}}``
 
 The distinction between the last two matters: ``tool_stats`` tracks *tools*
-(``web_search``, ``query_project_graph``, …), while ``skill_usage`` tracks
+(``web_search``, ``code_search``, …), while ``skill_usage`` tracks
 actual SKILL.md *skills* the agent invoked by reading their file. The
 refinement loop (``check_skill_effectiveness``) reads ``skill_usage`` — keying
 it off tool names (the historical bug) meant it could never match a real skill.

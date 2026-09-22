@@ -16,9 +16,10 @@ from rich.style import Style
 from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.strip import Strip
+from textual.selection import Selection
 from textual.theme import Theme
 from textual.widget import Widget
 from textual.message import Message
@@ -86,11 +87,13 @@ class MatrixRain(Static):
 
         art_w = max((len(ln) for ln in art_lines), default=0)
         art_h = len(art_lines)
-        # Fill (most of) the terminal width so the rain spans the whole row and
-        # the logo is centered within it. Leave a small margin for the transcript
-        # padding + scrollbar (avoids wrapping) and cap very wide terminals so
-        # the per-frame build stays cheap.
-        usable = (width or 80) - 6
+        # Fill the terminal width so the rain spans the whole row and the logo is
+        # centered within it. Subtract only the transcript's horizontal padding
+        # (2 cells each side, see `#transcript { padding: 1 2 }`); the scrollbar
+        # no longer reserves a column (it is hidden and the gutter is `auto`), so
+        # the rain reaches the right edge. Cap very wide terminals so the
+        # per-frame build stays cheap.
+        usable = (width or 80) - 4
         self._col_count = min(max(usable, art_w, 60), 200)
         self._row_count = max(art_h + 6, 18)
         self._art_left = max(0, (self._col_count - art_w) // 2)
@@ -449,6 +452,30 @@ NOVA_TOKYO_NIGHT = Theme(
         "border": "#3b4261",
     },
 )
+# The Matrix theme: phosphor green on near-black, the palette of the film's
+# terminal. Registered alongside tokyo-night so /theme can select it. Kept
+# deliberately monochrome-green — the accent/secondary/success hues are all
+# shades of the same phosphor so the UI reads as one CRT, with `error` the only
+# non-green (a red alert must still stand out on a green screen).
+NOVA_MATRIX = Theme(
+    name="matrix",
+    primary="#00ff41",  # the classic Matrix green
+    secondary="#00b32d",  # dimmer phosphor
+    accent="#39ff14",  # neon green, for highlights
+    success="#00ff41",
+    warning="#c8ff00",  # acid yellow-green
+    error="#ff3b30",  # the one non-green: alerts must not blend in
+    surface="#0a0f0a",
+    panel="#0d140d",
+    background="#000600",
+    foreground="#b6ffb6",
+    boost="#12200f",
+    dark=True,
+    variables={
+        "text-muted": "#3f7a3f",
+        "border": "#1f4d1f",
+    },
+)
 DEFAULT_THEME = "tokyo-night"
 
 
@@ -491,6 +518,109 @@ class NovaStatusBar:
     pass
 
 
+class SelectableStatic(Static):
+    """A ``Static`` whose Rich-rendered content can be text-selected.
+
+    Textual's default ``Widget.get_selection`` reads ``self._render()`` and only
+    handles a ``Text``/``Content`` visual. A ``Static`` holding a Rich renderable
+    (``Markdown``, ``Table``, ``Group``, …) renders to a ``RichVisual`` instead,
+    so ``get_selection`` returns ``None`` and drag-selecting the widget yields
+    nothing — the text is visible but not selectable.
+
+    This subclass falls back to the *rendered* text (the strips the compositor
+    actually paints) so selection works for any Rich renderable, and the offsets
+    line up with what the user sees. Plain ``Text``/``Content`` bodies keep the
+    base implementation, which is already correct and cheaper.
+    """
+
+    def get_selection(self, selection: Selection) -> tuple[str, str] | None:
+        """Extract the selected text, falling back to the rendered strips.
+
+        Args:
+            selection: The selection range, in cell offsets.
+
+        Returns:
+            A ``(text, ending)`` tuple, or ``None`` if nothing could be extracted.
+        """
+        visual = self._render()
+        # Text/Content visuals are handled correctly by the base class.
+        from textual.content import Content
+
+        if isinstance(visual, (Text, Content)):
+            return super().get_selection(selection)
+
+        # Rich renderable → RichVisual. Re-render it to strips and join the
+        # visible line text, which is what the selection offsets index into.
+        try:
+            from textual.visual import RichVisual, Visual
+
+            if not isinstance(visual, RichVisual):
+                return super().get_selection(selection)
+            width = max(1, self.size.width or self.content_size.width or 1)
+            strips = Visual.to_strips(self, visual, width, None, self.visual_style)
+            # rstrip each line: the compositor pads every strip to the widget
+            # width, so a copied selection would otherwise carry a screenful of
+            # trailing spaces per line.
+            text = "\n".join(strip.text.rstrip() for strip in strips)
+        except Exception:  # noqa: BLE001 — selection must never break rendering
+            return super().get_selection(selection)
+        return selection.extract(text), "\n"
+
+
+class TranscriptScroll(VerticalScroll):
+    """A scroll region that announces when it is (or stops being) at the bottom.
+
+    Textual posts no message when a widget scrolls — the only hook is the
+    ``scroll_y`` reactive watcher — so the "jump to latest" affordance had no
+    way to know the user had scrolled up. This subclass posts
+    :class:`TranscriptScroll.AtEndChanged` whenever the at-the-bottom state
+    flips, which is exactly when the button must appear or hide.
+    """
+
+    class AtEndChanged(Message):
+        """Posted when the scroll region reaches or leaves the bottom."""
+
+        def __init__(self, scroll: TranscriptScroll, *, at_end: bool) -> None:
+            """Record the scroll region and its new at-the-bottom state."""
+            self.scroll = scroll
+            self.at_end = at_end
+            super().__init__()
+
+    class Scrolled(Message):
+        """Posted on every scroll position change (for the distance readout)."""
+
+        def __init__(
+            self, scroll: TranscriptScroll, *, old_y: float, new_y: float
+        ) -> None:
+            """Record the scroll region that moved and its before/after offset.
+
+            The delta is carried on the message rather than compared against a
+            global "last position" in the app: with several session panes, a
+            global would be stale after a pane switch and misread a downward
+            scroll as an upward one.
+            """
+            self.scroll = scroll
+            self.old_y = old_y
+            self.new_y = new_y
+            super().__init__()
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Build the scroll region and seed the at-the-bottom state."""
+        super().__init__(*args, **kwargs)
+        self._at_end: bool | None = None
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        """Announce scroll changes so the jump-to-latest affordance can react."""
+        super().watch_scroll_y(old_value, new_value)
+        # Post on every change so the "N lines below" readout stays current;
+        # AtEndChanged only on a flip, so the show/hide work is not repeated.
+        self.post_message(self.Scrolled(self, old_y=old_value, new_y=new_value))
+        at_end = self.is_vertical_scroll_end or (self.max_scroll_y - self.scroll_y) <= 1
+        if at_end != self._at_end:
+            self._at_end = at_end
+            self.post_message(self.AtEndChanged(self, at_end=at_end))
+
+
 class ChatMessage(Vertical):
     """A single transcript entry: a left accent bar, a role header, and a body.
 
@@ -500,23 +630,37 @@ class ChatMessage(Vertical):
 
     DEFAULT_CSS = """
     /* Even, consistent cards: a colored left accent bar + padding. Only the
-       accent color and header differ between roles (minimal accent-bar style). */
+       accent color and header differ between roles (minimal accent-bar style).
+       The base background matches the app's own, so the agent's replies read as
+       plain transcript rather than a raised card. */
     ChatMessage {
         height: auto;
         margin: 1 0;
         padding: 1 2;
-        background: $surface;
+        background: $background;
     }
-    /* Subtle hover cue that a message is clickable (click = copy it). */
-    ChatMessage:hover { background: $boost; }
+    /* Hover cue that a message is clickable (click = copy it). User turns only:
+       the agent's replies are plain reading surface and must not shift color
+       under the cursor. */
+    ChatMessage.user:hover { background: $boost; }
     ChatMessage > .role { text-style: bold; }
     ChatMessage > .body { height: auto; }
     ChatMessage.user { border-left: thick $primary; }
-    ChatMessage.nova { border-left: thick $success; }
     ChatMessage.reason { border-left: thick $panel; color: $text-muted; }
+    /* Collapsed reasoning: only the header row remains, so a long thinking
+       trace stays in the transcript as a one-line affordance. */
+    ChatMessage.collapsed > .body { display: none; }
+    ChatMessage.collapsed { height: auto; }
+    /* User turns stand out from the agent's: a raised panel behind the text and
+       full-brightness foreground, so what YOU typed is easy to find when
+       scrolling back through a long transcript. The accent bar stays $primary. */
+    ChatMessage.user { background: $panel; color: $foreground; }
+    ChatMessage.user > .role { color: $primary; }
     """
 
-    def __init__(self, header: Text, role_class: str) -> None:
+    def __init__(
+        self, header: Text, role_class: str, *, collapsible: bool = False
+    ) -> None:
         super().__init__(classes=role_class)
         self._header = header
         # Plain-text form of the body, kept in sync by update_body so the message
@@ -526,6 +670,11 @@ class ChatMessage(Vertical):
         # Body renderable received before compose() finished mounting the `.body`
         # child. Applied in on_mount so a fast first stream chunk isn't lost.
         self._pending_body: Any = None
+        # Collapsible messages (reasoning traces) keep their body but can be
+        # folded to a one-line header, so a long thinking trace stays in the
+        # transcript without dominating it.
+        self._collapsible = collapsible
+        self._collapsed = False
         self.tooltip = "Click to copy this message"
 
         # Parse and store custom border color if specified
@@ -551,11 +700,13 @@ class ChatMessage(Vertical):
             self._pending_body.add_class("body")
             yield self._pending_body
         else:
-            yield Static(self._pending_body or "", classes="body")
+            yield SelectableStatic(self._pending_body or "", classes="body")
 
     def on_mount(self) -> None:
-        # Apply custom border color if set
-        if self._custom_color:
+        # Apply custom border color if set. Only user turns carry an accent bar
+        # (see DEFAULT_CSS) — the agent's replies are unbarred, so a header color
+        # must not re-introduce one.
+        if self._custom_color and self.has_class("user"):
             self.styles.border_left = ("thick", self._custom_color)
 
         # If update_body ran before the `.body` child existed, apply the stashed
@@ -567,6 +718,34 @@ class ChatMessage(Vertical):
                 except NoMatches:
                     pass
             self._pending_body = None
+
+    def set_collapsed(self, *, collapsed: bool) -> None:
+        """Fold/unfold a collapsible message's body (no-op for normal messages).
+
+        Args:
+            collapsed: True to hide the body, False to show it.
+        """
+        if not self._collapsible:
+            return
+        self._collapsed = collapsed
+        self.set_class(collapsed, "collapsed")
+        self._refresh_header_affordance()
+
+    def toggle_collapsed(self) -> None:
+        """Flip the collapsed state of a collapsible message."""
+        self.set_collapsed(collapsed=not self._collapsed)
+
+    def _refresh_header_affordance(self) -> None:
+        """Append a ▸/▾ caret to the header so the fold state is visible."""
+        if not self._collapsible:
+            return
+        caret = "▸" if self._collapsed else "▾"
+        header = self._header.copy()
+        header.append(f"  {caret}", style="dim")
+        try:
+            self.query_one(".role", Static).update(header)
+        except Exception:  # noqa: BLE001 — header refresh must never break render
+            pass
 
     def update_header(self, header: Text) -> None:
         self._header = header
@@ -593,7 +772,7 @@ class ChatMessage(Vertical):
                 elif "green" in style_str:
                     self._custom_color = "#10b981"
 
-        if self._custom_color:
+        if self._custom_color and self.has_class("user"):
             self.styles.border_left = ("thick", self._custom_color)
 
     def update_body(self, renderable: Any) -> None:
@@ -613,11 +792,11 @@ class ChatMessage(Vertical):
                 renderable.add_class("body")
                 self.mount(renderable)
         else:
-            if isinstance(body, Static):
+            if isinstance(body, SelectableStatic):
                 body.update(renderable)
             else:
                 body.remove()
-                new_body = Static(renderable, classes="body")
+                new_body = SelectableStatic(renderable, classes="body")
                 self.mount(new_body)
 
     @staticmethod

@@ -24,6 +24,7 @@ from novacode_cli.core.agent_loop import (
 from novacode_cli.headless.output import HeadlessOutput
 from novacode_cli.ui.hitl_approval import evaluate_tool_actions
 from novacode_cli.core.input_preparation import build_agent_config
+from novacode_cli.utils.model_info import get_current_provider
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -231,6 +232,7 @@ async def _autosave(
             assistant_id=assistant_id,
             todos=todos,
             model_name=model_name,
+            model_provider=get_current_provider(),
             project_root=settings.project_root or Path.cwd(),
             task_status="failed" if is_error else "completed",
         )

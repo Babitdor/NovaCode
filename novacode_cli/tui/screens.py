@@ -23,6 +23,7 @@ from textual.widgets import (
     Input,
     OptionList,
     Select,
+    SelectionList,
     Static,
 )
 from textual.widgets.option_list import Option
@@ -511,6 +512,10 @@ class SessionsScreen(ModalScreen[None]):
             age = format_session_age(meta.last_active)
             project = Path(meta.project_root).name if meta.project_root else "no project"
             model = meta.model_name or "unknown"
+            # Legacy sessions (no recorded provider) cannot have their model
+            # rebuilt on resume — mark them so the label never promises a restore.
+            if meta.model_name and not getattr(meta, "model_provider", None):
+                model = f"{model} (not restored)"
             marker = " ← current" if meta.session_id == self._current else ""
             ol.add_option(
                 Option(
@@ -1542,10 +1547,129 @@ class ThemeScreen(ModalScreen[None]):
         self.dismiss(None)
 
 
+def _tools_summary(tools: list[str] | None) -> str:
+    if tools is None:
+        return "all tools"
+    if not tools:
+        return "file + shell tools only"
+    shown = ", ".join(tools[:6])
+    return f"{len(tools)}: {shown}" + (f", +{len(tools) - 6} more" if len(tools) > 6 else "")
+
+
+class ToolPickerModal(ModalScreen[dict | None]):
+    """Pick the tools a subagent gets. Dismisses ``{"tools": list | None}``
+    (None = no restriction, every tool) or ``None`` on cancel."""
+
+    BINDINGS = [("escape", "cancel", "Cancel")]
+    DEFAULT_CSS = """
+    ToolPickerModal #modal-box { height: 90%; }
+    ToolPickerModal #tool-list { height: 1fr; border: round $accent 50%; }
+    ToolPickerModal #modal-buttons { dock: bottom; }
+    """
+
+    def __init__(
+        self, title: str, arsenal: list[tuple[str, str]], selected: list[str] | None
+    ) -> None:
+        super().__init__()
+        self._title = title
+        self._arsenal = arsenal
+        names = {n for n, _ in arsenal}
+        self._selected: set[str] = set(names) if selected is None else set(selected) & names
+
+    def compose(self) -> ComposeResult:
+        from novacode_cli.agents.agent_file import ALWAYS_INCLUDED
+
+        with Vertical(id="modal-box"):
+            yield Static(Text(self._title, style="bold"), id="modal-title")
+            yield Static(
+                Text(
+                    f"Always included: {', '.join(ALWAYS_INCLUDED)}. "
+                    "Space toggles, type to filter.",
+                    style="dim",
+                )
+            )
+            yield Input(placeholder="Filter tools...", id="tool-filter")
+            yield SelectionList[str](id="tool-list")
+            yield Static("", id="tool-count")
+            with Horizontal(id="modal-buttons"):
+                yield Button("Save", id="save", variant="primary")
+                yield Button("Select shown", id="all-shown")
+                yield Button("Clear shown", id="none-shown")
+                yield Button("Cancel", id="cancel")
+
+    def on_mount(self) -> None:
+        animate_modal_screen(self)
+        self._fill("")
+        self.query_one("#tool-filter", Input).focus()
+
+    def _fill(self, needle: str) -> None:
+        sl = self.query_one("#tool-list", SelectionList)
+        sl.clear_options()
+        needle = needle.lower().strip()
+        for name, desc in self._arsenal:
+            if needle and needle not in name.lower() and needle not in desc.lower():
+                continue
+            label = Text.assemble((name, "bold"), ("  " + desc[:70], "dim"))
+            sl.add_option((label, name, name in self._selected))
+        self._count()
+
+    def _count(self) -> None:
+        total = len(self._arsenal)
+        n = len(self._selected)
+        note = " (every tool)" if n == total else ""
+        self.query_one("#tool-count", Static).update(
+            Text(f"{n} of {total} selected{note}", style="cyan")
+        )
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "tool-filter":
+            self._fill(event.value)
+
+    def on_selection_list_selected_changed(self, event: SelectionList.SelectedChanged) -> None:
+        sl = event.selection_list
+        shown = {sl.get_option_at_index(i).value for i in range(sl.option_count)}
+        self._selected = (self._selected - shown) | set(sl.selected)
+        self._count()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        sl = self.query_one("#tool-list", SelectionList)
+        if event.button.id == "cancel":
+            self.dismiss(None)
+        elif event.button.id == "all-shown":
+            sl.select_all()
+        elif event.button.id == "none-shown":
+            sl.deselect_all()
+        elif event.button.id == "save":
+            # Everything ticked means "no restriction", so tools added later
+            # (a new MCP server) reach this agent too.
+            everything = self._selected >= {n for n, _ in self._arsenal}
+            self.dismiss({"tools": None if everything else sorted(self._selected)})
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+def _session_arsenal(app: Any) -> list[tuple[str, str]]:
+    from novacode_cli.agents.agent_file import tool_arsenal
+
+    return tool_arsenal(getattr(getattr(app, "session_state", None), "_tools", None))
+
+
 class AgentCreateModal(ModalScreen[dict | None]):
     """Modal dialog to collect inputs for creating a new custom subagent."""
 
     BINDINGS = [("escape", "cancel", "Cancel")]
+    DEFAULT_CSS = """
+    AgentCreateModal #modal-box { height: 90%; }
+    AgentCreateModal #agent-form { height: 1fr; }
+    AgentCreateModal #modal-buttons { dock: bottom; }
+    AgentCreateModal #agent-tools-row { height: auto; margin-top: 1; }
+    AgentCreateModal #agent-tools-summary { width: 1fr; padding: 1 1 0 0; }
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._tools: list[str] | None = None  # None = every tool
 
     def compose(self) -> ComposeResult:
         from novacode_cli.config.config import settings
@@ -1556,37 +1680,42 @@ class AgentCreateModal(ModalScreen[dict | None]):
 
         with Vertical(id="modal-box"):
             yield Static(Text("Create Custom Subagent", style="bold"), id="modal-title")
-            yield Static(
-                Text("Agent Name (e.g. code-reviewer):", style="bold"), id="agent-name-label"
-            )
-            yield Input(
-                placeholder="Name (letters, numbers, hyphens, underscores)", id="agent-name"
-            )
-
-            yield Static(Text("Specialization / Description:", style="bold"), id="agent-desc-label")
-            yield Input(
-                placeholder="e.g. Reviews python code for security vulnerabilities", id="agent-desc"
-            )
-
-            yield Static(Text("Storage Scope:", style="bold"), id="agent-scope-label")
-            yield Select(scope_options, id="agent-scope", value="global")
-
-            yield Static(Text("Color Theme:", style="bold"), id="agent-color-label")
-            yield Select(
-                [
-                    ("Sky Blue", "#0ea5e9"),
-                    ("Teal", "#14b8a6"),
-                    ("Green", "#22c55e"),
-                    ("Blue", "#3b82f6"),
-                    ("Orange", "#f97316"),
-                    ("Red", "#ef4444"),
-                    ("Purple", "#a855f7"),
-                    ("Pink", "#ec4899"),
-                    ("Gray", "#6b7280"),
-                ],
-                id="agent-color",
-                value="#0ea5e9",
-            )
+            with VerticalScroll(id="agent-form"):
+                yield Static(
+                    Text("Agent Name (e.g. code-reviewer):", style="bold"), id="agent-name-label"
+                )
+                yield Input(
+                    placeholder="Name (letters, numbers, hyphens, underscores)", id="agent-name"
+                )
+                yield Static(
+                    Text("Specialization / Description:", style="bold"), id="agent-desc-label"
+                )
+                yield Input(
+                    placeholder="e.g. Reviews python code for security vulnerabilities",
+                    id="agent-desc",
+                )
+                yield Static(Text("Storage Scope:", style="bold"), id="agent-scope-label")
+                yield Select(scope_options, id="agent-scope", value="global")
+                yield Static(Text("Color Theme:", style="bold"), id="agent-color-label")
+                yield Select(
+                    [
+                        ("Sky Blue", "#0ea5e9"),
+                        ("Teal", "#14b8a6"),
+                        ("Green", "#22c55e"),
+                        ("Blue", "#3b82f6"),
+                        ("Orange", "#f97316"),
+                        ("Red", "#ef4444"),
+                        ("Purple", "#a855f7"),
+                        ("Pink", "#ec4899"),
+                        ("Gray", "#6b7280"),
+                    ],
+                    id="agent-color",
+                    value="#0ea5e9",
+                )
+                yield Static(Text("Tools:", style="bold"), id="agent-tools-label")
+                with Horizontal(id="agent-tools-row"):
+                    yield Static(_tools_summary(None), id="agent-tools-summary")
+                    yield Button("Choose tools...", id="choose-tools")
             yield Static("", id="agent-create-hint")
             with Horizontal(id="modal-buttons"):
                 yield Button("Create", id="do-create", variant="primary")
@@ -1601,6 +1730,19 @@ class AgentCreateModal(ModalScreen[dict | None]):
             self.dismiss(None)
         elif event.button.id == "do-create":
             self._submit()
+        elif event.button.id == "choose-tools":
+            self.app.push_screen(
+                ToolPickerModal(
+                    "Tools for the new subagent", _session_arsenal(self.app), self._tools
+                ),
+                callback=self._tools_chosen,
+            )
+
+    def _tools_chosen(self, result: dict | None) -> None:
+        if result is None:
+            return
+        self._tools = result["tools"]
+        self.query_one("#agent-tools-summary", Static).update(_tools_summary(self._tools))
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "agent-name":
@@ -1650,6 +1792,7 @@ class AgentCreateModal(ModalScreen[dict | None]):
                 "description": desc,
                 "scope": scope,
                 "color": color,
+                "tools": self._tools,
             }
         )
 
@@ -1661,6 +1804,16 @@ class AgentsScreen(ModalScreen[None]):
     """Native subagents manager: list configured agents, view details, create or delete them."""
 
     BINDINGS = [("escape", "close", "Close")]
+    # Fixed height with the buttons docked: the details pane holds a whole
+    # system prompt, and with height:auto it pushed Create/Delete off the modal.
+    DEFAULT_CSS = """
+    AgentsScreen #modal-box { height: 90%; }
+    AgentsScreen #agents-list { height: 1fr; max-height: 100%; min-height: 3; }
+    AgentsScreen #agent-detail-scroll {
+        height: 2fr; background: $boost; border: round $accent 50%; padding: 0 1;
+    }
+    AgentsScreen #modal-buttons { dock: bottom; }
+    """
 
     def __init__(self) -> None:
         super().__init__()
@@ -1673,10 +1826,12 @@ class AgentsScreen(ModalScreen[None]):
             yield Static(Text("Configured Subagents:", style="bold cyan"), id="agents-section")
             yield OptionList(id="agents-list")
             yield Static(Text("Subagent Details:", style="bold yellow"), id="agent-detail-header")
-            yield Static("", id="agent-detail-preview", classes="preview-box")
+            with VerticalScroll(id="agent-detail-scroll"):
+                yield Static("", id="agent-detail-preview")
             yield Static("", id="agents-hint")
             with Horizontal(id="modal-buttons"):
                 yield Button("Create", id="create", variant="primary")
+                yield Button("Tools", id="edit-tools")
                 yield Button("Delete", id="delete", variant="error")
                 yield Button("Close", id="close")
 
@@ -1703,10 +1858,12 @@ class AgentsScreen(ModalScreen[None]):
                 Text("No subagents are currently configured.", style="dim")
             )
             self.query_one("#delete", Button).disabled = True
+            self.query_one("#edit-tools", Button).disabled = True
             hint.update(Text("Create one with the Create button", style="dim"))
             return
 
         self.query_one("#delete", Button).disabled = False
+        self.query_one("#edit-tools", Button).disabled = False
         for name, path, scope in self._agents:
             from novacode_cli.commands.agents_commands import extract_agent_description
 
@@ -1749,17 +1906,12 @@ class AgentsScreen(ModalScreen[None]):
         color = ""
         agent_md = path / "agent.md"
         try:
+            from novacode_cli.agents.agent_file import read_agent
+
             desc = extract_agent_description(agent_md)
-            content = agent_md.read_text(encoding="utf-8")
-            if content.startswith("---"):
-                parts = content.split("---", 2)
-                if len(parts) >= 3:
-                    system_prompt = parts[2].strip()
-                    for line in parts[1].splitlines():
-                        if line.strip().startswith("color:"):
-                            color = line.split(":", 1)[1].strip()
-            else:
-                system_prompt = content.strip()
+            front, system_prompt = read_agent(agent_md)
+            system_prompt = system_prompt.strip()
+            color = str(front.get("color") or "")
         except Exception as e:
             system_prompt = f"(error reading system prompt: {e})"
 
@@ -1775,7 +1927,15 @@ class AgentsScreen(ModalScreen[None]):
             preview_text.append(f"{color}\n", style=f"bold {color}")
         if desc:
             preview_text.append(f"Description: ", style="bold")
-            preview_text.append(f"{desc}\n\n", style="dim")
+            preview_text.append(f"{desc}\n", style="dim")
+        try:
+            from novacode_cli.agents.agent_file import agent_tools
+
+            chosen = agent_tools(agent_md.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            chosen = None
+        preview_text.append("Tools: ", style="bold")
+        preview_text.append(f"{_tools_summary(chosen)}\n\n", style="cyan")
         preview_text.append(f"System Prompt:\n", style="bold")
         preview_text.append(system_prompt, style="italic dim")
 
@@ -1790,6 +1950,48 @@ class AgentsScreen(ModalScreen[None]):
         elif event.button.id == "delete":
             if not self._generating:
                 self._delete_agent()
+        elif event.button.id == "edit-tools":
+            if not self._generating:
+                self._edit_tools()
+
+    def _edit_tools(self) -> None:
+        """Change the highlighted agent's tools (writes its agent.md)."""
+        idx = self.query_one("#agents-list", OptionList).highlighted
+        if idx is None or not (0 <= idx < len(self._agents)):
+            return
+        name, path, _scope = self._agents[idx]
+        agent_md = path / "agent.md"
+        from novacode_cli.agents.agent_file import agent_tools, set_agent_tools
+
+        try:
+            current = agent_tools(agent_md.read_text(encoding="utf-8"))
+        except OSError:
+            return
+
+        def _save(result: dict | None) -> None:
+            if result is None:
+                return
+            try:
+                set_agent_tools(agent_md, result["tools"])
+            except Exception as e:  # noqa: BLE001
+                self.query_one("#agents-hint", Static).update(
+                    Text(f"Could not save tools: {e}", style="red")
+                )
+                return
+            self.app._agent_names_cache = None
+            self._update_preview(idx)
+            self.query_one("#agents-hint", Static).update(
+                Text(
+                    f"Tools for @{name}: {_tools_summary(result['tools'])} "
+                    "(applies from the next agent build: /clear or restart)",
+                    style="green",
+                )
+            )
+
+        self.app.push_screen(
+            ToolPickerModal(f"Tools for @{name}", _session_arsenal(self.app), current),
+            callback=_save,
+        )
 
     async def _create_agent(self) -> None:
         result = await self.app.push_screen_wait(AgentCreateModal())
@@ -1846,16 +2048,14 @@ class AgentsScreen(ModalScreen[None]):
                 if not system_prompt:
                     raise RuntimeError("AI generation of system prompt returned empty response.")
 
-                final_content = f"""---
-color: {color}
-description: {desc}
----
+                from novacode_cli.agents.agent_file import write_agent
 
-{system_prompt}"""
-
-                agent_dir.mkdir(parents=True, exist_ok=True)
                 agent_md = agent_dir / "agent.md"
-                agent_md.write_text(final_content, encoding="utf-8")
+                write_agent(
+                    agent_md,
+                    {"color": color, "description": desc, "tools": result.get("tools")},
+                    system_prompt,
+                )
 
                 if self.is_mounted:
                     try:

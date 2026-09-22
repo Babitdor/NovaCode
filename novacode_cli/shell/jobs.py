@@ -14,8 +14,8 @@ Two things live here:
    (running → done | failed | terminated). Observers (the TUI indicator/panel and
    the completion notifier) are fired reactively on every state change.
 
-# ponytail: single global foreground slot — one turn runs at a time. If nested
-# subagent shells ever need independent control, key this by tool_call_id.
+# ponytail: Esc / Ctrl+B act on EVERY running foreground command (one turn's
+# parallel calls). Key controls by tool_call_id if a per-call action is ever needed.
 """
 
 from __future__ import annotations
@@ -41,52 +41,54 @@ class ForegroundControl:
     detach: threading.Event = field(default_factory=threading.Event)
 
 
-_current: ForegroundControl | None = None
+# Every foreground command running right now. A turn's tool calls run
+# concurrently, so there can be several: with a single slot the newest call
+# overwrote the older ones' control, and Esc / Ctrl+B could no longer reach them
+# (an older command then ran to its full timeout: the original freeze).
+_live: list[ForegroundControl] = []
 _lock = threading.Lock()
 
 
 def set_current(command: str) -> ForegroundControl:
-    """Publish a fresh control for the foreground command about to run."""
-    global _current
+    """Publish a fresh control for a foreground command about to run."""
     ctl = ForegroundControl(command=command)
     with _lock:
-        _current = ctl
+        _live.append(ctl)
     return ctl
 
 
 def get_current() -> ForegroundControl | None:
-    """Return the live foreground control, or None if nothing is running."""
+    """The most recently started live control, or None if nothing is running."""
     with _lock:
-        return _current
+        return _live[-1] if _live else None
 
 
 def clear_current(ctl: ForegroundControl) -> None:
-    """Clear the slot iff ``ctl`` is still the current one."""
-    global _current
+    """Retire ``ctl`` once its command is done."""
     with _lock:
-        if _current is ctl:
-            _current = None
+        if ctl in _live:
+            _live.remove(ctl)
 
 
 def request_kill() -> bool:
-    """Ask the running foreground command to die. True if one was running."""
-    ctl = get_current()
-    if ctl is not None:
+    """Ask every running foreground command to die. True if any was running."""
+    with _lock:
+        live = list(_live)
+    for ctl in live:
         ctl.kill.set()
-        return True
-    return False
+    return bool(live)
 
 
 def request_detach() -> bool:
-    """Ask the running foreground command to detach to the background.
+    """Move every running foreground command to the background.
 
-    True if a command was running and not already being killed.
+    True if at least one was running and not already being killed.
     """
-    ctl = get_current()
-    if ctl is not None and not ctl.kill.is_set():
+    with _lock:
+        live = [c for c in _live if not c.kill.is_set()]
+    for ctl in live:
         ctl.detach.set()
-        return True
-    return False
+    return bool(live)
 
 
 # ---------------------------------------------------------------------------

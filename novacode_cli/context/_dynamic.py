@@ -74,7 +74,9 @@ def get_ollama_context_length(model_name: str) -> Optional[int]:
             ["ollama", "show", model_name],
             capture_output=True,
             text=True,
-            timeout=10,
+            # Answers in ~0.1s when healthy; a busy daemon can hang. A failure is
+            # cached for the session anyway, so waiting longer buys nothing.
+            timeout=3,
         )
 
         if result.returncode != 0:
@@ -141,7 +143,7 @@ def get_ollama_runtime_info(model_name: str) -> Optional[dict]:
     """
     try:
         result = subprocess.run(
-            ["ollama", "ps"], capture_output=True, text=True, timeout=10
+            ["ollama", "ps"], capture_output=True, text=True, timeout=3
         )
         if result.returncode != 0:
             return None

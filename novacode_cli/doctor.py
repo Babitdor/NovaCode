@@ -92,7 +92,7 @@ def run_doctor() -> int:
                         )
 
                         _model = config.get("model") or _os.environ.get(
-                            "OLLAMA_MODEL", "qwen3-coder:480b-cloud"
+                            "OLLAMA_MODEL", "deepseek-v4.1-flash:cloud"
                         )
                         if is_ollama_cloud_model(_model):
                             # Cloud model: runs on Ollama's servers, not local

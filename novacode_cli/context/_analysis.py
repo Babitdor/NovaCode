@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from langchain_core.messages import BaseMessage
@@ -125,6 +125,19 @@ LIB_SUMMARIZATION_FRACTION = 0.85
 # library ALWAYS won and the user saw deepagents' "SESSION INTENT" block while
 # the indicator still read "warning, not critical".
 AUTO_COMPACT_THRESHOLD = 0.82
+
+# Where ``ContextEditingMiddleware``/``ClearToolUsesEdit`` starts clearing older
+# tool results (the lightweight, deterministic reducer that runs BEFORE whole
+# history compaction). Expressed as a fraction of the model's window and
+# converted to an absolute token count at agent-build time — the library's
+# ``trigger`` is an ``int``, so the fraction cannot be passed through directly.
+#
+# MUST stay below :data:`AUTO_COMPACT_THRESHOLD`: clearing tool results is far
+# cheaper than replacing the conversation, so it must get its chance first.
+# A fixed trigger (the previous 60_000) was window-independent and therefore
+# silently never fired on the small Ollama windows in MODEL_CONTEXT_WINDOWS
+# (e.g. ~40K), leaving those models with no tool-result reducer at all.
+CONTEXT_EDIT_TRIGGER_FRACTION = 0.60
 
 
 @dataclass
@@ -467,10 +480,47 @@ def _tool_call_text(msg: BaseMessage) -> str:
     return " ".join(parts)
 
 
+def _tool_schema_text(tools: list[Any]) -> str:
+    """Serialize tool definitions (name + description + args schema) for counting.
+
+    Unused tools' full schemas still ship on every request, so omitting them
+    hides a large, permanent slice of the baseline. Serialization mirrors
+    :func:`_tool_call_text` so both sides of a call are counted the same way.
+    """
+    import json
+
+    parts: list[str] = []
+    for tool in tools:
+        name = getattr(tool, "name", None) or (tool.get("name") if isinstance(tool, dict) else "")
+        if name:
+            parts.append(str(name))
+        description = getattr(tool, "description", None) or (
+            tool.get("description") if isinstance(tool, dict) else ""
+        )
+        if description:
+            parts.append(str(description))
+        schema = getattr(tool, "args_schema", None)
+        if schema is not None:
+            try:
+                if hasattr(schema, "model_json_schema"):
+                    parts.append(json.dumps(schema.model_json_schema(), ensure_ascii=False))
+                elif isinstance(schema, dict):
+                    parts.append(json.dumps(schema, ensure_ascii=False))
+            except (TypeError, ValueError):
+                parts.append(str(schema))
+        elif isinstance(tool, dict) and tool.get("parameters"):
+            try:
+                parts.append(json.dumps(tool["parameters"], ensure_ascii=False))
+            except (TypeError, ValueError):
+                parts.append(str(tool["parameters"]))
+    return " ".join(parts)
+
+
 def build_context_breakdown(
     messages: list[BaseMessage],
     model_name: str,
     use_dynamic: bool = True,
+    tools: list[Any] | None = None,
 ) -> ContextBreakdown:
     """Build a ContextBreakdown from the current conversation state.
 
@@ -481,6 +531,10 @@ def build_context_breakdown(
         messages: Current conversation messages from agent state.
         model_name: Model name for looking up context window size.
         use_dynamic: Whether to use dynamic detection from Ollama (default: True).
+        tools: Tool definitions bound to the model, if known. Their schemas ship
+            on every request and are a permanent part of the baseline, so they
+            are counted into ``tool_definitions_tokens``. Omitted (0) when the
+            caller cannot supply them cheaply.
 
     Returns:
         Populated ContextBreakdown with usage stats.
@@ -522,10 +576,15 @@ def build_context_breakdown(
         elif isinstance(msg, ToolMessage):
             tool_tokens += tokens
 
-    total = system_tokens + user_tokens + assistant_tokens + tool_tokens
+    # Tool schemas are bound to the model, not carried in the message list, but
+    # they consume context on every request — count them into the baseline.
+    tool_def_tokens = _estimate_tokens(_tool_schema_text(tools)) if tools else 0
+
+    total = system_tokens + user_tokens + assistant_tokens + tool_tokens + tool_def_tokens
 
     return ContextBreakdown(
         system_prompt_tokens=system_tokens,
+        tool_definitions_tokens=tool_def_tokens,
         user_message_tokens=user_tokens,
         assistant_message_tokens=assistant_tokens,
         tool_result_tokens=tool_tokens,
@@ -537,116 +596,3 @@ def build_context_breakdown(
     )
 
 
-@dataclass
-class CompactionRecommendation:
-    """Recommendation for whether compaction should be performed.
-
-    Attributes:
-        should_compact: Whether compaction is recommended
-        reason: Human-readable explanation for the recommendation
-        usage_percentage: Current context usage percentage
-        tokens_used: Total tokens currently used
-        tokens_available: Tokens remaining before hitting limit
-        messages_count: Number of messages in conversation
-        estimated_tokens_saved: Estimated tokens that would be saved by compaction
-    """
-
-    should_compact: bool
-    reason: str
-    usage_percentage: float
-    tokens_used: int
-    tokens_available: int
-    messages_count: int
-    estimated_tokens_saved: int = 0
-
-
-def get_compaction_recommendation(
-    messages: list[BaseMessage],
-    model_name: str,
-    baseline_tokens: int = 0,
-    use_dynamic: bool = True,
-) -> CompactionRecommendation:
-    """Analyze a conversation and recommend whether compaction should run.
-
-    Evaluates context-window usage percentage, message count, estimated token
-    savings, and conversation-length heuristics.
-
-    Args:
-        messages: Current conversation messages from agent state.
-        model_name: Model name for context window lookup.
-        baseline_tokens: Baseline tokens (system prompt, tools, memory) already used.
-        use_dynamic: Whether to use dynamic detection from Ollama (default: True).
-
-    Returns:
-        CompactionRecommendation with analysis and recommendation.
-    """
-    breakdown = build_context_breakdown(messages, model_name, use_dynamic=use_dynamic)
-
-    total_with_baseline = breakdown.total_tokens + baseline_tokens
-    effective_usage_pct = (total_with_baseline / breakdown.context_window_size) * 100
-    tokens_available = breakdown.context_window_size - total_with_baseline
-
-    total_messages = len(messages)
-
-    reasons = []
-
-    # Critical threshold: >90% usage - always recommend
-    if effective_usage_pct >= CONTEXT_CRITICAL_THRESHOLD * 100:
-        reasons.append(f"Critical context usage ({effective_usage_pct:.1f}%)")
-    # Warning threshold: >75% usage with significant message count
-    elif effective_usage_pct >= CONTEXT_WARNING_THRESHOLD * 100:
-        if total_messages >= 20:
-            reasons.append(
-                f"High context usage ({effective_usage_pct:.1f}%) "
-                f"with {total_messages} messages"
-            )
-    # Moderate usage but lots of messages - recommend for efficiency
-    elif effective_usage_pct >= 50 and total_messages >= 50:
-        reasons.append(
-            f"Many messages ({total_messages}) with moderate usage "
-            f"({effective_usage_pct:.1f}%)"
-        )
-    # Long conversation without compaction - recommend for cleanliness
-    elif total_messages >= 100:
-        reasons.append(f"Very long conversation ({total_messages} messages)")
-
-    # Estimate tokens that would be saved (keep last ~6 exchanges + a summary).
-    if total_messages > 10:
-        messages_to_summarize = max(0, total_messages - 12)
-        avg_tokens_per_message = breakdown.conversation_tokens / max(1, total_messages)
-        estimated_summary_tokens = 500
-        estimated_tokens_saved = int(
-            (messages_to_summarize * avg_tokens_per_message) - estimated_summary_tokens
-        )
-        estimated_tokens_saved = max(0, estimated_tokens_saved)
-    else:
-        estimated_tokens_saved = 0
-
-    should_compact = len(reasons) > 0
-
-    if not reasons:
-        if effective_usage_pct < 25:
-            reason = (
-                f"Low context usage ({effective_usage_pct:.1f}%) - no compaction needed"
-            )
-        elif total_messages < 10:
-            reason = (
-                f"Short conversation ({total_messages} messages) - no compaction needed"
-            )
-        else:
-            reason = (
-                f"Context usage acceptable ({effective_usage_pct:.1f}%) - "
-                f"compaction optional"
-            )
-    else:
-        reason = "; ".join(reasons)
-
-    return CompactionRecommendation(
-        should_compact=should_compact,
-        reason=reason,
-        usage_percentage=effective_usage_pct,
-        tokens_used=total_with_baseline,
-        tokens_available=tokens_available,
-        messages_count=total_messages,
-        estimated_tokens_saved=estimated_tokens_saved,
-    )

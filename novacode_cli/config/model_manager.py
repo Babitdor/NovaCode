@@ -27,6 +27,10 @@ ProviderType = Literal[
 
 
 # Model provider presets
+#: The model Nova falls back to when nothing else is chosen: no saved /model
+#: pick, or the saved provider has no API key.
+DEFAULT_OLLAMA_MODEL = "deepseek-v4.1-flash:cloud"
+
 MODEL_PRESETS: dict[str, dict[str, Any]] = {
     "openai": {
         "name": "OpenAI",
@@ -61,11 +65,12 @@ MODEL_PRESETS: dict[str, dict[str, Any]] = {
     "ollama": {
         "name": "Ollama",
         "description": "Local Ollama models (qwen, llama, mistral, etc.)",
-        "default_model": "qwen3-coder:480b-cloud",
+        "default_model": DEFAULT_OLLAMA_MODEL,
         "env_var": "OLLAMA_MODEL",
         "api_key_var": None,
         "requires_api_key": False,
         "models": [
+            DEFAULT_OLLAMA_MODEL,
             "qwen3-coder:480b-cloud",
             "qwen2.5:72b",
             "llama3.3:70b",
@@ -268,7 +273,7 @@ class ModelManager:
             model = os.environ.get("NVIDIA_MODEL", "deepseek-ai/deepseek-v4-pro-0813")
             return ("NVIDIA NIM", model)
         # Default to Ollama (always available, no API key needed)
-        model = os.environ.get("OLLAMA_MODEL", "qwen3-coder:480b-cloud")
+        model = os.environ.get("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
         return ("Ollama", model)
 
     def get_current_provider_id(self) -> str | None:

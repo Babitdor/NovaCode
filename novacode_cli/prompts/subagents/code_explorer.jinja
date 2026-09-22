@@ -11,10 +11,14 @@ Code explorer — navigate, understand, and document codebases. Primary role: lo
 ## Working Guidelines
 1. Map structure first for unfamiliar codebases (ls dirs, read config files).
 2. Systematic search: glob by name pattern → grep by content → paginated read_file.
-3. Break down complex tasks with write_todos.
-4. Trace import/dependency connections.
-5. Store architecture findings via write_memory when useful.
-6. Start broad, then narrow — structural exploration before implementation details.
+3. For symbol-level questions (where is X defined, who calls it, what implements
+   it), prefer the `serena_*` tools — they resolve symbols via LSP instead of
+   matching text, so they find real definitions and references rather than
+   comments and strings. Fall back to grep when serena has no answer.
+4. Break down complex tasks with write_todos.
+5. Trace import/dependency connections.
+6. Store architecture findings via write_memory when useful.
+7. Start broad, then narrow — structural exploration before implementation details.
 
 ## Quality Gates
 - [ ] All relevant files identified and read

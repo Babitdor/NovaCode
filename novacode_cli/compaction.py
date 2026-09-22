@@ -4,11 +4,13 @@ This module provides functionality to compress conversation history
 by generating an intelligent summary that preserves key context.
 """
 
+import json
 from pathlib import Path
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, RemoveMessage, ToolMessage
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from novacode_cli.context import CompactionResult
 from novacode_cli.prompts import render_template
@@ -73,7 +75,12 @@ def _message_parts(messages: list[BaseMessage]) -> list[str]:
             content = _format_message_content(msg.content)
             if len(content) > 2000:
                 content = content[:2000] + "... [truncated]"
-            parts.append(f"ASSISTANT: {content}")
+            # Tool calls live in .tool_calls, not .content — on a tool-calling
+            # turn the content is usually empty, so without this the summarizer
+            # never saw WHICH file was edited or WHAT command ran, and "Files
+            # Modified" was guessed from truncated tool results.
+            calls = [_render_tool_call(tc) for tc in getattr(msg, "tool_calls", None) or []]
+            parts.append("ASSISTANT: " + "\n".join(filter(None, [content, *calls])))
         elif isinstance(msg, ToolMessage):
             content = _format_message_content(msg.content)
             if len(content) > 500:
@@ -82,26 +89,120 @@ def _message_parts(messages: list[BaseMessage]) -> list[str]:
     return parts
 
 
+_TOOL_ARGS_CHARS = 300
+
+
+def _render_tool_call(call: dict) -> str:
+    """Render a tool call as ``-> name({args})`` with the args capped.
+
+    Enough for the summarizer to know what was touched, not a copy of the payload.
+    """
+    args = json.dumps(call.get("args") or {}, ensure_ascii=False, default=str)
+    if len(args) > _TOOL_ARGS_CHARS:
+        args = args[:_TOOL_ARGS_CHARS] + "...}"
+    return f"-> {call.get('name', 'tool')}({args})"
+
+
+def _window_tokens(model: BaseChatModel, context_window: int | None = None) -> int:
+    """Return the model's context window in tokens.
+
+    The caller's value wins (the TUI passes the tracker's effective window,
+    which accounts for Ollama ``num_ctx``); else the static table
+    (``use_dynamic=False`` — no slow/flaky live query here).
+    """
+    if context_window and context_window > 0:
+        return context_window
+    name = getattr(model, "model_name", None) or getattr(model, "model", None) or ""
+    try:
+        from novacode_cli.context._analysis import get_context_window_size
+
+        return get_context_window_size(str(name), use_dynamic=False)
+    except Exception:  # noqa: BLE001
+        return 8192
+
+
 def _budget_chars(model: BaseChatModel, context_window: int | None = None) -> int:
     """Character budget for the summarizer's input, sized to the model's context
     window so a long conversation never overflows the summarization call itself.
 
-    Prefers the caller-supplied ``context_window`` (the TUI passes the token
-    tracker's effective window, which already accounts for Ollama ``num_ctx``);
-    otherwise falls back to the static table (``use_dynamic=False`` — no slow/
-    flaky live query here). Reserves ~45% of the window for the prompt template +
-    generated summary; rough 4-chars/token.
+    Reserves ~45% of the window for the prompt template + generated summary;
+    rough 4-chars/token.
     """
-    window = context_window
-    if not window or window <= 0:
-        name = getattr(model, "model_name", None) or getattr(model, "model", None) or ""
-        try:
-            from novacode_cli.context._analysis import get_context_window_size
+    return max(8000, int(_window_tokens(model, context_window) * 0.55) * 4)
 
-            window = get_context_window_size(str(name), use_dynamic=False)
-        except Exception:  # noqa: BLE001
-            window = 8192
-    return max(8000, int(window * 0.55) * 4)
+
+# The recent tail compaction keeps VERBATIM, as a share of the window, capped.
+# Codex keeps ~20k tokens of recent messages; deepagents' own summarizer keeps
+# 10% of the window. Summarizing the turn the agent is in the middle of is the
+# lossiest possible cut — the exact error text, the file just edited, the
+# user's latest wording all become a paraphrase.
+KEEP_TAIL_FRACTION = 0.10
+KEEP_TAIL_MAX_TOKENS = 20_000
+
+
+def _message_chars(msg: BaseMessage) -> int:
+    size = len(_format_message_content(msg.content))
+    for call in getattr(msg, "tool_calls", None) or []:
+        size += len(json.dumps(call.get("args") or {}, default=str))
+    return size
+
+
+def _split_tail(messages: list[BaseMessage], keep_tokens: int) -> int:
+    """Index where the verbatim tail starts (``len(messages)`` = keep nothing).
+
+    Cuts only at a real user message, so a tool call is never separated from
+    its result, and takes the EARLIEST such cut whose tail fits the budget. A
+    tail with a ToolMessage whose call is not in the tail is rejected as a
+    second guard (a steer injected mid-turn is also a HumanMessage).
+    """
+    budget = keep_tokens * 4
+    best = len(messages)
+    size = 0
+    for i in range(len(messages) - 1, 0, -1):  # index 0: nothing left to summarize
+        size += _message_chars(messages[i])
+        if size > budget:
+            break
+        msg = messages[i]
+        if isinstance(msg, HumanMessage) and not is_compaction_summary(
+            _format_message_content(msg.content)
+        ):
+            best = i
+    tail = messages[best:]
+    issued = {tc.get("id") for m in tail for tc in (getattr(m, "tool_calls", None) or [])}
+    if any(isinstance(m, ToolMessage) and m.tool_call_id not in issued for m in tail):
+        return len(messages)
+    return best
+
+
+def _rehydration_note() -> str:
+    """Paths the agent touched, so it can re-read them just in time.
+
+    Claude Code and Codex re-attach recently used files after compacting. Paths
+    are the cheap form of that: the content is on disk, the summary only has
+    to say where to look.
+    """
+    try:
+        from novacode_cli.tracking.file_tracker import (
+            get_modified_files,
+            get_recently_read_files,
+        )
+
+        modified = get_modified_files()[-15:]
+        read = [p for p in get_recently_read_files(15) if p not in modified]
+    except Exception:  # noqa: BLE001 — a hint, never worth failing compaction
+        return ""
+    lines = []
+    if modified:
+        lines.append("- Modified: " + ", ".join(modified))
+    if read:
+        lines.append("- Read recently: " + ", ".join(read))
+    if not lines:
+        return ""
+    return (
+        "## Files touched this session\n"
+        "Re-read a file before relying on its contents; the summary only "
+        "describes it.\n" + "\n".join(lines)
+    )
 
 
 def _chunk_parts(parts: list[str], max_chars: int) -> list[list[str]]:
@@ -123,7 +224,11 @@ def _chunk_parts(parts: list[str], max_chars: int) -> list[list[str]]:
 
 
 async def _summarize_text(
-    model: BaseChatModel, conversation_text: str, focus_instructions: str | None
+    model: BaseChatModel,
+    conversation_text: str,
+    focus_instructions: str | None,
+    *,
+    tail_kept: bool = False,
 ) -> str:
     """One summarization LLM call over ``conversation_text``."""
     if focus_instructions:
@@ -137,6 +242,7 @@ async def _summarize_text(
         "summarization.jinja",
         focus_instructions=focus_text,
         conversation=conversation_text,
+        tail_kept=tail_kept,
     )
     response = await model.ainvoke([HumanMessage(content=prompt)])
     return _format_message_content(response.content)
@@ -220,6 +326,8 @@ async def summarize_conversation(
     messages: list[BaseMessage],
     focus_instructions: str | None = None,
     context_window: int | None = None,
+    *,
+    tail_kept: bool = False,
 ) -> str:
     """Summarize a conversation, budgeted to the model's context window.
 
@@ -239,6 +347,8 @@ async def summarize_conversation(
         focus_instructions: Optional focus instructions from the user
         context_window: Optional explicit context window (tokens); the TUI passes
             the token tracker's effective window.
+        tail_kept: The most recent messages stay verbatim after the summary, so
+            the summary covers only what precedes them.
 
     Returns:
         The summarized conversation as a string
@@ -251,7 +361,7 @@ async def summarize_conversation(
     text = "\n\n".join(parts)
 
     if len(text) <= budget:
-        return await _summarize_text(model, text, focus_instructions)
+        return await _summarize_text(model, text, focus_instructions, tail_kept=tail_kept)
 
     # Too big for one call → hierarchical summarization.
     chunks = _chunk_parts(parts, budget)
@@ -272,7 +382,7 @@ async def summarize_conversation(
         combined = "\n\n".join(summaries)
 
     # Final pass: one cohesive summary from the collapsed material.
-    final = await _summarize_text(model, combined[:budget], focus_instructions)
+    final = await _summarize_text(model, combined[:budget], focus_instructions, tail_kept=tail_kept)
 
     # Q&A gap-filling (Meta-Harness port): the hierarchical path is lossy — ask
     # what the summary missed and restore it from the full conversation. Only
@@ -343,28 +453,46 @@ async def compact_conversation(
         except Exception:
             original_tokens = len(original_text) // 4
 
+        # Keep the recent tail verbatim; summarize only what precedes it.
+        keep_tokens = min(
+            KEEP_TAIL_MAX_TOKENS,
+            int(_window_tokens(model, context_window) * KEEP_TAIL_FRACTION),
+        )
+        cut = _split_tail(messages, keep_tokens)
+        head, tail = messages[:cut], messages[cut:]
+
         # Generate summary (budgeted to the model's context window)
         summary = await summarize_conversation(
-            model, messages, focus_instructions, context_window=context_window
+            model,
+            head,
+            focus_instructions,
+            context_window=context_window,
+            tail_kept=bool(tail),
         )
 
-        # Replace all existing messages with the summary in a single atomic update.
-        # LangGraph's messages reducer uses add_messages semantics — passing
-        # RemoveMessage + new message together ensures the state never passes
-        # through an invalid intermediate (e.g. ToolMessages with no AIMessage),
-        # which would cause langchain's _fetch_last_ai_and_tool_messages to crash.
-        summary_message = HumanMessage(
-            content=f"{COMPACTION_SUMMARY_MARKER}\n\n{summary}"
+        # Replace the conversation in a single atomic update: REMOVE_ALL then
+        # summary + tail, so the summary lands BEFORE the tail (a plain
+        # RemoveMessage per id would append it after) and the state never
+        # passes through an invalid intermediate (ToolMessages with no
+        # AIMessage), which crashes langchain's _fetch_last_ai_and_tool_messages.
+        framing = (
+            "The earlier part of this conversation was compacted into the summary "
+            "below"
+            + ("; the most recent messages follow it verbatim" if tail else "")
+            + ". Continue the work from where it stopped. Do not acknowledge or "
+            "restate this summary."
         )
-        remove_ops = [RemoveMessage(id=msg.id) for msg in messages if msg.id]
+        body = "\n\n".join(filter(None, [framing, summary, _rehydration_note()]))
+        summary_message = HumanMessage(content=f"{COMPACTION_SUMMARY_MARKER}\n\n{body}")
         # Also clear any prior auto-summarization event. deepagents'
         # SummarizationMiddleware reconstructs the effective message list from
         # `_summarization_event` (a cutoff index into the OLD message list); if we
         # rewrite messages without clearing it, the next turn would slice the new
         # list at a stale index and corrupt context. Resetting it makes the fresh
         # summary the whole context.
+        new_messages = [RemoveMessage(id=REMOVE_ALL_MESSAGES), summary_message, *tail]
         update_values: dict[str, Any] = {
-            "messages": remove_ops + [summary_message],
+            "messages": new_messages,
             "_summarization_event": None,
         }
         try:
@@ -374,16 +502,16 @@ async def compact_conversation(
             # field; retry with just the message rewrite.
             await agent.aupdate_state(
                 config=config,
-                values={"messages": remove_ops + [summary_message]},
+                values={"messages": new_messages},
                 as_node="model",
             )
 
         # Count new tokens using the model's tokenizer when available.
         try:
-            _new = model.get_num_tokens_from_messages([HumanMessage(content=summary)])
-            new_tokens = _new if isinstance(_new, int) else len(summary) // 4
+            _new = model.get_num_tokens_from_messages([summary_message, *tail])
+            new_tokens = _new if isinstance(_new, int) else len(body) // 4
         except Exception:
-            new_tokens = len(summary) // 4
+            new_tokens = (len(body) + sum(_message_chars(m) for m in tail)) // 4
 
         # Persist the summary as a durable memory lesson so the conversation's
         # knowledge survives the rewrite (best-effort; never fails compaction).
@@ -392,7 +520,16 @@ async def compact_conversation(
             try:
                 from novacode_cli.hermes.memory_tiers import record_lesson
 
-                record_lesson(agent_dir, "session-summary", summary)
+                # The marker travels WITH the artifact: a derived summary is
+                # injected into future prompts, so it must carry its own
+                # provenance rather than relying on an instruction elsewhere to
+                # establish precedence. Unlabelled, it reads as verified fact.
+                record_lesson(
+                    agent_dir,
+                    "session-summary",
+                    "[derived summary, not a verified record — may be incomplete; "
+                    "observed reality wins on any conflict]\n\n" + summary,
+                )
                 learnings = summary
             except Exception:  # noqa: BLE001 — memory persistence is best-effort
                 learnings = ""
@@ -403,7 +540,7 @@ async def compact_conversation(
             new_tokens=new_tokens,
             tokens_saved=max(0, original_tokens - new_tokens),
             messages_before=messages_before,
-            messages_after=1,
+            messages_after=1 + len(tail),
             summary=summary,
             learnings=learnings,
         )

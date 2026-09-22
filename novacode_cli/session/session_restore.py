@@ -112,6 +112,11 @@ def format_session_summary(meta: SessionMeta) -> str:
     age = format_session_age(meta.last_active)
     project = Path(meta.project_root).name if meta.project_root else "no project"
     model = meta.model_name or "unknown model"
+    # A session saved before the provider was recorded cannot have its model
+    # rebuilt on resume, so say so rather than showing a model that will not be
+    # restored. Sessions with a provider restore exactly what is shown.
+    if meta.model_name and not getattr(meta, "model_provider", None):
+        model = f"{model} (not restored)"
     msg_count = meta.message_count
 
     return f"[bold]{meta.session_id[:8]}[/bold] - {project} ({model})\n  {msg_count} messages, {age}"

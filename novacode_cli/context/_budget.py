@@ -75,28 +75,6 @@ class ContextBudget:
             return total
         return 0
 
-    def get_usage_report(self) -> dict[str, Any]:
-        """Get a report of context usage by middleware."""
-        return {
-            "total_tokens": self.total_tokens,
-            "max_tokens": self.max_tokens,
-            "percentage_used": (self.total_tokens / self.max_tokens) * 100,
-            "middleware_breakdown": dict(
-                sorted(
-                    self.middleware_usage.items(),
-                    key=lambda x: x[1],
-                    reverse=True,
-                )
-            ),
-            "top_consumers": [
-                {"middleware": name, "tokens": tokens}
-                for name, tokens in sorted(
-                    self.middleware_usage.items(),
-                    key=lambda x: x[1],
-                    reverse=True,
-                )[:5]
-            ],
-        }
 
     def reset(self) -> None:
         """Reset tracking for a new request."""

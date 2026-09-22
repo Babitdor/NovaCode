@@ -7,6 +7,7 @@ from novacode_cli.commands import CommandContext
 from novacode_cli.commands.menu_helper import MenuOption, run_interactive_menu
 from novacode_cli.config.config import COLORS, console, settings
 from novacode_cli.ui.ui_elements import TokenTracker
+from novacode_cli.utils.model_info import get_current_provider
 
 
 async def handle_sessions_command(ctx: CommandContext) -> bool:
@@ -177,6 +178,7 @@ async def handle_save_command(
             assistant_id=assistant_id,
             todos=session_state.todos,
             model_name=model_name,
+            model_provider=get_current_provider(),
             project_root=project_root,
             sandbox_id=sandbox_id,
             sandbox_type=sandbox_type,

@@ -40,8 +40,7 @@ The agent's approach to work:
 **Key rules:**
 - `edit_file` — ALWAYS for existing files. Read first.
 - `write_file` — only for NEW files.
-- `shell` — build, test, run. `interactive=True` for prompts; `background=True` for servers.
-- `run_tests` — always after behavior-changing edits.
+- `shell` — build, test, run. `interactive=True` for prompts; `background=True` for servers. There is no `run_tests` tool: run the suite through `shell`.
 
 **Delegation:**
 - `write_todos` — track 3+ step tasks

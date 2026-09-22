@@ -26,8 +26,9 @@ from novacode_cli.remote.bridge import (
     BridgeConfig,
     RemoteMessage,
     RemotePlatform,
-    chunk_message,
 )
+from novacode_cli.remote.telegram_format import render as render_markdown
+from novacode_cli.remote.telegram_format import to_plain
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,8 @@ class TelegramBridge:
         self._session: aiohttp.ClientSession | None = None
         self._offset: int = 0  # last update_id + 1 for long-polling
         self._running = False
-        self._forum_thread_id: int | None = None  # set if chat is a forum supergroup
+        self.is_forum: bool | None = None  # topics enabled? (detected on first use)
+        self._owner: dict[int, str] = {}  # sent message_id -> session id that sent it
         self.bot_user: str | None = None  # set after successful getMe
 
     @property
@@ -146,35 +148,75 @@ class TelegramBridge:
             self._offset = updates[-1]["update_id"] + 1
         return updates
 
-    async def create_forum_topic(self, chat_id: int, name: str) -> int | None:
-        """Create a forum topic in a supergroup and return its message_thread_id.
+    # ── topics: one per Nova session (forum supergroups) ─────────────────
 
-        Returns None if the chat isn't a forum or the bot lacks permissions.
-        """
-        chat_info = await self._api_call("getChat", {"chat_id": chat_id})
-        if chat_info is None:
-            return None
-        if not chat_info.get("result", {}).get("is_forum"):
-            return None
-        result = await self._api_call("createForumTopic", {"chat_id": chat_id, "name": name[:128]})
-        if result is None:
-            return None
-        return result.get("result", {}).get("message_thread_id")
+    async def detect_forum(self) -> bool:
+        """Whether the chat is a forum supergroup (topics enabled). Cached."""
+        if self.is_forum is None:
+            info = await self._api_call("getChat", {"chat_id": self._config.chat_id})
+            self.is_forum = bool((info or {}).get("result", {}).get("is_forum"))
+        return self.is_forum
 
-    def _thread_params(self, base: dict[str, Any]) -> dict[str, Any]:
-        """Inject ``message_thread_id`` into an API payload when in a forum topic."""
-        if self._forum_thread_id is not None:
-            return {**base, "message_thread_id": self._forum_thread_id}
+    async def open_topic(self, name: str) -> int | None:
+        """Create a topic for a session; its ``message_thread_id``, or None
+        when the chat has no topics or the bot may not manage them."""
+        if not await self.detect_forum():
+            return None
+        result = await self._api_call(
+            "createForumTopic", {"chat_id": self._config.chat_id, "name": name[:128]}
+        )
+        return (result or {}).get("result", {}).get("message_thread_id")
+
+    async def close_topic(self, thread_id: int) -> None:
+        """Close (not delete) a session's topic: its history stays readable."""
+        await self._api_call(
+            "closeForumTopic", {"chat_id": self._config.chat_id, "message_thread_id": thread_id}
+        )
+
+    async def post(self, text: str, *, thread_id: int | None = None, sid: str = "root") -> None:
+        """Send markdown ``text`` unprompted (e.g. "session started") to a topic."""
+        await self._send_message(self._config.chat_id, text, thread_id=thread_id, sid=sid)
+
+    def _remember(self, sent: dict | None, sid: str | None) -> None:
+        """Note which session sent a message, so replying to it reaches that session."""
+        mid = (sent or {}).get("result", {}).get("message_id")
+        if mid is None or not sid:
+            return
+        self._owner[mid] = sid
+        if len(self._owner) > 5000:  # bounded: forget the oldest half
+            for key in list(self._owner)[:2500]:
+                del self._owner[key]
+
+    def _thread_params(self, base: dict[str, Any], thread_id: int | None = None) -> dict[str, Any]:
+        """Inject ``message_thread_id`` into an API payload for a topic."""
+        if thread_id is not None:
+            return {**base, "message_thread_id": thread_id}
         return base
 
-    async def _send_message(self, chat_id: int, text: str) -> None:
-        """Send a message to a Telegram chat (chunked, forum-topic-aware)."""
-        chunks = chunk_message(text, RemotePlatform.TELEGRAM)
-        for chunk in chunks:
-            await self._api_call(
-                "sendMessage",
-                self._thread_params({"chat_id": chat_id, "text": chunk, "parse_mode": "Markdown"}),
+    async def _send_html(self, method: str, params: dict[str, Any], body: str) -> dict | None:
+        """Send/edit ``body`` (Telegram HTML); on a parse refusal, resend it plain.
+
+        Without the fallback a message Telegram rejects is simply lost.
+        """
+        sent = await self._api_call(method, {**params, "text": body, "parse_mode": "HTML"})
+        if sent is None:
+            sent = await self._api_call(method, {**params, "text": to_plain(body)})
+        return sent
+
+    async def _send_message(
+        self,
+        chat_id: int,
+        text: str,
+        *,
+        thread_id: int | None = None,
+        sid: str | None = None,
+    ) -> None:
+        """Send markdown ``text`` as Telegram HTML (chunked, topic-aware)."""
+        for chunk in render_markdown(text):
+            sent = await self._send_html(
+                "sendMessage", self._thread_params({"chat_id": chat_id}, thread_id), chunk
             )
+            self._remember(sent, sid)
 
     async def run(self) -> None:
         """Start the Telegram long-polling loop.
@@ -206,7 +248,7 @@ class TelegramBridge:
                     # No messages (normal) or a network error (also returns []).
                     # Back off briefly after repeated failures to avoid spinning.
                     if _consecutive_errors > 0:
-                        await asyncio.sleep(min(2 ** _consecutive_errors, 30))
+                        await asyncio.sleep(min(2**_consecutive_errors, 30))
                     _consecutive_errors += 1
                 else:
                     _consecutive_errors = 0
@@ -234,14 +276,18 @@ class TelegramBridge:
                     if chat_id != self._config.chat_id and chat_id not in self._config.allowed_ids:
                         continue
 
-                    # If we're scoped to a forum topic, only accept messages in that thread.
-                    if self._forum_thread_id is not None:
-                        msg_thread_id = message.get("message_thread_id")
-                        if msg_thread_id != self._forum_thread_id:
-                            continue
+                    # Which topic it came from (forum groups only: in plain
+                    # groups message_thread_id also marks reply chains).
+                    thread_id = (
+                        message.get("message_thread_id")
+                        if message.get("is_topic_message")
+                        else None
+                    )
+                    reply_to = message.get("reply_to_message") or {}
+                    reply_owner = self._owner.get(reply_to.get("message_id"))
 
                     if not text:
-                        text = await self._transcribe_voice(chat_id, voice)
+                        text = await self._transcribe_voice(chat_id, voice, thread_id)
                         if not text:
                             continue  # nothing usable; the sender was told why
 
@@ -250,85 +296,61 @@ class TelegramBridge:
                         f"{text[:80]}{'...' if len(text) > 80 else ''}"
                     )
 
+                    # The router fills ``route`` before anything is sent back:
+                    # the session that answers ("sid") and where ("thread").
+                    route: dict = {"sid": None, "thread": thread_id}
+
                     async def reply_fn(
-                        response_text: str,
-                        _chat_id: int = chat_id,
+                        response_text: str, _chat_id: int = chat_id, _route: dict = route
                     ) -> None:
-                        await self._send_message(_chat_id, response_text)
+                        await self._send_message(
+                            _chat_id, response_text, thread_id=_route["thread"], sid=_route["sid"]
+                        )
 
-                    async def typing_fn(
-                        _chat_id: int = chat_id,
-                    ) -> None:
-                        await self._trigger_typing(_chat_id)
+                    async def typing_fn(_chat_id: int = chat_id, _route: dict = route) -> None:
+                        await self._trigger_typing(_chat_id, _route["thread"])
 
-                    # Edit-in-place streaming state. `text` is the FULL accumulated
-                    # answer; keep one live message and roll over past Telegram's
-                    # 4096-char cap. Stream as PLAIN text (partial markdown like an
-                    # unclosed code fence makes editMessageText reject the entity
-                    # parse); apply Markdown only on the final edit, best-effort.
-                    _live: dict = {"id": None, "base": 0, "last": None}
-                    _EDIT_LIMIT = 3900
+                    # Edit-in-place live status. ``body`` is markdown (the status
+                    # line's activity log); it is rendered to HTML on every edit,
+                    # which is safe mid-stream: markdown-it closes what the text
+                    # leaves open. Past one message it rolls over to a new one.
+                    _live: dict = {"id": None, "last": None}
 
                     async def edit_fn(
-                        body: str, final: bool = False, _chat_id: int = chat_id
+                        body: str,
+                        final: bool = False,  # noqa: ARG001
+                        _chat_id: int = chat_id,
+                        _route: dict = route,
+                        _live: dict = _live,
                     ) -> None:
                         try:
-                            while len(body) - _live["base"] > _EDIT_LIMIT:
-                                block = body[_live["base"] : _live["base"] + _EDIT_LIMIT]
-                                if _live["id"] is None:
-                                    sent = await self._api_call(
-                                        "sendMessage",
-                                        self._thread_params({"chat_id": _chat_id, "text": block}),
-                                    )
-                                    _live["id"] = (
-                                        (sent or {}).get("result", {}).get("message_id")
-                                    )
-                                elif block != _live["last"]:
-                                    await self._api_call(
-                                        "editMessageText",
-                                        {
-                                            "chat_id": _chat_id,
-                                            "message_id": _live["id"],
-                                            "text": block,
-                                        },
-                                    )
-                                _live["base"] += _EDIT_LIMIT
-                                _live["id"] = None
-                                _live["last"] = None
-                            remainder = body[_live["base"] :] or "…"
-                            if _live["id"] is None:
-                                params = self._thread_params({"chat_id": _chat_id, "text": remainder})
-                                if final:
-                                    params["parse_mode"] = "Markdown"
-                                sent = await self._api_call("sendMessage", params)
-                                if sent is None and final:
-                                    sent = await self._api_call(
-                                        "sendMessage",
-                                        self._thread_params({"chat_id": _chat_id, "text": remainder}),
-                                    )
-                                _live["id"] = (
-                                    (sent or {}).get("result", {}).get("message_id")
+                            pages = render_markdown(body)
+                            if len(pages) > 1 and _live["id"] is not None:
+                                # Overflowed: freeze this message, continue in a new one.
+                                await self._send_html(
+                                    "editMessageText",
+                                    {"chat_id": _chat_id, "message_id": _live["id"]},
+                                    pages[0],
                                 )
-                                _live["last"] = remainder
-                            elif remainder != _live["last"]:
-                                params = {
-                                    "chat_id": _chat_id,
-                                    "message_id": _live["id"],
-                                    "text": remainder,
-                                }
-                                if final:
-                                    params["parse_mode"] = "Markdown"
-                                res = await self._api_call("editMessageText", params)
-                                if res is None and final:
-                                    await self._api_call(
-                                        "editMessageText",
-                                        {
-                                            "chat_id": _chat_id,
-                                            "message_id": _live["id"],
-                                            "text": remainder,
-                                        },
-                                    )
-                                _live["last"] = remainder
+                                _live["id"] = None
+                            page = pages[-1]
+                            if page == _live["last"]:
+                                return
+                            if _live["id"] is None:
+                                sent = await self._send_html(
+                                    "sendMessage",
+                                    self._thread_params({"chat_id": _chat_id}, _route["thread"]),
+                                    page,
+                                )
+                                self._remember(sent, _route["sid"])
+                                _live["id"] = (sent or {}).get("result", {}).get("message_id")
+                            else:
+                                await self._send_html(
+                                    "editMessageText",
+                                    {"chat_id": _chat_id, "message_id": _live["id"]},
+                                    page,
+                                )
+                            _live["last"] = page
                         except Exception as e:  # noqa: BLE001
                             logger.error(f"Telegram stream edit error: {e}")
 
@@ -344,6 +366,9 @@ class TelegramBridge:
                         typing_fn=typing_fn,
                         edit_fn=edit_fn,
                         user_mention=user_mention,
+                        thread_id=thread_id,
+                        reply_to_owner=reply_owner,
+                        route=route,
                     )
 
                     await self._queue.put(remote_msg)
@@ -377,7 +402,9 @@ class TelegramBridge:
             logger.error(f"Telegram file download error: {e}")
             return None
 
-    async def _transcribe_voice(self, chat_id: int, voice: dict[str, Any]) -> str:
+    async def _transcribe_voice(
+        self, chat_id: int, voice: dict[str, Any], thread_id: int | None = None
+    ) -> str:
         """Transcribe a voice note, or explain to the sender why it could not be.
 
         Every failure path replies. The sender is on a phone, not at the
@@ -399,38 +426,42 @@ class TelegramBridge:
 
         data = await self._download_file(file_id)
         if not data:
-            await self._send_message(chat_id, "🎙 Could not download that voice note.")
+            await self._send_message(
+                chat_id, thread_id=thread_id, text="🎙 Could not download that voice note."
+            )
             return ""
 
         try:
             text = await transcribe_voice_note(data, duration=voice.get("duration"))
         except (VoiceNotesUnavailable, VoiceNoteTooLong) as e:
-            await self._send_message(chat_id, f"🎙 {e}")
+            await self._send_message(chat_id, thread_id=thread_id, text=f"🎙 {e}")
             return ""
         except Exception:
             # Never kill the poll loop: one bad clip must not stop every later
             # message from being answered.
             logger.exception("Voice note transcription failed")
-            await self._send_message(chat_id, "🎙 Could not transcribe that voice note.")
+            await self._send_message(
+                chat_id, thread_id=thread_id, text="🎙 Could not transcribe that voice note."
+            )
             return ""
 
         if not text:
             await self._send_message(
-                chat_id, "🎙 I could not make out any speech in that note."
+                chat_id, "🎙 I could not make out any speech in that note.", thread_id=thread_id
             )
             return ""
 
         # Echo what was heard before acting on it. Transcription is fallible,
         # and a wrong transcript that silently becomes a prompt is worse than a
         # visible one the sender can correct.
-        await self._send_message(chat_id, f"🎙 “{text}”")
+        await self._send_message(chat_id, thread_id=thread_id, text=f"🎙 “{text}”")
         return text
 
-    async def _trigger_typing(self, chat_id: int) -> None:
+    async def _trigger_typing(self, chat_id: int, thread_id: int | None = None) -> None:
         """Send a 'typing' chat action to Telegram."""
         await self._api_call(
             "sendChatAction",
-            self._thread_params({"chat_id": chat_id, "action": "typing"}),
+            self._thread_params({"chat_id": chat_id, "action": "typing"}, thread_id),
         )
 
     async def stop(self) -> None:

@@ -181,6 +181,9 @@ class SessionPane:
     worktree: Any = None
     branch: str | None = None
     state: dict[str, Any] = field(default_factory=dict)
+    remote_turns: deque = field(default_factory=deque)
+    """Remote (Telegram/Discord) prompts sent to this child, oldest first. The
+    head receives the child's events and is answered at its ``turn_done``."""
 
     def save_from(self, app: Any) -> None:
         """Capture the app's conversation attributes into this pane."""

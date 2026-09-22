@@ -7,8 +7,7 @@ instead of importing scattered free functions.
 
     cm = ContextManager(model_name)
     cm.window_size()                       # int
-    cm.breakdown(messages)                 # ContextBreakdown
-    cm.recommend_compaction(messages, baseline_tokens)  # CompactionRecommendation
+    cm.breakdown(messages, tools=tools)     # ContextBreakdown
     cm.model_config()                      # ModelConfig
 
 Model-independent operations don't require a model name:
@@ -23,9 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from novacode_cli.context._analysis import (
     ContextBreakdown,
-    CompactionRecommendation,
     build_context_breakdown,
-    get_compaction_recommendation,
     get_context_window_size,
 )
 from novacode_cli.context._budget import ContextBudget, get_context_budget
@@ -66,21 +63,18 @@ class ContextManager:
             self._require_model(), use_dynamic=self.use_dynamic
         )
 
-    def breakdown(self, messages: list[BaseMessage]) -> ContextBreakdown:
-        """Token breakdown of ``messages`` against the bound model's window."""
-        return build_context_breakdown(
-            messages, self._require_model(), use_dynamic=self.use_dynamic
-        )
+    def breakdown(
+        self, messages: list[BaseMessage], tools: list[Any] | None = None
+    ) -> ContextBreakdown:
+        """Token breakdown of ``messages`` against the bound model's window.
 
-    def recommend_compaction(
-        self, messages: list[BaseMessage], baseline_tokens: int = 0
-    ) -> CompactionRecommendation:
-        """Whether/why the conversation should be compacted."""
-        return get_compaction_recommendation(
-            messages,
-            self._require_model(),
-            baseline_tokens=baseline_tokens,
-            use_dynamic=self.use_dynamic,
+        Args:
+            messages: Conversation messages from agent state.
+            tools: Tool definitions bound to the model, if known — their schemas
+                are a permanent per-request cost and belong in the baseline.
+        """
+        return build_context_breakdown(
+            messages, self._require_model(), use_dynamic=self.use_dynamic, tools=tools
         )
 
     def model_config(self) -> ModelConfig:
