@@ -1047,6 +1047,14 @@ class NovaApp(App):
     .btw-card { margin: 1 0; border-left: thick $accent-muted; }
     .btw-card > .collapsible--title { color: $accent-muted; background: $surface; }
     .btw-body { padding: 0 2; color: $text-muted; }
+    /* Compaction is housekeeping, not conversation: a quiet one-line card that
+       expands for the stats and summary. Muted so it recedes in the transcript. */
+    .compact-card { margin: 1 0; border-left: thick $success-muted; }
+    .compact-card > .collapsible--title {
+        color: $success-muted;
+        background: $surface;
+    }
+    .compact-body { padding: 0 2; color: $text-muted; }
     .bgshell-card { margin: 1 0; border-left: thick $warning-muted; }
     .bgshell-card > .collapsible--title { color: $warning; background: $surface; }
     .bgshell-log {
@@ -7719,29 +7727,41 @@ class NovaApp(App):
                 except Exception:  # noqa: BLE001
                     pass
                 self._refresh_status()
-            t = Text()
-            t.append("✓ Conversation compacted\n", style="green")
-            t.append(
-                f"  messages: {result.messages_before} → {result.messages_after}\n",
+            # A compaction is a one-off housekeeping event, not conversation
+            # content: it collapses to a single line so it never buries the
+            # transcript, and expands on demand for the stats and the summary.
+            learnings = getattr(result, "learnings", "") or ""
+            summary = getattr(result, "summary", "") or ""
+            body = Text()
+            body.append(
+                f"messages: {result.messages_before} → {result.messages_after}\n",
                 style="dim",
             )
-            t.append(f"  tokens saved: ~{result.tokens_saved:,}\n", style="dim")
-            learnings = getattr(result, "learnings", "") or ""
+            body.append(f"tokens saved: ~{result.tokens_saved:,}\n", style="dim")
             if learnings:
                 # `learnings` is the summary text itself, written as ONE memory
                 # entry — counting its newlines reported "42 learnings" for a
                 # 42-line summary, which overstated what was saved.
-                t.append(
-                    "  🧠 summary preserved to memory\n",
-                    style="green",
-                )
-            summary = getattr(result, "summary", "") or ""
+                body.append("🧠 summary preserved to memory\n", style="green")
             if summary:
-                t.append(
+                body.append(
                     "\n" + summary[:400] + ("…" if len(summary) > 400 else ""),
                     style="dim italic",
                 )
-            self._log(t)
+            card = Collapsible(
+                Static(body, classes="compact-body"),
+                title=(
+                    f"✓ Conversation compacted  ·  "
+                    f"{result.messages_before} → {result.messages_after} msgs  ·  "
+                    f"~{result.tokens_saved:,} tokens saved"
+                ),
+                collapsed=True,
+            )
+            card.add_class("compact-card")
+            self._close_tool_group()
+            await self._transcript().mount(card)
+            self._prune_transcript()
+            self._scroll_end(force=False)
         else:
             self._log(
                 Text(

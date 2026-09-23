@@ -4120,6 +4120,76 @@ def test_tui_bg_agent_reports_back():
     asyncio.run(_drive_bg_agent_reports_back())
 
 
+async def _drive_compact_card() -> None:
+    """A compaction renders as a collapsed one-line card, not an inline dump.
+
+    Regression: the result was written straight into the transcript as a
+    multi-line block (stats + up to 400 chars of summary), which buried the
+    conversation under housekeeping text. It is now a Collapsible that is
+    collapsed by default, with the stats in the title and the summary in the
+    body.
+    """
+    from textual.widgets import Static
+
+    from novacode_cli import compaction
+    from novacode_cli.tui.app import NovaApp
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    class _Result:
+        success = True
+        messages_before = 787
+        messages_after = 72
+        tokens_saved = 79612
+        learnings = "a summary"
+        summary = "The user asked for a nicer compaction card."
+        error = ""
+
+    async def fake_compact(**_kw: object) -> _Result:
+        return _Result()
+
+    app = NovaApp(
+        agent=_FakeAgent(),
+        assistant_id="nova-agent",
+        session_state=_SS(),
+        backend=None,
+        token_tracker=TokenTracker(),
+        image_tracker=None,
+        model_name="m",
+    )
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+        orig = compaction.compact_conversation
+        compaction.compact_conversation = fake_compact
+        try:
+            await app._run_compact("")
+        finally:
+            compaction.compact_conversation = orig
+        await pilot.pause()
+
+        card = next(iter(app.query(".compact-card")))
+        assert card.collapsed is True, "compaction card should start collapsed"
+
+        # The title carries the headline stats, so the collapsed line is useful.
+        title = str(card.title)
+        assert "Conversation compacted" in title, title
+        assert "787" in title, title
+        assert "72" in title, title
+        assert "79,612" in title, title
+
+        # The body holds the detail, and the summary is not truncated away.
+        body = card.query_one(".compact-body", Static)
+        text = str(body.content)
+        assert "tokens saved" in text, text
+        assert "summary preserved to memory" in text, text
+        assert "nicer compaction card" in text, text
+
+
+def test_tui_compact_card():
+    if not _HAS_TEXTUAL:
+        return
+    asyncio.run(_drive_compact_card())
+
+
 async def _drive_ralph_screen():
     from novacode_cli.tui.app import NovaApp, RalphScreen
     from novacode_cli.ui.ui_elements import TokenTracker
