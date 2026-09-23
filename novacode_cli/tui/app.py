@@ -27,7 +27,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -549,6 +549,10 @@ _LIVE_PREVIEW_CHARS = 20_000
 _PCT_WARN = 75
 _PCT_CRITICAL = 90
 
+#: Cap on the background-agent final answer echoed back to the main agent, so a
+#: verbose run cannot flood the next turn's context.
+_BG_REPORT_MAX_CHARS = 2000
+
 
 def _pct_color(percent: float, base: str) -> str:
     """Recolor a usage percentage green→amber→red as it approaches the cap.
@@ -565,6 +569,116 @@ def _pct_color(percent: float, base: str) -> str:
     if percent >= _PCT_WARN:
         return "#e0af68"
     return base
+
+
+def _render_bg_event(  # noqa: PLR0912, PLR0915 — one branch per event type is the point
+    event: Any,  # noqa: ANN401 — event-stream dispatch, matches ui_events.py
+    write: Callable[[str], None],
+    set_phase: Callable[[str], None],
+    fileop_summary: Callable[[Any], str],
+    pending: dict[str, str],
+) -> None:
+    """Render one background-agent progress event into its card.
+
+    The background (Ctrl+B) card is the only view of a detached agent turn, so it
+    must explain *what* is happening, not just name the tool: tool arguments
+    (``display_str``), the reasoning trace, results, file changes and subagent
+    dispatches all go into the body, while ``set_phase`` keeps a one-line live
+    status in the card title (visible even when the card is collapsed).
+
+    A tool call and its result are rendered as ONE line (``✓ read_file(x) · Read
+    42 lines``) rather than two. RichLog cannot rewrite a line, so the call is
+    buffered in ``pending`` and only written when its result arrives; a call with
+    no result yet is flushed as-is by the caller when the turn ends.
+
+    Args:
+        event: A UI event from the agent stream.
+        write: Sink for one line of Rich markup into the card body.
+        set_phase: Sink for the live status line shown in the card title.
+        fileop_summary: Summarizer for a file-op record (``+A / -D`` etc.).
+        pending: Mutable buffer holding the in-flight tool call's rendered prefix,
+            keyed by ``call_id`` (or ``""`` when the event carries no id).
+    """
+    from novacode_cli.ui_events import (
+        AssistantMessage,
+        FileOp,
+        ReasoningDelta,
+        StatusUpdate,
+        SubagentActivity,
+        TextDelta,
+        ToolCall,
+        ToolResult,
+    )
+
+    def _flush_pending() -> None:
+        """Write any buffered tool call that never got a result."""
+        for prefix in pending.values():
+            write(prefix)
+        pending.clear()
+
+    if isinstance(event, AssistantMessage) and event.text:
+        _flush_pending()
+        # Blank line before prose so it does not run into the tool lines above.
+        write("")
+        for line in event.text.splitlines():
+            # Escape: prose may contain [brackets] (markdown links, list markers)
+            # that Rich would otherwise interpret as markup.
+            write(f"[white]{_esc(line)}[/white]" if line.strip() else "")
+        set_phase("responding")
+    elif isinstance(event, TextDelta) and event.text:
+        # Deliberately NOT written. The committed AssistantMessage carries the
+        # same text, and RichLog is append-only (no replace), so rendering the
+        # live preview here would duplicate every paragraph. The card title's
+        # "responding" phase is the live signal instead.
+        set_phase("responding")
+    elif isinstance(event, ReasoningDelta) and event.text:
+        # Dimmed thinking trace, so the user can see it is reasoning, not stalled.
+        _flush_pending()
+        # Blank line before the trace so it does not run into the tool lines above.
+        write("")
+        for line in event.text.splitlines():
+            if line.strip():
+                write(f"[dim italic]💭 {_esc(line)}[/dim italic]")
+        set_phase("thinking")
+    elif isinstance(event, StatusUpdate) and event.message:
+        set_phase(event.message)
+    elif isinstance(event, ToolCall):
+        # Buffer the call; it is written together with its result so the pair
+        # reads as one line. Show the tool AND its arguments (display_str).
+        _flush_pending()
+        pending[event.call_id or ""] = f"[cyan]{event.icon} {_esc(event.display_str)}[/cyan]"
+        set_phase(f"running {event.name}…")
+    elif isinstance(event, ToolResult):
+        prefix = pending.pop(event.call_id or "", None)
+        if prefix is None:
+            # No matching call (e.g. a result for a call we never saw): stand alone.
+            prefix = "[dim]·[/dim]"
+        if event.is_error:
+            write(f"[red]✗[/red] {prefix} [red]· {_esc(event.preview)}[/red]")
+        elif event.preview:
+            write(f"[green]✓[/green] {prefix} [dim]· {_esc(event.preview)}[/dim]")
+        else:
+            write(f"[green]✓[/green] {prefix}")
+    elif isinstance(event, FileOp):
+        rec = event.record
+        errored = bool(getattr(rec, "error", None)) or (
+            getattr(rec, "status", "") == "error"
+        )
+        mark = "[red]✗[/red]" if errored else "[green]✓[/green]"
+        prefix = pending.pop(event.call_id or "", None)
+        if prefix is not None:
+            write(f"{mark} {prefix} [dim]· {_esc(fileop_summary(rec))}[/dim]")
+        else:
+            write(f"{mark} [dim]{_esc(fileop_summary(rec))}[/dim]")
+    elif isinstance(event, SubagentActivity):
+        _flush_pending()
+        who = _esc(event.subagent_type or "subagent")
+        if event.kind == "dispatched":
+            write(f"[magenta]◇ dispatched {who}[/magenta]")
+        elif event.kind == "completed":
+            write(f"[magenta]◆ {who} done[/magenta]")
+        elif event.message:
+            write(f"[magenta]◇ {_esc(event.message)}[/magenta]")
 
 
 class NovaApp(App):
@@ -939,8 +1053,28 @@ class NovaApp(App):
         height: 30vh; min-height: 8; max-height: 22;
         border: none; background: $surface;
     }
-    .bgagent-card { margin: 1 0; border-left: thick $success-muted; }
-    .bgagent-card > .collapsible--title { color: $success; background: $surface; }
+    /* The agent card emits discrete progress lines, not a firehose of command
+       output, so it sizes to its content instead of reserving 30vh. Capped so a
+       long run cannot swallow the transcript. */
+    .bgagent-card {
+        margin: 1 0;
+        border-left: thick $success-muted;
+        background: $surface;
+    }
+    .bgagent-card > .collapsible--title {
+        color: $success;
+        background: $surface;
+        text-style: bold;
+    }
+    .bgagent-log {
+        height: auto; max-height: 14;
+        border: none; background: $surface;
+        padding: 0 1;
+    }
+    /* The Collapsible body is a Vertical that defaults to 1fr, which would
+       stretch the card to the full transcript height. Size it to the log.
+       (The Vertical sits inside the Collapsible's Contents wrapper.) */
+    .bgagent-card Contents > Vertical { height: auto; }
     .bgagent-done > .collapsible--title { color: $success; }
     .bgagent-failed > .collapsible--title { color: $error; }
     /* No reserved scrollbar column: the bar is hidden (see the transparent
@@ -6038,7 +6172,9 @@ class NovaApp(App):
     # -- background agent turn (ctrl+b, non-! input) --------------------------
 
     @work(group="bgagent")
-    async def _bg_agent_worker(self, prompt: str, job_id: int) -> None:
+    async def _bg_agent_worker(  # noqa: PLR0915 — linear stream-handling loop
+        self, prompt: str, job_id: int
+    ) -> None:
         """Run a full agent turn in the background without blocking the main input.
 
         Uses a fresh thread_id so the background conversation is isolated from the
@@ -6053,8 +6189,6 @@ class NovaApp(App):
             Done,
             Error,
             InterruptRequest,
-            ToolCall,
-            ToolResult,
         )
 
         thread_id = f"bg-{uuid.uuid4().hex[:12]}"
@@ -6092,10 +6226,10 @@ class NovaApp(App):
         bg_session = _BgSession(self.session_state)
         ag, backend = self._active_agent()
 
-        log_widget = RichLog(classes="bgshell-log", highlight=True, markup=True)
+        log_widget = RichLog(classes="bgagent-log", highlight=True, markup=True)
         card = Collapsible(
             Vertical(log_widget),
-            title=f"⟳ bg[{job_id}]: {p_short}  [running]",
+            title=f"⟳ bg[{job_id}] · {p_short}",
             collapsed=False,
         )
         card.add_class("bgagent-card")
@@ -6103,6 +6237,23 @@ class NovaApp(App):
         await self._transcript().mount(card)
         self._prune_transcript()
         self._scroll_end()
+
+        # Live "what is happening" line, mirrored into the card title so it is
+        # visible even when the card is collapsed. The body keeps the full trace.
+        def _set_phase(phase: str) -> None:
+            card.title = f"⟳ bg[{job_id}] · {p_short}  ·  {phase}"
+
+        def _write(markup: str) -> None:
+            log_widget.write(markup)
+            log_widget.scroll_end(animate=False)
+
+        # In-flight tool calls, buffered so a call and its result render as one
+        # line (RichLog cannot rewrite a line once written).
+        pending: dict[str, str] = {}
+
+        # The final answer, captured so the main agent can be told what the
+        # background run concluded (not just that it finished).
+        final_text: list[str] = []
 
         try:
             async for e in run_agent_stream(
@@ -6113,17 +6264,7 @@ class NovaApp(App):
                 backend=backend,
                 seen_message_ids=set(),
             ):
-                if isinstance(e, AssistantMessage) and e.text:
-                    for line in e.text.splitlines():
-                        log_widget.write(line)
-                    log_widget.scroll_end(animate=False)
-                elif isinstance(e, ToolCall):
-                    log_widget.write(f"[dim]{e.icon} {e.name}[/dim]")
-                    log_widget.scroll_end(animate=False)
-                elif isinstance(e, ToolResult) and e.is_error:
-                    log_widget.write(f"[red]✗ {e.preview}[/red]")
-                    log_widget.scroll_end(animate=False)
-                elif isinstance(e, InterruptRequest):
+                if isinstance(e, InterruptRequest):
                     # Only ask_user_question reaches here (tools and plans are
                     # auto-approved via auto_approve=True on the session).
                     # Provide a canned answer so the turn continues unblocked.
@@ -6138,19 +6279,62 @@ class NovaApp(App):
                         pass
                 elif isinstance(e, (Done, Error)):
                     break
+                else:
+                    # Everything else is a progress event: render it into the card
+                    # body and update the live phase line.
+                    if isinstance(e, AssistantMessage) and e.text:
+                        final_text.append(e.text)
+                    _render_bg_event(e, _write, _set_phase, self._fileop_summary, pending)
         except asyncio.CancelledError:
-            card.title = f"✗ bg[{job_id}]: {p_short}  [cancelled]"
+            card.title = f"✗ bg[{job_id}] · {p_short}  ·  cancelled"
             return
         except Exception as ex:  # noqa: BLE001
-            log_widget.write(f"[bold red]Error: {ex}[/bold red]")
-            card.title = f"✗ bg[{job_id}]: {p_short}  [error]"
+            _write(f"[bold red]Error: {ex}[/bold red]")
+            card.title = f"✗ bg[{job_id}] · {p_short}  ·  error"
             card.add_class("bgagent-failed")
             card.collapsed = True
             return
 
-        card.title = f"✓ bg[{job_id}]: {p_short}  [done]"
+        # A tool call whose result never arrived (turn ended mid-call) still needs
+        # to appear, or the trace would silently drop it.
+        for prefix in pending.values():
+            _write(prefix)
+        pending.clear()
+
+        card.title = f"✓ bg[{job_id}] · {p_short}  ·  done"
         card.add_class("bgagent-done")
         card.collapsed = True
+
+        # Report the outcome back to the main agent so it can summarise and act on
+        # what the background run found, rather than the user having to relay it.
+        self._report_bg_agent_done(job_id, prompt, "\n".join(final_text))
+
+    def _report_bg_agent_done(self, job_id: int, prompt: str, final_text: str) -> None:
+        """Queue a note telling the main agent what a background run concluded.
+
+        The note is prepended to the agent's next turn (see the
+        ``_pending_job_notes`` drain in the submit path), so the agent can
+        summarise the result and act on it without the user relaying it by hand.
+
+        Args:
+            job_id: The background job number (``bg[<job_id>]``).
+            prompt: The task the background run was given.
+            final_text: The run's final assistant prose (may be empty).
+        """
+        summary = final_text.strip()
+        if len(summary) > _BG_REPORT_MAX_CHARS:
+            summary = summary[:_BG_REPORT_MAX_CHARS] + "\n… (truncated)"
+        note = f"Background agent bg[{job_id}] finished. Task: {prompt}" + (
+            f"\n\nIts final answer:\n{summary}" if summary else "\n\n(no final answer)"
+        )
+        self._pending_job_notes.append(note)
+        self._log(
+            Text(
+                f"✓ Background agent bg[{job_id}] finished — the agent will be told "
+                f"on its next turn.",
+                style="green",
+            )
+        )
 
     async def _run_slash(self, text: str) -> None:
         """Handle the TUI-native slash command subset — table dispatch.

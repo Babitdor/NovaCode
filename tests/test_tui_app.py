@@ -3717,6 +3717,409 @@ def test_tui_subagent_terminal_preview():
     asyncio.run(_drive_subagent_terminal_preview())
 
 
+def test_tui_bg_agent_card_explains_progress():  # noqa: PLR0915 — one block per event type
+    """The Ctrl+B background card must explain what is happening, not just name tools.
+
+    Regression: the card used to write only ``e.name`` for a ToolCall, so a
+    detached run showed a bare list of tool names with no arguments, no reasoning,
+    no results and no live status. ``_render_bg_event`` is a pure function, so it
+    is asserted directly (no RichLog deferred-write timing to race).
+    """
+    if not _HAS_TEXTUAL:
+        return
+    import novacode_cli.ui_events as ev
+    from novacode_cli.tui.app import _render_bg_event
+
+    body: list[str] = []
+    phases: list[str] = []
+    pending: dict[str, str] = {}
+    write = body.append
+    set_phase = phases.append
+
+    def summary(rec: object) -> str:
+        return f"{getattr(rec, 'path', '?')} +1/-0"
+
+    # A tool call is BUFFERED, not written: it must render together with its
+    # result on one line, so nothing appears until the result arrives.
+    _render_bg_event(
+        ev.ToolCall(
+            name="read_file",
+            display_str="read_file(/src/config.py)",
+            icon="→",
+            call_id="c1",
+        ),
+        write,
+        set_phase,
+        summary,
+        pending,
+    )
+    assert body == [], f"call should be buffered, not written: {body}"
+    assert "c1" in pending, pending
+    assert phases[-1] == "running read_file…", phases
+
+    # Reasoning must be surfaced (dimmed), so the run does not look stalled.
+    # It also flushes the buffered call (which never got a result).
+    _render_bg_event(
+        ev.ReasoningDelta("I should check the config first."),
+        write,
+        set_phase,
+        summary,
+        pending,
+    )
+    assert any("check the config" in line for line in body), body
+    assert any("read_file(/src/config.py)" in line for line in body), body
+    assert pending == {}, pending
+    assert phases[-1] == "thinking", phases
+    # The flushed call comes first, then a blank line, then the reasoning trace.
+    assert body[0] == "[cyan]→ read_file(/src/config.py)[/cyan]", body
+    assert body[1] == "", f"reasoning should be preceded by a blank line: {body}"
+
+    # A call + its result render on ONE line, with the arguments AND the result.
+    body.clear()
+    _render_bg_event(
+        ev.ToolCall(
+            name="read_file",
+            display_str="read_file(/src/a.ts)",
+            icon="→",
+            call_id="c2",
+        ),
+        write,
+        set_phase,
+        summary,
+        pending,
+    )
+    _render_bg_event(
+        ev.ToolResult(preview="Read 42 lines", is_error=False, call_id="c2"),
+        write,
+        set_phase,
+        summary,
+        pending,
+    )
+    assert len(body) == 1, f"call+result must be one line, got {body}"
+    assert "read_file(/src/a.ts)" in body[0], body
+    assert "Read 42 lines" in body[0], body
+    assert "✓" in body[0], body
+
+    # An error result is marked as an error, still on one line.
+    body.clear()
+    _render_bg_event(
+        ev.ToolCall(name="shell", display_str="shell(pytest)", icon="$", call_id="c3"),
+        write,
+        set_phase,
+        summary,
+        pending,
+    )
+    _render_bg_event(
+        ev.ToolResult(preview="3 failed", is_error=True, call_id="c3"),
+        write,
+        set_phase,
+        summary,
+        pending,
+    )
+    assert len(body) == 1, body
+    assert "shell(pytest)" in body[0], body
+    assert "3 failed" in body[0], body
+    assert "✗" in body[0], body
+
+    # A FileOp result also joins its call on one line.
+    body.clear()
+
+    class _Rec:
+        path = "/src/config.py"
+        status = "ok"
+        error = None
+
+    _render_bg_event(
+        ev.ToolCall(
+            name="edit_file",
+            display_str="edit_file(/src/config.py)",
+            icon="✎",
+            call_id="c4",
+        ),
+        write,
+        set_phase,
+        summary,
+        pending,
+    )
+    _render_bg_event(
+        ev.FileOp(record=_Rec(), call_id="c4"), write, set_phase, summary, pending
+    )
+    assert len(body) == 1, body
+    assert "edit_file(/src/config.py)" in body[0], body
+    assert "/src/config.py" in body[0], body
+
+    # Subagent dispatches are surfaced too.
+    _render_bg_event(
+        ev.SubagentActivity(kind="dispatched", subagent_type="code-explorer"),
+        write,
+        set_phase,
+        summary,
+        pending,
+    )
+    assert any("code-explorer" in line for line in body), body
+
+    # StatusUpdate drives the live phase line.
+    _render_bg_event(ev.StatusUpdate("planning…"), write, set_phase, summary, pending)
+    assert phases[-1] == "planning…", phases
+
+    # Markup in tool output must be escaped, not interpreted.
+    body.clear()
+    _render_bg_event(
+        ev.ToolCall(
+            name="shell",
+            display_str="shell(echo [bold]hi[/bold])",
+            icon="$",
+            call_id="c5",
+        ),
+        write,
+        set_phase,
+        summary,
+        pending,
+    )
+    _render_bg_event(
+        ev.ToolResult(preview="ok", call_id="c5"), write, set_phase, summary, pending
+    )
+    assert any("\\[bold]" in line for line in body), body
+
+    # A `task` dispatch carries "[Agent Label] ..." in display_str. Rich treats
+    # "[Code Explorer]" as an invalid tag (spaces are not allowed in tag names)
+    # and renders it literally, so the label survives. Assert it is present.
+    body.clear()
+    _render_bg_event(
+        ev.ToolCall(
+            name="task",
+            display_str="[Code Explorer] Find all refs",
+            icon="🔧",
+            call_id="c6",
+        ),
+        write,
+        set_phase,
+        summary,
+        pending,
+    )
+    _render_bg_event(
+        ev.ToolResult(preview="✓ 12.3s", call_id="c6"), write, set_phase, summary, pending
+    )
+    assert len(body) == 1, body
+    assert "[Code Explorer] Find all refs" in body[0], body
+
+
+def test_tui_bg_agent_card_prose():
+    """The bg card's prose must not duplicate, must be escaped, and must be spaced.
+
+    Regression: ``TextDelta`` wrote a live preview that the committed
+    ``AssistantMessage`` then wrote AGAIN (RichLog is append-only, so the preview
+    cannot be replaced), and the committed text was written unescaped, so
+    ``[brackets]`` in prose were interpreted as Rich markup.
+    """
+    if not _HAS_TEXTUAL:
+        return
+    import novacode_cli.ui_events as ev
+    from novacode_cli.tui.app import _render_bg_event
+
+    body: list[str] = []
+    phases: list[str] = []
+    pending: dict[str, str] = {}
+    write = body.append
+    set_phase = phases.append
+
+    def summary(_rec: object) -> str:
+        return "x"
+
+    # The live TextDelta preview must NOT be written: the committed
+    # AssistantMessage carries the same text, so writing both duplicates it.
+    _render_bg_event(ev.TextDelta("I found "), write, set_phase, summary, pending)
+    _render_bg_event(ev.TextDelta("three issues."), write, set_phase, summary, pending)
+    assert body == [], f"TextDelta must not be written: {body}"
+    assert phases[-1] == "responding", phases
+
+    # The committed message is written once, escaped, preceded by a blank line.
+    _render_bg_event(
+        ev.AssistantMessage(
+            text="I found three issues.\n\nSee [the docs](http://x).",
+            agent_name="Nova",
+            agent_color="cyan",
+        ),
+        write,
+        set_phase,
+        summary,
+        pending,
+    )
+    joined = "\n".join(body)
+    assert joined.count("I found three issues.") == 1, f"prose duplicated: {body}"
+    assert body[0] == "", f"prose should be preceded by a blank line: {body}"
+    # Brackets in prose are escaped, not interpreted as markup.
+    assert "\\[the docs]" in joined, body
+
+
+async def _drive_bg_agent_card_sizes_to_content() -> None:
+    """The Ctrl+B agent card must size to its content, not reserve 30vh.
+
+    Regression: the card reused ``.bgshell-log`` (``height: 30vh``) and its
+    Collapsible body defaulted to ``1fr``, so a 5-line run occupied the whole
+    transcript. The card now uses ``.bgagent-log`` (auto height, capped) and the
+    body is pinned to ``auto``.
+    """
+    from textual.widgets import RichLog
+
+    import novacode_cli.agent_stream as astream
+    import novacode_cli.ui_events as ev
+    from novacode_cli.tui.app import NovaApp
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    async def _measure(n_tools: int) -> tuple[int, int]:
+        app = NovaApp(
+            agent=_FakeAgent(),
+            assistant_id="nova-agent",
+            session_state=_SS(),
+            backend=None,
+            token_tracker=TokenTracker(),
+            image_tracker=None,
+            model_name="m",
+        )
+        async with app.run_test(size=(100, 40)) as pilot:
+            await pilot.pause()
+            events = []
+            for i in range(n_tools):
+                events.append(
+                    ev.ToolCall(
+                        name="read_file",
+                        display_str=f"read_file(/src/f{i}.py)",
+                        icon="→",
+                        call_id=f"c{i}",
+                    )
+                )
+                events.append(ev.ToolResult(preview=f"Read {i} lines", call_id=f"c{i}"))
+            gate = asyncio.Event()
+
+            async def fake_stream(*_a: object, **_k: object):  # noqa: ANN202 — async generator
+                for e in events:
+                    yield e
+                await gate.wait()
+
+            orig = astream.run_agent_stream
+            astream.run_agent_stream = fake_stream
+            task = asyncio.create_task(
+                app._bg_agent_worker.__wrapped__(app, "do a thing", 1)
+            )
+            try:
+                # Poll until the card has mounted AND laid out with the expected
+                # number of lines. A fixed number of pauses races the layout under
+                # a full-suite run (pilot.pause() alone was measured at 46-69 ms
+                # under load), which made this flaky.
+                expected = n_tools * 2
+                deadline = asyncio.get_running_loop().time() + 20.0
+                card = None
+                log_widget = None
+                while asyncio.get_running_loop().time() < deadline:
+                    await pilot.pause()
+                    cards = list(app.query(".bgagent-card"))
+                    if not cards:
+                        await asyncio.sleep(0.01)
+                        continue
+                    card = cards[0]
+                    log_widget = card.query_one(RichLog)
+                    if len(log_widget.lines) >= expected and log_widget.size.height > 0:
+                        break
+                    await asyncio.sleep(0.01)
+                assert card is not None, "card never mounted"
+                assert log_widget is not None, "log never mounted"
+                return card.size.height, log_widget.size.height
+            finally:
+                gate.set()
+                await task
+                astream.run_agent_stream = orig
+
+    short_card, short_log = await _measure(2)
+    tall_card, tall_log = await _measure(20)
+
+    # A short run must NOT reserve the old 30vh (~12 rows at this size).
+    assert short_card < 12, f"short run card too tall: {short_card}"
+    # The log grows with content, up to the 14-row cap.
+    assert short_log < tall_log, (short_log, tall_log)
+    assert tall_log <= 14, f"log exceeded its cap: {tall_log}"
+    # The card tracks the log (body is auto, not 1fr).
+    assert tall_card < 20, f"card stretched to the transcript: {tall_card}"
+
+
+def test_tui_bg_agent_card_sizes_to_content():
+    if not _HAS_TEXTUAL:
+        return
+    asyncio.run(_drive_bg_agent_card_sizes_to_content())
+
+
+async def _drive_bg_agent_reports_back() -> None:
+    """A finished Ctrl+B agent run must report its result to the main agent.
+
+    Regression: the background worker only updated its own card. The main agent
+    was never told what the run concluded, so the user had to relay it by hand.
+    The worker now queues a note (drained into the agent's next turn) carrying the
+    run's final answer.
+    """
+    import novacode_cli.agent_stream as astream
+    import novacode_cli.ui_events as ev
+    from novacode_cli.tui.app import NovaApp
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    app = NovaApp(
+        agent=_FakeAgent(),
+        assistant_id="nova-agent",
+        session_state=_SS(),
+        backend=None,
+        token_tracker=TokenTracker(),
+        image_tracker=None,
+        model_name="m",
+    )
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+        events = [
+            ev.ToolCall(
+                name="read_file",
+                display_str="read_file(/src/a.ts)",
+                icon="→",
+                call_id="c1",
+            ),
+            ev.ToolResult(preview="Read 60 lines", call_id="c1"),
+            ev.AssistantMessage(
+                text="Found 3 vulnerabilities in the auth flow.",
+                agent_name="Nova",
+                agent_color="cyan",
+            ),
+            ev.Done(),
+        ]
+
+        async def fake_stream(*_a: object, **_k: object):  # noqa: ANN202 — async generator
+            for e in events:
+                yield e
+
+        orig = astream.run_agent_stream
+        astream.run_agent_stream = fake_stream
+        try:
+            await app._bg_agent_worker.__wrapped__(app, "Test for vulnerabilities", 1)
+        finally:
+            astream.run_agent_stream = orig
+        await pilot.pause()
+
+        # The note must exist and carry the run's final answer.
+        assert app._pending_job_notes, "no report-back note was queued"
+        note = app._pending_job_notes[-1]
+        assert "bg[1]" in note, note
+        assert "Test for vulnerabilities" in note, note
+        assert "Found 3 vulnerabilities" in note, note
+
+        # The card is collapsed on completion (its body is not readable then), so
+        # the one-line call+result format is asserted in the pure-function test
+        # above rather than here.
+        card = next(iter(app.query(".bgagent-card")))
+        assert card.collapsed is True, "finished card should collapse"
+
+
+def test_tui_bg_agent_reports_back():
+    if not _HAS_TEXTUAL:
+        return
+    asyncio.run(_drive_bg_agent_reports_back())
+
+
 async def _drive_ralph_screen():
     from novacode_cli.tui.app import NovaApp, RalphScreen
     from novacode_cli.ui.ui_elements import TokenTracker

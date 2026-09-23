@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://opensource.org/licenses/MIT)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 
-An open-source, terminal-based AI coding assistant built on LangGraph and the `deepagents` framework. NOVA runs entirely in your terminal with both a Rich console REPL and a Textual TUI — similar to Claude Code, but extensible and transparent.
+An open-source, terminal-based AI coding assistant built on LangGraph and the `deepagents` framework. NOVA runs entirely in your terminal with a Textual TUI, a headless non-interactive mode for scripting and CI, and remote bridges for Discord/Telegram — similar to Claude Code, but extensible and transparent.
 
 ![Nova CLI Preview](assets/Preview.gif)
 
@@ -26,18 +26,30 @@ An open-source, terminal-based AI coding assistant built on LangGraph and the `d
 - **Webhook Ingress Server**: Let external systems (GitHub, Linear, or any signed sender) trigger a Nova run without a human relaying through Discord/Telegram. Per-source HMAC-SHA256 secrets, timing-safe verification, binds to `127.0.0.1` by default. Manage with `/webhook`
 - **Reasoning Effort Control**: Dynamically adjust LLM reasoning effort (`/effort low|medium|high|off`) — hot-swaps the model without restarting. Supports OpenAI o-series, Gemini 2.5/3, and Claude 3.7 Sonnet
 - **Self-Evolution Log**: Track the agent's own growth over time (`/evolution`) — skills unlocked and levelled up at the completion of complex tasks, persisted in durable store
+- **Autonomous Goal Mode**: Set a persistent goal (`/goal <text>`) that is injected into every turn, with an optional acceptance rubric (`/goal rubric <criteria>`) graded by deepagents' `RubricMiddleware`. The agent runs autonomously toward the goal (capped at 5 turns by default) and stops when it declares `GOAL ACHIEVED`
+- **Side Questions**: Ask a question on an ephemeral thread without touching the main conversation (`/btw <question>`)
+- **Refinement Loop**: `/refine` runs a refinement audit trail over the session's work, with `history` and `rollback <id>` subcommands
+- **Headless Mode**: Run a single prompt non-interactively and exit (`nova -p "..."`, or pipe the prompt on stdin) with `text`, `json`, or `stream-json` output — built for scripting and CI. `--max-turns` caps the run; `--deny-tools` auto-rejects tool approvals (fail-closed)
 
 ### UI & Interaction
-- **Rich Console REPL**: Full-featured interactive shell with `prompt-toolkit` — syntax highlighting, tab completion, command history
 - **Textual TUI**: Modern terminal UI with chat messages, modals, animations, keyboard shortcuts, condensed tool groups, and click-to-copy
+- **Multi-line Prompt**: The input grows with its content; `shift+enter` inserts a newline
+- **Parallel Session Panes**: Run several sessions side by side (`/session new`, `ctrl+n`, `alt+<n>`) and switch between them
+- **Docked Todo Checklist**: The todo list stays on screen and can be clicked to collapse/expand
 - **Condensed Tool UI**: Consecutive tool calls grouped into collapsible sections — full diffs shown for code edits; reads, searches, and other calls stay compact
-- **Syntax-Highlighted Diffs**: Diff previews are syntax-highlighted per line (Pygments, keyed off the file extension) in both the Rich console and the Textual TUI — token colours overlay the `+`/`-` marker colour, so added/removed lines stay visually distinct
+- **Syntax-Highlighted Diffs**: Diff previews are syntax-highlighted per line (Pygments, keyed off the file extension) — token colours overlay the `+`/`-` marker colour, so added/removed lines stay visually distinct
 - **Modal Animations**: Entrance effects (fade/slide/zoom) for all modal dialogs, pulsing borders, and a shimmer status bar
 - **Web Chat UI**: Launch a local browser-based chat interface via `/chat` — dark-themed, Claude-inspired, with Markdown rendering and code highlighting
-- **Local Voice I/O** (optional): Speak prompts and hear Nova's prose replies, fully offline — Faster-Whisper (STT), Silero VAD (utterance endpointing), and Piper (TTS). Push-to-talk (`ctrl+g`) or hands-free always-listening (`ctrl+l`); code blocks are stripped before speaking. One-command install: `uv tool install -e .[voice]`, or `uv pip install -e '.[voice]'` for uv run; manage with `/voice`. Swappable TTS/STT providers: cloud (ElevenLabs / Deepgram), **Orpheus** — an optional, very natural LLM-based local TTS (`/voice settings tts orpheus`; `uv pip install -e '.[voice-orpheus]'` + the CPU `llama-cpp-python` wheel; ~2GB model, slower than Piper), or **Parakeet** — NVIDIA's local STT via sherpa-onnx (`/voice settings stt parakeet`; `uv pip install -e '.[voice-parakeet]'`)
+- **Nova Cowork Desktop App**: Launch a desktop companion app via `/cowork` (alias `/desktop`) for a native window onto the same agent
+- **Local Voice I/O** (optional): Speak prompts and hear Nova's prose replies, fully offline — Faster-Whisper (STT), Silero VAD (utterance endpointing), and Piper (TTS). Push-to-talk (`ctrl+g`) or hands-free always-listening (`ctrl+l`); code blocks are stripped before speaking. One-command install: `uv tool install -e .[voice]`, or `uv pip install -e '.[voice]'` for uv run; manage with `/voice`. Swappable TTS/STT providers: cloud (ElevenLabs / Deepgram), **Orpheus** — an optional, very natural LLM-based local TTS (`/voice settings tts orpheus`; `uv pip install -e '.[voice-orpheus]'` + the CPU `llama-cpp-python` wheel; ~2GB model, slower than Piper), **Parakeet** — NVIDIA's local STT via sherpa-onnx (`/voice settings stt parakeet`; `uv pip install -e '.[voice-parakeet]'`), or **Pocket TTS** — Kyutai's lightweight local TTS (`/voice settings tts pocket`; `uv pip install -e '.[voice-pocket]'`)
 
 ### Tools & Capabilities
-- **30+ Built-in Tools**: File operations, shell commands, web search (Tavily + DuckDuckGo), docs search, HTTP fetch, subagent delegation, semantic code search, project graph queries, wiki management, plan mode, and more
+- **30+ Built-in Tools**: File operations, shell commands, web search (Tavily + DuckDuckGo), docs search, HTTP fetch, subagent delegation, semantic code search, project graph queries, wiki management, plan mode, artifacts, background tasks, daemons, a persistent Python kernel, and more
+- **Artifacts**: Create, update, and list durable artifacts (`create_artifact`, `update_artifact`, `list_artifacts`) that persist across resume — browse them with `/artifacts`
+- **Background Tasks**: Long-running shell jobs are monitored and reported back when they finish; inspect them with `list_background_tasks`, `get_task_status`, `get_task_logs`, `terminate_task`, `restart_task`, or the `/tasks` panel
+- **Daemons**: Start, stop, and tail long-lived background processes (`daemon`) — dev servers, watchers, and the like
+- **Persistent Python Kernel**: Run Python in a long-lived kernel that keeps state between calls (`python_kernel`)
+- **Multi-Model Oracle**: Ask several models the same question and have a judge synthesize the best answer (`oracle`)
 - **Web Scraping**: GitHub trending repos, Hacker News headlines, LinkedIn jobs, Reddit posts — no external API keys required
 - **Semantic Code Search**: Find code by description or meaning, not just exact text matches (`code_search`, `find_related_code`)
 - **LSP Integration**: Language Server Protocol support for go-to-definition, find references, rename, diagnostics, and more
@@ -47,7 +59,7 @@ An open-source, terminal-based AI coding assistant built on LangGraph and the `d
 - **MCP Support**: Extend capabilities with Model Context Protocol servers (12+ presets) — tools eagerly discovered with server-prefixed names to avoid collisions
 - **Skills System**: 50+ built-in skills with progressive disclosure — domain-specific workflows loaded on demand. Install skills from any public GitHub repo
 - **Plugin System**: Python entry-point based plugins that can register slash commands, add middleware at defined slots, and extend the agent
-- **Custom Subagents**: 20+ built-in specialized subagents (code review, security audit, refactoring, testing, research swarm, browser automation, frontend/backend/docker engineering, and more)
+- **Custom Subagents**: 13 built-in specialized subagents (code review, security audit, refactoring, testing, browser automation, frontend/backend/docker engineering, and more)
 - **Async Subagents**: Background task execution on remote LangGraph servers — documentation updates, code reviews, test generation, dependency audits, refactoring; results are automatically reported to the user when the agent is idle
 - **Wiki System**: Persistent project wiki at `.nova/wiki/` — ingest web clippings (`/ingest`), ask questions with wiki context (`/ask`), file conversation knowledge as wiki pages (`/file`), and browse the vault (`/wiki`)
 
@@ -59,7 +71,7 @@ An open-source, terminal-based AI coding assistant built on LangGraph and the `d
 - **Path Approval**: Path-based operation approval for filesystem access outside the project root
 
 ### Infrastructure
-- **Session Management**: Save, restore, auto-save, and resume sessions. Compact conversation history via `/compact`
+- **Session Management**: Save, restore, auto-save, and resume sessions. Compact conversation history via `/compact`. Run several sessions in parallel panes (`/session new`) and resume a saved session for the current path with `/resume <id>`
 - **Remote Bridges**: Discord and Telegram integration for remote agent interaction. Telegram accepts **voice notes** — they're transcribed with your configured `/voice` STT provider and sent to the agent as an ordinary prompt (the transcript is echoed back so you can see what was heard)
 - **Vixie Desktop Companion**: Background server for desktop notifications and system tray integration
 - **Hooks System**: Lifecycle hooks at key points (pre/post tool call, on message, on error) — shell commands or Python scripts
@@ -82,6 +94,18 @@ uv sync
 uv run nova
 ```
 
+**Headless (non-interactive) — for scripting and CI:**
+```bash
+# Run a single prompt and exit
+uv run nova -p "summarize the changes in this repo"
+
+# Machine-readable output, capped at 10 turns, no tool approvals
+uv run nova -p "run the test suite and report failures" --output-format json --max-turns 10 --deny-tools
+
+# Or pipe the prompt on stdin
+echo "explain src/main.py" | uv run nova -p
+```
+
 **Optional — voice I/O adds STT, TTS, and VAD (~2 GB extra):**
 ```bash
 uv run nova
@@ -99,7 +123,7 @@ $env:Path += ";$pwd\.venv\Scripts"
 ```
 Then just type `nova` anywhere.
 
-#### Option 2: Install with pip
+#### Alternative: Install with pip
 
 ```bash
 # 1. Clone the repository
@@ -237,6 +261,10 @@ mypy novacode_cli/
 | `--no-splash` | off | Disable the startup splash screen |
 | `--continue` / `-c` | off | Continue last session (optionally specify session ID) |
 | `--resume` / `-r` | off | Interactively select and resume a session |
+| `--print` / `-p` | off | Run a single prompt non-interactively and exit (pass the prompt as the value, or omit it to read from stdin) |
+| `--output-format` | `text` | Headless output format: `text`, `json`, or `stream-json` |
+| `--max-turns` | `None` | Headless only: cap the number of agent turns |
+| `--deny-tools` | off | Headless only: auto-reject tool approvals (fail-closed) instead of prompting |
 | `--version` | — | Show version number and exit |
 
 ### Interactive Slash Commands
@@ -248,14 +276,21 @@ mypy novacode_cli/
 | `/clear` | Clear conversation history and reset session |
 | `/tokens` | Display token usage for the session |
 | `/context` | Display current context window status |
+| `/cost` | Show session token spend |
 | `/verbose` | Toggle verbose mode (show internal agent context) |
 | `/steer` | Set persistent steering instructions for the agent |
+| `/goal` | Set a persistent goal injected into every turn (`/goal rubric <criteria>` for an acceptance rubric; `status` / `clear`) |
+| `/btw` | Ask a side question on an ephemeral thread without touching the main conversation |
 | `/save` | Save current session |
 | `/compact` | Compact conversation history with optional focus |
 | `/sessions` | List, select, or delete saved sessions |
+| `/session` | Parallel sessions: `new` / `list` / `close` (`ctrl+n`, `alt+<n>`) |
+| `/resume` | Resume a saved session for this path (`/resume <id>`) |
 | `/restore` | Restore a previous file version from snapshots |
 | `/files` | Show file operation summary for the session |
 | `/images` | Manage tracked image references |
+| `/artifacts` | Open the artifacts list |
+| `/tasks` | Open the background tasks panel |
 | `/log` | Show workspace log files |
 | `/servers` | Show active server processes |
 | `/tests` | Run test suites |
@@ -263,6 +298,8 @@ mypy novacode_cli/
 | `/notifications` | Review and manage notifications |
 | `/remote` | Manage remote sandbox connections |
 | `/reindex` | Rebuild semantic code search index |
+| `/copy` | Copy the last response (or the whole chat) |
+| `/theme` | Switch color theme |
 
 | Command | Description |
 |---------|-------------|
@@ -273,6 +310,8 @@ mypy novacode_cli/
 | `/skills` | Interactive skills manager |
 | `/agents` | Custom agent management (view, create, delete) |
 | `/plugins` / `/plugin` | Nova plugin management (list, enable, disable) |
+| `/middleware` | List active middleware (`/reload-plugins` to reload) |
+| `/reload-plugins` | Reload plugin registrations |
 | `/plan` | Invoke plan-mode agent for investigation & approval |
 | `/trace` | LangSmith tracing management (status, enable, projects) |
 | `/ralph` | Autonomous looping mode (background task execution) |
@@ -281,8 +320,8 @@ mypy novacode_cli/
 | `/council approve <n>` | Approve plan `n` and hand it to the coding agent (nothing is implemented before this) |
 | `/council revise <notes>` | Re-plan with your changes |
 | `/council history` | Past council runs (kept in `.nova/council/`) |
-| `/council` | Launch local Council web UI (multi-agent debate) |
 | `/chat` | Launch local browser-based chat UI |
+| `/cowork` / `/desktop` | Launch the Nova Cowork desktop app (`/cowork [task]`) |
 | `/trello` | Browser-based task board server |
 | `/research` | Multi-agent research swarm (academic/market/stocks/technical/general) |
 | `/dream` | Run memory consolidation |
@@ -292,10 +331,12 @@ mypy novacode_cli/
 | `/cron` | Manage scheduled (heartbeat) tasks — list, add, remove, fire now |
 | `/webhook` | Manage webhook ingress server — start, stop, register sources, status |
 | `/prompt` | Manage evolving system-prompt templates — status, rollback, accept, reject |
+| `/refine` | Refinement audit trail (`/refine history`, `/refine rollback <id>`) |
 | `/voice` | Local voice I/O — status, on/off, mode ptt\|listen, test (ctrl+g talk, ctrl+l listen) |
 | `/effort` | Set reasoning effort level — `low`, `medium`, `high`, or `off` (hot-swaps model) |
 | `/vision` | Configure image handling — status, set the auxiliary vision model, or force the main model multimodal/text-only |
 | `/evolution` | View the self-evolution log — skills unlocked (🧬) and levelled up (⬆️) |
+| `/learning` | Toggle Nova's autonomous learning loop (`/learning on\|off\|status`) |
 | `/ingest` | Ingest captured sources (Obsidian Web Clipper) into synthesized wiki pages |
 | `/ask` | Ask a question informed by wiki context — searches wiki and answers with relevant knowledge |
 | `/file` | File recent conversation knowledge as a wiki page under a topic path |
@@ -330,6 +371,17 @@ mypy novacode_cli/
 | `list_memories` / `forget` | List and delete stored durable memory facts |
 | `list_trash` | List file snapshots available for recovery |
 | `restore_file` | Restore a deleted or overwritten file from snapshots |
+| `create_artifact` | Create a durable artifact (markdown, code, etc.) that persists across resume |
+| `update_artifact` | Update an existing artifact's title, type, or content |
+| `list_artifacts` | List all artifacts in the session |
+| `list_background_tasks` | List agent-launched background shell jobs |
+| `get_task_status` | Get a background task's status, runtime, and exit code |
+| `get_task_logs` | Read the recent output of a background task |
+| `terminate_task` | Stop a running background task |
+| `restart_task` | Restart a background task |
+| `daemon` | Start, stop, and tail long-lived background processes |
+| `python_kernel` | Run Python in a persistent kernel that keeps state between calls |
+| `oracle` | Ask several models the same question and have a judge synthesize the answer |
 | `query_project_graph` | Query the project graph for architectural information |
 | `code_search` | Semantic code search by description or symbol name |
 | `find_related_code` | Find code semantically similar to a known location |
@@ -440,15 +492,19 @@ Every model call passes through this middleware chain (in order):
 |-------|--------|---------|
 | `ModelRetryMiddleware` | `deepagents` | Retry transient model failures (rate limits, 429) with exponential backoff |
 | `VisionCaptionMiddleware` | `bootstrap/vision_router.py` | Convert images to text for a text-only main model; pass-through when the main model is multimodal |
-| `NovaLearningMiddleware` | `hermes/middleware.py` | Hermes learning system — tool usage tracking, review cycles, memory tiers |
+| `NovaLearningMiddleware` | `hermes/middleware.py` | Hermes learning system — tool usage tracking, review cycles, memory tiers (opt-in) |
 | `SecurityMiddleware` | `security/` | URL sanitization, unicode attack prevention |
-| `MCPMiddleware` | `mcp/middleware.py` | MCP tool provisioning (inserted dynamically when MCP servers configured) |
 | `BootstrapMiddleware` | `bootstrap/` | Environment snapshot injection |
-| `GraphContextMiddleware` | `bootstrap/graph_context.py` | Injects project graph legend summary |
 | `SteeringMiddleware` | `bootstrap/steering.py` | Injects persistent user instructions (mid-run steering) |
-| `FileTrackerMiddleware` | `tracking/` | Read-before-edit enforcement, result truncation |
+| `FileTrackerMiddleware` | `tracking/` | File-op tracking, result truncation |
+| `LoopGuardMiddleware` | `tracking/loop_guard.py` | Break stuck identical tool-call loops |
+| `RubricMiddleware` | `deepagents` | Rubric self-evaluation — dormant unless a rubric is set via `/goal rubric` |
+| `ContextEditingMiddleware` | `langchain.agents.middleware` | Clear older tool-call outputs when the window-relative token trigger is reached |
 | `ShellMiddleware` | `shell.py` | Shell tool + sandbox execution |
-| `AgentMemoryMiddleware` | `memory/` | Agent memory loading (USER.md, MEMORY.md) |
+| `AgentMemoryMiddleware` | `memory/` | Agent memory loading (USER.md, MEMORY.md, project NOVA.md) |
+| `TaskDisciplineMiddleware` | `agents/task_discipline.py` | Todo recitation appended to the final system message |
+| `MCPMiddleware` | `mcp/middleware.py` | MCP tool provisioning (inserted dynamically when MCP servers configured) |
+| `GraphContextMiddleware` | `bootstrap/graph_context.py` | Injects project graph legend summary |
 
 ## Project Graph
 
@@ -553,7 +609,7 @@ If the repository has no `SKILL.md`, Nova auto-generates one from the repo's REA
 
 ## Built-in Subagents
 
-NOVA includes 20+ specialized subagents, each loaded with domain-relevant skills:
+NOVA includes 13 specialized subagents, each loaded with domain-relevant skills:
 
 ### Code Quality Agents
 
@@ -588,18 +644,6 @@ NOVA includes 20+ specialized subagents, each loaded with domain-relevant skills
 | `backend-agent` | API design, databases, auth, async patterns | `backend-dev-guidelines/`, `async-python-patterns/` |
 | `docker-agent` | Optimized Dockerfiles, Compose stacks | `docker-deploy/` |
 
-### Research Swarm Agents
-
-| Subagent | Description | Auto-loaded Skills |
-|----------|-------------|-------------------|
-| `web-researcher` | General web research — search, fetch, synthesize | `web-research/`, `arxiv-search/` |
-| `fact-checker` | Verify critical claims via web search | `web-research/` |
-| `research-synthesizer` | Synthesize findings into final report | — (inline only) |
-| `literature-reviewer` | Academic search (arXiv, Scholar, PubMed) | `arxiv-search/`, `web-research/` |
-| `market-analyst` | Market sizing, competitive landscape | `web-research/` |
-| `financial-analyst` | Financial statements, SEC filings, risk | `web-research/`, `xlsx/` |
-| `technical-researcher` | Docs, GitHub repos, RFCs, version-accurate | `web-research/`, `codebase-explorer/` |
-
 ### Async Background Agents (Remote LangGraph)
 
 | Subagent | Description |
@@ -609,6 +653,7 @@ NOVA includes 20+ specialized subagents, each loaded with domain-relevant skills
 | `test-generation-agent` | Generate/maintain test suites in the background |
 | `dependency-audit-agent` | Audit dependencies for updates and security vulnerabilities |
 | `refactoring-agent` | Analyze and improve code quality in the background |
+| `plan-scout-agent` | Read-only directory scans dispatched during plan mode |
 
 Start any with `start_async_task()`, check status with `check_async_task()`.
 
@@ -814,10 +859,10 @@ User Input → CLI Entry (main.py) → Agent Loop (core/agent_loop.py) → UI Re
 
 ### Core Flow
 
-1. **CLI Entry** (`main.py` → `cli_main()`) — parses args, initializes `SessionState`, runs optional onboarding, enters interactive REPL
+1. **CLI Entry** (`main.py` → `cli_main()`) — parses args, initializes `SessionState`, runs optional onboarding, then enters the Textual TUI (or the headless runner with `-p`)
 2. **Agent Loop** (`core/agent_loop.py` → `iterate_agent_events()`) — the single canonical async generator driving the LangGraph agent stream
-3. **UI Events** (`ui_events.py`) — dataclass instances decoupled from rendering; both Rich console and Textual TUI consume the same event types
-4. **Middleware Stack** — wraps every model call (ModelRetry → VisionCaption → NovaLearning → Security → MCP → Bootstrap → GraphContext → Steering → FileTracker → Shell → AgentMemory)
+3. **UI Events** (`ui_events.py`) — dataclass instances decoupled from rendering; the TUI, the headless runner, and the remote bridges all consume the same event types
+4. **Middleware Stack** — wraps every model call (ModelRetry → VisionCaption → NovaLearning → Security → Bootstrap → Steering → FileTracker → LoopGuard → Rubric → ContextEditing → Shell → AgentMemory → TaskDiscipline)
 
 ### Module Structure
 
@@ -830,7 +875,7 @@ User Input → CLI Entry (main.py) → Agent Loop (core/agent_loop.py) → UI Re
 
 **Agent:**
 - `agents/core_agent.py` — Agent creation, configuration, middleware wiring
-- `agents/default_subagents/` — 20+ built-in specialized subagents
+- `agents/default_subagents/` — 13 built-in specialized subagents + async background agents
 - `agents/plan_agent/` — Plan mode agent with planning middleware
 
 **Commands:**
@@ -866,7 +911,7 @@ User Input → CLI Entry (main.py) → Agent Loop (core/agent_loop.py) → UI Re
 - `hermes/prompt_evolution.py` — Prompt-template hill climbing with A/B testing (Enhancement 2)
 - `hermes/tuner.py` — Threshold auto-tuner via hill-climbing inward (Enhancement 4)
 
-**UI (Rich REPL):**
+**UI (Rich console):**
 - `ui/ui_elements.py` — Token tracking, help, diff rendering, todos
 - `ui/execution.py` — Tool execution orchestration and approval flow
 - `ui/streaming.py` — Real-time output streaming
@@ -875,11 +920,15 @@ User Input → CLI Entry (main.py) → Agent Loop (core/agent_loop.py) → UI Re
 - `ui/subagent_tracking.py` — Subagent progress visualization
 
 **TUI (Textual):**
-- `tui/app.py` — NovaApp: chat messages, modals, keyboard shortcuts, condensed tool groups, history
+- `tui/app.py` — NovaApp: chat messages, modals, keyboard shortcuts, condensed tool groups, history, parallel session panes
 - `tui/animations.py` — Fade/slide/zoom, pulsing borders, shimmer, thinking dots
 
+**Headless:**
+- `headless/runner.py` — Non-interactive single-prompt runner (`nova -p`)
+- `headless/output.py` — `text` / `json` / `stream-json` output formatting
+
 **Tools:**
-- `tools/` — HTTP fetch, search, web scraping, package info, git, LSP, browser, memory, reflection, project graph, code search, plan mode
+- `tools/` — HTTP fetch, search, web scraping, package info, git, LSP, browser, memory, reflection, project graph, code search, plan mode, artifacts, background jobs, daemons, Python kernel, oracle
 
 **Integrations:**
 - `integrations/` — Sandbox providers and workdir backend
@@ -891,11 +940,17 @@ User Input → CLI Entry (main.py) → Agent Loop (core/agent_loop.py) → UI Re
 
 **Infrastructure:**
 - `session/` — Session persistence, restore, summarization, prompt building
-- `states/slices/` — 5 state slices (UISettings, AgentRuntime, RemoteBridge, BackgroundTask, Notifications)
+- `sessions/` — Parallel session supervisor, worker, lease, and worktree management
+- `states/slices/` — 6 state slices (UISettings, AgentRuntime, RemoteBridge, BackgroundTask, Notifications, Wiki)
 - `states/Session.py` — SessionState composite dataclass
+- `artifacts/` — Durable artifact registry and serving
+- `daemons/` — Long-lived background process registry
+- `cowork/` — Nova Cowork desktop app launcher, broker middleware, and policy
+- `server/` — Local HTTP server, event adapter, and session manager
+- `audio/` — Voice I/O: capture, VAD, STT/TTS providers, speakable-text extraction
 - `server_runner/` — Dev server and test runner lifecycle
 - `process_manager.py` — Subprocess lifecycle, health checks, cleanup
-- `tracking/` — File tracking, run logging, LangSmith, workspace anchoring
+- `tracking/` — File tracking, run logging, LangSmith, workspace anchoring, loop guard
 
 **Safety & Recovery:**
 - `errors/` — Error taxonomy (14 categories) and recovery handlers
