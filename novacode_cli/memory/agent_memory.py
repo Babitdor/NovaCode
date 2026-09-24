@@ -1,10 +1,10 @@
 """Middleware for loading agent-specific long-term memory into the system prompt."""
 
+import asyncio
 import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any, TypedDict, cast
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 if TYPE_CHECKING:
     from langchain_core.messages import SystemMessage
@@ -630,6 +630,18 @@ class AgentMemoryMiddleware(AgentMiddleware):
             return (0, 0.0)
         return (len(mtimes), max(mtimes))
 
+    async def _relevant_memories_async(self, request: ModelRequest) -> str:
+        """Async wrapper around :meth:`_relevant_memories`.
+
+        The corpus load globs and reads every topic file, which is synchronous
+        disk I/O. Called from ``awrap_model_call`` on the shared UI/agent event
+        loop, it froze the whole TUI: the stall watchdog recorded 70 freezes
+        totalling ~2,071s with the loop blocked in ``pathlib.read_text`` /
+        ``pathlib.glob`` under this call. Off-loading to a worker thread keeps
+        the loop free to paint.
+        """
+        return await asyncio.to_thread(self._relevant_memories, request)
+
     def _relevant_memories(self, request: ModelRequest) -> str:
         """Retrieve topic bodies relevant to this turn's user message, formatted
         for injection. Lexical overlap scoring (title hits weighted 2x); cached
@@ -710,6 +722,16 @@ class AgentMemoryMiddleware(AgentMiddleware):
         """
         stable = self._build_system_prompt(request)
         volatile = self._relevant_memories(request)
+        return stable, volatile
+
+    async def _build_system_prompt_parts_async(self, request: ModelRequest) -> tuple[str, str]:
+        """Async twin of :meth:`_build_system_prompt_parts`.
+
+        Identical result, but the retrieval half (which reads the topic corpus
+        off disk) runs in a worker thread so it cannot stall the event loop.
+        """
+        stable = self._build_system_prompt(request)
+        volatile = await self._relevant_memories_async(request)
         return stable, volatile
 
     def _build_system_prompt(self, request: ModelRequest) -> str:
@@ -882,6 +904,6 @@ class AgentMemoryMiddleware(AgentMiddleware):
         Returns:
             The model response from the handler.
         """
-        stable, volatile = self._build_system_prompt_parts(request)
+        stable, volatile = await self._build_system_prompt_parts_async(request)
         system_message = self._make_system_message(request, stable, volatile)
         return await handler(request.override(system_message=system_message))

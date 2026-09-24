@@ -18,6 +18,7 @@ from ``on_mount`` handlers via Python's ``animate()`` API.
 
 from __future__ import annotations
 from novacode_cli.prompts import render_template
+from novacode_cli.ui import status_phrases
 
 import asyncio
 import contextlib
@@ -117,6 +118,11 @@ from novacode_cli.tui.screens import (
 # well over a screenful of scrollback (a full-height terminal shows ~40 rows).
 _MAX_TRANSCRIPT_WIDGETS = 200
 _TRANSCRIPT_LOW_WATER = 150
+
+# How many subagent log lines to draw. The subagent card is a live progress view,
+# not a scrollback: only the tail is visible, and rendering every entry on every
+# event made subagent events O(n^2) (see _refresh_subagent_list).
+_SUBAGENT_LIST_TAIL = 100
 
 # Responsive breakpoints (terminal columns/rows). Below _NARROW_WIDTH the info
 # bar sheds its widest columns and the status line drops its right-side counts;
@@ -1183,6 +1189,10 @@ class NovaApp(App):
         # is only repainted on a ~50ms timer (see _flush_stream) so a fast token
         # stream doesn't trigger a full re-render + scroll per token.
         self._stream_flush_scheduled = False
+        # Transcript pruning is coalesced onto a zero-delay timer: a burst of
+        # mounts/log lines produces ONE prune instead of one per widget (see
+        # _schedule_prune).
+        self._prune_scheduled = False
         # "Follow the tail" intent: True while the user wants new content to
         # auto-scroll into view. It is NOT the same as being geometrically at the
         # bottom — content growth raises max_scroll_y without the user moving, so
@@ -2219,6 +2229,34 @@ class NovaApp(App):
             note += f" (branch {pane.branch})"
         self._log(Text(note, style="#7aa2f7"))
 
+    def _schedule_prune(self) -> None:
+        """Coalesce transcript pruning into one pass per refresh cycle.
+
+        ``_prune_transcript`` is called from ``_log`` and ``_mount`` — i.e. once
+        per log line and once per mounted widget. Each call that trips the cap
+        does a synchronous ``remove_children``, which makes Textual walk the full
+        descendant set of every removed node and then re-layout the transcript.
+        A burst of log lines therefore paid that cost repeatedly, and because
+        ``_log`` mounts without awaiting, a later prune faced every queued mount
+        at once. The stall watchdog recorded 30 freezes totalling ~4,188s with
+        the loop blocked in ``_prune_transcript -> remove_children ->
+        dom.walk_children``.
+
+        Deferring to ``call_after_refresh`` means N mounts in a burst produce ONE
+        prune, and it runs after the pending mounts have been processed so the
+        child count it sees is accurate. (Not ``set_timer(0, ...)``: Textual's
+        timer divides by its interval and raises ZeroDivisionError at 0.)
+        """
+        if self._prune_scheduled:
+            return
+        self._prune_scheduled = True
+        self.call_after_refresh(self._run_scheduled_prune)
+
+    def _run_scheduled_prune(self) -> None:
+        """Callback for :meth:`_schedule_prune`."""
+        self._prune_scheduled = False
+        self._prune_transcript()
+
     def _prune_transcript(self) -> None:
         """Cap the transcript: drop the oldest widgets once it grows too large.
 
@@ -2360,7 +2398,7 @@ class NovaApp(App):
         # stays correct and the next tool burst starts a fresh group.
         self._close_tool_group()
         await self._transcript().mount(widget)
-        self._prune_transcript()
+        self._schedule_prune()
         # Automatic scroll: new content follows the tail only if the user is
         # still following it (see _follow_tail).
         self._scroll_end(force=False)
@@ -2696,7 +2734,7 @@ class NovaApp(App):
         """Mount an ancillary line (errors, command output, notices)."""
         self._close_tool_group()
         self._transcript().mount(Static(renderable, classes="logline"))
-        self._prune_transcript()
+        self._schedule_prune()
         # Automatic scroll: don't yank a user who is reading history.
         self._scroll_end(force=False)
 
@@ -3444,6 +3482,7 @@ class NovaApp(App):
                         idx = tool_lines[e.detail]
                         entry = log_entries[idx]
                         entry["display"] = e.message
+                        entry.pop("_line", None)  # invalidate the cached render
                     else:
                         entry = {
                             "type": "tool",
@@ -3467,6 +3506,7 @@ class NovaApp(App):
                         entry["mark"] = "✗" if is_error else "✓"
                         entry["detail"] = e.message
                         entry["error"] = is_error
+                        entry.pop("_line", None)  # invalidate the cached render
                     comp._log_entries = log_entries
                     comp._tool_lines = tool_lines
                     self._refresh_subagent_list(cid)
@@ -3483,37 +3523,51 @@ class NovaApp(App):
                 self._log(Text(f"  ⟐ {e.message}", style=color))
 
     def _refresh_subagent_list(self, cid: str) -> None:
-        """Redraw the subagent Static list based on its current entries."""
+        """Redraw the subagent Static list based on its current entries.
+
+        Mirrors ``_refresh_tool_group``: this runs on EVERY subagent event, and
+        ``comp._log_entries`` grows for the life of the subagent, so re-rendering
+        all of them each time made subagent events O(n^2). Each line is rendered
+        once and cached on its entry, and only the tail is drawn.
+        """
         if cid not in self._subagent_widgets:
             return
         comp, body, stype, start_time = self._subagent_widgets[cid]
         try:
             list_widget = body.query_one("#subagent-list", Static)
-            log_entries = getattr(comp, "_log_entries", [])
+            log_entries = getattr(comp, "_log_entries", [])[-_SUBAGENT_LIST_TAIL:]
             lines = []
             for entry in log_entries:
-                if entry.get("type") == "status":
-                    lines.append(f"⟐ {entry['display']}")
-                else:
-                    mark = entry["mark"]
-                    display = entry["display"]
-                    detail = entry["detail"]
-                    error = entry["error"]
-                    color = "#f7768e" if error else ("#73daca" if mark == "✓" else "#bb9af7")
-
-                    line = f"[{color}]{mark}[/{color}] {display}"
-                    if detail:
-                        clean_detail = detail
-                        if clean_detail in ("✓", "✗"):
-                            clean_detail = ""
-                        if clean_detail.startswith("✓ ") or clean_detail.startswith("✗ "):
-                            clean_detail = clean_detail[2:]
-                        if clean_detail:
-                            line += f" [dim]· {clean_detail}[/dim]"
-                    lines.append(f"⟐ {line}")
+                line = entry.get("_line")
+                if line is None:
+                    line = self._render_subagent_line(entry)
+                    entry["_line"] = line
+                lines.append(line)
             list_widget.update("\n".join(lines))
         except Exception:
             pass
+
+    @staticmethod
+    def _render_subagent_line(entry: dict) -> str:
+        """Render one subagent log entry to a markup line (cached by the caller)."""
+        if entry.get("type") == "status":
+            return f"⟐ {entry['display']}"
+        mark = entry["mark"]
+        display = entry["display"]
+        detail = entry["detail"]
+        error = entry["error"]
+        color = "#f7768e" if error else ("#73daca" if mark == "✓" else "#bb9af7")
+
+        line = f"[{color}]{mark}[/{color}] {display}"
+        if detail:
+            clean_detail = detail
+            if clean_detail in ("✓", "✗"):
+                clean_detail = ""
+            if clean_detail.startswith("✓ ") or clean_detail.startswith("✗ "):
+                clean_detail = clean_detail[2:]
+            if clean_detail:
+                line += f" [dim]· {clean_detail}[/dim]"
+        return f"⟐ {line}"
 
     async def _remove_reasoning(self) -> None:
         """Finalize the reasoning trace: collapse it and keep it in the transcript.
@@ -5185,7 +5239,10 @@ class NovaApp(App):
         self._current_assistant_id = assistant_id
         self._turn_active = True
         self._turn_start = time.monotonic()
-        self._set_status("thinking…")
+        # New turn: drop the held phrases so it opens with fresh wording. They
+        # stay put for the rest of the turn (see the sticky guard in _render).
+        status_phrases.reset()
+        self._set_status(status_phrases.status_line("thinking", sticky_phrase=True))
         try:
             if lock is not None:
                 async with lock:
@@ -6505,7 +6562,7 @@ class NovaApp(App):
         Reuses the agent-rebuild path (``reload_mcp_servers``): a fresh
         ``create_agent_with_config`` re-scans plugin skills/agents/MCP.
         """
-        self._set_status("thinking")
+        self._set_status(status_phrases.status_line("working"))
         try:
             # The agent-rebuild path prints build/skill/MCP chatter to the global
             # Rich console, which bypasses Textual and corrupts the TUI screen.
@@ -9627,12 +9684,15 @@ class NovaApp(App):
             self._reasoning_buf += e.text
             if self._reason_msg is None:
                 self._reason_msg = ChatMessage(
-                    Text("💭 thinking", style="dim italic"), "reason", collapsible=True
+                    Text("💭 musing…", style="dim italic"), "reason", collapsible=True
                 )
                 await self._mount(self._reason_msg)
             self._schedule_stream_flush()
-            if self._activity != "thinking…":
-                self._set_status("thinking…")
+            thinking_line = status_phrases.status_line(
+                "thinking", sticky_phrase=True
+            )
+            if self._activity != thinking_line:
+                self._set_status(thinking_line)
         elif isinstance(e, ev.TextDelta):
             # Stream incremental prose into the in-progress Nova message widget.
             # Coalesced repaint (~20fps) — see _schedule_stream_flush/_flush_stream.
@@ -9642,8 +9702,11 @@ class NovaApp(App):
                 self._stream_msg = ChatMessage(Text(name, style=f"bold {color}"), "nova")
                 await self._mount(self._stream_msg)
             self._schedule_stream_flush()
-            if self._activity != "responding…":
-                self._set_status("responding…")
+            responding_line = status_phrases.status_line(
+                "responding", sticky_phrase=True
+            )
+            if self._activity != responding_line:
+                self._set_status(responding_line)
         elif isinstance(e, ev.TextDiscard):
             self._stream_flush_scheduled = False
             if self._stream_msg is not None:
@@ -9789,7 +9852,7 @@ class NovaApp(App):
             # Non-tool content: close any open tool group first to keep order.
             self._close_tool_group()
             self._transcript().mount(Static(t, classes=css))
-            self._prune_transcript()
+            self._schedule_prune()
             self._scroll_end()
         elif isinstance(e, ev.SubagentActivity):
             await self._handle_subagent(e)

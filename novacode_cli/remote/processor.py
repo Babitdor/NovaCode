@@ -233,8 +233,11 @@ async def remote_message_processor(
                             except Exception:
                                 _typing_cm = None
 
+                    from novacode_cli.ui import status_phrases
+
                     console.print(
-                        f"  [{COLORS.get('dim', 'dim')}]\U0001f914 Thinking...[/]"
+                        f"  [{COLORS.get('dim', 'dim')}]\U0001f914 "
+                        f"Nova {status_phrases.rotating('thinking')}[/]"
                     )
 
                     # A compact status line edits in place to show live tool/

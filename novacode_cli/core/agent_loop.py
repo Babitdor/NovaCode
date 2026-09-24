@@ -46,6 +46,7 @@ from novacode_cli.core.streaming import (
 )
 from novacode_cli.tracking.loop_guard import TextRepetitionGuard
 from novacode_cli.tracking.usage_tree import scoped_stream
+from novacode_cli.ui import status_phrases
 from novacode_cli.core.subagent_tracking import (
     SubagentTracker,
     get_status_icon,
@@ -1026,7 +1027,9 @@ async def _handle_tool_message(
             color=get_agent_color(subagent_type),
             call_id=tool_call_id,
         )
-        yield ev.StatusUpdate(f"{agent_display_name} is synthesizing...")
+        yield ev.StatusUpdate(
+            status_phrases.status_line("synthesizing", agent_display_name)
+        )
         return
 
     if is_main_agent:
@@ -1191,7 +1194,7 @@ async def _handle_tool_call_chunk(
             yield ev.SubagentActivity(
                 kind="dispatched",
                 subagent_type=subagent_type,
-                message=f"{subagent_type} is thinking…",
+                message=status_phrases.status_line("subagent", subagent_type),
                 detail=description or None,
                 color=get_agent_color(subagent_type),
                 call_id=buffer_id,

@@ -22,6 +22,7 @@ from novacode_cli.core.agent_loop import default_interrupt_response
 from novacode_cli.core.autonomous_loop import run_with_goal
 from novacode_cli.file_ops import get_session_file_op_tracker
 from novacode_cli.input_utils import ImageTracker
+from novacode_cli.ui import status_phrases
 from novacode_cli.core.input_preparation import (
     build_agent_config,
     get_agent_display_name,
@@ -311,7 +312,7 @@ async def execute_task(  # type: ignore
 
     status = console.status(
 
-        f"[bold {agent_colors}]{agent_display_name} is thinking...",
+        f"[bold {agent_colors}]{status_phrases.status_line('thinking', agent_display_name)}",
 
         spinner="dots",
 
@@ -717,7 +718,7 @@ async def execute_task(  # type: ignore
 
                                 f"[bold {COLORS['thinking']}]"
 
-                                f"All {subagent_done} {label} done, synthesizing..."
+                                f"All {subagent_done} {label} done, stitching it together..."
 
                             )
 
@@ -725,7 +726,8 @@ async def execute_task(  # type: ignore
 
                         status.update(
 
-                            f"[bold {COLORS['thinking']}]{agent_display_name} is thinking..."
+                            f"[bold {COLORS['thinking']}]"
+                            f"{status_phrases.status_line('thinking', agent_display_name)}"
 
                         )
 
@@ -803,7 +805,9 @@ async def execute_task(  # type: ignore
 
                         status.update(
 
-                            f"[bold {COLORS['thinking']}]{subagent_remaining} agents thinking..."
+                            f"[bold {COLORS['thinking']}]"
+
+                            f"{subagent_remaining} agents out on errands..."
 
                         )
 
@@ -811,7 +815,10 @@ async def execute_task(  # type: ignore
 
                         sub_color = event.color or COLORS["thinking"]
 
-                        status.update(f"[bold {sub_color}]{event.subagent_type} is thinking...")
+                        status.update(
+                            f"[bold {sub_color}]"
+                            f"{status_phrases.status_line('subagent', event.subagent_type)}"
+                        )
 
                     if not spinner_active:
 
@@ -853,7 +860,7 @@ async def execute_task(  # type: ignore
 
                                 f"[bold {COLORS['thinking']}]"
 
-                                f"All {done} {label} done, synthesizing..."
+                                f"All {done} {label} done, stitching it together..."
 
                             )
 

@@ -11,6 +11,7 @@ post-review skill creation/refinement (both injected).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from pathlib import Path
@@ -382,6 +383,80 @@ class ReviewRunner:
 
     # -- Content persistence -------------------------------------------------
 
+    def _persist_review(self, parsed: dict, response_content: str) -> None:
+        """Apply a parsed review to disk. Synchronous — call via ``to_thread``.
+
+        Split out of :meth:`_apply_review_content` so the whole read-modify-write
+        block can run in a worker thread instead of stalling the event loop.
+
+        Args:
+            parsed: The parsed review payload (``user_model``, ``lessons``,
+                ``habits``).
+            response_content: The raw review text (unused here; kept for parity
+                with the caller's logging).
+        """
+        if self._agent_dir and (parsed["user_model"] or parsed["lessons"]):
+            from novacode_cli.hermes.memory_tiers import update_from_review
+
+            update_from_review(
+                self._agent_dir,
+                parsed["user_model"],
+                parsed["lessons"],
+            )
+            logger.info(
+                "Nova review applied: user_model=%s, lessons=%d",
+                bool(parsed["user_model"]),
+                len(parsed["lessons"]),
+            )
+
+        if self._agent_dir and parsed.get("habits"):
+            from novacode_cli.hermes.memory_tiers import record_habit
+
+            record_habit(self._agent_dir, parsed["habits"])
+            logger.info("Nova review recorded a good habit")
+
+        # Unified refinement audit trail: record what this review changed.
+        # Best-effort — a failed append must never block applying the review.
+        # ONE batched append, not one per lesson: each individual append re-read
+        # and re-wrote the whole ledger, so a 20-lesson review did 20 full
+        # read-modify-writes of a 500-entry JSON file.
+        if self._agent_dir:
+            try:
+                from novacode_cli.hermes.refinement_log import append_refinement_events
+
+                nova_root = self._agent_dir.parent.parent
+                batch: list[dict] = []
+                if parsed["user_model"]:
+                    batch.append(
+                        {
+                            "domain": "memory",
+                            "action": "update_user_model",
+                            "target": "agent.md",
+                            "detail": "review user-model update",
+                        }
+                    )
+                for lesson in parsed["lessons"]:
+                    batch.append(
+                        {
+                            "domain": "memory",
+                            "action": "record_lesson",
+                            "target": lesson.get("topic") or "lessons",
+                            "detail": "review lesson",
+                        }
+                    )
+                if parsed.get("habits"):
+                    batch.append(
+                        {
+                            "domain": "memory",
+                            "action": "record_habit",
+                            "target": "HABITS.md",
+                            "detail": "review good habit",
+                        }
+                    )
+                append_refinement_events(nova_root, batch)
+            except Exception:  # noqa: BLE001
+                logger.debug("Could not append refinement events", exc_info=True)
+
     async def _apply_review_content(self, response_content: str) -> None:
         """Persist a completed review's learnings.
 
@@ -395,64 +470,16 @@ class ReviewRunner:
         try:
             response_content = response_content or ""
 
-            from novacode_cli.hermes.memory_tiers import (
-                parse_review_response,
-                update_from_review,
-            )
+            from novacode_cli.hermes.memory_tiers import parse_review_response
 
             parsed = parse_review_response(response_content)
 
-            if self._agent_dir and (parsed["user_model"] or parsed["lessons"]):
-                update_from_review(
-                    self._agent_dir,
-                    parsed["user_model"],
-                    parsed["lessons"],
-                )
-                logger.info(
-                    "Nova review applied: user_model=%s, lessons=%d",
-                    bool(parsed["user_model"]),
-                    len(parsed["lessons"]),
-                )
-
-            if self._agent_dir and parsed.get("habits"):
-                from novacode_cli.hermes.memory_tiers import record_habit
-
-                record_habit(self._agent_dir, parsed["habits"])
-                logger.info("Nova review recorded a good habit")
-
-            # Unified refinement audit trail: record what this review changed.
-            # Best-effort — a failed append must never block applying the review.
-            if self._agent_dir:
-                try:
-                    from novacode_cli.hermes.refinement_log import append_refinement_event
-
-                    nova_root = self._agent_dir.parent.parent
-                    if parsed["user_model"]:
-                        append_refinement_event(
-                            nova_root,
-                            domain="memory",
-                            action="update_user_model",
-                            target="agent.md",
-                            detail="review user-model update",
-                        )
-                    for lesson in parsed["lessons"]:
-                        append_refinement_event(
-                            nova_root,
-                            domain="memory",
-                            action="record_lesson",
-                            target=lesson.get("topic") or "lessons",
-                            detail="review lesson",
-                        )
-                    if parsed.get("habits"):
-                        append_refinement_event(
-                            nova_root,
-                            domain="memory",
-                            action="record_habit",
-                            target="HABITS.md",
-                            detail="review good habit",
-                        )
-                except Exception:  # noqa: BLE001
-                    logger.debug("Could not append refinement events", exc_info=True)
+            # All of the persistence below is synchronous disk I/O (read/write
+            # memory topic files, rewrite the refinement ledger). This runs on the
+            # shared UI/agent event loop, where the stall watchdog recorded a 263s
+            # freeze with the loop blocked in pathlib read_text/write_text under
+            # this method. Off-load the whole block to a worker thread.
+            await asyncio.to_thread(self._persist_review, parsed, response_content)
 
             current_count = await self._get_review_count()
 

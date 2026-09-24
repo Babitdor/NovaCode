@@ -77,23 +77,61 @@ def append_refinement_event(
     Returns:
         The new event id, or ``None`` if the append failed.
     """
+    ids = append_refinement_events(
+        nova_root,
+        [
+            {
+                "domain": domain,
+                "action": action,
+                "target": target,
+                "detail": detail,
+                "outcome": outcome,
+            }
+        ],
+    )
+    return ids[0] if ids else None
+
+
+def append_refinement_events(nova_root: Path, events_in: list[dict]) -> list[str]:
+    """Append several refinement events in ONE read-modify-write.
+
+    :func:`append_refinement_event` re-reads and re-writes the whole ledger per
+    call. A review cycle appends one event per lesson, so a review with N lessons
+    did N full parses plus N full rewrites of a 500-entry JSON file — all on the
+    shared UI/agent event loop, which the stall watchdog recorded as a 263s
+    freeze. Batching collapses that to a single read and a single write.
+
+    Args:
+        nova_root: The shared ``~/.nova`` directory.
+        events_in: Partial event dicts; ``domain``/``action``/``target`` are
+            required, ``detail``/``outcome`` default.
+
+    Returns:
+        The new event ids, in input order. Empty when the write failed.
+    """
+    if not events_in:
+        return []
     path = _log_path(nova_root)
     events = _read_events(path)
-    event = {
-        "id": datetime.now().strftime("%Y%m%dT%H%M%S_%f"),
-        "ts": datetime.now().timestamp(),
-        "domain": domain,
-        "action": action,
-        "target": target,
-        "detail": detail,
-        "outcome": outcome,
-    }
-    events.append(event)
+    now = datetime.now()
+    ids: list[str] = []
+    for partial in events_in:
+        event = {
+            "id": now.strftime("%Y%m%dT%H%M%S_%f"),
+            "ts": now.timestamp(),
+            "domain": partial.get("domain", ""),
+            "action": partial.get("action", ""),
+            "target": partial.get("target", ""),
+            "detail": partial.get("detail", ""),
+            "outcome": partial.get("outcome", "applied"),
+        }
+        events.append(event)
+        ids.append(event["id"])
     # Cap the log, dropping the oldest events.
     if len(events) > _MAX_EVENTS:
         events = events[-_MAX_EVENTS:]
     _write_events(path, events)
-    return event["id"]
+    return ids
 
 
 def read_refinement_events(nova_root: Path, *, limit: int = 50) -> list[dict]:

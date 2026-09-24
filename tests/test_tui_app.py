@@ -10,8 +10,11 @@ Runnable directly (``python tests/test_tui_app.py``) or via pytest.
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
+
+from novacode_cli.ui import status_phrases
 
 try:
     import textual  # noqa: F401
@@ -849,7 +852,7 @@ async def _drive_live_render():
         await app._render(ev.TextDelta("hi"))
         # prose starts → the tool group is closed so ordering stays correct
         assert app._tool_group is None
-        assert app._activity == "responding…"
+        assert app._activity == f"Nova {status_phrases.sticky('responding')}"
         assert app._stream_msg is not None and app._live_buf == "hi"
         await app._render(
             ev.AssistantMessage(text="done", agent_name="Nova", agent_color="cyan")
@@ -863,6 +866,55 @@ def test_tui_remote_render():
     if not _HAS_TEXTUAL:
         return
     asyncio.run(_drive_remote_render())
+
+
+async def _drive_status_rotates_per_turn_but_is_stable_within_one():
+    """The status line must vary between turns yet stay put inside a turn.
+
+    _render refreshes the status on every streamed token and guards the rebuild
+    with ``if self._activity != <phrase>``. If the phrase re-rolled per call the
+    guard would never hold and the status line would rebuild once per token.
+    """
+    from novacode_cli.tui.app import NovaApp
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    import novacode_cli.ui_events as ev
+
+    status_phrases.reset()
+    status_phrases._cursor.clear()
+
+    app = NovaApp(
+        agent=_FakeAgent(), assistant_id="nova-agent", session_state=_SS(),
+        backend=None, token_tracker=TokenTracker(), image_tracker=None,
+        model_name="m",
+    )
+    async with app.run_test() as pilot:
+        # Two consecutive turns (each _start_turn resets the held phrases).
+        seen_lines = []
+        for _ in range(2):
+            status_phrases.reset()
+            app._turn_active = True
+            app._turn_start = time.monotonic()
+            app._set_status(status_phrases.status_line("thinking", sticky_phrase=True))
+            seen_lines.append(app._activity)
+
+        assert seen_lines[0] != seen_lines[1], (
+            f"both turns showed the same status: {seen_lines[0]!r}"
+        )
+
+        # Within one turn, repeated reasoning deltas must NOT change the line.
+        before = app._activity
+        for _ in range(30):
+            await app._render(ev.ReasoningDelta("more thinking"))
+        assert app._activity == before, (
+            f"status changed within a turn: {before!r} -> {app._activity!r}"
+        )
+
+
+def test_tui_status_rotates_per_turn_but_is_stable_within_one():
+    if not _HAS_TEXTUAL:
+        return
+    asyncio.run(_drive_status_rotates_per_turn_but_is_stable_within_one())
 
 
 async def _drive_remote_streaming():
@@ -3715,6 +3767,76 @@ def test_tui_subagent_terminal_preview():
     if not _HAS_TEXTUAL:
         return
     asyncio.run(_drive_subagent_terminal_preview())
+
+
+async def _drive_subagent_list_is_capped_and_cached():
+    """The subagent list must draw only a tail, and cache each rendered line.
+
+    _refresh_subagent_list runs on EVERY subagent event while comp._log_entries
+    grows for the life of the subagent, so re-rendering every entry each time
+    made subagent events O(n^2). Its sibling _refresh_tool_group already caps
+    ([-100:]) and caches (entry["_line"]); this pins the same contract here.
+    """
+    import novacode_cli.tui.app as appmod
+    from textual.widgets import Static
+
+    from novacode_cli.tui.app import NovaApp
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    app = NovaApp(
+        agent=_FakeAgent(), assistant_id="nova-agent", session_state=_SS(),
+        backend=None, token_tracker=TokenTracker(), image_tracker=None,
+        model_name="m",
+    )
+    async with app.run_test(size=(100, 30)) as pilot:
+        comp = Static("")
+        comp._log_entries = [
+            {"type": "tool", "display": f"tool {i}", "mark": "✓", "detail": "", "error": False}
+            for i in range(appmod._SUBAGENT_LIST_TAIL + 50)
+        ]
+        body = Static("")
+        await app._mount(body)
+        await body.mount(Static("", id="subagent-list"))
+        app._subagent_widgets["cid"] = (comp, body, "researcher", 0.0)
+
+        app._refresh_subagent_list("cid")
+        await pilot.pause()
+        rendered = str(body.query_one("#subagent-list", Static).render())
+        drawn = [ln for ln in rendered.splitlines() if ln.strip()]
+        assert len(drawn) <= appmod._SUBAGENT_LIST_TAIL, (
+            f"drew {len(drawn)} lines against a tail cap of {appmod._SUBAGENT_LIST_TAIL}"
+        )
+        # The tail is what's drawn: the newest entry must be present.
+        assert f"tool {appmod._SUBAGENT_LIST_TAIL + 49}" in rendered
+
+        # Caching: a second refresh must not re-render the entries.
+        calls = {"n": 0}
+        real = app._render_subagent_line
+
+        def counting(entry):
+            calls["n"] += 1
+            return real(entry)
+
+        app._render_subagent_line = staticmethod(counting)  # type: ignore[method-assign]
+        app._refresh_subagent_list("cid")
+        await pilot.pause()
+        assert calls["n"] == 0, (
+            f"re-rendered {calls['n']} lines on an unchanged refresh — the "
+            "per-entry cache is not being used"
+        )
+
+        # ...but a mutated entry must invalidate its cached line.
+        comp._log_entries[-1]["mark"] = "✗"
+        comp._log_entries[-1].pop("_line", None)
+        app._refresh_subagent_list("cid")
+        await pilot.pause()
+        assert calls["n"] == 1, f"expected 1 re-render after a mutation, got {calls['n']}"
+
+
+def test_tui_subagent_list_is_capped_and_cached():
+    if not _HAS_TEXTUAL:
+        return
+    asyncio.run(_drive_subagent_list_is_capped_and_cached())
 
 
 def test_tui_bg_agent_card_explains_progress():  # noqa: PLR0915 — one block per event type
