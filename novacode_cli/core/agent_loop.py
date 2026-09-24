@@ -281,7 +281,16 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
         except Exception:
             return []
 
-    yield ev.StatusUpdate(f"{agent_display_name} is thinking...")
+    # Turn boundary: release any held phrases so this turn opens with fresh
+    # wording, then hold this one for the rest of the turn. It must be the
+    # *sticky* form: the TUI rebuilds its status on every streamed token behind
+    # an `if self._activity != <phrase>` guard, and a phrase that re-rolled per
+    # call would defeat that guard. Both UIs consume this one message, so a
+    # reset here is what gives the console REPL per-turn variety too.
+    status_phrases.reset()
+    yield ev.StatusUpdate(
+        status_phrases.status_line("thinking", agent_display_name, sticky_phrase=True)
+    )
     for _ctx in _drain_nova_events():
         yield _ctx
 
