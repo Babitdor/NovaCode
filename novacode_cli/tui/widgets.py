@@ -91,17 +91,38 @@ class MatrixRain(Static):
 
         art_w = max((cell_len(ln) for ln in art_lines), default=0)
         art_h = len(art_lines)
-        # Fill the terminal width and centre the lockup within it. Subtract only
-        # the transcript's horizontal padding (2 cells each side, see
-        # `#transcript { padding: 1 2 }`); the scrollbar no longer reserves a
-        # column (it is hidden and the gutter is `auto`), so the art is centred
-        # across the full content width. Cap very wide terminals so the
-        # per-frame build stays cheap.
+        # Fill the content width and centre the lockup within it. Subtract the
+        # transcript's horizontal padding (2 cells each side, see
+        # `#transcript { padding: 1 2 }`); the scrollbar reserves no column (it is
+        # hidden and the gutter is `auto`), so the content width is exactly
+        # ``width - 4`` and the art is centred across all of it.
+        #
+        # The grid is *exactly* the content width -- no clamp in either
+        # direction. It used to be ``min(max(usable, art_w, 60), 200)``, and both
+        # ends of that were wrong:
+        #
+        # * the 200 ceiling left a blank band down the right-hand side of the
+        #   backdrop on any terminal wider than ~204 columns. Measured in the real
+        #   app: at 200 columns the grid filled the content width exactly, but at
+        #   260 it pinned at 200 against 256 available, and at 320 it was 200
+        #   against 316 -- a 116-column empty stripe, which is the "rain does not
+        #   go across the window" report.
+        # * the 60 floor made the grid *wider* than the content area on a narrow
+        #   terminal (at 50 columns the grid was 60 against 46 available), so
+        #   every row wrapped.
+        #
+        # The ceiling's stated justification was per-frame cost, but measurement
+        # does not support it: a frame build is ~2 ms at 320 columns and ~7 ms at
+        # 640 (15 fps leaves a 66 ms budget), the cost is dominated by the strip
+        # build rather than the simulation, and the p99 spikes at wide grids are
+        # GC, not the grid. No real terminal reaches a width where this bites.
         #
         # `art_w` stays in the max() as a floor: the art must never be wider
-        # than the grid, or the composite would clip its right edge.
+        # than the grid, or the composite would clip its right edge. (`art_for`
+        # keeps the art within the content width already, so in practice this
+        # guards art handed in from elsewhere.)
         usable = (width or 80) - 4
-        self._col_count = min(max(usable, art_w, 60), 200)
+        self._col_count = max(usable, art_w)
         self._row_count = max(art_h + 6, 18)
         self._art_left = max(0, (self._col_count - art_w) // 2)
         self._art_top = 2  # a couple rows of rain above the lockup

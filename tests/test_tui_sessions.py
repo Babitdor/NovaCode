@@ -319,19 +319,29 @@ def test_stateful_attrs_has_no_duplicates():
 # ── layout: the pane wrapper must not shrink the transcript ──────────────────
 
 
-async def _drive_banner_fits_its_container():
-    """The Matrix-rain banner must fit the transcript's real content width.
+async def _drive_banner_fits_its_container(term_width: int = 120, *, _height: int = 40):
+    """The Matrix-rain banner must span the transcript's real content width.
 
     Regression: wrapping the transcript in a ContentSwitcher for session panes
     left it unstyled, so the transcript stopped filling the screen and its
     content width shrank. The banner sizes itself from the TERMINAL width, so it
     no longer fit — every row wrapped, pushing the logo down a row and letting it
     spring back as the rain shifted ("the rain pushes the logo down, then up").
+
+    This asserts **equality**, not ``<=``. The banner had the opposite defect
+    too: a 200-column ceiling in ``MatrixRain._configure`` meant that on a
+    terminal wider than ~204 columns the grid pinned itself to 200 and left a
+    blank band down the right-hand side of the backdrop. A ``<=`` assertion
+    passes happily through that — it only ever checked that the grid was not too
+    *wide*. The rain must fill the content width exactly.
+
+    Driven at both ends of the old clamp: 260 columns (past the 200 ceiling) and
+    50 (below the 60 floor). 120 would pass under either old defect.
     """
     from rich.cells import cell_len
 
     app = _app()
-    async with app.run_test(size=(120, 40)) as pilot:
+    async with app.run_test(size=(term_width, _height)) as pilot:
         # The banner is mounted during startup; don't mount a second one (the
         # widget has a fixed id, so a duplicate raises and _show_home_banner
         # swallows it, leaving _home_banner=None).
@@ -345,16 +355,18 @@ async def _drive_banner_fits_its_container():
         avail = app._transcript().content_size.width
         assert avail > 0
 
-        assert rain._col_count <= avail, (
-            f"rain grid {rain._col_count} wider than transcript content {avail} "
-            "— every row will wrap and the logo will jitter"
+        assert rain._col_count == max(avail, rain._art_w), (
+            f"rain grid {rain._col_count} against transcript content {avail} at "
+            f"{term_width} columns — a narrower grid leaves a blank band, a wider one "
+            "wraps every row"
         )
         for line in rain._build_frame().plain.split("\n"):
             assert cell_len(line) <= avail
 
 
-def test_home_banner_fits_the_transcript_width():
-    asyncio.run(_drive_banner_fits_its_container())
+@pytest.mark.parametrize("term_width", [260, 120, 50])
+def test_home_banner_fits_the_transcript_width(term_width: int):
+    asyncio.run(_drive_banner_fits_its_container(term_width))
 
 
 async def _drive_transcript_fills_screen():

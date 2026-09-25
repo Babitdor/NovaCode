@@ -283,6 +283,64 @@ def test_grid_never_overflows_the_transcript_width() -> None:
     assert mw._col_count <= 80 - 4
 
 
+@pytest.mark.parametrize("width", [60, 64, 76, 80, 100, 160, 200, 204, 210, 260, 340])
+def test_the_grid_fills_the_content_width_exactly(width: int) -> None:
+    """The backdrop must span the window, not stop short of its right edge.
+
+    The sizing expression used to be ``min(max(usable, art_w, 60), 200)``, with a
+    ceiling and a floor that were each wrong in a different direction:
+
+    * the **200 ceiling** left a blank band on any terminal wider than ~204
+      columns. Measured in the real app: at 260 columns the transcript offered
+      256 and the rain drew 200, and at 340 it offered 336 against 200 -- a
+      136-column empty stripe down the right-hand side, which is what the
+      "the rain does not go across the window" report was.
+    * the **60 floor** made the grid *wider* than the content area on a narrow
+      terminal, so every row wrapped: at 50 columns the grid was 60 against 46
+      available.
+
+    ``<=`` cannot see either defect, so this asserts equality. ``art_w`` is a
+    legitimate exception (art wider than the content width must still fit), which
+    is why the expected value is a ``max`` rather than a bare subtraction.
+    """
+    mw = _built(width)
+    assert mw._col_count == max(width - 4, mw._art_w), (
+        f"grid {mw._col_count} columns against {width - 4} content columns at width "
+        f"{width}: the backdrop does not span the window"
+    )
+
+
+@pytest.mark.parametrize("width", [80, 120, 200, 340])
+def test_render_line_does_no_per_line_work(width: int) -> None:
+    """The render path must be the prebuilt strips, not a per-frame rebuild.
+
+    The removed 200-column ceiling was justified as "cap very wide terminals so
+    the per-frame build stays cheap", so the cost of a wider grid is the reason
+    it needs a guard. A *timing* guard is the obvious choice and is useless here:
+    measured with the old ``Text``-building path re-injected, a frame cost 1.9 ms
+    at 80 columns and 9.2 ms at 400 -- it never approached the 66 ms frame budget
+    at any width the test could use, so an assertion on duration was decoration
+    (it passed with the regression injected; verified).
+
+    This pins the contract structurally instead. ``render_line`` is Textual's hot
+    path: it must serve the strips ``_tick`` already built and do no work of its
+    own. That is what makes the per-frame cost proportional to the grid and not
+    to the number of *rows painted*, and it is the property that reverting to
+    ``Static.update(Text)`` would break.
+    """
+    mw = _built(width, art=get_responsive_ascii(width=400))
+    mw._strips = mw._build_strips()  # what _tick does; render_line serves this
+    strips = mw._strips
+    before = mw._frame_lines[0][:]
+    # Every row must hand back the very Strip object it already holds -- not an
+    # equal one. An implementation that rebuilds per call would fail `is` even
+    # if the content matched.
+    for y in range(mw._row_count):
+        assert mw.render_line(y) is strips[y], f"row {y} was rebuilt on render"
+    # ...and rendering must not advance or mutate the simulation.
+    assert mw._frame_lines[0] == before
+
+
 def test_zero_width_selector_does_not_shift_the_row() -> None:
     """A U+FE0E must not consume a cell when composited.
 

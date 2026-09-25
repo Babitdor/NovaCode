@@ -1082,8 +1082,11 @@ async def _drive_home_banner():
         before = rain._col_count
         rain.reflow(get_responsive_ascii(width=200), 200)
         assert rain._col_count > before
+        # Narrow: the grid tracks the content width exactly. It used to have a
+        # 60-column floor, which made it *wider* than the content area (46
+        # columns at this width) so every row wrapped.
         rain.reflow(get_responsive_ascii(width=50), 50)
-        assert rain._col_count <= 60
+        assert rain._col_count == 50 - 4
         # reflow is a no-op when the width is unchanged.
         cols = rain._col_count
         rain.reflow(get_responsive_ascii(width=50), 50)
@@ -1099,8 +1102,9 @@ async def _drive_home_banner():
 
         app.on_resize(_Resize())
         # Only the transcript's horizontal padding (2 cells each side) is
-        # subtracted; the scrollbar no longer reserves a column.
-        assert rain._col_count == min(max(140 - 4, 60), 200)
+        # subtracted; the scrollbar no longer reserves a column. No ceiling
+        # either -- the 200-column cap left a blank band on wide terminals.
+        assert rain._col_count == 140 - 4
 
         # Pause the rain when the terminal loses OS focus; resume on focus.
         timer = rain._timer
