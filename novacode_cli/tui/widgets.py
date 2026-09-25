@@ -11,6 +11,7 @@ import random
 from pathlib import Path
 from typing import Any
 
+from rich.cells import cell_len
 from rich.markdown import Markdown
 from rich.segment import Segment
 from rich.style import Style
@@ -88,19 +89,23 @@ class MatrixRain(Static):
             art_lines.pop()
         self._art_lines = art_lines
 
-        art_w = max((len(ln) for ln in art_lines), default=0)
+        art_w = max((cell_len(ln) for ln in art_lines), default=0)
         art_h = len(art_lines)
-        # Fill the terminal width so the rain spans the whole row and the logo is
-        # centered within it. Subtract only the transcript's horizontal padding
-        # (2 cells each side, see `#transcript { padding: 1 2 }`); the scrollbar
-        # no longer reserves a column (it is hidden and the gutter is `auto`), so
-        # the rain reaches the right edge. Cap very wide terminals so the
+        # Fill the terminal width and centre the lockup within it. Subtract only
+        # the transcript's horizontal padding (2 cells each side, see
+        # `#transcript { padding: 1 2 }`); the scrollbar no longer reserves a
+        # column (it is hidden and the gutter is `auto`), so the art is centred
+        # across the full content width. Cap very wide terminals so the
         # per-frame build stays cheap.
+        #
+        # `art_w` stays in the max() as a floor: the art must never be wider
+        # than the grid, or the composite would clip its right edge.
         usable = (width or 80) - 4
         self._col_count = min(max(usable, art_w, 60), 200)
         self._row_count = max(art_h + 6, 18)
         self._art_left = max(0, (self._col_count - art_w) // 2)
-        self._art_top = 2  # a couple rows of rain above the logo
+        self._art_top = 2  # a couple rows of rain above the lockup
+        self._art_w = art_w  # the lockup's bounding box, for the rain confinement
         self._width = width
 
     def reflow(self, art: str, width: int | None) -> None:
@@ -393,6 +398,14 @@ class MatrixRain(Static):
                 d["speed"] = random.uniform(0.08, 0.23)  # adjusted for 15fps
                 d["trail"] = random.randint(5, 14)
 
+            # Confine the rain to the margins beside the lockup. A column inside
+            # the art's bounding box is skipped, so no katakana is drawn behind
+            # the lettering -- the text stays legible without a background box.
+            # The column still advances (above) rather than `continue`-ing
+            # first, so a later reflow does not resume it from a stale position.
+            if self._art_lines and self._art_left <= col < self._art_left + self._art_w:
+                continue
+
             tail_start = max(0, int(d["pos"]) - d["trail"])
             head = min(rows - 1, int(d["pos"]))
             for y in range(tail_start, head + 1):
@@ -421,13 +434,22 @@ class MatrixRain(Static):
                 row_l = lines[gy]
                 row_s = styles[gy]
                 left = self._art_left
-                for ax, ch in enumerate(art_line):
-                    if ch == " ":
-                        continue
-                    gx = left + ax
-                    if 0 <= gx < cols:
-                        row_l[gx] = ch
-                        row_s[gx] = art_style
+                # Advance by CELL, not by codepoint. Rich gives a zero-width
+                # variation selector (U+FE0E/U+FE0F) no cell of its own, so
+                # indexing a per-codepoint loop by that number would shift every
+                # cell after it one column right. brand.py keeps such pairs out
+                # of the art; this makes the compositor agree with cell_len
+                # regardless.
+                ax = 0
+                for ch in art_line:
+                    if ch in ("\ufe0e", "\ufe0f"):
+                        continue  # zero-width: shares the previous char's cell
+                    if ch != " ":
+                        gx = left + ax
+                        if 0 <= gx < cols:
+                            row_l[gx] = ch
+                            row_s[gx] = art_style
+                    ax += cell_len(ch)
 
 
 
