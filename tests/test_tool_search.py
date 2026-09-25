@@ -8,7 +8,12 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langchain_core.tools import tool
 
 import novacode_cli.skills.retrieval as R
-from novacode_cli.agents.tool_search import LOADED_MARKER, ToolSearchMiddleware, loaded_names
+from novacode_cli.agents.tool_search import (
+    CORE_TOOLS,
+    LOADED_MARKER,
+    ToolSearchMiddleware,
+    loaded_names,
+)
 
 
 @tool
@@ -96,6 +101,22 @@ def test_hidden_subagents_leave_the_task_description() -> None:
     assert "rust-reviewer" not in desc and "- reviewer: Reviews code." in desc
     assert "1 more specialist subagents" in desc
     assert "rust-reviewer" in task.description, "the shared tool itself is untouched"
+
+
+def test_artifact_tools_are_core_not_deferred() -> None:
+    """Artifact tools must be bound without a tool_search round-trip.
+
+    The prompt tells the agent to create artifacts proactively; if these drop
+    out of CORE_TOOLS the instruction names tools the model cannot see.
+    """
+    assert {"create_artifact", "update_artifact", "list_artifacts"} <= CORE_TOOLS
+
+    # End-to-end: a request carrying the artifact tools keeps them bound.
+    arts = [_mcp(n, "d") for n in ("create_artifact", "update_artifact", "list_artifacts")]
+    req = _request([HumanMessage("hi")])
+    req = req.override(tools=[*TOOLS, *arts])
+    bound = _names(_mw()._apply(req))
+    assert {"create_artifact", "update_artifact", "list_artifacts"} <= bound
 
 
 def test_tool_search_loads_by_description_and_by_exact_name() -> None:

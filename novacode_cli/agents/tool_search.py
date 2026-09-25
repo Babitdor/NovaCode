@@ -64,6 +64,12 @@ CORE_TOOLS = frozenset(
         "skill_search",
         "tool_search",
         "check_async_task",
+        # Artifacts: the prompt tells the agent to create these proactively, so
+        # the schemas must be bound without a tool_search round-trip — otherwise
+        # the instruction names tools the model cannot see.
+        "create_artifact",
+        "update_artifact",
+        "list_artifacts",
     }
 )
 #: Also bound: up to this many of the user's most-used other tools...
