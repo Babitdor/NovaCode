@@ -759,9 +759,17 @@ def get_default_coding_instructions() -> str:
     """
     from novacode_cli.prompts import render_template
 
+    from novacode_cli.agents.default_subagents.async_subagents import (
+        async_agents_available,
+    )
+
     return render_template(
         "System_Prompt_Nova.jinja",
         has_tavily=settings.has_tavily,
+        # The async subagents exist only while their LangGraph container runs.
+        # Describing tools that are not bound wastes context and invites the
+        # model to call something that isn't there.
+        has_async_agents=async_agents_available(),
     )
 
 

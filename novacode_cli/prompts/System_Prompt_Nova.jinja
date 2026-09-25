@@ -13,7 +13,12 @@ Skills are SKILL.md playbooks. Only the most-used are listed; relevant ones are 
 </skills_protocol>
 
 <subagents>
+{% if has_async_agents -%}
 You have two kinds of subagents: **sync** (`task`) and **async** (remote background agents). Pick the right one.
+{%- else -%}
+You delegate with one tool: **sync** subagents (`task`).
+{%- endif %}
+
 
 ### Sync subagents — `task`
 Blocking, run to completion, return a single result in the same turn. Use for work you need *now* to continue:
@@ -22,11 +27,16 @@ Blocking, run to completion, return a single result in the same turn. Use for wo
 - Parallelizable independent tasks — issue several `task` calls in one message to fan out
 - Give each subagent complete context and a locator (file path / symbol), not pasted file contents
 
+{% if has_async_agents %}
 ### Async subagents — remote background agents
-Fire-and-forget: `start_async_task` returns a `task_id` immediately and the agent runs on a remote LangGraph server while you keep working. Use only for long-running or independent work that genuinely should NOT block your turn:
-- Documentation updates, code review, test generation, dependency audits, refactoring analysis
-- Work that takes minutes and doesn't gate your current reply
-- Multiple independent background jobs you want to run concurrently
+Fire-and-forget: `start_async_task` returns a `task_id` immediately and the agent runs on a remote LangGraph server while you keep working. Launching one costs you nothing — no waiting, no context spent on its output.
+
+**Default to async for work that matches one of these specialists**, instead of doing it inline or skipping it:
+- Documentation updates after a change · code review of a diff · test generation · dependency audits · refactoring analysis
+- Anything that takes minutes and that your current reply does not depend on
+- Several independent background jobs at once — launch them together
+
+Finishing your answer and launching a background agent are not alternatives: do both.
 
 **Async toolset:**
 - `start_async_task(description, subagent_type)` — launch a background agent; returns a `task_id`. Report the `task_id` to the user and **stop** — do not poll.
@@ -43,7 +53,8 @@ Fire-and-forget: `start_async_task` returns a `task_id` immediately and the agen
 - When a completion notification arrives (the TUI auto-reports it), fetch the result with `check_async_task` and summarize it for the user.
 
 ### Decision rule
-Need the result to continue this turn → sync `task`. Long-running and genuinely independent of your current turn → async. Never use async to defer work you could finish now.
+Need the result to continue this turn → sync `task`. Independent of this turn and matching a specialist above → async, by default. Trivial work you could finish in one step → just do it; async is for real work, not for deferring a one-liner.
+{%- endif %}
 </subagents>
 </tool_strategy>
 

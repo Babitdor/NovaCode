@@ -1,31 +1,96 @@
 # Async Subagents for NOVA CLI
 # These run on remote LangGraph servers in the background
 
+import logging
 import os
+import socket
+from urllib.parse import urlsplit
 
 from deepagents.middleware.async_subagents import AsyncSubAgent
 
+logger = logging.getLogger(__name__)
+
 # ── Base URL resolution ────────────────────────────────────────────────────────
 
-_ASYNC_AGENT_BASE_URL = os.environ.get("ASYNC_AGENT_BASE_URL", "http://localhost")
+#: Where the async-subagent LangGraph server lives when nothing says otherwise.
+#: Every async graph is hosted by the one ``novacode`` container; routing is by
+#: ``graph_id``, so a single base URL and port cover all of them.
+DEFAULT_ASYNC_AGENT_BASE_URL = "http://localhost"
+ASYNC_AGENT_PORT = 2024
+
+#: How long to wait for the server's port to accept a connection. This runs on
+#: the agent-build path, so it has to be short enough not to be felt; a
+#: container that is up answers a local TCP connect in single-digit ms.
+_PROBE_TIMEOUT_S = 0.4
+
+_availability: bool | None = None
 
 
-def _resolve_async_agent_url(port: int) -> str | None:
+def _resolve_async_agent_url(port: int) -> str:
     """Resolve the LangGraph server URL for an async subagent.
 
     Priority:
     1. ``ASYNC_AGENT_BASE_URL`` environment variable (shared base, e.g.
        ``http://localhost`` or ``http://doc-agent`` in Docker)
     2. ``LANGGRAPH_API_URL`` environment variable (shared LangGraph Platform URL)
-    3. ``None`` — falls back to ASGI in-process transport (only works when
-       running inside a LangGraph server process, e.g. ``langgraph dev``)
+    3. :data:`DEFAULT_ASYNC_AGENT_BASE_URL`
 
-    The port is appended as ``{base}:{port}``.
+    Previously this returned ``None`` when neither variable was set, which made
+    every spec fall back to an in-process ASGI transport that only exists inside
+    a ``langgraph dev`` process — so with the container running but no env var
+    exported, delegation failed. The port is appended as ``{base}:{port}``.
     """
-    base = os.environ.get("ASYNC_AGENT_BASE_URL") or os.environ.get("LANGGRAPH_API_URL")
-    if base is None:
-        return None
+    base = (
+        os.environ.get("ASYNC_AGENT_BASE_URL")
+        or os.environ.get("LANGGRAPH_API_URL")
+        or DEFAULT_ASYNC_AGENT_BASE_URL
+    ).rstrip("/")
+    # A base that already names a port wins — writing the obvious
+    # ASYNC_AGENT_BASE_URL=http://localhost:2024 otherwise produced
+    # "http://localhost:2024:2024", which no client can reach.
+    if _has_port(base):
+        return base
     return f"{base}:{port}"
+
+
+def _has_port(base: str) -> bool:
+    """Whether *base* already carries an explicit ``:port``."""
+    try:
+        return urlsplit(base).port is not None
+    except ValueError:
+        return False
+
+
+def async_agents_available(*, refresh: bool = False) -> bool:
+    """Whether the async-subagent server is actually reachable.
+
+    The async subagents only exist while the ``novacode`` LangGraph container is
+    running. Offering them when it is not turns every delegation into a failed
+    round-trip, so the specs are withheld instead and the agent uses its
+    ordinary in-process subagents.
+
+    One TCP connect, cached for the process: the container does not come and go
+    mid-session, and this sits on the agent-build path.
+    """
+    global _availability
+    if _availability is not None and not refresh:
+        return _availability
+    try:
+        parts = urlsplit(_resolve_async_agent_url(ASYNC_AGENT_PORT))
+        if parts.scheme not in ("http", "https") or not parts.hostname:
+            # A base URL the client cannot use. Reaching some other server on
+            # the default port would be worse than reporting it unavailable:
+            # the specs would carry the unusable URL.
+            msg = f"unusable async agent base URL: {parts.geturl()!r}"
+            raise ValueError(msg)
+        host, port = parts.hostname, parts.port or ASYNC_AGENT_PORT
+        with socket.create_connection((host, port), timeout=_PROBE_TIMEOUT_S):
+            _availability = True
+    except (OSError, ValueError):  # unreachable, or a malformed base URL
+        host = port = "?"
+        _availability = False
+    logger.debug("async subagent server at %s:%s reachable=%s", host, port, _availability)
+    return _availability
 
 
 def _resolve_async_agent_headers() -> dict[str, str]:
@@ -195,14 +260,23 @@ def build_plan_scout_agent() -> AsyncSubAgent:
 
 
 def retrieve_async_subagents() -> list[AsyncSubAgent]:
-    """Return the list of available async subagents.
+    """Return the async subagents, or ``[]`` when their server is not running.
 
-    Async subagents run on remote Agent Protocol servers and execute
-    in the background, returning a task ID immediately.
+    Async subagents run on remote Agent Protocol servers and execute in the
+    background, returning a task ID immediately. That server is the ``novacode``
+    Docker container; with it stopped the tools would still be advertised and
+    every delegation would fail, so nothing is returned and the agent falls back
+    to its synchronous in-process subagents.
 
     Returns:
-        List of AsyncSubAgent configurations.
+        List of AsyncSubAgent configurations, empty when the server is down.
     """
+    if not async_agents_available():
+        logger.info(
+            "Async subagent server unreachable — using synchronous subagents. "
+            "Start the novacode container to enable background delegation."
+        )
+        return []
     return [
         build_documentation_update_agent(),
         build_code_review_agent(),
