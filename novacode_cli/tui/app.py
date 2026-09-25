@@ -1675,6 +1675,10 @@ class NovaApp(App):
         self._eager_voice_warmup()
         # Replay prior conversation when resuming a session.
         self._replay_history()
+        # ...and measure what that history costs, so a continued session opens
+        # with a real ctx% instead of the empty-window baseline. No-ops when
+        # there is no history. on_mount is sync, so this runs as a worker.
+        self.run_worker(self._update_context_breakdown(), exclusive=False)
         # Route remote bridge status messages into the transcript (not stdout).
         mgr = getattr(self.session_state, "_remote_bridge_manager", None)
         if mgr is not None:
@@ -7372,6 +7376,12 @@ class NovaApp(App):
         self._todos_agent = None
         self._paint_todos(self._todos)
         self._update_mode_badge()
+        # Re-measure ctx from the seeded history. `token_tracker.reset()` above
+        # drops back to the baseline, which is correct for the API counters (no
+        # call has been made on this thread yet) but wrong for the display: the
+        # continuation prompt is already in the window, so ctx% read ~0 until
+        # the next turn finished. Measuring the state here shows the real size.
+        await self._update_context_breakdown()
         self._refresh_status()
 
         for w in warnings:
