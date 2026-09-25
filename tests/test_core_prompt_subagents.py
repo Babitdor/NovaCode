@@ -27,3 +27,13 @@ def test_subagents_block_follows_todo_management():
     assert "<todo_management>" in out
     assert "<subagents>" in out
     assert out.index("<subagents>") > out.index("</todo_management>")
+
+
+def test_core_prompt_has_artifacts_block():
+    out = _core_prompt()
+    assert "<artifacts>" in out
+    assert "</artifacts>" in out
+    # Proactive framing + the tool names it must match (see CORE_TOOLS).
+    assert "proactively" in out
+    for name in ("create_artifact", "update_artifact", "list_artifacts"):
+        assert name in out
