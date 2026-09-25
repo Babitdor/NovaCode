@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from novacode_cli.commands import CommandContext
 from novacode_cli.config.config import COLORS, console
-from novacode_cli.config.model_capabilities import model_supports_images
+from novacode_cli.config.model_capabilities import resolve_main_model_multimodal
 from novacode_cli.config.nova_config import NovaConfig
 
 
@@ -25,9 +25,11 @@ def _current_main_model() -> tuple[str, str]:
 def _print_status() -> None:
     """Print the current vision configuration."""
     nova_config = NovaConfig()
-    provider, model = _current_main_model()
+    _, model = _current_main_model()
     override = nova_config.get_main_model_multimodal()
-    detected = model_supports_images(provider, model, override=override)
+    # The same resolver the agent uses, so the status line cannot claim
+    # "no" while the agent passes images through (or the reverse).
+    detected = resolve_main_model_multimodal(model)
     vision_cfg = nova_config.get_vision_model_config()
 
     console.print()

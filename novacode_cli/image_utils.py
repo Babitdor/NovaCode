@@ -25,6 +25,16 @@ class ImageData:
     format: str  # "png", "jpeg", etc.
     placeholder: str  # Display text like "[image 1]"
 
+    def to_data_url(self) -> str:
+        """The image as a ``data:<mime>;base64,<…>`` URL.
+
+        This is the form multimodal chat APIs accept for an ``image_url``
+        content part, and the form :func:`~novacode_cli.bootstrap.vision_router.
+        caption_images` expects — it takes URL strings, not :class:`ImageData`
+        objects.
+        """
+        return f"data:image/{self.format};base64,{self.base64_data}"
+
     def to_message_content(self) -> dict:
         """Convert to LangChain message content format.
 
@@ -33,7 +43,7 @@ class ImageData:
         """
         return {
             "type": "image_url",
-            "image_url": {"url": f"data:image/{self.format};base64,{self.base64_data}"},
+            "image_url": {"url": self.to_data_url()},
         }
 
     @property

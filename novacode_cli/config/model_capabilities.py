@@ -69,6 +69,34 @@ MULTIMODAL_MODEL_PATTERNS: tuple[str, ...] = (
 )
 
 
+#: What the *bound* model's own ``ModelProfile`` says about image input, as
+#: recorded by :func:`note_bound_model` when the agent is built. ``None`` means
+#: "no profile said anything", not "no".
+#:
+#: Cached rather than re-derived because the two callers see different things:
+#: agent construction has the model object, prompt preparation (which must give
+#: the SAME answer) has only the config. A stale value cannot outlive a model
+#: switch — that rebuilds the agent, which re-notes it.
+_bound_profile_support: bool | None = None
+
+
+def note_bound_model(model: object) -> None:
+    """Record what *model*'s own profile declares about image input.
+
+    LangChain populates ``model.profile`` from its provider's profile data, which
+    knows about models this module's pattern list never will. Trusting it is the
+    difference between a capable model reading a screenshot and being handed
+    ``[read_file: UI.png was not attached ...]`` — at which point the model does
+    the only thing left and writes a script to inspect the pixels.
+    """
+    global _bound_profile_support
+    profile = getattr(model, "profile", None)
+    if isinstance(profile, dict) and "image_inputs" in profile:
+        _bound_profile_support = bool(profile["image_inputs"])
+    else:
+        _bound_profile_support = None
+
+
 def _matches_pattern(model_name: str) -> bool:
     """True when *model_name* matches a known multimodal pattern."""
     low = (model_name or "").lower()
@@ -104,7 +132,54 @@ def model_supports_images(
     return _matches_pattern(name)
 
 
+def resolve_main_model_multimodal(model: object) -> bool:
+    """Whether the *configured* main model can accept image input.
+
+    The single source of truth for this question. It reads the provider and
+    model from ``Nova.config.json`` and applies the user override, so the
+    answer matches the model Nova is actually running.
+
+    Used both when building the agent (to configure the vision middleware) and
+    when preparing a prompt (to decide whether a pasted image can be handed to
+    the main model directly instead of being captioned). Deriving it twice would
+    let those two decisions disagree — the shape of the original bug, where a
+    multimodal model still had its images captioned.
+
+    Args:
+        model: The bound model or its name. Only used to tell whether the main
+            model is multimodal; the provider comes from the saved config.
+
+    Precedence: the user's explicit override, then the bound model's own
+    profile (see :func:`note_bound_model`), then the static pattern list.
+
+    Returns:
+        ``True`` when images may be sent straight to the main model.
+    """
+    try:
+        from novacode_cli.config.nova_config import NovaConfig
+
+        override = NovaConfig().get_main_model_multimodal()
+        if override is not None:
+            return bool(override)
+        if _bound_profile_support is not None:
+            return _bound_profile_support
+        cfg = NovaConfig().get_model_config() or {}
+        provider = cfg.get("provider", "") if isinstance(cfg, dict) else ""
+        name = cfg.get("model") if isinstance(cfg, dict) else None
+        if not name:
+            name = (
+                model
+                if isinstance(model, str)
+                else getattr(model, "model_name", getattr(model, "model", ""))
+            )
+        return model_supports_images(str(provider), str(name))
+    except Exception:  # noqa: BLE001 — capability detection must never break a turn
+        return False
+
+
 __all__ = [
     "MULTIMODAL_MODEL_PATTERNS",
     "model_supports_images",
+    "note_bound_model",
+    "resolve_main_model_multimodal",
 ]

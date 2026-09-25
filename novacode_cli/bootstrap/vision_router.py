@@ -60,17 +60,28 @@ _MIME_BY_SUFFIX: dict[str, str] = {
     ".tif": "image/tiff",
 }
 
+#: Appended to every failure placeholder. Without it the model is handed a
+#: bracketed note about an image it cannot see and improvises — in practice it
+#: writes a script to decode the file and read raw pixel values, which answers
+#: nothing and costs a tool round-trip. Saying so explicitly stops that.
+_NO_PIXEL_ARCHAEOLOGY = (
+    " Do not try to inspect the image yourself (no pixel decoding, no PIL/ffmpeg "
+    "scripts) — it cannot be read that way. Ask the user what it shows, or "
+    "suggest `/vision on` if their model can see images."
+)
+
 # Placeholder captions returned (instead of leaking an image) when vision fails.
 _VISION_UNAVAILABLE = (
     "[image: vision model unavailable — set a multimodal `vision_model` in "
     "~/.nova/Nova.config.json, or run `/vision` to configure it. If your main "
     "model is multimodal, run `/vision on` to send images to it directly]"
 )
+_VISION_UNAVAILABLE += _NO_PIXEL_ARCHAEOLOGY
 _VISION_FAILED = (
     "[image: vision captioning failed — the configured vision_model rejected the "
-    "image or is unavailable]"
+    "image or is unavailable]" + _NO_PIXEL_ARCHAEOLOGY
 )
-_VISION_EMPTY = "[image: vision model returned no description]"
+_VISION_EMPTY = "[image: vision model returned no description]" + _NO_PIXEL_ARCHAEOLOGY
 
 #: How many consecutive images to skip captioning for after a hard failure.
 #: A single transient failure (a cold Ollama model, a momentary network blip)
@@ -473,8 +484,19 @@ class VisionCaptionMiddleware(AgentMiddleware):
         return handler(request.override(messages=_strip_all_images(request.messages)))
 
 
+def is_vision_failure(caption: str) -> bool:
+    """True when *caption* is a failure placeholder rather than a description.
+
+    The placeholders are ordinary (truthy) strings, so a caller that only tests
+    ``if captions`` will treat a failed caption as a successful one. Use this to
+    tell them apart.
+    """
+    return caption in (_VISION_FAILED, _VISION_UNAVAILABLE, _VISION_EMPTY)
+
+
 __all__ = [
     "VisionCaptionMiddleware",
     "caption_images",
     "get_vision_model",
+    "is_vision_failure",
 ]

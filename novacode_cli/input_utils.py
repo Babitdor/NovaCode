@@ -272,8 +272,66 @@ _FILE_EXTENSIONS = frozenset({
 })
 
 
+# Caps for @mention content. A mention is inlined into the prompt, so an
+# unbounded read would let one large file (or many) blow the context window.
+MAX_MENTION_FILE_CHARS = 50_000  # per file, before truncation
+MAX_MENTION_TOTAL_CHARS = 200_000  # across all mentions in one message
+MAX_MENTION_DIR_ENTRIES = 100  # a directory mention lists at most this many names
+
+# @path, either quoted ("my file.py") or bare with \  escapes.
+_FILE_MENTION_RE = re.compile(r'@(?:"([^"]+)"|((?:[^\s@]|(?<=\\)\s)+))')
+
+
+def _mention_roots() -> list[Path]:
+    """Directories a relative @mention is resolved against, in priority order.
+
+    The workspace root comes first because the TUI's ``@`` autocomplete emits
+    paths relative to it (``tui/app.py``). Resolving against ``Path.cwd()``
+    instead meant a mention inserted by the picker could not be found whenever
+    Nova was launched from a subdirectory of the repo.
+    """
+    roots: list[Path] = []
+    try:
+        from novacode_cli.config.config import settings
+
+        roots.append(Path(settings.get_workspace_root()))
+    except Exception:  # noqa: BLE001 — config may be unavailable in tests
+        pass
+    roots.append(Path.cwd())
+
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for root in roots:
+        try:
+            resolved = root.resolve()
+        except Exception:  # noqa: BLE001
+            continue
+        if resolved not in seen:
+            seen.add(resolved)
+            unique.append(resolved)
+    return unique
+
+
+def _resolve_mention(clean_path: str) -> Path | None:
+    """Resolve a mention to an existing file or directory, else ``None``.
+
+    Absolute paths are used as-is; relative ones are tried against the
+    workspace root first, then the launch directory.
+    """
+    path = Path(clean_path).expanduser()
+    candidates = [path] if path.is_absolute() else [r / path for r in _mention_roots()]
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except Exception:  # noqa: BLE001 — invalid path syntax
+            continue
+        if resolved.exists():
+            return resolved
+    return None
+
+
 def _is_likely_file_mention(match_str: str) -> bool:
-    """Return True if the @-mention looks like a file path, not a CSS at-rule or decorator."""
+    """Return True if the @-mention looks like a path, not a CSS at-rule or decorator."""
     if len(match_str) < 2:
         return False
 
@@ -284,48 +342,33 @@ def _is_likely_file_mention(match_str: str) -> bool:
     if bare_word in _FALSE_POSITIVE_AT_RULES:
         return False
 
+    # A path that actually exists is the strongest signal, so check it before
+    # the heuristic filters below. Otherwise a real file with an uncommon
+    # extension (e.g. @data.bin) is mistaken for an email address and dropped.
+    if _resolve_mention(match_str) is not None:
+        return True
+
     has_slash = "/" in cleaned
     has_dot = "." in cleaned
 
-    if not has_slash:
-        # Bare @word with no path separator
-        if not has_dot:
-            # No extension, no slash — check if the file actually exists on disk.
-            # This handles files like @Makefile, @Dockerfile, @LICENSE, @README.
-            try:
-                bare_path = Path(match_str).expanduser()
-                if not bare_path.is_absolute():
-                    bare_path = Path.cwd() / bare_path
-                if bare_path.exists() and bare_path.is_file():
-                    return True
-            except Exception:
-                pass
-            # Not a real file, not a path — skip
-            # (e.g. @keyframes, @decorator, @cache_read_tokens, @e1)
-            return False
-        else:
-            # Has extension but no slash — could be @README.md
-            ext = cleaned.rsplit(".", 1)[-1].lower()
-            if ext in _FILE_EXTENSIONS:
-                return True
-            # email@domain.com pattern (no slash, domain-like suffix)
-            if re.match(r"^[a-zA-Z0-9._%+-]+\.[a-zA-Z]{2,}$", cleaned):
-                return False
-            # Unknown extension, no slash — check if the file actually exists on disk.
-            # Handles dotfiles like .env.template, .gitignore, .python-version.
-            try:
-                bare_path = Path(match_str).expanduser()
-                if not bare_path.is_absolute():
-                    bare_path = Path.cwd() / bare_path
-                if bare_path.exists() and bare_path.is_file():
-                    return True
-            except Exception:
-                pass
-            return False
+    if not has_slash and not has_dot:
+        # Bare @word, no separator or extension, and not on disk — not a file
+        # (rules out @keyframes, @decorator, @cache_read_tokens, @e1).
+        return False
 
-    # Has a slash — likely a path like @src/utils.ts or @app/components/Header.tsx
-    # Even @angular/core style scoped packages pass through here;
-    # the file-existence check below filters them out silently.
+    if not has_slash:
+        # Has an extension but no slash — could be @README.md.
+        ext = cleaned.rsplit(".", 1)[-1].lower()
+        if ext in _FILE_EXTENSIONS:
+            return True
+        # email@domain.com pattern (no slash, domain-like suffix, not on disk)
+        if re.match(r"^[a-zA-Z0-9._%+-]+\.[a-zA-Z]{2,}$", cleaned):
+            return False
+        return False
+
+    # Has a slash — likely a path like @src/utils.ts or @app/components/Header.tsx.
+    # Even @angular/core style scoped packages pass through here; the
+    # existence check in parse_file_mentions filters them out silently.
     return True
 
 
@@ -335,32 +378,31 @@ def parse_file_mentions(text: str) -> tuple[str, list[Path]]:
     Filters out false positives like CSS at-rules (@keyframes, @media),
     Python/JS decorators (@dataclass, @property), and email addresses
     (user@domain.com) that the @-mention regex would otherwise match.
-    """
-    pattern = r"@((?:[^\s@]|(?<=\\\\)\s)+)"
-    matches = re.findall(pattern, text)
 
+    Returns the text unchanged plus the resolved paths, which may be files or
+    directories (a directory mention lists its entries rather than recursing).
+    """
     files: list[Path] = []
-    for match in matches:
+    seen: set[Path] = set()
+
+    for match in _FILE_MENTION_RE.finditer(text):
+        # Group 1 = quoted form, group 2 = bare form (with \  escapes).
+        raw = match.group(1) if match.group(1) is not None else match.group(2)
+        if not raw:
+            continue
+        clean_path = raw.replace("\\ ", " ")
+
         # Skip false positives (CSS at-rules, decorators, email addresses)
-        if not _is_likely_file_mention(match):
+        if not _is_likely_file_mention(clean_path):
             continue
 
-        # Remove escape characters
-        clean_path = match.replace("\\ ", " ")
-        path = Path(clean_path).expanduser()
-
-        # Try to resolve relative to cwd
-        if not path.is_absolute():
-            path = Path.cwd() / path
-
-        try:
-            path = path.resolve()
-            if path.exists() and path.is_file():
-                files.append(path)
-            # Silently skip non-existent files that passed the filter —
-            # avoids noise for scoped packages like @angular/core
-        except Exception:
-            pass  # Silently ignore invalid paths from filtered matches
+        resolved = _resolve_mention(clean_path)
+        # Silently skip non-existent paths — avoids noise for scoped packages
+        # like @angular/core, which look like paths but are not.
+        if resolved is None or resolved in seen:
+            continue
+        seen.add(resolved)
+        files.append(resolved)
 
     return text, files
 

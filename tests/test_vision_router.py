@@ -405,9 +405,15 @@ class TestPasteIngestionCaptioning:
     async def test_pasted_image_becomes_text(self, monkeypatch: pytest.MonkeyPatch):
         import novacode_cli.core.input_preparation as ip
 
+        # Captioning only applies to a TEXT-ONLY main model; a multimodal one is
+        # handed the image blocks instead (test_vision_multimodal_routing.py).
+        monkeypatch.setattr(ip, "_main_model_can_see_images", lambda: False)
         monkeypatch.setattr(vr, "caption_images", AsyncMock(return_value="a bar chart of sales"))
 
         class _FakeImg:
+            def to_data_url(self) -> str:
+                return "data:image/png;base64,abc"
+
             def to_message_content(self) -> dict:
                 return {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}}
 
@@ -421,6 +427,34 @@ class TestPasteIngestionCaptioning:
         assert "describe this chart" in out
         assert "a bar chart of sales" in out
         assert "data:image" not in out  # image never enters the conversation
+
+    async def test_multimodal_main_model_gets_image_blocks_not_a_caption(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """The counterpart: a capable model reads the image itself."""
+        import novacode_cli.core.input_preparation as ip
+
+        monkeypatch.setattr(ip, "_main_model_can_see_images", lambda: True)
+        caption = AsyncMock(return_value="should not be used")
+        monkeypatch.setattr(vr, "caption_images", caption)
+
+        class _FakeImg:
+            def to_data_url(self) -> str:
+                return "data:image/png;base64,abc"
+
+            def to_message_content(self) -> dict:
+                return {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}}
+
+        tracker = MagicMock()
+        tracker.get_images.return_value = [_FakeImg()]
+
+        out = await ip.prepare_input_content(
+            "describe this chart", image_tracker=tracker, skip_file_mentions=True
+        )
+        assert isinstance(out, list)
+        assert out[0]["type"] == "text"
+        assert out[1]["type"] == "image_url"
+        caption.assert_not_awaited()
 
 
 # =========================================================================
@@ -464,3 +498,67 @@ class TestMainModelMultimodalOverride:
         assert nc.get_main_model_multimodal() is False
         nc.set_main_model_multimodal(None)
         assert nc.get_main_model_multimodal() is None
+
+
+# ── capability detection: the model's own profile beats our pattern list ─────
+
+
+class _Profiled:
+    """A bound chat model carrying a LangChain ModelProfile."""
+
+    def __init__(self, image_inputs: bool | None) -> None:
+        self.profile = {"max_input_tokens": 128_000}
+        if image_inputs is not None:
+            self.profile["image_inputs"] = image_inputs
+
+
+def _fresh_caps(monkeypatch, *, override=None, model="some/unlisted-vl-model"):
+    from novacode_cli.config import model_capabilities as mc
+
+    monkeypatch.setattr(mc, "_bound_profile_support", None, raising=False)
+
+    class _Cfg:
+        def get_main_model_multimodal(self):  # noqa: ANN001, ANN201
+            return override
+
+        def get_model_config(self):  # noqa: ANN201
+            return {"provider": "openai", "model": model}
+
+    monkeypatch.setattr("novacode_cli.config.nova_config.NovaConfig", lambda: _Cfg())
+    return mc
+
+
+def test_an_unlisted_model_is_believed_when_its_profile_says_it_sees_images(monkeypatch):
+    """The pattern list cannot know every model; the provider's profile does."""
+    mc = _fresh_caps(monkeypatch)
+    assert mc.resolve_main_model_multimodal(None) is False, "unlisted, nothing bound yet"
+
+    mc.note_bound_model(_Profiled(image_inputs=True))
+    assert mc.resolve_main_model_multimodal(None) is True
+
+
+def test_a_profile_saying_no_is_believed_too(monkeypatch):
+    mc = _fresh_caps(monkeypatch, model="gpt-4o")
+    mc.note_bound_model(_Profiled(image_inputs=False))
+    assert mc.resolve_main_model_multimodal(None) is False
+
+
+def test_a_model_without_a_profile_falls_back_to_the_pattern_list(monkeypatch):
+    mc = _fresh_caps(monkeypatch, model="gpt-4o")
+    mc.note_bound_model(_Profiled(image_inputs=None))
+    assert mc.resolve_main_model_multimodal(None) is True
+
+
+def test_the_user_override_still_wins(monkeypatch):
+    mc = _fresh_caps(monkeypatch, override=True)
+    mc.note_bound_model(_Profiled(image_inputs=False))
+    assert mc.resolve_main_model_multimodal(None) is True
+
+
+def test_a_failed_caption_forbids_pixel_archaeology() -> None:
+    """The symptom: told an image "was not attached", the model writes a decoder."""
+    from novacode_cli.bootstrap import vision_router as vr
+
+    for placeholder in (vr._VISION_UNAVAILABLE, vr._VISION_FAILED, vr._VISION_EMPTY):
+        assert "Do not try to inspect the image yourself" in placeholder
+        assert vr.is_vision_failure(placeholder), "still recognised as a failure"
