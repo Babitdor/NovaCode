@@ -144,3 +144,12 @@ prime-agent/
 
 # Ad-hoc debugging probe scripts — scratch, never part of the tree
 _probe_*.py
+# Same, when the file is named to describe what it audits rather than what it
+# probes. Kept as an exact path so a real module can never be caught by it.
+novacode_cli/_audit_probe.py
+# Scratch working directory for one-off analysis scripts and captured output.
+tmp/
+
+# Screenshots used while iterating on the TUI — not documentation, not shipped.
+/UI.png
+/UI-*.png
