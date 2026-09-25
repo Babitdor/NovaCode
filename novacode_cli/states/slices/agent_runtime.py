@@ -8,6 +8,7 @@ UI configuration or remote bridges.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 
@@ -94,8 +95,17 @@ class AgentRuntimeState:
 
         from novacode_cli.agents.core_agent import create_agent_with_config
 
-        # Recreate agent with new model, preserving state
-        new_agent, new_backend = create_agent_with_config(
+        # Recreate agent with new model, preserving state.
+        #
+        # Off the event loop: this rebuild recompiles every subagent graph and
+        # re-scans plugin skills/agents/MCP, which is seconds of synchronous work
+        # that otherwise freezes the whole TUI (the stall watchdog recorded
+        # multi-second freezes with the loop blocked in
+        # create_agent_with_config -> _build_subagent_roster -> plugin_agent_specs
+        # on /model switches). create_agent_with_config is sync and only builds
+        # objects, so running it in a worker thread is safe.
+        new_agent, new_backend = await asyncio.to_thread(
+            create_agent_with_config,
             model=new_model,
             assistant_id=self._assistant_id,
             tools=self._tools,
@@ -159,8 +169,11 @@ class AgentRuntimeState:
 
         from novacode_cli.agents.core_agent import create_agent_with_config
 
-        # Recreate agent, preserving state
-        new_agent, new_backend = create_agent_with_config(
+        # Recreate agent, preserving state. Off the event loop for the same
+        # reason as switch_model: the rebuild recompiles every subagent graph and
+        # re-scans plugin skills/agents/MCP, which would otherwise freeze the TUI.
+        new_agent, new_backend = await asyncio.to_thread(
+            create_agent_with_config,
             model=self._model,
             assistant_id=self._assistant_id,
             tools=self._tools,

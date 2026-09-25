@@ -13,6 +13,8 @@ from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
+import pytest
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from pathlib import Path
@@ -146,3 +148,95 @@ def test_append_refinement_events_batches_one_write(tmp_path: Path) -> None:
     )
     assert one
     assert len(refinement_log.read_refinement_events(tmp_path, limit=100)) == 21
+
+
+# -- Phase 1: the per-turn corpus signature must not walk the whole dir -----
+
+
+def test_corpus_signature_scandir_is_used_and_value_is_unchanged(tmp_path: Path) -> None:
+    """The signature must come from os.scandir, not one stat() per file.
+
+    It runs on every turn (the corpus cache is keyed on it). With 18k topic
+    files the old ``Path.glob`` + per-file ``Path.stat`` cost ~600ms of
+    event-loop block per turn; ``os.scandir`` returns the same value in ~40ms.
+    This pins both the value contract and the cheaper mechanism.
+    """
+    from novacode_cli.memory.agent_memory import AgentMemoryMiddleware
+
+    mem_dir = tmp_path / "memories"
+    mem_dir.mkdir()
+    (mem_dir / "a-topic.md").write_text("A", encoding="utf-8")
+    (mem_dir / "b-topic.md").write_text("B", encoding="utf-8")
+    (mem_dir / "INDEX.md").write_text("index", encoding="utf-8")
+
+    sig = AgentMemoryMiddleware._corpus_signature(mem_dir)
+    assert sig is not None
+    count, newest = sig
+    # Every *.md counts, INDEX.md included — this matches the previous
+    # glob("*.md") behaviour exactly (the signature is only a change detector;
+    # counting INDEX.md is harmless and keeps parity with the old value).
+    assert count == 3
+    names = ("a-topic.md", "b-topic.md", "INDEX.md")
+    assert newest == max((mem_dir / f).stat().st_mtime for f in names)
+
+    # The mechanism: no Path.stat is called on the topic files during a scan.
+    import novacode_cli.memory.agent_memory as am
+
+    real_scandir = am.os.scandir
+    calls = {"n": 0}
+
+    def counting_scandir(path: object) -> object:
+        calls["n"] += 1
+        return real_scandir(path)
+
+    am.os.scandir = counting_scandir  # type: ignore[assignment]
+    try:
+        again = AgentMemoryMiddleware._corpus_signature(mem_dir)
+    finally:
+        am.os.scandir = real_scandir  # type: ignore[assignment]
+
+    assert calls["n"] == 1, "signature must enumerate via os.scandir"
+    assert again == sig
+
+
+# -- Model switch / MCP reload: the full agent rebuild must run off-loop ----
+
+
+@pytest.mark.parametrize("rebuild", ["switch_model", "reload_mcp_servers"])
+async def test_agent_rebuild_does_not_block_the_loop(
+    monkeypatch: pytest.MonkeyPatch, rebuild: str
+) -> None:
+    """Rebuilding the agent recompiles subagent graphs off the event loop.
+
+    The rebuild is seconds of synchronous work. On /model switches it ran on the
+    loop and froze the whole TUI (the stall watchdog recorded freezes blocked in
+    create_agent_with_config -> _build_subagent_roster). It must run in a worker
+    thread.
+    """
+    from novacode_cli.agents import core_agent
+    from novacode_cli.states.slices.agent_runtime import AgentRuntimeState
+
+    def slow_build(**_kw: object) -> tuple[object, object]:
+        time.sleep(_BLOCK_SECS)  # stand-in for the subagent recompile
+        return object(), object()
+
+    monkeypatch.setattr(core_agent, "create_agent_with_config", slow_build)
+    monkeypatch.setattr("novacode_cli.mcp.reset_shared_mcp_middleware", lambda: None)
+
+    rt = AgentRuntimeState()
+    rt.set_agent_context(
+        agent=object(),
+        backend=object(),
+        checkpointer=object(),
+        store=object(),
+        tools=[],
+        assistant_id="a",
+        model=object(),
+        sandbox_type="none",
+        sandbox=None,
+    )
+
+    work = rt.switch_model(object()) if rebuild == "switch_model" else rt.reload_mcp_servers()
+    ticks = await _count_loop_ticks(lambda: work)
+
+    assert ticks >= _MIN_TICKS, f"loop was blocked: only {ticks} ticks during the rebuild"

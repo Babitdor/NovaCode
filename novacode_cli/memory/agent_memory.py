@@ -1,6 +1,7 @@
 """Middleware for loading agent-specific long-term memory into the system prompt."""
 
 import asyncio
+import os
 import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -23,7 +24,7 @@ from langchain.agents.middleware.types import (
 
 # from langgraph.runtime import Runtime
 from novacode_cli.config.config import Settings
-from novacode_cli.memory.limits import MAX_MEMORY_CHARS
+from novacode_cli.memory.limits import MAX_MEMORY_CHARS, memory_budget
 from novacode_cli.prompts import render_template
 
 # Injection-time truncation keeps the file *head* (newest, given memory files are
@@ -137,6 +138,11 @@ class AgentMemoryMiddleware(AgentMiddleware):
 
     state_schema = AgentMemoryState
 
+    #: Per-block injection budget. Overwritten per instance in ``__init__``
+    #: from the model's window; the class default keeps ``_cap`` working for
+    #: instances built without it.
+    _max_chars: int = MAX_MEMORY_CHARS
+
     def __init__(
         self,
         *,
@@ -145,6 +151,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
         system_prompt_template: str | None = None,
         skip_project_memory: bool = False,
         backend: Any = None,
+        context_window: int = 0,
     ) -> None:
         """Initialize the agent memory middleware.
 
@@ -159,8 +166,11 @@ class AgentMemoryMiddleware(AgentMiddleware):
             backend: Optional sandbox backend for reading files from sandbox.
                 When provided, memory files are read from the sandbox instead
                 of the local filesystem.
+            context_window: The bound model's window in tokens, used to size the
+                per-block injection budget. 0 keeps the fixed legacy cap.
         """
         self.settings = settings
+        self._max_chars = memory_budget(context_window)
         self.assistant_id = assistant_id
         self.skip_project_memory = skip_project_memory
         self._backend = backend
@@ -225,6 +235,16 @@ class AgentMemoryMiddleware(AgentMiddleware):
             mtime = self._get_file_mtime(path)
             if mtime is not None:
                 self._last_mtimes[str(path)] = mtime
+
+    def _cap(self, content: str) -> str:
+        """Truncate an injected memory block to this model's per-block budget.
+
+        Keeps the HEAD: memory files are written newest-first (see
+        ``memory/limits.py``), so the head is the recent content.
+        """
+        if len(content) <= self._max_chars:
+            return content
+        return content[: self._max_chars] + _MEMORY_TRUNCATION_NOTICE
 
     def _read_file(self, path: Path) -> str | None:
         """Read file content from backend or local filesystem.
@@ -408,8 +428,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
         if needs_reload or "user_memory" not in state:
             content = self._read_file(user_path)
             if content is not None:
-                if len(content) > MAX_MEMORY_CHARS:
-                    content = content[:MAX_MEMORY_CHARS] + _MEMORY_TRUNCATION_NOTICE
+                content = self._cap(content)
                 result["user_memory"] = content
 
         # Load the topic-memory index (memories/INDEX.md). It's a compact pointer
@@ -418,16 +437,14 @@ class AgentMemoryMiddleware(AgentMiddleware):
         if needs_reload or "memory_index" not in state:
             index_content = self._read_file(index_path)
             if index_content is not None and index_content.strip():
-                if len(index_content) > MAX_MEMORY_CHARS:
-                    index_content = index_content[:MAX_MEMORY_CHARS] + _MEMORY_TRUNCATION_NOTICE
+                index_content = self._cap(index_content)
                 result["memory_index"] = index_content
 
         # Load the always-injected good-habits file (HABITS.md), if present.
         if needs_reload or "habits_memory" not in state:
             habits_content = self._read_file(habits_path)
             if habits_content is not None and habits_content.strip():
-                if len(habits_content) > MAX_MEMORY_CHARS:
-                    habits_content = habits_content[:MAX_MEMORY_CHARS] + _MEMORY_TRUNCATION_NOTICE
+                habits_content = self._cap(habits_content)
                 result["habits_memory"] = habits_content
 
         # Load the compact learning overview (memory topics, skills, prompt
@@ -447,8 +464,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
                 # Read project memory from sandbox if available, local otherwise
                 content = self._read_file_sandbox(path)
                 if content is not None:
-                    if len(content) > MAX_MEMORY_CHARS:
-                        content = content[:MAX_MEMORY_CHARS] + _MEMORY_TRUNCATION_NOTICE
+                    content = self._cap(content)
                     if content.strip():
                         # Add header showing the source file
                         relative_path = (
@@ -512,22 +528,19 @@ class AgentMemoryMiddleware(AgentMiddleware):
         if needs_reload or "user_memory" not in state:
             content = await self._aread_file(user_path)
             if content is not None:
-                if len(content) > MAX_MEMORY_CHARS:
-                    content = content[:MAX_MEMORY_CHARS] + _MEMORY_TRUNCATION_NOTICE
+                content = self._cap(content)
                 result["user_memory"] = content
 
         if needs_reload or "memory_index" not in state:
             index_content = await self._aread_file(index_path)
             if index_content is not None and index_content.strip():
-                if len(index_content) > MAX_MEMORY_CHARS:
-                    index_content = index_content[:MAX_MEMORY_CHARS] + _MEMORY_TRUNCATION_NOTICE
+                index_content = self._cap(index_content)
                 result["memory_index"] = index_content
 
         if needs_reload or "habits_memory" not in state:
             habits_content = await self._aread_file(habits_path)
             if habits_content is not None and habits_content.strip():
-                if len(habits_content) > MAX_MEMORY_CHARS:
-                    habits_content = habits_content[:MAX_MEMORY_CHARS] + _MEMORY_TRUNCATION_NOTICE
+                habits_content = self._cap(habits_content)
                 result["habits_memory"] = habits_content
 
         if needs_reload or "learning_overview" not in state:
@@ -541,8 +554,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
             for path in project_paths:
                 content = await self._aread_file(path)
                 if content is not None:
-                    if len(content) > MAX_MEMORY_CHARS:
-                        content = content[:MAX_MEMORY_CHARS] + _MEMORY_TRUNCATION_NOTICE
+                    content = self._cap(content)
                     if content.strip():
                         relative_path = (
                             path.relative_to(self.project_root) if self.project_root else path.name
@@ -621,14 +633,29 @@ class AgentMemoryMiddleware(AgentMiddleware):
         rewriting a file in place does not bump the parent directory's mtime
         (only create/delete/rename do), and the review/dream passes rewrite topic
         files in place — so a dir-mtime key served a stale corpus all session.
+
+        Uses ``os.scandir`` rather than ``Path.glob`` + ``stat``: this runs on
+        every turn (the corpus cache is keyed on it), and each ``Path.stat`` is a
+        separate syscall. On a large memory dir (18k+ topic files) that was ~600ms
+        of event-loop block *per turn*; ``scandir`` returns the same count and the
+        same newest mtime from the cached directory enumeration in ~40ms (14x).
+        The value is identical, so the delete/rewrite invalidation guarantees are
+        unchanged.
         """
         try:
-            mtimes = [p.stat().st_mtime for p in mem_dir.glob("*.md")]
+            count = 0
+            newest = 0.0
+            with os.scandir(mem_dir) as entries:
+                for entry in entries:
+                    if not entry.name.endswith(".md"):
+                        continue
+                    count += 1
+                    newest = max(newest, entry.stat().st_mtime)
         except OSError:
             return None
-        if not mtimes:
+        if count == 0:
             return (0, 0.0)
-        return (len(mtimes), max(mtimes))
+        return (count, newest)
 
     async def _relevant_memories_async(self, request: ModelRequest) -> str:
         """Async wrapper around :meth:`_relevant_memories`.

@@ -35,8 +35,8 @@ def _emit_tui_event(event_type: str, message: str) -> None:
     Autonomous skill creation/refinement runs *inside the agent loop* (Hermes),
     so printing to the console here corrupts the Textual TUI (it overlaps the
     input box). Instead we append to ``nova_event_log``, which
-    ``iterate_agent_events`` drains into a ``ContextMessage`` rendered by both the
-    Rich console REPL and the TUI. Best-effort — never raise from a notification.
+    ``iterate_agent_events`` drains into a ``ContextMessage`` rendered by the
+    TUI. Best-effort — never raise from a notification.
 
     Events include:
     - nova_skill_created: Skill created from pattern

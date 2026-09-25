@@ -128,7 +128,7 @@ class TestRecordLesson:
         assert "testing.md" in index.read_text(encoding="utf-8")
 
     def test_slugifies_topic(self, temp_agent_dir):
-        record_lesson(temp_agent_dir, "TUI Slash Commands!", "- a lesson")
+        record_lesson(temp_agent_dir, "TUI Slash Commands!", "- a real lesson")
         assert (temp_agent_dir / "memories" / "tui-slash-commands.md").exists()
 
     def test_dedupes_bullets(self, temp_agent_dir):
@@ -138,8 +138,8 @@ class TestRecordLesson:
         assert content.count("- same lesson") == 1
 
     def test_index_pointer_not_duplicated(self, temp_agent_dir):
-        record_lesson(temp_agent_dir, "testing", "- one")
-        record_lesson(temp_agent_dir, "testing", "- two")
+        record_lesson(temp_agent_dir, "testing", "- lesson one")
+        record_lesson(temp_agent_dir, "testing", "- lesson two")
         index = (temp_agent_dir / "memories" / "INDEX.md").read_text("utf-8")
         assert index.count("testing.md") == 1
 
@@ -282,3 +282,48 @@ def test_record_habit_empty_is_noop(tmp_path):  # noqa: ANN001
 
     record_habit(tmp_path, "   ")
     assert not (tmp_path / "HABITS.md").exists()
+
+
+class TestRunawayMemoryGuards:
+    """One bad review must not flood the topic corpus.
+
+    On 2026-09-23 a review emitted a word list; the writer created 16,721 topic
+    files (one per "lesson", each a single word) in 12 seconds. Every later turn
+    then paid ~7s stat-ing and scoring 18k files, and INDEX.md grew to 1.1MB —
+    of which the prompt shows only the first 12k.
+    """
+
+    def test_a_flood_of_lessons_is_capped(self, temp_agent_dir: Path) -> None:
+        from novacode_cli.hermes.memory_tiers import (
+            MAX_LESSONS_PER_REVIEW,
+            update_from_review,
+        )
+
+        lessons = [
+            {"topic": f"nova-readme-audit-{w}", "bullets": f"- The {w} check needs a follow-up run"}
+            for w in ("alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta")
+        ]
+        update_from_review(temp_agent_dir, "", lessons)
+
+        written = list((temp_agent_dir / "memories").glob("*.md"))
+        topics = [p for p in written if p.name != "INDEX.md"]
+        assert len(topics) == MAX_LESSONS_PER_REVIEW, [p.name for p in topics]
+
+    def test_one_word_bullets_are_not_memories(self, temp_agent_dir: Path) -> None:
+        """The exact shape of the runaway: a topic whose whole content is '- **Abhorring.**'."""
+        record_lesson(temp_agent_dir, "nova-readme-audit-abhorring", "- **Abhorring.**")
+        memories = temp_agent_dir / "memories"
+        assert not list(memories.glob("nova-readme-audit-*.md")), "no file for a one-word lesson"
+        index = memories / "INDEX.md"
+        assert not index.exists() or "abhorring" not in index.read_text(encoding="utf-8")
+
+    def test_a_real_lesson_still_lands(self, temp_agent_dir: Path) -> None:
+        record_lesson(
+            temp_agent_dir,
+            "telegram-routing",
+            "- Topic ids map to sessions; replying to a message reaches that session\n"
+            "- **Ok.**",
+        )
+        body = (temp_agent_dir / "memories" / "telegram-routing.md").read_text(encoding="utf-8")
+        assert "Topic ids map to sessions" in body
+        assert "Ok." not in body, "the thin bullet is dropped, the real one kept"

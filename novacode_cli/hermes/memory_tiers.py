@@ -63,6 +63,17 @@ _HABITS_HEADER = "# Good Habits\n\nReusable practices that worked well, captured
 # A safe default topic for unstructured or untagged lessons.
 _DEFAULT_TOPIC = "lessons"
 
+#: Topic files one review may write. A single degenerate review (the model
+#: emitted a word list) once created 16,721 one-word topic files in 12s, which
+#: grew the corpus to 18k files: every turn then spent ~7s stat-ing and scoring
+#: them, and INDEX.md (1.1MB) was truncated to its first 1% in the prompt.
+MAX_LESSONS_PER_REVIEW = 5
+
+#: A lesson bullet must say something: at least this many words. "Abhorring."
+#: is not a lesson. Deliberately minimal — the runaway wrote one-word bullets,
+#: and a real lesson is never one word.
+MIN_BULLET_WORDS = 2
+
 
 # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -202,15 +213,28 @@ def _slugify_topic(raw: str) -> str:
     return slug[:50]
 
 
+#: Lines of prose before the pointer list in ``INDEX.md`` (the header this
+#: module writes, plus any the user has added under it).
+_INDEX_HEADER_RE = re.compile(r"\A(.*?)(?=^- \[|\Z)", re.DOTALL | re.MULTILINE)
+
+
 def _upsert_index_pointer(memories_dir: Path, topic_slug: str) -> None:
-    """Ensure ``memories/INDEX.md`` has a pointer to ``<topic_slug>.md``."""
+    """Ensure ``memories/INDEX.md`` has a pointer to ``<topic_slug>.md``.
+
+    PREPENDED, not appended. The index is injected into every prompt truncated
+    to the per-block budget (``memory/limits.py``), and truncation keeps the
+    head — so the head has to be the newest topics. Appending meant a long
+    index showed the model only its oldest pointers.
+    """
     index = memories_dir / "INDEX.md"
     line = f"- [{topic_slug}]({topic_slug}.md)"
     if index.exists():
         content = index.read_text(encoding="utf-8")
         if re.search(rf"\]\(\s*{re.escape(topic_slug)}\.md\s*\)", content):
             return  # pointer already present
-        content = content.rstrip() + "\n" + line + "\n"
+        header = _INDEX_HEADER_RE.match(content)
+        cut = header.end() if header else 0
+        content = content[:cut].rstrip() + "\n\n" + line + "\n" + content[cut:].lstrip("\n")
     else:
         content = (
             "# Memory Index\n\n"
@@ -218,6 +242,27 @@ def _upsert_index_pointer(memories_dir: Path, topic_slug: str) -> None:
         )
     index.write_text(content, encoding="utf-8")
     _emit_memory_event(f"Indexed memory topic: {topic_slug}")
+
+
+def _worthwhile_bullets(bullets: str) -> str:
+    """Drop bullets too thin to be a lesson; "" when none survive.
+
+    The write side is the only place that can stop junk from reaching every
+    later prompt: a one-word bullet carries nothing but still costs a file, an
+    INDEX pointer, and a slot in the per-turn scoring corpus.
+    """
+    kept = []
+    for line in (bullets or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if not stripped.startswith(("-", "*", "•")):
+            kept.append(line)  # prose/sub-lines belong to the bullet above
+            continue
+        words = re.sub(r"[*_`\[\]()#.]+", " ", stripped.lstrip("-*• ")).split()
+        if len(words) >= MIN_BULLET_WORDS:
+            kept.append(line)
+    return "\n".join(kept).strip()
 
 
 def record_lesson(agent_dir: Path, topic: str, bullets: str) -> None:
@@ -232,7 +277,8 @@ def record_lesson(agent_dir: Path, topic: str, bullets: str) -> None:
         topic: Topic name (slugified into the filename).
         bullets: Bullet lines to record under this topic.
     """
-    if not (bullets or "").strip():
+    bullets = _worthwhile_bullets(bullets)
+    if not bullets:
         return
     topic_slug = _slugify_topic(topic) or _DEFAULT_TOPIC
     memories_dir = agent_dir / "memories"
@@ -409,11 +455,21 @@ def update_from_review(
     if user_model:
         update_user_model(agent_dir, user_model)
 
+    written = 0
     for lesson in lessons or []:
+        if written >= MAX_LESSONS_PER_REVIEW:
+            logger.warning(
+                "Review produced %d lessons; keeping the first %d (see "
+                "MAX_LESSONS_PER_REVIEW)",
+                len(lessons),
+                MAX_LESSONS_PER_REVIEW,
+            )
+            break
         topic = (lesson.get("topic") or _DEFAULT_TOPIC).strip() or _DEFAULT_TOPIC
         bullets = lesson.get("bullets") or ""
         if bullets.strip():
             record_lesson(agent_dir, topic, bullets)
+            written += 1
 
 
 # ── Legacy migration ───────────────────────────────────────────────────────
