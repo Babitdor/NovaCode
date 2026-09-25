@@ -21,8 +21,8 @@ def get_ollama_models() -> List[str]:
         )
         
         if result.returncode == 0:
-            # Parse JSON output
-            data = json.loads(result.stdout)
+            # Parse JSON output. stdout can be None on Windows even with rc=0.
+            data = json.loads(result.stdout or "")
             models = []
             for model in data.get("models", []):
                 models.append(model["name"])
@@ -38,7 +38,7 @@ def get_ollama_models() -> List[str]:
             
             if result.returncode == 0:
                 models = []
-                lines = result.stdout.strip().split('\n')
+                lines = (result.stdout or "").strip().split('\n')
                 # Skip header line
                 for line in lines[1:]:
                     if line.strip():

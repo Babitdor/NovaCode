@@ -208,6 +208,54 @@ def get_ollama_models() -> list[str]:
     return MODEL_PRESETS["ollama"]["models"]
 
 
+def get_opencode_models() -> list[str]:
+    """Get the live list of OpenCode Go models from the gateway.
+
+    Mirrors :func:`get_ollama_models`: ask the provider what it actually serves
+    rather than trusting the hand-maintained preset list, which drifts (six of
+    the preset's eighteen ids are already ``deprecated`` and 400 on first use).
+
+    The gateway's ``/models`` endpoint is keyed off the API key: an authorised
+    key returns the subscription's models, an absent/bad key returns a wider
+    public list. Either way the ids are real, so a bad key still yields a usable
+    picker rather than an empty one.
+
+    Returns:
+        Model ids sorted for a stable display, or the preset list if the request
+        fails (offline, gateway down) — same best-effort contract as Ollama.
+    """
+    # Resolve keyring-or-env: a key saved to the system keychain is not in
+    # os.environ on a fresh session, so reading the env alone would 401.
+    api_key = Settings.from_environment().opencode_api_key or os.environ.get(
+        "OPENCODE_API_KEY"
+    )
+
+    models: list[str] = []
+    try:
+        import httpx
+
+        headers = {"Accept": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        # The gateway 403s a default UA (same as models.dev) — send a browser one.
+        headers["User-Agent"] = "Mozilla/5.0 (Nova-Code)"
+
+        response = httpx.get(f"{OPENCODE_BASE_URL}/models", headers=headers, timeout=10)
+        response.raise_for_status()
+        payload = response.json()
+
+        models = [
+            entry["id"]
+            for entry in payload.get("data", [])
+            if isinstance(entry, dict) and entry.get("id")
+        ]
+    except Exception:  # noqa: BLE001 — network/parse failure falls back, as Ollama does
+        models = []
+
+    # Fallback to preset models if the request returned nothing usable
+    return sorted(models) if models else MODEL_PRESETS["opencode"]["models"]
+
+
 class ModelManager:
     """Manages model provider selection and switching."""
 

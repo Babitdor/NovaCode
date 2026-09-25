@@ -132,14 +132,27 @@ def test_resolve_api_key_missing_returns_none():
 # Both adapters route through the shared core (structural)
 # ---------------------------------------------------------------------------
 
-def test_both_adapters_route_through_model_manager_core():
-    from novacode_cli.commands import model_handler
+def test_the_tui_is_the_only_model_adapter():
+    """Model switching routes through ModelManager's shared core.
+
+    The console ``/model`` adapter was removed with the REPL, so the TUI's
+    ``_run_model`` is now the single adapter. It must still go through the
+    shared ModelManager API rather than reimplementing provider handling.
+    """
     from novacode_cli.tui.app import NovaApp
 
-    console_src = inspect.getsource(model_handler)
     tui_src = inspect.getsource(NovaApp._run_model)
-    for src in (console_src, tui_src):
-        assert ".resolve_api_key(" in src
-        assert ".set_provider(" in src
-        assert ".get_current_provider_id(" in src
-        assert ".get_available_providers(" in src
+    assert ".resolve_api_key(" in tui_src
+    assert ".set_provider(" in tui_src
+    assert ".get_current_provider_id(" in tui_src
+    assert ".get_available_providers(" in tui_src
+
+
+def test_console_model_handler_points_at_the_tui():
+    """The leftover console /model entry must not try to prompt (no REPL)."""
+    from novacode_cli.commands import model_handler
+
+    src = inspect.getsource(model_handler)
+    assert "import PromptSession" not in src
+    assert "run_interactive_menu" not in src
+    assert "prompt_async" not in src
