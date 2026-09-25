@@ -116,10 +116,15 @@ class MatrixRain(Static):
     def _theme_base_color(self):
         """The active theme's primary color as a Textual ``Color`` object.
 
-        Handles ANSI theme names (``ansi_blue`` → ``blue``) and falls back to
-        matrix green if the theme color can't be parsed.
+        Handles ANSI theme names (``ansi_blue`` → ``blue``). A theme colour that
+        cannot be read or parsed falls back to :data:`brand.FALLBACK_ACCENT` —
+        the same accent the pre-TUI boot screen uses — rather than the old
+        hardcoded green, which was a third brand colour disagreeing with both
+        the red boot splash and the blue TUI.
         """
         from textual.color import Color
+
+        from novacode_cli.brand import FALLBACK_ACCENT
 
         raw = None
         try:
@@ -129,13 +134,13 @@ class MatrixRain(Static):
                 raw = self.app.theme_variables.get("primary")
             except Exception:  # noqa: BLE001
                 raw = None
-        raw = (raw or "#00ff88").strip()
+        raw = (raw or FALLBACK_ACCENT).strip()
         if raw.startswith("ansi_"):
             raw = raw[len("ansi_") :]
         try:
             return Color.parse(raw)
         except Exception:  # noqa: BLE001
-            return Color.parse("#00ff88")
+            return Color.parse(FALLBACK_ACCENT)
 
     def _art_style(self) -> str:
         """Bold style for the logo — the theme's primary color at full strength."""
@@ -143,6 +148,8 @@ class MatrixRain(Static):
 
     def _theme_key(self) -> str:
         """The active theme's primary color string — the palette cache key."""
+        from novacode_cli.brand import FALLBACK_ACCENT
+
         raw = None
         try:
             raw = self.app.current_theme.primary
@@ -151,7 +158,7 @@ class MatrixRain(Static):
                 raw = self.app.theme_variables.get("primary")
             except Exception:  # noqa: BLE001
                 raw = None
-        return (raw or "#00ff88").strip()
+        return (raw or FALLBACK_ACCENT).strip()
 
     def _ensure_theme_cache(self) -> None:
         """Recompute the palette + art style only when the theme color changes."""

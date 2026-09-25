@@ -36,10 +36,18 @@ from pathlib import Path
 import dotenv
 from rich.console import Console
 from rich.live import Live
-from rich.progress import BarColumn, Progress, TextColumn
 from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
+
+from novacode_cli.brand import (
+    TAGLINE,
+    WORDMARK_WIDTH,
+    art_for,
+    compact_mark,
+    get_accent_hex,
+    wordmark,
+)
 
 dotenv.load_dotenv()
 
@@ -172,102 +180,34 @@ def parse_agent_color(agent_md_path: Path) -> str | None:
 def get_responsive_ascii(
     console: Console | None = None, width: int | None = None
 ) -> str:
-    """Generate responsive ASCII art that adapts to terminal width.
+    """Responsive startup ASCII art, sized to the terminal width.
+
+    Thin adapter over :func:`novacode_cli.brand.art_for`, which owns the art.
+    This used to inline three near-identical copies plus a fourth legacy
+    constant, whose rows ranged from 29 to 77 columns wide.
 
     Args:
-        console: Rich console instance to get terminal width from (used only
-            when ``width`` is not given).
+        console: Rich console to read the terminal width from, used only when
+            ``width`` is not given.
         width: Explicit terminal width in columns. Prefer this from a Textual
             app (``self.size.width``), since the global Rich console width does
             not track the live TUI size on resize.
 
     Returns:
-        ASCII art string sized appropriately for the terminal
+        ASCII art sized for the terminal.
     """
-    # Resolve width: explicit arg wins; else the console; else a safe default.
     terminal_width = width
     if terminal_width is None:
         try:
             terminal_width = console.width if console is not None else 80
         except Exception:
             terminal_width = 80
-
-    # Minimum width for full ASCII art
-    min_width = 75
-
-    # ASCII art templates for different sizes
-    if terminal_width >= min_width:
-        # Full ASCII art for wide terminals
-        ascii_art = """
-⣿⣿⣿⣿⣟⠊⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⢿⣿         ███╗   ██╗  ██████╗  ██╗   ██╗  █████╗   
-⣿⣿⣿⡏⠁⠀⠀⠀⠀⠀⠀⢀⣰⣶⣶⡄⠀⠀⠀⠀⠀⠀⢀⠀⠀⠈⢻        ████╗  ██║ ██╔═══██╗ ██║   ██║ ██╔══██╗   
-⣿⣿⣿⠁⠄⠀⠀⠀⠀⠀⣤⣾⣿⣿⣿⣿⡂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠽       ██╔██╗ ██║ ██║   ██║ ██║   ██║ ███████║
-⣿⣿⡏⣸⠀⠀⠀⠀⢀⣼⣿⣿⣿⣿⣿⣿⣿⡆⠀⠀⠈⠀⠀⠀⠀⠀⠀⠰      ██║╚██╗██║ ██║   ██║ ╚██╗ ██╔╝ ██╔══██║      
-⣿⣿⡇⠁⠀⠀⠀⣤⣍⣙⣿⣿⣏⣠⠄⠲⠲⠦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢻     ██║ ╚████║ ╚██████╔╝  ╚████╔╝  ██║  ██║ 
-⣿⣿⠁⠀⠀⠀⠀⠀⢤⠙⣿⣿⣿⣇⣀⡐⢂⣠⡄⠠⠀⠀⠀⠀⠀⠀⡀⢠⢸     ╚═╝  ╚═══╝  ╚═════╝    ╚═══╝   ╚═╝  ╚═╝ 
-⣿⣿⠀⠀⠐⠀⣶⣷⣷⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀⠀⠐⠈⠀⠀⠀⠉⠘⣼
-⣿⣿⠀⠈⠀⠀⣿⣿⣿⡿⣿⠿⢿⣿⣿⣿⣿⣿⣿⣧⡀⠀⢄⠲⠀⠀⠀⣱      ~ Secrets, Locks, Firewalls
-⣿⣿⡆⠀⠀⠀⠈⣿⣿⣷⣶⣼⣾⣿⣿⣿⣿⣿⣿⣿⣷⠂⠀⠀⠂⢀⢲         Everything has a weakness.
-⣿⣿⣿⡆⠀⠀⠀⠙⣿⠋⠠⠄⢀⠉⣹⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⣿          The right code just knows where to look.
-⣿⣿⣿⣿⣦⠀⠀⠀⠘⣿⣤⣤⣶⣿⣿⣿⣿⣿⠟⣛⡽⠀⠀⠀⠠⣸            ♥︎ NOVA ~   
-⣿⣿⣿⣿⣿⣷⡀⠀⠀⠈⠻⣿⣿⣿⠿⠛⠋⠐⠚⠛⠃   ⣰⣿                  
-                                                                           
-"""
-    elif terminal_width >= 60:
-        # Medium ASCII art for medium terminals
-        ascii_art = """      
-⣿⣿⣿⣿⣟⠊⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⢿⣿         ███╗   ██╗  ██████╗  ██╗   ██╗  █████╗   
-⣿⣿⣿⡏⠁⠀⠀⠀⠀⠀⠀⢀⣰⣶⣶⡄⠀⠀⠀⠀⠀⠀⢀⠀⠀⠈⢻        ████╗  ██║ ██╔═══██╗ ██║   ██║ ██╔══██╗   
-⣿⣿⣿⠁⠄⠀⠀⠀⠀⠀⣤⣾⣿⣿⣿⣿⡂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠽       ██╔██╗ ██║ ██║   ██║ ██║   ██║ ███████║
-⣿⣿⡏⣸⠀⠀⠀⠀⢀⣼⣿⣿⣿⣿⣿⣿⣿⡆⠀⠀⠈⠀⠀⠀⠀⠀⠀⠰      ██║╚██╗██║ ██║   ██║ ╚██╗ ██╔╝ ██╔══██║      
-⣿⣿⡇⠁⠀⠀⠀⣤⣍⣙⣿⣿⣏⣠⠄⠲⠲⠦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢻     ██║ ╚████║ ╚██████╔╝  ╚████╔╝  ██║  ██║ 
-⣿⣿⠁⠀⠀⠀⠀⠀⢤⠙⣿⣿⣿⣇⣀⡐⢂⣠⡄⠠⠀⠀⠀⠀⠀⠀⡀⢠⢸     ╚═╝  ╚═══╝  ╚═════╝    ╚═══╝   ╚═╝  ╚═╝ 
-⣿⣿⠀⠀⠐⠀⣶⣷⣷⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀⠀⠐⠈⠀⠀⠀⠉⠘⣼
-⣿⣿⠀⠈⠀⠀⣿⣿⣿⡿⣿⠿⢿⣿⣿⣿⣿⣿⣿⣧⡀⠀⢄⠲⠀⠀⠀⣱      ~ Secrets, Locks, Firewalls
-⣿⣿⡆⠀⠀⠀⠈⣿⣿⣷⣶⣼⣾⣿⣿⣿⣿⣿⣿⣿⣷⠂⠀⠀⠂⢀⢲         Everything has a weakness.
-⣿⣿⣿⡆⠀⠀⠀⠙⣿⠋⠠⠄⢀⠉⣹⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⣿          The right code just knows where to look.
-⣿⣿⣿⣿⣦⠀⠀⠀⠘⣿⣤⣤⣶⣿⣿⣿⣿⣿⠟⣛⡽⠀⠀⠀⠠⣸            ♥︎ NOVA ~   
-⣿⣿⣿⣿⣿⣷⡀⠀⠀⠈⠻⣿⣿⣿⠿⠛⠋⠐⠚⠛⠃   ⣰⣿  
-"""
-    else:
-        # Simple text for narrow terminals
-        ascii_art = """
-                      
-⣿⣿⣿⣿⣟⠊⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⢿⣿         
-⣿⣿⣿⡏⠁⠀⠀⠀⠀⠀⠀⢀⣰⣶⣶⡄⠀⠀⠀⠀⠀⠀⢀⠀⠀⠈⢻          
-⣿⣿⣿⠁⠄⠀⠀⠀⠀⠀⣤⣾⣿⣿⣿⣿⡂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠽       
-⣿⣿⡏⣸⠀⠀⠀⠀⢀⣼⣿⣿⣿⣿⣿⣿⣿⡆⠀⠀⠈⠀⠀⠀⠀⠀⠀⠰          
-⣿⣿⡇⠁⠀⠀⠀⣤⣍⣙⣿⣿⣏⣠⠄⠲⠲⠦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢻     
-⣿⣿⠁⠀⠀⠀⠀⠀⢤⠙⣿⣿⣿⣇⣀⡐⢂⣠⡄⠠⠀⠀⠀⠀⠀⠀⡀⢠⢸     
-⣿⣿⠀⠀⠐⠀⣶⣷⣷⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀⠀⠐⠈⠀⠀⠀⠉⠘⣼
-⣿⣿⠀⠈⠀⠀⣿⣿⣿⡿⣿⠿⢿⣿⣿⣿⣿⣿⣿⣧⡀⠀⢄⠲⠀⠀⠀⣱      
-⣿⣿⡆⠀⠀⠀⠈⣿⣿⣷⣶⣼⣾⣿⣿⣿⣿⣿⣿⣿⣷⠂⠀⠀⠂⢀⢲         
-⣿⣿⣿⡆⠀⠀⠀⠙⣿⠋⠠⠄⢀⠉⣹⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⣿          
-⣿⣿⣿⣿⣦⠀⠀⠀⠘⣿⣤⣤⣶⣿⣿⣿⣿⣿⠟⣛⡽⠀⠀⠀⠠⣸            
-⣿⣿⣿⣿⣿⣷⡀⠀⠀⠈⠻⣿⣿⣿⠿⠛⠋⠐⠚⠛⠃   ⣰⣿  
-                      
-     ♥︎ NOVA        
-                      
-"""
-
-    return ascii_art
+    return art_for(terminal_width, settings.version)
 
 
-# Legacy static ASCII art (kept for backward compatibility)
-NOVA_CODE_ASCII = """
-⣿⣿⣿⣿⣟⠊⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⢿⣿         ███╗   ██╗  ██████╗  ██╗   ██╗  █████╗   
-⣿⣿⣿⡏⠁⠀⠀⠀⠀⠀⠀⢀⣰⣶⣶⡄⠀⠀⠀⠀⠀⠀⢀⠀⠀⠈⢻        ████╗  ██║ ██╔═══██╗ ██║   ██║ ██╔══██╗   
-⣿⣿⣿⠁⠄⠀⠀⠀⠀⠀⣤⣾⣿⣿⣿⣿⡂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠽       ██╔██╗ ██║ ██║   ██║ ██║   ██║ ███████║
-⣿⣿⡏⣸⠀⠀⠀⠀⢀⣼⣿⣿⣿⣿⣿⣿⣿⡆⠀⠀⠈⠀⠀⠀⠀⠀⠀⠰      ██║╚██╗██║ ██║   ██║ ╚██╗ ██╔╝ ██╔══██║      
-⣿⣿⡇⠁⠀⠀⠀⣤⣍⣙⣿⣿⣏⣠⠄⠲⠲⠦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢻     ██║ ╚████║ ╚██████╔╝  ╚████╔╝  ██║  ██║ 
-⣿⣿⠁⠀⠀⠀⠀⠀⢤⠙⣿⣿⣿⣇⣀⡐⢂⣠⡄⠠⠀⠀⠀⠀⠀⠀⡀⢠⢸     ╚═╝  ╚═══╝  ╚═════╝    ╚═══╝   ╚═╝  ╚═╝ 
-⣿⣿⠀⠀⠐⠀⣶⣷⣷⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀⠀⠐⠈⠀⠀⠀⠉⠘⣼
-⣿⣿⠀⠈⠀⠀⣿⣿⣿⡿⣿⠿⢿⣿⣿⣿⣿⣿⣿⣧⡀⠀⢄⠲⠀⠀⠀⣱      ~ Secrets, Locks, Firewalls
-⣿⣿⡆⠀⠀⠀⠈⣿⣿⣷⣶⣼⣾⣿⣿⣿⣿⣿⣿⣿⣷⠂⠀⠀⠂⢀⢲         Everything has a weakness.
-⣿⣿⣿⡆⠀⠀⠀⠙⣿⠋⠠⠄⢀⠉⣹⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⣿          The right code just knows where to look.
-⣿⣿⣿⣿⣦⠀⠀⠀⠘⣿⣤⣤⣶⣿⣿⣿⣿⣿⠟⣛⡽⠀⠀⠀⠠⣸            ♥︎ NOVA ~   
-⣿⣿⣿⣿⣿⣷⡀⠀⠀⠈⠻⣿⣿⣿⠿⠛⠋⠐⠚⠛⠃   ⣰⣿
-"""
+# Legacy static ASCII art. Kept as the name earlier code imported; the art
+# itself now comes from brand.py so there is one wordmark, not five.
+NOVA_CODE_ASCII = wordmark()
 
 # Interactive commands
 COMMANDS = {
@@ -344,28 +284,14 @@ config = {"recursion_limit": 1000}
 
 
 def format_version_banner(version: str) -> str:
-    """Return a styled version banner for ``nova --version``."""
-    return f"""
-⣿⣿⣿⣿⣟⠊⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⢿⣿
-⣿⣿⣿⡏⠁⠀⠀⠀⠀⠀⠀⢀⣰⣶⣶⡄⠀⠀⠀⠀⠀⠀⢀⠀⠀⠈⢻
-⣿⣿⣿⠁⠄⠀⠀⠀⠀⠀⣤⣾⣿⣿⣿⣿⡂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠽
-⣿⣿⡏⣸⠀⠀⠀⠀⢀⣼⣿⣿⣿⣿⣿⣿⣿⡆⠀⠀⠈⠀⠀⠀⠀⠀⠀⠰
-⣿⣿⡇⠁⠀⠀⠀⣤⣍⣙⣿⣿⣏⣠⠄⠲⠲⠦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢻
-⣿⣿⠁⠀⠀⠀⠀⠀⢤⠙⣿⣿⣿⣇⣀⡐⢂⣠⡄⠠⠀⠀⠀⠀⠀⠀⡀⢠⢸
-⣿⣿⠀⠀⠐⠀⣶⣷⣷⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀⠀⠐⠈⠀⠀⠀⠉⠘⣼
-⣿⣿⠀⠈⠀⠀⣿⣿⣿⡿⣿⠿⢿⣿⣿⣿⣿⣿⣿⣧⡀⠀⢄⠲⠀⠀⠀⣱
-⣿⣿⡆⠀⠀⠀⠈⣿⣿⣷⣶⣼⣾⣿⣿⣿⣿⣿⣿⣿⣷⠂⠀⠀⠂⢀⢲
-⣿⣿⣿⡆⠀⠀⠀⠙⣿⠋⠠⠄⢀⠉⣹⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⣿
-⣿⣿⣿⣿⣦⠀⠀⠀⠘⣿⣤⣤⣶⣿⣿⣿⣿⣿⠟⣛⡽⠀⠀⠀⠠⣸
-⣿⣿⣿⣿⣿⣷⡀⠀⠀⠈⠻⣿⣿⣿⠿⠛⠋⠐⠚⠛⠃   ⣰⣿
+    """Return the styled version banner for ``nova --version``.
 
-███╗   ██╗ ██████╗  ██╗   ██╗  █████╗
-████╗  ██║ ██╔═══██╗ ██║   ██║ ██╔══██╗
-██╔██╗ ██║ ██║   ██║ ██║   ██║ ███████║
-██║╚██╗██║ ██║   ██║ ╚██╗ ██╔╝ ██╔══██║
-██║ ╚████║ ╚██████╔╝  ╚████╔╝  ██║  ██║
-╚═╝  ╚═══╝  ╚═════╝    ╚═══╝   ╚═╝  ╚═╝ ~ v{version}
-"""
+    Uses the shared wordmark from :mod:`novacode_cli.brand` — this used to
+    inline a fourth, differently-sized copy of the logo (missing the braille
+    half entirely and stamped with its own version row).
+    """
+    caption = f"NOVA · {TAGLINE} · v{version}"
+    return f"\n{wordmark()}\n{caption.center(WORDMARK_WIDTH)}\n"
 
 
 # Rich console instance
@@ -458,20 +384,18 @@ class BootAnimation:
     _live: Live | None = None
     _messages: list[tuple[str, str]] = []
     _start_time: float = 0.0
-    _total_steps: int = 0
 
     @classmethod
     @contextmanager
-    def start(cls, total_steps: int = 0) -> None:
+    def start(cls) -> None:
         """Open the live display (sync version). Yields once, then tears down.
 
-        Args:
-            total_steps: Total number of boot steps for the progress bar.
-                When 0, auto-calculated from ``_BOOT_MESSAGES``.
+        There is no ``total_steps`` argument: the progress rail derives its
+        denominator from the phases actually reported, so it cannot be told a
+        number the boot will never reach.
         """
         cls._messages = []
         cls._start_time = time.monotonic()
-        cls._total_steps = total_steps or len(_BOOT_MESSAGES)
 
         layout = Table.grid(padding=(0, 1))
         layout.add_column(no_wrap=True)
@@ -492,20 +416,18 @@ class BootAnimation:
 
     @classmethod
     @asynccontextmanager
-    async def async_start(cls, total_steps: int = 0) -> None:
+    async def async_start(cls) -> None:
         """Open the live display (async version). Yields once, then tears down.
 
         Safe to use with ``async with`` in async functions (e.g. ``main()``).
         Rich's ``Live.__enter__`` starts a background rendering thread which
         is compatible with async event loops.
 
-        Args:
-            total_steps: Total number of boot steps for the progress bar.
-                When 0, auto-calculated from ``_BOOT_MESSAGES``.
+        Like :meth:`start`, no ``total_steps``: the rail is derived from the
+        phases actually reported.
         """
         cls._messages = []
         cls._start_time = time.monotonic()
-        cls._total_steps = total_steps or len(_BOOT_MESSAGES)
 
         layout = Table.grid(padding=(0, 1))
         layout.add_column(no_wrap=True)
@@ -545,70 +467,93 @@ class BootAnimation:
             cls._messages.append((message, level))
         cls._refresh()
 
+    @staticmethod
+    def _phase(message: str) -> tuple[str, str]:
+        """Split a ``"subsystem: detail"`` status into ``(label, detail)``.
+
+        The staged boot list reads as two aligned columns, so the label and the
+        detail are rendered separately. A message with no colon is all label.
+        """
+        label, sep, detail = message.partition(":")
+        if not sep:
+            return message.strip(), ""
+        return label.strip(), detail.strip()
+
     @classmethod
     def _refresh(cls) -> None:
-        """Rebuild and update the live display with logo header + progress bar."""
+        """Rebuild and update the live staged boot display.
+
+        Three changes from the old splash, each fixing something real:
+
+        * **The rail no longer lies.** The denominator is the number of phases
+          *observed so far*, not a guessed ``len(_BOOT_MESSAGES)`` constant that
+          a real boot never reached (15 declared vs ~6 emitted, so the bar died
+          near 33%). Progress therefore always converges to exactly 100% when
+          the last phase reports, and never claims work that did not happen.
+        * **One art source.** The header is ``brand.compact_mark()``; the old
+          splash inlined a 12-line braille blob spliced to a second ANSI
+          wordmark, with rows ranging from 29 to 77 columns wide.
+        * **Theme accent.** Colours come from ``brand.get_accent_hex()``, so the
+          boot screen is tinted for the theme the TUI is about to open with --
+          previously it was hardcoded red and the app opened blue.
+        """
         if not cls._live:
             return
 
         elapsed = time.monotonic() - cls._start_time
+        accent = get_accent_hex()
         layout = Table.grid(padding=(0, 1))
         layout.add_column(no_wrap=True)
 
-        # ── Compact Nova logo header (first 3 lines of ASCII art) ──
-        logo_lines = [
-            "⣿⣿⣿⣿⣟⠊⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⢿⣿         ███╗   ██╗  ██████╗  ██╗   ██╗  █████╗    ",
-            "⣿⣿⣿⡏⠁⠀⠀⠀⠀⠀⠀⢀⣰⣶⣶⡄⠀⠀⠀⠀⠀⠀⢀⠀⠀⠈⢻        ████╗  ██║ ██╔═══██╗ ██║   ██║ ██╔══██╗   ",
-            "⣿⣿⣿⠁⠄⠀⠀⠀⠀⠀⣤⣾⣿⣿⣿⣿⡂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠽       ██╔██╗ ██║ ██║   ██║ ██║   ██║ ███████║   ",
-            "⣿⣿⡏⣸⠀⠀⠀⠀⢀⣼⣿⣿⣿⣿⣿⣿⣿⡆⠀⠀⠈⠀⠀⠀⠀⠀⠀⠰      ██║╚██╗██║ ██║   ██║ ╚██╗ ██╔╝ ██╔══██║    ",
-            "⣿⣿⡇⠁⠀⠀⠀⣤⣍⣙⣿⣿⣏⣠⠄⠲⠲⠦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢻     ██║ ╚████║ ╚██████╔╝  ╚████╔╝  ██║  ██║    ",
-            "⣿⣿⠁⠀⠀⠀⠀⠀⢤⠙⣿⣿⣿⣇⣀⡐⢂⣠⡄⠠⠀⠀⠀⠀⠀⠀⡀⢠⢸     ╚═╝  ╚═══╝  ╚═════╝    ╚═══╝   ╚═╝  ╚═╝    ",
-            "⣿⣿⠀⠀⠐⠀⣶⣷⣷⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀⠀⠐⠈⠀⠀⠀⠉⠘⣼                                               ",
-            "⣿⣿⠀⠈⠀⠀⣿⣿⣿⡿⣿⠿⢿⣿⣿⣿⣿⣿⣿⣧⡀⠀⢄⠲⠀⠀⠀⣱      ~ Secrets, Locks, Firewalls               ",
-            "⣿⣿⡆⠀⠀⠀⠈⣿⣿⣷⣶⣼⣾⣿⣿⣿⣿⣿⣿⣿⣷⠂⠀⠀⠂⢀⢲         Everything has a weakness.              ",
-            "⣿⣿⣿⡆⠀⠀⠀⠙⣿⠋⠠⠄⢀⠉⣹⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⣿          The right code just knows where to look. ",
-            "⣿⣿⣿⣿⣦⠀⠀⠀⠘⣿⣤⣤⣶⣿⣿⣿⣿⣿⠟⣛⡽⠀⠀⠀⠠⣸            ♥︎ NOVA ~                               ",
-            "⣿⣿⣿⣿⣿⣷⡀⠀⠀⠈⠻⣿⣿⣿⠿⠛⠋⠐⠚⠛⠃   ⣰⣿                                                   ",
-        ]
-        logo = Text("\n".join(logo_lines), style=f"bold {COLORS['primary']}")
-        layout.add_row(logo)
-        layout.add_row(Text("", style="dim"))  # spacer
+        # ── Header: the compact mark (see brand.py) ──
+        header = Text()
+        header.append("  ")
+        header.append(compact_mark(), style=f"bold {accent}")
+        layout.add_row(header)
 
-        # ── Completed messages (all except the last one) ──
-        for msg, lvl in cls._messages[:-1]:
-            glyph = "✓" if lvl == "ok" else ("⚠" if lvl == "warn" else "·")
-            glyph_style = (
-                "green" if lvl == "ok" else ("yellow" if lvl == "warn" else "grey42")
-            )
-            layout.add_row(Text(f"  {glyph} {msg}", style=glyph_style))
+        caption = Text("  ", style="grey30")
+        caption.append(f"{TAGLINE}  ·  v{settings.version}", style="grey30")
+        layout.add_row(caption)
+        layout.add_row(Text(""))
 
-        # ── Current in-progress message (with spinner glyph) ──
-        if cls._messages:
-            last_msg = cls._messages[-1][0]
-            spinner = Spinner("dots10", text=last_msg, style="bold cyan")
-            layout.add_row(spinner)
+        # ── Staged checklist: one aligned row per phase ──
+        # The last entry is split off only when it is still in progress; a
+        # finished boot therefore shows every phase with its checkmark and no
+        # lingering spinner (a spinner on a completed phase reads as "still
+        # working" right up until the screen vanishes).
+        label_w = max((len(cls._phase(m)[0]) for m, _ in cls._messages), default=0)
+        glyphs = {"ok": ("✓", "green"), "warn": ("⚠", "yellow")}
+        active = cls._messages[-1] if cls._messages and cls._messages[-1][1] == "info" else None
+        done_msgs = cls._messages[:-1] if active else cls._messages
+        for msg, lvl in done_msgs:
+            label, detail = cls._phase(msg)
+            glyph, style = glyphs.get(lvl, ("·", "grey42"))
+            row = Text()
+            row.append(f"  {glyph} ", style=style)
+            row.append(label.ljust(label_w), style=f"bold {accent}")
+            if detail:
+                row.append(f"  {detail}", style="default")
+            layout.add_row(row)
 
-        # ── Progress bar ──
-        completed = sum(1 for _, lvl in cls._messages if lvl in ("ok", "warn"))
-        total = max(cls._total_steps, 1)
-        progress = Progress(
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(
-                bar_width=None,
-                style="grey30",
-                complete_style=COLORS["primary"],
-                finished_style="green",
-            ),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-            console=console,
-            transient=True,
-        )
-        task = progress.add_task("", total=total)
-        progress.update(task, completed=min(completed, total))
-        layout.add_row(progress)
+        # ── Active phase, with a live spinner ──
+        if active:
+            label, detail = cls._phase(active[0])
+            text = f"{label.ljust(label_w)}  {detail}".rstrip()
+            layout.add_row(Spinner("dots2", text=f"  {text}", style=f"bold {accent}"))
 
-        # ── Elapsed time ──
-        layout.add_row(Text(f"  ⏱ {elapsed:.1f}s", style="grey30"))
+        # ── Honest progress rail ──
+        total = max(len(cls._messages), 1)
+        done = sum(1 for _, lvl in cls._messages if lvl in ("ok", "warn"))
+        ratio = done / total
+        bar_w = 28
+        filled = int(ratio * bar_w)
+        rail = Text()
+        rail.append("  ")
+        rail.append("█" * filled, style=accent)
+        rail.append("░" * (bar_w - filled), style="grey30")
+        rail.append(f"  {ratio:>3.0%}", style="bold")
+        rail.append(f"   {elapsed:.1f}s", style="grey30")
+        layout.add_row(rail)
         cls._live.update(layout)
 
 
