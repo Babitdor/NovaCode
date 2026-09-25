@@ -32,10 +32,32 @@ _model_future: concurrent.futures.Future | None = None
 _index_cache: dict[tuple, SkillIndex] = {}
 
 
+def _cached_model_path() -> str:
+    """Return the locally cached snapshot dir for :data:`MODEL_NAME`, or the id.
+
+    ``model2vec`` loads by repo id with ``force_download=True``, which calls
+    ``huggingface_hub.snapshot_download`` and makes a metadata round-trip to the
+    Hub on *every* launch even when the model is already on disk — that is the
+    "Fetching 7 files … 0.00B" bar users see at startup. Asking the Hub for the
+    cache only (``local_files_only``) skips the network entirely and loads in
+    ~0.16 s instead of ~0.8 s.
+
+    Falls back to the repo id when nothing is cached, so the first run (or a
+    cleared cache) still downloads normally.
+    """
+    from huggingface_hub import snapshot_download
+    from huggingface_hub.errors import LocalEntryNotFoundError
+
+    try:
+        return snapshot_download(MODEL_NAME, local_files_only=True)
+    except LocalEntryNotFoundError:
+        return MODEL_NAME
+
+
 def _load_model() -> Any:
     from model2vec import StaticModel
 
-    return StaticModel.from_pretrained(MODEL_NAME)
+    return StaticModel.from_pretrained(_cached_model_path())
 
 
 def _model() -> Any | None:

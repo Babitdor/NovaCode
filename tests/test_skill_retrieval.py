@@ -149,3 +149,75 @@ def test_without_the_embedder_nothing_is_suggested_but_search_works(monkeypatch)
 def test_one_word_messages_get_no_suggestion() -> None:
     state = {"messages": [HumanMessage("clickhouse")]}
     assert "messages" not in (_mw()._finish(state, {"skills_metadata": SKILLS}) or {})
+
+
+# ---------------------------------------------------------------------------
+# Cache-first model load — no Hub round-trip at startup
+# ---------------------------------------------------------------------------
+
+
+def test_cached_model_path_prefers_local_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A cached model resolves to its local dir, so loading never hits the Hub.
+
+    Loading by repo id (``from_pretrained(MODEL_NAME)``) makes
+    ``snapshot_download`` re-validate every file over the network on each
+    launch, which is what prints the startup "Fetching 7 files … 0.00B" bar.
+    """
+    snapshot = "/cache/models--minishlab--potion-code-16M/snapshots/abc"
+
+    def fake_snapshot(*_args: object, **_kwargs: object) -> str:
+        return snapshot
+
+    monkeypatch.setattr("huggingface_hub.snapshot_download", fake_snapshot)
+
+    assert R._cached_model_path() == snapshot
+
+
+def test_cached_model_path_requests_local_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The lookup must be cache-only, or it is the very round-trip we removed."""
+    seen: dict = {}
+
+    def fake_snapshot(model: str, **kwargs: object) -> str:
+        seen["model"] = model
+        seen["kwargs"] = kwargs
+        return "/cache/snapshot"
+
+    monkeypatch.setattr("huggingface_hub.snapshot_download", fake_snapshot)
+    R._cached_model_path()
+
+    assert seen["model"] == R.MODEL_NAME
+    assert seen["kwargs"].get("local_files_only") is True
+
+
+def test_cached_model_path_falls_back_to_repo_id_when_not_cached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cold cache (first run, or cleared) must still download normally."""
+    from huggingface_hub.errors import LocalEntryNotFoundError
+
+    def missing(*_args: object, **_kwargs: object) -> None:
+        msg = "not cached"
+        raise LocalEntryNotFoundError(msg)
+
+    monkeypatch.setattr("huggingface_hub.snapshot_download", missing)
+
+    assert R._cached_model_path() == R.MODEL_NAME
+
+
+def test_load_model_uses_the_cached_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``_load_model`` loads whatever ``_cached_model_path`` resolved."""
+    loaded: dict = {}
+
+    class _Model:
+        @staticmethod
+        def from_pretrained(path: str) -> str:
+            loaded["path"] = path
+            return "MODEL"
+
+    import model2vec
+
+    monkeypatch.setattr(R, "_cached_model_path", lambda: "/resolved/snapshot")
+    monkeypatch.setattr(model2vec, "StaticModel", _Model)
+
+    assert R._load_model() == "MODEL"
+    assert loaded["path"] == "/resolved/snapshot"

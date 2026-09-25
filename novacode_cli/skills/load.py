@@ -53,7 +53,39 @@ class _LazySkillMetadata:
 SkillMetadata = _LazySkillMetadata()  # type: ignore[assignment]
 
 # Re-export for CLI commands
-__all__ = ["SkillMetadata", "list_skills"]
+__all__ = ["SkillMetadata", "find_skill_dir", "list_skills"]
+
+
+def find_skill_dir(name: str) -> tuple[Path, str] | None:
+    """Locate an installed skill's directory by name.
+
+    Searches the writable sources in the same precedence order as
+    :func:`list_skills` (user → project → global Claude) and returns
+    ``(skill_dir, source)`` where ``source`` is ``"user"`` / ``"project"`` /
+    ``"claude"``, or ``None`` when no such skill exists.
+
+    Unlike :func:`list_skills` this reads only the filesystem — no deepagents
+    import — so callers that just need a path (prune, delete, edit) stay cheap.
+    The returned path is the *directory*; the skill file is ``dir / "SKILL.md"``.
+    """
+    from novacode_cli.config.config import Settings
+
+    settings = Settings.from_environment()
+
+    # User (global) skills first — the writable foundation.
+    user_dir = settings.get_global_skills_dir()
+    if (user_dir / name / "SKILL.md").is_file():
+        return user_dir / name, "user"
+
+    for project_dir in settings.get_project_skills_dirs():
+        if (project_dir / name / "SKILL.md").is_file():
+            return project_dir / name, "project"
+
+    claude_dir = Settings.get_global_claude_skills_dir()
+    if (claude_dir / name / "SKILL.md").is_file():
+        return claude_dir / name, "claude"
+
+    return None
 
 
 def list_skills(
