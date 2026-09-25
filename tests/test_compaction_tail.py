@@ -148,18 +148,104 @@ def test_template_asks_for_one_format_only() -> None:
 # ── tool-result clearing ────────────────────────────────────────────────────
 
 
+def _read_history(n: int = 8, tool: str = "read_file") -> list:
+    msgs: list = [HumanMessage(content="go")]
+    for i in range(n):
+        msgs.append(AIMessage(content="", tool_calls=[{"id": f"r{i}", "name": tool, "args": {}}]))
+        msgs.append(ToolMessage(content=f"payload-{i}" * 400, tool_call_id=f"r{i}", name=tool))
+    return msgs
+
+
 def test_old_file_reads_are_cleared_with_a_recovery_hint() -> None:
     from novacode_cli.agents.core_agent import CLEARED_TOOL_RESULT, _tool_result_clearing
 
-    msgs: list = [HumanMessage(content="go")]
-    for i in range(8):
-        msgs.append(
-            AIMessage(content="", tool_calls=[{"id": f"r{i}", "name": "read_file", "args": {}}])
-        )
-        msgs.append(ToolMessage(content="z" * 4_000, tool_call_id=f"r{i}", name="read_file"))
-
+    msgs = _read_history()
     _tool_result_clearing(0).apply(msgs, count_tokens=lambda m: 10**9)
 
     cleared = [m for m in msgs if isinstance(m, ToolMessage) and m.content == CLEARED_TOOL_RESULT]
     assert len(cleared) == 3, "the 3 oldest reads should go, the last 5 stay"
-    assert "Re-run" in CLEARED_TOOL_RESULT
+    assert "Re-run" in CLEARED_TOOL_RESULT, "no offload dir: say what was lost"
+
+
+def test_cleared_payloads_are_offloaded_not_destroyed(tmp_path) -> None:
+    """Restorable compaction: the bytes leave the context, not the machine."""
+    from novacode_cli.agents.core_agent import _tool_result_clearing
+
+    msgs = _read_history()
+    _tool_result_clearing(0, tmp_path).apply(msgs, count_tokens=lambda m: 10**9)
+
+    cleared = [m for m in msgs if isinstance(m, ToolMessage) and "moved out of context" in m.content]
+    assert len(cleared) == 3
+    for i, msg in enumerate(cleared):
+        assert "/cleared/" in msg.content, "the placeholder must name a readable path"
+        name = msg.content.split("/cleared/")[1].split(" ")[0]
+        assert (tmp_path / name).read_text(encoding="utf-8") == f"payload-{i}" * 400
+    assert len(msgs[2].content) < 200, "the context copy is what shrinks"
+
+
+def test_web_search_results_are_offloaded_too() -> None:
+    """They were excluded only because a search cannot be re-run; now it needn't be."""
+    from novacode_cli.agents.core_agent import _tool_result_clearing
+
+    assert "web_search" not in _tool_result_clearing(0).exclude_tools
+    assert "think" in _tool_result_clearing(0).exclude_tools, "reasoning is not an observation"
+
+
+def test_offload_failure_falls_back_to_the_honest_placeholder(tmp_path) -> None:
+    from novacode_cli.agents.core_agent import _tool_result_clearing
+
+    blocked = tmp_path / "file-in-the-way"
+    blocked.write_text("not a directory", encoding="utf-8")
+    msgs = _read_history()
+    _tool_result_clearing(0, blocked).apply(msgs, count_tokens=lambda m: 10**9)
+
+    from novacode_cli.agents.tool_offload import UNSAVED
+
+    cleared = [m for m in msgs if isinstance(m, ToolMessage) and m.content == UNSAVED]
+    assert len(cleared) == 3, "still cleared — the context pressure is real either way"
+    assert "[cleared]" not in {m.content for m in msgs}, "the bare marker must never ship"
+
+
+def test_compaction_archives_the_raw_transcript(monkeypatch, tmp_path) -> None:
+    """The summary is a paraphrase; the originals must survive somewhere."""
+    from novacode_cli.config import config as cfg
+
+    monkeypatch.setattr(cfg, "HOME_DIR", tmp_path)
+    agent = _Agent(_turn(1))
+
+    asyncio.run(C.compact_conversation(agent, _Model(), "thread-x", context_window=4_000))
+
+    dumps = list((tmp_path / "sessions" / "thread-x").glob("pre-compact-*.jsonl"))
+    assert len(dumps) == 1
+    lines = dumps[0].read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == len(_turn(1))
+    assert str(dumps[0]) in agent.updated["messages"][1].content, "the summary must point at it"
+
+
+def test_offloaded_results_are_readable_through_the_cleared_route(tmp_path) -> None:
+    """The placeholder names /cleared/<file>; the backend must serve it."""
+    from novacode_cli.agents.core_agent import _build_composite_backend
+    from novacode_cli.agents.tool_offload import cleared_dir
+
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    (tmp_path / "ws").mkdir()
+    (tmp_path / "skills").mkdir()
+    composite, _ = _build_composite_backend(
+        sandbox=None,
+        sandbox_type=None,
+        workspace_root=tmp_path / "ws",
+        skills_dir=tmp_path / "skills",
+        claude_skills_dir=tmp_path / "absent",
+        project_skills_dirs=[],
+        plugin_skills=[],
+        agent_dir=agent_dir,
+        store=None,
+        assistant_id="a",
+    )
+    cleared_dir(agent_dir).mkdir(parents=True, exist_ok=True)
+    (cleared_dir(agent_dir) / "read_file-r0.txt").write_text("the original bytes", "utf-8")
+
+    result = composite.read("/cleared/read_file-r0.txt")
+    assert result.error is None
+    assert result.file_data["content"] == "the original bytes"

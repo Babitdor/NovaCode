@@ -5,6 +5,8 @@ by generating an intelligent summary that preserves key context.
 """
 
 import json
+import logging
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +26,8 @@ from novacode_cli.prompts import render_template
 # any surface that renders history must skip it, or the entire summarized
 # context appears in the transcript as a message the user supposedly typed.
 COMPACTION_SUMMARY_MARKER = "[Conversation context — previous session summarized]"
+
+logger = logging.getLogger(__name__)
 
 
 def is_compaction_summary(text: str) -> bool:
@@ -203,6 +207,31 @@ def _rehydration_note() -> str:
         "Re-read a file before relying on its contents; the summary only "
         "describes it.\n" + "\n".join(lines)
     )
+
+
+def _archive_messages(thread_id: str, messages: list[BaseMessage]) -> Path | None:
+    """Write the pre-compaction transcript to the session dir; return its path.
+
+    Compaction is the one irreversible step in the context pipeline: the
+    summary is a paraphrase and the originals are replaced. LangGraph keeps the
+    old checkpoint, but nothing surfaces it — so the raw messages also go to a
+    file next to the session, the way Claude Code keeps a pre-compaction
+    transcript. Reaped with the session directory. Best-effort.
+    """
+    try:
+        from novacode_cli.config import config as _config
+
+        session_dir = _config.HOME_DIR / "sessions" / thread_id
+        session_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        path = session_dir / f"pre-compact-{stamp}.jsonl"
+        with path.open("w", encoding="utf-8") as fh:
+            for msg in messages:
+                fh.write(json.dumps(msg.model_dump(), ensure_ascii=False, default=str) + "\n")
+        return path
+    except Exception:  # noqa: BLE001 — an archive is never worth failing compaction
+        logger.debug("Could not archive pre-compaction messages", exc_info=True)
+        return None
 
 
 def _chunk_parts(parts: list[str], max_chars: int) -> list[list[str]]:
@@ -441,6 +470,7 @@ async def compact_conversation(
             )
 
         messages_before = len(messages)
+        archived = _archive_messages(thread_id, messages)
 
         # Count original tokens using the model's tokenizer when available,
         # falling back to the rough 4-chars-per-token approximation.
@@ -482,7 +512,15 @@ async def compact_conversation(
             + ". Continue the work from where it stopped. Do not acknowledge or "
             "restate this summary."
         )
-        body = "\n\n".join(filter(None, [framing, summary, _rehydration_note()]))
+        archive_note = (
+            f"The full pre-compaction transcript is at {archived} if an exact "
+            "detail is needed."
+            if archived
+            else ""
+        )
+        body = "\n\n".join(
+            filter(None, [framing, summary, _rehydration_note(), archive_note])
+        )
         summary_message = HumanMessage(content=f"{COMPACTION_SUMMARY_MARKER}\n\n{body}")
         # Also clear any prior auto-summarization event. deepagents'
         # SummarizationMiddleware reconstructs the effective message list from

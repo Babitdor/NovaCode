@@ -59,9 +59,21 @@ def test_library_fraction_matches_installed_deepagents():
 # ── the threshold actually drives the breakdown ──────────────────────────────
 
 
-def _bd(pct: float) -> ContextBreakdown:
-    # 1000-token window makes usage_percentage exactly `pct`.
-    return ContextBreakdown(total_tokens=int(pct * 10), context_window_size=1000)
+def _bd(pct: float, window: int = 128_000) -> ContextBreakdown:
+    # A real-sized window: below ~16K the absolute headroom reserve binds
+    # instead of the percentage (see compact_threshold_pct).
+    return ContextBreakdown(total_tokens=round(pct / 100 * window), context_window_size=window)
+
+
+def test_small_windows_compact_earlier_to_keep_headroom():
+    """82% of 40K leaves 7.4K free — less than one large file read."""
+    from novacode_cli.context import MIN_RESERVE_TOKENS, compact_threshold_pct
+
+    assert compact_threshold_pct(128_000) == AUTO_COMPACT_THRESHOLD * 100
+    assert compact_threshold_pct(40_960) < AUTO_COMPACT_THRESHOLD * 100
+    assert _bd(81, window=40_960).should_auto_compact is True
+    free = 40_960 - round(compact_threshold_pct(40_960) / 100 * 40_960)
+    assert free >= MIN_RESERVE_TOKENS - 1
 
 
 def test_should_auto_compact_fires_at_threshold():
@@ -135,3 +147,13 @@ if __name__ == "__main__":
     import pytest
 
     sys.exit(pytest.main([__file__, "-v", "--assert=plain"]))
+
+
+def test_clearing_always_precedes_compaction():
+    """The cheap reducer must get its chance first, on every window size."""
+    from novacode_cli.agents.core_agent import _context_edit_trigger
+    from novacode_cli.context import compact_threshold_pct
+
+    for window in (8_192, 16_384, 40_960, 128_000, 200_000):
+        compact_at = window * compact_threshold_pct(window) / 100
+        assert _context_edit_trigger(window) < compact_at, window

@@ -1,9 +1,9 @@
 """One shared policy for reacting to context pressure.
 
-Both UIs must apply the SAME rule. It previously lived inline in
-``tui/app.py`` only, so the Rich console REPL recorded the breakdown and then
-did nothing — no warning, no compaction, straight into the provider's limit on
-a long session.
+Every renderer must apply the SAME rule. It previously lived inline in
+``tui/app.py`` only, so the console path recorded the breakdown and then did
+nothing — no warning, no compaction, straight into the provider's limit on a
+long session.
 
 Kept pure (no agent, no model, no I/O) so the policy is unit-testable without a
 running agent and cannot drift between surfaces.
@@ -15,9 +15,10 @@ from dataclasses import dataclass
 from enum import Enum
 
 from novacode_cli.context._analysis import (
-    AUTO_COMPACT_THRESHOLD,
     CONTEXT_CRITICAL_THRESHOLD,
     CONTEXT_WARNING_THRESHOLD,
+    MIN_RESERVE_TOKENS,
+    compact_threshold_pct,
 )
 
 
@@ -59,6 +60,7 @@ def assess_pressure(
     *,
     compacted_last_turn: bool = False,
     auto_compact_enabled: bool = True,
+    context_window: int = 0,
 ) -> PressureDecision:
     """Decide how to react to ``usage_percentage`` of the model's window.
 
@@ -69,12 +71,15 @@ def assess_pressure(
             compaction is not winning and the loop is broken.
         auto_compact_enabled: False when the caller has already disabled
             auto-compaction for this session; it then only warns.
+        context_window: The model's window in tokens. Given, the compaction
+            point also has to leave :data:`MIN_RESERVE_TOKENS` free — see
+            :func:`compact_threshold_pct`. 0 keeps the plain percentage.
 
     Returns:
         A :class:`PressureDecision`. ``action`` is ``COMPACT`` only when
         auto-compaction is enabled AND it has not already failed to help.
     """
-    if usage_percentage >= AUTO_COMPACT_THRESHOLD * 100:
+    if usage_percentage >= compact_threshold_pct(context_window):
         if not auto_compact_enabled:
             return PressureDecision(
                 action=PressureAction.WARN,
@@ -123,7 +128,7 @@ def assess_pressure(
 
 
 def post_compaction_still_critical(
-    usage_percentage: float, *, auto_compact_enabled: bool
+    usage_percentage: float, *, auto_compact_enabled: bool, context_window: int = 0
 ) -> PressureDecision:
     """Re-assess right after a compaction, to detect that it is not working.
 
@@ -132,7 +137,10 @@ def post_compaction_still_critical(
     model), so further auto-compaction is futile.
     """
     decision = assess_pressure(
-        usage_percentage, compacted_last_turn=False, auto_compact_enabled=auto_compact_enabled
+        usage_percentage,
+        compacted_last_turn=False,
+        auto_compact_enabled=auto_compact_enabled,
+        context_window=context_window,
     )
     if decision.action is PressureAction.COMPACT:
         return PressureDecision(
@@ -151,8 +159,10 @@ def post_compaction_still_critical(
 
 __all__ = [
     "CONTEXT_CRITICAL_THRESHOLD",
+    "MIN_RESERVE_TOKENS",
     "PressureAction",
     "PressureDecision",
     "assess_pressure",
+    "compact_threshold_pct",
     "post_compaction_still_critical",
 ]

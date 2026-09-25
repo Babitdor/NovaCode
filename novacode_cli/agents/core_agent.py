@@ -144,6 +144,10 @@ from deepagents.backends.protocol import BackendProtocol, SandboxBackendProtocol
 from deepagents.backends.store import StoreBackend
 from deepagents.middleware.subagents import SubAgent
 
+from novacode_cli.agents.tool_offload import UNSAVED as _UNSAVED_TOOL_RESULT
+from novacode_cli.agents.tool_offload import VIRTUAL_PREFIX as _CLEARED_PREFIX
+from novacode_cli.agents.tool_offload import cleared_dir
+
 from novacode_cli.agents.default_subagents.subagents import (
     _tool_name,
     retrieve_core_subagents,
@@ -769,6 +773,35 @@ def _seed_summarization_profile(
         )
 
 
+def _declare_image_support(model: object) -> None:
+    """Record on the model's profile that it accepts images.
+
+    deepagents scrubs image blocks out of a ``read_file`` result whenever the
+    bound model's ``ModelProfile`` has ``image_inputs: False``, replacing them
+    with "[read_file: X was not attached because this model does not support
+    image content]". That check reads the PROFILE — so Nova deciding the model
+    is multimodal (pattern match, or the user running ``/vision on``) was not
+    enough on its own: the image was still stripped before the model saw it,
+    and the model, told only that something was withheld, would go and write a
+    script to decode the pixels instead.
+
+    Only called when Nova has concluded the model can see images. Never raises.
+    """
+    try:
+        if not isinstance(model, BaseChatModel):
+            return
+        existing = getattr(model, "profile", None)
+        profile = dict(existing) if isinstance(existing, dict) else {}
+        if profile.get("image_inputs") is True:
+            return
+        profile["image_inputs"] = True
+        model.profile = profile  # type: ignore[assignment]
+    except Exception:  # noqa: BLE001 — never block an agent build on a profile hint
+        __import__("logging").getLogger(__name__).debug(
+            "Could not declare image support on the model profile", exc_info=True
+        )
+
+
 def _build_skill_sources() -> tuple[list[str], Path, Path, list[Path], list[tuple[str, Path]]]:
     """Assemble the skill source prefixes and the directories backing them.
 
@@ -965,6 +998,17 @@ def _build_composite_backend(
         )
         _routes["/memories/"] = _agent_backend
 
+    # /cleared/ route → offloaded tool results (see agents/tool_offload.py).
+    # A cleared result's placeholder names a path under this prefix; without the
+    # route the model would be told to read a file it cannot open.
+    if agent_dir:
+        _cleared = cleared_dir(agent_dir)
+        _cleared.mkdir(parents=True, exist_ok=True)
+        _routes[_CLEARED_PREFIX] = FilesystemBackend(
+            root_dir=str(_cleared),
+            virtual_mode=True,
+        )
+
     # /store/ route → StoreBackend (persistent, cross-thread).
     #
     # Unlike /memories/ (which is backed by a FilesystemBackend so
@@ -1080,19 +1124,26 @@ def _build_composite_backend(
     return composite_backend, _default_backend
 
 
-# What an old, cleared tool result reads as. A bare "[cleared]" left the model
-# guessing whether the tool failed; saying how to recover is what makes
-# clearing safe (the file or command can simply be run again).
-CLEARED_TOOL_RESULT = (
-    "[Old tool result cleared to save context. Re-run the tool if you need it again.]"
-)
+# What an old, cleared tool result reads as when its payload could NOT be
+# written to disk. The normal case is the restorable one — see
+# novacode_cli/agents/tool_offload.py.
+CLEARED_TOOL_RESULT = _UNSAVED_TOOL_RESULT
+
+# Marker the offloading edit uses to find the messages it just cleared, so it
+# must differ from every final placeholder text.
+_CLEARING_MARKER = "[cleared]"
 
 
-def _tool_result_clearing(context_window: int):  # noqa: ANN202 — lazy import
-    """The ``ClearToolUsesEdit`` Nova runs before whole-history compaction."""
-    from langchain.agents.middleware import ClearToolUsesEdit
+def _tool_result_clearing(context_window: int, offload_dir: Path | None = None):  # noqa: ANN202
+    """The tool-result clearing edit Nova runs before whole-history compaction.
 
-    return ClearToolUsesEdit(
+    Restorable: the payload is written to ``offload_dir`` and the placeholder
+    names it, so clearing costs context but never information. Without an
+    offload directory it degrades to the plain "re-run the tool" placeholder.
+    """
+    from novacode_cli.agents.tool_offload import OffloadingToolUsesEdit
+
+    return OffloadingToolUsesEdit(
         trigger=_context_edit_trigger(context_window),
         keep=5,  # keep last 5 tool results
         clear_tool_inputs=False,
@@ -1101,8 +1152,14 @@ def _tool_result_clearing(context_window: int):  # noqa: ANN202 — lazy import
         # should drop (Anthropic's context editing, JetBrains' "Complexity
         # Trap"). The file is still on disk, and the read-before-edit guard
         # checks the tracker, not message content, so a re-read is the fix.
-        exclude_tools=["think", "web_search"],
-        placeholder=CLEARED_TOOL_RESULT,
+        #
+        # web_search is no longer excluded either: it was excluded only because
+        # a search is the one result you CANNOT re-run deterministically — and
+        # now it isn't dropped, it's offloaded. `think` stays excluded: it is
+        # the model's own reasoning, not an observation, and it is small.
+        exclude_tools=["think"],
+        placeholder=_CLEARING_MARKER if offload_dir else CLEARED_TOOL_RESULT,
+        offload_dir=offload_dir,
     )
 
 
@@ -1116,42 +1173,33 @@ def _context_edit_trigger(context_window: int, *, fallback: int = 60_000) -> int
     """
     if not context_window or context_window <= 0:
         return fallback
-    from novacode_cli.context import CONTEXT_EDIT_TRIGGER_FRACTION
+    from novacode_cli.context import CONTEXT_EDIT_TRIGGER_FRACTION, compact_threshold_pct
 
-    return max(5_000, int(context_window * CONTEXT_EDIT_TRIGGER_FRACTION))
+    # Never at or above the compaction point: clearing is the cheap reducer and
+    # has to get its chance first. On a window under ~16K the compaction point
+    # is driven down by the absolute headroom reserve, which would otherwise
+    # overtake a flat 60% and invert the two stages.
+    # The floor is a SHARE of the window, not an absolute count: an absolute
+    # floor can sit above the compaction point on a small window and invert the
+    # two stages again.
+    compact_at = int(context_window * compact_threshold_pct(context_window) / 100)
+    return max(
+        int(context_window * 0.25),
+        min(int(context_window * CONTEXT_EDIT_TRIGGER_FRACTION), compact_at - 2_000),
+    )
 
 
 def _resolve_main_model_multimodal(model: str | BaseChatModel) -> bool:
     """Whether the main model can accept image input (see model_capabilities).
 
-    Combines the static pattern registry with the user's explicit
-    ``main_model_multimodal`` override in ``~/.nova/Nova.config.json``. When the
-    main model is multimodal, images are passed straight to it instead of being
-    captioned by the auxiliary vision model — the fix for "read_file on an image
-    returns ``[image: vision model unavailable]`` even though my model is
-    multimodal".
+    Thin wrapper over :func:`~novacode_cli.config.model_capabilities.
+    resolve_main_model_multimodal`, which is the single source of truth. It is
+    shared with prompt preparation so the middleware and the ingestion path
+    cannot disagree about whether a pasted image should be captioned.
     """
-    try:
-        from novacode_cli.config.model_capabilities import model_supports_images
-        from novacode_cli.config.nova_config import NovaConfig
+    from novacode_cli.config.model_capabilities import resolve_main_model_multimodal
 
-        model_name = (
-            model
-            if isinstance(model, str)
-            else getattr(model, "model_name", getattr(model, "model", ""))
-        )
-        provider = ""
-        try:
-            cfg = NovaConfig().get_model_config()
-            if isinstance(cfg, dict):
-                provider = cfg.get("provider", "")
-        except Exception:  # noqa: BLE001 — provider is only a hint
-            provider = ""
-        return model_supports_images(
-            provider, str(model_name), override=NovaConfig().get_main_model_multimodal()
-        )
-    except Exception:  # noqa: BLE001 — never break agent construction over this
-        return False
+    return resolve_main_model_multimodal(model)
 
 
 def _build_middleware_stack(
@@ -1300,7 +1348,14 @@ def _build_middleware_stack(
         # with no tool-result reducer at all) while clearing needlessly early
         # on 200K models. Kept below AUTO_COMPACT_THRESHOLD so the cheap
         # reducer always gets its chance before whole-history compaction.
-        ContextEditingMiddleware(edits=[_tool_result_clearing(context_window)]),
+        ContextEditingMiddleware(
+            edits=[
+                _tool_result_clearing(
+                    context_window,
+                    cleared_dir(agent_dir) if agent_dir else None,
+                )
+            ]
+        ),
         ShellMiddleware(
             workspace_root=str(workspace_root),
             env=dict(os.environ),
@@ -1323,6 +1378,9 @@ def _build_middleware_stack(
             # summarization/compaction.
             skip_project_memory=False,
             backend=composite_backend,  # Route through CompositeBackend for /memories/ etc.
+            # Sizes the per-block injection budget: four memory blocks at a flat
+            # 12k chars each is 12% of a 200K window but a third of a 40K one.
+            context_window=context_window,
         ),
         # Last, so its todo recitation is appended to the FINAL system message
         # (AgentMemoryMiddleware rebuilds it) and sits after the cache breakpoint.
@@ -1698,7 +1756,14 @@ This file stores your preferences and context that persist across sessions.
     # straight through instead of being captioned by the auxiliary vision model
     # (see _resolve_main_model_multimodal). Computed once and shared by the main
     # stack and every subagent — subagents inherit the main model.
+    from novacode_cli.config.model_capabilities import note_bound_model
+
+    note_bound_model(model)
     _main_model_supports_images = _resolve_main_model_multimodal(model)
+    if _main_model_supports_images:
+        # Not redundant with the line above: that decides what NOVA does, this
+        # tells DEEPAGENTS not to strip the image on the way to the model.
+        _declare_image_support(model)
 
     # Resolve the bound model's effective window exactly ONCE per build and pass
     # it to both consumers: the window-relative context-editing trigger below and

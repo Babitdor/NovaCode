@@ -151,6 +151,11 @@ def get_ollama_runtime_info(model_name: str) -> Optional[dict]:
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return None
 
+    # On Windows `capture_output=True` can yield stdout=None even with a 0
+    # returncode, so guard before splitting rather than crashing on None.
+    if not output:
+        return None
+
     lines = [ln for ln in output.splitlines() if ln.strip()]
     if len(lines) < 2:  # header only (nothing loaded) or empty
         return None

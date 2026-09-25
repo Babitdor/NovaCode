@@ -22,7 +22,9 @@ from novacode_cli.context.manager import ContextManager
 from novacode_cli.context.pressure import (
     PressureAction,
     PressureDecision,
+    MIN_RESERVE_TOKENS,
     assess_pressure,
+    compact_threshold_pct,
     post_compaction_still_critical,
 )
 
@@ -31,7 +33,9 @@ __all__ = [
     # Context-pressure policy (shared by both UIs)
     "PressureAction",
     "PressureDecision",
+    "MIN_RESERVE_TOKENS",
     "assess_pressure",
+    "compact_threshold_pct",
     "post_compaction_still_critical",
     # Data types
     "ContextBreakdown",

@@ -34,7 +34,13 @@ def test_unknown_window_falls_back_to_legacy_fixed_count() -> None:
 
 
 def test_trigger_has_a_floor_for_tiny_windows() -> None:
-    assert _context_edit_trigger(1_000) == 5_000
+    """A floor, but never above the point where compaction would take over."""
+    from novacode_cli.context import compact_threshold_pct
+
+    assert _context_edit_trigger(1_000) == 250, "a floor, but relative to the window"
+    for window in (1_000, 8_192, 40_960, 200_000):
+        assert _context_edit_trigger(window) >= window * 0.25, window
+        assert _context_edit_trigger(window) < window * compact_threshold_pct(window) / 100
 
 
 def test_clearing_precedes_whole_history_compaction() -> None:

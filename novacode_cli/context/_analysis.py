@@ -9,7 +9,7 @@ source), and the compaction recommendation heuristics.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -126,6 +126,32 @@ LIB_SUMMARIZATION_FRACTION = 0.85
 # the indicator still read "warning, not critical".
 AUTO_COMPACT_THRESHOLD = 0.82
 
+#: Tokens that must stay free at the moment the compaction decision is taken.
+#: The check runs BETWEEN turns, so this has to cover everything that lands
+#: before the next decision point: the reply the model is about to generate,
+#: the next user message, the re-injected memory/skills blocks, and whatever
+#: tool results that turn pulls in. Claude Code reserves ~33K of its 200K for
+#: exactly this; a bare percentage does not, which is why 18% of a 40K Ollama
+#: window (7.4K — less than one large file read) was not enough headroom.
+MIN_RESERVE_TOKENS = 8_000
+
+
+def compact_threshold_pct(context_window: int) -> float:
+    """Usage percentage at which to auto-compact for a given window.
+
+    The lower of :data:`AUTO_COMPACT_THRESHOLD` and "leave
+    :data:`MIN_RESERVE_TOKENS` free" — so large windows keep the familiar 82%
+    and small ones compact earlier instead of overflowing on the next turn.
+    """
+    if context_window <= 0:
+        return AUTO_COMPACT_THRESHOLD * 100
+    by_reserve = (context_window - MIN_RESERVE_TOKENS) / context_window * 100
+    # Floor at 50%: on a window smaller than ~16K the reserve is most of it, and
+    # compacting at 10% would just thrash. Such a model cannot really run an
+    # agent loop; the post-compaction check catches it and disables auto-compact.
+    return min(AUTO_COMPACT_THRESHOLD * 100, max(50.0, by_reserve))
+
+
 # Where ``ContextEditingMiddleware``/``ClearToolUsesEdit`` starts clearing older
 # tool results (the lightweight, deterministic reducer that runs BEFORE whole
 # history compaction). Expressed as a fraction of the model's window and
@@ -225,9 +251,39 @@ class ContextBreakdown:
         """Whether Nova should compact now, BEFORE deepagents' backstop fires.
 
         Deliberately lower than :data:`LIB_SUMMARIZATION_FRACTION` so the
-        harness compacts first and the library stays a mid-turn safety net.
+        harness compacts first and the library stays a mid-turn safety net, and
+        lower still on a small window, where a flat percentage leaves less free
+        space than a single tool result needs (:func:`compact_threshold_pct`).
         """
-        return self.usage_percentage >= AUTO_COMPACT_THRESHOLD * 100
+        return self.usage_percentage >= compact_threshold_pct(self.context_window_size)
+
+    def scaled_to(self, total_tokens: int) -> ContextBreakdown:
+        """This breakdown with the categories rescaled to a known real total.
+
+        The categories are estimated at 4 chars/token, which runs ~20-30% light
+        on code and JSON tool arguments, while ``total_tokens`` can be the
+        provider's own count. Overriding only the total left the /context bars
+        summing to something other than the number printed above them. Scaling
+        does not make a category exact — it makes the parts agree with the
+        whole, which is what the bars are read for.
+        """
+        estimated = (
+            self.baseline_tokens + self.conversation_tokens
+        )
+        if total_tokens <= 0 or estimated <= 0:
+            return replace(self, total_tokens=max(0, total_tokens) or self.total_tokens)
+        factor = total_tokens / estimated
+        return replace(
+            self,
+            system_prompt_tokens=round(self.system_prompt_tokens * factor),
+            user_memory_tokens=round(self.user_memory_tokens * factor),
+            project_memory_tokens=round(self.project_memory_tokens * factor),
+            tool_definitions_tokens=round(self.tool_definitions_tokens * factor),
+            user_message_tokens=round(self.user_message_tokens * factor),
+            assistant_message_tokens=round(self.assistant_message_tokens * factor),
+            tool_result_tokens=round(self.tool_result_tokens * factor),
+            total_tokens=total_tokens,
+        )
 
 
 @dataclass
