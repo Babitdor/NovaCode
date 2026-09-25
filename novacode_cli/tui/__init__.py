@@ -1,8 +1,9 @@
-"""Textual TUI front-end for NovaCode (experimental, behind ``--tui``).
+"""Textual TUI front-end for NovaCode — the only interactive UI.
 
-Phase 1 of the migration: a chat screen that consumes the UI-agnostic
+The chat screen consumes the UI-agnostic
 :func:`novacode_cli.agent_stream.run_agent_stream` and renders its events.
-The legacy ``rich`` + ``prompt_toolkit`` REPL remains the default.
+There is no console REPL: the non-interactive paths are headless mode (``-p``)
+and the parallel-session worker.
 """
 
 from novacode_cli.tui.app import run_tui

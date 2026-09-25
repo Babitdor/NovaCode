@@ -26,9 +26,19 @@ import logging
 import re
 import threading
 import time
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    # Annotation-only: the clipboard image is passed straight to the tracker, so
+    # the module is never imported at runtime on this path.
+    from novacode_cli.image_utils import ImageData
+
+    # Also annotation-only: the palette module is imported lazily at call sites
+    # (see _active_palette), so this adds no module-scope import cost.
+    from novacode_cli.tui.palette import FooterPalette
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +67,7 @@ from textual.widgets.option_list import Option
 from novacode_cli.tui.animations import (
     animate_entrance,
 )
-
-
+from novacode_cli.tui import motion
 
 # Widgets and modal screens were extracted verbatim into widgets.py /
 # screens.py. Re-exported here so `from novacode_cli.tui.app import X`
@@ -364,6 +373,11 @@ def _category_glyph(cat: str) -> str:
 # autocomplete *anywhere* in the line, not just at the very start.
 _AT_FRAGMENT_RE = re.compile(r"(?:^|(?<=\s))@([^\s@]*)$")
 
+# Inputs that mean "quit", matched case-insensitively. Centralised because the
+# check appears on four paths (dispatch, queued-command drain, slash handler,
+# and the mid-turn bypass) and they must agree on what counts as exit.
+_EXIT_COMMANDS = frozenset({"/quit", "/exit", "quit", "exit", "q"})
+
 
 @dataclass(frozen=True)
 class SlashCommand:
@@ -547,7 +561,6 @@ def _approval_details(action_requests: list[dict]) -> Text:
     return t
 
 
-
 #: Characters of in-progress prose kept in the live (pre-commit) preview.
 _LIVE_PREVIEW_CHARS = 20_000
 
@@ -560,21 +573,48 @@ _PCT_CRITICAL = 90
 _BG_REPORT_MAX_CHARS = 2000
 
 
-def _pct_color(percent: float, base: str) -> str:
+def _pct_color(percent: float, base: str, pal: FooterPalette | None = None) -> str:
     """Recolor a usage percentage green→amber→red as it approaches the cap.
 
     Args:
         percent: The usage percentage (0-100).
         base: The color to use below the warning threshold.
+        pal: Optional footer palette; when given, the warning/critical colours
+            come from the active theme instead of the hardcoded fallbacks.
 
     Returns:
         A hex color string.
     """
+    warn = pal.warning if pal is not None else "#e0af68"
+    crit = pal.error if pal is not None else "#f7768e"
     if percent >= _PCT_CRITICAL:
-        return "#f7768e"
+        return crit
     if percent >= _PCT_WARN:
-        return "#e0af68"
+        return warn
     return base
+
+
+def _active_palette() -> FooterPalette:
+    """The active theme's footer palette, falling back to tokyo-night's.
+
+    Only usable where a Textual app context exists; ``active_app`` is a
+    ContextVar and is NOT visible inside a worker thread. Instance methods
+    should prefer ``NovaApp._palette``, which reads the theme off ``self``.
+    """
+    from novacode_cli.tui.palette import cached_palette
+
+    try:
+        from textual.app import active_app
+
+        app = active_app.get()
+    except Exception:  # noqa: BLE001 — no app context (thread/import/test)
+        app = None
+    if app is None:
+        return cached_palette(NOVA_TOKYO_NIGHT)
+    try:
+        return cached_palette(app.get_theme(app.theme))
+    except Exception:  # noqa: BLE001 — a missing theme must not break the bar
+        return cached_palette(NOVA_TOKYO_NIGHT)
 
 
 def _render_bg_event(  # noqa: PLR0912, PLR0915 — one branch per event type is the point
@@ -667,9 +707,7 @@ def _render_bg_event(  # noqa: PLR0912, PLR0915 — one branch per event type is
             write(f"[green]✓[/green] {prefix}")
     elif isinstance(event, FileOp):
         rec = event.record
-        errored = bool(getattr(rec, "error", None)) or (
-            getattr(rec, "status", "") == "error"
-        )
+        errored = bool(getattr(rec, "error", None)) or (getattr(rec, "status", "") == "error")
         mark = "[red]✗[/red]" if errored else "[green]✓[/green]"
         prefix = pending.pop(event.call_id or "", None)
         if prefix is not None:
@@ -814,11 +852,32 @@ class NovaApp(App):
         height: auto;
         background: $surface;
     }
-    #prompt-hint-bar {
+    /* --- Status row: activity + context meter on the left, counts flush right.
+       The 1fr/auto split is load-bearing: it is the only way a Text can be
+       right-aligned here (Rich Text has no right-align of its own). --- */
+    #status-row {
         height: 1;
+        background: $background;
         padding: 0 2;
-        background: $surface;
+    }
+    #prompt-hint-bar {
+        width: 1fr;
+        height: 1;
+        background: $background;
         color: $text-muted;
+        /* Truncate at the edge rather than colliding with the right-docked
+           counts: the status Text is long and its right end must yield. */
+        overflow-x: hidden;
+        text-overflow: ellipsis;
+    }
+    #status-counts {
+        width: auto;
+        height: 1;
+        background: $background;
+        color: $text-muted;
+        /* A guaranteed gap from the (possibly truncated) status text, so the
+           two never read as one run-on line on a mid-width terminal. */
+        padding: 0 0 0 2;
     }
     #prompt {
         width: 1fr;
@@ -846,40 +905,48 @@ class NovaApp(App):
         height: auto;
         background: $panel;
         padding: 0;
-        border-top: solid $border 30%;
-        border-bottom: solid $border 30%;
+        /* `solid` (not `tall`): a tall border is drawn with half-block glyphs,
+           which render as a noisy dotted line rather than a hairline. */
+        border-top: solid $border 35%;
+        border-bottom: solid $border 35%;
     }
-    /* BASH mode — magenta, urgent. */
+    /* BASH mode — magenta, urgent. Theme tokens, so the mode colours follow
+       /theme like everything else (they were hardcoded tokyo-night hexes). */
     #prompt.bash-mode {
-        background: #2a1a2e; color: #d7c4ff;
+        background: $accent 12%; color: $text;
     }
     #prompt:focus.bash-mode {
-        background: #2f1e35;
+        background: $accent 20%;
     }
     #prompt-row.bash-mode {
-        border-top: solid #bb9af7 50%;
-        border-bottom: solid #bb9af7 50%;
+        border-top: solid $accent 60%;
+        border-bottom: solid $accent 60%;
     }
-    #prompt-prefix.bash-mode { color: #bb9af7; background: #2a1a2e; }
+    #prompt-prefix.bash-mode { color: $accent; background: $accent 12%; }
     /* PLAN mode — blue, calm. */
     #prompt.plan-mode {
-        background: #161f33; color: #b4c6ef;
+        background: $primary 14%; color: $text;
     }
     #prompt:focus.plan-mode {
-        background: #1b2540;
+        background: $primary 22%;
     }
     #prompt-row.plan-mode {
-        border-top: solid #7aa2f7 50%;
-        border-bottom: solid #7aa2f7 50%;
+        border-top: solid $primary 60%;
+        border-bottom: solid $primary 60%;
     }
-    #prompt-prefix.plan-mode { color: #7aa2f7; background: #161f33; }
+    #prompt-prefix.plan-mode { color: $primary; background: $primary 14%; }
+    /* Input-mode badge (plan / bash / goal). Sits between the input and the
+       info bar; empty in normal mode. Colours come from the theme so the modes
+       track /theme instead of carrying tokyo-night hexes. */
     #mode-badge {
         height: 1;
         padding: 0 2;
-        background: $panel;
+        background: $background;
         color: $text-muted;
     }
-    /* --- Info bar: workspace / branch / sandbox / model / quota --- */
+    /* --- Info bar: workspace / branch / sandbox / model / context / artifacts.
+       Two decks: a micro-caps label row over a value row, so the values line up
+       in columns instead of drifting with each label's width. */
     #info-bar {
         height: 2;
         padding: 0 1;
@@ -945,12 +1012,25 @@ class NovaApp(App):
         padding: 0 1;
         width: 1fr;
     }
+    /* Micro-caps labels: small, letter-spaced, dim — they read as field names
+       rather than as content, so the bold value row below carries the eye. */
     .info-label {
         height: 1;
         color: $text-muted;
+        text-style: bold;
+    }
+    /* The accent tick on the first field only: it anchors the start of the
+       footer row without turning every label into a competing accent. */
+    .info-label.first {
+        color: $accent;
     }
     .info-value {
         height: 1;
+        text-style: bold;
+        /* Ellipsis, not the default `fold`: a folded value wraps onto a second
+           row and pushes the value deck out of the 1-row box it must occupy. */
+        overflow-x: hidden;
+        text-overflow: ellipsis;
     }
     /* Narrow terminals: shed the widest info columns so the rest stay readable
        instead of being squeezed to a few clipped characters. Toggled by
@@ -1019,9 +1099,10 @@ class NovaApp(App):
         scrollbar-gutter: stable;
         overflow-y: scroll;
     }
-    /* The Ollama model list sits ABOVE the inputs + Switch/Cancel buttons, so it
-       gets a tighter cap and its own scroll — otherwise a long list pushes the
-       buttons out of the modal and they can't be clicked. */
+    /* The live model list (Ollama / OpenCode Go) sits ABOVE the inputs +
+       Switch/Cancel buttons, so it gets a tighter cap and its own scroll —
+       otherwise a long list pushes the buttons out of the modal and they
+       can't be clicked. */
     #modellist {
         height: auto; max-height: 9;
         border: round $accent 50%; margin-bottom: 1;
@@ -1143,6 +1224,7 @@ class NovaApp(App):
         token_tracker,
         image_tracker,
         model_name,
+        model_provider: str | None = None,
         session_manager=None,
         restored_messages=None,
         sandbox_id: str | None = None,
@@ -1165,12 +1247,21 @@ class NovaApp(App):
         # from the same precedence chain that built the model; kept in sync by
         # the model-switch path. None means "unknown", which resume treats as
         # "nothing to restore".
-        try:
-            from novacode_cli.utils.model_info import get_current_provider
+        #
+        # A RESUMED session passes its own provider in: the global config still
+        # describes whatever was last selected, which need not be this session's
+        # model. Deriving from the global config here would then re-record the
+        # wrong provider on the very next save and quietly lose the session's
+        # model for good.
+        if model_provider:
+            self._model_provider: str | None = model_provider
+        else:
+            try:
+                from novacode_cli.utils.model_info import get_current_provider
 
-            self._model_provider: str | None = get_current_provider()
-        except Exception:  # noqa: BLE001 — never block app construction
-            self._model_provider = None
+                self._model_provider = get_current_provider()
+            except Exception:  # noqa: BLE001 — never block app construction
+                self._model_provider = None
         self.session_manager = session_manager
         # Sandbox identity for session persistence (so --continue can reconnect).
         self._sandbox_id = sandbox_id
@@ -1369,7 +1460,13 @@ class NovaApp(App):
                 yield Static("", id="jump-latest").with_tooltip(
                     "Jump to the latest message — click (or ctrl+end)"
                 )
-            yield Static("", id="prompt-hint-bar")
+            with Horizontal(id="status-row"):
+                # A `1fr` left cell + an `auto` right cell is what actually
+                # right-aligns the counts. Appending them to the status Text
+                # could only ever produce a ragged trailing gap, because a Rich
+                # Text cannot right-align itself.
+                yield Static("", id="prompt-hint-bar")
+                yield Static("", id="status-counts")
             with Horizontal(id="prompt-row"):
                 yield Static("> ", id="prompt-prefix")
                 yield PromptInput(
@@ -1377,10 +1474,14 @@ class NovaApp(App):
                     id="prompt",
                     paste_tracker=self.paste_tracker,
                     on_large_paste=self._on_large_paste,
+                    on_clipboard_image=self._on_clipboard_image,
                 ).with_tooltip(
                     "Enter to send · shift+enter for a new line · "
+                    "ctrl+v pastes an image from the clipboard · "
                     "/ for commands · @ for files/agents · ! for bash"
                 )
+            # Input-mode badge (normal / bash / plan / goal). Empty and 1 row
+            # tall in normal mode, so it costs nothing until a mode is active.
             yield Static("", id="mode-badge").with_tooltip(
                 "Active input mode (normal / bash / plan)"
             )
@@ -1393,36 +1494,52 @@ class NovaApp(App):
                 with Vertical(id="col-workspace", classes="info-col").with_tooltip(
                     "Workspace root — the directory Nova reads and writes"
                 ):
-                    yield Static("workspace (/directory)", classes="info-label")
+                    # The single accent tick marks where the field row starts;
+                    # the rest of the labels stay dim so the values carry the eye.
+                    yield Static("◆ WORKSPACE", classes="info-label first")
                     yield Static("", id="info-workspace", classes="info-value")
                 with Vertical(classes="info-col").with_tooltip(
                     "Current git branch of the workspace"
                 ):
-                    yield Static("branch", classes="info-label")
+                    yield Static("BRANCH", classes="info-label")
                     yield Static("", id="info-branch", classes="info-value")
                 with Vertical(id="col-sandbox", classes="info-col").with_tooltip(
                     "Sandbox backend running the agent's shell commands"
                 ):
-                    yield Static("sandbox", classes="info-label")
+                    yield Static("SANDBOX", classes="info-label")
                     yield Static("", id="info-sandbox", classes="info-value")
-                with Vertical(classes="info-col").with_tooltip(
-                    "Active model — /model to switch"
-                ):
-                    yield Static("/model", classes="info-label")
+                with Vertical(classes="info-col").with_tooltip("Active model — /model to switch"):
+                    yield Static("MODEL", classes="info-label")
                     yield Static("", id="info-model", classes="info-value")
                 with Vertical(classes="info-col").with_tooltip(
                     "Context window fill, then cumulative session usage — "
                     "/context for the full breakdown"
                 ):
-                    yield Static("context", classes="info-label")
+                    yield Static("SESSION", classes="info-label")
                     yield Static("", id="info-quota", classes="info-value")
                 # Persistent artifacts component — fixed in the footer, click (or
                 # /artifacts) to open the list. Updates live via a registry observer.
                 with Vertical(id="col-artifacts", classes="info-col").with_tooltip(
                     "Artifacts — click (or /artifacts) to open the list"
                 ):
-                    yield Static("artifacts", classes="info-label")
+                    yield Static("◆ ARTIFACTS", classes="info-label")
                     yield Static("", id="info-artifacts", classes="info-value")
+
+    @property
+    def _palette(self) -> FooterPalette:
+        """The footer palette for THIS app's active theme.
+
+        Preferred over the module-level :func:`_active_palette` everywhere an
+        instance is available: it reads the theme off ``self``, so it works on
+        worker threads too (``active_app`` is a ContextVar that worker threads
+        cannot see, which raised LookupError from ``_refresh_branch_worker``).
+        """
+        from novacode_cli.tui.palette import cached_palette
+
+        try:
+            return cached_palette(self.get_theme(self.theme))
+        except Exception:  # noqa: BLE001
+            return _active_palette()
 
     def _apply_saved_theme(self) -> None:
         """Register Nova's palettes and apply the persisted theme (or default)."""
@@ -1444,6 +1561,23 @@ class NovaApp(App):
             self.theme = name
         except Exception:  # noqa: BLE001
             pass
+
+    def _watch_theme(self, theme_name: str) -> None:
+        """Recolour the footer's Rich Text when the theme changes.
+
+        The status line, info bar and prompt row carry colours baked into Rich
+        ``Text`` objects, which CSS never touches — so ``/theme`` recoloured the
+        CSS-driven widgets while the footer kept its old hexes. Rebuild them
+        here, after the base class has applied the new theme.
+        """
+        super()._watch_theme(theme_name)  # type: ignore[misc]
+        # The palette is keyed by theme name; clearing the tail forces every
+        # segment to be rebuilt with the new colours on the next refresh.
+        self._status_tail = None
+        self._status_right = None
+        with suppress(Exception):  # a repaint must never break a theme switch
+            self._refresh_status()
+            self._refresh_info_bar()
 
     def on_mount(self) -> None:
         import threading
@@ -1473,6 +1607,7 @@ class NovaApp(App):
             ("#mode-badge", Static),
             ("#cmdpalette", OptionList),
             ("#prompt-hint-bar", Static),
+            ("#status-counts", Static),
             ("#jump-latest-row", Horizontal),
             ("#jump-latest-box", Horizontal),
             ("#jump-latest", Static),
@@ -1803,7 +1938,7 @@ class NovaApp(App):
         stripped = text.strip()
         low = stripped.lower()
 
-        if low in ("/quit", "/exit", "quit", "exit", "q"):
+        if low in _EXIT_COMMANDS:
             await self.action_quit()
             return
         if low in ("/close", "/session close"):
@@ -2209,9 +2344,7 @@ class NovaApp(App):
             with contextlib.suppress(Exception):
                 repo = wt.repo_root(Path.cwd())
                 if repo is not None:
-                    outcome = await asyncio.to_thread(
-                        wt.remove_worktree, pane.worktree, repo=repo
-                    )
+                    outcome = await asyncio.to_thread(wt.remove_worktree, pane.worktree, repo=repo)
 
         if pane in self._panes:
             self._panes.remove(pane)
@@ -2357,9 +2490,7 @@ class NovaApp(App):
         except NoMatches:
             pass
 
-    def on_transcript_scroll_at_end_changed(
-        self, _event: TranscriptScroll.AtEndChanged
-    ) -> None:
+    def on_transcript_scroll_at_end_changed(self, _event: TranscriptScroll.AtEndChanged) -> None:
         """Toggle the jump-to-latest button when the transcript reaches/leaves the end."""
         self._update_jump_latest(measure=True)
 
@@ -2379,9 +2510,7 @@ class NovaApp(App):
             # auto-scrolling. (Content growth never moves scroll_y, so this can
             # only be a real user scroll.)
             self._follow_tail = False
-        elif event.scroll.is_vertical_scroll_end or (
-            event.scroll.max_scroll_y - event.new_y
-        ) <= 1:
+        elif event.scroll.is_vertical_scroll_end or (event.scroll.max_scroll_y - event.new_y) <= 1:
             # Back at the bottom (by wheel, key, or the jump button): resume.
             self._follow_tail = True
         # A real user scroll: recompute the distance readout.
@@ -2547,7 +2676,9 @@ class NovaApp(App):
             return
         with contextlib.suppress(Exception):
             await self._add_message(
-                Text(f"📡 {msg.user_name} → {pane.title}", style="bold cyan"), "user", Text(msg.text)
+                Text(f"📡 {msg.user_name} → {pane.title}", style="bold cyan"),
+                "user",
+                Text(msg.text),
             )
         proxy = pane.state.get("session_state")
         turn = SimpleNamespace(
@@ -2705,8 +2836,6 @@ class NovaApp(App):
                     except Exception:  # noqa: BLE001
                         pass
             finally:
-                from contextlib import suppress
-
                 with suppress(ValueError):
                     queue.task_done()
                     pass
@@ -2952,11 +3081,7 @@ class NovaApp(App):
             "pending": ("☐", "dim"),
         }
         items = todos or []
-        done = sum(
-            1
-            for td in items
-            if isinstance(td, dict) and td.get("status") == "completed"
-        )
+        done = sum(1 for td in items if isinstance(td, dict) and td.get("status") == "completed")
         t = Text()
         name = f"{agent_name} · Todos" if agent_name else "Todos"
         caret = "▸" if collapsed else "▾"
@@ -3023,9 +3148,7 @@ class NovaApp(App):
     def action_toggle_todos(self) -> None:
         """Collapse/expand the todo checklist (click the dock, or alt+t)."""
         self._todos_collapsed = not getattr(self, "_todos_collapsed", False)
-        self._paint_todos(
-            getattr(self, "_todos", None), getattr(self, "_todos_agent", None)
-        )
+        self._paint_todos(getattr(self, "_todos", None), getattr(self, "_todos_agent", None))
 
     def _pop_tool(self, call_id: str | None) -> "tuple[Collapsible, Static, str] | None":
         """Find (and stop tracking) the tool component for a result."""
@@ -3248,10 +3371,9 @@ class NovaApp(App):
         except Exception:
             pass
         n = len(self._tool_group_entries)
-        title = f"⚙ {n} tool call" + ("" if n == 1 else "s")
-        if running:
-            title += f"  · running {running}…"
-        self._tool_group.title = title
+        self._tool_group.title = motion.tool_group_title(
+            n, running, self._spinner_frame, self._palette
+        )
 
     @staticmethod
     def _category_noun(cat: str, count: int) -> str:
@@ -3581,16 +3703,16 @@ class NovaApp(App):
             try:
                 # Commit the full trace (the live view only showed a tail) and
                 # fold it to its header.
-                self._reason_msg.update_body(
-                    Text(self._reasoning_buf, style="dim italic")
-                )
+                self._reason_msg.update_body(Text(self._reasoning_buf, style="dim italic"))
                 self._reason_msg.set_collapsed(collapsed=True)
             except Exception:  # noqa: BLE001 — finalizing must never break the turn
                 pass
             self._reason_msg = None
         self._reasoning_buf = ""
 
-    _SPINNER = "▖▘▙▚▛▜▝▞▟"
+    #: Cached right-docked status counts (see _refresh_status). Class-level so a
+    #: read before the first tail rebuild yields an empty Text, not AttributeError.
+    _status_right: Text | None = None
 
     def _set_status(self, activity: str) -> None:
         self._activity = activity
@@ -3626,61 +3748,118 @@ class NovaApp(App):
                 auto_clear, lambda: self._set_nova_indicator("")
             )
 
-    @staticmethod
-    def _ctx_gauge(percent: float, width: int = 10) -> str:
-        """A unicode fill gauge like ▕█▉░░░░░░░▏ for *percent* across *width* cells."""
+    def _ctx_gauge(self, percent: float, pal: FooterPalette | None = None, width: int = 12) -> Text:
+        """A two-tone fill meter for *percent* across *width* cells.
+
+        Returns a :class:`rich.text.Text` rather than a bare string because the
+        filled cells and the empty track MUST be styled differently. The old
+        version returned one string that the caller painted in a single colour,
+        so at 6% the roughly ten empty cells were as bright as the filled one
+        and the bar read as full while the number beside it said 6%.
+
+        Palette colours are taken from the active theme (see
+        :mod:`novacode_cli.tui.palette`) so the meter recolours with ``/theme``.
+
+        Args:
+            percent: Context-window fill, 0-100.
+            pal: A :class:`~novacode_cli.tui.palette.FooterPalette`, or None to
+                resolve the active theme's palette.
+            width: Number of cells in the track.
+
+        Returns:
+            The meter as a styled ``Text``.
+        """
+        if pal is None:
+            pal = self._palette
         percent = max(0.0, min(100.0, percent))
+        color = (
+            pal.error
+            if percent >= _PCT_CRITICAL
+            else (pal.warning if percent >= _PCT_WARN else pal.success)
+        )
         filled = percent / 100.0 * width
         full = int(filled)
-        eighths = " ▏▎▍▌▋▊▉█"
-        cells = ["█"] * full
         rem = round((filled - full) * 8)
-        if full < width and rem > 0:
-            cells.append(eighths[min(8, rem)])
-        cells += ["░"] * (width - len(cells))
-        return "▕" + "".join(cells[:width]) + "▏"
+        eighths = " ▏▎▍▌▋▊▉█"
+
+        t = Text()
+        t.append("▐", style=pal.dim)
+        if full == 0 and rem == 0:
+            # Never paint an entirely empty track: a single eighth-block stub
+            # keeps "0-ish" legible as a small amount rather than a broken bar.
+            t.append("▏", style=color)
+            t.append("─" * max(0, width - 1), style=pal.faint)
+        else:
+            t.append("█" * full, style=color)
+            if full < width and rem > 0:
+                t.append(eighths[min(8, rem)], style=color)
+                full += 1
+            if full < width:
+                t.append("─" * (width - full), style=pal.faint)
+        t.append("▌", style=pal.dim)
+        return t
 
     def _refresh_status(self) -> None:
+        pal = self._palette
         line = Text()
 
         # Activity segment — animated spinner + elapsed while live, else a ● dot.
         # Rebuilt every frame (cheap); it is the only part that changes at 20fps.
         if self._turn_active:
-            frame = self._SPINNER[self._spinner_frame % len(self._SPINNER)]
             elapsed = time.monotonic() - self._turn_start
-            line.append(f"{frame} ", style="bold #bb9af7")
-            line.append(str(self._activity), style="#c0caf5")
-            line.append(f"  {elapsed:0.1f}s", style="dim")
+            # A single-glyph spinner (so the label never jitters) plus a light
+            # band sweeping across the words. The motion says "working" without
+            # moving the text, which is the difference between polish and noise.
+            line.append(f"{motion.spinner(self._spinner_frame)} ", style=f"bold {pal.accent}")
+            line.append_text(motion.shimmer(str(self._activity).upper(), self._spinner_frame, pal))
+            line.append(f"  {elapsed:0.1f}s", style=pal.muted)
         else:
-            line.append("● ", style="#9ece6a")
-            line.append(str(self._activity), style="#9ece6a")
+            line.append("● ", style=f"bold {pal.success}")
+            line.append(str(self._activity).upper(), style=f"bold {pal.success}")
 
-        # Heavy tail (ctx gauge, bridge, notifs, counts) changes slowly. Rebuild
-        # it at most ~4x/sec so the per-frame spinner update stays cheap; _tick
-        # drops the cache to None when a notif/bridge change must show at once.
+        # Heavy tail (ctx gauge, bridge, notifs) and the right-aligned counts
+        # change slowly. Rebuild them at most ~4x/sec so the per-frame spinner
+        # update stays cheap; _tick drops the cache to None when a notif/bridge
+        # change must show at once.
         now = time.monotonic()
         ttl = 0.25  # rebuild the heavy tail at most ~4x/sec
         last = getattr(self, "_status_tail_ts", 0.0)
         if getattr(self, "_status_tail", None) is None or now - last > ttl:
-            self._status_tail = self._build_status_tail()
+            self._status_tail, self._status_right = self._build_status_tail()
             self._status_tail_ts = now
-        line.append_text(self._status_tail)
+        if self._status_tail is not None:
+            line.append_text(self._status_tail)
 
         try:
             self._w("#prompt-hint-bar", Static).update(line)
         except NoMatches:
             pass
+        # The counts live in their own right-docked widget. A Rich Text cannot
+        # right-align itself, but a Horizontal with a `1fr` left cell and an
+        # `auto` right cell does — so the counts sit flush against the edge
+        # instead of trailing the status text wherever it happens to end.
+        right = self._status_right
+        if self._narrow:
+            right = Text()
+        try:
+            self._w("#status-counts", Static).update(right if right is not None else Text())
+        except NoMatches:
+            pass
 
-    def _build_status_tail(self) -> Text:
+    def _build_status_tail(self) -> tuple[Text, Text]:
         """Slow-changing status segments, cached on a short TTL by _refresh_status.
 
-        Split out so the 20fps spinner refresh doesn't rebuild the ctx gauge,
-        bridge scan, notification counts, and skill/file counts every frame.
+        Returns ``(left, right)``: the left segment follows the activity text and
+        the right one is right-docked by the status row's layout. Split out so
+        the 20fps spinner refresh doesn't rebuild the ctx gauge, bridge scan,
+        notification counts, and skill/file counts every frame.
         """
+        pal = self._palette
         line = Text()
+        right = Text()
 
         def _divider() -> None:
-            line.append("  │  ", style="#3b4261")
+            line.append("   ┃   ", style=pal.rail)
 
         # Context segment — a filling gauge that recolors green→amber→red.
         if self.token_tracker is not None:
@@ -3690,23 +3869,19 @@ class NovaApp(App):
                 bd = None
             if bd is not None:
                 p = bd.usage_percentage
-                if p >= 90:
-                    ctx_color = "#f7768e"
-                elif p >= 75:
-                    ctx_color = "#e0af68"
-                else:
-                    ctx_color = "#9ece6a"
+                ctx_color = _pct_color(p, pal.success, pal)
                 _divider()
-                line.append("ctx ", style="dim")
-                line.append(self._ctx_gauge(p), style=ctx_color)
-                line.append(f" {p:.0f}%", style=f"bold {ctx_color}")
+                line.append("CTX ", style=pal.dim)
+                line.append_text(self._ctx_gauge(p, pal))
+                line.append(f"  {p:.0f}%", style=f"bold {ctx_color}")
 
         # Nova learning status (review cycle).
         if self._nova_status:
             _divider()
+            line.append("◆ ", style=pal.accent)
             line.append(self._nova_status, style=self._nova_status_style)
 
-        # Remote bridge indicator — shows 📡 + platform abbreviations when active.
+        # Remote bridge indicator — platform abbreviations when a bridge is live.
         try:
             mgr = getattr(self.session_state, "_remote_bridge_manager", None)
             if mgr is not None:
@@ -3715,54 +3890,49 @@ class NovaApp(App):
                 ]
                 if _active:
                     _divider()
-                    line.append("📡 ", style="bold #7dcfff")
+                    line.append("📡 ", style=f"bold {pal.primary}")
                     _labels = []
                     for _b in _active:
                         _plat = str(_b.get("platform", "")).lower()
-                        _label = "tg" if _plat == "telegram" else _plat[:3]
+                        _label = "TG" if _plat == "telegram" else _plat[:3].upper()
                         _status = _b.get("status", "")
-                        _style = "dim #7dcfff" if _status == "connecting..." else "#7dcfff"
+                        _style = pal.dim if _status == "connecting..." else f"bold {pal.primary}"
                         _labels.append((_label, _style))
                     for _i, (_lbl, _sty) in enumerate(_labels):
                         if _i:
-                            line.append(" · ", style="dim #7dcfff")
+                            line.append(" · ", style=pal.rail)
                         line.append(_lbl, style=_sty)
         except Exception:  # noqa: BLE001
             pass
 
         notif = self._unread_count()
         if notif:
-            line.append("   🔔 ", style="bold #e0af68")
-            line.append(str(notif), style="bold #e0af68")
+            _divider()
+            line.append("🔔 ", style=f"bold {pal.warning}")
+            line.append(str(notif), style=f"bold {pal.warning}")
 
         pending = self._pending_approval_count()
         if pending:
-            line.append("   ⚡", style="bold yellow")
-            line.append(str(pending), style="bold yellow")
+            _divider()
+            line.append("⚡ ", style=f"bold {pal.warning}")
+            line.append(str(pending), style=f"bold {pal.warning}")
 
-        # Right-align skill/file counts. Skills shows the *enabled* set so it
-        # reflects /skills toggles, not the full installed list. Dropped on
-        # narrow terminals where there's no room for them.
+        # Right-docked counts. Skills shows the *enabled* set so it reflects
+        # /skills toggles, not the full installed list. Dropped on narrow
+        # terminals where there is no room for them.
         skill_count = 0 if self._narrow else self._cached_enabled_skill_count()
         file_count = 0 if self._narrow else self._cached_agent_md_count()
 
-        # Build the right-side info string
-        right_parts: list[str] = []
         if file_count:
-            right_parts.append(f"{file_count} NOVA.md file{'s' if file_count != 1 else ''}")
+            right.append(
+                f"{file_count} NOVA.md file{'s' if file_count != 1 else ''}", style=pal.muted
+            )
         if skill_count:
-            right_parts.append(f"{skill_count} skill{'s' if skill_count != 1 else ''}")
+            if file_count:
+                right.append("  ·  ", style=pal.rail)
+            right.append(f"{skill_count} skill{'s' if skill_count != 1 else ''}", style=pal.muted)
 
-        if right_parts:
-            # Pad to push the right info to the far right
-            right_text = " · ".join(right_parts)
-            # Use a large gap to simulate right alignment
-            line.append("  ", style="dim")
-            # We'll just append it; true right-align isn't possible in Text, but
-            # the CSS already handles this if we update the hint bar carefully.
-            line.append(right_text, style="dim")
-
-        return line
+        return line, right
 
     def _unread_count(self) -> int:
         """Unread notification count (0 on any error)."""
@@ -3789,20 +3959,33 @@ class NovaApp(App):
         is read off-thread (``_refresh_branch_worker``) so a slow repo can't stall
         the UI. Safe to call repeatedly — used at mount and on a refresh timer, so
         a model switch, branch change, or sandbox change shows up live.
+
+        Colours come from the active theme's palette so ``/theme`` recolours the
+        footer like every other surface (these were hardcoded tokyo-night hexes,
+        which stayed neon under any other theme).
         """
         from novacode_cli.config.config import settings
 
-        self._set_info("#info-workspace", Text(str(settings.get_workspace_root()), style="bold"))
+        pal = self._palette
+        self._set_info(
+            "#info-workspace", Text(str(settings.get_workspace_root()), style=f"bold {pal.text}")
+        )
 
         sandbox_type = getattr(self.session_state, "_sandbox_type", None)
         if sandbox_type:
-            sandbox_text = Text(str(sandbox_type), style="bold yellow")
+            sandbox_text = Text(str(sandbox_type), style=f"bold {pal.warning}")
         else:
-            sandbox_text = Text("no sandbox", style="#e0af68")
+            sandbox_text = Text("no sandbox", style=pal.warning)
         self._set_info("#info-sandbox", sandbox_text)
 
-        self._set_info("#info-model", Text(str(self.model_name or "—"), style="bold #7aa2f7"))
+        self._set_info(
+            "#info-model", Text(str(self.model_name or "—"), style=f"bold {pal.primary}")
+        )
         self._refresh_quota()
+        # The artifacts cell is otherwise only repainted by its registry observer,
+        # so a /theme switch left it carrying the previous theme's colour while
+        # every cell beside it recoloured.
+        self._refresh_artifacts_component()
         self._refresh_branch_worker()
 
     def _set_info(self, selector: str, renderable: Text) -> None:
@@ -3831,7 +4014,10 @@ class NovaApp(App):
                 branch = result.stdout.strip() or "—"
         except Exception:  # noqa: BLE001
             branch = "—"
-        self.call_from_thread(self._set_info, "#info-branch", Text(branch, style="bold #bb9af7"))
+        pal = self._palette
+        self.call_from_thread(
+            self._set_info, "#info-branch", Text(branch, style=f"bold {pal.accent}")
+        )
 
     @staticmethod
     def _fmt_tokens(n: int) -> str:
@@ -3858,6 +4044,7 @@ class NovaApp(App):
         both are rendered side by side.
         """
         parts: list[tuple[str, str]] = []
+        pal = self._palette
 
         # Context-window fill (bounded; drops on compaction).
         try:
@@ -3866,7 +4053,7 @@ class NovaApp(App):
             bd = None
         if bd is not None and getattr(bd, "context_window_size", 0):
             ctx_pct = bd.usage_percentage
-            parts.append((f"ctx {ctx_pct:.0f}%", f"bold {_pct_color(ctx_pct, '#9ece6a')}"))
+            parts.append((f"ctx {ctx_pct:.0f}%", f"bold {_pct_color(ctx_pct, pal.success, pal)}"))
 
         # Cumulative session usage (monotonic; survives compaction).
         tot = getattr(self.token_tracker, "session_total_tokens", 0)
@@ -3874,11 +4061,14 @@ class NovaApp(App):
             pct = getattr(self.token_tracker, "session_pct", 0.0)
             budget = getattr(self.token_tracker, "session_token_budget", 0)
             parts.append(
-                (f"{pct:.0f}% of {self._fmt_tokens(budget)}", f"bold {_pct_color(pct, '#7aa2f7')}")
+                (
+                    f"{pct:.0f}% of {self._fmt_tokens(budget)}",
+                    f"bold {_pct_color(pct, pal.primary, pal)}",
+                )
             )
 
         if not parts:
-            usage_text = Text("—", style="dim")
+            usage_text = Text("—", style=pal.dim)
         else:
             usage_text = Text()
             for i, (label, style) in enumerate(parts):
@@ -3896,6 +4086,20 @@ class NovaApp(App):
         if self._turn_active:
             self._spinner_frame += 1
             refresh = True
+            # A tool group with a live tool also animates, so re-title it every
+            # tick. This is one attribute assignment on one widget (cheap); it
+            # matters because a title painted only on tool events would freeze
+            # mid-sweep for the whole duration of a slow tool.
+            if self._tool_group is not None and self._tool_group_running:
+                try:
+                    self._tool_group.title = motion.tool_group_title(
+                        len(self._tool_group_entries),
+                        self._tool_group_running,
+                        self._spinner_frame,
+                        self._palette,
+                    )
+                except Exception:  # noqa: BLE001 — a title must never break a turn
+                    pass
         # Surface notifications raised by background tasks within ~200ms.
         cur = self._unread_count()
         if cur != self._last_notif_count:
@@ -3954,21 +4158,24 @@ class NovaApp(App):
         except NoMatches:
             return
 
+        pal = self._palette
         if plan and bash:
             t = Text()
-            t.append("  ⏸ PLAN  ", style="bold #7aa2f7")
-            t.append("$ BASH — runs in your shell", style="bold #bb9af7")
+            t.append("  ⏸ PLAN  ", style=f"bold {pal.primary}")
+            t.append("$ BASH — runs in your shell", style=f"bold {pal.accent}")
             badge.update(t)
             badge.display = True
         elif plan:
-            badge.update(Text("  ⏸ PLAN MODE — proposing, not editing", style="bold #7aa2f7"))
+            badge.update(
+                Text("  ⏸ PLAN MODE — proposing, not editing", style=f"bold {pal.primary}")
+            )
             badge.display = True
         elif bash:
-            badge.update(Text("  $ BASH — runs in your shell", style="bold #bb9af7"))
+            badge.update(Text("  $ BASH — runs in your shell", style=f"bold {pal.accent}"))
             badge.display = True
         elif goal:
             short = goal if len(goal) <= 60 else goal[:57] + "…"
-            badge.update(Text(f"  🎯 GOAL — {short}", style="bold #e0af68"))
+            badge.update(Text(f"  🎯 GOAL — {short}", style=f"bold {pal.warning}"))
             badge.display = True
         else:
             badge.update("")
@@ -4166,6 +4373,7 @@ class NovaApp(App):
             max_results = 50
             try:
                 from novacode_cli.config.config import settings
+
                 cwd = settings.get_workspace_root()
                 # Skip common non-source directories to keep rglob fast
                 _SKIP_DIRS = frozenset(
@@ -4343,6 +4551,37 @@ class NovaApp(App):
         """Notify the transcript that a large paste was collapsed."""
         self._log(Text(f"{placeholder} ({char_count:,} chars)", style="dim"))
 
+    def _on_clipboard_image(self, image: ImageData) -> str:
+        """Register a Ctrl+V clipboard image and return its placeholder id.
+
+        Returns ``""`` when images aren't tracked, so the widget falls back to a
+        text paste instead of inserting a placeholder that resolves to nothing.
+
+        The image joins the *conversation's* images: ``prepare_input_content``
+        re-attaches every tracked image to each turn, so it stays available for
+        follow-up questions until ``/clear`` (or ``/images clear``) drops it.
+        """
+        tracker = self.image_tracker
+        if tracker is None:
+            return ""
+        try:
+            image_id = tracker.add_image(image)
+        except Exception:  # noqa: BLE001 — pasting must never break input
+            logger.warning("clipboard image could not be tracked", exc_info=True)
+            return ""
+        try:
+            size_kb = image.size_kb
+        except Exception:  # noqa: BLE001
+            size_kb = 0.0
+        self._log(
+            Text(
+                f"🖼️  Image pasted: {image_id} ({size_kb:.1f} KB) — "
+                "attached to this conversation (/images to manage)",
+                style="dim",
+            )
+        )
+        return image_id
+
     def on_prompt_input_submitted(self, event: Any) -> None:
         """The prompt (a TextArea) posts its own Submitted on enter."""
         self.on_input_submitted(event)
@@ -4376,15 +4615,21 @@ class NovaApp(App):
         # (injected for its next step) instead of cancelling it or starting a new
         # turn. Esc still cancels. Empty turns route normally.
         if self._turn_active:
+            # Exit is a control command, not a prompt: honour it immediately
+            # rather than queueing behind a turn that may run for minutes. This
+            # handler is sync, so the async quit runs as a worker. A separate
+            # group stops the "turn" group's cancellation (issued inside
+            # action_quit) from killing the quit itself mid-flight.
+            if text.strip().lower() in _EXIT_COMMANDS:
+                self.run_worker(self.action_quit(), group="quit", exclusive=True)
+                return
             # A slash command or !bash isn't a message to the agent — queue it to
             # RUN as a command when the turn ends, rather than steering the agent
             # with its literal text.
             stripped = text.lstrip()
             if stripped.startswith("/") or stripped.startswith("!"):
                 self._deferred_commands.append(text)
-                self._log(
-                    Text(f"↳ Queued command (runs after this turn): {text}", style="dim")
-                )
+                self._log(Text(f"↳ Queued command (runs after this turn): {text}", style="dim"))
             else:
                 self._add_live_steer(text)
             return
@@ -4517,7 +4762,6 @@ class NovaApp(App):
         """
         if self._voice_pipeline is None:
             return
-        from contextlib import suppress
 
         pending: list[str] = []
         with suppress(Exception):
@@ -4879,14 +5123,8 @@ class NovaApp(App):
             # to keep running and only leaves a note. Either way this requires an
             # idle agent: resuming mid-turn would interleave two prompts on the
             # same thread.
-            watched = getattr(job, "resume_on_done", False) or getattr(
-                job, "agent_launched", False
-            )
-            resume = (
-                event in ("completed", "failed")
-                and watched
-                and not self._turn_active
-            )
+            watched = getattr(job, "resume_on_done", False) or getattr(job, "agent_launched", False)
+            resume = event in ("completed", "failed") and watched and not self._turn_active
             if resume:
                 self._log(Text(f"↻ Resuming — {job.task_id} finished.", style="cyan"))
                 self._continue_after_task(job)
@@ -4949,18 +5187,20 @@ class NovaApp(App):
 
     # ── Artifacts (persistent component) ─────────────────────────────────
     def _refresh_artifacts_component(self) -> None:
-        """Update the fixed ``◈ Artifacts (N)`` footer component."""
+        """Update the fixed ``Artifacts (N)`` footer component."""
         try:
             from novacode_cli.artifacts.registry import get_registry
 
             n = get_registry().count()
         except Exception:  # noqa: BLE001
             n = 0
+        pal = self._palette
         if n:
-            t = Text("◈ ", style="#7aa2f7")
-            t.append(f"Artifacts ({n})", style="bold #7aa2f7")
+            # The ARTIFACTS label above already carries the icon; repeating it in
+            # the value row reads as a stray glyph before the text.
+            t = Text(f"Artifacts ({n})", style=f"bold {pal.accent}")
         else:
-            t = Text("◈ Artifacts", style="dim")
+            t = Text("Artifacts", style=pal.dim)
         self._set_info("#info-artifacts", t)
 
     def _on_artifact_event_threadsafe(self, event: str, art: Any) -> None:
@@ -4970,7 +5210,7 @@ class NovaApp(App):
 
     def _on_artifact_event(self, event: str, art: Any) -> None:
         if event == "created":
-            self._log(Text(f"◈ Artifact created: {art.title}", style="#7aa2f7"))
+            self._log(Text(f"◈ Artifact created: {art.title}", style=f"bold {self._palette.accent}"))
         self._refresh_artifacts_component()
 
     @work
@@ -4984,14 +5224,12 @@ class NovaApp(App):
             self._log(
                 Text(
                     "No artifacts yet — ask me to create one, e.g. "
-                    "\"create an artifact showing the changes you made\".",
+                    '"create an artifact showing the changes you made".',
                     style="dim",
                 )
             )
             return
-        options = [
-            f"◈ {a.title}  ·  [{a.type}] v{a.version} · {a.status}" for a in arts
-        ]
+        options = [f"◈ {a.title}  ·  [{a.type}] v{a.version} · {a.status}" for a in arts]
         idx = await self.push_screen_wait(
             PickScreen("Artifacts — open in browser", options, hint="↑/↓ · Enter open · Esc cancel")
         )
@@ -5058,12 +5296,20 @@ class NovaApp(App):
         await self.action_quit()
 
     async def action_quit(self) -> None:
-        """Persist the session (so --continue works) then exit."""
+        """Persist the session (so --continue works) then exit.
+
+        Every step is independently guarded and the whole sequence is timed, so
+        a slow exit can be diagnosed from the log instead of merely felt.
+        """
+        started = time.monotonic()
+        # Stop any turn still running. Without this a mid-turn /exit would leave
+        # the agent streaming while we tear the app down underneath it.
+        await self._cancel_active_turn()
         try:
             from novacode_cli.events import unregister_tool_output_callback
 
             unregister_tool_output_callback(self._on_tool_output)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         # Shut spawned sessions down before we go: main.py ends in os._exit(),
         # which runs no finally blocks, so anything still alive here is orphaned.
@@ -5084,9 +5330,35 @@ class NovaApp(App):
             pool = getattr(middleware, "_session_pool", None)
             if pool is not None:
                 await asyncio.wait_for(pool.aclose(), timeout=5.0)
-        await self._save_session()
-        await self._consolidate_learning()
+        # Guarded separately (defence in depth: each already swallows its own
+        # errors) so losing the conversation can never follow a teardown fault.
+        with contextlib.suppress(Exception):
+            await self._save_session()
+        with contextlib.suppress(Exception):
+            await self._consolidate_learning()
+        logger.debug("exit teardown took %.2fs", time.monotonic() - started)
         self.exit()
+
+    async def _cancel_active_turn(self) -> None:
+        """Stop the in-flight turn so exit is immediate.
+
+        Reuses ``action_cancel_turn`` rather than cancelling workers directly: it
+        also kills a hung foreground shell subprocess and handles a turn started
+        from a remote bridge, neither of which a plain group cancel reaches.
+        Cancelling only the ``turn`` group (not ``cancel_all``) keeps the
+        supervisor's child readers and the remote consumer alive — they are torn
+        down by their own steps above.
+        """
+        if not self._turn_active and not getattr(self, "_remote_turn_task", None):
+            return
+        try:
+            self.action_cancel_turn()
+            # Give the cancellation a moment to unwind so teardown does not race
+            # a still-running stream, but never block exit on it.
+            await asyncio.sleep(0.1)
+        except Exception:  # noqa: BLE001 — exiting must not fail on this
+            logger.debug("cancel-on-exit failed", exc_info=True)
+        self._turn_active = False
 
     async def _consolidate_learning(self) -> None:
         """Distil this session's un-reviewed work into memory before it ends.
@@ -5120,7 +5392,6 @@ class NovaApp(App):
         if self.session_manager is None:
             return
         try:
-
             config = {"configurable": {"thread_id": self.session_state.thread_id}}
             # Bound the checkpointer read so a slow/contended DB can't hang /quit.
             state = await asyncio.wait_for(self.agent.aget_state(config), timeout=5.0)
@@ -5128,6 +5399,7 @@ class NovaApp(App):
             if not messages:
                 return
             from novacode_cli.config.config import settings
+
             todos = state.values.get("todos") or getattr(self.session_state, "todos", None)
             # save_session does several synchronous file writes — run it off the
             # event loop so /save, /clear, and quit don't freeze the UI.
@@ -5161,7 +5433,7 @@ class NovaApp(App):
             return
 
         low = text.lower()
-        if low in ("/quit", "/exit", "quit", "exit", "q"):
+        if low in _EXIT_COMMANDS:
             await self.action_quit()
             return
 
@@ -5176,7 +5448,7 @@ class NovaApp(App):
         # @agent mention(s) -> delegate through the main agent's `task` tool.
         try:
             from novacode_cli.config.config import settings
-            from novacode_cli.input import (
+            from novacode_cli.input_utils import (
                 parse_agent_mentions,
                 parse_agent_mentions_multi,
             )
@@ -5184,6 +5456,9 @@ class NovaApp(App):
             mentioned_agents = parse_agent_mentions_multi(text, settings)
             agent_name, query = parse_agent_mentions(text, settings)
         except Exception:  # noqa: BLE001
+            # Never break the turn over a mention parse, but do not hide a real
+            # bug: a bad import here silently disabled @agent delegation once.
+            logger.warning("agent mention parsing failed", exc_info=True)
             mentioned_agents, agent_name, query = [], None, text
 
         # Two or more agents (or an agent mentioned mid-message): hand the whole
@@ -5318,9 +5593,7 @@ class NovaApp(App):
                 # Off the loop: it can shell out to `ollama show`, which hangs
                 # while the local daemon is busy (a 42s UI freeze was measured).
                 model = tracker.model_name
-                breakdown = await asyncio.to_thread(
-                    lambda: ContextManager(model).breakdown(msgs)
-                )
+                breakdown = await asyncio.to_thread(lambda: ContextManager(model).breakdown(msgs))
                 tracker.set_breakdown(breakdown)
         except Exception:  # noqa: BLE001
             pass
@@ -5387,7 +5660,7 @@ class NovaApp(App):
             cmd = self._deferred_commands.pop(0)
             self._log(Text(f"↳ Running queued command: {cmd}", style="italic #9ece6a"))
             low = cmd.strip().lower()
-            if low in ("/quit", "/exit", "quit", "exit", "q"):
+            if low in _EXIT_COMMANDS:
                 await self.action_quit()
                 return
             if cmd.startswith("!"):
@@ -5441,6 +5714,7 @@ class NovaApp(App):
             pct,
             compacted_last_turn=getattr(self, "_compacted_last_turn", False),
             auto_compact_enabled=self._auto_compact,
+            context_window=getattr(bd, "context_window_size", 0) or 0,
         )
         self._compacted_last_turn = decision.compacted_last_turn
 
@@ -5465,6 +5739,7 @@ class NovaApp(App):
                 after = post_compaction_still_critical(
                     getattr(bd2, "usage_percentage", 0.0),
                     auto_compact_enabled=self._auto_compact,
+                    context_window=getattr(bd2, "context_window_size", 0) or 0,
                 )
                 if after.disable_auto_compact:
                     self._auto_compact = False
@@ -5715,8 +5990,6 @@ class NovaApp(App):
                 self._log(Text(f"Remote error: {ex}", style="red"))
                 self._remote_react("❌", msg)
             finally:
-                from contextlib import suppress
-
                 with suppress(ValueError):
                     queue.task_done()
 
@@ -6506,7 +6779,11 @@ class NovaApp(App):
             self._log(Text(msg, style=style) if style else Text(msg))
 
         def fmt(comps: dict) -> str:
-            parts = [f"{k}: {', '.join(v)}" for k in ("skills", "commands", "agents", "mcp", "hooks") if (v := comps.get(k))]
+            parts = [
+                f"{k}: {', '.join(v)}"
+                for k in ("skills", "commands", "agents", "mcp", "hooks")
+                if (v := comps.get(k))
+            ]
             return "  " + " | ".join(parts) if parts else "  (no components)"
 
         parts = text.split(maxsplit=2)
@@ -6515,22 +6792,36 @@ class NovaApp(App):
         try:
             if sub == "install":
                 if not arg:
-                    log("Usage: /plugins install <owner/repo | git-url | dir | plugin@marketplace>", "yellow")
+                    log(
+                        "Usage: /plugins install <owner/repo | git-url | dir | plugin@marketplace>",
+                        "yellow",
+                    )
                     return
-                name = mp.install_plugin(arg) if _re.fullmatch(r"[\w.-]+@[\w.-]+", arg) else cp.install(arg)
+                name = (
+                    mp.install_plugin(arg)
+                    if _re.fullmatch(r"[\w.-]+@[\w.-]+", arg)
+                    else cp.install(arg)
+                )
                 log(f"✓ Installed {name}", "green")
                 log(fmt(cp.plugin_components(name)), "cyan")
                 log("Restart Nova to activate.", "dim")
             elif sub == "remove":
-                log(f"✓ Removed {arg}" if cp.remove(arg) else f"No plugin named '{arg}'",
-                    "green" if arg else "yellow")
+                log(
+                    f"✓ Removed {arg}" if cp.remove(arg) else f"No plugin named '{arg}'",
+                    "green" if arg else "yellow",
+                )
             elif sub == "search":
                 hits = mp.list_marketplace_plugins()
                 if arg:
                     q = arg.lower()
-                    hits = [p for p in hits if q in p["name"].lower() or q in p["description"].lower()]
+                    hits = [
+                        p for p in hits if q in p["name"].lower() or q in p["description"].lower()
+                    ]
                 if not hits:
-                    log("No matching plugins. Add a marketplace: /plugins marketplace add <owner/repo>", "dim")
+                    log(
+                        "No matching plugins. Add a marketplace: /plugins marketplace add <owner/repo>",
+                        "dim",
+                    )
                 else:
                     log("Available plugins:", "bold")
                     for p in hits:
@@ -6540,14 +6831,25 @@ class NovaApp(App):
                 marg = marg.strip()
                 if msub == "add":
                     name = mp.add(marg)
-                    log(f"✓ Added marketplace {name} ({len(mp.list_marketplace_plugins())} plugins — /plugins search)", "green")
+                    log(
+                        f"✓ Added marketplace {name} ({len(mp.list_marketplace_plugins())} plugins — /plugins search)",
+                        "green",
+                    )
                 elif msub == "remove":
-                    log(f"✓ Removed marketplace {marg}" if mp.remove_marketplace(marg) else f"No marketplace '{marg}'",
-                        "green" if marg else "yellow")
+                    log(
+                        f"✓ Removed marketplace {marg}"
+                        if mp.remove_marketplace(marg)
+                        else f"No marketplace '{marg}'",
+                        "green" if marg else "yellow",
+                    )
                 else:
                     mkts = mp.list_marketplaces()
-                    log("Marketplaces:" if mkts else "No marketplaces. /plugins marketplace add <owner/repo>",
-                        "bold" if mkts else "dim")
+                    log(
+                        "Marketplaces:"
+                        if mkts
+                        else "No marketplaces. /plugins marketplace add <owner/repo>",
+                        "bold" if mkts else "dim",
+                    )
                     for m in mkts:
                         log(f"  • {m['name']}  {m['source']}")
             else:  # list — open the native plugins viewer instead of a text dump
@@ -7098,7 +7400,9 @@ class NovaApp(App):
         """
         parts = text.split(maxsplit=1)
         task = parts[1].strip() if len(parts) > 1 else None
-        self._log(Text("◆ Launching Nova Cowork desktop… (grant a folder to begin)", style="#7aa2f7"))
+        self._log(
+            Text("◆ Launching Nova Cowork desktop… (grant a folder to begin)", style="#7aa2f7")
+        )
         self._launch_cowork(task)
 
     @work(thread=True, exclusive=True, group="cowork")
@@ -7538,7 +7842,12 @@ class NovaApp(App):
                 self._show_home_banner()
                 self._log(Text("✓ Plan approved — starting fresh execution…", style="cyan"))
                 _tid = getattr(self.session_state, "thread_id", "?")
-                self._log(Text(f"[plan-debug] executing on thread {str(_tid)[:8]}, plan {len(approved)} chars", style="dim"))
+                self._log(
+                    Text(
+                        f"[plan-debug] executing on thread {str(_tid)[:8]}, plan {len(approved)} chars",
+                        style="dim",
+                    )
+                )
                 await self._stream_prompt(
                     "The user has approved the following plan. Execute it step by step, "
                     "marking each step complete as you go:\n\n" + approved
@@ -7547,7 +7856,12 @@ class NovaApp(App):
                     _st = await self.agent.aget_state({"configurable": {"thread_id": _tid}})
                     _msgs = _st.values.get("messages", []) if _st else []
                     _kinds = [type(m).__name__ for m in _msgs][-6:]
-                    self._log(Text(f"[plan-debug] after execution: {len(_msgs)} msgs, last={_kinds}", style="dim"))
+                    self._log(
+                        Text(
+                            f"[plan-debug] after execution: {len(_msgs)} msgs, last={_kinds}",
+                            style="dim",
+                        )
+                    )
                 except Exception as _ex:  # noqa: BLE001
                     self._log(Text(f"[plan-debug] state read failed: {_ex}", style="dim red"))
         finally:
@@ -7983,8 +8297,6 @@ class NovaApp(App):
         Only repaints when a breakpoint actually flips, so a drag-resize that
         stays in one band costs nothing extra.
         """
-        from contextlib import suppress
-
         width = event.size.width or 0
         height = event.size.height or 0
         narrow = width < _NARROW_WIDTH
@@ -8024,7 +8336,9 @@ class NovaApp(App):
             t = Text()
             t.append("Nova Learning (Hermes)\n", style="bold")
             t.append("Status: ", style="dim")
-            t.append("on\n" if current else "off\n", style="bold green" if current else "bold yellow")
+            t.append(
+                "on\n" if current else "off\n", style="bold green" if current else "bold yellow"
+            )
             t.append(
                 "\nWhen on, Nova periodically self-reviews its tool usage, extracts\n"
                 "lessons to memory, and creates/refines skills as you work.\n",
@@ -8551,7 +8865,6 @@ class NovaApp(App):
             )
             return
 
-
         from novacode_cli.config.config import settings as _settings
 
         workspace = _settings.get_workspace_root()
@@ -8677,6 +8990,7 @@ class NovaApp(App):
         parts = text.split(maxsplit=1)
         cmd_args = parts[1].strip() if len(parts) > 1 else ""
         from novacode_cli.config.config import settings
+
         working_dir = str(settings.get_workspace_root())
         if not cmd_args:
             framework = detect_test_framework(working_dir)
@@ -9322,9 +9636,7 @@ class NovaApp(App):
             self._log(Text(f"✗ {exc}", style="red"))
             return
         self._log(Text(f"✓ Plan approved — {run.approved_proposal_id}", "bold green"))
-        self._log(
-            Text(f"  saved to .nova/council/{run.id}/approved-plan.md", style="dim")
-        )
+        self._log(Text(f"  saved to .nova/council/{run.id}/approved-plan.md", style="dim"))
         self._log(Text("Handing the approved plan to the coding agent…", "cyan"))
         # The executor is told the plan carries the user's authorization, so it
         # implements rather than re-opening the choice the council already made.
@@ -9334,8 +9646,7 @@ class NovaApp(App):
                 "The user reviewed and APPROVED the following implementation plan "
                 "from a planning council. Implement it. Do not redesign it or "
                 "propose alternatives; if a step turns out to be wrong, say so and "
-                "stop rather than silently substituting your own approach.\n\n"
-                + plan
+                "stop rather than silently substituting your own approach.\n\n" + plan
             )
         finally:
             # Even on an error, the run must not be left reading "executing"
@@ -9388,21 +9699,15 @@ class NovaApp(App):
                     if label:
                         self._log(Text(f"  → {label}", style="cyan"))
                 elif name == "proposal.created":
-                    self._log(
-                        Text(f"    ✓ {payload['proposal_id']} — {payload['title']}", "dim")
-                    )
+                    self._log(Text(f"    ✓ {payload['proposal_id']} — {payload['title']}", "dim"))
                 elif name == "agent.failed":
                     # With the reason: "dropped out" alone leaves the user
                     # unable to tell a slow model from an unreachable one.
                     why = payload.get("reason") or "no reply"
-                    self._log(
-                        Text(f"    ✗ {payload['name']} — {why}", style="yellow")
-                    )
+                    self._log(Text(f"    ✗ {payload['name']} — {why}", style="yellow"))
                 elif name == "vote.tallied":
                     entropy = payload["tally"].get("entropy", 0.0)
-                    self._log(
-                        Text(f"    ballots in · disagreement {entropy:.2f}", "dim")
-                    )
+                    self._log(Text(f"    ballots in · disagreement {entropy:.2f}", "dim"))
                 elif name == "council.failed":
                     self._log(Text(f"✗ {payload['reason']}", style="red"))
                 elif name == "plans.selected":
@@ -9688,9 +9993,7 @@ class NovaApp(App):
                 )
                 await self._mount(self._reason_msg)
             self._schedule_stream_flush()
-            thinking_line = status_phrases.status_line(
-                "thinking", sticky_phrase=True
-            )
+            thinking_line = status_phrases.status_line("thinking", sticky_phrase=True)
             if self._activity != thinking_line:
                 self._set_status(thinking_line)
         elif isinstance(e, ev.TextDelta):
@@ -9702,9 +10005,7 @@ class NovaApp(App):
                 self._stream_msg = ChatMessage(Text(name, style=f"bold {color}"), "nova")
                 await self._mount(self._stream_msg)
             self._schedule_stream_flush()
-            responding_line = status_phrases.status_line(
-                "responding", sticky_phrase=True
-            )
+            responding_line = status_phrases.status_line("responding", sticky_phrase=True)
             if self._activity != responding_line:
                 self._set_status(responding_line)
         elif isinstance(e, ev.TextDiscard):
@@ -9901,9 +10202,7 @@ class NovaApp(App):
                     self._log(Text(line, style="yellow"))
                 return
             self._overflow_retried = True
-            self._log(
-                Text("⚠ Context overflow — compacting and retrying…", style="bold #f7768e")
-            )
+            self._log(Text("⚠ Context overflow — compacting and retrying…", style="bold #f7768e"))
             await self._run_compact("")
             prompt = getattr(self, "_last_user_prompt", None)
             if prompt:
@@ -10246,6 +10545,7 @@ async def run_tui(
     token_tracker,
     image_tracker,
     model_name,
+    model_provider: str | None = None,
     session_manager=None,
     restored_messages=None,
     sandbox_id: str | None = None,
@@ -10261,6 +10561,7 @@ async def run_tui(
         token_tracker=token_tracker,
         image_tracker=image_tracker,
         model_name=model_name,
+        model_provider=model_provider,
         session_manager=session_manager,
         restored_messages=restored_messages,
         sandbox_id=sandbox_id,

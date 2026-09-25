@@ -78,6 +78,11 @@ STATEFUL_ATTRS: tuple[str, ...] = (
     "agent",
     "backend",
     "model_name",
+    # Each conversation can run a different provider/model. Without this the
+    # provider stayed app-global while model_name was per-pane, so switching
+    # tabs and saving recorded the OTHER session's provider — silently
+    # corrupting which model each session restores to.
+    "_model_provider",
     "session_state",
     "assistant_id",
     "_restored_messages",
@@ -92,6 +97,7 @@ def fresh_state(
     session_state: Any = None,
     assistant_id: str | None = None,
     model_name: str | None = None,
+    model_provider: str | None = None,
 ) -> dict[str, Any]:
     """A blank conversation bundle for a brand-new pane.
 
@@ -152,6 +158,7 @@ def fresh_state(
         "agent": None,
         "backend": None,
         "model_name": model_name,
+        "_model_provider": model_provider,
         "session_state": session_state,
         "assistant_id": assistant_id,
         "_restored_messages": [],

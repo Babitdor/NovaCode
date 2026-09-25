@@ -6,6 +6,7 @@ names for backward compatibility). This module must not import from app.py.
 
 from __future__ import annotations
 
+import asyncio
 import random
 from pathlib import Path
 from typing import Any
@@ -25,12 +26,14 @@ from textual.widget import Widget
 from textual.message import Message
 from textual.widgets import Input, Static, TextArea
 
+from novacode_cli.image_utils import ImageData
 from novacode_cli.input_utils import (
     PASTE_MIN_CHARS,
     PASTE_MIN_NEWLINES,
     PasteTracker,
     format_paste_placeholder,
 )
+
 
 # ---------------------------------------------------------------------------
 # Matrix rain — animated home screen banner
@@ -867,6 +870,10 @@ class PromptInput(TextArea):
     def __init__(self, *args, **kwargs) -> None:
         self._paste_tracker: PasteTracker | None = kwargs.pop("paste_tracker", None)
         self._on_large_paste = kwargs.pop("on_large_paste", None)
+        # Called with the new ImageData when Ctrl+V finds an image on the
+        # clipboard; returns the id to insert as a placeholder, or "" to
+        # decline. Left unset, Ctrl+V is a plain text paste.
+        self._on_clipboard_image = kwargs.pop("on_clipboard_image", None)
         super().__init__(*args, **kwargs)
         # On Windows terminals, pasting fires BOTH a Paste event AND individual
         # key events for each character.  We stop the Paste event, but the
@@ -942,6 +949,18 @@ class PromptInput(TextArea):
             self._end_paste_merge()
             self.insert("\n")
             return
+        # ctrl+v: prefer a clipboard IMAGE, else fall back to a text paste.
+        #
+        # Intercepting here is necessary rather than optional: when this
+        # ``_on_key`` does not stop the event, Textual never runs the ctrl+v
+        # binding, so the built-in ``action_paste`` is unreachable either way.
+        # Reading the clipboard is blocking, so it runs in a worker.
+        if event.key == "ctrl+v":
+            event.prevent_default()
+            event.stop()
+            self._end_paste_merge()
+            self.run_worker(self._paste_clipboard(), group="clipboard")
+            return
         # Drop ALL key events during the key-drop window. On Windows terminals,
         # pasting fires per-character keystrokes after the Paste event — the old
         # `len(event.key) == 1` filter was too narrow because some terminals send
@@ -954,6 +973,41 @@ class PromptInput(TextArea):
         self._end_paste_merge()
         await super()._on_key(event)
 
+    async def _paste_clipboard(self) -> None:
+        """Paste a clipboard image if there is one, else the clipboard text.
+
+        The image read is platform-specific and blocking (PIL / a subprocess),
+        so it happens on a worker thread; the widget stays responsive for the
+        fraction of a second that takes.
+        """
+        if self._on_clipboard_image is not None:
+            try:
+                image = await asyncio.to_thread(self._read_clipboard_image)
+            except Exception:  # noqa: BLE001 — never break input over this
+                image = None
+            if image is not None:
+                try:
+                    image_id = self._on_clipboard_image(image)
+                except Exception:  # noqa: BLE001
+                    image_id = ""
+                if image_id:
+                    # Trailing space so typing continues after the placeholder.
+                    self.insert(f"[{image_id}] ")
+                    return
+        # No image (or the app declined it): plain text paste.
+        self.action_paste()
+
+    @staticmethod
+    def _read_clipboard_image() -> ImageData | None:
+        """Read an image off the system clipboard, or ``None``.
+
+        Imported lazily so Pillow is only pulled in when a paste actually asks
+        for it — it is not needed on the import path of the TUI.
+        """
+        from novacode_cli.image_utils import get_clipboard_image
+
+        return get_clipboard_image()
+
     def _on_paste(self, event: events.Paste) -> None:
         text = event.text
         # Blank this out before Input._on_paste runs (Textual calls _on_* handlers
@@ -963,6 +1017,14 @@ class PromptInput(TextArea):
         event.stop()
 
         if not text:
+            # An EMPTY paste is how a terminal reports Ctrl+V on an image: the
+            # terminal owns ctrl+v, so the key never reaches ``_on_key``, and
+            # with no text for it to paste it delivers an empty bracketed paste
+            # (verified on Windows Terminal). Treat it as "look at the clipboard
+            # for an image" — the only signal available on this path.
+            # Guarded on the callback so a plain empty paste stays a no-op.
+            if self._on_clipboard_image is not None:
+                self.run_worker(self._paste_clipboard(), group="clipboard")
             return
         normalized = text.replace("\r\n", "\n").replace("\r", "\n")
         tracker = self._paste_tracker

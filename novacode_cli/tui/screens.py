@@ -322,8 +322,9 @@ class ModelScreen(ModalScreen[dict | None]):
             yield Static(Text("Switch model", style="bold"), id="modal-title")
             yield Select(options, value=default_value, id="provider", allow_blank=True)
             yield Static("", id="modelinfo")
-            # For Ollama: a live list of installed models (from `ollama list`).
-            # Hidden for other providers (shown via _refresh_info).
+            # Live model list for providers that expose one (Ollama via
+            # `ollama list`, OpenCode Go via the gateway's /models). Hidden for
+            # the rest (shown per-provider via _refresh_info).
             yield OptionList(id="modellist")
             yield Input(placeholder="API key (blank = use saved)", password=True, id="apikey")
             # OpenAI-compatible endpoint override. Shown only for providers that
@@ -339,7 +340,8 @@ class ModelScreen(ModalScreen[dict | None]):
 
     def on_mount(self) -> None:
         animate_modal_screen(self)
-        # List is shown only for Ollama; hide until a provider is chosen.
+        # List is shown only for providers with a live model list; hide until a
+        # provider is chosen.
         self.query_one("#modellist", OptionList).display = False
         # Endpoint box likewise: hidden until a provider that accepts one is
         # selected, so the modal stays short for everyone else.
@@ -366,6 +368,13 @@ class ModelScreen(ModalScreen[dict | None]):
             info.append("loading installed models (ollama list)…", style="dim")
             model_list.display = True
             self._load_ollama_models()
+        elif pid == "opencode":
+            # Populate the list from the gateway's live /models endpoint. The
+            # preset list is hand-maintained and drifts (dead ids 400 on first
+            # use), so the gateway is the source of truth here too.
+            info.append("loading models (opencode.ai)…", style="dim")
+            model_list.display = True
+            self._load_opencode_models()
         else:
             models = preset.get("models", [])
             if models:
@@ -399,6 +408,36 @@ class ModelScreen(ModalScreen[dict | None]):
         except Exception:  # noqa: BLE001
             models = []
 
+        self._fill_model_list(
+            models,
+            empty="No Ollama models found — is `ollama` installed/running?",
+            note=f"{len(models)} installed model(s) — select one or type a slug below",
+        )
+
+    @work(exclusive=True)
+    async def _load_opencode_models(self) -> None:
+        """Populate the OpenCode Go model list from the gateway's /models."""
+        import asyncio
+
+        from novacode_cli.config.model_manager import get_opencode_models
+
+        try:
+            models = await asyncio.to_thread(get_opencode_models)
+        except Exception:  # noqa: BLE001
+            models = []
+
+        self._fill_model_list(
+            models,
+            empty="No OpenCode Go models available — check your key/connection.",
+            note=f"{len(models)} model(s) from opencode.ai — select one or type a slug below",
+        )
+
+    def _fill_model_list(self, models: list[str], *, empty: str, note: str) -> None:
+        """Render *models* into the shared ``#modellist`` OptionList.
+
+        Shared by the Ollama and OpenCode loaders so the empty/placeholder and
+        option-id handling live in one place.
+        """
         try:
             model_list = self.query_one("#modellist", OptionList)
         except Exception:  # noqa: BLE001
@@ -406,29 +445,21 @@ class ModelScreen(ModalScreen[dict | None]):
         model_list.clear_options()
 
         if not models:
-            model_list.add_option(
-                Option(
-                    "No Ollama models found — is `ollama` installed/running?",
-                    id="__none__",
-                )
-            )
+            model_list.add_option(Option(empty, id="__none__"))
             return
 
         for name in models:
             model_list.add_option(Option(name, id=name))
 
         info = Text()
-        info.append(
-            f"{len(models)} installed model(s) — select one or type a slug below\n",
-            style="dim",
-        )
+        info.append(note + "\n", style="dim")
         try:
             self.query_one("#modelinfo", Static).update(info)
         except Exception:  # noqa: BLE001
             pass
 
     def on_option_list_option_selected(self, event: "OptionList.OptionSelected") -> None:
-        # Only the Ollama model list lives on this screen.
+        # Only the live model list (Ollama / OpenCode Go) lives on this screen.
         if event.option_list.id != "modellist":
             return
         chosen = event.option.id
@@ -2211,12 +2242,64 @@ class SkillCreateModal(ModalScreen[dict | None]):
         self.dismiss(None)
 
 
+class _ArchivePickerModal(ModalScreen["Path | None"]):
+    """Pick an archived skill to restore. Returns the archive dir, or None."""
+
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def __init__(self, archived: list[dict]) -> None:
+        super().__init__()
+        self._archived = archived
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="modal-box"):
+            yield Static(Text("Restore Archived Skill", style="bold"), id="modal-title")
+            yield Static(
+                Text(
+                    f"{len(self._archived)} archived skill(s). Select one to move "
+                    "back into the skills folder.",
+                    style="dim",
+                )
+            )
+            yield OptionList(id="archive-list")
+            with Horizontal(id="modal-buttons"):
+                yield Button("Restore", id="do-restore", variant="primary")
+                yield Button("Cancel", id="cancel")
+
+    def on_mount(self) -> None:
+        animate_modal_screen(self)
+        ol = self.query_one("#archive-list", OptionList)
+        for entry in self._archived:
+            ol.add_option(Option(f"{entry['name']}  ({entry['path'].name})"))
+        ol.focus()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        self._choose(event.option_index)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "do-restore":
+            ol = self.query_one("#archive-list", OptionList)
+            self._choose(ol.highlighted)
+        elif event.button.id == "cancel":
+            self.dismiss(None)
+
+    def _choose(self, index: int | None) -> None:
+        if index is None or not (0 <= index < len(self._archived)):
+            self.dismiss(None)
+            return
+        self.dismiss(self._archived[index]["path"])
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class SkillsScreen(ModalScreen[None]):
     """Native skills manager: list/toggle/view installed skills, create new skills."""
 
     BINDINGS = [
         ("escape", "close", "Close"),
         ("space", "toggle", "Toggle on/off"),
+        ("delete", "delete", "Archive marked"),
     ]
 
     def __init__(self) -> None:
@@ -2224,6 +2307,9 @@ class SkillsScreen(ModalScreen[None]):
         self._generating = False
         # Which prefs file toggles are written to ("global" or "project").
         self._scope = "global"
+        # Prune mode: skills marked for archiving (empty = not in prune mode).
+        self._marked: set[str] = set()
+        self._pruning = False
 
     def compose(self) -> ComposeResult:
         from novacode_cli.config.config import settings
@@ -2246,6 +2332,8 @@ class SkillsScreen(ModalScreen[None]):
             yield Static("", id="skills-hint")
             with Horizontal(id="modal-buttons"):
                 yield Button("Toggle", id="toggle", variant="primary")
+                yield Button("Prune", id="prune")
+                yield Button("Restore", id="restore")
                 yield Button("Create", id="create")
                 yield Button("Close", id="close")
 
@@ -2268,6 +2356,10 @@ class SkillsScreen(ModalScreen[None]):
                 Text("No skills are currently installed.", style="dim")
             )
             hint.update(Text("Create one with the Create button", style="dim"))
+            return
+
+        if self._pruning:
+            self._render_prune_rows(ol, names, keep, hint)
             return
 
         # Mark each skill on/off for the selected scope. [x] = on (passed to the
@@ -2298,6 +2390,116 @@ class SkillsScreen(ModalScreen[None]):
             )
         )
 
+    def _render_prune_rows(
+        self, ol: "OptionList", names: list[str], keep: int | None, hint: "Static"
+    ) -> None:
+        """Render the prune view: mark removable skills, flag bundled ones."""
+        from novacode_cli.skills import prune as prune_mod
+
+        prunable = {c["name"] for c in prune_mod.candidates() if c["prunable"]}
+
+        for name in names:
+            row = Text()
+            if name not in prunable:
+                row.append("    ", style="dim")
+                row.append(name, style="dim")
+                row.append("  (bundled — protected)", style="dim italic")
+            else:
+                marked = name in self._marked
+                row.append("[x] " if marked else "[ ] ", style="bold red" if marked else "dim")
+                row.append(name, style="bold red" if marked else "bold")
+            ol.add_option(Option(row))
+
+        if keep is not None and 0 <= keep < len(names):
+            ol.highlighted = keep
+        else:
+            ol.highlighted = 0
+        ol.focus()
+
+        hint.update(
+            Text(
+                f"PRUNE MODE · {len(self._marked)} marked · "
+                "Space marks · Delete archives marked · Esc cancels",
+                style="bold red",
+            )
+        )
+
+    def _enter_prune(self) -> None:
+        """Switch the screen into prune mode."""
+        self._pruning = True
+        self._marked.clear()
+        self._reload()
+
+    def _exit_prune(self) -> None:
+        """Leave prune mode without archiving anything."""
+        self._pruning = False
+        self._marked.clear()
+        self._reload()
+
+    def _archive_marked(self) -> None:
+        """Archive every marked skill (soft delete), then refresh the screen."""
+        if not self._marked:
+            self.query_one("#skills-hint", Static).update(
+                Text("Nothing marked — Space marks a skill first.", style="yellow")
+            )
+            return
+        from novacode_cli.skills import prune as prune_mod
+
+        marked = sorted(self._marked)
+        results = prune_mod.archive_many(marked)
+        for _name, ok, msg in results:
+            self.app._log(Text(("✓ " if ok else "✗ ") + msg, style="green" if ok else "red"))
+
+        done = sum(1 for _, ok, _ in results if ok)
+        self._marked.clear()
+        self._pruning = False
+        self._reload()
+        # A prune changes the installed set, so refresh the status bar the same
+        # way a toggle does (the tick loop does not run while idle).
+        self.app._skill_count_cache = None
+        self.app._status_tail = None
+        self.app._refresh_status()
+        if done:
+            self.app._log(
+                Text(
+                    f"Archived {done} skill(s). Restore them with the Restore button.",
+                    style="dim",
+                )
+            )
+
+    def _restore_archived(self) -> None:
+        """Offer the archived skills and restore the chosen one.
+
+        The counterpart to Prune: archived skills live outside the skills root,
+        so they need an explicit entry point to come back. Without this the
+        TUI's prune would be a one-way door.
+        """
+        from novacode_cli.skills import prune as prune_mod
+
+        archived = prune_mod.list_archived_skills()
+        if not archived:
+            self.app._log(Text("No archived skills to restore.", style="dim"))
+            return
+
+        self.app.run_worker(self._pick_and_restore(archived), group="restore", exclusive=True)
+
+    async def _pick_and_restore(self, archived: list[dict]) -> None:
+        """Show an archive picker, then restore the selection."""
+        from novacode_cli.skills import prune as prune_mod
+
+        chosen = await self.app.push_screen_wait(_ArchivePickerModal(archived))
+        if chosen is None or not self.is_mounted:
+            return
+
+        ok, msg = prune_mod.restore_skill(chosen)
+        self.app._log(Text(("✓ " if ok else "✗ ") + msg, style="green" if ok else "red"))
+        if ok:
+            self.app._skill_names_cache = None
+            self.app._skill_count_cache = None
+            self.app._status_tail = None
+            self._reload()
+            self.app._refresh_status()
+
     def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
         if event.option_list.id == "skills-list":
             self._update_preview(event.option_index)
@@ -2309,7 +2511,11 @@ class SkillsScreen(ModalScreen[None]):
             self._reload()
 
     def action_toggle(self) -> None:
-        """Flip the highlighted skill on/off in the selected scope, then reload."""
+        """In prune mode, mark/unmark; otherwise flip the skill on/off."""
+        if self._pruning:
+            self.action_mark()
+            return
+
         ol = self.query_one("#skills-list", OptionList)
         idx = ol.highlighted
         names = self.app._get_skill_names()
@@ -2332,6 +2538,65 @@ class SkillsScreen(ModalScreen[None]):
         self.app._skill_count_cache = None
         self.app._status_tail = None
         self.app._refresh_status()
+
+    def action_mark(self) -> None:
+        """Toggle the highlighted skill's mark (prune mode only)."""
+        if not self._pruning:
+            return
+        ol = self.query_one("#skills-list", OptionList)
+        idx = ol.highlighted
+        names = self.app._get_skill_names()
+        if idx is None or not names or not (0 <= idx < len(names)):
+            return
+        name = names[idx]
+
+        from novacode_cli.skills import prune as prune_mod
+
+        prunable = {c["name"] for c in prune_mod.candidates() if c["prunable"]}
+        if name not in prunable:
+            self.query_one("#skills-hint", Static).update(
+                Text(f"'{name}' is bundled and read-only.", style="yellow")
+            )
+            return
+
+        if name in self._marked:
+            self._marked.discard(name)
+        else:
+            self._marked.add(name)
+        self._reload()
+
+    def action_delete(self) -> None:
+        """Archive the marked skills, after a confirmation (prune mode only)."""
+        if not self._pruning:
+            return
+        if not self._marked:
+            self.query_one("#skills-hint", Static).update(
+                Text("Nothing marked — Space marks a skill first.", style="yellow")
+            )
+            return
+        marked = sorted(self._marked)
+        body = Text()
+        body.append("Archive these skills?\n\n", style="bold")
+        for name in marked:
+            body.append(f"  • {name}\n")
+        body.append(
+            "\nThey are moved to the archive, not deleted — recover them any "
+            "time with /skills restore.",
+            style="dim",
+        )
+        self.app.run_worker(self._confirm_and_archive(marked, body), group="prune", exclusive=True)
+
+    async def _confirm_and_archive(self, marked: list[str], body: "Text") -> None:
+        """Ask for confirmation, then archive (never delete on one keystroke)."""
+        confirmed = await self.app.push_screen_wait(
+            ConfirmModal("Prune skills", body)
+        )
+        if not confirmed:
+            return
+        if not self.is_mounted:
+            return
+        self._marked = set(marked)
+        self._archive_marked()
 
     def _update_preview(self, idx: int | None) -> None:
         preview = self.query_one("#skill-detail-preview", Static)
@@ -2420,6 +2685,13 @@ class SkillsScreen(ModalScreen[None]):
             self.dismiss(None)
         elif event.button.id == "toggle":
             self.action_toggle()
+        elif event.button.id == "prune":
+            if self._pruning:
+                self.action_delete()
+            else:
+                self._enter_prune()
+        elif event.button.id == "restore":
+            self._restore_archived()
         elif event.button.id == "create":
             if not self._generating:
                 self.app.run_worker(self._create_skill(), group="create_skill", exclusive=True)
@@ -2506,6 +2778,11 @@ class SkillsScreen(ModalScreen[None]):
                 self._reload()
 
     def action_close(self) -> None:
+        # In prune mode Esc backs out of the mode rather than closing the whole
+        # manager, so a half-made selection is not a reason to lose the screen.
+        if self._pruning:
+            self._exit_prune()
+            return
         self.dismiss(None)
 
 

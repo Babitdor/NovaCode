@@ -259,9 +259,7 @@ async def _drive_passthrough_sync() -> None:
         await app.workers.wait_for_complete()
         await pilot.pause()
 
-    with patch(
-        "novacode_cli.commands.commands.handle_command", _fake_handle_command
-    ):
+    with patch("novacode_cli.commands.commands.handle_command", _fake_handle_command):
         async with app.run_test() as pilot:
             await submit(pilot, "/cron list")
             # The sync block ran and read `_agent` (the bug read `.agent` and
@@ -434,6 +432,7 @@ async def _drive_autocomplete():
         await pilot.press("/")
         await pilot.press("m")
         await pilot.press("o")
+
         # The palette is filled by a background worker (group="palette"). Waiting
         # only for "populated" was not enough: the STALE unfiltered list (from
         # the bare "/") is also populated, so Enter could accept whatever was
@@ -468,7 +467,14 @@ async def _drive_agents_skills():
     from textual.widgets import Button, Input
     from novacode_cli.tui.widgets import PromptInput
 
-    from novacode_cli.tui.app import AgentsScreen, HooksScreen, NovaApp, ServersScreen, SkillsScreen, WikiScreen
+    from novacode_cli.tui.app import (
+        AgentsScreen,
+        HooksScreen,
+        NovaApp,
+        ServersScreen,
+        SkillsScreen,
+        WikiScreen,
+    )
     from novacode_cli.ui.ui_elements import TokenTracker
 
     app = NovaApp(
@@ -552,9 +558,9 @@ async def _drive_skill_agent_autocomplete():
         inp.value = "/skill:co"
         await pilot.pause()
         await app.workers.wait_for_complete()
-        assert [
-            str(pal.get_option_at_index(i).prompt) for i in range(pal.option_count)
-        ] == ["/skill:code-review"]
+        assert [str(pal.get_option_at_index(i).prompt) for i in range(pal.option_count)] == [
+            "/skill:code-review"
+        ]
 
         # @ mentions are token-aware: type so the cursor tracks the fragment
         # (setting .value directly leaves the cursor stale).
@@ -571,7 +577,8 @@ async def _drive_skill_agent_autocomplete():
         await pilot.pause()
         await app.workers.wait_for_complete()
         assert [
-            p for p in [str(pal.get_option_at_index(i).prompt) for i in range(pal.option_count)]
+            p
+            for p in [str(pal.get_option_at_index(i).prompt) for i in range(pal.option_count)]
             if p in {"@researcher", "@critic"}
         ] == ["@critic"]
 
@@ -585,7 +592,8 @@ async def _drive_skill_agent_autocomplete():
             await app.workers.wait_for_complete()
         assert pal.display
         assert [
-            p for p in [str(pal.get_option_at_index(i).prompt) for i in range(pal.option_count)]
+            p
+            for p in [str(pal.get_option_at_index(i).prompt) for i in range(pal.option_count)]
             if p in {"@researcher", "@critic"}
         ] == ["@critic"], "mid-message @ should complete the token at the cursor"
 
@@ -598,8 +606,12 @@ async def _drive_skill_agent_autocomplete():
 
         # /ingest autocomplete
         from novacode_cli.wiki.ingest import IngestEngine
+
         old_list = IngestEngine.list_raw_sources
-        IngestEngine.list_raw_sources = lambda self: ["Clippings/langgraph.md", "raw/articles/crewai.md"]
+        IngestEngine.list_raw_sources = lambda self: [
+            "Clippings/langgraph.md",
+            "raw/articles/crewai.md",
+        ]
         try:
             inp.value = "/ingest "
             await pilot.pause()
@@ -641,7 +653,13 @@ async def _drive_create_agent_and_skill(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "ensure_user_skills_dir", lambda *a, **k: _skills)
     from textual.widgets import Button, Input
     from novacode_cli.tui.widgets import PromptInput
-    from novacode_cli.tui.app import NovaApp, AgentsScreen, AgentCreateModal, SkillsScreen, SkillCreateModal
+    from novacode_cli.tui.app import (
+        NovaApp,
+        AgentsScreen,
+        AgentCreateModal,
+        SkillsScreen,
+        SkillCreateModal,
+    )
     from novacode_cli.ui.ui_elements import TokenTracker
 
     app = NovaApp(
@@ -657,12 +675,13 @@ async def _drive_create_agent_and_skill(tmp_path, monkeypatch):
         # Mock _generate_agent_system_prompt and _generate_skill
         import novacode_cli.commands.agents_commands as ac
         import novacode_cli.skills.skill_creation as sc
-        
+
         async def mock_gen_prompt(name, desc):
             return "Mock prompt"
-            
+
         async def mock_gen_skill(name, base_dir, description):
             import os
+
             os.makedirs(base_dir / name, exist_ok=True)
             skill_file = base_dir / name / "SKILL.md"
             with open(skill_file, "w", encoding="utf-8") as f:
@@ -700,7 +719,7 @@ async def _drive_create_agent_and_skill(tmp_path, monkeypatch):
         app.screen.query_one("#close", Button).press()
         for _ in range(4):
             await pilot.pause(0.05)
-        assert app.screen == app.screen_stack[0] # back to main screen
+        assert app.screen == app.screen_stack[0]  # back to main screen
 
         # 2. Test Skill creation
         inp = app.query_one("#prompt", PromptInput)
@@ -854,9 +873,7 @@ async def _drive_live_render():
         assert app._tool_group is None
         assert app._activity == f"Nova {status_phrases.sticky('responding')}"
         assert app._stream_msg is not None and app._live_buf == "hi"
-        await app._render(
-            ev.AssistantMessage(text="done", agent_name="Nova", agent_color="cyan")
-        )
+        await app._render(ev.AssistantMessage(text="done", agent_name="Nova", agent_color="cyan"))
         assert app._stream_msg is None and app._live_buf == ""
         assert app._reason_msg is None
         assert len(app.query("ChatMessage.nova")) >= 1
@@ -884,8 +901,12 @@ async def _drive_status_rotates_per_turn_but_is_stable_within_one():
     status_phrases._cursor.clear()
 
     app = NovaApp(
-        agent=_FakeAgent(), assistant_id="nova-agent", session_state=_SS(),
-        backend=None, token_tracker=TokenTracker(), image_tracker=None,
+        agent=_FakeAgent(),
+        assistant_id="nova-agent",
+        session_state=_SS(),
+        backend=None,
+        token_tracker=TokenTracker(),
+        image_tracker=None,
         model_name="m",
     )
     async with app.run_test() as pilot:
@@ -944,7 +965,11 @@ async def _drive_remote_streaming():
             return _StateMsgs(list(self._msgs))
 
         async def astream(self, inp, **kw):
-            yield ((), "messages", (_Chunk("r1", [{"type": "text", "text": "Streamed answer"}]), {}))
+            yield (
+                (),
+                "messages",
+                (_Chunk("r1", [{"type": "text", "text": "Streamed answer"}]), {}),
+            )
             self._msgs.append(AIMessage(content="Streamed answer", id="r1"))
 
         async def aupdate_state(self, **kw):
@@ -1177,8 +1202,7 @@ async def _drive_remote_slash():
         reply, stream = await app._remote_slash("/steer focus on tests")
         assert stream is None and "Steering added" in reply
         assert any(
-            "focus on tests" in si.instruction
-            for si in app.session_state.steering_instructions
+            "focus on tests" in si.instruction for si in app.session_state.steering_instructions
         )
         # /steer clear → clears, no agent turn
         reply, stream = await app._remote_slash("/steer clear")
@@ -1232,8 +1256,7 @@ async def _drive_remote_steer_drain():
             pass
 
         assert any(
-            "null inputs" in si.instruction
-            for si in app.session_state.steering_instructions
+            "null inputs" in si.instruction for si in app.session_state.steering_instructions
         )
 
 
@@ -1292,14 +1315,16 @@ async def _drive_remote_question():
         app._remote_msg = m
 
         # Start the steer drain task
-        drain = asyncio.create_task(app._remote_steer_drain(app.session_state._remote_message_queue))
+        drain = asyncio.create_task(
+            app._remote_steer_drain(app.session_state._remote_message_queue)
+        )
 
         # Ask a structured question
         payload = {
             "question": "Choose an option?",
             "question_type": "structured",
             "options": ["First Option", "Second Option"],
-            "context": "Need detail"
+            "context": "Need detail",
         }
 
         # Start the question task
@@ -1367,22 +1392,16 @@ async def _drive_markup_safe():
     async with app.run_test() as pilot:
         # Brackets in args/preview previously raised "Expected markup value".
         await app._render(
-            ev.ToolCall(
-                name="shell", display_str="grep('[abc]?)')", icon="+", call_id="c1"
-            )
+            ev.ToolCall(name="shell", display_str="grep('[abc]?)')", icon="+", call_id="c1")
         )
         await app._render(
-            ev.ToolResult(
-                preview="found [1] ?)", is_error=False, full_output="x", call_id="c1"
-            )
+            ev.ToolResult(preview="found [1] ?)", is_error=False, full_output="x", call_id="c1")
         )
         assert len(app.query("Collapsible.tool")) == 1
 
         # QuestionModal with bracketed question/options must render cleanly.
         await app.push_screen(
-            QuestionModal(
-                {"question": "pick [a] or [b]?", "options": ["use [x]", "use [y]"]}
-            )
+            QuestionModal({"question": "pick [a] or [b]?", "options": ["use [x]", "use [y]"]})
         )
         await pilot.pause()
         assert isinstance(app.screen, QuestionModal), type(app.screen).__name__
@@ -1435,9 +1454,7 @@ async def _drive_context_warning():
         tt._bd = _BD(96.0, True, True)
         await app._check_context()
         await pilot.pause()
-        txt = " ".join(
-            str(w.render()) for w in app.query("#transcript .logline").results(Static)
-        )
+        txt = " ".join(str(w.render()) for w in app.query("#transcript .logline").results(Static))
         assert "critical" in txt.lower(), txt
         # Back below the warning line -> re-arm so the next rise warns again.
         tt._bd = _BD(40.0, False, False)
@@ -1481,9 +1498,7 @@ async def _drive_live_steering():
         instrs = ss.steering_instructions
         assert any(si.instruction == "focus on error handling" for si in instrs), instrs
         assert len(app._live_steers) == 1
-        txt = " ".join(
-            str(w.render()) for w in app.query("#transcript .logline").results(Static)
-        )
+        txt = " ".join(str(w.render()) for w in app.query("#transcript .logline").results(Static))
         assert "Steering" in txt, txt
         # Turn-end cleanup removes the transient steer (one-turn lifetime).
         app._turn_active = False
@@ -1694,6 +1709,157 @@ def test_tui_transcript_cap():
     asyncio.run(_drive_transcript_cap())
 
 
+def _flat_strips(app) -> list:  # noqa: ANN001 — test helper, mirrors the file's style
+    """The composed frame as [(text, fg_hex, bg_hex), ...] per segment."""
+    out = []
+    for strip in app.screen._compositor.render_strips():
+        row = []
+        for seg in strip:
+            st = seg.style
+            fg = bg = None
+            if st is not None:
+                if st.color is not None:
+                    tc = st.color.get_truecolor()
+                    fg = f"#{tc.red:02x}{tc.green:02x}{tc.blue:02x}"
+                if st.bgcolor is not None:
+                    tc = st.bgcolor.get_truecolor()
+                    bg = f"#{tc.red:02x}{tc.green:02x}{tc.blue:02x}"
+            row.append((seg.text, fg, bg))
+        out.append(row)
+    return out
+
+
+async def _drive_context_gauge_two_tone():
+    """The context meter must paint filled and empty cells DIFFERENTLY.
+
+    Regression: _ctx_gauge returned a bare string that the caller styled with a
+    single colour, so the empty ``░`` cells were as bright as the filled ``█``
+    ones. At 6% the bar therefore looked full while the number read 6%.
+    """
+    from novacode_cli.tui.app import NovaApp
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    tt = TokenTracker()
+    tt.set_baseline(int(128_000 * 0.06))  # a small, mostly-empty context
+    app = NovaApp(
+        agent=_FakeAgent(),
+        assistant_id="nova-agent",
+        session_state=_SS(),
+        backend=None,
+        token_tracker=tt,
+        image_tracker=None,
+        model_name="m",
+    )
+    async with app.run_test(size=(150, 40)) as pilot:
+        await pilot.pause()
+        app._status_tail = None
+        app._refresh_status()
+        await pilot.pause()
+
+        rows = _flat_strips(app)
+        gauge_rows = [
+            row
+            for row in rows
+            if any("CTX" in seg[0] for seg in row)
+            and any("\u2588" in seg[0] or "\u2500" in seg[0] for seg in row)
+        ]
+        assert gauge_rows, "no context meter found in the rendered frame"
+        row = gauge_rows[0]
+
+        fill_colors = {fg for text, fg, _bg in row if "\u2588" in text or "\u258a" in text}
+        track_colors = {fg for text, fg, _bg in row if "\u2500" in text}
+        assert fill_colors, "meter has no filled cell at 6%"
+        assert track_colors, "meter has no empty track at 6%"
+        assert fill_colors.isdisjoint(track_colors), (
+            f"filled and empty meter cells share a colour: fill={fill_colors} track={track_colors}"
+        )
+
+
+def test_tui_context_gauge_two_tone():
+    if not _HAS_TEXTUAL:
+        return
+    asyncio.run(_drive_context_gauge_two_tone())
+
+
+async def _drive_footer_follows_theme():
+    """Every footer segment must recolour when the theme changes.
+
+    Regression: the status line, info bar and prompt carried hardcoded
+    tokyo-night hexes inside Rich ``Text`` styles, which CSS never rewrites — so
+    ``/theme`` recoloured the CSS-driven widgets but left the footer neon. The
+    artifacts cell was a second offender: it was only repainted by its registry
+    observer, so it kept the previous theme's colour.
+    """
+    from novacode_cli.tui.app import NovaApp
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    app = NovaApp(
+        agent=_FakeAgent(),
+        assistant_id="nova-agent",
+        session_state=_SS(),
+        backend=None,
+        token_tracker=TokenTracker(),
+        image_tracker=None,
+        model_name="deepseek-v4.1-flash",
+    )
+    async with app.run_test(size=(150, 40)) as pilot:
+        await pilot.pause()
+
+        # text -> fg color, for every coloured segment in the footer rows.
+        sampled: dict[str, dict[str, str]] = {}
+        accents: dict[str, str] = {}
+        for theme in ("flexoki", "matrix"):
+            app.theme = theme
+            await pilot.pause()
+            await asyncio.sleep(0.15)
+            app._status_tail = None
+            app._refresh_status()
+            app._refresh_info_bar()
+            await pilot.pause()
+
+            per_text: dict[str, str] = {}
+            for row in _flat_strips(app):
+                joined = "".join(seg[0] for seg in row)
+                if "WORKSPACE" in joined or "Artifacts" in joined or "CTX" in joined:
+                    for text, fg, _bg in row:
+                        if text.strip() and fg:
+                            per_text.setdefault(text.strip(), fg)
+            sampled[theme] = per_text
+            accent = app.get_theme(theme).accent
+            accents[theme] = accent if accent.startswith("#") else f"#{accent}"
+
+        flexoki, matrix = sampled["flexoki"], sampled["matrix"]
+        assert flexoki, f"nothing sampled for flexoki: {sampled}"
+        assert matrix, f"nothing sampled for matrix: {sampled}"
+
+        # EVERY footer segment must change colour. A hardcoded hex inside a Rich
+        # Text survives the switch, so it would show up here as a text run whose
+        # colour is identical on both themes.
+        unchanged = {
+            text: flexoki[text]
+            for text in set(flexoki) & set(matrix)
+            if flexoki[text].lower() == matrix[text].lower()
+        }
+        assert not unchanged, (
+            f"these footer segments kept the same colour across themes, so they "
+            f"are not theme-driven: {unchanged}"
+        )
+
+        # The theme accent must actually appear in the footer on each theme.
+        for theme in ("flexoki", "matrix"):
+            want = accents[theme].lower()
+            assert any(c.lower() == want for c in sampled[theme].values()), (
+                f"{theme} accent {want} absent from the footer: "
+                f"{sorted(set(sampled[theme].values()))}"
+            )
+
+
+def test_tui_footer_follows_theme():
+    if not _HAS_TEXTUAL:
+        return
+    asyncio.run(_drive_footer_follows_theme())
+
+
 async def _drive_palette_noop():
     """_update_palette doesn't rebuild the OptionList when candidates are
     unchanged; on_key bails fast when the palette is hidden."""
@@ -1724,9 +1890,7 @@ async def _drive_palette_noop():
 
         app._update_palette("/h")  # matches /help, /hooks, … → builds once
         await app.workers.wait_for_complete()
-        assert app._last_palette and all(
-            c.startswith("/h") for c in app._last_palette
-        )
+        assert app._last_palette and all(c.startswith("/h") for c in app._last_palette)
         assert rebuilds["n"] == 1
         first_list = list(app._last_palette)
         app._update_palette("/h")  # identical input → candidates unchanged
@@ -1774,9 +1938,7 @@ async def _drive_startup_info():
     )
     async with app.run_test() as pilot:
         await pilot.pause()
-        blob = " ".join(
-            str(w.render()) for w in app.query("#transcript .logline").results(Static)
-        )
+        blob = " ".join(str(w.render()) for w in app.query("#transcript .logline").results(Static))
         assert "session" in blob and "deepseek-v4" in blob, blob
 
 
@@ -2091,9 +2253,7 @@ async def _drive_init_routes_native():
         # native notice rendered; not the "isn't available in --tui" fallback
         from textual.widgets import Static
 
-        texts = " ".join(
-            str(w.render()) for w in app.query("#transcript .logline").results(Static)
-        )
+        texts = " ".join(str(w.render()) for w in app.query("#transcript .logline").results(Static))
         assert "isn't available" not in texts, texts
         assert "requires a project" in texts or "Initializing NOVA.md" in texts, texts
 
@@ -2157,8 +2317,9 @@ async def _drive_todos_are_per_pane():
         from textual.widgets import Static as _Static
 
         await app._render(
-            ev.TodoUpdate(todos=[{"content": "pane one item", "status": "pending"}],
-                          agent_name=None)
+            ev.TodoUpdate(
+                todos=[{"content": "pane one item", "status": "pending"}], agent_name=None
+            )
         )
         dock = app.query_one("#todo-dock", _Static)
         assert "pane one item" in str(dock.render())
@@ -2210,8 +2371,12 @@ async def _drive_todo_dock_does_not_cover_the_prompt():
     from novacode_cli.ui.ui_elements import TokenTracker
 
     app = NovaApp(
-        agent=_FakeAgent(), assistant_id="nova-agent", session_state=_SS(),
-        backend=None, token_tracker=TokenTracker(), image_tracker=None,
+        agent=_FakeAgent(),
+        assistant_id="nova-agent",
+        session_state=_SS(),
+        backend=None,
+        token_tracker=TokenTracker(),
+        image_tracker=None,
         model_name="m",
     )
     async with app.run_test(size=(100, 30)) as pilot:
@@ -2224,9 +2389,7 @@ async def _drive_todo_dock_does_not_cover_the_prompt():
         dock = app.query_one("#todo-dock", _Static).region
         row = app.query_one("#prompt-row").region
         assert dock.height > 0, "dock rendered with no height"
-        overlap = set(range(dock.y, dock.y + dock.height)) & set(
-            range(row.y, row.y + row.height)
-        )
+        overlap = set(range(dock.y, dock.y + dock.height)) & set(range(row.y, row.y + row.height))
         assert not overlap, f"todo dock is painting over the input rows: {sorted(overlap)}"
 
 
@@ -2238,8 +2401,12 @@ async def _drive_todo_dock_collapses():
     from novacode_cli.ui.ui_elements import TokenTracker
 
     app = NovaApp(
-        agent=_FakeAgent(), assistant_id="nova-agent", session_state=_SS(),
-        backend=None, token_tracker=TokenTracker(), image_tracker=None,
+        agent=_FakeAgent(),
+        assistant_id="nova-agent",
+        session_state=_SS(),
+        backend=None,
+        token_tracker=TokenTracker(),
+        image_tracker=None,
         model_name="m",
     )
     async with app.run_test(size=(100, 30)) as pilot:
@@ -2281,8 +2448,12 @@ async def _drive_todo_dock_dismisses_when_all_done():
     from novacode_cli.ui.ui_elements import TokenTracker
 
     app = NovaApp(
-        agent=_FakeAgent(), assistant_id="nova-agent", session_state=_SS(),
-        backend=None, token_tracker=TokenTracker(), image_tracker=None,
+        agent=_FakeAgent(),
+        assistant_id="nova-agent",
+        session_state=_SS(),
+        backend=None,
+        token_tracker=TokenTracker(),
+        image_tracker=None,
         model_name="m",
     )
     async with app.run_test(size=(100, 30)) as pilot:
@@ -2335,8 +2506,12 @@ async def _drive_prompt_grows_and_takes_newlines():
     from novacode_cli.ui.ui_elements import TokenTracker
 
     app = NovaApp(
-        agent=_FakeAgent(), assistant_id="nova-agent", session_state=_SS(),
-        backend=None, token_tracker=TokenTracker(), image_tracker=None,
+        agent=_FakeAgent(),
+        assistant_id="nova-agent",
+        session_state=_SS(),
+        backend=None,
+        token_tracker=TokenTracker(),
+        image_tracker=None,
         model_name="m",
     )
     async with app.run_test(size=(100, 30)) as pilot:
@@ -2375,8 +2550,12 @@ async def _drive_prompt_enter_still_submits():
     from novacode_cli.ui.ui_elements import TokenTracker
 
     app = NovaApp(
-        agent=_FakeAgent(), assistant_id="nova-agent", session_state=_SS(),
-        backend=None, token_tracker=TokenTracker(), image_tracker=None,
+        agent=_FakeAgent(),
+        assistant_id="nova-agent",
+        session_state=_SS(),
+        backend=None,
+        token_tracker=TokenTracker(),
+        image_tracker=None,
         model_name="m",
     )
     async with app.run_test(size=(100, 30)) as pilot:
@@ -2421,8 +2600,12 @@ async def _drive_prune_keeps_up_during_a_burst():
     from novacode_cli.ui.ui_elements import TokenTracker
 
     app = NovaApp(
-        agent=_FakeAgent(), assistant_id="nova-agent", session_state=_SS(),
-        backend=None, token_tracker=TokenTracker(), image_tracker=None,
+        agent=_FakeAgent(),
+        assistant_id="nova-agent",
+        session_state=_SS(),
+        backend=None,
+        token_tracker=TokenTracker(),
+        image_tracker=None,
         model_name="m",
     )
     async with app.run_test(size=(100, 30)) as pilot:
@@ -2479,24 +2662,44 @@ async def _drive_tool_group_line_cache():
     from novacode_cli.ui.ui_elements import TokenTracker
 
     app = NovaApp(
-        agent=_FakeAgent(), assistant_id="nova-agent", session_state=_SS(),
-        backend=None, token_tracker=TokenTracker(), image_tracker=None,
+        agent=_FakeAgent(),
+        assistant_id="nova-agent",
+        session_state=_SS(),
+        backend=None,
+        token_tracker=TokenTracker(),
+        image_tracker=None,
         model_name="m",
     )
     async with app.run_test(size=(120, 40)) as pilot:
         for _ in range(3):
             await pilot.pause()
 
-        await app._render(ev.ToolCall(
-            name="read_file", display_str="read a.py", icon="*",
-            is_main_agent=True, args={}, call_id="c1"))
+        await app._render(
+            ev.ToolCall(
+                name="read_file",
+                display_str="read a.py",
+                icon="*",
+                is_main_agent=True,
+                args={},
+                call_id="c1",
+            )
+        )
+        for _ in range(2):
+            await pilot.pause()
+        # The running-line paint is coalesced on the same ~100 ms
+        # _schedule_tool_group_refresh timer as the result paint below, so a
+        # fixed pause count can land before the flush and read an empty body.
+        # This flaked on unmodified HEAD too (3 of 5 runs), which is why the
+        # wait is explicit rather than another pause.
+        await asyncio.sleep(0.15)
         for _ in range(2):
             await pilot.pause()
         lst = app._tool_group_body.query_one("#tool-group-list", _Static)
         assert "⏳" in str(lst.render()), "running line should show the hourglass"
 
-        await app._render(ev.ToolResult(
-            preview="42 lines", is_error=False, full_output="x", call_id="c1"))
+        await app._render(
+            ev.ToolResult(preview="42 lines", is_error=False, full_output="x", call_id="c1")
+        )
         # The successful-result paint is coalesced on a ~100 ms timer
         # (_schedule_tool_group_refresh), so wait past it before asserting.
         for _ in range(4):
@@ -2509,11 +2712,19 @@ async def _drive_tool_group_line_cache():
         assert "⏳" not in txt, "stale cached line — hourglass survived the result"
         assert "42 lines" in txt, "result detail missing"
 
-        await app._render(ev.ToolCall(
-            name="shell", display_str="bad cmd", icon="*",
-            is_main_agent=True, args={}, call_id="c2"))
-        await app._render(ev.ToolResult(
-            preview="boom", is_error=True, full_output="x", call_id="c2"))
+        await app._render(
+            ev.ToolCall(
+                name="shell",
+                display_str="bad cmd",
+                icon="*",
+                is_main_agent=True,
+                args={},
+                call_id="c2",
+            )
+        )
+        await app._render(
+            ev.ToolResult(preview="boom", is_error=True, full_output="x", call_id="c2")
+        )
         for _ in range(2):
             await pilot.pause()
         assert "✗" in str(lst.render()), "error mark missing"
@@ -2536,8 +2747,12 @@ async def _drive_tool_group_coalescing():
     from novacode_cli.ui.ui_elements import TokenTracker
 
     app = NovaApp(
-        agent=_FakeAgent(), assistant_id="nova-agent", session_state=_SS(),
-        backend=None, token_tracker=TokenTracker(), image_tracker=None,
+        agent=_FakeAgent(),
+        assistant_id="nova-agent",
+        session_state=_SS(),
+        backend=None,
+        token_tracker=TokenTracker(),
+        image_tracker=None,
         model_name="m",
     )
 
@@ -2553,11 +2768,19 @@ async def _drive_tool_group_coalescing():
             await pilot.pause()
 
         for i in range(10):
-            await app._render(ev.ToolCall(
-                name="read_file", display_str=f"read f{i}.py", icon="*",
-                is_main_agent=True, args={}, call_id=f"b{i}"))
-            await app._render(ev.ToolResult(
-                preview=f"ok{i}", is_error=False, full_output="x", call_id=f"b{i}"))
+            await app._render(
+                ev.ToolCall(
+                    name="read_file",
+                    display_str=f"read f{i}.py",
+                    icon="*",
+                    is_main_agent=True,
+                    args={},
+                    call_id=f"b{i}",
+                )
+            )
+            await app._render(
+                ev.ToolResult(preview=f"ok{i}", is_error=False, full_output="x", call_id=f"b{i}")
+            )
         await settle(pilot)
         lst = app._tool_group_body.query_one("#tool-group-list", _Static)
         txt = str(lst.render())
@@ -2567,26 +2790,35 @@ async def _drive_tool_group_coalescing():
 
         # An error must NOT wait for the timer: the group pops open, so stale
         # content would be visible for up to 100 ms.
-        await app._render(ev.ToolCall(
-            name="shell", display_str="bad", icon="*",
-            is_main_agent=True, args={}, call_id="e1"))
-        await app._render(ev.ToolResult(
-            preview="boom", is_error=True, full_output="x", call_id="e1"))
+        await app._render(
+            ev.ToolCall(
+                name="shell", display_str="bad", icon="*", is_main_agent=True, args={}, call_id="e1"
+            )
+        )
+        await app._render(
+            ev.ToolResult(preview="boom", is_error=True, full_output="x", call_id="e1")
+        )
         await pilot.pause()  # ONE pause — deliberately no timer window
         assert "✗" in str(lst.render()), "error did not paint immediately"
 
         # Closing the group must flush a pending paint, or the last result is
         # lost (the timer would fire after _tool_group is None).
-        await app._render(ev.ToolCall(
-            name="read_file", display_str="last one", icon="*",
-            is_main_agent=True, args={}, call_id="z1"))
-        await app._render(ev.ToolResult(
-            preview="finaldetail", is_error=False, full_output="x", call_id="z1"))
+        await app._render(
+            ev.ToolCall(
+                name="read_file",
+                display_str="last one",
+                icon="*",
+                is_main_agent=True,
+                args={},
+                call_id="z1",
+            )
+        )
+        await app._render(
+            ev.ToolResult(preview="finaldetail", is_error=False, full_output="x", call_id="z1")
+        )
         app._log(RText("something else"))  # closes the tool group
         await settle(pilot)
-        assert "finaldetail" in str(lst.render()), (
-            "pending paint was lost when the group closed"
-        )
+        assert "finaldetail" in str(lst.render()), "pending paint was lost when the group closed"
 
 
 def test_tui_tool_group_coalescing():
@@ -2745,11 +2977,8 @@ async def _drive_trace_log_plan_native():
         # plan-mode routing helper falls back to the main agent when off
         ag, _ = app._active_agent()
         assert ag is app.agent
-        txt = " ".join(
-            str(w.render()) for w in app.query("#transcript .logline").results(Static)
-        )
+        txt = " ".join(str(w.render()) for w in app.query("#transcript .logline").results(Static))
         assert "isn't available" not in txt, txt
-
 
 
 async def _drive_steer_save_native():
@@ -2789,9 +3018,7 @@ async def _drive_steer_save_native():
         await submit(pilot, "/steer clear")
         assert len(ss.steering_instructions) == 0
         await submit(pilot, "/save")  # no session_manager -> native notice
-        txt = " ".join(
-            str(w.render()) for w in app.query("#transcript .logline").results(Static)
-        )
+        txt = " ".join(str(w.render()) for w in app.query("#transcript .logline").results(Static))
         assert "isn't available" not in txt, txt
 
 
@@ -2825,9 +3052,7 @@ async def _drive_research_dream_native():
     async with app.run_test() as pilot:
         await submit(pilot, "/research quick how do async generators work")
         await submit(pilot, "/dream")
-        txt = " ".join(
-            str(w.render()) for w in app.query("#transcript .logline").results(Static)
-        )
+        txt = " ".join(str(w.render()) for w in app.query("#transcript .logline").results(Static))
         assert "isn't available" not in txt, txt
         # research header surfaced natively
         assert "Research" in txt, txt
@@ -2898,9 +3123,7 @@ async def _drive_images_native():
         await submit(pilot, "/images remove 1")
         assert tracker.count == 0
         await submit(pilot, "/images")  # now empty
-        txt = " ".join(
-            str(w.render()) for w in app.query("#transcript .logline").results(Static)
-        )
+        txt = " ".join(str(w.render()) for w in app.query("#transcript .logline").results(Static))
         assert "isn't available" not in txt, txt
         assert "image-1" in txt, txt
 
@@ -2939,6 +3162,7 @@ async def _drive_menus_native():
         await pilot.pause()
 
     from unittest.mock import patch
+
     with patch("novacode_cli.recovery.get_recovery_manager", return_value=None):
         async with app.run_test() as pilot:
             await submit(pilot, "/files")
@@ -3119,9 +3343,7 @@ async def _drive_notifications_native():
 
         # /notifications lists it natively.
         await submit(pilot, "/notifications")
-        txt = " ".join(
-            str(w.render()) for w in app.query("#transcript .logline").results(Static)
-        )
+        txt = " ".join(str(w.render()) for w in app.query("#transcript .logline").results(Static))
         assert "Build done" in txt, txt
         assert "isn't available" not in txt, txt
 
@@ -3175,9 +3397,7 @@ async def _drive_resume_replay():
         assert len(users) >= 1, f"no user message replayed ({len(users)})"
         assert len(novas) >= 1, f"no nova message replayed ({len(novas)})"
         # and a "resumed" notice records how many were restored.
-        blob = " ".join(
-            str(w.render()) for w in app.query("#transcript .logline").results(Static)
-        )
+        blob = " ".join(str(w.render()) for w in app.query("#transcript .logline").results(Static))
         assert "Resumed" in blob and "2" in blob, blob
 
 
@@ -3223,9 +3443,7 @@ async def _drive_clear_resets_chat():
         # New conversation thread + cleared per-chat tracking.
         assert ss.thread_id != "orig-thread", ss.thread_id
         assert "sentinel" not in app._seen
-        txt = " ".join(
-            str(w.render()) for w in app.query("#transcript .logline").results(Static)
-        )
+        txt = " ".join(str(w.render()) for w in app.query("#transcript .logline").results(Static))
         assert "new chat" in txt.lower(), txt
 
 
@@ -3549,12 +3767,15 @@ async def _drive_plugins_screen():
 
     state: set[str] = set()
     fake = [
-        ("demo-plugin", {
-            "description": "demo",
-            "middleware": [1],
-            "tools": [1, 2],
-            "commands": [1],
-        }),
+        (
+            "demo-plugin",
+            {
+                "description": "demo",
+                "middleware": [1],
+                "tools": [1, 2],
+                "commands": [1],
+            },
+        ),
     ]
     orig = (
         loader.discover_plugins,
@@ -3564,8 +3785,8 @@ async def _drive_plugins_screen():
     )
     loader.discover_plugins = lambda: fake
     loader.list_enabled_plugins = lambda: list(state)
-    loader.enable_plugin = lambda n: (state.add(n) or True)
-    loader.disable_plugin = lambda n: (state.discard(n) or True)
+    loader.enable_plugin = lambda n: state.add(n) or True
+    loader.disable_plugin = lambda n: state.discard(n) or True
 
     app = NovaApp(
         agent=_FakeAgent(),
@@ -3714,8 +3935,7 @@ async def _drive_subagent_terminal_preview():
             await pilot.pause()
             log_widget = body.query_one("#subagent-log", RichLog)
             if any(
-                "searching codebase..." in getattr(line, "text", "")
-                for line in log_widget.lines
+                "searching codebase..." in getattr(line, "text", "") for line in log_widget.lines
             ):
                 found = True
                 break
@@ -3784,8 +4004,12 @@ async def _drive_subagent_list_is_capped_and_cached():
     from novacode_cli.ui.ui_elements import TokenTracker
 
     app = NovaApp(
-        agent=_FakeAgent(), assistant_id="nova-agent", session_state=_SS(),
-        backend=None, token_tracker=TokenTracker(), image_tracker=None,
+        agent=_FakeAgent(),
+        assistant_id="nova-agent",
+        session_state=_SS(),
+        backend=None,
+        token_tracker=TokenTracker(),
+        image_tracker=None,
         model_name="m",
     )
     async with app.run_test(size=(100, 30)) as pilot:
@@ -3963,9 +4187,7 @@ def test_tui_bg_agent_card_explains_progress():  # noqa: PLR0915 — one block p
         summary,
         pending,
     )
-    _render_bg_event(
-        ev.FileOp(record=_Rec(), call_id="c4"), write, set_phase, summary, pending
-    )
+    _render_bg_event(ev.FileOp(record=_Rec(), call_id="c4"), write, set_phase, summary, pending)
     assert len(body) == 1, body
     assert "edit_file(/src/config.py)" in body[0], body
     assert "/src/config.py" in body[0], body
@@ -3998,9 +4220,7 @@ def test_tui_bg_agent_card_explains_progress():  # noqa: PLR0915 — one block p
         summary,
         pending,
     )
-    _render_bg_event(
-        ev.ToolResult(preview="ok", call_id="c5"), write, set_phase, summary, pending
-    )
+    _render_bg_event(ev.ToolResult(preview="ok", call_id="c5"), write, set_phase, summary, pending)
     assert any("\\[bold]" in line for line in body), body
 
     # A `task` dispatch carries "[Agent Label] ..." in display_str. Rich treats
@@ -4121,9 +4341,7 @@ async def _drive_bg_agent_card_sizes_to_content() -> None:
 
             orig = astream.run_agent_stream
             astream.run_agent_stream = fake_stream
-            task = asyncio.create_task(
-                app._bg_agent_worker.__wrapped__(app, "do a thing", 1)
-            )
+            task = asyncio.create_task(app._bg_agent_worker.__wrapped__(app, "do a thing", 1))
             try:
                 # Poll until the card has mounted AND laid out with the expected
                 # number of lines. A fixed number of pauses races the layout under
@@ -4327,10 +4545,11 @@ async def _drive_ralph_screen():
         image_tracker=None,
         model_name="m",
     )
-    
+
     import asyncio
+
     ralph_called = False
-    
+
     async def mock_handle_ralph_command(*args, **kwargs):
         nonlocal ralph_called
         ralph_called = True
@@ -4347,6 +4566,7 @@ async def _drive_ralph_screen():
             raise
 
     import novacode_cli.commands.ralph_handler as rh
+
     orig_handle = rh.handle_ralph_command
     rh.handle_ralph_command = mock_handle_ralph_command
 
@@ -4362,17 +4582,17 @@ async def _drive_ralph_screen():
             )
             await app.push_screen(screen)
             await pilot.pause()
-            
+
             assert ralph_called is True
             assert screen.query_one("#ralph-stop", Button).disabled is False
             assert screen.query_one("#ralph-checkpoint", Button).disabled is False
             assert screen.query_one("#ralph-close", Button).disabled is False
-            
+
             screen.query_one("#ralph-checkpoint", Button).press()
             await pilot.pause()
             assert app.session_state._ralph_checkpoint_requested is True
             assert screen.query_one("#ralph-close", Button).disabled is False
-            
+
             await pilot.press("escape")
             await pilot.pause()
             assert app.screen == app.screen_stack[0]
@@ -4409,6 +4629,7 @@ async def _drive_wiki_screen():
     old_resolve = IngestEngine.resolve_source
 
     import pathlib
+
     WikiManager.__init__ = lambda self, *args, **kwargs: setattr(self, "_root", pathlib.Path("."))
     WikiManager.ensure_structure = lambda self: None
 
@@ -4417,16 +4638,18 @@ async def _drive_wiki_screen():
     }
     WikiManager.read_page = lambda self, path: "Mock LangGraph content"
     IngestEngine.list_raw_sources = lambda self: ["Clippings/langgraph.md"]
-    
+
     class FakePath:
         def read_text(self, encoding="utf-8"):
             return "Mock raw source content"
+
         def relative_to(self, root):
             class FakeRel:
                 def as_posix(self):
                     return "Clippings/langgraph.md"
+
             return FakeRel()
-            
+
     IngestEngine.resolve_source = lambda self, path: FakePath()
 
     app = NovaApp(
@@ -4446,13 +4669,13 @@ async def _drive_wiki_screen():
             inp.focus()
             await pilot.pause()
             await pilot.press("enter")
-            
+
             # Pushes a modal via push_screen_wait, which blocks dispatch worker.
             # Wait on the condition (a fixed pause count still lost the race
             # under full-suite load).
             await _wait_for_screen(app, pilot, WikiScreen)
             assert isinstance(app.screen, WikiScreen)
-            
+
             # Check default tab: Synthesized Pages
             assert app.screen._active_tab == "pages"
             ol_pages = app.screen.query_one("#wiki-pages-list", OptionList)
@@ -4468,11 +4691,11 @@ async def _drive_wiki_screen():
             tab_inbox = app.screen.query_one("#tab-inbox", Button)
             tab_inbox.press()
             await pilot.pause()
-            
+
             assert app.screen._active_tab == "inbox"
             ol_inbox = app.screen.query_one("#wiki-inbox-list", OptionList)
             assert ol_inbox.option_count == 1
-            
+
             # Ingest selected
             btn_ingest = app.screen.query_one("#ingest-btn", Button)
             btn_ingest.press()

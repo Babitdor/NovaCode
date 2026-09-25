@@ -169,6 +169,34 @@ def build_session_summary_message(messages: list, max_length: int = 500) -> str:
     return summary
 
 
+def resolve_resume_session_id(
+    *,
+    continue_session: bool | str,
+    session_manager: SessionManager,
+    project_root: Path | None = None,
+) -> str | None:
+    """Which session id is being resumed, for a concrete id or the bare flag.
+
+    ``continue_session`` is ``str | Literal[True]``: a string is the exact id the
+    user picked, while the bare ``--continue`` flag is ``True`` meaning "the
+    latest session". Resolving both here matters because the caller needs the id
+    *before* building the model — guarding on ``isinstance(..., str)`` alone
+    silently skipped the bare flag, so the common ``nova --continue`` never
+    restored its recorded model.
+
+    Returns:
+        The session id to resume, or ``None`` when there is nothing to resume
+        (the flag is off, or `--continue` found no previous session).
+    """
+    if isinstance(continue_session, str):
+        return continue_session or None
+    if continue_session is True:
+        latest = session_manager.get_latest_session(project_root)
+        if latest is not None:
+            return latest.session_id
+    return None
+
+
 def restore_session(
     session_manager: SessionManager,
     session_id: str | None = None,

@@ -631,9 +631,10 @@ class TokenTracker:
 
         if hasattr(self, "_last_breakdown") and self._last_breakdown is not None:
             bd = self._last_breakdown
-            # Override total_tokens with API data if available (more accurate).
+            # Override total_tokens with API data if available (more accurate)
+            # and rescale the categories so the parts still sum to the whole.
             if self.has_api_data and self.current_context > 0:
-                bd.total_tokens = self.current_context
+                bd = bd.scaled_to(self.current_context)
                 # Keep bd.context_window_size: it was detected live this turn
                 # (build_context_breakdown, use_dynamic=True), so it reflects the
                 # real Ollama-allocated window once the model has loaded — unlike
