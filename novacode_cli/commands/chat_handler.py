@@ -631,7 +631,12 @@ function convene() {
   es.addEventListener('council_error', e => {
     let m = 'The council failed.';
     try { m = JSON.parse(e.data).message || m; } catch (_) {}
-    addError(m); setStatus('error'); setRun(false);
+    addError(m); setStatus('error');
+    // endRun(), not setRun(false): an error has to close the stream and
+    // re-enable the composer exactly like `done` does. Leaving `es` non-null
+    // made convene() return immediately on every later send — the input stayed
+    // disabled and follow-up questions silently did nothing, with no clue why.
+    endRun();
   });
   es.addEventListener('done', e => { setStatus('the council has spoken'); endRun(); });
   es.onerror = () => {
