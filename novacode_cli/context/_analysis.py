@@ -572,6 +572,19 @@ def _tool_schema_text(tools: list[Any]) -> str:
     return " ".join(parts)
 
 
+#: Thinking-model fields that ride along in ``additional_kwargs`` and are sent
+#: back with the message on every subsequent request.
+_REASONING_KEYS = ("reasoning_content", "reasoning")
+
+
+def _reasoning_text(msg: BaseMessage) -> str:
+    """The chain of thought carried by *msg*, if the provider returned one."""
+    extra = getattr(msg, "additional_kwargs", None)
+    if not isinstance(extra, dict):
+        return ""
+    return " ".join(str(extra[k]) for k in _REASONING_KEYS if extra.get(k))
+
+
 def build_context_breakdown(
     messages: list[BaseMessage],
     model_name: str,
@@ -629,6 +642,11 @@ def build_context_breakdown(
                 # Tool-call arguments are part of the assistant turn and often
                 # dominate context (file contents, diffs) — count them.
                 assistant_tokens += _estimate_tokens(_tool_call_text(msg))
+            # A thinking model's chain of thought lives in additional_kwargs and
+            # has to be echoed back on every later request (see
+            # utils/backend_patches.apply_openai_reasoning_content_patch), so it
+            # is real, permanent context — invisible here until counted.
+            assistant_tokens += _estimate_tokens(_reasoning_text(msg))
         elif isinstance(msg, ToolMessage):
             tool_tokens += tokens
 

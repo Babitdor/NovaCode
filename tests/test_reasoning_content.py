@@ -115,3 +115,70 @@ def test_building_an_openai_compatible_model_applies_the_patch(monkeypatch):
 
     build_chat_model("openai", "gpt-4o")
     assert called, "model built without the reasoning_content patch applied"
+
+
+# ── The inbound half: the field has to arrive before it can be echoed ────────
+#
+# Every test above hands the converter an AIMessage that ALREADY carries
+# reasoning_content in additional_kwargs — so they all passed while the 400 kept
+# happening in production. langchain_openai drops the field on the way IN too
+# ("non-standard response fields are not extracted or preserved"), leaving the
+# outbound patch with nothing to echo.
+
+
+def _chunk(delta: dict):
+    from langchain_core.messages import AIMessageChunk
+    from langchain_openai.chat_models.base import _convert_delta_to_message_chunk
+
+    apply_openai_reasoning_content_patch()
+    return _convert_delta_to_message_chunk(delta, AIMessageChunk)
+
+
+def test_streaming_deltas_keep_the_reasoning():
+    apply_openai_reasoning_content_patch()
+    chunk = _chunk({"role": "assistant", "content": "", "reasoning_content": "hmm"})
+    assert chunk.additional_kwargs.get("reasoning_content") == "hmm"
+
+
+def test_a_non_streaming_response_keeps_the_reasoning():
+    apply_openai_reasoning_content_patch()
+    from langchain_openai.chat_models.base import _convert_dict_to_message
+
+    msg = _convert_dict_to_message(
+        {"role": "assistant", "content": "4", "reasoning_content": "2+2"}
+    )
+    assert msg.additional_kwargs.get("reasoning_content") == "2+2"
+
+
+def test_the_full_stream_round_trip():
+    """What actually happens on a turn: fragments in, one echoed field out."""
+    apply_openai_reasoning_content_patch()
+    merged = _chunk({"role": "assistant", "content": "", "reasoning_content": "Let me "})
+    for frag in ("check the ", "file. "):
+        merged = merged + _chunk({"content": "", "reasoning_content": frag})
+    merged = merged + _chunk({"content": "Done."})
+
+    out = _convert(merged)
+    assert out["reasoning_content"] == "Let me check the file. ", "fragments must merge"
+    assert out["content"] == "Done."
+
+
+def test_a_stream_without_reasoning_stays_clean():
+    apply_openai_reasoning_content_patch()
+    out = _convert(_chunk({"role": "assistant", "content": "hi"}))
+    assert "reasoning_content" not in out
+
+
+def test_echoed_reasoning_is_counted_as_context():
+    """It rides on every later request, so ctx% has to see it."""
+    from novacode_cli.context._analysis import build_context_breakdown
+
+    plain = build_context_breakdown(
+        [AIMessage(content="ok")], "claude-opus-5", use_dynamic=False
+    )
+    thinking = build_context_breakdown(
+        [AIMessage(content="ok", additional_kwargs={"reasoning_content": "t" * 8_000})],
+        "claude-opus-5",
+        use_dynamic=False,
+    )
+    assert thinking.assistant_message_tokens - plain.assistant_message_tokens == 2_000

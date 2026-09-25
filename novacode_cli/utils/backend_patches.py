@@ -317,16 +317,30 @@ def apply_openai_reasoning_content_patch() -> None:
         400 invalid_request_error — "The `reasoning_content` in the thinking
         mode must be passed back to the API."
 
-    ``langchain_openai._convert_message_to_dict`` emits only role/content/
-    tool_calls, so the field is parsed into ``additional_kwargs`` on the way in
-    and silently dropped on the way out. Any multi-turn conversation with a
-    thinking model — which for an agent means any conversation at all, since a
-    tool call is a second turn — therefore fails on its second request.
+    ``langchain_openai`` drops the field at BOTH ends, and deliberately — its
+    own module docstring says non-standard provider fields "are **not**
+    extracted or preserved", with a pointer to ``ChatDeepSeek`` instead. So
+    three converters need patching, not one:
 
-    The patch re-attaches the field, and only when the model itself produced it.
+    * ``_convert_delta_to_message_chunk`` — streaming responses. It builds
+      ``additional_kwargs`` from ``function_call`` and ``tool_calls`` only, so
+      the reasoning never reaches the message at all. This is the one that
+      matters: Nova streams.
+    * ``_convert_dict_to_message`` — the non-streaming equivalent.
+    * ``_convert_message_to_dict`` — the outbound payload, which emits only
+      role/content/tool_calls.
+
+    Patching only the outbound side (as this did originally) fixes nothing:
+    there is nothing in ``additional_kwargs`` left to echo.
+
+    Every arm re-attaches the field only when the model itself produced it.
     That guard is what makes this safe to apply to every OpenAI-compatible
     provider: a model that never returns reasoning_content never gets sent one,
     so strict endpoints (OpenAI's own) see exactly the payload they see today.
+
+    Streaming arrives in pieces, one fragment of reasoning per delta. Each lands
+    in that chunk's ``additional_kwargs``; LangChain's chunk merge concatenates
+    same-key strings, so the reassembled message carries the whole thought.
     """
     global _reasoning_content_patched
     if _reasoning_content_patched:
@@ -356,5 +370,29 @@ def apply_openai_reasoning_content_patch() -> None:
         return payload
 
     _oai_base._convert_message_to_dict = _convert_with_reasoning
+
+    def _keep_reasoning(original_fn):  # noqa: ANN001, ANN202
+        """Wrap an inbound converter so it preserves the reasoning fields."""
+
+        @functools.wraps(original_fn)
+        def _inbound(_dict: Any, *args: Any, **kwargs: Any) -> Any:
+            message = original_fn(_dict, *args, **kwargs)
+            extra = getattr(message, "additional_kwargs", None)
+            if isinstance(_dict, dict) and isinstance(extra, dict):
+                for field in _REASONING_FIELDS:
+                    value = _dict.get(field)
+                    if value:
+                        extra[field] = value
+            return message
+
+        return _inbound
+
+    for name in ("_convert_delta_to_message_chunk", "_convert_dict_to_message"):
+        inbound = getattr(_oai_base, name, None)
+        if inbound is not None:
+            setattr(_oai_base, name, _keep_reasoning(inbound))
+        else:  # pragma: no cover - upstream renamed it
+            logger.debug("No %s to patch; reasoning may not round-trip", name)
+
     _reasoning_content_patched = True
     logger.debug("Applied OpenAI reasoning_content round-trip patch")
