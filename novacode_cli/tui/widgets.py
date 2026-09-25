@@ -105,7 +105,7 @@ class MatrixRain(Static):
         self._row_count = max(art_h + 6, 18)
         self._art_left = max(0, (self._col_count - art_w) // 2)
         self._art_top = 2  # a couple rows of rain above the lockup
-        self._art_w = art_w  # the lockup's bounding box, for the rain confinement
+        self._art_w = art_w  # the art's bounding box, measured with cell_len
         self._width = width
 
     def reflow(self, art: str, width: int | None) -> None:
@@ -121,10 +121,15 @@ class MatrixRain(Static):
     def _theme_base_color(self):
         """The active theme's primary color as a Textual ``Color`` object.
 
-        Handles ANSI theme names (``ansi_blue`` → ``blue``) and falls back to
-        matrix green if the theme color can't be parsed.
+        Handles ANSI theme names (``ansi_blue`` → ``blue``). A theme colour that
+        cannot be read or parsed falls back to :data:`brand.FALLBACK_ACCENT` —
+        the same accent the pre-TUI boot screen uses — rather than the old
+        hardcoded green, which was a third brand colour disagreeing with both
+        the red boot splash and the blue TUI.
         """
         from textual.color import Color
+
+        from novacode_cli.brand import FALLBACK_ACCENT
 
         raw = None
         try:
@@ -134,13 +139,13 @@ class MatrixRain(Static):
                 raw = self.app.theme_variables.get("primary")
             except Exception:  # noqa: BLE001
                 raw = None
-        raw = (raw or "#00ff88").strip()
+        raw = (raw or FALLBACK_ACCENT).strip()
         if raw.startswith("ansi_"):
             raw = raw[len("ansi_") :]
         try:
             return Color.parse(raw)
         except Exception:  # noqa: BLE001
-            return Color.parse("#00ff88")
+            return Color.parse(FALLBACK_ACCENT)
 
     def _art_style(self) -> str:
         """Bold style for the logo — the theme's primary color at full strength."""
@@ -148,6 +153,8 @@ class MatrixRain(Static):
 
     def _theme_key(self) -> str:
         """The active theme's primary color string — the palette cache key."""
+        from novacode_cli.brand import FALLBACK_ACCENT
+
         raw = None
         try:
             raw = self.app.current_theme.primary
@@ -156,7 +163,7 @@ class MatrixRain(Static):
                 raw = self.app.theme_variables.get("primary")
             except Exception:  # noqa: BLE001
                 raw = None
-        return (raw or "#00ff88").strip()
+        return (raw or FALLBACK_ACCENT).strip()
 
     def _ensure_theme_cache(self) -> None:
         """Recompute the palette + art style only when the theme color changes."""
@@ -217,14 +224,23 @@ class MatrixRain(Static):
             self._timer.resume()
 
     def _init_columns(self) -> None:
+        """Seed a column per grid column, already in flight.
+
+        Heads are spread across the whole grid (and just above it) rather than
+        stacked above row 0. The old seeding used ``uniform(-span, 0)``, which
+        put every head off-screen, so the banner opened empty and the rain only
+        filled in over the next ~10-20 seconds -- the "rain does not cover the
+        window" complaint. Recycling a column still restarts it above the top
+        (see ``_fill_buffers``), which is what keeps the fall continuous.
+        """
         self._columns = []
-        span = self._row_count + 5
         for _ in range(self._col_count):
+            trail = random.randint(5, 14)
             self._columns.append(
                 {
-                    "pos": random.uniform(-span, 0),
+                    "pos": random.uniform(-trail, self._row_count),
                     "speed": random.uniform(0.07, 0.18),  # adjusted for 15fps
-                    "trail": random.randint(5, 14),
+                    "trail": trail,
                 }
             )
         # Pre-allocate frame buffers (reused per frame to avoid GC churn).
@@ -391,20 +407,20 @@ class MatrixRain(Static):
         pool_len = len(pool)
         idx = random.randrange(pool_len)  # one RNG call per frame
 
+        # The rain is drawn on every column, including the ones the art covers.
+        # Confining it was tried and removed: the art is stamped *after* the
+        # rain, so it overwrites every inked cell anyway -- masking those cells
+        # changed nothing observable (measured 0 katakana visible on inked cells
+        # with the confinement removed). Skipping the art's *bounding box* was
+        # worse than useless: it is ~74 of the 76 columns an 80-column terminal
+        # draws, so skipping it on every row carved a full-height dead stripe and
+        # the rain looked like it stopped at the portrait.
         for col, d in enumerate(self._columns):
             d["pos"] += d["speed"]
             if d["pos"] > rows + d["trail"]:  # reset when fully off-screen
                 d["pos"] = random.uniform(-rows, -3)
                 d["speed"] = random.uniform(0.08, 0.23)  # adjusted for 15fps
                 d["trail"] = random.randint(5, 14)
-
-            # Confine the rain to the margins beside the lockup. A column inside
-            # the art's bounding box is skipped, so no katakana is drawn behind
-            # the lettering -- the text stays legible without a background box.
-            # The column still advances (above) rather than `continue`-ing
-            # first, so a later reflow does not resume it from a stale position.
-            if self._art_lines and self._art_left <= col < self._art_left + self._art_w:
-                continue
 
             tail_start = max(0, int(d["pos"]) - d["trail"])
             head = min(rows - 1, int(d["pos"]))

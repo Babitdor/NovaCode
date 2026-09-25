@@ -22,7 +22,7 @@ from novacode_cli.tui.app import MatrixRain
 #: Every width the banner can be asked for, plus the tier boundaries.
 #: ``_MIN_WIDTH`` in ``tui/app.py`` is 50 -- below that the app shows a
 #: "terminal too small" notice instead of a layout.
-WIDTHS = [200, 160, 120, 100, 90, 80, 76, 75, 74, 60, 59, 50]
+WIDTHS = [200, 160, 120, 100, 90, 82, 80, 78, 77, 76, 60, 59, 50]
 
 
 def _rows(art: str) -> list[str]:
@@ -108,10 +108,15 @@ def test_narrow_tiers_keep_the_portrait_and_fit() -> None:
     assert max(cell_len(row) for row in rows) <= 59 - 4
 
 
-def test_too_narrow_for_anything_yields_the_name_only() -> None:
-    """A one-line mark is better than art that cannot fit."""
+def test_too_narrow_for_anything_yields_the_compact_mark() -> None:
+    """A one-line mark is better than art that cannot fit.
+
+    Below the portrait's own width the art gives up entirely and defers to
+    ``brand.compact_mark()`` -- the single-line mark shared with the command
+    banner and the Cowork UI.
+    """
     rows = _rows(get_responsive_ascii(width=20))
-    assert rows == ["\u2665 NOVA ~"]
+    assert rows == [brand.compact_mark()]
 
 
 def test_version_banner_carries_the_art_and_the_version() -> None:
@@ -136,45 +141,129 @@ def _built(width: int, art: str | None = None) -> MatrixRain:
     return mw
 
 
-@pytest.mark.parametrize("width", [200, 150, 120, 100, 80, 60, 50])
-def test_rain_never_intrudes_on_the_lockup(width: int) -> None:
-    """The point of the confinement: no katakana behind the lettering.
+@pytest.mark.parametrize("width", [200, 150, 120, 100, 80])
+def test_rain_falls_on_the_art_rows_where_the_art_has_no_ink(width: int) -> None:
+    """Rain must run *behind* the lockup, not stop at the portrait's edge.
 
-    Sampled over many frames, because the rain's column positions advance: a
-    single frame could pass by luck.
+    Regression for the removed confinement: the rain used to be skipped for
+    every row of the art's bounding box. On an 80-column terminal that box is 74
+    of the 76 drawn columns, so the backdrop had a full-height hole and the rain
+    looked like it began after the wordmark. Skipping bought nothing either -- an
+    inked cell is overwritten by the art whatever the rain buffer holds.
+
+    The *uninked* columns of the art's own rows are the observation window: a
+    bounding-box confinement blanks them, drawing the rain leaves them wet.
     """
     mw = _built(width)
     katakana = set(MatrixRain.KATAKANA)
-    band = range(mw._art_left, mw._art_left + mw._art_w)
-    art_rows = range(mw._art_top, mw._art_top + len(mw._art_lines))
-    assert mw._art_w > 0, "no art bounding box to confine against"
+
+    # The art's ink, derived from the art strings rather than from the widget,
+    # so this does not merely re-assert the implementation.
+    inked: dict[int, set[int]] = {}
+    for ay, line in enumerate(mw._art_lines):
+        cols: set[int] = set()
+        gx = mw._art_left
+        for ch in line:
+            if ch not in ("\ufe0e", "\ufe0f") and ch != " " and 0 <= gx < mw._col_count:
+                cols.add(gx)
+            gx += cell_len(ch)
+        inked[ay] = cols
+
+    gaps = [
+        (row_off, col)
+        for row_off, cols in inked.items()
+        for col in range(mw._art_left, mw._art_left + mw._art_w)
+        if col not in cols
+    ]
+    assert gaps, "the art leaves no uninked columns to observe"
+
+    wet = 0
     for _ in range(_FRAMES):
         mw._build_strips()
-        for y in art_rows:
-            row = mw._frame_lines[y]
-            intruders = [row[x] for x in band if row[x] in katakana]
-            assert not intruders, (
-                f"rain ({''.join(intruders)!r}) inside the art box at row {y}, width {width}"
-            )
+        for row_off, col in gaps:
+            if mw._frame_lines[mw._art_top + row_off][col] in katakana:
+                wet += 1
+    assert wet > 0, (
+        f"no rain on any uninked cell of the art's rows at width {width}: the art's "
+        "bounding box is being skipped instead of just its ink"
+    )
+
+
+def test_the_art_overwrites_rain_on_its_own_cells() -> None:
+    """The property that makes the confinement unnecessary, pinned directly.
+
+    Every inked cell is composited after the rain, so the frame's *visible* text
+    at an inked cell is the glyph, not katakana -- regardless of what the rain
+    buffer holds. If that ever stops holding, the confinement becomes load
+    bearing again and this test says so.
+    """
+    art = "AB " + " " * 5
+    mw = _built(120, art=art)
+    katakana = set(MatrixRain.KATAKANA)
+    # Force rain to be present on every row, across the whole art width.
+    for d in mw._columns:
+        d["pos"] = 0.0
+        d["speed"] = 0.0
+        d["trail"] = 0
+    mw._build_strips()
+    row = mw._frame_lines[mw._art_top]
+    left = mw._art_left
+    assert row[left] == "A"
+    assert row[left + 1] == "B"
+    # The gaps beside the glyphs may rain; the glyphs never become katakana.
+    assert "A" not in katakana
+    assert "B" not in katakana
+    assert not any(ch in katakana for ch in (row[left], row[left + 1]))
+
+
+@pytest.mark.parametrize("width", [80, 100, 120, 200])
+def test_the_banner_opens_with_rain_already_on_screen(width: int) -> None:
+    """The home banner must not open empty.
+
+    ``_init_columns`` used to seed every head at ``random.uniform(-span, 0)``,
+    i.e. above the grid, so the first frame measured ~0.2% coverage: the window
+    looked blank and the rain only crept in over the following ~15 seconds.
+    Seeding across the grid puts a fifth of it on screen immediately.
+
+    Deliberately a floor, not an exact figure: the coverage is random, and the
+    defect being guarded is "nothing is falling yet", which is orders of
+    magnitude away from the threshold.
+    """
+    art = get_responsive_ascii(width=width)
+    mw = MatrixRain(art=art, width=width)
+    mw._init_columns()
+    mw._build_strips()
+    hits = sum(
+        1 for y in range(mw._row_count) for ch in mw._frame_lines[y] if ch in MatrixRain.KATAKANA
+    )
+    coverage = 100.0 * hits / (mw._col_count * mw._row_count)
+    assert coverage > 5.0, f"the banner opened with only {coverage:.1f}% rain on screen"
+
+
+def test_column_seeding_recycles_from_above() -> None:
+    """Seeding in flight must not stop recycled columns falling in from the top.
+
+    Otherwise the fall becomes a loop that never crosses the top edge.
+    """
+    mw = _built(120)
+    for d in mw._columns:
+        d["pos"] = mw._row_count + d["trail"] + 1  # past the bottom
+    mw._fill_buffers()
+    assert all(d["pos"] < 0 for d in mw._columns), (
+        "a recycled column did not restart above the grid"
+    )
 
 
 @pytest.mark.parametrize("width", [200, 150, 120, 100, 80, 60, 50])
-def test_margin_columns_draw_rain_and_band_columns_do_not(width: int) -> None:
-    """Confining the rain must not kill it.
+def test_every_column_draws_rain_in_a_single_driven_frame(width: int) -> None:
+    """One frame, every column: the rain is not confined to the margins.
 
-    A guard on the confinement alone would pass if the rain were switched off
-    entirely, so this pins both sides: every column outside the lockup's box
-    draws, and every column inside it does not.
-
-    The rain is driven to a known state rather than sampled over time. Waiting
-    for random columns to fall is flaky exactly where it matters most -- at 80
-    columns there are only 4 margin columns, and a frame may show none of them.
-    ``pos=0`` and ``speed=0`` place every column's head on row 0, which is above
-    the art, so a band column that (wrongly) drew would not be masked by the
-    composite overwriting it.
+    A deterministic companion to the sampling test above. Waiting for random
+    falls is flaky exactly where it matters most -- an 80-column terminal has
+    only a handful of margin columns -- so this drives every column's head to a
+    known row and asserts each one drew, including the columns the art covers.
     """
     mw = _built(width)
-    # There must be margins at all, or the confinement has nothing to leave.
     assert 0 < mw._art_w < mw._col_count, "no margin columns beside the lockup"
     for d in mw._columns:
         d["pos"] = 0.0
@@ -183,13 +272,9 @@ def test_margin_columns_draw_rain_and_band_columns_do_not(width: int) -> None:
     mw._build_strips()
 
     katakana = set(MatrixRain.KATAKANA)
-    for col in range(mw._col_count):
-        drew = mw._frame_lines[0][col] in katakana
-        in_band = mw._art_left <= col < mw._art_left + mw._art_w
-        if in_band:
-            assert not drew, f"column {col} is inside the lockup but drew rain"
-        else:
-            assert drew, f"margin column {col} drew no rain at width {width}"
+    # Row 0 is above the art (`_art_top` is 2), so nothing is composited over it.
+    dry = [col for col in range(mw._col_count) if mw._frame_lines[0][col] not in katakana]
+    assert not dry, f"columns {dry[:8]} drew no rain at width {width}"
 
 
 def test_grid_never_overflows_the_transcript_width() -> None:

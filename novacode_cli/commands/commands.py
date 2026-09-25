@@ -223,7 +223,9 @@ async def handle_command(
                 pass
         token_tracker.reset(reset_session=True)
         console.clear()
-        console.print(NOVA_CODE_ASCII, style=f"bold {COLORS['primary']}")
+        from novacode_cli.brand import get_accent_hex
+
+        console.print(NOVA_CODE_ASCII, style=f"bold {get_accent_hex()}")
         console.print()
         console.print(
             "... Fresh start! Conversation history cleared.",

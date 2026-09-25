@@ -1404,8 +1404,10 @@ def show_interactive_help() -> None:
 
 def show_help() -> None:
     """Show help information."""
+    from novacode_cli.brand import get_accent_hex
+
     console.print()
-    console.print(NOVA_CODE_ASCII, style=f"bold {COLORS['primary']}")
+    console.print(NOVA_CODE_ASCII, style=f"bold {get_accent_hex()}")
     console.print()
 
     console.print("[bold]Usage:[/bold]", style=COLORS["primary"])
