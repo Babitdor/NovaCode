@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import dotenv
-from rich.console import Console
+from rich.console import Console, ConsoleOptions, RenderResult
 from rich.live import Live
 from rich.spinner import Spinner
 from rich.table import Table
@@ -361,6 +361,68 @@ def _pick_boot_message(subsystem: str) -> str:
     return choice
 
 
+class BootRail:
+    """An indeterminate progress rail that animates on elapsed time alone.
+
+    A boot genuinely cannot report a fraction: only ``core_agent`` emits an
+    unconditional ``boot_status`` (at the *start* of MCP discovery, which then
+    blocks for seconds emitting nothing), while voice, session, sandbox, memory
+    and shell are all conditional. So a ``done/total`` ratio has no honest
+    inputs — the denominator is usually 1, which pinned the previous rail at a
+    constant 0% for the entire boot.
+
+    This renderable therefore reports *activity*, not *completion*: a span
+    sweeps the track, position derived purely from wall-clock elapsed time. It
+    animates during any silent phase (e.g. MCP discovery) without a single
+    ``boot_status`` call, and it never claims a percentage it cannot know.
+
+    Colour is applied by the caller via style strings, not here, so the bar
+    still reads correctly on consoles without truecolor.
+    """
+
+    #: Number of character cells in the sweeping highlight.
+    COMET = 6
+    #: Cells of travel per second — fast enough to read as "working".
+    SPEED = 14.0
+    #: Track length in cells.
+    WIDTH = 28
+
+    def __init__(
+        self,
+        width: int = WIDTH,
+        accent: str = "cyan",
+        start: float | None = None,
+    ) -> None:
+        """Store the track width, highlight colour and the animation epoch."""
+        self.width = width
+        self.accent = accent
+        self._start = time.monotonic() if start is None else start
+
+    def frame(self, elapsed: float) -> Text:
+        """The rail at *elapsed* seconds, as styled text.
+
+        Pure in ``elapsed``, so the geometry is testable without a display and
+        ``__rich_console__`` just feeds it the wall clock.
+        """
+        span = self.width + self.COMET
+        head = int(max(elapsed, 0.0) * self.SPEED) % span
+        track = Text()
+        for i in range(self.width):
+            if head - self.COMET < i <= head:
+                track.append("━", style=self.accent)
+            else:
+                track.append("─", style="grey30")
+        return track
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        """Yield the current frame.
+
+        Re-rendered on every ``Live`` refresh tick (~12/s), which is what makes
+        the rail keep moving while the boot is silent.
+        """
+        yield from console.render(self.frame(time.monotonic() - self._start), options)
+
+
 class BootAnimation:
     """Animated startup sequence with live spinner and accumulating status lines.
 
@@ -485,11 +547,11 @@ class BootAnimation:
 
         Three changes from the old splash, each fixing something real:
 
-        * **The rail no longer lies.** The denominator is the number of phases
-          *observed so far*, not a guessed ``len(_BOOT_MESSAGES)`` constant that
-          a real boot never reached (15 declared vs ~6 emitted, so the bar died
-          near 33%). Progress therefore always converges to exactly 100% when
-          the last phase reports, and never claims work that did not happen.
+        * **The rail no longer lies.** It is indeterminate: a span sweeps a
+          track on elapsed time, because the boot reports no usable fraction
+          (see :class:`BootRail`). An earlier attempt derived ``done/total``
+          from the phases observed, which pinned the bar at 0% for an entire
+          real boot — the denominator is 1 whenever nothing has completed yet.
         * **One art source.** The header is ``brand.compact_mark()``; the old
           splash inlined a 12-line braille blob spliced to a second ANSI
           wordmark, with rows ranging from 29 to 77 columns wide.
@@ -542,19 +604,23 @@ class BootAnimation:
             layout.add_row(Spinner("dots2", text=f"  {text}", style=f"bold {accent}"))
 
         # ── Honest progress rail ──
-        total = max(len(cls._messages), 1)
-        done = sum(1 for _, lvl in cls._messages if lvl in ("ok", "warn"))
-        ratio = done / total
-        bar_w = 28
-        filled = int(ratio * bar_w)
-        rail = Text()
-        rail.append("  ")
-        rail.append("█" * filled, style=accent)
-        rail.append("░" * (bar_w - filled), style="grey30")
-        rail.append(f"  {ratio:>3.0%}", style="bold")
-        rail.append(f"   {elapsed:.1f}s", style="grey30")
-        layout.add_row(rail)
+        # Deliberately NOT a percentage. Only ``core_agent`` emits an
+        # unconditional status (at the start of MCP discovery); every other
+        # subsystem is conditional, so ``done/total`` was nearly always 0/1 and
+        # the old rail sat pinned at 0% for the whole boot. A sweeping rail
+        # reports activity, which is the one thing that is always true.
+        rail_row = Text("  ")
+        rail_row.append_text(cls._rail(accent))
+        rail_row.append(f"   {elapsed:.1f}s", style="grey30")
+        layout.add_row(rail_row)
         cls._live.update(layout)
+
+    @classmethod
+    def _rail(cls, accent: str) -> Text:
+        """The rail for the current instant; shared by ``_refresh`` and tests."""
+        return BootRail(accent=accent, start=cls._start_time).frame(
+            time.monotonic() - cls._start_time
+        )
 
 
 def boot_status(message: str, level: str = "info") -> None:
