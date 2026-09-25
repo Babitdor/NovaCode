@@ -40,12 +40,10 @@ from novacode_cli.ui.ui_elements import (
 
 
 async def _react_to_context_pressure(agent, session_state, token_tracker, breakdown) -> None:
-    """Warn about — and where appropriate auto-compact — high context usage.
+    """Warn about high context usage and auto-compact where appropriate.
 
-    The Rich console REPL had no equivalent of the TUI's context check, so a
-    long session neither warned the user nor compacted and ran straight into the
-    provider's limit. The decision itself is shared
-    (:func:`novacode_cli.context.assess_pressure`) so both surfaces agree.
+    The decision itself is shared
+    (:func:`novacode_cli.context.assess_pressure`) so every renderer agrees.
 
     Never raises: a warning is not worth failing a completed turn.
     """
@@ -1306,7 +1304,7 @@ async def execute_task(  # type: ignore
                     token_tracker.set_breakdown(breakdown)
 
                     # Same policy the TUI applies (context/pressure.py) — the
-                    # REPL previously recorded the breakdown and then did
+                    # console path previously recorded the breakdown and then did
                     # NOTHING, so a long session sailed into the provider's
                     # limit with no warning and no compaction.
                     await _react_to_context_pressure(

@@ -97,7 +97,6 @@ class SessionState:
 
         # -- declared fields formerly invented dynamically by other modules ----
         # (each comment names the module(s) that read/write the field)
-        self.use_tui: bool = True  # main.py
         self.headless: bool = False  # main.py, headless/runner.py
         self.headless_prompt: str | None = None  # main.py, headless/runner.py
         self.headless_output_format: str = "text"  # main.py, headless/runner.py
@@ -445,7 +444,7 @@ class SessionState:
         "_ui_settings", "_agent_runtime", "_remote_bridge", "_bg_tasks", "_ntf",
         "_wiki", "_dynamic", "_pending_approvals",
         # formerly-dynamic fields declared in __init__
-        "use_tui", "headless", "headless_prompt", "headless_output_format",
+        "headless", "headless_prompt", "headless_output_format",
         "headless_max_turns", "headless_deny_tools", "headless_out_fd",
         "headless_exit_code",
         "workspace_root", "verify_enabled", "active_goal", "active_rubric",

@@ -1,8 +1,9 @@
 """Output formatting for headless (non-interactive) Nova runs.
 
-Headless mode is a third renderer of the UI-agnostic agent event stream (see
-:mod:`novacode_cli.ui_events`), alongside the Rich REPL (``execute_task``) and
-the Textual TUI. Where those render to a live terminal, this writes
+Headless mode is another renderer of the UI-agnostic agent event stream (see
+:mod:`novacode_cli.ui_events`), alongside the Textual TUI (and the console
+renderer ``execute_task``, which the remote bridges and several command
+handlers use). Where those render to a live terminal, this writes
 machine-consumable output to **stdout** in one of three formats:
 
 - ``text``        — only the final assistant answer (good for piping).

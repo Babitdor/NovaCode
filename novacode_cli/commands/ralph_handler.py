@@ -28,7 +28,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from prompt_toolkit import PromptSession
 from rich.markup import escape
 
 from novacode_cli.commands import ralph_events as rev
@@ -420,78 +419,6 @@ def _stop_and_save_all_ralph_tasks(session_state, emit: EmitFn = _console_emit) 
             emit(f"[red]✗ Failed to save Ralph checkpoint: {escape(str(e))}[/red]")
 
     return True
-
-
-def _get_modified_files(working_directory: str) -> list[str]:
-    """Get list of modified files via git status."""
-    try:
-        result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=working_directory,
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-        if result.returncode == 0:
-            return [line[3:] for line in result.stdout.strip().split("\n") if line]
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pass
-    return []
-
-
-async def _prompt_stop_action(
-    iteration: int,
-    max_iterations: int,
-    task: str,
-    working_directory: str,
-    emit: EmitFn = _console_emit,
-) -> str:
-    """Prompt the user (CLI only) for an action when Ralph is interrupted.
-
-    Returns one of: 'stop', 'rollback', 'finish', 'continue', 'checkpoint'.
-
-    This uses ``prompt_toolkit`` for input and is only reachable from the classic
-    REPL — the TUI handles Ctrl+C itself and never raises into this loop.
-    """
-    ps: PromptSession[str] = PromptSession()
-
-    iter_display = f"{iteration}/{max_iterations}" if max_iterations > 0 else str(iteration)
-
-    emit("")
-    emit("[bold yellow]⚠️  Ralph mode interrupted[/bold yellow]")
-    emit(f"[dim]Iteration {iter_display} in progress[/dim]")
-    emit("")
-    emit("[bold]What would you like to do?[/bold]")
-    emit("  [cyan]S[/cyan] - Stop now (may leave partial work)")
-    emit("  [cyan]F[/cyan] - Finish current iteration, then stop")
-    emit("  [cyan]C[/cyan] - Continue running")
-    emit("  [cyan]R[/cyan] - Stop and save checkpoint (resume later)")
-    emit("")
-
-    while True:
-        try:
-            response = (await ps.prompt_async("Choice [S/F/C/R]: ")).strip().lower()
-
-            if response in ("s", "stop"):
-                modified = _get_modified_files(working_directory)
-                if modified:
-                    emit("")
-                    emit(f"[dim]Modified files: {len(modified)}[/dim]")
-                    rollback = await ps.prompt_async("Rollback changes? [y/N]: ")
-                    if rollback.strip().lower() == "y":
-                        return "rollback"
-                return "stop"
-            if response in ("f", "finish"):
-                return "finish"
-            if response in ("c", "continue"):
-                return "continue"
-            if response in ("r", "checkpoint"):
-                return "checkpoint"
-
-            emit("[dim]Please enter S, F, C, or R[/dim]")
-        except (KeyboardInterrupt, EOFError):
-            return "stop"  # second Ctrl+C = force stop
 
 
 def _build_status_snapshot(session_state) -> rev.StatusSnapshot:
@@ -1312,64 +1239,14 @@ async def handle_ralph_command(
             interrupted = True
 
         if interrupted:
-            action = await _prompt_stop_action(
-                iteration - 1, max_iterations, task, working_directory, emit
-            )
-
-            if action == "stop":
-                emit("")
-                emit("[yellow]Ralph mode stopped by user.[/yellow]")
-                emit(f"[dim]Completed {iteration - 1} iteration(s).[/dim]")
-                emit("")
-                return True
-
-            if action == "rollback":
-                emit("")
-                emit("[yellow]Rolling back changes...[/yellow]")
-                try:
-                    subprocess.run(
-                        ["git", "stash"],
-                        cwd=working_directory,
-                        capture_output=True,
-                        text=True,
-                        timeout=30,
-                        check=False,
-                    )
-                    emit("[green]Changes stashed. Use 'git stash pop' to restore.[/green]")
-                except (subprocess.TimeoutExpired, FileNotFoundError):
-                    emit("[red]Failed to stash changes. Manual cleanup may be needed.[/red]")
-                emit(f"[dim]Completed {iteration - 1} iteration(s).[/dim]")
-                emit("")
-                return True
-
-            if action == "finish":
-                emit("")
-                emit("[green]Iteration already completed. Stopping now.[/green]")
-                emit(f"[dim]Completed {iteration - 1} iteration(s).[/dim]")
-                emit("")
-                return True
-
-            if action == "continue":
-                emit("")
-                emit("[dim]Continuing Ralph mode...[/dim]")
-                emit("[yellow]Note: Use /ralph --resume to continue if needed.[/yellow]")
-                emit("")
-                return True
-
-            if action == "checkpoint":
-                _save_ralph_checkpoint(
-                    task=task,
-                    max_iterations=max_iterations,
-                    completed_iterations=iteration - 1,
-                    working_directory=working_directory,
-                    notes="Interrupted by user",
-                )
-                emit("")
-                emit("[green]Checkpoint saved![/green]")
-                emit("[dim]Resume with: /ralph --resume[/dim]")
-                emit(f"[dim]Completed {iteration - 1} iteration(s).[/dim]")
-                emit("")
-                return True
+            # The console REPL was removed and the TUI always passes ``on_event``
+            # (handled above), so this path is unreachable in practice. Default to
+            # a clean stop rather than prompting for an action.
+            emit("")
+            emit("[dim]Ralph mode stopped (no interactive UI available).[/dim]")
+            emit(f"[dim]Completed {iteration - 1} iteration(s).[/dim]")
+            emit("")
+            return True
 
         done = iteration - 1
 

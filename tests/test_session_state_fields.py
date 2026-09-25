@@ -17,7 +17,6 @@ CONCRETE_FIELDS = [
     "is_continued",
     "todos",
     "steering_instructions",
-    "use_tui",  # main.py
     "headless",  # main.py, headless/runner.py
     "headless_prompt",
     "headless_output_format",

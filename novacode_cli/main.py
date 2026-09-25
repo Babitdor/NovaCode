@@ -1,26 +1,27 @@
-"""Main entry point and CLI loop for deepagents.
+"""Main entry point and session bootstrap for NovaCode.
 
 This module provides the primary CLI interface for nova-Code CLI, including:
 - Command-line argument parsing and validation
-- Interactive REPL loop for agent conversations
+- Session setup (agent, tools, middleware, backends) and hand-off to the TUI
 - Session management (save, restore, auto-save)
 - Command handling for special CLI commands (/help, /tokens, etc.)
 - Integration with sandbox backends and agent configuration
 - Auto-save functionality for session persistence
 
-The CLI loop handles:
+The interactive UI is the Textual TUI (``novacode_cli.tui``); this module only
+builds the session and launches it. The non-interactive paths are headless mode
+(``-p``), the parallel-session worker, and the remote bridges.
+
+This module's job ends at handing a configured session to the TUI:
 1. Agent initialization with configuration and backends
-2. User input collection via prompt_toolkit
-3. Task execution through the deep agent
-4. Tool approval and human-in-the-loop interaction
-5. Output streaming and UI rendering
-6. Session state management and persistence
+2. Session state management and persistence
+3. Launching the TUI (which owns input, streaming, rendering and approvals)
 
 Key Functions:
 - parse_args(): Parse command-line arguments
 - cli_main(): Main entry point for the CLI
 - main(): Async entry point that sets up the agent and session
-- _run_agent_session(): Execute the interactive CLI loop
+- _run_agent_session(): Build the agent/session, then hand off to the TUI
 """
 
 # Suppress transformer warnings before any imports that might trigger them
@@ -521,8 +522,8 @@ def _is_api_error(e: Exception) -> bool:
 async def _shutdown_background_services(session_state) -> None:
     """Best-effort teardown of background services on exit. Never raises.
 
-    The classic REPL does this in ``_cleanup_and_save_session``; the TUI path
-    needs the same so the Vixie server, managed processes, remote bridges and
+    The TUI does its own session save on exit; this teardown makes sure the
+    Vixie server, managed processes, remote bridges and
     background tasks don't dangle and throw during event-loop teardown (which
     can leave the terminal in a broken state).
     """
@@ -610,10 +611,14 @@ async def _run_agent_session(
     checkpointer: InMemorySaver | None = None,
     restored_session_data: tuple | None = None,
     exec_sandbox: bool = False,
+    model_provider: str | None = None,
 ) -> None:
-    """Helper to create agent and run CLI session.
+    """Build the agent/session for this run, then launch the TUI.
 
-    Extracted to avoid duplication between sandbox and local modes.
+    Not a REPL loop: it does the shared bootstrap (agent, tools, middleware,
+    voice, remote bridges, cron) for both the local and sandbox branches, then
+    ends by calling ``run_tui`` — the TUI is the only interactive UI.
+    Extracted so the sandbox and local modes share one setup path.
 
     Args:
         model: LLM model to use
@@ -627,6 +632,8 @@ async def _run_agent_session(
         initial_messages: Optional messages to inject for session continuation
         session_manager: SessionManager for session persistence
         restored_session_data: Tuple of (session_data, warnings, nova_md_loaded) for continuation
+        model_provider: Provider recorded on the resumed session, so the TUI
+            records that session's provider rather than the global default.
     """
     # Lazy import: core_agent pulls in deepagents (~4s) which we only need once
     # we're actually building the agent, not at CLI startup.
@@ -739,8 +746,8 @@ async def _run_agent_session(
     # Heavy initialization with live animated boot status.
     # The BootAnimation context wraps all boot_status() calls from agent
     # creation, MCP discovery, session restore, and token calculation.
-    # transient=True means the animation disappears cleanly before simple_cli
-    # displays the splash screen.
+    # transient=True means the animation disappears cleanly before the TUI
+    # takes over the terminal.
     from novacode_cli.config.config import BootAnimation
 
     # Apply the filesystem/write_file patches here (not at module import) so
@@ -836,7 +843,7 @@ async def _run_agent_session(
     session_state._console = console
     session_state._composite_backend = composite_backend
     # image_tracker and _seen_message_ids are set on session_state
-    # by simple_cli() since they're not available in this scope
+    # by the TUI (run_tui) since they're not available in this scope
 
     # Initialize remote bridge infrastructure
     # Queue for messages from Discord/Telegram; processed by a background task
@@ -935,7 +942,7 @@ async def _run_agent_session(
 
     # Headless (non-interactive) mode: run the single prompt through the shared
     # event stream, format machine-readable output, auto-save, and exit. Shares
-    # the same agent/backend/session as the TUI and REPL.
+    # the same agent/backend/session as the TUI.
     if getattr(session_state, "headless", False):
         from novacode_cli.headless import run_headless
         from novacode_cli.ui.ui_elements import TokenTracker
@@ -992,6 +999,7 @@ async def _run_agent_session(
             token_tracker=token_tracker,
             image_tracker=ImageTracker(),
             model_name=model_name,
+            model_provider=model_provider,
             session_manager=session_manager,
             restored_messages=_restored_msgs,
             sandbox_id=_tui_sandbox_id,
@@ -1200,16 +1208,32 @@ async def main(
     # surfaced with the other resume warnings.
     session_model = None
     session_model_warning: str | None = None
-    # continue_session is True for the bare --continue flag (meaning "latest"),
-    # so only a concrete id can be looked up here. The bare-flag case is resolved
-    # later by restore_session, which falls back to the global model.
-    if isinstance(continue_session, str):
-        _resume_meta = session_manager.load_session_meta(continue_session)
+    session_provider: str | None = None
+    # Resolve the session id for BOTH forms of continue: a concrete id, and the
+    # bare `--continue` flag (True = "the latest session"). Guarding on
+    # isinstance(str) alone skipped the bare flag, so the common
+    # `nova --continue` never restored its model at all.
+    from novacode_cli.session.session_restore import resolve_resume_session_id
+
+    _resume_session_id = resolve_resume_session_id(
+        continue_session=continue_session,
+        session_manager=session_manager,
+        project_root=settings.get_workspace_root(),
+    )
+
+    if _resume_session_id is not None:
+        _resume_meta = session_manager.load_session_meta(_resume_session_id)
         if _resume_meta is not None:
+            session_provider = getattr(_resume_meta, "model_provider", None)
             session_model, session_model_warning = create_model_for_session(
-                getattr(_resume_meta, "model_provider", None),
+                session_provider,
                 getattr(_resume_meta, "model_name", None),
             )
+            # create_model_for_session returns no model for a legacy session;
+            # keep the recorded provider only when it actually rebuilt one, so a
+            # failed restore never writes a provider the live model is not on.
+            if session_model is None:
+                session_provider = None
 
     if _SQLITE_CHECKPOINTER_AVAILABLE:
         # Run model creation (heavy SDK imports) and checkpointer setup (SQLite
@@ -1358,6 +1382,7 @@ async def main(
                 checkpointer=checkpointer,
                 restored_session_data=restored_session_data,
                 exec_sandbox=(sandbox_type == "os"),
+                model_provider=session_provider,
             )
         except KeyboardInterrupt:
             console.print("\n\n[yellow]Interrupted[/yellow]")
@@ -1466,6 +1491,7 @@ async def main(
                     store=store,
                     checkpointer=checkpointer,
                     restored_session_data=restored_session_data,
+                    model_provider=session_provider,
                 )
 
                 # If this run saved no session (e.g. the user exited immediately
@@ -1934,8 +1960,8 @@ def cli_main() -> None:
                 auto_approve=args.auto_approve,
                 no_splash=args.no_splash or headless_prompt is not None,
             )
-            # TUI is the only interactive UI. Headless mode uses its own path.
-            session_state.use_tui = headless_prompt is None
+            # The TUI is the only interactive UI; `headless` selects the
+            # non-interactive path (see the branch order in main()).
             session_state.headless = headless_prompt is not None
 
             # Parallel-session child. `headless` is reused as the umbrella
@@ -1945,7 +1971,6 @@ def cli_main() -> None:
             # auto_approve is deliberately NOT set: a human IS watching, in the
             # parent, and interrupts are forwarded there for a real decision.
             if getattr(args, "session_worker", False):
-                session_state.use_tui = False
                 session_state.headless = True
                 session_state.worker = True
                 session_state.no_splash = True
