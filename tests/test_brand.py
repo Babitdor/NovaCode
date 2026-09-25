@@ -174,19 +174,41 @@ def _render_rail(monkeypatch: pytest.MonkeyPatch, messages: list[tuple[str, str]
     return sink.getvalue()
 
 
-def test_rail_reaches_100_percent_when_all_phases_report(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The old bar could never reach 100%: 15 declared steps vs ~6 emitted."""
-    out = _render_rail(monkeypatch, _boot_messages(["ok"] * 6))
-    assert "100%" in out, out
+def test_rail_shows_no_percentage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A fraction is not knowable here, so the rail must never render one.
+
+    The previous rail showed ``done/total`` and, because only ``core_agent``
+    emits an unconditional status, that was 0/1 -> a rail pinned at 0% for the
+    whole boot. Any percentage is a lie; the rail reports activity instead.
+    """
+    for levels in (["info"], ["ok"] * 6, ["ok", "ok", "info"]):
+        out = _render_rail(monkeypatch, _boot_messages(levels))
+        assert "%" not in out, out
 
 
-def test_rail_is_proportional_to_observed_phases(monkeypatch: pytest.MonkeyPatch) -> None:
-    """2 of 3 observed phases done -> 67%, not a fraction of a guessed total."""
-    out = _render_rail(monkeypatch, _boot_messages(["ok", "ok", "info"]))
-    assert "67%" in out, out
-    assert "100%" not in out, out
+def test_rail_animates_without_any_status_call() -> None:
+    """The rail must sweep during a silent phase (MCP discovery blocks for seconds).
+
+    This is the regression that the old tests missed: they only ever checked
+    frames built from synthetic multi-phase input, never the single-message
+    frame a real boot actually shows.
+    """
+    from novacode_cli.config.config import BootRail
+
+    rail = BootRail(accent="cyan", start=0.0)
+    frames = {rail.frame(t).plain for t in (0.0, 0.2, 0.4, 0.6, 0.8)}
+    assert len(frames) > 1, frames
+    assert all(len(f) == BootRail.WIDTH for f in frames), frames
+
+
+def test_rail_sweep_wraps_and_is_bounded() -> None:
+    """The highlight stays inside the track at every sampled instant."""
+    from novacode_cli.config.config import BootRail
+
+    rail = BootRail(accent="cyan", start=0.0)
+    for t in [i * 0.05 for i in range(400)]:
+        plain = rail.frame(t).plain
+        assert len(plain) == BootRail.WIDTH, (t, plain)
 
 
 def test_finished_boot_shows_checks_and_no_spinner(monkeypatch: pytest.MonkeyPatch) -> None:

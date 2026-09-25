@@ -1843,9 +1843,18 @@ This file stores your preferences and context that persist across sessions.
         # so lazy discovery would leave ``mcp_middleware.tools`` empty and the
         # MCP tools (serena, playwright, …) would never be registered or callable.
         if not mcp_middleware._tools_discovered:
+            # Report a real completion as well as a start. Before this, only the
+            # start line was emitted, so a SUCCESSFUL discovery left the spinner
+            # sitting on "Nova is launching…" for the rest of the boot — the
+            # longest silent phase looked indistinguishable from a hang.
             try:
-                boot_status("Nova is launching…")
+                servers = len(mcp_middleware.mcp_config.list_servers())
+                boot_status(f"mcp: linking {servers} servers…")
                 mcp_middleware._discover_tools_sync()
+                boot_status(
+                    f"mcp: {len(mcp_middleware.tools)} tools from {servers} servers",
+                    "ok",
+                )
             except Exception as exc:  # noqa: BLE001
                 boot_status(f"mcp: some servers are still at large ({type(exc).__name__})", "warn")
         agent_middleware.insert(3, mcp_middleware)
