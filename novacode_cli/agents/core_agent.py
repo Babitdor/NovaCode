@@ -1962,13 +1962,18 @@ This file stores your preferences and context that persist across sessions.
     from novacode_cli.agents.tool_search import ToolSearchMiddleware
     from novacode_cli.plugins.claude_plugins import plugin_agent_specs
 
-    _plugin_agents = {s["name"] for s in plugin_agent_specs()}
+    from novacode_cli.agents.default_subagents.subagents import RESEARCH_SWARM_AGENTS
+
+    # Plugin agents and the research-swarm personas are both registered in the
+    # graph but kept out of the `task` description. /research names its agents
+    # itself, so listing them every turn is pure overhead.
+    _hidden_agents = {s["name"] for s in plugin_agent_specs()} | RESEARCH_SWARM_AGENTS
     agent_middleware.append(
         ToolSearchMiddleware(
             deferred_subagents={
                 s["name"]: s.get("description", "")
                 for s in subagents
-                if isinstance(s, dict) and s.get("name") in _plugin_agents
+                if isinstance(s, dict) and s.get("name") in _hidden_agents
             }
         )
     )

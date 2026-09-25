@@ -24,6 +24,14 @@ from .prompt import (
     FRONTEND_AGENT,
     BACKEND_AGENT,
     DOCKER_AGENT,
+    # Research-swarm agents (dispatched by /research; see RESEARCH_SWARM_AGENTS)
+    WEB_RESEARCHER,
+    FACT_CHECKER,
+    RESEARCH_SYNTHESIZER,
+    LITERATURE_REVIEWER,
+    MARKET_ANALYST,
+    FINANCIAL_ANALYST,
+    TECHNICAL_RESEARCHER,
 )
 
 AnyTool = BaseTool | Callable[..., Any]
@@ -40,6 +48,23 @@ def _filter_tools(tools: list[AnyTool], names: list[str]) -> list[AnyTool]:
         return tools
     name_set = set(names)
     return [t for t in tools if _tool_name(t) in name_set]
+
+
+#: Registered in the graph but hidden from the ``task`` tool description: only
+#: ``/research`` dispatches them, and it names them itself, so paying ~30 tokens
+#: each on every ordinary turn buys nothing. ``tool_search`` still surfaces them
+#: if the agent goes looking.
+RESEARCH_SWARM_AGENTS = frozenset(
+    {
+        "web-researcher",
+        "fact-checker",
+        "research-synthesizer",
+        "literature-reviewer",
+        "market-analyst",
+        "financial-analyst",
+        "technical-researcher",
+    }
+)
 
 
 def retrieve_core_subagents(
@@ -67,13 +92,21 @@ def retrieve_core_subagents(
         ("frontend-agent", FRONTEND_AGENT),
         ("backend-agent", BACKEND_AGENT),
         ("docker-agent", DOCKER_AGENT),
-        # NOTE: the research-swarm agents (web-researcher, fact-checker,
-        # research-synthesizer, literature-reviewer, market-analyst,
-        # financial-analyst, technical-researcher) were removed from the default
-        # roster. They are niche, unreferenced anywhere in the codebase, and each
-        # one's description is loaded into the `task` tool schema on every turn
-        # (~30 tokens each). The general-purpose agent handles these tasks fine.
-        # Re-add them here if a dedicated research-swarm workflow is built.
+        # Research-swarm agents. These were removed once as "niche, unreferenced
+        # anywhere in the codebase" — but /research references all seven by name
+        # (prompts/research_swarm.jinja), so removing them silently broke that
+        # command: the orchestrator dispatched subagent types the graph no
+        # longer had. They are back, and the token objection that motivated the
+        # removal is answered by RESEARCH_SWARM_AGENTS below: they are registered
+        # in the graph but deferred out of the `task` description, so they cost
+        # nothing per turn and /research can still name them directly.
+        ("web-researcher", WEB_RESEARCHER),
+        ("fact-checker", FACT_CHECKER),
+        ("research-synthesizer", RESEARCH_SYNTHESIZER),
+        ("literature-reviewer", LITERATURE_REVIEWER),
+        ("market-analyst", MARKET_ANALYST),
+        ("financial-analyst", FINANCIAL_ANALYST),
+        ("technical-researcher", TECHNICAL_RESEARCHER),
     ]
 
     subagents: list[SubAgent] = [
