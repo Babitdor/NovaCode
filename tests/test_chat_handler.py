@@ -350,6 +350,106 @@ def test_sse_run_records_and_resets_history(council_server):
     assert ch._council_history == []
 
 
+# ---------------------------------------------------------------------------
+# The user's decision on a round
+# ---------------------------------------------------------------------------
+
+
+def _post_decision(url: str, payload: dict) -> int:
+    """POST a decision to the server and return the status code."""
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(  # noqa: S310 - localhost
+        url + "/api/council/decision",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310
+            return resp.status
+    except urllib.error.HTTPError as exc:
+        return exc.code
+
+
+def test_decision_is_recorded(council_server):
+    """Approving a round is recorded, so the outcome outlives the page."""
+    before = len(ch._council_decisions)
+    status = _post_decision(
+        council_server,
+        {
+            "topic": "Should we use a database?",
+            "decision": "approve",
+            "winner": "The Architect",
+            "winner_id": "architect",
+        },
+    )
+    assert status == 204
+    assert len(ch._council_decisions) == before + 1
+    entry = ch._council_decisions[-1]
+    assert entry["decision"] == "approve"
+    assert entry["topic"] == "Should we use a database?"
+    assert entry["winner"] == "The Architect"
+    # And it is timestamped, so a later reader can order the session.
+    assert isinstance(entry["at"], float)
+
+
+@pytest.mark.parametrize("decision", ["approve", "revise", "reject"])
+def test_every_decision_key_is_accepted(council_server, decision):
+    assert _post_decision(council_server, {"topic": "t", "decision": decision}) == 204
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"topic": "t", "decision": "maybe"},  # not a real decision
+        {"topic": "t"},  # missing decision
+        {"topic": "t", "decision": ""},  # empty decision
+    ],
+)
+def test_unknown_decisions_are_rejected_not_stored(council_server, payload):
+    """A client bug must not fill the record with junk."""
+    before = len(ch._council_decisions)
+    assert _post_decision(council_server, payload) == 400
+    assert len(ch._council_decisions) == before
+
+
+def test_malformed_decision_body_is_rejected(council_server):
+    """Garbage in, 400 out — never a 500, never a stored record."""
+    before = len(ch._council_decisions)
+    req = urllib.request.Request(  # noqa: S310 - localhost
+        council_server + "/api/council/decision",
+        data=b"not json at all",
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310
+            status = resp.status
+    except urllib.error.HTTPError as exc:
+        status = exc.code
+    assert status == 400
+    assert len(ch._council_decisions) == before
+
+
+def test_decisions_are_bounded(council_server):
+    """A long-lived server must not accumulate a decision per round forever."""
+    for _ in range(ch._MAX_KEPT_ROUNDS + 5):
+        _post_decision(council_server, {"topic": "t", "decision": "approve"})
+    assert len(ch._council_decisions) <= ch._MAX_KEPT_ROUNDS
+
+
+def test_reset_clears_decisions_as_well_as_history(council_server):
+    """New session must not leave the previous round's approval behind."""
+    _post_decision(council_server, {"topic": "t", "decision": "approve"})
+    assert ch._council_decisions
+    with urllib.request.urlopen(  # noqa: S310 - localhost
+        council_server + "/api/council/reset", timeout=10
+    ) as resp:
+        assert resp.status == 204
+    assert ch._council_decisions == []
+    assert ch._council_history == []
+
+
 # ── production hardening ─────────────────────────────────────────────────────
 
 

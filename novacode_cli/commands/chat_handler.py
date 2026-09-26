@@ -19,6 +19,7 @@ import queue
 import socket
 import sys
 import threading
+import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -58,6 +59,20 @@ _council_history: list[dict[str, Any]] = []
 # (council._MAX_HISTORY_ROUNDS); a small margin over that lets the UI show a
 # little more scrollback without the list growing without bound.
 _MAX_KEPT_ROUNDS = 12
+
+# The user's verdict on each round: the council recommends, the user settles.
+# Each entry is {"topic", "decision", "winner", "at"} where decision is one of
+# DECISION_KEYS. Bounded like _council_history — a long-lived server would
+# otherwise accumulate one record per round forever. Guarded by _run_lock.
+_council_decisions: list[dict[str, Any]] = []
+
+# The only decisions the server will record. Anything else is a client bug (or
+# something poking the endpoint), and is rejected rather than stored.
+DECISION_KEYS = ("approve", "revise", "reject")
+
+# Refuse absurd bodies outright: this is a localhost endpoint and a decision is
+# four short fields, so a large one is never legitimate.
+_MAX_DECISION_BODY = 8 * 1024
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +255,27 @@ def _make_chat_html() -> str:
   .verdict .winner-answer pre { background: var(--bg) !important; border: 1px solid var(--border);
     border-left: 3px solid var(--accent); padding: 10px 12px; border-radius: 3px; overflow-x: auto; }
 
+  /* your approval — the council recommends, you decide */
+  .approval { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .approval-lead { font-size: 10px; text-transform: uppercase; letter-spacing: .12em;
+    color: var(--muted); margin-bottom: 9px; }
+  .approval-row { display: flex; flex-wrap: wrap; gap: 8px; }
+  .approval-row button { font: inherit; font-size: 11px; padding: 5px 12px; cursor: pointer;
+    background: var(--panel); color: var(--fg); border: 1px solid var(--border);
+    border-radius: 3px; transition: border-color .15s, color .15s, background .15s; }
+  .approval-row button:hover { border-color: var(--primary); background: var(--boost); }
+  .approval-row button[data-decision="approve"] { border-color: var(--success); color: var(--success); }
+  .approval-row button[data-decision="approve"]:hover { background: rgba(115,218,202,.12); }
+  .approval-row button[data-decision="revise"] { border-color: var(--warning); color: var(--warning); }
+  .approval-row button[data-decision="revise"]:hover { background: rgba(224,175,104,.12); }
+  .approval-row button[data-decision="reject"] { border-color: var(--error); color: var(--error); }
+  .approval-row button[data-decision="reject"]:hover { background: rgba(247,118,142,.12); }
+  .approval-state { font-size: 11.5px; display: flex; align-items: center; gap: 8px; }
+  .approval-state[data-decision="approve"] { color: var(--success); }
+  .approval-state[data-decision="revise"] { color: var(--warning); }
+  .approval-state[data-decision="reject"] { color: var(--error); }
+  .approval-note { color: var(--muted); font-size: 10.5px; }
+
   .error-msg { align-self: center; color: var(--error); font-size: 12px; padding: 8px 18px;
     text-align: center; background: rgba(247,118,142,.08); border-radius: 4px;
     border: 1px solid rgba(247,118,142,.25); }
@@ -281,6 +317,11 @@ def _make_chat_html() -> str:
   #status-bar .dot.off { color: var(--muted); }
   #status-bar .spacer { flex: 1; }
   #status-bar .hint { color: var(--muted); }
+  /* The running phase message. Clamped so a long name ("The Skeptic is forming
+     an answer…") cannot push the clock off a narrow window. */
+  .status-msg { flex: 0 1 auto; min-width: 0; max-width: 46vw; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; color: var(--fg); opacity: .85; }
+  .status-msg:empty { display: none; }
 
   /* --- atmosphere --- */
   .scanlines { position: fixed; inset: 0; pointer-events: none; z-index: 9998; opacity: .5;
@@ -343,6 +384,7 @@ def _make_chat_html() -> str:
 </div>
 <div id="status-bar">
   <span id="conn" class="dot off">○ ready</span>
+  <span id="status-msg" class="status-msg"></span>
   <span id="stat-run" class="dot off">○ idle</span>
   <span class="spacer"></span>
   <span class="hint">⏎ send · ⇧⏎ newline</span>
@@ -356,7 +398,6 @@ const $ = id => document.getElementById(id);
 const messages = $('messages');
 const input = $('input');
 const sendBtn = $('send-btn');
-const statusBar = $('status-bar');
 const bench = $('bench');
 let es = null;
 
@@ -366,11 +407,23 @@ let agentMeta = {};     // id -> {name, avatar, color}
 
 const REDUCED = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-function setStatus(m) { statusBar.textContent = m; }
+// The running message lives in its OWN child span. Assigning
+// `statusBar.textContent` here instead would delete every child of the bar —
+// #conn, #stat-run, #clock and all — on the first status update. setRun() then
+// dereferenced the destroyed #stat-run and threw, and because convene() calls
+// setRun(true) *before* `new EventSource(...)`, every follow-up question died
+// before its stream was ever created: text consumed, composer left disabled,
+// nothing rendered. That was the "follow-up chat does nothing" wedge, and a
+// string-grep test for `endRun()` could never have caught it.
+function setStatus(m) { $('status-msg').textContent = m; }
 function setRun(on) {
   $('run-badge').classList.toggle('show', on);
-  $('stat-run').textContent = on ? '● running' : '○ idle';
-  $('stat-run').className = 'dot ' + (on ? 'on' : 'off');
+  // Null-guarded: a status/render helper must never be able to wedge the
+  // composer. This bug shipped twice by throwing from exactly here.
+  const sr = $('stat-run');
+  if (!sr) return;
+  sr.textContent = on ? '● running' : '○ idle';
+  sr.className = 'dot ' + (on ? 'on' : 'off');
 }
 function atBottom() { return messages.scrollHeight - messages.scrollTop - messages.clientHeight < 100; }
 function scrollDown(force) { if (force || atBottom()) messages.scrollTop = messages.scrollHeight; }
@@ -581,8 +634,78 @@ function renderVerdict(ev) {
     ans.innerHTML = marked.parse(ev.answer); highlight(ans);
     card.appendChild(lbl); card.appendChild(ans);
   }
+  card.appendChild(buildApproval(ev));
   messages.appendChild(card);
   scrollDown(true);
+}
+
+/* The council's vote is a recommendation. The round is not settled until you
+   say so, so every verdict ends at this gate — and the composer stays open
+   afterwards, so the session keeps going as a conversation. */
+const DECISIONS = {
+  approve: { mark: '✓', text: 'Settled by you', note: 'recorded as approved' },
+  revise:  { mark: '↻', text: 'Changes requested', note: 'ask below, the council will build on it' },
+  reject:  { mark: '✕', text: 'Rejected', note: 'ask below to try a different angle' },
+};
+
+function buildApproval(ev) {
+  const wrap = el('div', 'approval');
+  const lead = el('div', 'approval-lead');
+  lead.textContent = 'Your decision';
+  wrap.appendChild(lead);
+
+  const row = el('div', 'approval-row');
+  const settle = (decision) => {
+    // One decision per round: freeze the row, then report it to the server so
+    // it outlives this page. A failure to record must not look like a crash.
+    row.remove();
+    const d = DECISIONS[decision];
+    const state = el('div', 'approval-state');
+    state.dataset.decision = decision;
+    const t = el('span'); t.textContent = d.mark + ' ' + d.text;
+    const n = el('span', 'approval-note'); n.textContent = '· ' + d.note;
+    state.appendChild(t); state.appendChild(n);
+    wrap.replaceChildren(lead, state);
+
+    const topic = (lastTopic() || '').replace(/^“|”$/g, '');
+    fetch('/api/council/decision', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        topic: topic,
+        decision: decision,
+        winner: ev.winner_name || '',
+        winner_id: ev.winner_id || '',
+      }),
+    }).catch(() => {
+      const warn = el('div', 'approval-note');
+      warn.textContent = '· (could not reach the server to record this)';
+      state.appendChild(warn);
+    });
+
+    if (decision !== 'approve') { input.focus(); }
+  };
+
+  [['approve', '✓ Approve'], ['revise', '↻ Request changes'], ['reject', '✕ Reject']]
+    .forEach(([d, label]) => {
+      const b = el('button');
+      b.type = 'button';
+      b.dataset.decision = d;
+      b.textContent = label;
+      b.addEventListener('click', () => settle(d));
+      row.appendChild(b);
+    });
+
+  wrap.appendChild(row);
+  return wrap;
+}
+
+/* The topic of the round this verdict belongs to: the banner immediately above
+   it, so a click always reports the right question even with several rounds
+   on screen. */
+function lastTopic() {
+  const banners = messages.querySelectorAll('.topic-banner');
+  return banners.length ? banners[banners.length - 1].textContent : '';
 }
 
 function endRun() {
@@ -702,11 +825,71 @@ class _ChatHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def _reset_history(self) -> None:
-        """Clear the council's cross-round history (start a fresh thread)."""
-        global _council_history
+        """Clear the council's cross-round history and decisions (fresh thread)."""
+        global _council_history, _council_decisions
         with _run_lock:
             _council_history = []
+            _council_decisions = []
         self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+
+    def do_POST(self):
+        """Record the user's decision on a round."""
+        parsed = urlparse(self.path)
+        if parsed.path != "/api/council/decision":
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        self._record_decision()
+
+    def _record_decision(self) -> None:
+        """Store one ``{"topic", "decision", ...}`` decision, bounded.
+
+        Best-effort and never fatal: the page has already rendered the settled
+        state locally, so a rejected write is a lost record, not a broken UI.
+        """
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            length = 0
+        if length <= 0 or length > _MAX_DECISION_BODY:
+            self._decision_reply(400)
+            return
+
+        try:
+            raw = self.rfile.read(length)
+            payload = json.loads(raw.decode("utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            self._decision_reply(400)
+            return
+        if not isinstance(payload, dict):
+            self._decision_reply(400)
+            return
+
+        decision = str(payload.get("decision") or "")
+        if decision not in DECISION_KEYS:
+            self._decision_reply(400)
+            return
+
+        entry = {
+            "topic": str(payload.get("topic") or "")[:500],
+            "decision": decision,
+            "winner": str(payload.get("winner") or "")[:200],
+            "winner_id": str(payload.get("winner_id") or "")[:100],
+            "at": time.time(),
+        }
+        global _council_decisions
+        with _run_lock:
+            _council_decisions.append(entry)
+            if len(_council_decisions) > _MAX_KEPT_ROUNDS:
+                del _council_decisions[:-_MAX_KEPT_ROUNDS]
+        self._decision_reply(204)
+
+    def _decision_reply(self, status: int) -> None:
+        self.send_response(status)
+        self.send_header("Content-Length", "0")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
 
@@ -981,7 +1164,7 @@ def stop_chat_server() -> bool:
     Returns:
         True if the server was stopped, False if it wasn't running.
     """
-    global _server, _server_thread, _server_port, _council_history
+    global _server, _server_thread, _server_port, _council_history, _council_decisions
 
     if _server is None:
         return False
@@ -992,6 +1175,7 @@ def stop_chat_server() -> bool:
     _server_thread = None
     _server_port = None
     _council_history = []
+    _council_decisions = []
     return True
 
 
