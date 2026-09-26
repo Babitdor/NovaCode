@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 from rich.markdown import Markdown
 from rich.markup import escape as _esc
 from rich.text import Text
-from textual import events, work
+from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.color import Color
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -80,6 +80,7 @@ from novacode_cli.tui.widgets import (
     MatrixRain,
     NovaStatusBar,
     PromptInput,
+    QuestionDock,
     SessionHeader,
     TranscriptScroll,
     TuiInitRenderer,
@@ -971,6 +972,57 @@ class NovaApp(App):
     #todo-dock:hover { background: $boost; }
     /* Collapsed: just the one-line summary header. */
     #todo-dock.collapsed { max-height: 1; overflow-y: hidden; }
+    /* --- Question dock: the ask_user_question answer list, docked above the
+       input rather than pushed as a modal, so the transcript stays visible and
+       the footer keeps one layout. Same show/hide shape as #todo-dock.
+       Colour comes from classes, not markup: the option rows are plain Static
+       children, so an option containing '[' cannot be parsed as markup. --- */
+    #question-dock {
+        display: none;
+        height: auto;
+        padding: 0 2;
+        background: $surface;
+    }
+    #question-dock.active { display: block; }
+    #question-context {
+        height: auto;
+        color: $text-muted;
+    }
+    #question-text {
+        height: auto;
+        color: $text;
+        padding-bottom: 1;
+    }
+    /* Clamped so a long question cannot eat the transcript; scrolls inside. */
+    #question-options {
+        height: auto;
+        max-height: 14;
+        overflow-y: auto;
+    }
+    #question-options.hidden { display: none; }
+    .question-option { height: auto; }
+    /* Selected row: a dark band plus the accent label. No border — the row
+       highlight and the colour are the whole affordance.
+       $panel, not $boost: $boost resolves to transparent in this app's theme
+       (measured #00000000), so a $boost band would be invisible. $panel is the
+       next step up from the dock's $surface. */
+    .question-option.selected { background: $panel; }
+    .question-option .q-label { color: $text; }
+    .question-option.selected .q-label {
+        color: $accent;
+        text-style: bold;
+    }
+    .question-option .q-desc {
+        color: $text-muted;
+        padding-left: 4;
+    }
+    #question-input { display: none; }
+    #question-input.active { display: block; }
+    /* The legend carries its own two tones via Content spans, so no colour rule
+       here — a color: would be overridden by the inline styles anyway. */
+    #question-hints {
+        height: 1;
+    }
     #tasks-bar {
         display: none;
         height: 1;
@@ -1234,6 +1286,7 @@ class NovaApp(App):
         super().__init__()
         self.agent = agent
         self.assistant_id = assistant_id
+        self._question_future: asyncio.Future | None = None
         self.session_state = session_state
         self.backend = backend
         self.token_tracker = token_tracker
@@ -1467,6 +1520,11 @@ class NovaApp(App):
                 # Text cannot right-align itself.
                 yield Static("", id="prompt-hint-bar")
                 yield Static("", id="status-counts")
+            # The ask_user_question answer list. Docked here rather than pushed
+            # as a modal so the transcript stays visible and the footer keeps
+            # one layout; hidden until a question arrives. Sits directly above
+            # the input, which is where the eye already is.
+            yield QuestionDock(id="question-dock")
             with Horizontal(id="prompt-row"):
                 yield Static("> ", id="prompt-prefix")
                 yield PromptInput(
@@ -2104,8 +2162,9 @@ class NovaApp(App):
 
     async def _prompt_new_session(self) -> None:
         """Ctrl+N: ask for a name + task, then spawn."""
-        from novacode_cli.tui.screens import QuestionModal
-
+        # QuestionModal comes from the module-level re-export above: the
+        # ask_user_question path was the only user of a local re-import, and
+        # keeping it shadowed the re-export (ruff F811).
         answer = await self.push_screen_wait(
             QuestionModal(
                 {
@@ -10370,6 +10429,54 @@ class NovaApp(App):
 
         return {"response": QuestionResponse(answer=answer, selected_index=selected)}
 
+    @on(QuestionDock.Answered)
+    def _on_question_answered(self, message: QuestionDock.Answered) -> None:
+        """Resolve the pending question with the option the user chose."""
+        from novacode_cli.ui.question_prompt import QuestionResponse
+
+        self._resolve_question(
+            {
+                "response": QuestionResponse(
+                    answer=message.answer, selected_index=message.selected_index
+                )
+            }
+        )
+
+    @on(QuestionDock.Dismissed)
+    def _on_question_dismissed(self, _message: QuestionDock.Dismissed) -> None:
+        """Escape dismisses the question only — the turn keeps running."""
+        from novacode_cli.ui.question_prompt import QuestionResponse
+
+        self._resolve_question({"response": QuestionResponse(answer="", selected_index=None)})
+
+    def _resolve_question(self, result: dict) -> None:
+        future = self._question_future
+        if future is not None and not future.done():
+            future.set_result(result)
+
+    async def _show_question_dock(self, payload: object) -> dict:
+        """Show the docked answer list and await the user's answer.
+
+        The dock is already mounted inside ``#prompt-dock``; this fills it,
+        reveals it, and waits for the ``Answered``/``Dismissed`` message the
+        widget posts. A docked widget is not a screen, so there is no
+        ``push_screen_wait`` to block on — hence the explicit future.
+
+        Returns:
+            The same ``{"response": QuestionResponse}`` shape ``QuestionModal``
+            produced, so the tool and the remote bridge are unaffected.
+        """
+        dock = self.query_one("#question-dock", QuestionDock)
+        self._question_future = asyncio.get_running_loop().create_future()
+        dock.activate(payload if isinstance(payload, dict) else {})
+        try:
+            return await self._question_future
+        finally:
+            self._question_future = None
+            dock.deactivate()
+            # Hand focus back, or the prompt stays dead to the keyboard.
+            self.query_one("#prompt", PromptInput).focus()
+
     async def _handle_interrupt(self, e: "ev.InterruptRequest") -> None:
         # Resolve in a finally so a handler that raises before set_result fails
         # closed (reject) instead of leaving the agent loop awaiting forever.
@@ -10470,7 +10577,7 @@ class NovaApp(App):
             if self._remote_msg is not None:
                 result = await self._ask_remote_question(e.payload)
             else:
-                result = await self.push_screen_wait(QuestionModal(e.payload))
+                result = await self._show_question_dock(e.payload)
             e.future.set_result(result)
         elif e.kind == "plan":
             body: Any = "Review the plan and approve to proceed."

@@ -33,24 +33,63 @@ _auto_approve_var: contextvars.ContextVar[bool] = contextvars.ContextVar(
 # ---------------------------------------------------------------------------
 
 
+def _option_parts(raw: list[str | dict[str, Any]]) -> list[tuple[str, str, str]]:
+    """Each option as a ``(label, description, value)`` triple.
+
+    Single source of truth for both wire formats below, so a rich UI's
+    structured view and the flat view every other surface receives cannot drift.
+    """
+    parts: list[tuple[str, str, str]] = []
+    for opt in raw:
+        if isinstance(opt, dict):
+            label = str(opt.get("label") or opt.get("value") or opt)
+            description = str(opt.get("description") or "")
+            value = str(opt.get("value") or label)
+        else:
+            label = description = value = str(opt)
+        parts.append((label, description, value))
+    return parts
+
+
+def _display(label: str, description: str) -> str:
+    """The one-line form shown by the console renderer and the remote bridges."""
+    return f"{label} — {description}" if description else label
+
+
 def _normalize_options(
     raw: list[str | dict[str, Any]],
 ) -> tuple[list[str], dict[str, str]]:
     """Normalise options to display strings and build a label→value mapping."""
     display_options: list[str] = []
     value_map: dict[str, str] = {}
-    for opt in raw:
-        if isinstance(opt, dict):
-            label = str(opt.get("label") or opt.get("value") or opt)
-            description = opt.get("description", "")
-            display = f"{label} — {description}" if description else label
-            return_value = str(opt.get("value") or label)
-        else:
-            display = str(opt)
-            return_value = str(opt)
+    for label, description, value in _option_parts(raw):
+        display = _display(label, description)
         display_options.append(display)
-        value_map[display] = return_value
+        value_map[display] = value
     return display_options, value_map
+
+
+def _structured_choices(raw: list[str | dict[str, Any]]) -> list[dict[str, str]]:
+    """Structured option rows for a UI that lays the description out separately.
+
+    ``_normalize_options`` flattens a label and its description into a single
+    string, which a rich TUI cannot split apart again. This is additive: the
+    flat ``options`` list stays the wire format for the console renderer and the
+    remote bridges, and ``display`` is the exact string the flat form carries so
+    both surfaces resolve through the same ``value_map``.
+
+    Absent, a UI falls back to the flat strings: the remote bridges, the cowork
+    server and any older caller send only ``options``.
+    """
+    return [
+        {
+            "label": label,
+            "description": description,
+            "value": value,
+            "display": _display(label, description),
+        }
+        for label, description, value in _option_parts(raw)
+    ]
 
 
 @tool
@@ -81,6 +120,7 @@ def ask_user_question(
     request: dict[str, Any] = {
         "question": question,
         "options": display_options,
+        "choices": _structured_choices(options),
         "question_type": "structured",
     }
     if context:

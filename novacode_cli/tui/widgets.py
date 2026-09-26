@@ -19,6 +19,7 @@ from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.content import Content
 from textual.css.query import NoMatches
 from textual.strip import Strip
 from textual.selection import Selection
@@ -1143,6 +1144,292 @@ class PromptInput(TextArea):
                 self._on_large_paste(self._active_paste_ph, len(full))
         self._active_paste_id = None
         self._active_paste_ph = ""
+
+
+# ---------------------------------------------------------------------------
+# Question dock — keyboard-first answer picker for ask_user_question
+# ---------------------------------------------------------------------------
+
+#: Label of the always-present final row: answer in free text instead.
+CUSTOM_ANSWER_LABEL = "Type your own answer"
+
+#: Keyboard legend: the key names brighter than their explanations, matching the
+#: footer style. Assembled as ``Content`` rather than a markup string because a
+#: plain ``str`` handed to ``Static`` is parsed as markup, and markup rejects a
+#: ``$variable`` style value (it raised "Expected markup value"). No user text is
+#: interpolated, so this stays a literal.
+_HINTS = Content.assemble(
+    ("↑↓", "$text"),
+    (" select    ", "$text-muted"),
+    ("enter", "$text"),
+    (" confirm    ", "$text-muted"),
+    ("esc", "$text"),
+    (" dismiss", "$text-muted"),
+)
+
+
+def _choices_from(payload: dict[str, Any]) -> list[dict[str, str]]:
+    """Answer rows from an ``ask_user_question`` interrupt payload.
+
+    Prefers the structured ``choices`` list and falls back to the flat
+    ``options`` strings, which is all the remote bridges, the cowork server and
+    any older caller send. ``display`` is the answer to hand back: it is the
+    exact string the flat form carries, so the tool's ``value_map`` resolves a
+    selection from any surface the same way.
+    """
+    raw = payload.get("choices")
+    if isinstance(raw, list) and raw:
+        rows: list[dict[str, str]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("label") or item.get("value") or "")
+            if not label:
+                continue
+            rows.append(
+                {
+                    "label": label,
+                    "description": str(item.get("description") or ""),
+                    "display": str(item.get("display") or label),
+                }
+            )
+        if rows:
+            return rows
+    return [
+        {"label": str(opt), "description": "", "display": str(opt)}
+        for opt in (payload.get("options") or [])
+    ]
+
+
+class QuestionDock(Vertical):
+    """A docked, keyboard-first answer list for an ``ask_user_question`` interrupt.
+
+    Lives inside ``#prompt-dock`` and is revealed by :meth:`activate` instead of
+    being pushed as a screen, so the transcript stays visible and the footer
+    keeps a single layout. The agent keeps running underneath; only the dock
+    takes the keyboard while a question is open.
+
+    Rows are plain ``Static`` children coloured by CSS classes. Nothing is built
+    from a markup string, so an option containing ``[`` cannot be parsed as
+    markup and crash the render — the hazard ``QuestionModal`` had to work
+    around by building a ``Text``.
+
+    The result is announced as an :class:`Answered` or :class:`Dismissed`
+    message rather than returned, because a docked widget is not a screen and
+    has no ``dismiss``.
+    """
+
+    #: Focus is *dynamic*, not static. A permanently focusable widget inside
+    #: ``#prompt-dock`` competes with ``#prompt`` for the initial focus and
+    #: silently broke the ``/wiki`` path (measured: ``test_tui_wiki_screen``
+    #: passes with this False, fails with it True). So the dock is only a focus
+    #: stop while a question is actually open — see :meth:`activate`.
+    can_focus = False
+
+    class Answered(Message):
+        """The user confirmed an answer."""
+
+        def __init__(self, answer: str, selected_index: int | None) -> None:
+            """Record the answer and where it came from.
+
+            Args:
+                answer: The answer to hand back to the tool.
+                selected_index: Position among the listed options, or ``None``
+                    for a free-text answer.
+            """
+            super().__init__()
+            self.answer = answer
+            self.selected_index = selected_index
+
+    class Dismissed(Message):
+        """The user dismissed the question instead of answering."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        """Build an inert, empty dock; :meth:`activate` fills it."""
+        # **kwargs so compose() can pass id=/classes= through to Widget.
+        super().__init__(**kwargs)
+        self._choices: list[dict[str, str]] = []
+        self._rows: list[Vertical] = []
+        self._index = 0
+        self._custom = False
+
+    def compose(self) -> ComposeResult:
+        """Build the dock once; :meth:`populate` fills and rebuilds the rows."""
+        yield Static("", id="question-context")
+        yield Static("", id="question-text")
+        yield Vertical(id="question-options")
+        yield Input(placeholder="Type your answer…", id="question-input")
+        yield Static(_HINTS, id="question-hints")
+
+    # ── show / hide ────────────────────────────────────────────────────────
+
+    def activate(self, payload: dict[str, Any]) -> None:
+        """Fill the dock, reveal it, and hand it the keyboard."""
+        self.populate(payload)
+        self.can_focus = True
+        self.add_class("active")
+        self.focus()
+
+    def deactivate(self) -> None:
+        """Hide the dock and stop it competing for focus again."""
+        self.remove_class("active")
+        self.can_focus = False
+        self._custom = False
+
+    # ── populating ─────────────────────────────────────────────────────────
+
+    def populate(self, payload: dict[str, Any]) -> None:
+        """Fill the dock from an interrupt payload and select the first row."""
+        payload = payload or {}
+        self._choices = _choices_from(payload)
+        self._index = 0
+        self._custom = False
+
+        context = str(payload.get("context") or "")
+        ctx_row = self.query_one("#question-context", Static)
+        ctx_row.display = bool(context)
+        ctx_row.update(Text(context))
+
+        question = str(payload.get("question") or payload.get("prompt") or "")
+        self.query_one("#question-text", Static).update(Text(question))
+
+        self.query_one("#question-options", Vertical).remove_class("hidden")
+        field = self.query_one("#question-input", Input)
+        field.remove_class("active")
+        field.value = ""
+        self._build_rows()
+
+    def _make_row(self, number: int, label: str, description: str) -> Vertical:
+        """One option: the numbered label, with its description indented below."""
+        children: list[Static] = [Static(Text(f"{number}. {label}"), classes="q-label")]
+        if description:
+            children.append(Static(Text(description), classes="q-desc"))
+        return Vertical(*children, classes="question-option")
+
+    def _build_rows(self) -> None:
+        container = self.query_one("#question-options", Vertical)
+        container.remove_children()
+        rows = [
+            self._make_row(n, choice["label"], choice["description"])
+            for n, choice in enumerate(self._choices, start=1)
+        ]
+        # The free-text row lives here, not in the tool: ask_user_question's
+        # docstring promises an automatic "Other" option but never adds one, so
+        # the widget owns it and every surface gets it.
+        rows.append(
+            self._make_row(
+                len(self._choices) + 1,
+                CUSTOM_ANSWER_LABEL,
+                "Skip the list and answer in your own words.",
+            )
+        )
+        self._rows = rows
+        container.mount(*rows)
+        self._sync_selection()
+
+    def _sync_selection(self) -> None:
+        for i, row in enumerate(self._rows):
+            row.set_class(i == self._index, "selected")
+        if 0 <= self._index < len(self._rows):
+            # Keeps the highlighted row visible when the list overflows.
+            self._rows[self._index].scroll_visible()
+
+    @property
+    def _on_custom_row(self) -> bool:
+        return self._index == len(self._choices)
+
+    def _move(self, delta: int) -> None:
+        if not self._rows:
+            return
+        self._index = (self._index + delta) % len(self._rows)
+        self._sync_selection()
+
+    # ── custom answer ──────────────────────────────────────────────────────
+
+    def _begin_custom(self) -> None:
+        """Swap the list for the inline free-text field.
+
+        No seed character: assigning ``Input.value`` selects the whole string
+        (applied asynchronously, so it lands after any synchronous collapse) and
+        the next keystroke then *replaces* rather than appends — measured,
+        typing "use" one key at a time yielded "se". Typing therefore starts
+        from an empty field, after the user has chosen this row, which is also
+        what the reference interaction describes.
+        """
+        self._custom = True
+        self.query_one("#question-options", Vertical).add_class("hidden")
+        field = self.query_one("#question-input", Input)
+        field.add_class("active")
+        field.focus()
+
+    def _return_to_list(self) -> None:
+        """Back out of the free-text field and refocus the list."""
+        self._custom = False
+        field = self.query_one("#question-input", Input)
+        field.remove_class("active")
+        field.value = ""
+        self.query_one("#question-options", Vertical).remove_class("hidden")
+        self.focus()
+
+    def _confirm(self) -> None:
+        if not self._rows:
+            return
+        if self._on_custom_row:
+            self._begin_custom()
+            return
+        self.post_message(self.Answered(self._choices[self._index]["display"], self._index))
+
+    # ── keys ───────────────────────────────────────────────────────────────
+
+    def on_key(self, event: events.Key) -> None:
+        """Own up/down/enter/escape while the list has focus.
+
+        Every branch stops the event *and* calls ``prevent_default``. The app
+        binds escape to ``cancel_turn`` (see ``NovaApp.BINDINGS``), so without
+        both, dismissing a question would cancel the whole turn.
+        """
+        key = event.key
+
+        if self._custom:
+            if key == "escape":
+                event.stop()
+                event.prevent_default()
+                self._return_to_list()
+            return
+
+        if key in ("up", "down"):
+            event.stop()
+            event.prevent_default()
+            self._move(-1 if key == "up" else 1)
+        elif key == "enter":
+            event.stop()
+            event.prevent_default()
+            self._confirm()
+        elif key == "escape":
+            event.stop()
+            event.prevent_default()
+            self.post_message(self.Dismissed())
+        elif key.isdigit() and key != "0":
+            # Direct pick, keeping the affordance QuestionModal had. A digit that
+            # lands on the custom row only moves the selection; the next enter
+            # opens the field.
+            index = int(key) - 1
+            if index < len(self._rows):
+                self._index = index
+                self._sync_selection()
+                if not self._on_custom_row:
+                    self._confirm()
+        # Printable letters are deliberately ignored here: free text is entered
+        # after choosing the "Type your own answer" row, so a stray keystroke on
+        # the list cannot silently discard the options.
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Answer with the typed text, or fall back to the list if it is empty."""
+        text = event.value.strip()
+        if not text:
+            self._return_to_list()
+            return
+        self.post_message(self.Answered(text, None))
 
 
 class TuiInitRenderer:
