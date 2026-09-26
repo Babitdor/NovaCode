@@ -7406,6 +7406,67 @@ class NovaApp(App):
             except Exception:  # noqa: BLE001
                 pass
 
+        # Restore the resumed session's own model, the way the `--continue`
+        # startup path does. Without this the agent kept running on whatever
+        # model the *previous* conversation was using, so the picker at the top
+        # of this command showed the session's recorded model while the chat
+        # quietly ran on a different one -- and the next autosave overwrote the
+        # recorded model with the live one, losing the session's original
+        # model for good.
+        #
+        # Non-fatal by design: a model that cannot be rebuilt must never abort
+        # the resume. Losing the conversation over a missing API key would be
+        # strictly worse than continuing on the current model, so every failure
+        # below falls through and says why.
+        resumed_provider = getattr(session_data.meta, "model_provider", None)
+        if resumed_provider:
+            try:
+                from novacode_cli.config.model_create import create_model_for_session
+
+                resumed_model, model_warning = create_model_for_session(
+                    resumed_provider,
+                    getattr(session_data.meta, "model_name", None),
+                )
+                if resumed_model is not None:
+                    # switch_model() takes only the model: it reads session_id
+                    # off session_state, which is already resumed_id from the
+                    # reset above, so hook dispatch attributes the rebuilt
+                    # agent to the resumed session.
+                    new_agent, new_backend = await self.session_state.switch_model(
+                        resumed_model,
+                    )
+                    self.agent = new_agent
+                    self.backend = new_backend
+                    self.model_name = (
+                        getattr(resumed_model, "model_name", None)
+                        or getattr(resumed_model, "model", None)
+                        or self.model_name
+                    )
+                    # Keep the recorded provider in step with the live model, so
+                    # the next save records the model we actually switched to
+                    # rather than the one we just replaced.
+                    self._model_provider = resumed_provider
+                    if self.token_tracker is not None:
+                        try:
+                            self.token_tracker.set_model(self.model_name)
+                        except Exception:  # noqa: BLE001
+                            pass
+                    self._log(
+                        Text(
+                            f"✓ Restored session model "
+                            f"{resumed_provider}:{self.model_name}.",
+                            style="green",
+                        )
+                    )
+                elif model_warning:
+                    # (None, warning): the session recorded a model that cannot
+                    # be rebuilt now. Warn and keep the current one.
+                    warnings.append(model_warning)
+            except Exception as exc:  # noqa: BLE001
+                self._log(Text(f"Model restore failed: {exc}", style="red"))
+        # (None, None) is a legacy session that predates provider recording:
+        # nothing to restore, so no warning and no wasted agent rebuild.
+
         # Seed the fresh thread with the continuation history.
         config = {"configurable": {"thread_id": self.session_state.thread_id}}
         try:
