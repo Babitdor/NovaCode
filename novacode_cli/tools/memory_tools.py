@@ -13,9 +13,26 @@ so the LLM sees consistent path formatting regardless of the OS.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from langchain.tools import tool
+from pydantic import WithJsonSchema
+
+#: ``memory_type`` accepts ``"user"`` or ``"project"``. The JSON schema still
+#: advertises that enum (it is what the model reads), but validation is a plain
+#: ``str``: when a virtual ``path`` is supplied it alone determines the file, so
+#: a guessed value like ``"topic"`` — which the model does send for a topic file
+#: under ``/memories/memories/`` — must not hard-fail the whole call before the
+#: tool body can ignore it. The no-path case is validated inside
+#: :func:`_resolve_memory_path` and returns a helpful ``success: False`` dict.
+MemoryType = Annotated[
+    str, WithJsonSchema({"type": "string", "enum": ["user", "project"]})
+]
+
+
+def _normalize_memory_type(memory_type: str | None) -> str:
+    """Lower-case/trim a memory type; unknown values pass through for validation."""
+    return (memory_type or "user").strip().lower()
 
 
 def _resolve_memory_path(
@@ -25,7 +42,8 @@ def _resolve_memory_path(
     """Resolve a memory type and optional path to real and virtual paths.
 
     Args:
-        memory_type: "user" or "project".
+        memory_type: "user" or "project". Ignored when *path* is a virtual path
+            (the path is authoritative); validated only for the no-path default.
         path: Optional custom path. If it starts with "/", it's treated as
             a virtual path and resolved to a real path. Otherwise, it's
             treated as a real filesystem path.
@@ -34,13 +52,16 @@ def _resolve_memory_path(
         Tuple of (real_path, virtual_path).
 
     Raises:
-        ValueError: If memory_type is invalid or path cannot be resolved.
+        ValueError: If memory_type is invalid (and no path was given) or path
+            cannot be resolved.
     """
     from novacode_cli.config.config import MAIN_AGENT_ID, settings
     from novacode_cli.utils.backend_paths import virtual_to_real_path
 
     if path and path.startswith("/"):
-        # Virtual path — resolve to real path.
+        # Virtual path — resolve to real path. This is authoritative, so an
+        # out-of-enum memory_type (e.g. the model's "topic" for a topic file)
+        # is harmless and deliberately not validated here.
         real_path = virtual_to_real_path(
             path,
             agent_id=MAIN_AGENT_ID,
@@ -63,24 +84,33 @@ def _resolve_memory_path(
         )
         return real_path, virtual or str(real_path)
 
-    # Default paths based on memory_type.
-    if memory_type == "user":
+    # Default paths based on memory_type. Validated only here — a path is the
+    # only way to name a topic file, so without one the type must be exact.
+    normalized = _normalize_memory_type(memory_type)
+    if normalized == "user":
         agent_dir = settings.get_agent_dir(MAIN_AGENT_ID)
         real_path = agent_dir / "agent.md"
         return real_path, "/memories/agent.md"
 
-    # memory_type == "project"
-    if not settings.project_root:
-        msg = "Not in a project directory. Use memory_type='user' for user memory."
-        raise ValueError(msg)
-    real_path = settings.project_root / ".nova" / "NOVA.md"
-    return real_path, "/project-memory/NOVA.md"
+    if normalized == "project":
+        if not settings.project_root:
+            msg = "Not in a project directory. Use memory_type='user' for user memory."
+            raise ValueError(msg)
+        real_path = settings.project_root / ".nova" / "NOVA.md"
+        return real_path, "/project-memory/NOVA.md"
+
+    msg = (
+        f"Invalid memory_type: {memory_type!r}. Use 'user' or 'project'. "
+        "To read a topic file, pass its path, e.g. "
+        "path='/memories/memories/<topic>.md'."
+    )
+    raise ValueError(msg)
 
 
 @tool
 def write_memory(
     content: str,
-    memory_type: Literal["user", "project"] = "user",
+    memory_type: MemoryType = "user",
     path: str | None = None,
     append: bool = False,
 ) -> dict[str, Any]:
@@ -102,8 +132,9 @@ def write_memory(
 
     Args:
         content: Memory content to write (Markdown format recommended)
-        memory_type: "user" for user preferences (applies to all projects),
-                    "project" for project-specific context
+        memory_type: Must be "user" or "project" — "user" for user preferences
+                    (applies to all projects), "project" for project-specific
+                    context. Ignored when ``path`` is a virtual path.
         path: Optional custom path. Supports virtual paths:
             - /memories/agent.md (user memory)
             - /memories/memories/preferences.md (advanced structure)
@@ -132,6 +163,7 @@ def write_memory(
     """
 
     # Resolve memory path (both real and virtual).
+    memory_type = _normalize_memory_type(memory_type)
     try:
         memory_path, virtual_path = _resolve_memory_path(memory_type, path)
     except ValueError as e:
@@ -196,7 +228,7 @@ def write_memory(
 
 @tool
 def read_memory(
-    memory_type: Literal["user", "project"] = "user",
+    memory_type: MemoryType = "user",
     path: str | None = None,
 ) -> dict[str, Any]:
     r"""Read agent memory file to see what the agent remembers.
@@ -205,7 +237,10 @@ def read_memory(
     updating it or when the user asks "what do you remember?"
 
     Args:
-        memory_type: "user" for user preferences, "project" for project context
+        memory_type: Must be "user" or "project" — "user" for user preferences,
+                    "project" for project context. Ignored when ``path`` is a
+                    virtual path (use "user" to read any ``/memories/`` file,
+                    including a topic file under ``/memories/memories/``).
         path: Optional custom path. Supports virtual paths:
             - /memories/agent.md (user memory)
             - /memories/memories/preferences.md (advanced structure)
@@ -226,6 +261,7 @@ def read_memory(
     """
 
     # Resolve memory path (both real and virtual).
+    memory_type = _normalize_memory_type(memory_type)
     try:
         memory_path, virtual_path = _resolve_memory_path(memory_type, path)
     except ValueError as e:

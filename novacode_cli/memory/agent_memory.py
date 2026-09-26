@@ -23,13 +23,23 @@ from langchain.agents.middleware.types import (
 )
 
 # from langgraph.runtime import Runtime
+from langchain_core.tools import StructuredTool
+
 from novacode_cli.config.config import Settings
-from novacode_cli.memory.limits import MAX_MEMORY_CHARS, memory_budget
+from novacode_cli.memory.limits import (
+    DEFAULT_MEMORY_BLOCK_CHARS,
+    DEFAULT_MEMORY_INDEX_CHARS,
+    memory_budget,
+)
 from novacode_cli.prompts import render_template
 
 # Injection-time truncation keeps the file *head* (newest, given memory files are
 # written newest-first — see novacode_cli/memory/limits.py for the invariant).
 _MEMORY_TRUNCATION_NOTICE = "\n\n... [memory truncated — use read_file for full content]"
+#: The index is a pointer list; the tail is reachable via ``memory_search``.
+_INDEX_TRUNCATION_NOTICE = (
+    "\n\n... [index truncated — `memory_search` finds the rest]"
+)
 
 # Per-turn memory retrieval tunables.
 _MAX_RETRIEVED_MEMORIES = 3  # top-K topic bodies injected per turn
@@ -141,7 +151,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
     #: Per-block injection budget. Overwritten per instance in ``__init__``
     #: from the model's window; the class default keeps ``_cap`` working for
     #: instances built without it.
-    _max_chars: int = MAX_MEMORY_CHARS
+    _max_chars: int = DEFAULT_MEMORY_BLOCK_CHARS
 
     def __init__(
         self,
@@ -152,6 +162,8 @@ class AgentMemoryMiddleware(AgentMiddleware):
         skip_project_memory: bool = False,
         backend: Any = None,
         context_window: int = 0,
+        memory_block_chars: int | None = None,
+        memory_index_chars: int | None = None,
     ) -> None:
         """Initialize the agent memory middleware.
 
@@ -168,9 +180,16 @@ class AgentMemoryMiddleware(AgentMiddleware):
                 of the local filesystem.
             context_window: The bound model's window in tokens, used to size the
                 per-block injection budget. 0 keeps the fixed legacy cap.
+            memory_block_chars: Per-block injection ceiling (agent.md, INDEX,
+                HABITS, project memory). Defaults to the configured budget.
+            memory_index_chars: Chars of the topic index injected; the rest is
+                reachable via ``memory_search``.
         """
         self.settings = settings
-        self._max_chars = memory_budget(context_window)
+        self._max_chars = memory_budget(
+            context_window, cap=memory_block_chars or DEFAULT_MEMORY_BLOCK_CHARS
+        )
+        self._index_chars = memory_index_chars or DEFAULT_MEMORY_INDEX_CHARS
         self.assistant_id = assistant_id
         self.skip_project_memory = skip_project_memory
         self._backend = backend
@@ -212,6 +231,22 @@ class AgentMemoryMiddleware(AgentMiddleware):
         self._corpus_sig: tuple[int, float] | None = None
         self._retrieval_cache: tuple[str, str] | None = None
 
+        # Progressive disclosure for topic memory: the system prompt carries only
+        # a small slice of INDEX.md, and this tool finds the rest (and the topic
+        # bodies) on demand. Registered like ``skills_search``.
+        self.tools = [
+            StructuredTool.from_function(
+                coroutine=self._memory_search,
+                name="memory_search",
+                description=(
+                    "Search your long-term topic memory (cross-session decisions, "
+                    "facts and lessons) by what you are trying to recall. Returns "
+                    "the best-matching topics with the `/memories/memories/<topic>.md` "
+                    "path to read for full detail."
+                ),
+            )
+        ]
+
     def _get_file_mtime(self, path: Path) -> float | None:
         """Get modification time for a file, or None if it doesn't exist."""
         try:
@@ -245,6 +280,17 @@ class AgentMemoryMiddleware(AgentMiddleware):
         if len(content) <= self._max_chars:
             return content
         return content[: self._max_chars] + _MEMORY_TRUNCATION_NOTICE
+
+    def _cap_index(self, content: str) -> str:
+        """Truncate the injected topic index to its own (smaller) budget.
+
+        The index is a pointer list, so a small slice orients the agent and
+        ``memory_search`` finds the rest — instead of paying for ~100k chars of
+        pointers on every turn.
+        """
+        if len(content) <= self._index_chars:
+            return content
+        return content[: self._index_chars] + _INDEX_TRUNCATION_NOTICE
 
     def _read_file(self, path: Path) -> str | None:
         """Read file content from backend or local filesystem.
@@ -437,7 +483,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
         if needs_reload or "memory_index" not in state:
             index_content = self._read_file(index_path)
             if index_content is not None and index_content.strip():
-                index_content = self._cap(index_content)
+                index_content = self._cap_index(index_content)
                 result["memory_index"] = index_content
 
         # Load the always-injected good-habits file (HABITS.md), if present.
@@ -534,7 +580,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
         if needs_reload or "memory_index" not in state:
             index_content = await self._aread_file(index_path)
             if index_content is not None and index_content.strip():
-                index_content = self._cap(index_content)
+                index_content = self._cap_index(index_content)
                 result["memory_index"] = index_content
 
         if needs_reload or "habits_memory" not in state:
@@ -708,6 +754,40 @@ class AgentMemoryMiddleware(AgentMiddleware):
                 )
         self._retrieval_cache = (query, block)
         return block
+
+    async def _memory_search(self, query: str, k: int = 5) -> str:
+        """Search topic memory by what you are trying to recall.
+
+        Args:
+            query: Plain words for what you need to remember — a topic, task,
+                decision, or symptom.
+            k: Maximum number of topics to return.
+        """
+        # Reading + tokenizing every topic file is synchronous disk I/O; off the
+        # event loop so a large memory dir cannot stall the TUI.
+        corpus = await asyncio.to_thread(self._load_memory_corpus)
+        if not corpus:
+            return "No topic memory yet. Proceed without it."
+        q = _tokens(query)
+        scored: list[tuple[int, str, str]] = []
+        if q:
+            for topic, (title_toks, body, body_toks) in corpus.items():
+                score = 2 * len(q & title_toks) + len(q & body_toks)
+                if score >= _MIN_RELEVANCE:
+                    scored.append((score, topic, body))
+        # An exact topic name always wins, even on a weak lexical score.
+        wanted = query.strip().lower().replace(" ", "-").replace("_", "-")
+        if wanted in corpus and not any(t == wanted for _, t, _ in scored):
+            scored.append((999, wanted, corpus[wanted][1]))
+        if not scored:
+            return f"No memory matches {query!r}. Proceed without it."
+        scored.sort(key=lambda t: (-t[0], t[1]))
+        lines = [
+            f"- **{topic}** `/memories/memories/{topic}.md`: "
+            f"{' '.join(body.strip().split())[:240]}"
+            for _score, topic, body in scored[: max(1, min(k, 20))]
+        ]
+        return "\n".join(lines)
 
     def _build_learning_overview(self) -> str:
         """Build the compact learning overview for injection.

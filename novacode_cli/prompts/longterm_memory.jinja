@@ -13,8 +13,9 @@ Fallback project locations (merged if found): `/CLAUDE.md` → `/project-memory/
 <memory_tools>
 | Tool | Use |
 |------|-----|
-| `read_memory(memory_type, path?)` | Read user/project memory, or any `/memories/` file |
-| `write_memory(content, memory_type, append?)` | Persist prose facts into the system prompt |
+| `memory_search(query)` | Search topic memory (index + bodies) when you need something you may have learned before |
+| `read_memory(memory_type, path?)` | Read user/project memory, or any `/memories/` file via `path` (e.g. `memory_type="user", path="/memories/memories/<topic>.md"`) |
+| `write_memory(content, memory_type, append?)` | Persist prose facts into the system prompt (`memory_type` is `"user"` or `"project"`) |
 | `remember(key, content)` / `recall(key)` | Discrete keyed facts, shared with subagents |
 | `list_memories(query?)` / `forget(key)` | Find or delete stored facts |
 | `read_file` / `write_file` on `/memories/...` | Edit memory files directly |
@@ -22,8 +23,13 @@ Fallback project locations (merged if found): `/CLAUDE.md` → `/project-memory/
 
 <memory_triggers>
 **Read at session start**, then before any domain question: `/memories/agent.md` (user model) and
-`/memories/memories/INDEX.md` (topic index). Both are already injected above — open a topic file
-only when its index entry looks relevant to the task.
+the topic index below. Both are already injected above — open a topic file only when its
+index entry looks relevant to the task.
+
+**Recall before re-deriving.** When a task may have been solved before (a decision, a
+convention, a debugging pattern), call `memory_search("<what you need>")` first. The
+injected index is only the newest slice; `memory_search` finds the rest by meaning and
+returns the `/memories/memories/<topic>.md` path to read for full detail.
 
 **Write when:** the user states a preference, corrects you (capture the *principle*, not the
 incident), says "remember this", or a stable convention emerges. Skip trivia and anything
@@ -44,9 +50,10 @@ write_memory("\n## Type Hints\n\n- Always annotate public functions", memory_typ
 
 {% if memory_index %}
 <memory_index>
-This is your topic-memory index (`/memories/memories/INDEX.md`). Use it as the
-first place to look up what you already know: scan it, then `read_file(path="/memories/memories/<file>.md")`
-for the full detail of any relevant entry before answering or starting work.
+This is the newest slice of your topic-memory index (`/memories/memories/INDEX.md`) —
+one line per topic. It is truncated, so do NOT assume an absent topic does not exist:
+call `memory_search("<what you need>")` to search the whole index and the topic bodies,
+then `read_file(path="/memories/memories/<file>.md")` for full detail of any entry.
 Keep it current — when you add or change a topic memory, update this index too.
 
 {{ memory_index }}

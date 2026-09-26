@@ -15,8 +15,10 @@ Compaction invariant (keep-newest):
 
 from __future__ import annotations
 
-# Maximum characters per memory file before compaction / truncation
-# (~3,000 tokens at 4 chars/token). Prevents unbounded prompt growth.
+# Maximum characters per memory file before disk compaction / truncation
+# (~3,000 tokens at 4 chars/token). This is the WRITE-side cap only: it bounds
+# what survives on disk, and is deliberately larger than the injection budget
+# below so raising the budget later can still recover content.
 MAX_MEMORY_CHARS = 12_000
 
 
@@ -26,7 +28,21 @@ MAX_MEMORY_CHARS = 12_000
 MEMORY_WINDOW_FRACTION = 0.03
 
 
-def memory_budget(context_window: int) -> int:
+#: Default per-block *injection* budget (agent.md, INDEX, HABITS, project
+#: memory). Lowered from the 12k disk cap: the injected head is what the model
+#: reads every turn, and older content is reachable on demand via
+#: ``memory_search``. User-overridable in Nova.config.json
+#: (``memory_block_chars``).
+DEFAULT_MEMORY_BLOCK_CHARS = 6_000
+
+
+#: Chars of the topic-memory INDEX injected into the system prompt. The index is
+#: a pointer list (newest first); the rest is reachable via ``memory_search``, so
+#: a small slice is enough to orient without paying for ~100k chars of pointers.
+DEFAULT_MEMORY_INDEX_CHARS = 2_000
+
+
+def memory_budget(context_window: int, cap: int = DEFAULT_MEMORY_BLOCK_CHARS) -> int:
     """Chars one injected memory block may use, given the model's window.
 
     ``MAX_MEMORY_CHARS`` is a *disk* cap and is window-independent — but as an
@@ -34,7 +50,10 @@ def memory_budget(context_window: int) -> int:
     Ollama one, where the four blocks together could claim a third of the
     window before the conversation started. Skills already budget this way
     (``skills.refreshing_middleware.listing_budget``); memory now does too.
+
+    ``cap`` overrides the ceiling (the user-configurable per-block budget);
+    the window fraction still applies, so a small window is never overrun.
     """
     if context_window <= 0:
-        return MAX_MEMORY_CHARS
-    return max(2_000, min(MAX_MEMORY_CHARS, int(context_window * MEMORY_WINDOW_FRACTION * 4)))
+        return cap
+    return max(2_000, min(cap, int(context_window * MEMORY_WINDOW_FRACTION * 4)))
