@@ -182,6 +182,120 @@ def test_the_main_agent_installs_the_repair():
     source = (
         Path(novacode_cli.__file__).parent / "agents" / "core_agent.py"
     ).read_text(encoding="utf-8")
-    assert "agent_middleware.append(RepairToolCallsEachStep())" in source, (
+    assert "agent_middleware.append(RepairToolCallsEachStep(" in source, (
         "the main agent is built without per-call tool-call repair"
     )
+
+
+# ── Cross-provider sanitation: the shape a provider switch produces ─────────
+
+
+def _sanitize(messages, model=None):
+    from novacode_cli.agents.tool_call_repair import sanitize_history
+
+    return sanitize_history(messages, model)
+
+
+def test_an_orphaned_tool_result_is_dropped():
+    """The OpenCode Go 400: a tool message with no preceding tool_calls."""
+    history = [
+        HumanMessage("go"),
+        ToolMessage(content="stale result", tool_call_id="gone"),
+        AIMessage("done"),
+    ]
+    out = _sanitize(history)
+    assert [m.type for m in out] == ["human", "ai"], "orphaned tool result survived"
+
+
+def test_a_paired_result_is_kept():
+    history = [
+        AIMessage(content="", tool_calls=[_call("c1")]),
+        ToolMessage(content="ok", tool_call_id="c1"),
+    ]
+    assert _sanitize(history) is history, "a valid sequence was rewritten"
+
+
+def test_raw_tool_calls_are_promoted_so_results_stay_paired():
+    """A provider that stored calls only in additional_kwargs left the result
+    orphaned for the next converter, which reads the typed field."""
+    # ``model_construct`` bypasses pydantic's auto-parse: AIMessage normally
+    # mirrors additional_kwargs["tool_calls"] into .tool_calls, but a message
+    # rehydrated from a non-standard provider can carry only the raw field.
+    assistant = AIMessage.model_construct(
+        content="",
+        additional_kwargs={
+            "tool_calls": [
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "ls", "arguments": "{}"},
+                }
+            ]
+        },
+        tool_calls=[],
+    )
+    assert not assistant.tool_calls
+    history = [assistant, ToolMessage(content="a.py", tool_call_id="c1")]
+    out = _sanitize(history)
+    assert [m.type for m in out] == ["ai", "tool"], "promotion lost the pairing"
+    assert out[0].tool_calls[0]["id"] == "c1"
+
+
+def test_reasoning_from_another_model_is_stripped():
+    """After a switch the new provider never asked for the old chain of thought."""
+    old = AIMessage(
+        content="hi",
+        additional_kwargs={"reasoning_content": "old thoughts"},
+        response_metadata={"model_name": "old-model"},
+    )
+    out = _sanitize([old], "new-model")
+    assert "reasoning_content" not in out[0].additional_kwargs
+
+
+def test_reasoning_from_the_same_model_is_kept():
+    """A thinking model that stays in use needs its own reasoning echoed back."""
+    same = AIMessage(
+        content="hi",
+        additional_kwargs={"reasoning_content": "keep me"},
+        response_metadata={"model_name": "same-model"},
+    )
+    out = _sanitize([same], "same-model")
+    assert out is same or out[0].additional_kwargs.get("reasoning_content") == "keep me"
+
+
+def test_foreign_thinking_content_blocks_are_stripped():
+    """Anthropic's signed thinking blocks are not portable to another provider."""
+    msg = AIMessage(
+        content=[
+            {"type": "thinking", "thinking": "secret", "signature": "sig"},
+            {"type": "text", "text": "answer"},
+        ],
+        response_metadata={"model_name": "claude-opus"},
+    )
+    out = _sanitize([msg], "gpt-5-mini")
+    assert out[0].content == [{"type": "text", "text": "answer"}]
+
+
+def test_same_model_thinking_blocks_survive():
+    msg = AIMessage(
+        content=[{"type": "thinking", "thinking": "keep", "signature": "sig"}],
+        response_metadata={"model_name": "claude-opus"},
+    )
+    out = _sanitize([msg], "claude-opus")
+    assert out is msg or out[0].content[0].get("type") == "thinking"
+
+
+def test_a_real_switch_no_longer_sends_the_orphan():
+    """End to end through the middleware the agent installs."""
+    from novacode_cli.agents.tool_call_repair import RepairToolCallsEachStep
+
+    state = {
+        "messages": [
+            HumanMessage("go"),
+            ToolMessage(content="orphan", tool_call_id="nope"),
+            AIMessage("done"),
+        ]
+    }
+    out = _patched(RepairToolCallsEachStep().before_model(state, None))
+    assert [m.type for m in out] == ["human", "ai"]
+

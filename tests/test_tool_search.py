@@ -104,7 +104,7 @@ def test_hidden_subagents_leave_the_task_description() -> None:
 
 
 def test_artifact_tools_are_core_not_deferred() -> None:
-    """Artifact tools must be bound without a tool_search round-trip.
+    """Artifact tools must be bound without a search_tools round-trip.
 
     The prompt tells the agent to create artifacts proactively; if these drop
     out of CORE_TOOLS the instruction names tools the model cannot see.
@@ -119,7 +119,7 @@ def test_artifact_tools_are_core_not_deferred() -> None:
     assert {"create_artifact", "update_artifact", "list_artifacts"} <= bound
 
 
-def test_tool_search_loads_by_description_and_by_exact_name() -> None:
+def test_search_tools_loads_by_description_and_by_exact_name() -> None:
     mw = _mw()
     mw._apply(_request([HumanMessage("hi")]))  # builds the catalog
     by_meaning = mw.tools[0].invoke({"query": "open a url in the browser"})
@@ -138,8 +138,8 @@ def test_loaded_tools_are_bound_from_then_on() -> None:
     result = mw.tools[0].invoke({"query": "playwright_browser_click"})
     history = [
         HumanMessage("click the button"),
-        AIMessage("", tool_calls=[{"id": "1", "name": "tool_search", "args": {}}]),
-        ToolMessage(result, tool_call_id="1", name="tool_search"),
+        AIMessage("", tool_calls=[{"id": "1", "name": "search_tools", "args": {}}]),
+        ToolMessage(result, tool_call_id="1", name="search_tools"),
     ]
     assert "playwright_browser_click" in _names(mw._apply(_request(history)))
 
@@ -159,3 +159,47 @@ def test_the_note_is_frozen_so_the_prompt_cache_holds() -> None:
     ]
     later = mw._apply(_request(history)).system_message.content_blocks[-1]["text"]
     assert first == later
+
+
+# ── the canonical names and the full-roster deferral ───────────────────────
+
+
+def test_the_search_tools_are_named_search_tools_and_skills_search() -> None:
+    """The two progressive-disclosure entry points are always bound."""
+    assert {"search_tools", "skills_search"} <= CORE_TOOLS
+    assert mw_tool_name() == "search_tools"
+
+
+def mw_tool_name() -> str:
+    return _mw().tools[0].name
+
+
+def test_a_result_from_the_old_name_still_loads() -> None:
+    """Checkpoints written before the rename keep working."""
+    mw = _mw()
+    mw._apply(_request([HumanMessage("hi")]))
+    result = mw.tools[0].invoke({"query": "playwright_browser_click"})
+    history = [
+        AIMessage("", tool_calls=[{"id": "1", "name": "tool_search", "args": {}}]),
+        ToolMessage(result, tool_call_id="1", name="tool_search"),
+    ]
+    assert "playwright_browser_click" in _names(mw._apply(_request(history)))
+
+
+def test_the_whole_subagent_roster_is_deferred() -> None:
+    """core_agent must hide every subagent except LISTED_SUBAGENTS.
+
+    Read as text: importing core_agent pulls the full agent stack.
+    """
+    from pathlib import Path
+
+    import novacode_cli
+    from novacode_cli.agents.default_subagents.subagents import LISTED_SUBAGENTS
+
+    assert "general-purpose" in LISTED_SUBAGENTS
+    source = (
+        Path(novacode_cli.__file__).parent / "agents" / "core_agent.py"
+    ).read_text(encoding="utf-8")
+    assert "s[\"name\"] not in LISTED_SUBAGENTS" in source, (
+        "the full subagent roster is still billed in the task description"
+    )

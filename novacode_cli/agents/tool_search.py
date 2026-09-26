@@ -9,9 +9,10 @@ provider-side-agnostically in middleware:
 * Only **core** tools (file, shell, todos, plan mode, search), the user's
   **most-used** tools (Hermes ``tool_stats``, read once per session) and tools
   already **loaded** in this thread are bound.
-* Plugin subagents drop out of the ``task`` description the same way.
-* ``tool_search`` finds the rest (hybrid search, shared with skills) and loads
-  them: a tool is loaded once a ``tool_search`` result names it or the model
+* Every subagent except the always-listed general-purpose one drops out of the
+  ``task`` description the same way.
+* ``search_tools`` finds the rest (hybrid search, shared with skills) and loads
+  them: a tool is loaded once a ``search_tools`` result names it or the model
   has called it. Derived from the messages, so it survives checkpoints and
   never needs its own state. Loaded tools stay loaded (a changing tool list
   re-bills the prompt cache, so it should change rarely).
@@ -61,11 +62,12 @@ CORE_TOOLS = frozenset(
         "web_search",
         "fetch_url",
         "code_search",
-        "skill_search",
-        "tool_search",
+        "skills_search",
+        "search_tools",
+        "memory_search",
         "check_async_task",
         # Artifacts: the prompt tells the agent to create these proactively, so
-        # the schemas must be bound without a tool_search round-trip — otherwise
+        # the schemas must be bound without a search_tools round-trip — otherwise
         # the instruction names tools the model cannot see.
         "create_artifact",
         "update_artifact",
@@ -93,12 +95,12 @@ def _description(tool: Any) -> str:
 
 
 def loaded_names(messages: list[Any]) -> set[str]:
-    """Tools this thread has loaded: named by ``tool_search`` or already called."""
+    """Tools this thread has loaded: named by ``search_tools`` or already called."""
     names: set[str] = set()
     for msg in messages:
         if isinstance(msg, AIMessage):
             names.update(tc["name"] for tc in msg.tool_calls or [])
-        elif isinstance(msg, ToolMessage) and msg.name == "tool_search":
+        elif isinstance(msg, ToolMessage) and msg.name in ("search_tools", "tool_search"):
             for line in str(msg.content).splitlines():
                 if line.startswith(LOADED_MARKER):
                     names.update(n.strip() for n in line[len(LOADED_MARKER) :].split(","))
@@ -122,7 +124,7 @@ def _group(names: list[str]) -> str:
 
 
 class ToolSearchMiddleware(AgentMiddleware):
-    """Bind core + frequent + loaded tools; ``tool_search`` loads the rest."""
+    """Bind core + frequent + loaded tools; ``search_tools`` loads the rest."""
 
     def __init__(self, *, deferred_subagents: dict[str, str] | None = None) -> None:
         """``deferred_subagents``: name -> description, hidden from ``task`` until found."""
@@ -134,9 +136,9 @@ class ToolSearchMiddleware(AgentMiddleware):
         self.tools = [
             StructuredTool.from_function(
                 self._tool_search,
-                name="tool_search",
+                name="search_tools",
                 description=(
-                    "Load tools or subagents that are available but not loaded yet "
+                    "Find and load tools or subagents that are available but not loaded yet "
                     "(see 'More tools' in your instructions). Pass what you need to do, "
                     "or exact tool names separated by commas. Loaded tools are callable "
                     "from your next step on."
@@ -144,7 +146,7 @@ class ToolSearchMiddleware(AgentMiddleware):
             )
         ]
 
-    # ── tool_search ────────────────────────────────────────────────────────
+    # ── search_tools ───────────────────────────────────────────────────────
 
     def _tool_search(self, query: str) -> str:
         """Find and load deferred tools and subagents.
@@ -187,14 +189,24 @@ class ToolSearchMiddleware(AgentMiddleware):
         self._frequent = {n for n in ranked[:FREQUENT_TOOLS] if uses[n] >= FREQUENT_MIN_USES}
 
     def _trim_task(self, tool: Any, hidden: list[str]) -> Any:
-        """Drop hidden subagents from the ``task`` description (a request-local copy)."""
-        text = _description(tool)
-        for name in hidden:
-            entry = re.escape(f"- {name}: {self._deferred_subagents[name]}")
-            text = re.sub(rf"^[ \t]*{entry}[ \t]*(\n|$)", "", text, flags=re.M)
+        """Drop hidden subagents from the ``task`` description (a request-local copy).
+
+        One pass over the description's lines: with the whole roster deferred
+        (~90 names) a per-name regex would rescan the whole string 90 times on
+        every model call. Matching the ``- name:`` prefix keeps the agent name
+        authoritative even when a description contains regex metacharacters.
+        """
+        hidden_set = set(hidden)
+        kept: list[str] = []
+        for line in _description(tool).splitlines():
+            match = re.match(r"^[ \t]*- ([^:]+):", line)
+            if match and match.group(1).strip() in hidden_set:
+                continue
+            kept.append(line)
+        text = "\n".join(kept)
         text += (
             f"\n\n{len(hidden)} more specialist subagents are not listed here: "
-            "`tool_search` finds them by what they do."
+            "`search_tools` finds them by what they do."
         )
         return tool.model_copy(update={"description": text})
 
@@ -225,7 +237,7 @@ class ToolSearchMiddleware(AgentMiddleware):
                 f"These {len(deferred)} tools are available but not loaded, to save "
                 f"context. {len(hidden)} specialist subagents are likewise unlisted.\n"
                 f"{_group([_name(t) for t in deferred])}\n\n"
-                'Call `tool_search("<what you need>")` or `tool_search("name1, name2")`; '
+                'Call `search_tools("<what you need>")` or `search_tools("name1, name2")`; '
                 "what it returns is callable from your next step. Never guess a tool's "
                 "arguments: load it first."
             )
