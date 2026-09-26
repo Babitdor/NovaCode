@@ -52,7 +52,7 @@ def _filter_tools(tools: list[AnyTool], names: list[str]) -> list[AnyTool]:
 
 #: Registered in the graph but hidden from the ``task`` tool description: only
 #: ``/research`` dispatches them, and it names them itself, so paying ~30 tokens
-#: each on every ordinary turn buys nothing. ``tool_search`` still surfaces them
+#: each on every ordinary turn buys nothing. ``search_tools`` still surfaces them
 #: if the agent goes looking.
 RESEARCH_SWARM_AGENTS = frozenset(
     {
@@ -65,6 +65,15 @@ RESEARCH_SWARM_AGENTS = frozenset(
         "technical-researcher",
     }
 )
+
+
+#: Subagents kept in the ``task`` tool description on every turn. Everything
+#: else stays registered in the graph (so ``task(subagent_type=...)`` and
+#: ``/research`` still work by name) but is deferred out of the description:
+#: a ~90-entry roster is ~19k chars resent on every call, which is exactly the
+#: context cost progressive disclosure exists to avoid. ``search_tools`` finds
+#: the rest by what they do.
+LISTED_SUBAGENTS = frozenset({"general-purpose"})
 
 
 def retrieve_core_subagents(

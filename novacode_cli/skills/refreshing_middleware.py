@@ -13,7 +13,7 @@ Claude Code (1% of the window), Codex (2%) and Anthropic's Tool Search Tool do:
    because agents are poor at noticing when they need a skill
    (arXiv 2604.24594); in the messages, not the system prompt, so the cache
    holds.
-3. **``skill_search``** — for needs that surface mid-task.
+3. **``skills_search``** — for needs that surface mid-task.
 
 It also re-lists when the watched skill directories change, so a skill created
 mid-session (``skill_manage`` / Hermes review) is usable at once (see
@@ -42,10 +42,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("nova.skills")
 
-#: Listing budget when the model's window is unknown (Codex uses the same).
-DEFAULT_LISTING_CHARS = 8_000
+#: Listing budget when the model's window is unknown.
+DEFAULT_LISTING_CHARS = 4_000
 #: Hard ceiling: a 1M-token window must not mean an 80k-char listing.
-MAX_LISTING_CHARS = 16_000
+MAX_LISTING_CHARS = 8_000
 
 # Starts with "Internal context" so transcript replay hides it
 # (core/streaming.py::is_internal_context_text): the user did not type it.
@@ -56,7 +56,7 @@ SKILLS_PROMPT = """## Skills
 Skills are playbooks (`SKILL.md`) for specific tasks. {skills_load_warnings}
 
 **Finding one.** When a request looks like it has a matching skill, you get an
-`{marker}` note listing them. Mid-task, call `skill_search("<what you need>")`.
+`{marker}` note listing them. Mid-task, call `skills_search("<what you need>")`.
 Most-used skills:
 
 {skills_list}
@@ -67,10 +67,10 @@ Skill sources: {skills_locations}"""
 
 
 def listing_budget(context_window: int) -> int:
-    """Chars for the always-on listing: 2% of the window, as Codex does."""
+    """Chars for the always-on listing: 1% of the window, as Claude Code does."""
     if context_window <= 0:
         return DEFAULT_LISTING_CHARS
-    return min(MAX_LISTING_CHARS, int(context_window * 0.02 * 4))  # ~4 chars/token
+    return min(MAX_LISTING_CHARS, int(context_window * 0.01 * 4))  # ~4 chars/token
 
 
 def _entry(skill: SkillMetadata) -> str:
@@ -85,7 +85,7 @@ def _text(msg: Any) -> str:
 
 
 class RefreshingSkillsMiddleware(SkillsMiddleware):
-    """Tiered skills: budgeted listing + per-turn suggestions + ``skill_search``."""
+    """Tiered skills: budgeted listing + per-turn suggestions + ``skills_search``."""
 
     def __init__(
         self,
@@ -110,7 +110,7 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
         self.tools = [
             StructuredTool.from_function(
                 self._skill_search,
-                name="skill_search",
+                name="skills_search",
                 description=(
                     "Search the skill library (playbooks for specific tasks) by what you "
                     "need to do. Returns the best matches with the path of each SKILL.md."
@@ -118,7 +118,7 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
             )
         ]
 
-    # ── skill_search ───────────────────────────────────────────────────────
+    # ── skills_search ──────────────────────────────────────────────────────
 
     def _skill_search(self, query: str) -> str:
         """Search the skills library.
@@ -150,7 +150,7 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
             used += len(line) + 1
         rest = len(skills) - len(lines)
         if rest:
-            lines.append(f"- ({rest} more skills: `skill_search` finds them)")
+            lines.append(f"- ({rest} more skills: `skills_search` finds them)")
         return "\n".join(lines)
 
     # ── tier 2: suggestions ────────────────────────────────────────────────

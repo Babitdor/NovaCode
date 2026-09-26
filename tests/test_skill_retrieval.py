@@ -1,7 +1,7 @@
 """Skills are tiered, not dumped into every prompt.
 
 The old SkillsMiddleware listed all ~630 skills (~200k chars) on every model
-call. Now: a budgeted listing, per-turn suggestions, and ``skill_search``.
+call. Now: a budgeted listing, per-turn suggestions, and ``skills_search``.
 The embedder is replaced by a bag-of-words stand-in so these run offline and
 deterministically.
 """
@@ -75,7 +75,7 @@ def _mw(listing_chars: int = 600) -> RefreshingSkillsMiddleware:
 def test_listing_stays_within_budget_and_points_at_search() -> None:
     text = _mw(600)._format_skills_list(SKILLS)
     assert len(text) < 700
-    assert "more skills: `skill_search` finds them" in text
+    assert "more skills: `skills_search` finds them" in text
 
 
 def test_listing_ranks_most_used_first() -> None:
@@ -85,9 +85,9 @@ def test_listing_ranks_most_used_first() -> None:
 
 
 def test_listing_budget_scales_with_window_and_is_capped() -> None:
-    assert listing_budget(0) == 8_000
-    assert listing_budget(128_000) == 10_240
-    assert listing_budget(1_000_000) == 16_000
+    assert listing_budget(0) == 4_000
+    assert listing_budget(128_000) == 5_120
+    assert listing_budget(1_000_000) == 8_000
 
 
 def test_relevant_request_gets_a_suggestion_chit_chat_does_not() -> None:
