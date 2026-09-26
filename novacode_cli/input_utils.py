@@ -269,7 +269,15 @@ _FILE_EXTENSIONS = frozenset({
     "c", "cpp", "h", "hpp", "rs", "go", "java", "kt", "swift",
     "rb", "php", "r", "R", "lua", "vim", "ex", "exs", "erl",
     "cfg", "ini", "conf", "env", "proto", "graphql", "lock", "wasm",
+    # Images — an image mention is an attach route (see /images), and without
+    # these a bare @shot.png looks like an email address to the heuristic.
+    "png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "tif",
 })
+
+#: Trailing punctuation to trim off a bare @mention. Natural prose writes
+#: "@app.py?" or "see @UI.png, then…"; the punctuation is sentence syntax, not
+#: part of the path, and leaving it attached made the mention unresolvable.
+_MENTION_TRAILING = ".,;:!?)({"
 
 
 # Caps for @mention content. A mention is inlined into the prompt, so an
@@ -335,7 +343,7 @@ def _is_likely_file_mention(match_str: str) -> bool:
     if len(match_str) < 2:
         return False
 
-    cleaned = match_str.rstrip(".,;:!?)({")
+    cleaned = match_str.rstrip(_MENTION_TRAILING)
 
     # Check for CSS at-rules and known decorators (bare @word before / or \()
     bare_word = cleaned.split("(")[0].split("/")[0].lower()
@@ -345,7 +353,9 @@ def _is_likely_file_mention(match_str: str) -> bool:
     # A path that actually exists is the strongest signal, so check it before
     # the heuristic filters below. Otherwise a real file with an uncommon
     # extension (e.g. @data.bin) is mistaken for an email address and dropped.
-    if _resolve_mention(match_str) is not None:
+    # Resolve the *trimmed* path: the raw token may carry trailing prose
+    # punctuation ("@app.py?"), which never exists on disk.
+    if _resolve_mention(cleaned) is not None:
         return True
 
     has_slash = "/" in cleaned
@@ -387,10 +397,17 @@ def parse_file_mentions(text: str) -> tuple[str, list[Path]]:
 
     for match in _FILE_MENTION_RE.finditer(text):
         # Group 1 = quoted form, group 2 = bare form (with \  escapes).
-        raw = match.group(1) if match.group(1) is not None else match.group(2)
+        quoted = match.group(1) is not None
+        raw = match.group(1) if quoted else match.group(2)
         if not raw:
             continue
         clean_path = raw.replace("\\ ", " ")
+        # A bare mention picks up the surrounding prose's punctuation; quoted
+        # paths are delimited by their quotes, so leave those exactly as typed.
+        if not quoted:
+            clean_path = clean_path.rstrip(_MENTION_TRAILING)
+        if not clean_path:
+            continue
 
         # Skip false positives (CSS at-rules, decorators, email addresses)
         if not _is_likely_file_mention(clean_path):

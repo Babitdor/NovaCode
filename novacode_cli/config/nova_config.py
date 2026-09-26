@@ -190,6 +190,49 @@ class NovaConfig:
         self._config["learning_enabled"] = bool(enabled)
         self._save()
 
+    # ── Memory injection budget ─────────────────────────────────────────────
+
+    def get_memory_block_chars(self) -> int:
+        """Per-block char budget for injected memory files.
+
+        Applies to each of ``agent.md``, the topic index, ``HABITS.md`` and
+        project memory. Defaults to
+        :data:`~novacode_cli.memory.limits.DEFAULT_MEMORY_BLOCK_CHARS`.
+        """
+        from novacode_cli.memory.limits import DEFAULT_MEMORY_BLOCK_CHARS
+
+        value = self._config.get("memory_block_chars")
+        try:
+            n = int(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return DEFAULT_MEMORY_BLOCK_CHARS
+        return n if n > 0 else DEFAULT_MEMORY_BLOCK_CHARS
+
+    def set_memory_block_chars(self, chars: int) -> None:
+        """Persist the per-block memory injection budget."""
+        self._config["memory_block_chars"] = int(chars)
+        self._save()
+
+    def get_memory_index_chars(self) -> int:
+        """Chars of the topic-memory INDEX injected into the system prompt.
+
+        The index is a pointer list; the rest is reachable via ``memory_search``.
+        Defaults to :data:`~novacode_cli.memory.limits.DEFAULT_MEMORY_INDEX_CHARS`.
+        """
+        from novacode_cli.memory.limits import DEFAULT_MEMORY_INDEX_CHARS
+
+        value = self._config.get("memory_index_chars")
+        try:
+            n = int(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return DEFAULT_MEMORY_INDEX_CHARS
+        return n if n > 0 else DEFAULT_MEMORY_INDEX_CHARS
+
+    def set_memory_index_chars(self, chars: int) -> None:
+        """Persist the topic-index injection budget."""
+        self._config["memory_index_chars"] = int(chars)
+        self._save()
+
     # ── Voice config (local STT / VAD / TTS) ────────────────────────────────
 
     VOICE_DEFAULTS: dict[str, Any] = {  # noqa: RUF012

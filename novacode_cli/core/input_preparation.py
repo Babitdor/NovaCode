@@ -14,6 +14,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+from novacode_cli.image_utils import is_image_file, load_image_from_path
 from novacode_cli.input_utils import (
     MAX_MENTION_DIR_ENTRIES,
     MAX_MENTION_FILE_CHARS,
@@ -119,6 +120,35 @@ async def _inline_mentions(prompt_text: str, mentioned: list[Path]) -> str:
     return "\n".join(parts)
 
 
+async def _split_image_mentions(paths: list[Path]) -> tuple[list[Path], list]:
+    """Partition mentions into (paths to inline as text, loaded images).
+
+    An ``@screenshot.png`` mention used to reach the model as
+    ``[binary file, N bytes — not inlined]``: the file was detected as binary
+    and skipped, so a multimodal model never received the picture it was told
+    about and had to be asked again. Image mentions are loaded here into the
+    same :class:`~novacode_cli.image_utils.ImageData` form the clipboard path
+    produces, so both ingest routes hand the model the actual image.
+
+    A mention that fails to load (too large, corrupt, unreadable) is left in
+    the text list so the existing ``[binary file …]`` / ``[could not read …]``
+    notice still explains what happened instead of failing silently.
+    """
+    text_paths: list[Path] = []
+    loaded: list = []
+    for path in paths:
+        if not is_image_file(path):
+            text_paths.append(path)
+            continue
+        try:
+            # Blocking decode + re-encode; never run it on the event loop.
+            loaded.append(await asyncio.to_thread(load_image_from_path, path))
+        except Exception:  # noqa: BLE001 — fall back to the binary notice
+            logger.warning("Could not load image mention %s", path, exc_info=True)
+            text_paths.append(path)
+    return text_paths, loaded
+
+
 async def prepare_input_content(
     user_input: str,
     image_tracker: ImageTracker | None = None,
@@ -137,49 +167,59 @@ async def prepare_input_content(
     Returns:
         Prepared content as string or list of content blocks
     """
+    # Images reach the main model from two ingest routes: a clipboard paste
+    # (already tracked) and an ``@path/to/image.png`` mention (loaded here).
+    # Both must arrive as image content blocks — inlining an image as text is
+    # impossible, and the old binary-file notice told the model nothing.
+    images: list = []
+
     if skip_file_mentions:
         cleaned_input = user_input
     else:
         # Parse @file mentions, then inline their contents into the prompt so
         # the model actually sees the referenced files (paths alone are inert).
         cleaned_input, mentioned_files = parse_file_mentions(user_input)
-        cleaned_input = await _inline_mentions(cleaned_input, mentioned_files)
+        text_mentions, image_mentions = await _split_image_mentions(mentioned_files)
+        cleaned_input = await _inline_mentions(cleaned_input, text_mentions)
+        images.extend(image_mentions)
 
     if image_tracker:
         try:
-            images = image_tracker.get_images()
+            tracked = image_tracker.get_images()
         except Exception:  # noqa: BLE001
-            images = []
-        if images:
-            # A multimodal main model reads the image itself, so it is handed the
-            # image content blocks directly. Captioning it through the auxiliary
-            # vision model would both lose detail AND fail the whole paste when
-            # no vision model is configured — the reported
-            # "[image: vision captioning failed]" on a model that can see
-            # perfectly well.
-            if _main_model_can_see_images():
-                return _image_content_blocks(cleaned_input, images)
-            try:
-                from novacode_cli.bootstrap.vision_router import caption_images
+            tracked = []
+        images.extend(tracked)
 
-                # caption_images takes data: URL *strings* — passing the
-                # ImageData objects instead made the vision model raise
-                # "Only string image_url ... supported", which surfaced to the
-                # user as "[image: vision captioning failed]".
-                image_urls = [img.to_data_url() for img in images]
-                captions = await caption_images(image_urls)
-                # Only a real description counts. The failure placeholders ARE
-                # truthy strings, so `if captions` accepted them and returned a
-                # "[image: ...]" notice as if it were a caption, making the
-                # image-blocks fallback below unreachable.
-                if captions and not _is_vision_failure(captions):
-                    return f"{cleaned_input}\n\n[Attached image: {captions}]"
-            except Exception:  # noqa: BLE001
-                logger.warning("Clipboard image captioning failed", exc_info=True)
-            # Captioning failed, or returned no description: pass the images
-            # through so a multimodal model still sees them, instead of sending a
-            # failure notice in their place.
+    if images:
+        # A multimodal main model reads the image itself, so it is handed the
+        # image content blocks directly. Captioning it through the auxiliary
+        # vision model would both lose detail AND fail the whole paste when
+        # no vision model is configured — the reported
+        # "[image: vision captioning failed]" on a model that can see
+        # perfectly well.
+        if _main_model_can_see_images():
             return _image_content_blocks(cleaned_input, images)
+        try:
+            from novacode_cli.bootstrap.vision_router import caption_images
+
+            # caption_images takes data: URL *strings* — passing the
+            # ImageData objects instead made the vision model raise
+            # "Only string image_url ... supported", which surfaced to the
+            # user as "[image: vision captioning failed]".
+            image_urls = [img.to_data_url() for img in images]
+            captions = await caption_images(image_urls)
+            # Only a real description counts. The failure placeholders ARE
+            # truthy strings, so `if captions` accepted them and returned a
+            # "[image: ...]" notice as if it were a caption, making the
+            # image-blocks fallback below unreachable.
+            if captions and not _is_vision_failure(captions):
+                return f"{cleaned_input}\n\n[Attached image: {captions}]"
+        except Exception:  # noqa: BLE001
+            logger.warning("Clipboard image captioning failed", exc_info=True)
+        # Captioning failed, or returned no description: pass the images
+        # through so a multimodal model still sees them, instead of sending a
+        # failure notice in their place.
+        return _image_content_blocks(cleaned_input, images)
 
     return cleaned_input
 

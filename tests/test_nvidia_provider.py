@@ -16,7 +16,17 @@ import pytest
 
 @pytest.fixture
 def isolated(tmp_path, monkeypatch):
-    """Keep config writes and key lookups out of the real ~/.nova and keychain."""
+    """Keep config writes and key lookups out of the real ~/.nova and keychain.
+
+    ``HOME``/``USERPROFILE`` alone are not enough: ``config.HOME_DIR`` is
+    computed at import time and ``Settings.user_deepagents_dir`` returns that
+    frozen constant, so ``NovaConfig`` kept resolving the real ``~/.nova`` — a
+    test that saved a model overwrote the developer's actual
+    ``Nova.config.json``. Patch the constant itself as well.
+    """
+    import novacode_cli.config.config as config_mod
+
+    monkeypatch.setattr(config_mod, "HOME_DIR", tmp_path / ".nova")
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-test-key")

@@ -74,6 +74,17 @@ def test_false_positives_are_ignored(workspace):
     assert files == []
 
 
+def test_mention_with_trailing_punctuation_resolves(workspace):
+    """Prose punctuation glued to a mention must not break resolution.
+
+    "what does @app.py?" captured the "?" into the path, so it was dropped as
+    an email-like token and the file never reached the model.
+    """
+    (workspace / "app.py").write_text("x = 1\n", encoding="utf-8")
+    _, files = parse_file_mentions("what does @app.py?")
+    assert [p.name for p in files] == ["app.py"]
+
+
 def test_relative_mention_resolves_against_the_workspace_root(workspace, monkeypatch):
     """The TUI picker emits workspace-root-relative paths, so the parser must
     resolve them there even when the process cwd is a subdirectory."""
@@ -130,6 +141,62 @@ async def test_binary_file_is_not_inlined(workspace):
     out = await ip.prepare_input_content("read @blob.bin")
     assert "binary file" in out
     assert "\x00" not in out
+
+
+# ── image mentions attach the picture, not a binary notice ──────────────────
+
+
+def _write_png(workspace, name: str = "shot.png"):
+    from PIL import Image
+
+    path = workspace / name
+    Image.new("RGB", (8, 8), (10, 20, 30)).save(path, format="PNG")
+    return path
+
+
+async def test_image_mention_is_attached_as_an_image_block(workspace, monkeypatch):
+    """``@screenshot.png`` must reach a multimodal model as an image.
+
+    The old path fed a binary file through the text inliner, so the model got
+    ``[binary file, N bytes — not inlined]`` and never the picture — even though
+    ``/images`` documents ``@path/to/image.png`` as an attach route.
+    """
+    _write_png(workspace)
+    monkeypatch.setattr(ip, "_main_model_can_see_images", lambda: True)
+
+    out = await ip.prepare_input_content("what is @shot.png?")
+    assert isinstance(out, list), "an image mention must produce image blocks"
+    assert out[0]["type"] == "text"
+    assert "@shot.png" in out[0]["text"]
+    assert any(b.get("type") == "image_url" for b in out)
+    assert "binary file" not in str(out)
+
+
+async def test_image_mention_is_captioned_for_a_text_only_model(workspace, monkeypatch):
+    """A text-only model gets a caption for an ``@image`` mention, not blocks."""
+    import novacode_cli.bootstrap.vision_router as vr
+
+    _write_png(workspace)
+    monkeypatch.setattr(ip, "_main_model_can_see_images", lambda: False)
+
+    async def fake_captions(urls, *args, **kwargs):  # noqa: ANN002, ANN003
+        return "a dark blue square"
+
+    monkeypatch.setattr(vr, "caption_images", fake_captions)
+
+    out = await ip.prepare_input_content("what is @shot.png?")
+    assert isinstance(out, str)
+    assert "a dark blue square" in out
+    assert "binary file" not in out
+
+
+async def test_unloadable_image_mention_falls_back_to_the_binary_notice(workspace):
+    """A corrupt ``.png`` must not vanish silently — the notice still explains it."""
+    (workspace / "broken.png").write_bytes(b"\x00\x01notreallyanimage")
+
+    out = await ip.prepare_input_content("read @broken.png")
+    assert isinstance(out, str)
+    assert "binary file" in out
 
 
 async def test_directory_mention_lists_entries_without_recursing(workspace):

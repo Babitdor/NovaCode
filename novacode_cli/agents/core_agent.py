@@ -179,7 +179,7 @@ from novacode_cli.skills.refreshing_middleware import (
 
 # deepagents builds each subagent's SkillsMiddleware itself, which would put the
 # full ~200k-char skill listing in every subagent call. Swap in the tiered one
-# (no listing; suggestions from the task description + skill_search).
+# (no listing; suggestions from the task description + skills_search).
 import deepagents.graph as _dgraph  # noqa: E402
 
 _dgraph.SkillsMiddleware = SubagentSkillsMiddleware
@@ -1378,9 +1378,13 @@ def _build_middleware_stack(
             # summarization/compaction.
             skip_project_memory=False,
             backend=composite_backend,  # Route through CompositeBackend for /memories/ etc.
-            # Sizes the per-block injection budget: four memory blocks at a flat
-            # 12k chars each is 12% of a 200K window but a third of a 40K one.
+            # Sizes the per-block injection budget. Four blocks at the default
+            # 6k chars each is ~6k tokens; the topic index gets a smaller slice
+            # and the rest is reachable via the `memory_search` tool. Both are
+            # user-configurable in Nova.config.json.
             context_window=context_window,
+            memory_block_chars=NovaConfig().get_memory_block_chars(),
+            memory_index_chars=NovaConfig().get_memory_index_chars(),
         ),
         # Last, so its todo recitation is appended to the FINAL system message
         # (AgentMemoryMiddleware rebuilds it) and sits after the cache breakpoint.
@@ -1947,35 +1951,33 @@ This file stores your preferences and context that persist across sessions.
     except ImportError:
         pass
 
-    # Repair unanswered tool calls before EVERY model call. deepagents' own
-    # PatchToolCalls only runs once per invocation, so a call left unanswered
-    # mid-turn reached the next model call as-is — which OpenAI-strict
-    # endpoints reject outright ("An assistant message with 'tool_calls' must
-    # be followed by tool messages..."). See agents/tool_call_repair.py.
+    # Repair malformed tool-call history before EVERY model call. deepagents'
+    # own PatchToolCalls runs once per invocation, so damage that happens
+    # mid-turn reached the next call unrepaired. sanitize_history also drops
+    # orphaned tool results and strips reasoning echoed from a different model,
+    # which is what breaks a turn after a provider switch. See
+    # agents/tool_call_repair.py.
     from novacode_cli.agents.tool_call_repair import RepairToolCallsEachStep
 
-    agent_middleware.append(RepairToolCallsEachStep())
+    agent_middleware.append(RepairToolCallsEachStep(current_model=_model_name))
 
-    # Bind only core / frequent / already-loaded tools; `tool_search` loads the
-    # rest (MCP servers alone are ~75 schemas). Plugin subagents leave the
-    # `task` description the same way. Innermost, so it filters the final list.
+    # Bind only core / frequent / already-loaded tools; `search_tools` loads the
+    # rest (MCP servers alone are ~75 schemas). The whole subagent roster except
+    # the always-listed general-purpose agent leaves the `task` description the
+    # same way (~19k chars over ~90 entries), and `search_tools` surfaces any of
+    # them by what they do. Registered in the graph regardless, so /research and
+    # any explicit `task(subagent_type=...)` still work. Innermost, so it filters
+    # the final list.
     from novacode_cli.agents.tool_search import ToolSearchMiddleware
-    from novacode_cli.plugins.claude_plugins import plugin_agent_specs
+    from novacode_cli.agents.default_subagents.subagents import LISTED_SUBAGENTS
 
-    from novacode_cli.agents.default_subagents.subagents import RESEARCH_SWARM_AGENTS
-
-    # Plugin agents and the research-swarm personas are both registered in the
-    # graph but kept out of the `task` description. /research names its agents
-    # itself, so listing them every turn is pure overhead.
-    _hidden_agents = {s["name"] for s in plugin_agent_specs()} | RESEARCH_SWARM_AGENTS
+    _deferred_agents = {
+        s["name"]: s.get("description", "")
+        for s in subagents
+        if isinstance(s, dict) and s.get("name") and s["name"] not in LISTED_SUBAGENTS
+    }
     agent_middleware.append(
-        ToolSearchMiddleware(
-            deferred_subagents={
-                s["name"]: s.get("description", "")
-                for s in subagents
-                if isinstance(s, dict) and s.get("name") in _hidden_agents
-            }
-        )
+        ToolSearchMiddleware(deferred_subagents=_deferred_agents)
     )
 
     # Caller-injected middleware (e.g. Cowork's WorkspacePolicy broker) goes last
