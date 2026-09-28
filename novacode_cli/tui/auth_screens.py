@@ -54,6 +54,15 @@ if TYPE_CHECKING:
     from textual.binding import BindingType
 
 
+#: What a *service* credential unlocks, for the rows that need to say it. Only a
+#: service that gates a tool earns an entry: the voice credentials already name
+#: their own axis in the display name ("Deepgram (speech to text)"), so reusing
+#: Tavily's "gates web search" note for them was simply wrong.
+_SERVICE_NOTES: dict[str, str] = {
+    "tavily": "gates web search",
+}
+
+
 def _endpoint_providers() -> frozenset[str]:
     """Return the providers that accept a custom endpoint.
 
@@ -224,7 +233,9 @@ class AuthManagerScreen(ModalScreen[None]):
             if meta is not None and meta.base_url:
                 parts.append(meta.base_url)
             if is_service(name):
-                parts.append("gates web search")
+                note = _SERVICE_NOTES.get(name)
+                if note:
+                    parts.append(note)
             return "  ·  ".join(parts)
         return ""
 

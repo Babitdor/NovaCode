@@ -472,6 +472,49 @@ async def test_a_filter_finds_the_voice_section_by_provider_name():
         assert not _model_ids(screen)
 
 
+@pytest.mark.parametrize("needle", ["voice", "speech"])
+async def test_a_filter_finds_the_voice_section_by_axis_word(needle: str):
+    """An axis word must reach the speech rows.
+
+    They are painted below every chat model, and a full list is a few hundred of
+    those, which buries the two voice sections far below the fold. Typed into the
+    filter, "voice" and "speech" are how a user gets there.
+
+    The filter is an ordered-subsequence match, so a chat id can still match by
+    accident (measured against the real catalog: none for "voice", one for
+    "speech"). What matters is that every speech row survives and the chat list
+    collapses, which is what this asserts.
+    """
+    from textual.widgets import Input
+
+    app = _host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _open(pilot, app)
+        every_voice_row = set(_voice_ids(screen))
+        assert every_voice_row
+
+        screen.query_one("#model-filter", Input).value = needle
+        await pilot.pause()
+
+        assert set(_voice_ids(screen)) == every_voice_row
+        assert len(_model_ids(screen)) <= 2
+
+
+async def test_the_info_line_says_where_the_voice_rows_are():
+    """A count alone does not help when the rows sit below the fold."""
+    app = _host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _open(pilot, app)
+
+        count = len(_voice_ids(screen))
+        plain = screen._info_text().plain
+
+        assert count
+        assert f"{count} voice option(s)" in plain
+        assert "at the end" in plain
+        assert "type “voice”" in plain
+
+
 async def test_a_typed_voice_id_is_used_for_the_highlighted_voice_provider():
     from textual.widgets import Input, OptionList
 

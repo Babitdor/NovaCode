@@ -605,12 +605,18 @@ class ModelScreen(ModalScreen[dict | None]):
             picks.append(pick)
         if needle:
             # Match the provider name too, so "eleven" finds the section without
-            # the user knowing a voice id.
+            # the user knowing a voice id. The axis words are here because these
+            # sections are painted after every chat model (263 of them on a full
+            # list), so "voice"/"speech"/"stt"/"tts" is how the rows are reached
+            # without scrolling a few hundred lines to the bottom.
             registry_name = str(meta.get("name") or "")
+            keywords = f"{space} voice speech"
             picks = [
                 pick
                 for pick in picks
-                if _fuzzy_match(f"{pick.spec} {pick.display} {registry_name}", needle)
+                if _fuzzy_match(
+                    f"{pick.spec} {pick.display} {registry_name} {keywords}", needle
+                )
             ]
         return picks
 
@@ -740,8 +746,12 @@ class ModelScreen(ModalScreen[dict | None]):
             option_list.highlighted = current
             option_list.scroll_to_highlight()
 
-    def _update_info(self) -> None:
-        """Refresh the line above the list with the active count/subset."""
+    def _info_text(self) -> Text:
+        """Compose the line above the list: active counts, subset, filter.
+
+        Separate from the widget update so what it says is assertable without
+        reaching into Textual's rendering internals.
+        """
         picks = list(self._targets.values())
         models = [pick for pick in picks if pick.kind == "model"]
         voices = [pick for pick in picks if pick.kind == "voice"]
@@ -751,12 +761,22 @@ class ModelScreen(ModalScreen[dict | None]):
             style="dim",
         )
         if voices:
-            info.append(f"  ·  {len(voices)} voice option(s)", style="dim")
+            # The voice rows are painted after every chat model, which is well
+            # below the fold on a large list, so the count alone does not help
+            # find them: say where they are and how to get there.
+            info.append(
+                f"  ·  {len(voices)} voice option(s) at the end (type “voice”)",
+                style="dim",
+            )
         if self._curated_only:
             info.append("  ·  curated lists only (Ctrl+R for all)", style="yellow")
         if self._filter.strip():
             info.append(f"  ·  filtered by “{self._filter.strip()}”", style="dim")
-        self.query_one("#modelinfo", Static).update(info)
+        return info
+
+    def _update_info(self) -> None:
+        """Refresh the line above the list with the active count/subset."""
+        self.query_one("#modelinfo", Static).update(self._info_text())
 
     def _highlighted_target(self) -> _Pick | None:
         """Return the highlighted row's selection, if selectable."""

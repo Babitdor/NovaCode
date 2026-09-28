@@ -174,6 +174,37 @@ async def test_the_voice_providers_are_manageable_here_too(secrets):
         assert "text to speech" in labels["elevenlabs"]
 
 
+async def test_a_service_row_only_claims_what_that_service_gates(
+    secrets: type[_StubSecretManager],
+):
+    """The trailing note describes *that* credential.
+
+    The note read "gates web search" for any service, so the ElevenLabs row
+    claimed its key gated web search.
+    """
+    from textual.app import App, ComposeResult
+
+    from novacode_cli.tui.auth_screens import AuthManagerScreen
+
+    secrets.store = {"elevenlabs_api_key": "el-stored", "tavily_api_key": "tv-stored"}
+
+    class _Host(App):
+        def compose(self) -> ComposeResult:
+            return []
+
+    app = _Host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        manager = AuthManagerScreen()
+        app.push_screen(manager)
+        assert await _settle(pilot, lambda: bool(_rows(manager)))
+
+        labels = dict(zip(_rows(manager), _labels(manager), strict=True))
+
+        assert "gates web search" in labels["tavily"]
+        assert "gates web search" not in labels["elevenlabs"]
+        assert "gates web search" not in labels["deepgram"]
+
+
 # ---------------------------------------------------------------------------
 # The key prompt
 # ---------------------------------------------------------------------------
