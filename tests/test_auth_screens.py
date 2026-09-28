@@ -139,6 +139,41 @@ async def test_a_stored_key_is_reported_as_stored(secrets):
         assert "[missing]" in labels["openai"]
 
 
+async def test_the_voice_providers_are_manageable_here_too(secrets):
+    """Deepgram and ElevenLabs are credentials like any other.
+
+    They used to be storable only through `/voice settings --key`, which wrote
+    them to the config file in plaintext.
+    """
+    from textual.app import App
+
+    from novacode_cli.tui.auth_screens import AuthManagerScreen
+
+    secrets.store = {"elevenlabs_api_key": "el-stored"}
+
+    class _Host(App):
+        def compose(self):
+            return []
+
+    app = _Host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        manager = AuthManagerScreen()
+        app.push_screen(manager)
+        assert await _settle(pilot, lambda: bool(_rows(manager)))
+
+        rows = _rows(manager)
+        labels = dict(zip(rows, _labels(manager), strict=True))
+
+        assert "deepgram" in rows
+        assert "elevenlabs" in rows
+        assert "[stored]" in labels["elevenlabs"]
+        assert "[missing]" in labels["deepgram"]
+        # The name has to say which kind of provider it is: a bare "Deepgram"
+        # next to "OpenAI" reads like a chat provider.
+        assert "speech to text" in labels["deepgram"]
+        assert "text to speech" in labels["elevenlabs"]
+
+
 # ---------------------------------------------------------------------------
 # The key prompt
 # ---------------------------------------------------------------------------

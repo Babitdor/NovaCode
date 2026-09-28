@@ -108,16 +108,22 @@ class ProviderAuthStatus:
 
 SERVICE_API_KEY_ENV: dict[str, str] = {
     "tavily": "TAVILY_API_KEY",
+    "deepgram": "DEEPGRAM_API_KEY",
+    "elevenlabs": "ELEVENLABS_API_KEY",
 }
 """Non-model services configurable through ``/auth``, mapped to their env var.
 
 These back features rather than chat models — Tavily gates the ``web_search``
-tool — but their credentials are stored exactly like a provider key, so they
-belong in the same manager.
+tool, Deepgram and ElevenLabs back the cloud voice backends — but their
+credentials are stored exactly like a provider key, so they belong in the same
+manager. Without them here, a voice key can only live in plaintext in
+``Nova.config.json``.
 """
 
 SERVICE_DISPLAY_NAMES: dict[str, str] = {
     "tavily": "Tavily (web search)",
+    "deepgram": "Deepgram (speech to text)",
+    "elevenlabs": "ElevenLabs (text to speech)",
 }
 """Capitalized names for the services in ``/auth``.
 

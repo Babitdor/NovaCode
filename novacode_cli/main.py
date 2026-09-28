@@ -1123,6 +1123,15 @@ async def main(
 
     load_secrets_into_env()
 
+    # Voice keys were once written in plaintext to Nova.config.json. Move any
+    # that are still there into the keychain, before the pipeline reads them.
+    from novacode_cli.config.credentials import migrate_voice_keys
+
+    for moved in migrate_voice_keys():
+        logging.getLogger(__name__).info(
+            "Moved the %s key from the config into the credential store", moved
+        )
+
     # Initialize Vixie WebSocket server for desktop pet integration (non-blocking)
     # Server runs in background; if port is in use, it gracefully skips.
     # Skipped in headless mode — it's an interactive desktop-pet feature.

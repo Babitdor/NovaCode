@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import re
 import time
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,43 @@ from novacode_cli.tui.widgets import DEFAULT_THEME
 #: section labels). Provider ids in `MODEL_PRESETS` are bare words, so no
 #: selectable row's `provider:model` id can collide with one of these.
 _HEADER_PREFIX = "#hdr:"
+
+
+@dataclass(frozen=True)
+class _Pick:
+    """What a selectable row in the model picker means.
+
+    Two different selections share one list, so the row has to say which kind it
+    is: ``"model"`` switches the chat model and hot-swaps the agent, while
+    ``"voice"`` reconfigures speech I/O and rebuilds the (cached) voice pipeline.
+    Treating a voice row as a model row would send a voice provider id into
+    ``MODEL_PRESETS``, which does not contain it.
+
+    Attributes:
+        kind: ``"model"`` or ``"voice"``.
+        provider: Provider id, or voice-provider id (``deepgram``, ``elevenlabs``).
+        name: Model id, or the voice/model name for a voice provider.
+        space: ``"stt"`` or ``"tts"`` for voice rows; empty for model rows.
+        field: Config key a voice row writes (``model``, ``voice``, ``voice_id``).
+        label: Display name, when it differs from `name`.
+    """
+
+    kind: str
+    provider: str
+    name: str
+    space: str = ""
+    field: str = ""
+    label: str = ""
+
+    @property
+    def spec(self) -> str:
+        """The ``provider:name`` string used for filtering and recents."""
+        return f"{self.provider}:{self.name}"
+
+    @property
+    def display(self) -> str:
+        """What to paint on the row."""
+        return self.label or self.name
 
 
 def _fuzzy_match(spec: str, needle: str) -> bool:
@@ -322,6 +360,13 @@ class ModelScreen(ModalScreen[dict | None]):
     construction time — it dismisses with ``{"provider": …, "needs_auth": True}``
     so the app can route the user into ``/auth`` for that provider.
 
+    Two of the providers are speech rather than chat: Deepgram (STT) and
+    ElevenLabs (TTS). Their entries come from
+    :mod:`novacode_cli.audio.providers`, appear under their own section headers
+    below the chat providers, and carry the same credential indicator — a voice
+    provider with no key routes into ``/auth`` exactly like a chat provider.
+    Voice rows are hidden while ``Ctrl+R`` (curated chat lists only) is active.
+
     Loading reads the credential store, the filesystem, ``ollama list`` and (for
     OpenCode Go) the network, so it runs in a worker thread and the list is
     painted when it lands rather than blocking the first frame.
@@ -335,6 +380,11 @@ class ModelScreen(ModalScreen[dict | None]):
     #: Section label for the recently used models pinned at the top.
     _RECENT_LABEL = "Recent"
 
+    #: Section labels for the speech rows, which are a different axis from the
+    #: chat models above them.
+    _STT_LABEL = "Speech to text"
+    _TTS_LABEL = "Text to speech"
+
     def __init__(
         self, current_provider: str | None = None, current_model: str | None = None
     ) -> None:
@@ -345,10 +395,10 @@ class ModelScreen(ModalScreen[dict | None]):
         self._statuses: dict[str, Any] = {}
         self._models: dict[str, list[str]] = {}
         self._recent: list[str] = []
-        #: Option index -> (provider, model) for the selectable rows only.
-        #: `OptionList.highlighted` reports an index, so this is the mapping
-        #: back to what that index means.
-        self._targets: dict[int, tuple[str, str]] = {}
+        self._voice_cfg: dict[str, Any] = {}
+        #: Option index -> what that row selects. `OptionList.highlighted`
+        #: reports an index, so this is the mapping back to a choice.
+        self._targets: dict[int, _Pick] = {}
         self._filter = ""
 
     def compose(self) -> ComposeResult:
@@ -393,20 +443,30 @@ class ModelScreen(ModalScreen[dict | None]):
             models = get_all_models()
         except Exception:  # noqa: BLE001 — presets still render without discovery
             models = {}
+        recent: list[str] = []
+        voice_cfg: dict[str, Any] = {}
         try:
             from novacode_cli.config.nova_config import NovaConfig
 
-            recent = NovaConfig().get_recent_models()
-        except Exception:  # noqa: BLE001 — recents are a convenience
-            recent = []
+            config = NovaConfig()
+        except Exception:  # noqa: BLE001 — recents and voice are conveniences
+            config = None
+        if config is not None:
+            # Read separately: one unavailable getter must not discard the
+            # other's data, which is how the "Recent" section disappeared.
+            with contextlib.suppress(Exception):
+                recent = config.get_recent_models()
+            with contextlib.suppress(Exception):
+                voice_cfg = config.get_voice_config()
         with contextlib.suppress(Exception):
-            self.app.call_from_thread(self._apply, statuses, models, recent)
+            self.app.call_from_thread(self._apply, statuses, models, recent, voice_cfg)
 
     def _apply(
         self,
         statuses: dict[str, Any],
         models: dict[str, list[str]],
         recent: list[str],
+        voice_cfg: dict[str, Any] | None = None,
     ) -> None:
         """Record the loaded data and paint the list.
 
@@ -414,10 +474,12 @@ class ModelScreen(ModalScreen[dict | None]):
             statuses: Credential readiness per provider id.
             models: Model ids per provider id.
             recent: Recently used ``provider:model`` specs, newest first.
+            voice_cfg: The saved voice config, used to mark the active voice.
         """
         self._statuses = statuses
         self._models = models
         self._recent = recent
+        self._voice_cfg = voice_cfg or {}
         self._repaint()
 
     def _provider_models(self, provider: str) -> list[str]:
@@ -456,7 +518,7 @@ class ModelScreen(ModalScreen[dict | None]):
                     provider, _, model = spec.partition(":")
                     if model and spec not in seen:
                         seen.add(spec)
-                        self._add_model_row(option_list, provider, model)
+                        self._add_pick(option_list, _Pick("model", provider, model))
                         shown += 1
 
         for provider in MODEL_PRESETS:
@@ -470,27 +532,109 @@ class ModelScreen(ModalScreen[dict | None]):
                 continue
             option_list.add_option(self._header_row(provider))
             for model in models:
-                self._add_model_row(option_list, provider, model)
+                self._add_pick(option_list, _Pick("model", provider, model))
                 shown += 1
 
-        if not shown:
+        voice_shown = 0 if self._curated_only else self._add_voice_sections(option_list, needle)
+
+        if not shown and not voice_shown:
             option_list.add_option(self._disabled_row("No models match your filter."))
         self._highlight_current(option_list)
         self._update_info()
 
-    def _add_model_row(self, option_list: OptionList, provider: str, model: str) -> None:
-        """Append a selectable model row and record what it selects."""
-        option_list.add_option(self._model_row(provider, model))
+    def _add_voice_sections(self, option_list: OptionList, needle: str) -> int:
+        """Append the STT and TTS sections; return how many rows were added.
+
+        Each provider gets its own header carrying the credential indicator, so
+        a keyless provider is visible *before* its rows are selected. The section
+        label above is what says which axis the block belongs to.
+        """
+        from novacode_cli.audio.providers import STT_PROVIDERS, TTS_PROVIDERS
+
+        added = 0
+        for label, space, registry in (
+            (self._STT_LABEL, "stt", STT_PROVIDERS),
+            (self._TTS_LABEL, "tts", TTS_PROVIDERS),
+        ):
+            grouped = [
+                (provider, self._voice_picks(space, provider, meta, needle))
+                for provider, meta in registry.items()
+                if provider != "none"
+            ]
+            grouped = [(provider, picks) for provider, picks in grouped if picks]
+            if not grouped:
+                continue
+            option_list.add_option(self._disabled_row(label))
+            for provider, picks in grouped:
+                option_list.add_option(self._header_row(provider))
+                for pick in picks:
+                    self._add_pick(option_list, pick)
+                    added += 1
+        return added
+
+    def _voice_picks(
+        self,
+        space: str,
+        provider: str,
+        meta: dict[str, Any],
+        needle: str,
+    ) -> list[_Pick]:
+        """Build the selectable rows for one voice provider.
+
+        Args:
+            space: ``"stt"`` or ``"tts"``.
+            provider: Voice provider id.
+            meta: That provider's entry in the audio registry.
+            needle: Active filter text.
+
+        Returns:
+            The rows to show, in registry order.
+        """
+        field = str(meta.get("option_field") or "model")
+        labels = meta.get("option_labels") or {}
+        picks: list[_Pick] = []
+        for name in meta.get("options") or []:
+            pick = _Pick(
+                "voice",
+                provider,
+                str(name),
+                space=space,
+                field=field,
+                label=str(labels.get(name, "")),
+            )
+            picks.append(pick)
+        if needle:
+            # Match the provider name too, so "eleven" finds the section without
+            # the user knowing a voice id.
+            registry_name = str(meta.get("name") or "")
+            picks = [
+                pick
+                for pick in picks
+                if _fuzzy_match(f"{pick.spec} {pick.display} {registry_name}", needle)
+            ]
+        return picks
+
+    def _add_pick(self, option_list: OptionList, pick: _Pick) -> None:
+        """Append a selectable row and record what it selects."""
+        option_list.add_option(self._pick_row(pick))
         # Index is what `OptionList.highlighted` reports, so the mapping back to
-        # a (provider, model) pair has to be keyed on the option's position.
-        self._targets[option_list.option_count - 1] = (provider, model)
+        # a choice has to be keyed on the option's position.
+        self._targets[option_list.option_count - 1] = pick
 
     def _header_row(self, provider: str) -> Option:
         """Build a provider header row, carrying its credential indicator."""
+        from novacode_cli.audio.providers import STT_PROVIDERS, TTS_PROVIDERS
         from novacode_cli.config.model_manager import MODEL_PRESETS
 
-        preset = MODEL_PRESETS.get(provider) or {}
-        text = Text(str(preset.get("name") or provider), style="bold")
+        preset = MODEL_PRESETS.get(provider)
+        if preset is None:
+            # A voice provider has no chat preset, so its display name comes from
+            # the audio registry instead of the raw id.
+            meta = STT_PROVIDERS.get(provider) or TTS_PROVIDERS.get(provider) or {}
+            name = str(meta.get("name") or provider)
+        else:
+            name = str(preset.get("name") or provider)
+        text = Text(name, style="bold")
         status = self._statuses.get(provider)
         indicator = format_auth_indicator(status) if status is not None else ""
         if indicator:
@@ -502,30 +646,73 @@ class ModelScreen(ModalScreen[dict | None]):
         """Build a non-selectable row (section label, empty state)."""
         return Option(Text(label, style="dim"), id=f"{_HEADER_PREFIX}{label}", disabled=True)
 
-    def _model_row(self, provider: str, model: str) -> Option:
-        """Build a selectable model row, marking the model in use."""
-        text = Text(model, style="italic" if self._is_current(provider, model) else "")
-        if self._is_current(provider, model):
-            text.append("  (current)", style="dim")
-        return Option(text, id=f"{provider}:{model}")
+    def _pick_row(self, pick: _Pick) -> Option:
+        """Build a selectable row, marking the model or voice in use.
 
-    def _is_current(self, provider: str, model: str) -> bool:
-        """Whether this pair is the model the session is running on."""
-        return provider == self._current_provider and model == self._current_model
+        When a label differs from the stored value (an ElevenLabs voice id, a
+        Piper voice), the label leads and the value is shown dimmed beside it —
+        the value is what gets saved, so it has to stay visible.
+        """
+        current = self._is_current(pick)
+        text = Text(pick.display, style="italic" if current else "")
+        if pick.label and pick.name not in pick.label:
+            # Show the stored value when the label does not already contain it
+            # (an ElevenLabs voice id would otherwise be invisible).
+            text.append(f"  {pick.name}", style="dim")
+        if current:
+            text.append("  (current)", style="dim")
+        return Option(text, id=pick.spec)
+
+    def _is_current(self, pick: _Pick) -> bool:
+        """Whether this row is the model, or the voice, the session runs on."""
+        if pick.kind == "model":
+            return self._is_current_model(pick)
+        return self._is_current_voice(pick)
+
+    def _is_current_model(self, pick: _Pick) -> bool:
+        """Whether this row is the chat model the session is running on."""
+        return pick.provider == self._current_provider and pick.name == self._current_model
+
+    def _is_current_voice(self, pick: _Pick) -> bool:
+        """Whether this row is the configured voice for its axis."""
+        if not self._voice_cfg:
+            return False
+        space = pick.space
+        if pick.provider != self._voice_cfg.get(f"{space}_provider"):
+            return False
+        written = self._voice_field_value(pick.provider, pick.field)
+        if written is None:
+            # The legacy flat keys are the default for whisper and piper.
+            written = self._voice_cfg.get("stt_model" if space == "stt" else "tts_voice")
+        return pick.name == written
+
+    def _voice_field_value(self, provider: str, field: str) -> str | None:
+        """The configured value of *field* for *provider*, or ``None``."""
+        providers = self._voice_cfg.get("providers")
+        if not isinstance(providers, dict):
+            return None
+        entry = providers.get(provider)
+        if not isinstance(entry, dict):
+            return None
+        value = entry.get(field)
+        return value if isinstance(value, str) and value else None
 
     def _highlight_current(self, option_list: OptionList) -> None:
         """Put the cursor on the model in use, else the active provider's rows.
 
-        Falls back in two steps because the reason the picker reopened is not
-        always a current model: after `/auth` it holds a *provider* to act on,
-        and landing on an unrelated provider's first row would look like the
-        dialog ignored the choice that brought the user here.
+        The chat model wins over a configured voice: the picker is opened to
+        switch models, and a voice is very often already set, so letting the
+        voice take the cursor would mean landing somewhere the user did not come
+        to change. The remaining steps exist because the reason the picker
+        reopened is not always a current model — after `/auth` it holds a
+        *provider* to act on, and landing on an unrelated provider's first row
+        would look like the dialog ignored the choice that brought the user here.
         """
         current = next(
             (
                 position
-                for position, target in self._targets.items()
-                if self._is_current(*target)
+                for position, pick in self._targets.items()
+                if pick.kind == "model" and self._is_current_model(pick)
             ),
             None,
         )
@@ -533,8 +720,17 @@ class ModelScreen(ModalScreen[dict | None]):
             current = next(
                 (
                     position
-                    for position, (provider, _) in self._targets.items()
-                    if provider == self._current_provider
+                    for position, pick in self._targets.items()
+                    if pick.provider == self._current_provider
+                ),
+                None,
+            )
+        if current is None:
+            current = next(
+                (
+                    position
+                    for position, pick in self._targets.items()
+                    if pick.kind == "voice" and self._is_current_voice(pick)
                 ),
                 None,
             )
@@ -546,19 +742,24 @@ class ModelScreen(ModalScreen[dict | None]):
 
     def _update_info(self) -> None:
         """Refresh the line above the list with the active count/subset."""
-        providers = {provider for provider, _ in self._targets.values()}
+        picks = list(self._targets.values())
+        models = [pick for pick in picks if pick.kind == "model"]
+        voices = [pick for pick in picks if pick.kind == "voice"]
         info = Text()
         info.append(
-            f"{len(self._targets)} model(s) from {len(providers)} provider(s)", style="dim"
+            f"{len(models)} model(s) from {len({pick.provider for pick in models})} provider(s)",
+            style="dim",
         )
+        if voices:
+            info.append(f"  ·  {len(voices)} voice option(s)", style="dim")
         if self._curated_only:
             info.append("  ·  curated lists only (Ctrl+R for all)", style="yellow")
         if self._filter.strip():
             info.append(f"  ·  filtered by “{self._filter.strip()}”", style="dim")
         self.query_one("#modelinfo", Static).update(info)
 
-    def _highlighted_target(self) -> tuple[str, str] | None:
-        """Return the highlighted row's ``(provider, model)``, if selectable."""
+    def _highlighted_target(self) -> _Pick | None:
+        """Return the highlighted row's selection, if selectable."""
         option_list = self.query_one("#model-options", OptionList)
         index = option_list.highlighted
         if index is None:
@@ -588,7 +789,7 @@ class ModelScreen(ModalScreen[dict | None]):
             return
         target = self._targets.get(event.option_index)
         if target is not None:
-            self._choose(*target)
+            self._choose(target)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cancel":
@@ -605,35 +806,48 @@ class ModelScreen(ModalScreen[dict | None]):
         self.dismiss(None)
 
     def _submit(self) -> None:
-        """Resolve the highlighted row or the typed model id and switch."""
+        """Resolve the highlighted row or the typed value and apply it."""
         typed = self.query_one("#model", Input).value.strip()
         target = self._highlighted_target()
 
         if typed:
-            provider = target[0] if target else self._current_provider
+            if target is not None and target.kind == "voice":
+                # The free-text field follows whatever row is highlighted, so a
+                # voice id the registry does not list can still be set.
+                self._choose(replace(target, name=typed, label=""))
+                return
+            provider = target.provider if target else self._current_provider
             if provider is None:
                 self._show_hint("Highlight a provider row first, then retry.", error=True)
                 return
-            self._choose(provider, typed)
+            self._choose(_Pick("model", provider, typed))
             return
 
         if target is None:
             self._show_hint("Nothing selected — pick a model or type one.", error=True)
             return
-        self._choose(*target)
+        self._choose(target)
 
-    def _choose(self, provider: str, model: str) -> None:
+    def _choose(self, pick: _Pick) -> None:
         """Dismiss with the choice, or with a request to authenticate it.
 
         A provider whose credential is missing is not an error to swallow: the
         switch would fail at model construction with an SDK-level message. The
         app turns ``needs_auth`` into a trip through ``/auth`` for this provider.
         """
-        status = self._statuses.get(provider)
+        status = self._statuses.get(pick.provider)
         if status is not None and not status.is_usable:
-            self.dismiss({"provider": provider, "needs_auth": True})
+            self.dismiss({"provider": pick.provider, "needs_auth": True, "kind": pick.kind})
             return
-        self.dismiss({"provider": provider, "model": model})
+        payload: dict[str, str] = {
+            "kind": pick.kind,
+            "provider": pick.provider,
+            "model": pick.name,
+        }
+        if pick.kind == "voice":
+            payload["space"] = pick.space
+            payload["field"] = pick.field
+        self.dismiss(payload)
 
 
 class SessionsScreen(ModalScreen[None]):

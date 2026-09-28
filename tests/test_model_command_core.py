@@ -9,6 +9,7 @@ grows a private copy again.
 
 import inspect
 import os
+from types import SimpleNamespace
 
 import pytest
 
@@ -196,3 +197,177 @@ def test_console_model_handler_points_at_the_tui():
     assert "import PromptSession" not in src
     assert "run_interactive_menu" not in src
     assert "prompt_async" not in src
+
+
+# ---------------------------------------------------------------------------
+# Voice picks from the same picker
+#
+# The picker carries a second axis, so a voice row must never reach the chat
+# branch: `MODEL_PRESETS` has no entry for a voice provider id and would raise.
+# ---------------------------------------------------------------------------
+
+class _RecordingVoiceConfig:
+    """NovaConfig stand-in that records the voice writes."""
+
+    voice_calls: list[dict] = []
+    provider_calls: list[tuple[str, dict]] = []
+    fail = False
+
+    def __init__(self, *a, **k) -> None:
+        pass
+
+    def set_voice_config(self, **updates):
+        if type(self).fail:
+            raise OSError("config is read-only")
+        type(self).voice_calls.append(updates)
+        return {}
+
+    def set_voice_provider_config(self, provider, **updates):
+        type(self).provider_calls.append((provider, updates))
+        return {}
+
+
+class _AppStub:
+    """The bits of NovaApp `_apply_voice_pick` touches."""
+
+    def __init__(self) -> None:
+        self._voice_pipeline = "warmed-pipeline"
+        self.session_state = SimpleNamespace(_voice_pipeline="warmed-pipeline")
+        self.logged: list[str] = []
+
+    def _log(self, text) -> None:
+        self.logged.append(str(text))
+
+
+@pytest.fixture
+def voice_config(monkeypatch):
+    _RecordingVoiceConfig.voice_calls = []
+    _RecordingVoiceConfig.provider_calls = []
+    _RecordingVoiceConfig.fail = False
+    monkeypatch.setattr(
+        "novacode_cli.config.nova_config.NovaConfig", _RecordingVoiceConfig
+    )
+    return _RecordingVoiceConfig
+
+
+def _apply(payload: dict) -> _AppStub:
+    from novacode_cli.tui.app import NovaApp
+
+    app = _AppStub()
+    NovaApp._apply_voice_pick(app, payload)
+    return app
+
+
+def test_a_voice_pick_saves_the_field_and_activates_its_provider(voice_config):
+    """Selecting a voice must also make its provider the active one.
+
+    Otherwise picking "nova-3" while faster-whisper is active would save a value
+    that nothing reads.
+    """
+    _apply(
+        {
+            "kind": "voice",
+            "space": "stt",
+            "provider": "deepgram",
+            "field": "model",
+            "model": "nova-3",
+        }
+    )
+
+    assert voice_config.provider_calls == [("deepgram", {"model": "nova-3"})]
+    assert voice_config.voice_calls == [{"stt_provider": "deepgram"}]
+
+
+def test_a_voice_pick_writes_the_tll_fieldthe_payload_names(voice_config):
+    """ElevenLabs stores a `voice_id`, not a `voice` — the payload decides."""
+    _apply(
+        {
+            "kind": "voice",
+            "space": "tts",
+            "provider": "elevenlabs",
+            "field": "voice_id",
+            "model": "EXAVITQu4vr4xnSDxMaL",
+        }
+    )
+
+    assert voice_config.provider_calls == [
+        ("elevenlabs", {"voice_id": "EXAVITQu4vr4xnSDxMaL"})
+    ]
+    assert voice_config.voice_calls == [{"tts_provider": "elevenlabs"}]
+
+
+def test_a_voice_pick_rebuilds_the_cached_pipeline(voice_config):
+    """The pipeline is cached, so without this the pick silently does nothing.
+
+    `_ensure_voice_pipeline` returns early while one exists, which is why
+    `/voice settings` clears both references too.
+    """
+    app = _apply(
+        {
+            "kind": "voice",
+            "space": "tts",
+            "provider": "piper",
+            "field": "voice",
+            "model": "en_US-amy-medium",
+        }
+    )
+
+    assert app._voice_pipeline is None
+    assert app.session_state._voice_pipeline is None
+
+
+def test_a_voice_pick_reports_what_changed(voice_config):
+    app = _apply(
+        {
+            "kind": "voice",
+            "space": "stt",
+            "provider": "deepgram",
+            "field": "model",
+            "model": "nova-3",
+        }
+    )
+
+    assert any("Deepgram" in line and "nova-3" in line for line in app.logged)
+
+
+def test_an_empty_voice_name_is_ignored(voice_config):
+    """A blank selection must not blank a working setting."""
+    app = _apply({"kind": "voice", "space": "stt", "provider": "deepgram", "model": ""})
+
+    assert voice_config.provider_calls == []
+    assert voice_config.voice_calls == []
+    assert app._voice_pipeline == "warmed-pipeline"
+
+
+def test_a_config_failure_is_reported_not_raised(voice_config):
+    voice_config.fail = True
+
+    app = _apply(
+        {
+            "kind": "voice",
+            "space": "stt",
+            "provider": "deepgram",
+            "field": "model",
+            "model": "nova-3",
+        }
+    )
+
+    assert any("Could not save" in line for line in app.logged)
+    # The warmed pipeline stays: nothing changed, so nothing to rebuild.
+    assert app._voice_pipeline == "warmed-pipeline"
+
+
+def test_run_model_branches_on_kind_before_indexing_model_presets():
+    """Ordering matters: `MODEL_PRESETS["deepgram"]` would raise KeyError.
+
+    A voice provider id is absent from the chat presets, so the kind check has to
+    come first.
+    """
+    from novacode_cli.tui.app import NovaApp
+
+    src = inspect.getsource(NovaApp._run_model)
+    branch = src.index('== "voice"')
+    lookup = src.index("MODEL_PRESETS[provider]")
+
+    assert branch < lookup
+    assert "_apply_voice_pick(" in src

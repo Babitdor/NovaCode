@@ -18,6 +18,10 @@ _CREDENTIAL_ENV_VARS = (
     "TAVILY_API_KEY",
     "LANGSMITH_API_KEY",
     "OPENAI_BASE_URL",
+    # Voice services. Kept in step with `SERVICE_API_KEY_ENV`: a value exported
+    # here makes a later test's provider read as "env set" instead of "stored".
+    "DEEPGRAM_API_KEY",
+    "ELEVENLABS_API_KEY",
 )
 
 

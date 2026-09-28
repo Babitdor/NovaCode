@@ -446,3 +446,83 @@ def credential_meta(env_var: str) -> CredentialMeta | None:
 def apply_credential_to_env(env_var: str) -> str | None:
     """Export a stored credential into the process environment."""
     return default_store().apply_to_env(env_var)
+
+
+def credential_value(env_var: str) -> str:
+    """The stored credential for *env_var*, else the environment, else ``""``.
+
+    The order is the point. A key entered through the UI lives in the keychain,
+    and only the startup hydration pass puts it in ``os.environ``, so a caller
+    reading the environment alone sees nothing until the process restarts. This
+    is the lookup for code that was written against ``os.environ`` directly.
+
+    Args:
+        env_var: The environment variable the credential is filed under.
+
+    Returns:
+        The key, or an empty string when none is available anywhere.
+    """
+    stored = get_stored_key(env_var)
+    if stored:
+        return stored
+    return os.environ.get(env_var) or ""
+
+
+#: Cloud voice providers, mapped to their credential env var and the config
+#: provider id those keys used to be written to. Both lived in plaintext in
+#: ``Nova.config.json`` under ``voice.providers.<id>``.
+_LEGACY_VOICE_KEYS: dict[str, str] = {
+    "DEEPGRAM_API_KEY": "deepgram",
+    "ELEVENLABS_API_KEY": "elevenlabs",
+}
+
+
+def migrate_voice_keys() -> list[str]:
+    """Move plaintext voice keys from the config file into the keychain.
+
+    Earlier releases stored these under ``voice.providers.<id>.api_key`` (and a
+    legacy ``.key`` duplicate), because the voice backends read their key from
+    the config rather than the environment. The value is copied to the keychain
+    and the config field is blanked, so the file stops carrying a secret.
+
+    Idempotent, and safe to call on every startup: a provider with no plaintext
+    key is skipped, and one whose key is already stored only has the redundant
+    copy cleared. Writes to the config are non-fatal — a failure leaves the
+    plaintext in place, which the pipeline still honors via its fallback chain.
+
+    Returns:
+        The env var names whose plaintext copy was removed, for reporting.
+    """
+    from novacode_cli.config.nova_config import NovaConfig
+
+    migrated: list[str] = []
+    try:
+        config = NovaConfig()
+        store = default_store()
+    except Exception:  # noqa: BLE001 — startup must not fail on a config problem
+        logger.warning("Could not open the config for voice key migration")
+        return migrated
+
+    for env_var, provider in _LEGACY_VOICE_KEYS.items():
+        try:
+            provider_cfg = config.get_voice_provider_config(provider)
+        except Exception:  # noqa: BLE001
+            logger.warning("Could not read voice config for %s", provider)
+            continue
+        plaintext = _clean(provider_cfg.get("api_key")) or _clean(provider_cfg.get("key"))
+        if not plaintext:
+            continue
+        try:
+            if not store.has_key(env_var):
+                outcome = store.set_key(env_var, plaintext)
+                if not outcome.ok:
+                    logger.warning("Could not store the %s key", env_var)
+                    continue
+            # Blank both fields: `api_key` and the legacy `key` alias the older
+            # `/voice settings --key` wrote.
+            config.set_voice_provider_config(provider, api_key="", key="")
+        except Exception:  # noqa: BLE001
+            logger.warning("Could not move the %s key out of the config", env_var)
+            continue
+        migrated.append(env_var)
+    return migrated

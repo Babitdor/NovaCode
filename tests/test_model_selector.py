@@ -49,19 +49,37 @@ FAKE_STATUSES: dict[str, ProviderAuthStatus] = {
     "openrouter": _status("openrouter", ProviderAuthState.MISSING),
     "opencode": _status("opencode", ProviderAuthState.MISSING),
     "nvidia": _status("nvidia", ProviderAuthState.MISSING),
+    # Voice providers are credentials too, and the picker lists them beside the
+    # chat providers — one configured, one not, so both paths are exercised.
+    "elevenlabs": _status("elevenlabs", ProviderAuthState.CONFIGURED, ProviderAuthSource.STORED),
+    "deepgram": _status("deepgram", ProviderAuthState.MISSING),
+}
+
+FAKE_VOICE: dict = {
+    "stt_provider": "faster-whisper",
+    "tts_provider": "piper",
+    "stt_model": "base",
+    "providers": {
+        "faster-whisper": {"model": "base"},
+        "piper": {"voice": "en_US-lessac-medium"},
+    },
 }
 
 
 class _FakeConfig:
-    """NovaConfig stand-in carrying a canned recent list."""
+    """NovaConfig stand-in carrying canned recents and voice settings."""
 
     recent: list[str] = []
+    voice: dict = {}
 
     def __init__(self, *args, **kwargs) -> None:
         pass
 
     def get_recent_models(self) -> list[str]:
         return list(type(self).recent)
+
+    def get_voice_config(self) -> dict:
+        return dict(type(self).voice or FAKE_VOICE)
 
 
 @pytest.fixture(autouse=True)
@@ -75,6 +93,7 @@ def _stubbed(monkeypatch):
     )
     monkeypatch.setattr(catalog, "get_all_models", lambda **kwargs: dict(FAKE_MODELS))
     _FakeConfig.recent = []
+    _FakeConfig.voice = {}
     monkeypatch.setattr(nova_config, "NovaConfig", _FakeConfig)
 
 
@@ -103,11 +122,27 @@ def _options(screen):
 
 
 def _model_ids(screen) -> list[str]:
+    """Ids of the selectable CHAT rows (voice rows are asserted separately)."""
+    voice = {pick.spec for pick in screen._targets.values() if pick.kind == "voice"}
     return [
         option.id
         for option in _options(screen)
-        if option.id and not str(option.id).startswith("#hdr:")
+        if option.id and not str(option.id).startswith("#hdr:") and option.id not in voice
     ]
+
+
+def _voice_ids(screen) -> list[str]:
+    """Ids of the selectable VOICE rows, in painted order."""
+    return [pick.spec for pick in screen._targets.values() if pick.kind == "voice"]
+
+
+def _voice_row(screen, spec: str):
+    """The ``_Pick`` behind a voice row id."""
+    return next(pick for pick in screen._targets.values() if pick.spec == spec)
+
+
+def _all_ids(screen) -> list[str]:
+    return [option.id for option in _options(screen)]
 
 
 def _texts(screen) -> list[str]:
@@ -129,10 +164,22 @@ async def test_rows_are_grouped_under_provider_headers():
     async with app.run_test(size=(120, 40)) as pilot:
         screen = await _open(pilot, app)
 
-        ids = [option.id for option in _options(screen)]
+        ids = _all_ids(screen)
         headers = [i for i in ids if i and str(i).startswith("#hdr:")]
 
-        assert len(headers) == len(FAKE_MODELS)
+        # One header per chat provider, plus the two speech section labels.
+        for provider in FAKE_MODELS:
+            assert f"#hdr:{provider}" in headers
+        assert "#hdr:Speech to text" in headers
+        assert "#hdr:Text to speech" in headers
+        # Every voice provider also gets its own header, which is what carries
+        # its credential indicator. Without one a missing key is invisible until
+        # the row is already selected.
+        from novacode_cli.audio.providers import STT_PROVIDERS, TTS_PROVIDERS
+
+        for provider, meta in (STT_PROVIDERS | TTS_PROVIDERS).items():
+            if meta.get("options"):
+                assert f"#hdr:{provider}" in headers, f"{provider} has no header"
         # Every model row is prefixed with its provider, which is what the
         # selection returns and what the app switches on.
         assert set(_model_ids(screen)) == {
@@ -208,7 +255,7 @@ async def test_choosing_a_model_dismisses_with_it():
         await pilot.press("enter")
         await pilot.pause()
 
-    assert got == [{"provider": "anthropic", "model": "claude-opus-5"}]
+    assert got == [{"kind": "model", "provider": "anthropic", "model": "claude-opus-5"}]
 
 
 async def test_a_provider_without_a_key_asks_to_authenticate():
@@ -236,7 +283,7 @@ async def test_a_provider_without_a_key_asks_to_authenticate():
         await pilot.pause()
 
     # Not an error to swallow: the app routes this into /auth for the provider.
-    assert got == [{"provider": "openai", "needs_auth": True}]
+    assert got == [{"provider": "openai", "needs_auth": True, "kind": "model"}]
 
 
 async def test_a_typed_model_id_is_used_for_the_selected_provider():
@@ -263,7 +310,7 @@ async def test_a_typed_model_id_is_used_for_the_selected_provider():
 
     # The curated lists cannot name a model the provider has not published yet,
     # so a free-typed id goes through for the provider under the cursor.
-    assert got == [{"provider": "anthropic", "model": "claude-opus-6-preview"}]
+    assert got == [{"kind": "model", "provider": "anthropic", "model": "claude-opus-6-preview"}]
 
 
 async def test_ctrl_r_restricts_the_list_to_the_curated_subset():
@@ -284,6 +331,206 @@ async def test_ctrl_r_restricts_the_list_to_the_curated_subset():
         assert set(_model_ids(screen)) == curated
         # A curated id the stubbed catalog never returned is back in view.
         assert "google:gemini-1.5-flash" in _model_ids(screen)
+        # Ctrl+R means "the curated CHAT lists", so the speech sections go away
+        # rather than sitting under a list that deliberately excludes them.
+        assert not _voice_ids(screen)
+        assert "#hdr:Speech to text" not in _all_ids(screen)
+
+
+async def test_voice_headers_carry_the_credential_indicator():
+    """The key state has to be visible before a row is chosen."""
+    app = _host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _open(pilot, app)
+
+        by_id = dict(zip(_all_ids(screen), _texts(screen), strict=True))
+
+        assert "no key" in by_id["#hdr:deepgram"]
+        # Configured in FAKE_STATUSES, so no annotation.
+        assert "no key" not in by_id["#hdr:elevenlabs"]
+        # Local providers need no key at all.
+        assert "no key" not in by_id["#hdr:piper"]
+
+
+async def test_a_voice_row_shows_the_value_it_will_store():
+    """An ElevenLabs row is a voice ID; the label alone would hide that."""
+    app = _host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _open(pilot, app)
+
+        by_id = dict(zip(_all_ids(screen), _texts(screen), strict=True))
+
+        assert "21m00Tcm4TlvDq8ikWAM" in by_id["elevenlabs:21m00Tcm4TlvDq8ikWAM"]
+        # A label that already contains the value is not repeated.
+        piper_row = by_id["piper:en_US-lessac-medium"]
+        assert piper_row.count("en_US-lessac-medium") == 1
+
+
+# ── Voice rows ───────────────────────────────────────────────────────────────
+# The picker carries a second axis besides chat models. These pin the parts that
+# differ: what a voice row selects, and that it never reaches MODEL_PRESETS.
+
+
+async def test_voice_sections_list_every_speech_provider():
+    app = _host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _open(pilot, app)
+
+        ids = set(_voice_ids(screen))
+        by_spec = {spec: _voice_row(screen, spec) for spec in ids}
+
+        # The repo default for each provider is offered, under the right axis.
+        assert by_spec["faster-whisper:base"].space == "stt"
+        assert by_spec["faster-whisper:base"].field == "model"
+        assert by_spec["deepgram:nova-2"].space == "stt"
+        assert by_spec["piper:en_US-lessac-medium"].space == "tts"
+        assert by_spec["piper:en_US-lessac-medium"].field == "voice"
+        # ElevenLabs stores a voice ID under its own key, not `voice`.
+        eleven = _voice_row(screen, "elevenlabs:21m00Tcm4TlvDq8ikWAM")
+        assert eleven.space == "tts"
+        assert eleven.field == "voice_id"
+        # Local, keyless providers are listed too — they are still a choice.
+        assert "parakeet:parakeet-tdt-0.6b-v2" in ids
+
+
+async def test_choosing_a_voice_row_dismisses_with_its_axis_and_field():
+    from textual.widgets import OptionList
+
+    from novacode_cli.tui.screens import ModelScreen
+
+    app = _host()
+    got: list[dict | None] = []
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = ModelScreen()
+        app.push_screen(screen, callback=got.append)
+        for _ in range(120):
+            await pilot.pause()
+            if screen.query_one("#model-options", OptionList).option_count:
+                break
+
+        option_list = screen.query_one("#model-options", OptionList)
+        for index, option in enumerate(option_list.options):
+            if option.id == "piper:en_US-amy-medium":
+                option_list.highlighted = index
+                break
+        await pilot.press("enter")
+        await pilot.pause()
+
+    # `kind` is what keeps a voice pick from being handed to MODEL_PRESETS,
+    # which has no entry for a voice provider.
+    assert got == [
+        {
+            "kind": "voice",
+            "provider": "piper",
+            "model": "en_US-amy-medium",
+            "space": "tts",
+            "field": "voice",
+        }
+    ]
+
+
+async def test_a_voice_provider_without_a_key_asks_to_authenticate():
+    from textual.widgets import OptionList
+
+    from novacode_cli.tui.screens import ModelScreen
+
+    app = _host()
+    got: list[dict | None] = []
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = ModelScreen()
+        app.push_screen(screen, callback=got.append)
+        for _ in range(120):
+            await pilot.pause()
+            if screen.query_one("#model-options", OptionList).option_count:
+                break
+
+        option_list = screen.query_one("#model-options", OptionList)
+        for index, option in enumerate(option_list.options):
+            if option.id == "deepgram:nova-2":
+                option_list.highlighted = index
+                break
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert got == [{"provider": "deepgram", "needs_auth": True, "kind": "voice"}]
+
+
+async def test_a_filter_finds_the_voice_section_by_provider_name():
+    """Typing a provider name must find it — a user rarely knows a voice id."""
+    from textual.widgets import Input
+
+    app = _host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _open(pilot, app)
+
+        screen.query_one("#model-filter", Input).value = "eleven"
+        await pilot.pause()
+
+        assert set(_voice_ids(screen)) == {"elevenlabs:21m00Tcm4TlvDq8ikWAM"}
+        assert not _model_ids(screen)
+
+
+async def test_a_typed_voice_id_is_used_for_the_highlighted_voice_provider():
+    from textual.widgets import Input, OptionList
+
+    from novacode_cli.tui.screens import ModelScreen
+
+    app = _host()
+    got: list[dict | None] = []
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = ModelScreen()
+        app.push_screen(screen, callback=got.append)
+        for _ in range(120):
+            await pilot.pause()
+            if screen.query_one("#model-options", OptionList).option_count:
+                break
+
+        option_list = screen.query_one("#model-options", OptionList)
+        for index, option in enumerate(option_list.options):
+            if option.id == "elevenlabs:21m00Tcm4TlvDq8ikWAM":
+                option_list.highlighted = index
+                break
+        # A voice the registry does not list, so the free-text field is the only
+        # way to reach it.
+        screen.query_one("#model", Input).value = "EXAVITQu4vr4xnSDxMaL"
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert got == [
+        {
+            "kind": "voice",
+            "provider": "elevenlabs",
+            "model": "EXAVITQu4vr4xnSDxMaL",
+            "space": "tts",
+            "field": "voice_id",
+        }
+    ]
+
+
+async def test_the_active_voice_is_marked():
+    """The configured voice shows as current, which is how a user sees the axis."""
+    _FakeConfig.voice = {
+        "stt_provider": "deepgram",
+        "tts_provider": "elevenlabs",
+        "providers": {
+            "deepgram": {"model": "nova-3"},
+            "elevenlabs": {"voice_id": "21m00Tcm4TlvDq8ikWAM"},
+        },
+    }
+
+    app = _host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _open(pilot, app)
+
+        by_id = dict(zip(_all_ids(screen), _texts(screen), strict=True))
+
+        assert "(current)" in by_id["deepgram:nova-3"]
+        assert "(current)" not in by_id["deepgram:nova-2"]
+        assert "(current)" in by_id["elevenlabs:21m00Tcm4TlvDq8ikWAM"]
+        assert "(current)" not in by_id["piper:en_US-lessac-medium"]
 
 
 async def test_recent_picks_are_pinned_on_top_and_not_repeated():

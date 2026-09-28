@@ -29,6 +29,29 @@ def get_active_pipeline() -> VoicePipeline | None:
     return _ACTIVE_PIPELINE
 
 
+def _stored_or_config_key(cfg: dict[str, Any], env_var: str) -> str:
+    """Resolve a cloud voice provider's key, preferring the credential store.
+
+    The config field is checked first only because it is the older location and
+    may still hold a key on a machine where the startup migration has not run;
+    `credential_value` then covers the keychain (which is where `/auth` and
+    `/voice settings --key` now write) and the environment.
+
+    A key that no longer resolves returns ``""`` so the backend still reports its
+    own "no API key" error rather than the pipeline guessing.
+
+    Args:
+        cfg: The provider's config block.
+        env_var: Credential env var backing this provider.
+
+    Returns:
+        The API key, or an empty string when none is configured.
+    """
+    from novacode_cli.config.credentials import credential_value
+
+    return cfg.get("api_key") or cfg.get("key") or credential_value(env_var)
+
+
 def build_stt(provider: str, provider_configs: dict[str, Any] | None = None) -> VoiceSTT:
     """Create an STT backend by provider name.
 
@@ -50,7 +73,7 @@ def build_stt(provider: str, provider_configs: dict[str, Any] | None = None) -> 
         from novacode_cli.audio.stt_deepgram import DeepgramTranscriber
 
         return DeepgramTranscriber(
-            api_key=cfg.get("api_key") or cfg.get("key") or "",
+            api_key=_stored_or_config_key(cfg, "DEEPGRAM_API_KEY"),
             model=cfg.get("model", "nova-2"),
         )
     if provider == "parakeet":
@@ -152,7 +175,7 @@ class VoicePipeline:
             from novacode_cli.audio.stt_elevenlabs import ElevenLabsSpeaker
 
             return ElevenLabsSpeaker(
-                api_key=cfg.get("api_key") or cfg.get("key") or "",
+                api_key=_stored_or_config_key(cfg, "ELEVENLABS_API_KEY"),
                 voice_id=cfg.get("voice_id", "21m00Tcm4TlvDq8ikWAM"),
             )
         if provider == "orpheus":

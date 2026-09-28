@@ -40,6 +40,11 @@ API_KEY_NAMES = {
     "opencode": "opencode_api_key",
     "nvidia": "nvidia_api_key",
     "groq": "groq_api_key",
+    # Cloud voice providers. Listed here, not just in the audio registry, so the
+    # startup hydration pass exports a keychain-stored voice key too — the STT and
+    # TTS backends read the environment.
+    "deepgram": "deepgram_api_key",
+    "elevenlabs": "elevenlabs_api_key",
 }
 
 

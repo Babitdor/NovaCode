@@ -218,7 +218,12 @@ def test_the_picker_offers_the_gateways_live_ids(monkeypatch: pytest.MonkeyPatch
 
 
 def test_the_catalog_is_what_the_picker_lists(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No second source of model ids grew back inside the screen."""
+    """No second source of model ids grew back inside the screen.
+
+    Rows have two origins: chat ids (catalog + presets) and voice options (the
+    audio registry). Asserting the screen's providers are exactly those two sets
+    is what catches a hand-written list reappearing inside the widget.
+    """
     if not _HAS_TEXTUAL:
         return
     out = asyncio.run(_drive_screen(monkeypatch))
@@ -226,4 +231,11 @@ def test_the_catalog_is_what_the_picker_lists(monkeypatch: pytest.MonkeyPatch) -
     modeled = [option for option in out["options"] if not str(option).startswith("#hdr:")]
     providers = {str(option).split(":", 1)[0] for option in modeled}
 
-    assert providers == set(MODEL_PRESETS)
+    from novacode_cli.audio.providers import STT_PROVIDERS, TTS_PROVIDERS
+
+    voice = {
+        provider
+        for provider, meta in (STT_PROVIDERS | TTS_PROVIDERS).items()
+        if meta.get("options")
+    }
+    assert providers == set(MODEL_PRESETS) | voice

@@ -6,6 +6,7 @@ the graceful-degradation path (install hint), not real audio.
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -26,6 +27,38 @@ class _Console:
     @property
     def text(self) -> str:
         return "\n".join(self.lines)
+
+
+class _StubSecretManager:
+    """SecretManager stand-in: a dict, so no real keychain is touched.
+
+    Needed because under pytest ``keyring`` resolves to a null backend that
+    *accepts* writes and persists nothing, which would make "the key was stored"
+    an untestable claim.
+    """
+
+    store: dict[str, str] = {}
+
+    def __init__(self) -> None:
+        self.store = _StubSecretManager.store
+
+    def store_secret(self, key: str, value: str) -> bool:
+        self.store[key] = value
+        return True
+
+    def get_secret(self, key: str) -> str | None:
+        return self.store.get(key)
+
+    def delete_secret(self, key: str) -> bool:
+        return self.store.pop(key, None) is not None
+
+
+@pytest.fixture
+def stub_keychain(monkeypatch):
+    """Route credential writes into a dict instead of the OS keychain."""
+    _StubSecretManager.store = {}
+    monkeypatch.setattr("novacode_cli.onboarding.SecretManager", _StubSecretManager)
+    return _StubSecretManager
 
 
 @pytest.fixture
@@ -110,14 +143,45 @@ class TestVoiceCommand:
         assert "diagnostics" in console.text.lower() or "install" in console.text.lower()
         assert "voice" in console.text.lower()
 
-    async def test_configure_key_mapping(self, isolated_config):
-        # Configure ElevenLabs key using --key
+    async def test_configure_key_mapping(self, isolated_config, stub_keychain):
+        # Configure ElevenLabs key using --key. The key must land in the
+        # credential store, NOT in the config file, which no longer carries
+        # secrets.
         console = _Console()
         await handle_voice_command(
             "settings tts elevenlabs --key test-eleven-key", SimpleNamespace(), console
         )
         pcfg = isolated_config.get_voice_provider_config("elevenlabs")
-        assert pcfg.get("api_key") == "test-eleven-key"
+        assert stub_keychain.store == {"elevenlabs_api_key": "test-eleven-key"}
+        assert pcfg.get("api_key") in ("", None)
+        assert "test-eleven-key" not in json.dumps(pcfg)
+
+    async def test_configure_key_clears_a_legacy_plaintext_copy(
+        self, isolated_config, stub_keychain
+    ):
+        """Rotating a key must not leave the old plaintext value behind."""
+        isolated_config.set_voice_provider_config("elevenlabs", api_key="old-plaintext", key="")
+        await handle_voice_command(
+            "settings tts elevenlabs --key new-key", SimpleNamespace(), _Console()
+        )
+        pcfg = isolated_config.get_voice_provider_config("elevenlabs")
+        assert stub_keychain.store["elevenlabs_api_key"] == "new-key"
+        assert "old-plaintext" not in json.dumps(pcfg)
+
+    async def test_configure_key_falls_back_to_config_without_a_store(
+        self, isolated_config, monkeypatch, stub_keychain
+    ):
+        """A provider with no credential slot keeps the old, config-based path."""
+        monkeypatch.setattr(
+            "novacode_cli.config.provider_auth.credential_env_var", lambda _name: None
+        )
+        console = _Console()
+        await handle_voice_command(
+            "settings tts elevenlabs --key legacy-key", SimpleNamespace(), console
+        )
+        pcfg = isolated_config.get_voice_provider_config("elevenlabs")
+        assert pcfg.get("api_key") == "legacy-key"
+        assert stub_keychain.store == {}
         assert isolated_config.get_voice_config()["tts_provider"] == "elevenlabs"
 
         # Configure Deepgram key using --key

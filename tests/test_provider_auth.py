@@ -139,6 +139,8 @@ def test_credential_names_exclude_keyless_providers():
     assert "ollama" not in names
     assert names["anthropic"] == "ANTHROPIC_API_KEY"
     assert names["tavily"] == "TAVILY_API_KEY"
+    assert names["deepgram"] == "DEEPGRAM_API_KEY"
+    assert names["elevenlabs"] == "ELEVENLABS_API_KEY"
     assert set(names) == {
         "openai",
         "anthropic",
@@ -147,6 +149,8 @@ def test_credential_names_exclude_keyless_providers():
         "opencode",
         "nvidia",
         "tavily",
+        "deepgram",
+        "elevenlabs",
     }
 
 

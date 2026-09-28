@@ -7230,8 +7230,14 @@ class NovaApp(App):
     async def _run_model(self) -> None:
         """Native /model: pick a model from the provider-grouped list, hot-swap.
 
-        A provider with no usable credential is not a dead end here: the picker
-        reports ``needs_auth`` for it, the user is routed into ``/auth`` for that
+        The list carries two kinds of choice. A chat model hot-swaps the agent; a
+        voice row (Deepgram, ElevenLabs, a local STT/TTS provider) only rewrites
+        the voice config and rebuilds the cached pipeline. The row's ``kind``
+        decides which, because a voice provider id is absent from
+        ``MODEL_PRESETS`` and would raise there.
+
+        A provider with no usable credential is not a dead end either way: the
+        picker reports ``needs_auth``, the user is routed into ``/auth`` for that
         provider, and the picker reopens afterwards.
         """
         from novacode_cli.config.model_manager import MODEL_PRESETS, ModelManager
@@ -7251,6 +7257,10 @@ class NovaApp(App):
                 current_id = provider
                 continue
             break
+
+        if result.get("kind") == "voice":
+            self._apply_voice_pick(result)
+            return
 
         provider = result["provider"]
         preset = MODEL_PRESETS[provider]
@@ -7308,6 +7318,50 @@ class NovaApp(App):
             )
         except Exception as ex:  # noqa: BLE001
             self._log(Text(f"Model switch failed: {ex}", style="red"))
+
+    def _apply_voice_pick(self, result: dict) -> None:
+        """Persist a voice row chosen in the picker and rebuild the pipeline.
+
+        The cached pipeline has to go: `_ensure_voice_pipeline` returns early
+        while one exists, so a config change alone would look like the picker did
+        nothing. This mirrors what ``/voice settings`` does in ``_run_voice``.
+
+        Args:
+            result: The picker's payload, carrying ``space``, ``provider``,
+                ``field`` and ``model`` (the voice/model name).
+        """
+        from novacode_cli.audio.providers import STT_PROVIDERS, TTS_PROVIDERS
+        from novacode_cli.config.nova_config import NovaConfig
+
+        space = str(result.get("space") or "")
+        provider = str(result.get("provider") or "")
+        field = str(result.get("field") or "model")
+        name = str(result.get("model") or "")
+        registry = STT_PROVIDERS if space == "stt" else TTS_PROVIDERS
+        meta = registry.get(provider) or {}
+        if not name:
+            return
+
+        try:
+            config = NovaConfig()
+            config.set_voice_provider_config(provider, **{field: name})
+            # Selecting a voice also makes its provider the active one for that
+            # axis: choosing "nova-3" while faster-whisper is active would
+            # otherwise save a setting with no effect.
+            config.set_voice_config(**{f"{space}_provider": provider})
+        except Exception as ex:  # noqa: BLE001 — a config failure must be visible
+            self._log(Text(f"Could not save the voice setting: {ex}", style="red"))
+            return
+
+        self._voice_pipeline = None
+        if hasattr(self.session_state, "_voice_pipeline"):
+            self.session_state._voice_pipeline = None
+
+        label = meta.get("name") or provider
+        axis = "speech to text" if space == "stt" else "text to speech"
+        self._log(Text(f"✓ {label} · {name} for {axis}", style="green"))
+        if meta.get("requires_key"):
+            self._log(Text("Used on the next capture; /voice test to check it.", style="dim"))
 
     @staticmethod
     def _credential_base_url(provider: str) -> str:

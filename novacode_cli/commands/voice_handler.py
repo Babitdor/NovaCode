@@ -149,6 +149,94 @@ def _print_settings(config: NovaConfig, console: Console) -> None:
     _show_provider_options(TTS_PROVIDERS, cfg["tts_provider"], config, console)
 
 
+def _voice_provider_has_key(provider: str, config: NovaConfig) -> bool:
+    """Whether a cloud voice provider has a usable key.
+
+    Checks the credential store as well as the legacy config field: `/auth` and
+    `/voice settings --key` write to the store, so a config-only check would
+    report "(no key)" for a provider that is perfectly configured.
+
+    Args:
+        provider: Voice provider id (e.g. ``deepgram``).
+        config: Config to read the legacy plaintext field from.
+
+    Returns:
+        True when a key is available from either source.
+    """
+    from novacode_cli.config.credentials import has_stored_credential
+    from novacode_cli.config.provider_auth import credential_env_var
+
+    pcfg = config.get_voice_provider_config(provider)
+    if pcfg.get("api_key") or pcfg.get("key"):
+        return True
+    env_var = credential_env_var(provider)
+    return bool(env_var) and has_stored_credential(env_var)
+
+
+def _store_voice_key(provider: str, key: str, console: Console) -> bool:
+    """Store a voice provider's key in the OS credential store.
+
+    The key is written to the store, never to the config file, and is never
+    echoed back to the console.
+
+    Args:
+        provider: Voice provider id (e.g. ``elevenlabs``).
+        key: The API key to store.
+        console: Console for reporting a failure.
+
+    Returns:
+        True when the key was stored.
+    """
+    from novacode_cli.config.credentials import set_credential
+    from novacode_cli.config.provider_auth import credential_env_var
+
+    env_var = credential_env_var(provider)
+    if env_var is None:
+        console.print(
+            f"  [yellow]{provider} has no credential slot — "
+            f"keeping the value in the config.[/yellow]"
+        )
+        return False
+    outcome = set_credential(env_var, key)
+    if not outcome.ok:
+        detail = outcome.warnings[0] if outcome.warnings else "the credential store rejected it"
+        console.print(f"  [red]Could not store the key:[/red] {detail}")
+        return False
+    console.print(
+        f"  [green]✓[/green] Key stored for [cyan]{provider}[/cyan] (OS credential store)."
+    )
+    return True
+
+
+def _route_key_flag(
+    flags: dict[str, str],
+    provider: str,
+    config: NovaConfig,
+    console: Console,
+) -> None:
+    """Send a ``--key`` flag to the credential store instead of the config file.
+
+    Mutates *flags* in place: the key is removed so it is never written to
+    ``Nova.config.json``, and ``api_key`` is explicitly blanked so a previously
+    saved plaintext value does not linger next to the stored one.
+
+    Args:
+        flags: Parsed flag pairs (``api_key`` from ``--key``), modified in place.
+        provider: Voice provider id being configured.
+        config: Config holding the legacy plaintext field, if any.
+        console: Console for reporting the outcome.
+    """
+    key = flags.pop("api_key", "") or flags.pop("key", "")
+    if not key:
+        return
+    if _store_voice_key(provider, key, console):
+        config.set_voice_provider_config(provider, api_key="", key="")
+        return
+    # No credential slot, or the store refused it: keep the old behaviour rather
+    # than dropping the key the user just typed.
+    flags["api_key"] = key
+
+
 def _show_provider_options(
     providers: dict,
     current: str,
@@ -161,8 +249,7 @@ def _show_provider_options(
         name = meta.get("name", key)
         desc = meta.get("description", "")
         if meta.get("requires_key"):
-            pcfg = config.get_voice_provider_config(key)
-            key_ok = bool(pcfg.get("api_key") or pcfg.get("key"))
+            key_ok = _voice_provider_has_key(key, config)
             key_status = " [green](key set)[/green]" if key_ok else " [yellow](no key)[/yellow]"
         else:
             key_status = ""
@@ -195,6 +282,7 @@ async def _handle_settings(  # noqa: PLR0912 — settings sub-dispatch
         if len(rest) > 1:
             # Configure — parse --key, --model
             flags = _parse_flags(rest[1:])
+            _route_key_flag(flags, provider, config, console)
             config.set_voice_provider_config(provider, **flags)
             config.set_voice_config(stt_provider=provider)
             console.print(
@@ -204,12 +292,10 @@ async def _handle_settings(  # noqa: PLR0912 — settings sub-dispatch
             # Switch provider
             config.set_voice_config(stt_provider=provider)
             console.print(f"  [green]✓[/green] STT provider set to [cyan]{meta['name']}[/cyan].")
-            if meta.get("requires_key"):
-                pcfg = config.get_voice_provider_config(provider)
-                if not (pcfg.get("api_key") or pcfg.get("key")):
-                    console.print(
-                        f"  [yellow]Set key:[/yellow] /voice settings stt {provider} --key <key>"
-                    )
+            if meta.get("requires_key") and not _voice_provider_has_key(provider, config):
+                console.print(
+                    f"  [yellow]Set key:[/yellow] /voice settings stt {provider} --key <key>"
+                )
     elif action == "tts":
         if not rest:
             console.print(
@@ -224,6 +310,7 @@ async def _handle_settings(  # noqa: PLR0912 — settings sub-dispatch
         meta = TTS_PROVIDERS[provider]
         if len(rest) > 1:
             flags = _parse_flags(rest[1:])
+            _route_key_flag(flags, provider, config, console)
             config.set_voice_provider_config(provider, **flags)
             config.set_voice_config(tts_provider=provider)
             console.print(
@@ -232,12 +319,10 @@ async def _handle_settings(  # noqa: PLR0912 — settings sub-dispatch
         else:
             config.set_voice_config(tts_provider=provider)
             console.print(f"  [green]✓[/green] TTS provider set to [cyan]{meta['name']}[/cyan].")
-            if meta.get("requires_key"):
-                pcfg = config.get_voice_provider_config(provider)
-                if not (pcfg.get("api_key") or pcfg.get("key")):
-                    console.print(
-                        f"  [yellow]Set key:[/yellow] /voice settings tts {provider} --key <key>"
-                    )
+            if meta.get("requires_key") and not _voice_provider_has_key(provider, config):
+                console.print(
+                    f"  [yellow]Set key:[/yellow] /voice settings tts {provider} --key <key>"
+                )
         # Orpheus is an optional heavy dep — warn if selected but not installed.
         if provider == "orpheus" and not audio.is_orpheus_available():
             console.print(f"  [yellow]{audio.orpheus_install_hint()}[/yellow]")
