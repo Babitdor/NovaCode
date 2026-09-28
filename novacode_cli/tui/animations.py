@@ -46,6 +46,53 @@ __all__ = [
 #: cards) still animates, while a burst does not pile on more work.
 _MAX_CONCURRENT_ENTRANCES = 6
 
+#: Extra delay past a fade's own duration before repairing its subtree, and how
+#: many times to re-arm while waiting for the fade to actually finish (an
+#: animation under load can overrun the duration it was given).
+_FADE_REPAIR_MARGIN = 0.05
+_FADE_REPAIR_ATTEMPTS = 12
+
+
+def _refresh_cached_paints(root: Widget) -> None:
+    """Drop *root*'s subtree cache of painted styles.
+
+    ``Widget.visual_style`` bakes every ancestor's ``opacity`` into the value it
+    caches, but it only recomputes when the widget's OWN style key changes. A fade
+    that starts at ``opacity: 0`` therefore leaves descendants painting the blend
+    they cached on the way up, and that blend is the plain screen background. A
+    variant Button (``-success``, ``-primary``) then fills with the screen colour
+    instead of its own, while its label — an auto-contrast colour chosen for the
+    light fill — arrives dark on dark, i.e. invisible. Rebinding the cache once
+    the fade has finished repaints them with their real colours.
+    """
+    for node in root.walk_children(with_self=True):
+        # No guard needed: this only ever runs on a mounted subtree, and a node
+        # without the attribute is skipped rather than touched.
+        if getattr(node, "_visual_style", None) is not None:
+            node._visual_style = None
+            node.refresh()
+
+
+def _repair_paints_after_fade(widget: Widget, duration: float, attempt: int = 1) -> None:
+    """Re-cache *widget*'s subtree once the fade it just started is opaque.
+
+    Re-arms itself while the fade is still running so the repair cannot land
+    early and be undone by the frames that follow.
+    """
+
+    def repair() -> None:
+        try:
+            opaque = float(widget.styles.opacity) >= 1.0
+        except Exception:  # noqa: BLE001 — unmounted mid-fade
+            return
+        if opaque or attempt >= _FADE_REPAIR_ATTEMPTS:
+            _refresh_cached_paints(widget)
+            return
+        _repair_paints_after_fade(widget, duration, attempt + 1)
+
+    widget.set_timer(duration + _FADE_REPAIR_MARGIN, repair)
+
+
 
 def _entrances_in_flight(widget: Widget) -> int:
     """How many animations the app currently has scheduled (0 if unknown)."""
@@ -80,6 +127,10 @@ def animate_entrance(widget: Widget, style: str = "slide") -> None:
     more than :data:`_MAX_CONCURRENT_ENTRANCES` are already running, the widget
     is shown immediately instead. A quiet UI still animates; a busy one stays
     responsive.
+
+    The fade is also repaired on the way out (see
+    :func:`_refresh_cached_paints`): descendants must not be left painting the
+    background they cached while the widget was transparent.
     """
     duration = {"fade": 0.25, "slide": 0.32, "zoom": 0.28}.get(style, 0.28)
     if _entrances_in_flight(widget) > _MAX_CONCURRENT_ENTRANCES:
@@ -88,6 +139,7 @@ def animate_entrance(widget: Widget, style: str = "slide") -> None:
         return
     widget.styles.opacity = 0.0
     widget.styles.animate("opacity", 1.0, duration=duration, easing="out_cubic")
+    _repair_paints_after_fade(widget, duration)
 
 
 def animate_modal_screen(screen: Any) -> None:

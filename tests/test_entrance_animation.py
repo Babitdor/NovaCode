@@ -13,6 +13,10 @@ far worse than a slow fade. These pin both halves.
 from __future__ import annotations
 
 import asyncio
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from rich.color import Color as RichColor
 
 try:
     import textual  # noqa: F401
@@ -128,3 +132,117 @@ def test_animation_is_skipped_under_load_but_nothing_stays_invisible():
         "a skipped animation left a widget at opacity 0 — invisible content"
     )
     assert out["all_visible"], "every burst widget must end fully opaque"
+
+
+# ---------------------------------------------------------------------------
+# What the fade must not leave behind
+# ---------------------------------------------------------------------------
+
+
+def _rgb(color: RichColor) -> tuple[int, int, int]:
+    """RGB channels of a Rich colour, truecolor or otherwise.
+
+    ``rich_style.color``/``bgcolor`` are Rich ``Color`` values, not Textual ones,
+    and a non-truecolor one has no ``triplet``.
+    """
+    triplet = getattr(color, "triplet", None)
+    if triplet is not None:
+        return (triplet.red, triplet.green, triplet.blue)
+    get_truecolor = getattr(color, "get_truecolor", None)
+    if get_truecolor is not None:
+        return tuple(get_truecolor())[:3]
+    return (0, 0, 0)
+
+
+def _relative_luminance(color: RichColor) -> float:
+    """WCAG relative luminance of a Rich colour (0..1)."""
+
+    def linear(component: float) -> float:
+        value = component / 255
+        return value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4
+
+    red, green, blue = (linear(channel) for channel in _rgb(color))
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+
+
+def _contrast_ratio(foreground: RichColor, background: RichColor) -> float:
+    """WCAG contrast ratio between two Textual ``Color`` values."""
+    lighter, darker = sorted(
+        (_relative_luminance(foreground), _relative_luminance(background)), reverse=True
+    )
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _modal_button_contrast() -> float:
+    """Fade a modal in, then report the contrast of its variant button's label.
+
+    Returns the ratio measured once the fade has finished and the repair has had
+    its grace frames, so the value reflects what the user is left looking at.
+    """
+
+    async def drive() -> float:
+        from textual.app import App, ComposeResult
+        from textual.containers import Vertical
+        from textual.screen import ModalScreen
+        from textual.widgets import Button
+
+        from novacode_cli.tui.animations import animate_modal_screen
+        from novacode_cli.tui.widgets import NOVA_TOKYO_NIGHT
+
+        class _Host(App):
+            def compose(self) -> ComposeResult:
+                return []
+
+        class _Modal(ModalScreen[None]):
+            def compose(self) -> ComposeResult:
+                with Vertical(id="modal-box"):
+                    yield Button("Switch", id="switch", variant="success")
+
+            def on_mount(self) -> None:
+                animate_modal_screen(self)
+
+        app = _Host()
+        app.register_theme(NOVA_TOKYO_NIGHT)
+        app.theme = "tokyo-night"
+
+        ratio = 0.0
+        async with app.run_test(size=(120, 40)) as pilot:
+            app.push_screen(_Modal())
+
+            # Let the fade finish: the bug appears only once opacity is back to
+            # 1, because the descendant keeps the blend it cached on the way up.
+            for _ in range(240):
+                await pilot.pause()
+                boxes = list(app.screen.query("#modal-box"))
+                if boxes and float(boxes[0].styles.opacity) >= 1.0:
+                    break
+
+            # ...then give the repair its grace frames before measuring.
+            for _ in range(60):
+                await pilot.pause()
+                button = app.screen.query_one("#switch", Button)
+                style = button.visual_style.rich_style
+                if style.color is None or style.bgcolor is None:
+                    continue
+                ratio = _contrast_ratio(style.color, style.bgcolor)
+                if ratio >= 3.0:
+                    break
+        return ratio
+
+    return asyncio.run(drive())
+
+
+def test_a_faded_in_modal_leaves_its_buttons_readable():
+    """A fade must not leave a variant button painting the screen behind its label.
+
+    ``visual_style`` bakes every ancestor's opacity into the value it caches, so a
+    fade that starts at 0 left the buttons painting the screen background for
+    good: a ``success`` Button's auto-contrast label, chosen for its light fill,
+    arrived dark on dark — an invisible "Switch".
+    """
+    if not _HAS_TEXTUAL:
+        return
+    ratio = _modal_button_contrast()
+    assert ratio >= 3.0, (
+        f"the button label is unreadable on its own background (contrast {ratio:.2f}:1)"
+    )
