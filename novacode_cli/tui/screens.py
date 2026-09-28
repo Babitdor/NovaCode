@@ -390,6 +390,12 @@ class ModelScreen(ModalScreen[dict | None]):
     _STT_LABEL = "Speech to text"
     _TTS_LABEL = "Text to speech"
 
+    #: What the free-text field will do, per axis: a model id for chat, a voice id
+    #: or voice name for speech. Kept here so the field's first paint and every
+    #: tab switch read from one place.
+    _MODEL_PLACEHOLDER = "…or type any model id (uses the selected provider)"
+    _VOICE_PLACEHOLDER = "…or type any voice id (uses the highlighted provider)"
+
     def __init__(
         self, current_provider: str | None = None, current_model: str | None = None
     ) -> None:
@@ -427,9 +433,7 @@ class ModelScreen(ModalScreen[dict | None]):
             # Free-type escape hatch: the curated lists cannot name a model the
             # provider has not published yet, and OpenRouter's list is a short
             # hand-picked subset of what it actually serves.
-            yield Input(
-                placeholder="…or type any model id (uses the selected provider)", id="model"
-            )
+            yield Input(placeholder=self._MODEL_PLACEHOLDER, id="model")
             yield Static(
                 Text(
                     "↑/↓ move · Enter switch · Ctrl+R curated only · Esc cancel",
@@ -458,7 +462,15 @@ class ModelScreen(ModalScreen[dict | None]):
         if kind == self._tab:
             return
         self._tab = kind
+        self._sync_free_text_placeholder()
         self._repaint()
+
+    def _sync_free_text_placeholder(self) -> None:
+        """Point the free-text field at whatever this tab's rows select."""
+        field = self.query_one("#model", Input)
+        field.placeholder = (
+            self._VOICE_PLACEHOLDER if self._tab == "voice" else self._MODEL_PLACEHOLDER
+        )
 
     @work(thread=True, exclusive=True)
     def _load(self) -> None:

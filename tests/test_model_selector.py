@@ -559,6 +559,21 @@ async def test_each_tab_shows_only_its_own_axis():
         assert not _voice_ids(screen)
 
 
+async def test_the_free_text_field_describes_the_active_tab():
+    """It takes a voice id on one tab and a model id on the other."""
+    from textual.widgets import Input
+
+    app = _host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _open(pilot, app)
+        assert "model id" in screen.query_one("#model", Input).placeholder
+
+        await _tab(pilot, screen, "tab-voice")
+        placeholder = screen.query_one("#model", Input).placeholder
+        assert "voice id" in placeholder
+        assert "model id" not in placeholder
+
+
 async def test_the_info_line_describes_the_active_tab():
     """The line above the list must name the axis being shown, not both."""
     app = _host()
