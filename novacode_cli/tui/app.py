@@ -407,6 +407,12 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "help": SlashCommand("_run_help", "show this help", wants_text=False, aliases=("?",)),
     "init": SlashCommand("_run_init", "generate NOVA.md from the codebase"),
     "model": SlashCommand("_run_model", "switch provider / model", wants_text=False),
+    "auth": SlashCommand(
+        "_run_auth",
+        "manage provider / service API keys",
+        wants_text=False,
+        aliases=("connect",),
+    ),
     "sessions": SlashCommand("_run_sessions", "list / delete saved sessions", wants_text=False),
     "session": SlashCommand(
         "_run_session_command", "parallel sessions: new / list / close (ctrl+n, alt+<n>)"
@@ -1151,14 +1157,29 @@ class NovaApp(App):
         scrollbar-gutter: stable;
         overflow-y: scroll;
     }
-    /* The live model list (Ollama / OpenCode Go) sits ABOVE the inputs +
-       Switch/Cancel buttons, so it gets a tighter cap and its own scroll —
-       otherwise a long list pushes the buttons out of the modal and they
-       can't be clicked. */
-    #modellist {
-        height: auto; max-height: 9;
+    /* The /model picker list sits ABOVE the free-text field and the
+       Switch/Cancel buttons, so it gets a bounded height and its own scroll —
+       otherwise a long list pushes the buttons out of the modal and they can't
+       be clicked. Kept in sync with the reference layout's 16-row cap. */
+    #model-options {
+        height: auto; max-height: 16;
         border: round $accent 50%; margin-bottom: 1;
+        scrollbar-gutter: stable;
     }
+    #model-filter { margin-bottom: 1; }
+    #modelinfo { height: auto; color: $text-muted; margin-bottom: 1; }
+    #model-hint { padding: 0 1; color: $text-muted; }
+    /* /auth: the provider list must scroll rather than push the buttons off a
+       short terminal. */
+    #auth-list {
+        height: auto; max-height: 16;
+        border: round $accent 50%; margin-bottom: 1;
+        scrollbar-gutter: stable;
+    }
+    #auth-desc { height: auto; color: $text-muted; margin-bottom: 1; }
+    #auth-hint { padding: 0 1; color: $text-muted; }
+    #auth-error { padding: 0 1; height: auto; }
+    #auth-endpoint-label { margin-top: 1; }
     #modal-buttons {
         height: auto; align: center middle;
         margin-top: 1; padding: 0 0;
@@ -7207,49 +7228,54 @@ class NovaApp(App):
             self._log(Text(f"/voice failed: {ex}", style="red"))
 
     async def _run_model(self) -> None:
-        """Native /model: choose provider + model, store key, hot-swap the agent."""
-        import os
+        """Native /model: pick a model from the provider-grouped list, hot-swap.
 
+        A provider with no usable credential is not a dead end here: the picker
+        reports ``needs_auth`` for it, the user is routed into ``/auth`` for that
+        provider, and the picker reopens afterwards.
+        """
         from novacode_cli.config.model_manager import MODEL_PRESETS, ModelManager
 
         mm = ModelManager()
-        configured = {pid for pid, _ in mm.get_available_providers()}
         current_id = mm.get_current_provider_id()
 
-        saved_base_url = None
-        try:
-            from novacode_cli.config.nova_config import NovaConfig
-
-            saved_base_url = NovaConfig().get_model_base_url()
-        except Exception:  # noqa: BLE001 — prefill is a convenience
-            saved_base_url = None
-
-        result = await self.push_screen_wait(
-            ModelScreen(current_id, configured, current_base_url=saved_base_url)
-        )
-        if not result:
-            return
+        while True:
+            result = await self.push_screen_wait(ModelScreen(current_id, self.model_name))
+            if not result:
+                return
+            if result.get("needs_auth"):
+                provider = str(result["provider"])
+                await self._run_auth(provider)
+                # Reopen with the same provider highlighted: the user's next
+                # action is picking a model now that the key exists.
+                current_id = provider
+                continue
+            break
 
         provider = result["provider"]
         preset = MODEL_PRESETS[provider]
         model = result["model"] or preset["default_model"]
-        key = result["api_key"]
-        base_url = (result.get("base_url") or "").strip()
+
+        # The endpoint travels with the credential, and `/auth` owns that field,
+        # so it is read back here rather than re-entered in the picker.
+        base_url = self._credential_base_url(provider)
 
         # Ensure the API key is present in the environment (model creation reads
-        # os.environ). Store a newly entered key in the keychain.
-        if preset["requires_api_key"]:
-            if key:
-                from novacode_cli.onboarding import SecretManager
-
-                SecretManager().store_secret(preset["api_key_var"].lower(), key)
-                os.environ[preset["api_key_var"]] = key
-            elif not mm.resolve_api_key(provider) and not base_url:
-                # resolve_api_key exports a keychain/env key when it exists.
-                # A custom endpoint (LM Studio, vLLM, a local proxy) usually
-                # needs no key, so don't block the switch on one.
-                self._log(Text(f"{preset['name']} requires an API key.", style="red"))
-                return
+        # os.environ). `resolve_api_key` exports a keychain/env key when one
+        # exists; a custom endpoint (LM Studio, vLLM, a local proxy) usually
+        # needs no key at all, so a URL alone is enough to proceed.
+        if (
+            preset["requires_api_key"]
+            and not mm.resolve_api_key(provider)
+            and not base_url
+        ):
+            self._log(
+                Text(
+                    f"{preset['name']} has no API key — run /auth to add one.",
+                    style="red",
+                )
+            )
+            return
 
         mm.set_provider(provider, model, base_url or None)
         try:
@@ -7273,6 +7299,7 @@ class NovaApp(App):
                     pass
             self._set_status("ready")
             self._refresh_info_bar()  # reflect the new model in the footer at once
+            self._remember_model(provider, model)
             self._log(
                 Text(
                     f"✓ Switched to {preset['name']} · {self.model_name}",
@@ -7281,6 +7308,92 @@ class NovaApp(App):
             )
         except Exception as ex:  # noqa: BLE001
             self._log(Text(f"Model switch failed: {ex}", style="red"))
+
+    @staticmethod
+    def _credential_base_url(provider: str) -> str:
+        """Return the endpoint paired with *provider*'s stored credential.
+
+        Empty for a provider that takes no endpoint, and empty when the stored
+        credential has none — both mean "use the provider default".
+
+        Args:
+            provider: Provider id.
+
+        Returns:
+            The endpoint URL, or an empty string.
+        """
+        from novacode_cli.config.credentials import credential_meta
+        from novacode_cli.config.model_manager import ENDPOINT_PROVIDERS
+        from novacode_cli.config.provider_auth import credential_env_var
+
+        if provider not in ENDPOINT_PROVIDERS:
+            return ""
+        env_var = credential_env_var(provider)
+        meta = credential_meta(env_var) if env_var else None
+        return (meta.base_url or "") if meta is not None else ""
+
+    @staticmethod
+    def _remember_model(provider: str, model: str) -> None:
+        """Record a successful pick so the picker can pin it next time.
+
+        Args:
+            provider: Provider id that was switched to.
+            model: Model id that was switched to.
+        """
+        try:
+            from novacode_cli.config.nova_config import NovaConfig
+
+            NovaConfig().push_recent_model(f"{provider}:{model}")
+        except Exception:  # noqa: BLE001 — recents are a convenience, never a failure
+            pass
+
+    async def _run_auth(self, provider: str | None = None) -> None:
+        """Native /auth: manage the API keys stored on this machine.
+
+        Keys live in the OS credential store, so what is added here applies to
+        every Nova session rather than to this one. `/model` routes here when it
+        is handed a provider with no usable credential.
+
+        Args:
+            provider: Optional credential name (provider or service id) whose row
+                should start highlighted.
+        """
+        from novacode_cli.config.model_manager import MODEL_PRESETS, ModelManager
+        from novacode_cli.config.provider_auth import provider_display_name
+        from novacode_cli.tui.auth_screens import AuthManagerScreen
+
+        screen = AuthManagerScreen(focus=provider)
+        await self.push_screen_wait(screen)
+
+        if not (screen.saved or screen.deleted):
+            return
+
+        for name in screen.saved:
+            self._log(
+                Text(f"✓ Saved the API key for {provider_display_name(name)}", style="green")
+            )
+            if name == "tavily":
+                # tools/web_tools.py builds its Tavily client at import time, so
+                # a key added now only gates web_search after a restart.
+                self._log(Text("Web search picks it up after a restart.", style="yellow"))
+        for name in screen.deleted:
+            self._log(
+                Text(
+                    f"Deleted the stored API key for {provider_display_name(name)}",
+                    style="yellow",
+                )
+            )
+
+        # Say what the change was worth: the point of storing a key is the
+        # provider becoming usable, and that count is the honest summary.
+        available = len(ModelManager().get_available_providers())
+        self._log(
+            Text(
+                f"{available} of {len(MODEL_PRESETS)} providers configured "
+                "(/model to switch).",
+                style="dim",
+            )
+        )
 
     async def _run_sessions(self) -> None:
         """Open the saved-sessions screen (list + delete)."""

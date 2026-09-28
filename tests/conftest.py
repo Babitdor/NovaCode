@@ -1,6 +1,43 @@
 """Shared test fixtures."""
 
+import os
+
 import pytest
+
+#: Env vars that carry credentials. Anything that saves a credential writes
+#: these directly into ``os.environ`` (see `config/credentials.py`), and callers
+#: build models by reading the environment, so a leaked value changes which
+#: providers and tools a LATER test believes are configured.
+_CREDENTIAL_ENV_VARS = (
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GOOGLE_API_KEY",
+    "OPENROUTER_API_KEY",
+    "OPENCODE_API_KEY",
+    "NVIDIA_API_KEY",
+    "TAVILY_API_KEY",
+    "LANGSMITH_API_KEY",
+    "OPENAI_BASE_URL",
+)
+
+
+@pytest.fixture(autouse=True)
+def _restore_credential_env_vars():
+    """Undo credential exports a test made directly through ``os.environ``.
+
+    ``monkeypatch`` cannot see those: it only reverts what it set itself, so a
+    test that saved a key left it exported for the whole session. That is how a
+    leaked ``TAVILY_API_KEY`` once flipped the tool roster another test asserts
+    on. Restores exact prior presence (set, unset, or empty) for the credential
+    vars only, leaving the rest of the environment to monkeypatch.
+    """
+    saved = {name: os.environ.get(name) for name in _CREDENTIAL_ENV_VARS}
+    yield
+    for name, value in saved.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
 
 
 @pytest.fixture(autouse=True)

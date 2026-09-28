@@ -125,6 +125,7 @@ def build_command_registry() -> CommandRegistry:
     # Module-based handlers ##################################################
     # Import each handler module's register_commands and call it.
     from novacode_cli.commands.agents_commands import register_commands as _r8
+    from novacode_cli.commands.auth_handler import register_commands as _r27
     from novacode_cli.commands.browser_use_handler import register_commands as _r14
     from novacode_cli.commands.chat_handler import register_commands as _r19
     from novacode_cli.commands.create_handler import register_commands as _r23
@@ -178,6 +179,7 @@ def build_command_registry() -> CommandRegistry:
         _r24,
         _r25,
         _r26,
+        _r27,
     ):
         _r(registry)
 

@@ -83,9 +83,7 @@ class NovaConfig:
         self._load()  # fresh: another instance or process may have switched it
         return self._config.get("model")
 
-    def set_model_config(
-        self, provider: str, model: str, base_url: str | None = None
-    ) -> None:
+    def set_model_config(self, provider: str, model: str, base_url: str | None = None) -> None:
         """Save model provider configuration.
 
         Args:
@@ -115,6 +113,122 @@ class NovaConfig:
         if "model" in self._config:
             del self._config["model"]
             self._save()
+
+    # ── Credential metadata ─────────────────────────────────────────────────
+    #
+    # The secret itself lives in the OS keychain (see
+    # `novacode_cli.config.credentials`); only the non-secret facts that have to
+    # travel with it — the endpoint it belongs to, a project name, when it was
+    # last written — are kept here. Keyed by the credential's environment
+    # variable name, which is the stable identifier the keychain entry uses too.
+
+    def get_credential_meta(self) -> dict[str, dict[str, str]]:
+        """Get recorded metadata for stored credentials.
+
+        Returns:
+            Mapping of environment variable name to its recorded fields
+            (``base_url``, ``project``, ``added_at``). Empty when nothing was
+            recorded, which is the normal case for a plain key.
+        """
+        creds = self._config.get("credentials")
+        if not isinstance(creds, dict):
+            return {}
+        return {
+            str(env_var): dict(fields)
+            for env_var, fields in creds.items()
+            if isinstance(fields, dict)
+        }
+
+    def set_credential_meta(
+        self,
+        env_var: str,
+        *,
+        base_url: str | None = None,
+        project: str | None = None,
+        added_at: str | None = None,
+    ) -> None:
+        """Record metadata for a stored credential.
+
+        Re-reads the config from disk first so a concurrent Nova that saved a
+        credential for a different provider is not clobbered: `_save` merges per
+        top-level key, so without the refresh this would write back the whole
+        `credentials` map from a stale snapshot.
+
+        Args:
+            env_var: The credential's environment variable name.
+            base_url: Endpoint paired with the key, or None.
+            project: Project/workspace name paired with the key, or None.
+            added_at: ISO-8601 timestamp of the write, or None.
+        """
+        self._load()
+        creds = self._config.get("credentials")
+        if not isinstance(creds, dict):
+            creds = {}
+            self._config["credentials"] = creds
+        entry: dict[str, str] = {}
+        if base_url:
+            entry["base_url"] = base_url
+        if project:
+            entry["project"] = project
+        if added_at:
+            entry["added_at"] = added_at
+        creds[env_var] = entry
+        self._save()
+
+    def delete_credential_meta(self, env_var: str) -> None:
+        """Drop recorded metadata for a credential.
+
+        Args:
+            env_var: The credential's environment variable name.
+        """
+        self._load()
+        creds = self._config.get("credentials")
+        if not isinstance(creds, dict) or env_var not in creds:
+            return
+        del creds[env_var]
+        if not creds:
+            # Keep the file clean: an empty map and no map mean the same thing,
+            # and a leftover `"credentials": {}` reads like configuration the
+            # user set.
+            del self._config["credentials"]
+        self._save()
+
+    # ── Recent model picks ──────────────────────────────────────────────────
+
+    #: How many recent picks are remembered. Enough to cover the handful of
+    #: models someone rotates between; short enough to stay a convenience
+    #: rather than a second copy of the model list.
+    RECENT_MODELS_LIMIT = 8
+
+    def get_recent_models(self) -> list[str]:
+        """Get recently selected ``provider:model`` specs, most recent first.
+
+        Returns:
+            The recorded specs, newest first. Empty before any switch.
+        """
+        recent = self._config.get("model_recent")
+        if not isinstance(recent, list):
+            return []
+        return [spec for spec in recent if isinstance(spec, str) and spec]
+
+    def push_recent_model(self, spec: str) -> list[str]:
+        """Record a model pick as the most recent one.
+
+        Args:
+            spec: The ``provider:model`` spec that was selected.
+
+        Returns:
+            The updated recent list, newest first.
+        """
+        spec = spec.strip()
+        if not spec:
+            return self.get_recent_models()
+        self._load()
+        recent = [entry for entry in self.get_recent_models() if entry != spec]
+        recent.insert(0, spec)
+        self._config["model_recent"] = recent[: self.RECENT_MODELS_LIMIT]
+        self._save()
+        return list(self._config["model_recent"])
 
     # ── Vision model config (for image routing) ─────────────────────────────
 

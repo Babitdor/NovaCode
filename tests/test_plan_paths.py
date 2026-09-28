@@ -10,7 +10,6 @@ showed no plan and ``/plan`` found nothing.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import novacode_cli.tools.plan_mode_tools as pmt
@@ -36,7 +35,12 @@ def test_writer_and_readers_agree_from_outside_the_project(
     elsewhere.mkdir()
 
     monkeypatch.setattr(settings, "project_root", project, raising=False)
-    os.chdir(elsewhere)
+    # `monkeypatch.chdir`, not bare `os.chdir`: this test deliberately runs from
+    # outside the project, and monkeypatch is what puts the cwd back. A leaked
+    # cwd breaks every LATER test that reads a relative path — it took out
+    # tests/test_research_swarm_roster.py, whose prompt path is relative, in any
+    # run where this file came first.
+    monkeypatch.chdir(elsewhere)
 
     saved = pmt._persist_approved_plan("# Refactor auth flow\n\nStep one.")
     assert saved, "plan should have been persisted"

@@ -7,7 +7,6 @@ the wiring and that no literal key ever reaches the source tree.
 
 from __future__ import annotations
 
-import os
 import subprocess
 from pathlib import Path
 
@@ -113,6 +112,54 @@ def test_no_api_key_is_hardcoded_anywhere():
     assert not hits, f"an NVIDIA key literal is committed:\n{hits}"
 
 
+class _StubKeychain:
+    """SecretManager stand-in holding (or not holding) an NVIDIA key."""
+
+    def __init__(self, key: str | None) -> None:
+        self._key = key
+
+    def get_secret(self, name):
+        return self._key if name == "nvidia_api_key" else None
+
+
+def test_a_keychain_only_key_is_enough_to_build_a_model(isolated, monkeypatch):
+    """This path used to require the env var.
+
+    `create_model_for_provider` checked `os.environ` directly, so a key entered
+    through the TUI — which lands in the OS keychain, and only reaches the
+    environment during startup hydration — raised "requires NVIDIA_API_KEY
+    environment variable" for a provider that had a perfectly good key. The
+    council builds its models through this path.
+    """
+    monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "novacode_cli.onboarding.SecretManager", lambda *a, **k: _StubKeychain("nvapi-test-key")
+    )
+
+    from novacode_cli.config.model_manager import ModelManager
+
+    model = ModelManager().create_model_for_provider(
+        "nvidia", "nvidia/nemotron-3-super-120b-a12b"
+    )
+
+    assert type(model).__name__ == "ChatNVIDIA"
+
+
+def test_no_key_still_refuses_to_build(isolated, monkeypatch):
+    """The guard has to keep working — this is the other half of the fix."""
+    monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "novacode_cli.onboarding.SecretManager", lambda *a, **k: _StubKeychain(None)
+    )
+
+    from novacode_cli.config.model_manager import ModelManager
+
+    with pytest.raises(ValueError, match="NVIDIA_API_KEY"):
+        ModelManager().create_model_for_provider(
+            "nvidia", "nvidia/nemotron-3-super-120b-a12b"
+        )
+
+
 def test_onboarding_offers_nvidia_and_stores_the_key_under_the_right_name():
     """The wizard derives the env var as f"{provider.upper()}_API_KEY"."""
     from novacode_cli.onboarding import API_KEY_NAMES, OnboardingWizard
@@ -178,7 +225,8 @@ def test_building_the_model_does_not_warn_about_chat_template_kwargs(isolated):
 
 def test_the_token_limit_still_reaches_the_request(isolated):
     """max_completion_tokens is silently DROPPED by this client, so max_tokens
-    stays despite its deprecation warning — swapping it would lose the limit."""
+    stays despite its deprecation warning — swapping it would lose the limit.
+    """
     from novacode_cli.config.model_create import build_chat_model
 
     assert _payload(build_chat_model("nvidia", "deepseek-ai/deepseek-v4-pro-0813"))[

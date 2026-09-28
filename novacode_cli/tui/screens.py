@@ -8,6 +8,7 @@ import from app.py — screens reach the running app via ``self.app``.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
 import time
 from pathlib import Path
@@ -29,7 +30,33 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 
 from novacode_cli.tui.animations import animate_modal_screen
+from novacode_cli.tui.auth_display import format_auth_indicator
 from novacode_cli.tui.widgets import DEFAULT_THEME
+
+#: Prefix for the non-selectable rows in `ModelScreen` (provider headers and
+#: section labels). Provider ids in `MODEL_PRESETS` are bare words, so no
+#: selectable row's `provider:model` id can collide with one of these.
+_HEADER_PREFIX = "#hdr:"
+
+
+def _fuzzy_match(spec: str, needle: str) -> bool:
+    """Whether *needle* appears in *spec* as an ordered subsequence.
+
+    Order-preserving rather than contiguous, so ``sonnet5`` finds
+    ``anthropic:claude-sonnet-5`` without the user typing the punctuation in
+    between, and case-insensitive so the shell's capitalization never matters.
+
+    Args:
+        spec: The ``provider:model`` string to search.
+        needle: The filter text. Empty matches everything.
+
+    Returns:
+        True when every character of *needle* occurs in *spec*, in order.
+    """
+    if not needle:
+        return True
+    remaining = iter(spec.casefold())
+    return all(character in remaining for character in needle.casefold())
 
 
 class ConfirmModal(ModalScreen[bool]):
@@ -287,184 +314,281 @@ class QuestionModal(ModalScreen[dict]):
 
 
 class ModelScreen(ModalScreen[dict | None]):
-    """Native ``/model`` screen: pick a provider, optionally enter an API key,
-    and choose (or free-type) a model. Returns the selection; the app performs
-    the actual switch."""
+    """Native ``/model`` picker: filter, browse by provider, choose a model.
 
-    BINDINGS = [("escape", "cancel", "Cancel")]
+    Rows come from :mod:`novacode_cli.config.model_catalog`, grouped under a
+    header per provider that also carries that provider's credential indicator.
+    Picking a model whose provider has no usable credential does not fail at
+    construction time — it dismisses with ``{"provider": …, "needs_auth": True}``
+    so the app can route the user into ``/auth`` for that provider.
 
-    #: Providers that accept a custom OpenAI-compatible endpoint. OpenRouter and
-    #: OpenCode are also OpenAI-compatible but pin their own base URL, so
-    #: offering a box there would only let the user break the gateway.
-    _ENDPOINT_PROVIDERS = frozenset({"openai"})
+    Loading reads the credential store, the filesystem, ``ollama list`` and (for
+    OpenCode Go) the network, so it runs in a worker thread and the list is
+    painted when it lands rather than blocking the first frame.
+    """
+
+    BINDINGS = [
+        ("escape", "cancel", "Cancel"),
+        ("ctrl+r", "toggle_curated", "Curated only"),
+    ]
+
+    #: Section label for the recently used models pinned at the top.
+    _RECENT_LABEL = "Recent"
 
     def __init__(
-        self,
-        current_provider: str | None,
-        configured: set[str],
-        current_base_url: str | None = None,
+        self, current_provider: str | None = None, current_model: str | None = None
     ) -> None:
         super().__init__()
-        self._current = current_provider
-        self._configured = configured
-        self._current_base_url = current_base_url or ""
+        self._current_provider = current_provider
+        self._current_model = current_model
+        self._curated_only = False
+        self._statuses: dict[str, Any] = {}
+        self._models: dict[str, list[str]] = {}
+        self._recent: list[str] = []
+        #: Option index -> (provider, model) for the selectable rows only.
+        #: `OptionList.highlighted` reports an index, so this is the mapping
+        #: back to what that index means.
+        self._targets: dict[int, tuple[str, str]] = {}
+        self._filter = ""
 
     def compose(self) -> ComposeResult:
-        from novacode_cli.config.model_manager import MODEL_PRESETS
-
-        options = []
-        for pid, preset in MODEL_PRESETS.items():
-            mark = "" if pid in self._configured else "  (needs key)"
-            options.append((f"{preset['name']}{mark}", pid))
-
-        default_value = self._current if self._current in MODEL_PRESETS else Select.BLANK
         with Vertical(id="modal-box"):
             yield Static(Text("Switch model", style="bold"), id="modal-title")
-            yield Select(options, value=default_value, id="provider", allow_blank=True)
+            yield Input(placeholder="Filter models…", id="model-filter")
             yield Static("", id="modelinfo")
-            # Live model list for providers that expose one (Ollama via
-            # `ollama list`, OpenCode Go via the gateway's /models). Hidden for
-            # the rest (shown per-provider via _refresh_info).
-            yield OptionList(id="modellist")
-            yield Input(placeholder="API key (blank = use saved)", password=True, id="apikey")
-            # OpenAI-compatible endpoint override. Shown only for providers that
-            # accept one (see _ENDPOINT_PROVIDERS) — the gateways pin their own
-            # base URL, and Anthropic/Google/Ollama don't take one at all.
+            yield OptionList(id="model-options")
+            # Free-type escape hatch: the curated lists cannot name a model the
+            # provider has not published yet, and OpenRouter's list is a short
+            # hand-picked subset of what it actually serves.
             yield Input(
-                placeholder="Endpoint URL (blank = api.openai.com)", id="baseurl"
+                placeholder="…or type any model id (uses the selected provider)", id="model"
             )
-            yield Input(placeholder="Model (blank = default, or type any slug)", id="model")
+            yield Static(
+                Text(
+                    "↑/↓ move · Enter switch · Ctrl+R curated only · Esc cancel",
+                    style="dim",
+                ),
+                id="model-hint",
+            )
             with Horizontal(id="modal-buttons"):
                 yield Button("Switch", id="switch", variant="success")
                 yield Button("Cancel", id="cancel")
 
     def on_mount(self) -> None:
         animate_modal_screen(self)
-        # List is shown only for providers with a live model list; hide until a
-        # provider is chosen.
-        self.query_one("#modellist", OptionList).display = False
-        # Endpoint box likewise: hidden until a provider that accepts one is
-        # selected, so the modal stays short for everyone else.
-        self.query_one("#baseurl", Input).display = False
-        if self._current:
-            self._refresh_info(self._current)
+        self.query_one("#model-filter", Input).focus()
+        self._load()
 
-    def on_select_changed(self, event: Select.Changed) -> None:
-        if event.select.id == "provider" and event.value is not Select.BLANK:
-            self._refresh_info(str(event.value))
+    @work(thread=True, exclusive=True)
+    def _load(self) -> None:
+        """Resolve statuses and model lists off the UI thread, then paint."""
+        from novacode_cli.config.model_catalog import get_all_models
+        from novacode_cli.config.provider_auth import get_all_auth_statuses
 
-    def _refresh_info(self, pid: str) -> None:
+        try:
+            statuses = get_all_auth_statuses(include_providers_without_keys=True)
+        except Exception:  # noqa: BLE001 — a failed pass must still render a list
+            statuses = {}
+        try:
+            models = get_all_models()
+        except Exception:  # noqa: BLE001 — presets still render without discovery
+            models = {}
+        try:
+            from novacode_cli.config.nova_config import NovaConfig
+
+            recent = NovaConfig().get_recent_models()
+        except Exception:  # noqa: BLE001 — recents are a convenience
+            recent = []
+        with contextlib.suppress(Exception):
+            self.app.call_from_thread(self._apply, statuses, models, recent)
+
+    def _apply(
+        self,
+        statuses: dict[str, Any],
+        models: dict[str, list[str]],
+        recent: list[str],
+    ) -> None:
+        """Record the loaded data and paint the list.
+
+        Args:
+            statuses: Credential readiness per provider id.
+            models: Model ids per provider id.
+            recent: Recently used ``provider:model`` specs, newest first.
+        """
+        self._statuses = statuses
+        self._models = models
+        self._recent = recent
+        self._repaint()
+
+    def _provider_models(self, provider: str) -> list[str]:
+        """Model ids to offer for *provider* under the active subset."""
         from novacode_cli.config.model_manager import MODEL_PRESETS
 
-        preset = MODEL_PRESETS.get(pid)
-        if not preset:
-            return
-        info = Text()
-        info.append(f"default: {preset['default_model']}\n", style="dim")
-        model_list = self.query_one("#modellist", OptionList)
+        if self._curated_only:
+            preset = MODEL_PRESETS.get(provider) or {}
+            return [str(name) for name in (preset.get("models") or [])]
+        return list(self._models.get(provider) or [])
 
-        if pid == "ollama":
-            # Populate the list from `ollama list` (off the event loop).
-            info.append("loading installed models (ollama list)…", style="dim")
-            model_list.display = True
-            self._load_ollama_models()
-        elif pid == "opencode":
-            # Populate the list from the gateway's live /models endpoint. The
-            # preset list is hand-maintained and drifts (dead ids 400 on first
-            # use), so the gateway is the source of truth here too.
-            info.append("loading models (opencode.ai)…", style="dim")
-            model_list.display = True
-            self._load_opencode_models()
-        else:
-            models = preset.get("models", [])
-            if models:
-                info.append("suggestions: " + ", ".join(models[:6]), style="dim")
-            model_list.display = False
-            model_list.clear_options()
+    def _repaint(self) -> None:
+        """Rebuild the option list from the loaded data and the current filter."""
+        from novacode_cli.config.model_manager import MODEL_PRESETS
 
-        base_input = self.query_one("#baseurl", Input)
-        show_endpoint = pid in self._ENDPOINT_PROVIDERS
-        base_input.display = show_endpoint
-        if show_endpoint:
-            # Prefill the saved endpoint so it is visible and editable rather
-            # than silently still in effect.
-            if not base_input.value:
-                base_input.value = self._current_base_url
-        else:
-            base_input.value = ""
+        option_list = self.query_one("#model-options", OptionList)
+        option_list.clear_options()
+        self._targets = {}
+        needle = self._filter.strip()
+        shown = 0
+        seen: set[str] = set()
 
-        self.query_one("#modelinfo", Static).update(info)
-        self.query_one("#model", Input).placeholder = f"Model (blank = {preset['default_model']})"
+        # Recent picks are a personal signal, so they stay pinned above the
+        # providers and are de-duplicated from the sections below. Suppressed
+        # while the curated-only subset is active, where recents can name models
+        # the subset deliberately excludes.
+        if not self._curated_only:
+            recent = [
+                spec
+                for spec in self._recent
+                if spec.split(":", 1)[0] in MODEL_PRESETS and _fuzzy_match(spec, needle)
+            ]
+            if recent:
+                option_list.add_option(self._disabled_row(self._RECENT_LABEL))
+                for spec in recent:
+                    provider, _, model = spec.partition(":")
+                    if model and spec not in seen:
+                        seen.add(spec)
+                        self._add_model_row(option_list, provider, model)
+                        shown += 1
 
-    @work(exclusive=True)
-    async def _load_ollama_models(self) -> None:
-        """Populate the Ollama model list from `ollama list` without blocking."""
-        import asyncio
+        for provider in MODEL_PRESETS:
+            models = [
+                model
+                for model in self._provider_models(provider)
+                if f"{provider}:{model}" not in seen
+                and _fuzzy_match(f"{provider}:{model}", needle)
+            ]
+            if not models:
+                continue
+            option_list.add_option(self._header_row(provider))
+            for model in models:
+                self._add_model_row(option_list, provider, model)
+                shown += 1
 
-        from novacode_cli.config.model_manager import get_ollama_models
+        if not shown:
+            option_list.add_option(self._disabled_row("No models match your filter."))
+        self._highlight_current(option_list)
+        self._update_info()
 
-        try:
-            models = await asyncio.to_thread(get_ollama_models)
-        except Exception:  # noqa: BLE001
-            models = []
+    def _add_model_row(self, option_list: OptionList, provider: str, model: str) -> None:
+        """Append a selectable model row and record what it selects."""
+        option_list.add_option(self._model_row(provider, model))
+        # Index is what `OptionList.highlighted` reports, so the mapping back to
+        # a (provider, model) pair has to be keyed on the option's position.
+        self._targets[option_list.option_count - 1] = (provider, model)
 
-        self._fill_model_list(
-            models,
-            empty="No Ollama models found — is `ollama` installed/running?",
-            note=f"{len(models)} installed model(s) — select one or type a slug below",
-        )
+    def _header_row(self, provider: str) -> Option:
+        """Build a provider header row, carrying its credential indicator."""
+        from novacode_cli.config.model_manager import MODEL_PRESETS
 
-    @work(exclusive=True)
-    async def _load_opencode_models(self) -> None:
-        """Populate the OpenCode Go model list from the gateway's /models."""
-        import asyncio
+        preset = MODEL_PRESETS.get(provider) or {}
+        text = Text(str(preset.get("name") or provider), style="bold")
+        status = self._statuses.get(provider)
+        indicator = format_auth_indicator(status) if status is not None else ""
+        if indicator:
+            text.append(f"  {indicator}", style="yellow")
+        return Option(text, id=f"{_HEADER_PREFIX}{provider}", disabled=True)
 
-        from novacode_cli.config.model_manager import get_opencode_models
+    @staticmethod
+    def _disabled_row(label: str) -> Option:
+        """Build a non-selectable row (section label, empty state)."""
+        return Option(Text(label, style="dim"), id=f"{_HEADER_PREFIX}{label}", disabled=True)
 
-        try:
-            models = await asyncio.to_thread(get_opencode_models)
-        except Exception:  # noqa: BLE001
-            models = []
+    def _model_row(self, provider: str, model: str) -> Option:
+        """Build a selectable model row, marking the model in use."""
+        text = Text(model, style="italic" if self._is_current(provider, model) else "")
+        if self._is_current(provider, model):
+            text.append("  (current)", style="dim")
+        return Option(text, id=f"{provider}:{model}")
 
-        self._fill_model_list(
-            models,
-            empty="No OpenCode Go models available — check your key/connection.",
-            note=f"{len(models)} model(s) from opencode.ai — select one or type a slug below",
-        )
+    def _is_current(self, provider: str, model: str) -> bool:
+        """Whether this pair is the model the session is running on."""
+        return provider == self._current_provider and model == self._current_model
 
-    def _fill_model_list(self, models: list[str], *, empty: str, note: str) -> None:
-        """Render *models* into the shared ``#modellist`` OptionList.
+    def _highlight_current(self, option_list: OptionList) -> None:
+        """Put the cursor on the model in use, else the active provider's rows.
 
-        Shared by the Ollama and OpenCode loaders so the empty/placeholder and
-        option-id handling live in one place.
+        Falls back in two steps because the reason the picker reopened is not
+        always a current model: after `/auth` it holds a *provider* to act on,
+        and landing on an unrelated provider's first row would look like the
+        dialog ignored the choice that brought the user here.
         """
-        try:
-            model_list = self.query_one("#modellist", OptionList)
-        except Exception:  # noqa: BLE001
-            return  # screen dismissed before load finished
-        model_list.clear_options()
+        current = next(
+            (
+                position
+                for position, target in self._targets.items()
+                if self._is_current(*target)
+            ),
+            None,
+        )
+        if current is None:
+            current = next(
+                (
+                    position
+                    for position, (provider, _) in self._targets.items()
+                    if provider == self._current_provider
+                ),
+                None,
+            )
+        if current is None:
+            current = next(iter(self._targets), None)
+        if current is not None:
+            option_list.highlighted = current
+            option_list.scroll_to_highlight()
 
-        if not models:
-            model_list.add_option(Option(empty, id="__none__"))
-            return
-
-        for name in models:
-            model_list.add_option(Option(name, id=name))
-
+    def _update_info(self) -> None:
+        """Refresh the line above the list with the active count/subset."""
+        providers = {provider for provider, _ in self._targets.values()}
         info = Text()
-        info.append(note + "\n", style="dim")
-        try:
-            self.query_one("#modelinfo", Static).update(info)
-        except Exception:  # noqa: BLE001
-            pass
+        info.append(
+            f"{len(self._targets)} model(s) from {len(providers)} provider(s)", style="dim"
+        )
+        if self._curated_only:
+            info.append("  ·  curated lists only (Ctrl+R for all)", style="yellow")
+        if self._filter.strip():
+            info.append(f"  ·  filtered by “{self._filter.strip()}”", style="dim")
+        self.query_one("#modelinfo", Static).update(info)
+
+    def _highlighted_target(self) -> tuple[str, str] | None:
+        """Return the highlighted row's ``(provider, model)``, if selectable."""
+        option_list = self.query_one("#model-options", OptionList)
+        index = option_list.highlighted
+        if index is None:
+            return None
+        return self._targets.get(index)
+
+    def _show_hint(self, message: str, *, error: bool = False) -> None:
+        """Write a message into the footer, replacing the key hints."""
+        self.query_one("#model-hint", Static).update(
+            Text(message, style="red" if error else "dim")
+        )
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "model-filter":
+            self._filter = event.value
+            self._repaint()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        # Enter in either the filter or the free-text field applies the choice,
+        # so a user is never blocked when the buttons are scrolled off a short
+        # terminal.
+        event.stop()
+        self._submit()
 
     def on_option_list_option_selected(self, event: "OptionList.OptionSelected") -> None:
-        # Only the live model list (Ollama / OpenCode Go) lives on this screen.
-        if event.option_list.id != "modellist":
+        if event.option_list.id != "model-options":
             return
-        chosen = event.option.id
-        if chosen and chosen != "__none__":
-            self.query_one("#model", Input).value = chosen
+        target = self._targets.get(event.option_index)
+        if target is not None:
+            self._choose(*target)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cancel":
@@ -472,36 +596,44 @@ class ModelScreen(ModalScreen[dict | None]):
             return
         self._submit()
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        # Enter in the API-key / model field applies the switch (same as the
-        # Switch button) — a keyboard path so the user is never blocked when the
-        # button is scrolled off a short terminal (e.g. behind the Ollama list).
-        self._submit()
-
-    def _submit(self) -> None:
-        provider = self.query_one("#provider", Select).value
-        if provider is Select.BLANK:
-            self.dismiss(None)
-            return
-        pid = str(provider)
-        # Only report an endpoint for providers that take one, so switching away
-        # from OpenAI can't carry a stale URL onto a gateway.
-        base_url = (
-            self.query_one("#baseurl", Input).value.strip()
-            if pid in self._ENDPOINT_PROVIDERS
-            else ""
-        )
-        self.dismiss(
-            {
-                "provider": pid,
-                "model": self.query_one("#model", Input).value.strip(),
-                "api_key": self.query_one("#apikey", Input).value.strip(),
-                "base_url": base_url,
-            }
-        )
+    def action_toggle_curated(self) -> None:
+        """Switch between the curated lists and everything discovered."""
+        self._curated_only = not self._curated_only
+        self._repaint()
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+    def _submit(self) -> None:
+        """Resolve the highlighted row or the typed model id and switch."""
+        typed = self.query_one("#model", Input).value.strip()
+        target = self._highlighted_target()
+
+        if typed:
+            provider = target[0] if target else self._current_provider
+            if provider is None:
+                self._show_hint("Highlight a provider row first, then retry.", error=True)
+                return
+            self._choose(provider, typed)
+            return
+
+        if target is None:
+            self._show_hint("Nothing selected — pick a model or type one.", error=True)
+            return
+        self._choose(*target)
+
+    def _choose(self, provider: str, model: str) -> None:
+        """Dismiss with the choice, or with a request to authenticate it.
+
+        A provider whose credential is missing is not an error to swallow: the
+        switch would fail at model construction with an SDK-level message. The
+        app turns ``needs_auth`` into a trip through ``/auth`` for this provider.
+        """
+        status = self._statuses.get(provider)
+        if status is not None and not status.is_usable:
+            self.dismiss({"provider": provider, "needs_auth": True})
+            return
+        self.dismiss({"provider": provider, "model": model})
 
 
 class SessionsScreen(ModalScreen[None]):

@@ -156,20 +156,26 @@ def test_entries_without_an_id_are_skipped(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 # ---------------------------------------------------------------------------
-# ModelScreen wiring — the list appears for opencode, like it does for ollama
+# /model wiring — the gateway's ids reach the picker
 # ---------------------------------------------------------------------------
 
 
 async def _drive_screen(monkeypatch: pytest.MonkeyPatch) -> dict:
     from textual.app import App, ComposeResult
-    from textual.widgets import Input, OptionList
+    from textual.widgets import OptionList
 
+    import novacode_cli.config.model_catalog as catalog
+    from novacode_cli.config import provider_auth
     from novacode_cli.tui.screens import ModelScreen
 
-    # Stub the fetcher at its source: the loader is @work-wrapped, so replacing
-    # the method would bypass Textual's scheduling. This is never awaited on the
-    # network — it returns a plain list via asyncio.to_thread.
-    monkeypatch.setattr(model_manager, "get_opencode_models", lambda: ["glm-5.3", "kimi-k3"])
+    # Stub the two blocking sources: the picker loads off the UI thread, so
+    # replacing the screen's loader would bypass Textual's scheduling.
+    monkeypatch.setattr(
+        model_manager, "get_opencode_models", lambda: ["gateway-only-id"]
+    )
+    monkeypatch.setattr(model_manager, "get_ollama_models", lambda: ["llama3.3:70b"])
+    monkeypatch.setattr(provider_auth, "get_all_auth_statuses", lambda **kwargs: {})
+    catalog.clear_catalog_cache()
 
     class Host(App):
         def compose(self) -> ComposeResult:
@@ -178,40 +184,46 @@ async def _drive_screen(monkeypatch: pytest.MonkeyPatch) -> dict:
     out: dict = {}
     app = Host()
     async with app.run_test(size=(100, 40)) as pilot:
-        screen = ModelScreen("opencode", {"opencode"})
+        screen = ModelScreen()
         app.push_screen(screen)
-        for _ in range(4):
+        ol = None
+        for _ in range(120):
             await pilot.pause()
+            try:
+                ol = screen.query_one("#model-options", OptionList)
+            except Exception:  # noqa: BLE001 — not mounted yet
+                continue
+            if ol.option_count:
+                break
 
-        screen._refresh_info("opencode")
-        for _ in range(4):
-            await pilot.pause()
-
-        ol = screen.query_one("#modellist", OptionList)
-        out["visible"] = bool(ol.display)
-        out["options"] = [ol.get_option_at_index(i).id for i in range(ol.option_count)]
-
-        # Picking a row fills the free-type model box.
-        screen.query_one("#model", Input).value = ""
-        screen.on_option_list_option_selected(
-            type("E", (), {"option_list": ol, "option": ol.get_option_at_index(0)})()
-        )
-        out["picked"] = screen.query_one("#model", Input).value
-
-        # Another provider must hide it again.
-        screen._refresh_info("anthropic")
-        await pilot.pause()
-        out["hidden_for_anthropic"] = not bool(screen.query_one("#modellist", OptionList).display)
+        assert ol is not None
+        out["options"] = [
+            ol.get_option_at_index(i).id for i in range(ol.option_count)
+        ]
     return out
 
 
-def test_opencode_shows_a_live_list_and_fills_the_model_box(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_the_picker_offers_the_gateways_live_ids(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The gateway is the source of truth, not the hand-maintained preset.
+
+    Six of the preset's eighteen ids are already `deprecated` and 400 on first
+    use, so an id only the gateway reports must still be selectable.
+    """
     if not _HAS_TEXTUAL:
         return
     out = asyncio.run(_drive_screen(monkeypatch))
-    assert out["visible"], "model list hidden for OpenCode Go"
-    assert out["options"] == ["glm-5.3", "kimi-k3"]
-    assert out["picked"] == "glm-5.3", "selection did not fill the model box"
-    assert out["hidden_for_anthropic"], "list must not linger for other providers"
+
+    assert "opencode:gateway-only-id" in out["options"]
+    assert "ollama:llama3.3:70b" in out["options"]
+
+
+def test_the_catalog_is_what_the_picker_lists(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No second source of model ids grew back inside the screen."""
+    if not _HAS_TEXTUAL:
+        return
+    out = asyncio.run(_drive_screen(monkeypatch))
+
+    modeled = [option for option in out["options"] if not str(option).startswith("#hdr:")]
+    providers = {str(option).split(":", 1)[0] for option in modeled}
+
+    assert providers == set(MODEL_PRESETS)

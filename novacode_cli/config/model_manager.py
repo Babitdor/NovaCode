@@ -4,14 +4,19 @@ Handles switching between different LLM providers (OpenAI, Anthropic, Ollama,
 Google, OpenRouter) during interactive sessions.
 """
 
+from __future__ import annotations
+
 import os
 import subprocess
-from typing import Any, Literal
-
-from langchain_core.language_models import BaseChatModel
+from typing import TYPE_CHECKING, Any, Literal
 
 from novacode_cli.config.config import Settings, console
 from novacode_cli.config.nova_config import NovaConfig
+
+if TYPE_CHECKING:
+    from langchain_core.language_models import BaseChatModel
+
+    from novacode_cli.config.provider_auth import ProviderAuthStatus
 
 # OpenRouter is OpenAI-API-compatible; routed through ChatOpenAI with this base URL.
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
@@ -24,6 +29,15 @@ OPENCODE_BASE_URL = "https://opencode.ai/zen/go/v1"
 ProviderType = Literal[
     "openai", "anthropic", "ollama", "google", "openrouter", "opencode", "nvidia"
 ]
+
+#: Providers that accept a custom OpenAI-compatible endpoint. OpenRouter and
+#: OpenCode are also OpenAI-compatible but pin their own base URL, so offering
+#: an endpoint there would only let the user break the gateway; Anthropic,
+#: Google and Ollama take none at all.
+#:
+#: Shared by `/auth` (which owns the field) and `/model` (which applies the
+#: stored value), so the two can never disagree about who accepts one.
+ENDPOINT_PROVIDERS: frozenset[str] = frozenset({"openai"})
 
 
 # Model provider presets
@@ -226,9 +240,7 @@ def get_opencode_models() -> list[str]:
     """
     # Resolve keyring-or-env: a key saved to the system keychain is not in
     # os.environ on a fresh session, so reading the env alone would 401.
-    api_key = Settings.from_environment().opencode_api_key or os.environ.get(
-        "OPENCODE_API_KEY"
-    )
+    api_key = Settings.from_environment().opencode_api_key or os.environ.get("OPENCODE_API_KEY")
 
     models: list[str] = []
     try:
@@ -267,22 +279,40 @@ class ModelManager:
         self.current_model: str | None = None
 
     def get_available_providers(self) -> list[tuple[str, dict[str, Any]]]:
-        """Get list of available providers based on configured API keys.
+        """Get list of providers that can actually be called right now.
+
+        Readiness comes from
+        :func:`novacode_cli.config.provider_auth.get_provider_auth_status`, which
+        checks the credential store before the environment. Checking
+        ``os.environ`` alone was wrong: a key saved through `/auth` lives in the
+        OS keychain and only reaches the environment during startup hydration, so
+        a keychain-only install reported every provider as unavailable.
 
         Returns:
             List of (provider_id, preset) tuples for available providers
         """
+        from novacode_cli.config.provider_auth import get_all_auth_statuses
+
+        statuses = get_all_auth_statuses(include_providers_without_keys=True)
         available = []
         for provider_id, preset in MODEL_PRESETS.items():
-            if not preset["requires_api_key"]:
-                # Ollama is always available
+            status = statuses.get(provider_id)
+            if status is not None and status.is_usable:
                 available.append((provider_id, preset))
-            else:
-                # Check if API key is configured
-                api_key_var = preset["api_key_var"]
-                if api_key_var and os.environ.get(api_key_var):
-                    available.append((provider_id, preset))
         return available
+
+    def get_provider_statuses(self) -> dict[str, ProviderAuthStatus]:
+        """Credential readiness for every provider, keyed by provider id.
+
+        Built from one credential-store pass, so a caller rendering a screen
+        does not probe the keychain once per provider.
+
+        Returns:
+            Mapping of provider id to its readiness status.
+        """
+        from novacode_cli.config.provider_auth import get_all_auth_statuses
+
+        return get_all_auth_statuses(include_providers_without_keys=True)
 
     def get_current_provider(self) -> tuple[str, str] | None:
         """Get currently active provider and model.
@@ -345,15 +375,17 @@ class ModelManager:
         read it. Key Policy: what to do when this returns None (prompt, warn,
         or fail) belongs to the caller, never here.
         """
+        from novacode_cli.config.credentials import CredentialStore
+
         preset = MODEL_PRESETS.get(provider)
         api_key_var = preset.get("api_key_var") if preset else None
         if not api_key_var:
             return None
-        from novacode_cli.onboarding import SecretManager
 
-        key = SecretManager().get_secret(api_key_var.lower()) or os.environ.get(
-            api_key_var
-        )
+        # Read through the credential store, not SecretManager directly: the
+        # store is the one place that knows how a credential is filed, and a
+        # second reader here is how the keychain and the TUI drifted apart.
+        key = CredentialStore().get_key(api_key_var) or os.environ.get(api_key_var)
         if key:
             os.environ[api_key_var] = key
         return key
@@ -381,11 +413,12 @@ class ModelManager:
         if model_name is None:
             model_name = preset["default_model"]
 
-        # Check API key requirement
-        if preset["requires_api_key"]:
+        # Check API key requirement. `resolve_api_key` is keychain-aware and
+        # exports what it finds, so a key saved through `/auth` works here too —
+        # an env-only check rejected it until the process was restarted.
+        if preset["requires_api_key"] and not self.resolve_api_key(provider):
             api_key_var = preset["api_key_var"]
-            if not os.environ.get(api_key_var):
-                raise ValueError(f"{preset['name']} requires {api_key_var} environment variable")
+            raise ValueError(f"{preset['name']} requires {api_key_var} environment variable")
 
         # Construction lives in ONE place (build_chat_model). This path used to
         # keep its own drifted copies — mid-session model switches silently

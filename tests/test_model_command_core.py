@@ -32,6 +32,12 @@ class _RecordingNovaConfig:
     def set_model_config(self, provider, model, base_url=None):
         type(self).saved = (provider, model)
 
+    def get_credential_meta(self):
+        return {}
+
+    def get_recent_models(self):
+        return []
+
     def get(self, key, default=None):
         return default
 
@@ -56,6 +62,12 @@ def _isolated(monkeypatch):
     monkeypatch.setattr(
         "novacode_cli.config.model_manager.NovaConfig", _RecordingNovaConfig
     )
+    # Credential metadata is read through its own module-level name, so the
+    # stub has to be installed there too or credential reads hit the real
+    # ~/.nova/Nova.config.json.
+    monkeypatch.setattr(
+        "novacode_cli.config.nova_config.NovaConfig", _RecordingNovaConfig
+    )
     monkeypatch.setattr("novacode_cli.onboarding.SecretManager", _StubSecrets)
     for var in KEY_VARS:
         monkeypatch.delenv(var, raising=False)
@@ -75,6 +87,22 @@ def test_availability_without_keys_is_ollama_only():
 def test_availability_respects_env_keys(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     available = {pid for pid, _ in ModelManager().get_available_providers()}
+    assert "openai" in available
+    assert "anthropic" not in available
+
+
+def test_availability_counts_a_key_stored_in_the_keychain():
+    """The regression this list exists to catch.
+
+    Availability used to read `os.environ` alone, so a key entered through the
+    TUI (which lands in the OS keychain, and only reaches the environment during
+    startup hydration) reported its provider as unavailable for the rest of the
+    session — the picker kept saying "(needs key)" for a provider that had one.
+    """
+    _StubSecrets.store = {"openai_api_key": "kc-key"}
+
+    available = {pid for pid, _ in ModelManager().get_available_providers()}
+
     assert "openai" in available
     assert "anthropic" not in available
 
@@ -145,7 +173,19 @@ def test_the_tui_is_the_only_model_adapter():
     assert ".resolve_api_key(" in tui_src
     assert ".set_provider(" in tui_src
     assert ".get_current_provider_id(" in tui_src
-    assert ".get_available_providers(" in tui_src
+    assert "ModelScreen(" in tui_src
+
+
+def test_availability_is_reported_by_the_auth_path():
+    """`get_available_providers` is the readiness summary `/auth` prints.
+
+    The assertion moved off ``_run_model`` when the picker stopped deciding what
+    to show from a precomputed availability set: it renders every provider with
+    its own indicator and routes a credential-less pick into ``/auth``.
+    """
+    from novacode_cli.tui.app import NovaApp
+
+    assert ".get_available_providers(" in inspect.getsource(NovaApp._run_auth)
 
 
 def test_console_model_handler_points_at_the_tui():
