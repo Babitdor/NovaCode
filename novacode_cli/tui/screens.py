@@ -27,6 +27,8 @@ from textual.widgets import (
     Select,
     SelectionList,
     Static,
+    Tab,
+    Tabs,
 )
 from textual.widgets.option_list import Option
 
@@ -362,10 +364,13 @@ class ModelScreen(ModalScreen[dict | None]):
 
     Two of the providers are speech rather than chat: Deepgram (STT) and
     ElevenLabs (TTS). Their entries come from
-    :mod:`novacode_cli.audio.providers`, appear under their own section headers
-    below the chat providers, and carry the same credential indicator — a voice
-    provider with no key routes into ``/auth`` exactly like a chat provider.
-    Voice rows are hidden while ``Ctrl+R`` (curated chat lists only) is active.
+    :mod:`novacode_cli.audio.providers` and live on their own **Voice** tab.
+    Speech is a different axis from chat, so the two never share a list — one list
+    put ~20 speech rows below ~260 chat models, which read as "the voice options
+    are not there". They carry the same credential indicator, so a voice provider
+    with no key routes into ``/auth`` exactly like a chat provider. ``Ctrl+R``
+    (curated chat lists only) applies to the Models tab, the only one with a
+    curated subset to narrow.
 
     Loading reads the credential store, the filesystem, ``ollama list`` and (for
     OpenCode Go) the network, so it runs in a worker thread and the list is
@@ -396,6 +401,9 @@ class ModelScreen(ModalScreen[dict | None]):
         self._models: dict[str, list[str]] = {}
         self._recent: list[str] = []
         self._voice_cfg: dict[str, Any] = {}
+        #: Which axis the list is showing: ``"model"`` or ``"voice"``. The tabs
+        #: drive it; the two never share a list.
+        self._tab = "model"
         #: Option index -> what that row selects. `OptionList.highlighted`
         #: reports an index, so this is the mapping back to a choice.
         self._targets: dict[int, _Pick] = {}
@@ -404,6 +412,15 @@ class ModelScreen(ModalScreen[dict | None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="modal-box"):
             yield Static(Text("Switch model", style="bold"), id="modal-title")
+            # Chat models and speech models are a different axis each, and the two
+            # have nothing to do with one another, so they get a tab each rather
+            # than sharing one list: a shared list put ~20 speech rows below 260
+            # chat models, which read as "the voice options are not there".
+            yield Tabs(
+                Tab("Models", id="tab-models"),
+                Tab("Voice", id="tab-voice"),
+                id="model-tabs",
+            )
             yield Input(placeholder="Filter models…", id="model-filter")
             yield Static("", id="modelinfo")
             yield OptionList(id="model-options")
@@ -428,6 +445,20 @@ class ModelScreen(ModalScreen[dict | None]):
         animate_modal_screen(self)
         self.query_one("#model-filter", Input).focus()
         self._load()
+
+    def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
+        """Show the axis the selected tab names.
+
+        Also fires once as the tab bar mounts, so the new axis is compared rather
+        than assumed: a repaint there would be wasted work (and would repaint the
+        list before the loader has anything to put in it).
+        """
+        tab_id = getattr(getattr(event, "tab", None), "id", "") or ""
+        kind = "voice" if tab_id == "tab-voice" else "model"
+        if kind == self._tab:
+            return
+        self._tab = kind
+        self._repaint()
 
     @work(thread=True, exclusive=True)
     def _load(self) -> None:
@@ -492,13 +523,47 @@ class ModelScreen(ModalScreen[dict | None]):
         return list(self._models.get(provider) or [])
 
     def _repaint(self) -> None:
-        """Rebuild the option list from the loaded data and the current filter."""
+        """Rebuild the option list from the loaded data and the current filter.
+
+        Only the active tab's axis is painted: chat models and speech models are
+        separate lists, so neither can bury the other.
+        """
         from novacode_cli.config.model_manager import MODEL_PRESETS
 
         option_list = self.query_one("#model-options", OptionList)
         option_list.clear_options()
         self._targets = {}
         needle = self._filter.strip()
+
+        if self._tab == "voice":
+            shown = self._add_voice_sections(option_list, needle)
+        else:
+            shown = self._add_model_sections(option_list, needle, MODEL_PRESETS)
+
+        if not shown:
+            option_list.add_option(self._disabled_row(self._empty_message()))
+        self._highlight_current(option_list)
+        self._update_info()
+
+    def _empty_message(self) -> str:
+        """What to say when the active tab has no rows to show."""
+        if self._tab == "voice":
+            return "No voice options match your filter."
+        return "No models match your filter."
+
+    def _add_model_sections(
+        self,
+        option_list: OptionList,
+        needle: str,
+        presets: dict[str, Any],
+    ) -> int:
+        """Append the recent picks and the chat providers; return the row count.
+
+        Args:
+            option_list: List being built.
+            needle: Active filter text.
+            presets: ``MODEL_PRESETS``, passed in so this stays import-light.
+        """
         shown = 0
         seen: set[str] = set()
 
@@ -510,7 +575,7 @@ class ModelScreen(ModalScreen[dict | None]):
             recent = [
                 spec
                 for spec in self._recent
-                if spec.split(":", 1)[0] in MODEL_PRESETS and _fuzzy_match(spec, needle)
+                if spec.split(":", 1)[0] in presets and _fuzzy_match(spec, needle)
             ]
             if recent:
                 option_list.add_option(self._disabled_row(self._RECENT_LABEL))
@@ -521,7 +586,7 @@ class ModelScreen(ModalScreen[dict | None]):
                         self._add_pick(option_list, _Pick("model", provider, model))
                         shown += 1
 
-        for provider in MODEL_PRESETS:
+        for provider in presets:
             models = [
                 model
                 for model in self._provider_models(provider)
@@ -534,13 +599,7 @@ class ModelScreen(ModalScreen[dict | None]):
             for model in models:
                 self._add_pick(option_list, _Pick("model", provider, model))
                 shown += 1
-
-        voice_shown = 0 if self._curated_only else self._add_voice_sections(option_list, needle)
-
-        if not shown and not voice_shown:
-            option_list.add_option(self._disabled_row("No models match your filter."))
-        self._highlight_current(option_list)
-        self._update_info()
+        return shown
 
     def _add_voice_sections(self, option_list: OptionList, needle: str) -> int:
         """Append the STT and TTS sections; return how many rows were added.
@@ -704,15 +763,15 @@ class ModelScreen(ModalScreen[dict | None]):
         return value if isinstance(value, str) and value else None
 
     def _highlight_current(self, option_list: OptionList) -> None:
-        """Put the cursor on the model in use, else the active provider's rows.
+        """Put the cursor on the item in use, else the active provider's rows.
 
-        The chat model wins over a configured voice: the picker is opened to
-        switch models, and a voice is very often already set, so letting the
-        voice take the cursor would mean landing somewhere the user did not come
-        to change. The remaining steps exist because the reason the picker
-        reopened is not always a current model — after `/auth` it holds a
-        *provider* to act on, and landing on an unrelated provider's first row
-        would look like the dialog ignored the choice that brought the user here.
+        Which "in use" is meant is the active tab's business: the model on the
+        Models tab, the configured voice on the Voice tab, and only one of the two
+        is ever in the list, so the steps below simply fall through to the other.
+        The remaining step exists because the reason the picker reopened is not
+        always a current model — after `/auth` it holds a *provider* to act on,
+        and landing on an unrelated provider's first row would look like the
+        dialog ignored the choice that brought the user here.
         """
         current = next(
             (
@@ -753,23 +812,25 @@ class ModelScreen(ModalScreen[dict | None]):
         reaching into Textual's rendering internals.
         """
         picks = list(self._targets.values())
-        models = [pick for pick in picks if pick.kind == "model"]
-        voices = [pick for pick in picks if pick.kind == "voice"]
         info = Text()
-        info.append(
-            f"{len(models)} model(s) from {len({pick.provider for pick in models})} provider(s)",
-            style="dim",
-        )
-        if voices:
-            # The voice rows are painted after every chat model, which is well
-            # below the fold on a large list, so the count alone does not help
-            # find them: say where they are and how to get there.
+        if self._tab == "voice":
+            voices = [pick for pick in picks if pick.kind == "voice"]
             info.append(
-                f"  ·  {len(voices)} voice option(s) at the end (type “voice”)",
+                f"{len(voices)} voice option(s) from "
+                f"{len({pick.provider for pick in voices})} provider(s)",
                 style="dim",
             )
-        if self._curated_only:
-            info.append("  ·  curated lists only (Ctrl+R for all)", style="yellow")
+        else:
+            models = [pick for pick in picks if pick.kind == "model"]
+            info.append(
+                f"{len(models)} model(s) from "
+                f"{len({pick.provider for pick in models})} provider(s)",
+                style="dim",
+            )
+            # Curated/named lists are a chat-only concern: the voice registry has
+            # one list per provider, so the toggle has nothing to narrow there.
+            if self._curated_only:
+                info.append("  ·  curated lists only (Ctrl+R for all)", style="yellow")
         if self._filter.strip():
             info.append(f"  ·  filtered by “{self._filter.strip()}”", style="dim")
         return info

@@ -200,6 +200,19 @@ async def _drive_screen(monkeypatch: pytest.MonkeyPatch) -> dict:
         out["options"] = [
             ol.get_option_at_index(i).id for i in range(ol.option_count)
         ]
+
+        # The speech options are a different axis, so they live on their own tab
+        # now: collect those rows too rather than assuming one list.
+        from textual.widgets import Tabs
+
+        screen.query_one("#model-tabs", Tabs).active = "tab-voice"
+        for _ in range(60):
+            await pilot.pause()
+            if screen._tab == "voice":
+                break
+        out["voice_options"] = [
+            ol.get_option_at_index(i).id for i in range(ol.option_count)
+        ]
     return out
 
 
@@ -220,16 +233,22 @@ def test_the_picker_offers_the_gateways_live_ids(monkeypatch: pytest.MonkeyPatch
 def test_the_catalog_is_what_the_picker_lists(monkeypatch: pytest.MonkeyPatch) -> None:
     """No second source of model ids grew back inside the screen.
 
-    Rows have two origins: chat ids (catalog + presets) and voice options (the
-    audio registry). Asserting the screen's providers are exactly those two sets
-    is what catches a hand-written list reappearing inside the widget.
+    Rows have two origins: chat ids (catalog + presets) on the Models tab, and
+    voice options (the audio registry) on the Voice tab. Asserting each tab's
+    providers are exactly its own set is what catches a hand-written list
+    reappearing inside the widget, or one axis leaking into the other's list.
     """
     if not _HAS_TEXTUAL:
         return
     out = asyncio.run(_drive_screen(monkeypatch))
 
-    modeled = [option for option in out["options"] if not str(option).startswith("#hdr:")]
-    providers = {str(option).split(":", 1)[0] for option in modeled}
+    def providers_of(rows: list) -> set[str]:
+        """Providers behind the selectable rows, ignoring the header rows."""
+        return {
+            str(option).split(":", 1)[0]
+            for option in rows
+            if not str(option).startswith("#hdr:")
+        }
 
     from novacode_cli.audio.providers import STT_PROVIDERS, TTS_PROVIDERS
 
@@ -238,4 +257,5 @@ def test_the_catalog_is_what_the_picker_lists(monkeypatch: pytest.MonkeyPatch) -
         for provider, meta in (STT_PROVIDERS | TTS_PROVIDERS).items()
         if meta.get("options")
     }
-    assert providers == set(MODEL_PRESETS) | voice
+    assert providers_of(out["options"]) == set(MODEL_PRESETS)
+    assert providers_of(out["voice_options"]) == voice

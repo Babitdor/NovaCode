@@ -1161,6 +1161,7 @@ class NovaApp(App):
        Switch/Cancel buttons, so it gets a bounded height and its own scroll —
        otherwise a long list pushes the buttons out of the modal and they can't
        be clicked. Kept in sync with the reference layout's 16-row cap. */
+    #model-tabs { height: auto; margin-bottom: 1; }
     #model-options {
         height: auto; max-height: 16;
         border: round $accent 50%; margin-bottom: 1;

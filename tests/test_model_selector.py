@@ -7,7 +7,14 @@ rather than letting model construction fail later with an SDK-level message.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
+
+if TYPE_CHECKING:
+    from textual.pilot import Pilot
+
+    from novacode_cli.tui.screens import ModelScreen
 
 from novacode_cli.config.provider_auth import (
     ProviderAuthSource,
@@ -115,6 +122,24 @@ async def _open(pilot, app, **kwargs):
     raise AssertionError("model list never populated")
 
 
+async def _tab(pilot: Pilot, screen: ModelScreen, tab_id: str) -> None:
+    """Select a tab and wait for the list to be rebuilt for it.
+
+    Models and voice options are separate lists now, so a test that is about the
+    speech rows has to be looking at the Voice tab first.
+    """
+    from textual.widgets import Tabs
+
+    screen.query_one("#model-tabs", Tabs).active = tab_id
+    wanted = "voice" if tab_id == "tab-voice" else "model"
+    for _ in range(60):
+        await pilot.pause()
+        if screen._tab == wanted:
+            return
+    message = f"tab {tab_id!r} never became active"
+    raise AssertionError(message)
+
+
 def _options(screen):
     from textual.widgets import OptionList
 
@@ -167,24 +192,39 @@ async def test_rows_are_grouped_under_provider_headers():
         ids = _all_ids(screen)
         headers = [i for i in ids if i and str(i).startswith("#hdr:")]
 
-        # One header per chat provider, plus the two speech section labels.
+        # One header per chat provider, and nothing from the other axis: the two
+        # are separate lists, so a chat tab can never hold speech rows.
         for provider in FAKE_MODELS:
             assert f"#hdr:{provider}" in headers
-        assert "#hdr:Speech to text" in headers
-        assert "#hdr:Text to speech" in headers
+        assert "#hdr:Speech to text" not in headers
+        assert "#hdr:Text to speech" not in headers
         # Every voice provider also gets its own header, which is what carries
         # its credential indicator. Without one a missing key is invisible until
         # the row is already selected.
         from novacode_cli.audio.providers import STT_PROVIDERS, TTS_PROVIDERS
 
+        await _tab(pilot, screen, "tab-voice")
+        voice_headers = [i for i in _all_ids(screen) if i and str(i).startswith("#hdr:")]
+        assert "#hdr:Speech to text" in voice_headers
+        assert "#hdr:Text to speech" in voice_headers
         for provider, meta in (STT_PROVIDERS | TTS_PROVIDERS).items():
             if meta.get("options"):
-                assert f"#hdr:{provider}" in headers, f"{provider} has no header"
+                assert f"#hdr:{provider}" in voice_headers, f"{provider} has no header"
+        # Only speech rows on the voice tab.
+        assert not _model_ids(screen)
+
+
+async def test_the_models_tab_lists_every_chat_provider():
+    app = _host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _open(pilot, app)
+
         # Every model row is prefixed with its provider, which is what the
         # selection returns and what the app switches on.
         assert set(_model_ids(screen)) == {
             f"{provider}:{model}" for provider, models in FAKE_MODELS.items() for model in models
         }
+        assert not _voice_ids(screen)
 
 
 async def test_headers_carry_the_credential_indicator():
@@ -342,6 +382,7 @@ async def test_voice_headers_carry_the_credential_indicator():
     app = _host()
     async with app.run_test(size=(120, 40)) as pilot:
         screen = await _open(pilot, app)
+        await _tab(pilot, screen, "tab-voice")
 
         by_id = dict(zip(_all_ids(screen), _texts(screen), strict=True))
 
@@ -357,6 +398,7 @@ async def test_a_voice_row_shows_the_value_it_will_store():
     app = _host()
     async with app.run_test(size=(120, 40)) as pilot:
         screen = await _open(pilot, app)
+        await _tab(pilot, screen, "tab-voice")
 
         by_id = dict(zip(_all_ids(screen), _texts(screen), strict=True))
 
@@ -375,6 +417,7 @@ async def test_voice_sections_list_every_speech_provider():
     app = _host()
     async with app.run_test(size=(120, 40)) as pilot:
         screen = await _open(pilot, app)
+        await _tab(pilot, screen, "tab-voice")
 
         ids = set(_voice_ids(screen))
         by_spec = {spec: _voice_row(screen, spec) for spec in ids}
@@ -409,6 +452,7 @@ async def test_choosing_a_voice_row_dismisses_with_its_axis_and_field():
             if screen.query_one("#model-options", OptionList).option_count:
                 break
 
+        await _tab(pilot, screen, "tab-voice")
         option_list = screen.query_one("#model-options", OptionList)
         for index, option in enumerate(option_list.options):
             if option.id == "piper:en_US-amy-medium":
@@ -446,6 +490,7 @@ async def test_a_voice_provider_without_a_key_asks_to_authenticate():
             if screen.query_one("#model-options", OptionList).option_count:
                 break
 
+        await _tab(pilot, screen, "tab-voice")
         option_list = screen.query_one("#model-options", OptionList)
         for index, option in enumerate(option_list.options):
             if option.id == "deepgram:nova-2":
@@ -464,6 +509,7 @@ async def test_a_filter_finds_the_voice_section_by_provider_name():
     app = _host()
     async with app.run_test(size=(120, 40)) as pilot:
         screen = await _open(pilot, app)
+        await _tab(pilot, screen, "tab-voice")
 
         screen.query_one("#model-filter", Input).value = "eleven"
         await pilot.pause()
@@ -472,24 +518,19 @@ async def test_a_filter_finds_the_voice_section_by_provider_name():
         assert not _model_ids(screen)
 
 
-@pytest.mark.parametrize("needle", ["voice", "speech"])
-async def test_a_filter_finds_the_voice_section_by_axis_word(needle: str):
-    """An axis word must reach the speech rows.
+@pytest.mark.parametrize("needle", ["voice", "speech", "stt"])
+async def test_a_filter_narrows_the_voice_tab_by_axis_word(needle: str):
+    """An axis word still has to find the speech rows, now on their own tab.
 
-    They are painted below every chat model, and a full list is a few hundred of
-    those, which buries the two voice sections far below the fold. Typed into the
-    filter, "voice" and "speech" are how a user gets there.
-
-    The filter is an ordered-subsequence match, so a chat id can still match by
-    accident (measured against the real catalog: none for "voice", one for
-    "speech"). What matters is that every speech row survives and the chat list
-    collapses, which is what this asserts.
+    The filter is an ordered-subsequence match, so a provider row can only ever
+    match by accident; every speech row surviving is the property that matters.
     """
     from textual.widgets import Input
 
     app = _host()
     async with app.run_test(size=(120, 40)) as pilot:
         screen = await _open(pilot, app)
+        await _tab(pilot, screen, "tab-voice")
         every_voice_row = set(_voice_ids(screen))
         assert every_voice_row
 
@@ -497,22 +538,41 @@ async def test_a_filter_finds_the_voice_section_by_axis_word(needle: str):
         await pilot.pause()
 
         assert set(_voice_ids(screen)) == every_voice_row
-        assert len(_model_ids(screen)) <= 2
 
 
-async def test_the_info_line_says_where_the_voice_rows_are():
-    """A count alone does not help when the rows sit below the fold."""
+async def test_each_tab_shows_only_its_own_axis():
+    """Switching tabs swaps the list, and switching back must restore it."""
     app = _host()
     async with app.run_test(size=(120, 40)) as pilot:
         screen = await _open(pilot, app)
 
-        count = len(_voice_ids(screen))
-        plain = screen._info_text().plain
+        models_first = set(_model_ids(screen))
+        assert models_first
+        assert not _voice_ids(screen)
 
-        assert count
-        assert f"{count} voice option(s)" in plain
-        assert "at the end" in plain
-        assert "type “voice”" in plain
+        await _tab(pilot, screen, "tab-voice")
+        assert set(_voice_ids(screen))
+        assert not _model_ids(screen)
+
+        await _tab(pilot, screen, "tab-models")
+        assert set(_model_ids(screen)) == models_first
+        assert not _voice_ids(screen)
+
+
+async def test_the_info_line_describes_the_active_tab():
+    """The line above the list must name the axis being shown, not both."""
+    app = _host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _open(pilot, app)
+
+        models = screen._info_text().plain
+        assert f"{len(_model_ids(screen))} model(s)" in models
+        assert "voice" not in models
+
+        await _tab(pilot, screen, "tab-voice")
+        voices = screen._info_text().plain
+        assert f"{len(_voice_ids(screen))} voice option(s)" in voices
+        assert "model(s)" not in voices
 
 
 async def test_a_typed_voice_id_is_used_for_the_highlighted_voice_provider():
@@ -531,6 +591,7 @@ async def test_a_typed_voice_id_is_used_for_the_highlighted_voice_provider():
             if screen.query_one("#model-options", OptionList).option_count:
                 break
 
+        await _tab(pilot, screen, "tab-voice")
         option_list = screen.query_one("#model-options", OptionList)
         for index, option in enumerate(option_list.options):
             if option.id == "elevenlabs:21m00Tcm4TlvDq8ikWAM":
@@ -567,6 +628,7 @@ async def test_the_active_voice_is_marked():
     app = _host()
     async with app.run_test(size=(120, 40)) as pilot:
         screen = await _open(pilot, app)
+        await _tab(pilot, screen, "tab-voice")
 
         by_id = dict(zip(_all_ids(screen), _texts(screen), strict=True))
 
