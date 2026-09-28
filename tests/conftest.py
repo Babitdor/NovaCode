@@ -1,8 +1,14 @@
 """Shared test fixtures."""
 
+from __future__ import annotations
+
 import os
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 #: Env vars that carry credentials. Anything that saves a credential writes
 #: these directly into ``os.environ`` (see `config/credentials.py`), and callers
@@ -26,7 +32,7 @@ _CREDENTIAL_ENV_VARS = (
 
 
 @pytest.fixture(autouse=True)
-def _restore_credential_env_vars():
+def _restore_credential_env_vars() -> Iterator[None]:
     """Undo credential exports a test made directly through ``os.environ``.
 
     ``monkeypatch`` cannot see those: it only reverts what it set itself, so a
@@ -45,7 +51,7 @@ def _restore_credential_env_vars():
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _guard_the_real_user_config():
+def _guard_the_real_user_config() -> Iterator[None]:
     """Fail the run if anything writes the developer's real Nova.config.json.
 
     Stubbing `NovaConfig` only works when the patch lands on the name the module
