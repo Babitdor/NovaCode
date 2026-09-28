@@ -44,6 +44,29 @@ def _restore_credential_env_vars():
             os.environ[name] = value
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _guard_the_real_user_config():
+    """Fail the run if anything writes the developer's real Nova.config.json.
+
+    Stubbing `NovaConfig` only works when the patch lands on the name the module
+    under test actually resolves. `voice_handler` imports it *inside* the
+    function, so patching `voice_handler.NovaConfig` misses and the write goes to
+    ``~/.nova/Nova.config.json`` — which is how a credential was once cleared
+    from the author's real config by a test run. This asserts the file is
+    untouched, so that mistake surfaces as a failure instead of as lost data.
+    """
+    from pathlib import Path
+
+    path = Path.home() / ".nova" / "Nova.config.json"
+    before = path.read_bytes() if path.exists() else None
+    yield
+    after = path.read_bytes() if path.exists() else None
+    assert before == after, (
+        f"a test modified the real user config at {path}; "
+        "stub Novaconfig on the name the code resolves, or patch config.HOME_DIR"
+    )
+
+
 @pytest.fixture(autouse=True)
 def _reset_shell_jobs():
     """Isolate the process-global background-job registry between tests.
