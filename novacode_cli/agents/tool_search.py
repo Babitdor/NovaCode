@@ -72,6 +72,10 @@ CORE_TOOLS = frozenset(
         "create_artifact",
         "update_artifact",
         "list_artifacts",
+        # Desktop power. Same rule as the artifacts above: the prompt tells the
+        # agent to end an overnight session by suspending the machine, so the tool
+        # has to be bound without a `search_tools` round-trip.
+        "sleep_desktop",
     }
 )
 #: Also bound: up to this many of the user's most-used other tools...

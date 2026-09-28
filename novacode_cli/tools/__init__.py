@@ -52,6 +52,9 @@ from novacode_cli.tools.reflection_tools import think
 # Speak tool
 from novacode_cli.tools.speak_tool import speak
 
+# Desktop power (suspend the machine when the user is done for the night)
+from novacode_cli.tools.desktop_tools import sleep_desktop
+
 # Skill management (agent-facing write path for self-improvement)
 from novacode_cli.tools.skill_tools import skill_manage
 
@@ -96,6 +99,8 @@ __all__ = [
     "think",
     # Speak tool
     "speak",
+    # Desktop power: the overnight "park the machine" action
+    "sleep_desktop",
     # Skill management (agent self-improvement write path)
     "skill_manage",
     # Web search tools

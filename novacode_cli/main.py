@@ -160,6 +160,7 @@ from novacode_cli.tools import (
     oracle,
     remember,
     skill_manage,
+    sleep_desktop,
     speak,
     think,
     web_search,
@@ -671,6 +672,10 @@ async def _run_agent_session(
         speak,
         oracle,
         skill_manage,
+        # Desktop power: suspend the machine when the user is done for the night.
+        # Refuses outside the overnight window unless forced, so it is safe to
+        # leave bound every turn.
+        sleep_desktop,
         
         # Web search (always available, no API key needed)
         duckduckgo_search,
