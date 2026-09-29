@@ -121,9 +121,15 @@ def retrieve_core_subagents(
     # The model for the subagent role, if the user chose one. Absent means
     # deepagents has every subagent inherit the main agent's model, which is what
     # they all did before per-role models existed.
-    from novacode_cli.config.role_models import subagent_spec
+    #
+    # A model *object*, not a 'provider:model' spec string, even though deepagents
+    # documents the string form for this field: a string is resolved with
+    # langchain's `init_chat_model`, which does not know Nova's own providers, so
+    # choosing e.g. `opencode` for this role crashed the whole agent build. See
+    # :func:`novacode_cli.config.model_create.build_role_model`.
+    from novacode_cli.config.model_create import build_role_model
 
-    subagent_model = subagent_spec()
+    subagent_model = build_role_model("subagent")
 
     subagents: list[SubAgent] = [
         {
@@ -132,8 +138,8 @@ def retrieve_core_subagents(
             "system_prompt": config["prompt"],
             "tools": _filter_tools(all_tools, config["tools"]),
             # Conditionally spread, so the key is simply absent when the role
-            # inherits. deepagents documents `model` as a 'provider:model-name'
-            # spec string, which is exactly what this resolves to.
+            # inherits. One shared instance, exactly as the inherited case shares
+            # the main agent's model.
             **({"model": subagent_model} if subagent_model else {}),
         }
         for name, config in subagent_configs

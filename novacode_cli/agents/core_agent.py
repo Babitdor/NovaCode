@@ -364,9 +364,17 @@ def build_named_subagents(
         # Model, in precedence order: the agent's own frontmatter, then the
         # "dynamic" role (which itself falls back to the "subagent" role), then
         # nothing at all, meaning inherit the main agent's model as before.
-        from novacode_cli.config.role_models import dynamic_spec
+        #
+        # The role resolves to a model *object* rather than a 'provider:model'
+        # spec string: a string is resolved with langchain's `init_chat_model`,
+        # which does not know Nova's own providers, so a role set to e.g.
+        # `opencode` broke the whole agent build. A frontmatter value is still
+        # passed through as the string its author wrote.
+        from novacode_cli.config.model_create import build_dynamic_role_model
 
-        agent_model = _parse_frontmatter_value(system_prompt, "model") or dynamic_spec()
+        agent_model = (
+            _parse_frontmatter_value(system_prompt, "model") or build_dynamic_role_model()
+        )
         if agent_model:
             subagent["model"] = agent_model
 

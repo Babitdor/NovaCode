@@ -2,8 +2,12 @@
 
 Pins the two things that make the feature safe: when a role is unset the specs are
 byte-for-byte what they were before (no `model` key at all, so deepagents inherits),
-and when it is set the spec carries exactly the 'provider:model-name' form deepagents
-documents.
+and when it is set the spec carries a model **object**.
+
+Not a 'provider:model' string -- the form deepagents documents for this field, but
+one it resolves with langchain's ``init_chat_model``, which only knows langchain's own
+provider names. A role set to one of Nova's (``opencode``, ``nvidia``) therefore raised
+"Unable to infer model provider" and no agent could be built at all.
 """
 
 from __future__ import annotations
@@ -42,19 +46,19 @@ def tmp_config(monkeypatch, tmp_path):
     return tmp_path
 
 
-def _specs_with_role(monkeypatch, role: str | None) -> list[dict]:
-    """The roster's specs, with the subagent role set or unset.
+def _specs_with_role(monkeypatch, model: object | None) -> list[dict]:
+    """The roster's specs, with the subagent role resolving to *model* (or unset).
 
-    ``retrieve_core_subagents`` imports ``subagent_spec`` inside the function, so
+    ``retrieve_core_subagents`` imports ``build_role_model`` inside the function, so
     patching the attribute on the module it imports from does take effect.
     """
     from novacode_cli.agents.default_subagents import subagents as mod
 
-    cfg = NovaConfig()
-    if role:
-        cfg.set_role_model("subagent", "openai", "gpt-5-mini")
-
-    monkeypatch.setattr("novacode_cli.config.role_models.subagent_spec", lambda *_a, **_k: role)
+    monkeypatch.setattr(
+        "novacode_cli.config.model_create.build_role_model",
+        lambda *_a, **_k: model,
+        raising=True,
+    )
     return mod.retrieve_core_subagents([])
 
 
@@ -69,12 +73,37 @@ def test_role_unset_leaves_every_spec_inheriting(monkeypatch):
     )
 
 
-def test_role_set_stamps_the_provider_model_spec_on_every_spec(monkeypatch):
-    specs = _specs_with_role(monkeypatch, "openai:gpt-5-mini")
+def test_role_set_stamps_a_model_object_on_every_spec(monkeypatch):
+    """An object, not a spec string: a string is unresolvable for Nova's providers."""
+    model = object()
+    specs = _specs_with_role(monkeypatch, model)
     assert specs, "no specs built"
-    assert all(s.get("model") == "openai:gpt-5-mini" for s in specs), [
+    assert all(s.get("model") is model for s in specs), [
         (s["name"], s.get("model")) for s in specs
     ]
+    assert not any(isinstance(s.get("model"), str) for s in specs), (
+        "a spec carries a string again -- the exact shape that raised "
+        "'Unable to infer model provider' and stopped the agent building"
+    )
+
+
+def test_a_nova_only_provider_role_builds_a_real_model_object(monkeypatch, tmp_path):
+    """The regression: `opencode` is not a langchain provider, so Nova must build it.
+
+    Before this, choosing `opencode` for a role put the spec string on every subagent
+    and deepagents handed it to `init_chat_model`, which raised at agent construction.
+    """
+    monkeypatch.setenv("OPENCODE_API_KEY", "test-key")
+
+    from novacode_cli.config.model_create import build_role_model
+
+    assert build_role_model("subagent") is None, "an unset role must stay unset"
+
+    NovaConfig().set_role_model("subagent", "opencode", "deepseek-v4.1-flash")
+    model = build_role_model("subagent")
+    assert model is not None
+    assert not isinstance(model, str), "a string here is the crash shape"
+    assert getattr(model, "model_name", None) == "deepseek-v4.1-flash"
 
 
 def test_frontmatter_model_beats_the_dynamic_role(monkeypatch, tmp_path):
@@ -100,7 +129,9 @@ def test_frontmatter_model_beats_the_dynamic_role(monkeypatch, tmp_path):
         raising=False,
     )
     monkeypatch.setattr(
-        "novacode_cli.config.role_models.dynamic_spec", lambda *_a, **_k: "openai:gpt-5-mini"
+        "novacode_cli.config.model_create.build_dynamic_role_model",
+        lambda *_a, **_k: object(),
+        raising=True,
     )
     core_agent.clear_named_subagents_cache()
 
@@ -113,9 +144,11 @@ def test_cache_clear_makes_a_role_change_take_effect(monkeypatch, tmp_path):
     """Without the clear, the TTL makes a change look ignored for a minute."""
     from novacode_cli.agents import core_agent
 
-    calls = {"spec": "openai:gpt-5-mini"}
+    calls = {"model": object()}
     monkeypatch.setattr(
-        "novacode_cli.config.role_models.dynamic_spec", lambda *_a, **_k: calls["spec"]
+        "novacode_cli.config.model_create.build_dynamic_role_model",
+        lambda *_a, **_k: calls["model"],
+        raising=True,
     )
     monkeypatch.setattr(
         "novacode_cli.config.config.settings.get_all_agents",
@@ -128,15 +161,16 @@ def test_cache_clear_makes_a_role_change_take_effect(monkeypatch, tmp_path):
 
     core_agent.clear_named_subagents_cache()
     first = core_agent.build_named_subagents("nova-agent", [])
-    assert first[0]["model"] == "openai:gpt-5-mini"
+    assert first[0]["model"] is calls["model"]
 
-    calls["spec"] = "google:gemini-3-pro-preview"
+    stale = calls["model"]
+    calls["model"] = object()
     cached = core_agent.build_named_subagents("nova-agent", [])
-    assert cached[0]["model"] == "openai:gpt-5-mini", "expected the cache to serve the old build"
+    assert cached[0]["model"] is stale, "expected the cache to serve the old build"
 
     core_agent.clear_named_subagents_cache()
     refreshed = core_agent.build_named_subagents("nova-agent", [])
-    assert refreshed[0]["model"] == "google:gemini-3-pro-preview"
+    assert refreshed[0]["model"] is calls["model"]
 
 
 def test_the_stored_async_role_reaches_a_spawned_servers_environment(monkeypatch):

@@ -612,6 +612,44 @@ PROVIDER_DEFAULT_MODEL: dict[str, str] = {
 }
 
 
+def build_role_model(role: str) -> BaseChatModel | None:
+    """The model a role runs on, or None when the role inherits the main agent's.
+
+    Returns a model **object**, never the ``provider:model`` spec string. deepagents
+    turns a spec string into a client with langchain's ``init_chat_model``, which
+    only knows langchain's own provider names -- so a spec naming one of Nova's
+    (``opencode``, ``nvidia``) dies at agent-construction time with
+
+        ValueError: Unable to infer model provider for model='opencode:...'
+
+    even though Nova builds that provider perfectly well right here. ``resolve_model``
+    returns a ``BaseChatModel`` unchanged, so an object sidesteps the lookup entirely
+    and every provider Nova supports works for a role, not just langchain's.
+
+    Raises whatever :func:`build_chat_model` raises: a role the user deliberately
+    chose must not quietly become a different model.
+    """
+    from novacode_cli.config.nova_config import NovaConfig
+
+    entry = NovaConfig().get_role_model(role)
+    if not entry:
+        return None
+    provider = str(entry.get("provider") or "").strip()
+    model_name = str(entry.get("model") or "").strip()
+    if not provider or not model_name:
+        return None
+    return build_chat_model(provider, model_name)
+
+
+def build_dynamic_role_model() -> BaseChatModel | None:
+    """The model for discovered agents that name none of their own.
+
+    ``dynamic`` falls back to ``subagent`` rather than to None, because a discovered
+    agent *is* a subagent; see :func:`novacode_cli.config.role_models.dynamic_spec`.
+    """
+    return build_role_model("dynamic") or build_role_model("subagent")
+
+
 def build_async_agent_model(*, per_agent_model_var: str | None = None) -> BaseChatModel:
     """The chat model one async-agent graph runs on.
 
