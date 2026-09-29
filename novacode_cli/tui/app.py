@@ -17,6 +17,7 @@ from ``on_mount`` handlers via Python's ``animate()`` API.
 """
 
 from __future__ import annotations
+from novacode_cli.core import subagent_tasks
 from novacode_cli.prompts import render_template
 from novacode_cli.ui import status_phrases
 
@@ -82,6 +83,7 @@ from novacode_cli.tui.widgets import (
     PromptInput,
     QuestionDock,
     SessionHeader,
+    SubagentsDock,
     TranscriptScroll,
     TuiInitRenderer,
 )
@@ -419,6 +421,9 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     ),
     "resume": SlashCommand("_run_resume", "resume a saved session for this path (/resume <id>)"),
     "artifacts": SlashCommand("_run_artifacts", "open the artifacts list", wants_text=False),
+        "subagents": SlashCommand(
+            "_run_subagents", "toggle the dynamic subagents panel", wants_text=False
+        ),
     "tasks": SlashCommand("_run_tasks", "open the background tasks panel", wants_text=False),
     "cowork": SlashCommand(
         "_run_cowork", "launch the Nova Cowork desktop app (/cowork [task])", aliases=("desktop",)
@@ -978,6 +983,22 @@ class NovaApp(App):
     #todo-dock:hover { background: $boost; }
     /* Collapsed: just the one-line summary header. */
     #todo-dock.collapsed { max-height: 1; overflow-y: hidden; }
+    /* --- Dynamic subagents: the fan-out a dispatch spawned, while it runs.
+       Above the transcript so a 32-way fan-out stays watchable, and hidden
+       entirely until something is in flight. The collapsed state keeps the one
+       header line, which is where the counts and the hint live. --- */
+    #subagents-dock {
+        display: none;
+        height: auto;
+        max-height: 14;
+        overflow-y: auto;
+        padding: 0 2;
+        background: $surface;
+        border-bottom: solid $border;
+    }
+    #subagents-dock.active { display: block; }
+    #subagents-dock:hover { background: $boost; }
+    #subagents-dock.collapsed #subagents-body { display: none; }
     /* --- Question dock: the ask_user_question answer list, docked above the
        input rather than pushed as a modal, so the transcript stays visible and
        the footer keeps one layout. Same show/hide shape as #todo-dock.
@@ -1292,6 +1313,7 @@ class NovaApp(App):
         # shadowed by Textual's Input editing bindings while #prompt has focus
         # (the normal state).
         ("alt+t", "toggle_todos", "Todos"),
+        ("alt+s", "toggle_subagents", "Subagents"),
         ("ctrl+end", "jump_latest", "Jump to latest"),
         ("ctrl+n", "new_session", "New session"),
         ("alt+right", "next_session", "Next session"),
@@ -1496,6 +1518,19 @@ class NovaApp(App):
         self._nova_status_style: str = "dim"
         self._nova_indicator_timer: Any = None
         self._os_focused = True
+        # Dynamic-subagents panel. Rows are upserted by task id (a dispatch is
+        # emitted twice, at start and at completion), and the phase order is the
+        # order phases first appeared, which is the order they were watched.
+        self._subagent_rows: dict[str, Any] = {}
+        self._subagent_phase_order: list[str] = []
+        self._subagent_collapsed_phases: set[str] = set()
+        self._subagents_collapsed = False
+        #: Set when a turn ends: the rows stay readable (collapsed) until the
+        #: next turn's first dispatch replaces them.
+        self._subagents_stale = False
+        self._subagents_rows_by_line: list[tuple[str | None, str | None]] = []
+        self._subagents_paint_timer: Any = None
+        self._subagents_tick: Any = None
 
     def _current_agent_info(self) -> tuple[str, str]:
         from novacode_cli.core.input_preparation import get_agent_display_name
@@ -1521,6 +1556,13 @@ class NovaApp(App):
         yield Tabs(id="session-tabs").with_tooltip(
             "Session tabs — alt+←/→ to switch, ctrl+n for a new session"
         )
+        # Dynamic subagents: every dispatch of the turn so far, grouped into the
+        # phases they were launched in. Hidden until something is in flight.
+        yield SubagentsDock(
+            Static("", id="subagents-title"),
+            Static("", id="subagents-body"),
+            id="subagents-dock",
+        ).with_tooltip("Dynamic subagents - click (or alt+s) to collapse/expand")
         with ContentSwitcher(initial="transcript", id="panes"):
             yield TranscriptScroll(id="transcript").with_tooltip(
                 "Transcript — drag to select, ctrl+c to copy"
@@ -3273,6 +3315,187 @@ class NovaApp(App):
         """Collapse/expand the todo checklist (click the dock, or alt+t)."""
         self._todos_collapsed = not getattr(self, "_todos_collapsed", False)
         self._paint_todos(getattr(self, "_todos", None), getattr(self, "_todos_agent", None))
+
+    # ── dynamic subagents (persistent panel) ────────────────────────────────
+
+    def _ingest_subagent_task(self, task: ev.SubagentTask) -> None:
+        """Upsert one dispatch row, then repaint.
+
+        A dispatch arrives twice: once when it is launched (type, label, start
+        time) and once when it finishes (status, duration, error). Neither event
+        carries all the fields, so the later one inherits what it does not have
+        rather than blanking the row.
+        """
+        existing = self._subagent_rows.get(task.task_id)
+        if existing is None and self._subagents_stale:
+            # First dispatch of a new turn: the previous run's rows have been
+            # readable for a whole turn, so they give way to this one.
+            self._reset_subagents()
+        if existing is not None:
+            for field in (
+                "phase_id",
+                "subagent_type",
+                "label",
+                "description",
+                "started_at",
+                "model",
+            ):
+                if not getattr(task, field, None):
+                    setattr(task, field, getattr(existing, field, None))
+        if task.model is None:
+            # Subagents inherit the session model: Nova sets no per-subagent one.
+            task.model = self.model_name
+        if task.phase_id and task.phase_id not in self._subagent_phase_order:
+            self._subagent_phase_order.append(task.phase_id)
+        self._subagent_rows[task.task_id] = task
+        # A run that has finished folds down to its header, so the transcript gets
+        # its rows back without the panel disappearing mid-read.
+        self._subagents_collapsed = not any(
+            row.status == "running" for row in self._subagent_rows.values()
+        )
+        self._schedule_subagents_paint()
+
+    def _subagent_task_list(self) -> list[Any]:
+        """Rows in arrival order, capped so a runaway fan-out cannot grow."""
+        rows = list(self._subagent_rows.values())
+        if len(rows) > subagent_tasks.MAX_ROWS:
+            rows = rows[-subagent_tasks.MAX_ROWS :]
+        return rows
+
+    def _schedule_subagents_paint(self) -> None:
+        """Coalesce repaints: a fan-out delivers its start events in a burst."""
+        if self._subagents_paint_timer is not None:
+            return
+        self._subagents_paint_timer = self.set_timer(0.1, self._paint_subagents)
+
+    def _paint_subagents(self) -> None:
+        """The single place the panel is written."""
+        self._subagents_paint_timer = None
+        try:
+            dock = self._w("#subagents-dock", SubagentsDock)
+            title = self._w("#subagents-title", Static)
+            body = self._w("#subagents-body", Static)
+        except NoMatches:
+            return
+
+        rows = self._subagent_task_list()
+        dock.set_class(self._subagents_collapsed, "collapsed")
+        if not rows:
+            dock.remove_class("active")
+            title.update("")
+            body.update("")
+            self._subagents_rows_by_line = []
+            self._stop_subagents_tick()
+            return
+
+        now = time.time()
+        title.update(
+            subagent_tasks.panel_title(rows, collapsed=self._subagents_collapsed)
+        )
+        rendered = subagent_tasks.panel_body(
+            rows,
+            width=self._subagents_width(dock),
+            now=now,
+            phase_order=self._subagent_phase_order,
+            collapsed_phases=self._subagent_collapsed_phases,
+        )
+        body.update(
+            Text("\n").join(rendered.lines) if rendered.lines else "",
+        )
+        self._subagents_rows_by_line = [
+            (rendered.row_phases[index], rendered.row_tasks[index])
+            for index in range(len(rendered.lines))
+        ]
+        dock.add_class("active")
+        # Only a running row's TIME moves, so the 1s repaint is only worth having
+        # while something runs.
+        if any(row.status == "running" for row in rows):
+            self._start_subagents_tick()
+        else:
+            self._stop_subagents_tick()
+
+    def _subagents_width(self, dock: Widget) -> int:
+        """Cells available to a panel line.
+
+        From the dock's own size minus its horizontal padding (``0 2`` each
+        side): ``content_size`` does not subtract padding, and rendering at the
+        un-padded width made every row long enough to wrap its TIME column, which
+        is the one thing a column layout must never do.
+        """
+        try:
+            width = int(dock.size.width) - 4
+        except Exception:  # noqa: BLE001 — not laid out yet
+            width = 0
+        if width <= 0:
+            try:
+                width = int(self.size.width or 0) - 6
+            except Exception:  # noqa: BLE001
+                width = 0
+        return max(40, width)
+
+    def _start_subagents_tick(self) -> None:
+        if self._subagents_tick is None:
+            self._subagents_tick = self.set_interval(1.0, self._paint_subagents)
+
+    def _stop_subagents_tick(self) -> None:
+        if self._subagents_tick is not None:
+            with suppress(Exception):
+                self._subagents_tick.stop()
+            self._subagents_tick = None
+
+    def _reset_subagents(self) -> None:
+        """Drop the last run's rows, so a new turn starts from an empty panel."""
+        self._subagent_rows.clear()
+        self._subagent_phase_order.clear()
+        self._subagent_collapsed_phases.clear()
+        self._subagents_collapsed = False
+        self._subagents_stale = False
+
+    def _ingest_async_tasks(self, tasks: object) -> None:
+        """Show remote async subagents in the same panel.
+
+        They refresh on the watcher's existing cadence (it polls the runs every
+        few seconds), so these rows are near-live rather than live, and they carry
+        no duration or model — the remote thread knows neither to us.
+        """
+        if not isinstance(tasks, dict):
+            return
+        now = time.time()
+        changed = False
+        for entry in tasks.values():
+            row = subagent_tasks.task_from_async_entry(entry, now=now, model=None)
+            if row is None:
+                continue
+            row.model = None  # rendered as an unknown, not as the local model
+            self._subagent_rows[row.task_id] = row
+            if row.phase_id and row.phase_id not in self._subagent_phase_order:
+                self._subagent_phase_order.append(row.phase_id)
+            changed = True
+        if changed:
+            self._schedule_subagents_paint()
+
+    def action_toggle_subagents(self) -> None:
+        """Collapse/expand the subagents panel (click the dock, or alt+s)."""
+        self._subagents_collapsed = not self._subagents_collapsed
+        self._paint_subagents()
+
+    def _on_subagents_click(self, y: int) -> None:
+        """A click on a phase row folds that phase; anywhere else folds the panel.
+
+        ``y`` is dock-relative, so line 0 is the header and the table starts one
+        line below it.
+        """
+        row = y - 1
+        if 0 <= row < len(self._subagents_rows_by_line):
+            phase_id, _task_id = self._subagents_rows_by_line[row]
+            if phase_id:
+                if phase_id in self._subagent_collapsed_phases:
+                    self._subagent_collapsed_phases.discard(phase_id)
+                else:
+                    self._subagent_collapsed_phases.add(phase_id)
+                self._paint_subagents()
+                return
+        self.action_toggle_subagents()
 
     def _pop_tool(self, call_id: str | None) -> "tuple[Collapsible, Static, str] | None":
         """Find (and stop tracking) the tool component for a result."""
@@ -7725,6 +7948,10 @@ class NovaApp(App):
         """Open the artifacts list (same as clicking the ◈ Artifacts component)."""
         self._open_artifacts_list()
 
+    async def _run_subagents(self) -> None:
+        """Collapse/expand the dynamic-subagents panel (same as alt+s)."""
+        self.action_toggle_subagents()
+
     async def _run_tasks(self) -> None:
         """Open the Background Tasks panel (same as clicking the ⚙ indicator)."""
         self._open_tasks_panel()
@@ -10494,6 +10721,10 @@ class NovaApp(App):
             self._scroll_end()
         elif isinstance(e, ev.SubagentActivity):
             await self._handle_subagent(e)
+        elif isinstance(e, ev.SubagentTask):
+            # The panel's own row for the same dispatch: a fan-out is visible as
+            # a list while it runs, rather than as N cards.
+            self._ingest_subagent_task(e)
         elif isinstance(e, ev.UsageUpdate):
             if self.token_tracker is not None:
                 try:
@@ -10573,6 +10804,12 @@ class NovaApp(App):
                 self._speak_reply(self._accumulated_reply)
                 self._accumulated_reply = ""
             await self._sync_async_task_watcher()
+            # The turn is over, so the panel's rows are final: leave them readable
+            # (folded to the header) until the next turn's first dispatch.
+            self._subagents_stale = True
+            if self._subagent_rows:
+                self._subagents_collapsed = True
+                self._paint_subagents()
 
     def _notify_async_done(self, level: str, title: str, message: str) -> None:
         """Surface a finished async subagent as a notification, and — when the
@@ -10640,6 +10877,7 @@ class NovaApp(App):
             watcher = AsyncTaskWatcher(self._notify_async_done)
             self._async_watcher = watcher
         watcher.sync_from_state(tasks)
+        self._ingest_async_tasks(tasks)
         # Surface newly-running agents in the ⚙ tasks bar right away (and start
         # its 1s runtime ticker, which will also drop them once they finish).
         try:

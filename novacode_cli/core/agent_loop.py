@@ -51,6 +51,11 @@ from novacode_cli.core.subagent_tracking import (
     SubagentTracker,
     get_status_icon,
 )
+from novacode_cli.core.subagent_tasks import (
+    task_from_custom_event,
+    task_from_sync_completion,
+    task_from_sync_dispatch,
+)
 from novacode_cli.ui.ui_elements import (
     format_tool_display,
     format_tool_message_content,
@@ -415,7 +420,10 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
             _current_stream_gen = scoped_stream(
                 agent.astream(
                     stream_input,
-                    stream_mode=["updates", "messages"],
+                    # "custom" carries the quickjs eval bridge's per-dispatch
+                    # subagent events, which is how a fan-out is visible while it
+                    # runs. Anything else on that stream is ignored downstream.
+                    stream_mode=["updates", "messages", "custom"],
                     subgraphs=True,
                     config=config,
                     durability="exit",
@@ -433,6 +441,15 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                 if not isinstance(chunk, tuple) or len(chunk) != 3:
                     continue
                 _namespace, current_stream_mode, data = chunk
+
+                if current_stream_mode == "custom":
+                    # A fan-out's tasks, one event each as they start and finish.
+                    # The mapper rejects every other custom payload, so middleware
+                    # writing to this stream costs nothing here.
+                    _task = task_from_custom_event(data, now=time.time())
+                    if _task is not None:
+                        yield _task
+                    continue
 
                 if current_stream_mode == "updates":
                     if not isinstance(data, dict):
@@ -1024,9 +1041,9 @@ async def _handle_tool_message(
     if tool_name == "task" and tool_call_id and tool_call_id in subagent_tracker.active_subagents:
         info = subagent_tracker.complete_subagent(tool_call_id)
         if info:
-            subagent_type, _, start_time = info
+            subagent_type, description, start_time = info
         else:
-            subagent_type, start_time = "unknown", time.time()
+            subagent_type, description, start_time = "unknown", "", time.time()
         activity = subagent_tracker.claim_namespace_for_tool_call(namespace, tool_call_id)
         yield ev.SubagentActivity(
             kind="completed",
@@ -1035,6 +1052,18 @@ async def _handle_tool_message(
             detail=(format_condensed_activity(activity) if activity else None),
             color=get_agent_color(subagent_type),
             call_id=tool_call_id,
+        )
+        # The panel's row for the same dispatch, now with its duration (the
+        # tracker recorded the start and it was previously thrown away) and the
+        # failure text, which the card only ever showed as a status icon.
+        yield task_from_sync_completion(
+            tool_call_id,
+            now=time.time(),
+            ok=tool_status == "success",
+            error="" if tool_status == "success" else str(tool_content or "")[:400],
+            started_at=start_time,
+            subagent_type=subagent_type,
+            description=description,
         )
         yield ev.StatusUpdate(
             status_phrases.status_line("synthesizing", agent_display_name)
@@ -1207,4 +1236,9 @@ async def _handle_tool_call_chunk(
                 detail=description or None,
                 color=get_agent_color(subagent_type),
                 call_id=buffer_id,
+            )
+            # The panel's row for the same dispatch. A blocking task call is its
+            # own one-row phase: it has no fan-out to belong to.
+            yield task_from_sync_dispatch(
+                buffer_id, subagent_type, description, time.time()
             )

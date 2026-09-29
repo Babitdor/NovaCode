@@ -1475,3 +1475,18 @@ class TuiInitRenderer:
             session_state.auto_approve = prev
 
 
+
+class SubagentsDock(Vertical):
+    """The dynamic-subagents panel: phases beside their tasks, while they run.
+
+    Owns its own click handling rather than adding branches to the app's global
+    click walk: a click on a phase line folds that phase, a click anywhere else
+    folds the whole panel. Row coordinates are the dock's, so the header occupies
+    line 0 and the rendered table starts at line 1.
+    """
+
+    def on_click(self, event: events.Click) -> None:
+        """Delegate the click to the app, which owns the row map."""
+        handler = getattr(self.app, "_on_subagents_click", None)
+        if handler is not None:
+            handler(event.y)

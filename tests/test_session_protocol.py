@@ -62,6 +62,19 @@ def _sample(name: str):
             kind="dispatched", subagent_type="code-explorer",
             message="m", detail="d", color="green", call_id="t9",
         ),
+        "SubagentTask": lambda: ev.SubagentTask(
+            task_id="ptc_task_ab12cd34",
+            status="failed",
+            phase_id="call_eval_1",
+            phase_kind="eval",
+            subagent_type="researcher",
+            label="research: docling",
+            description="research docling",
+            started_at=1000.0,
+            duration_ms=33600,
+            error="'charmap' codec can't decode byte 0x8f",
+            model="deepseek-v4.1-flash",
+        ),
         "UsageUpdate": lambda: ev.UsageUpdate(
             input_tokens=10, output_tokens=2, cache_read_tokens=1, cache_creation_tokens=4
         ),

@@ -143,6 +143,34 @@ class SubagentActivity:
 
 
 @dataclass
+class SubagentTask:
+    """One dispatch, as a row in the dynamic-subagents panel.
+
+    Distinct from :class:`SubagentActivity`, which drives the per-subagent card in
+    the transcript and carries only a loose human summary. This is the panel's
+    shape: one row per dispatch, with the fields its columns need, so a fan-out of
+    parallel tasks can be listed side by side instead of as N cards.
+
+    Producers: the ``langchain-quickjs`` ``task()`` bridge via LangGraph's custom
+    stream (a fan-out shares one ``phase_id``), the sync ``task`` tool, and the
+    async-task watcher. A row is emitted at dispatch and re-emitted with the same
+    ``task_id`` when it finishes, so consumers upsert rather than append.
+    """
+
+    task_id: str  # quickjs "ptc_task_<uuid8>", or the tool call id
+    status: str = "running"  # "running" | "done" | "failed"
+    phase_id: str | None = None  # eval_id; None = a dispatch outside a fan-out
+    phase_kind: str = "eval"  # "eval" | "direct" | "async" (how it was launched)
+    subagent_type: str = ""
+    label: str = ""  # the bridge's label, else the task description
+    description: str = ""
+    started_at: float = 0.0  # wall clock, stamped when the row first arrives
+    duration_ms: int | None = None  # filled in by the completing event
+    error: str = ""
+    model: str | None = None  # what the task actually ran on
+
+
+@dataclass
 class UsageUpdate:
     """Token usage captured from the model response (main agent only)."""
 
