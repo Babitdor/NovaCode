@@ -626,8 +626,11 @@ def build_role_model(role: str) -> BaseChatModel | None:
     returns a ``BaseChatModel`` unchanged, so an object sidesteps the lookup entirely
     and every provider Nova supports works for a role, not just langchain's.
 
-    Raises whatever :func:`build_chat_model` raises: a role the user deliberately
-    chose must not quietly become a different model.
+    A role that cannot be built -- a missing key, an unknown provider -- warns and
+    inherits the main agent's model instead of raising. That matches what the main
+    model does, and it matters more than enforcing the choice: raising here would
+    leave the CLI unusable over one setting, which is the very failure this function
+    exists to remove.
     """
     from novacode_cli.config.nova_config import NovaConfig
 
@@ -638,7 +641,14 @@ def build_role_model(role: str) -> BaseChatModel | None:
     model_name = str(entry.get("model") or "").strip()
     if not provider or not model_name:
         return None
-    return build_chat_model(provider, model_name)
+    try:
+        return build_chat_model(provider, model_name)
+    except Exception as exc:  # noqa: BLE001 - a bad role must never brick the CLI
+        console.print(
+            f"[yellow]Role '{role}' could not use {provider}:{model_name} "
+            f"({type(exc).__name__}: {exc}); inheriting the main agent's model.[/yellow]"
+        )
+        return None
 
 
 def build_dynamic_role_model() -> BaseChatModel | None:
