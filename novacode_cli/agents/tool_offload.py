@@ -23,6 +23,7 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from langchain.agents.middleware import ClearToolUsesEdit
 from langchain_core.messages import AnyMessage, ToolMessage
@@ -119,4 +120,123 @@ class OffloadingToolUsesEdit(ClearToolUsesEdit):
         )
 
 
-__all__ = ["MAX_AGE_SECONDS", "UNSAVED", "VIRTUAL_PREFIX", "OffloadingToolUsesEdit", "cleared_dir"]
+# No slots=True, for the same reason as the base class above.
+@dataclass
+class VerdictToolUsesEdit(OffloadingToolUsesEdit):
+    """Clear only the results a decision model scored stale.
+
+    Identical to :class:`OffloadingToolUsesEdit` in every other respect — same
+    offload, same recovery, same placeholder — but the *selection* is not "every
+    result older than the trigger except the last few". A result is cleared only
+    when its cached verdict says it is no longer needed:
+
+    * no verdict (never scored, or scored under a different value) → **keep**.
+      Failing open is what makes a cold cache, a slow model or an unreachable
+      endpoint safe: the history is only ever *less* pruned than the heuristic,
+      never more than the model has actually judged.
+    * verdict at or above ``keep_threshold`` → keep.
+
+    The ``trigger`` still gates the whole edit, so nothing is cleared before the
+    same context pressure the heuristic waits for, and the newest ``keep``
+    results stay verbatim either way. Verdicts arrive from
+    :mod:`novacode_cli.agents.tool_verdicts`; this class only reads them, which
+    keeps the hot path (``apply`` runs on every model call) free of I/O.
+    """
+
+    verdicts: Any = None
+    keep_threshold: float = 0.5
+
+    def apply(self, messages: list[AnyMessage], *, count_tokens) -> None:  # noqa: ANN001
+        """Clear only judged-stale results; capture payloads before they vanish."""
+        if self.verdicts is None:
+            return
+        # As in the base class: the payloads must be read before super() rewrites
+        # them in place, and the same marker identifies what it cleared.
+        before = {
+            msg.tool_call_id: (msg.name, msg.content)
+            for msg in messages
+            if isinstance(msg, ToolMessage)
+        }
+        judged = self._judged_stale_ids(messages)
+        super().apply(messages, count_tokens=count_tokens)
+        self._restore_unjudged(messages, before, judged)
+
+    def _judged_stale_ids(self, messages: list[AnyMessage]) -> set[str]:
+        """Ids of results the model scored stale and this edit may clear."""
+        cleared = {
+            message.tool_call_id
+            for message in messages
+            if isinstance(message, ToolMessage)
+            and message.response_metadata.get("context_editing", {}).get("cleared")
+        }
+        # The base class clears everything but the last `keep` results (and only
+        # when the pool exceeds `keep` at all), before any verdict is consulted.
+        # A restored result keeps unmarked metadata, so the *position* of a
+        # result — not its metadata — is the record of past clearing: a result
+        # that sits inside the retained tail must never be re-cleared later.
+        results = [message for message in messages if isinstance(message, ToolMessage)]
+        if self.keep >= len(results):
+            return set()
+        window = results[: len(results) - self.keep]
+        excluded = set(self.exclude_tools)
+
+        judged: set[str] = set()
+        for message in window:
+            if message.tool_call_id in cleared:
+                continue
+            if (message.name or "") in excluded:
+                continue
+            try:
+                stale = self.verdicts.stale(
+                    message, keep_threshold=self.keep_threshold
+                )
+            except Exception:  # noqa: BLE001 — an unreadable cache must never clear
+                logger.debug("Could not read a verdict", exc_info=True)
+                stale = None
+            if stale:
+                judged.add(message.tool_call_id)
+        return judged
+
+    def _restore_unjudged(
+        self,
+        messages: list[AnyMessage],
+        before: dict[str, tuple[str | None, object]],
+        judged: set[str],
+    ) -> None:
+        """Put back every result the base class touched without a stale verdict.
+
+        The base class decides what to touch; this method is the veto. A result
+        is restored byte-for-byte, so a message the model never judged is
+        indistinguishable from one it scored as still needed.
+
+        The marker is *identity* -- ``OffloadingToolUsesEdit`` replaces the
+        message with a copy carrying a fresh offload note, so two results share
+        the placeholder only before the base class runs. It only ever touches
+        results that carry a matching tool call in an earlier ``AIMessage``, and
+        restoring is a no-op when the bytes are already right.
+        """
+        for index, msg in enumerate(messages):
+            if not isinstance(msg, ToolMessage):
+                continue
+            if msg.tool_call_id in judged:
+                continue
+            name, payload = before.get(msg.tool_call_id, (None, None))
+            content = payload if isinstance(payload, str) else str(payload or "")
+            if msg.content == content and msg.name == name:
+                continue
+            messages[index] = msg.model_copy(
+                update={
+                    "content": content,
+                    "name": name if name is not None else msg.name,
+                }
+            )
+
+
+__all__ = [
+    "MAX_AGE_SECONDS",
+    "UNSAVED",
+    "VIRTUAL_PREFIX",
+    "OffloadingToolUsesEdit",
+    "VerdictToolUsesEdit",
+    "cleared_dir",
+]
