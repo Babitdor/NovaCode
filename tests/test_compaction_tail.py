@@ -183,6 +183,40 @@ def test_cleared_payloads_are_offloaded_not_destroyed(tmp_path) -> None:
     assert len(msgs[2].content) < 200, "the context copy is what shrinks"
 
 
+def test_a_reused_tool_call_id_offloads_each_payload_separately(tmp_path) -> None:
+    """A resumed session reuses ``tool_call_id``s, so the id is not an identity.
+
+    Naming the offload file after the id alone let a second result overwrite the
+    first, while the first result's placeholder still pointed at that file. The
+    bytes were then gone and recovery returned the *other* payload, with nothing
+    to show anything had gone wrong.
+    """
+    from novacode_cli.agents.tool_offload import OffloadingToolUsesEdit
+
+    first, second = "first-payload" * 40, "second-payload" * 40
+    msgs = [
+        AIMessage(content="", tool_calls=[{"id": "dup", "name": "read_file", "args": {}}]),
+        ToolMessage(content=first, tool_call_id="dup", name="read_file"),
+        AIMessage(content="", tool_calls=[{"id": "dup", "name": "read_file", "args": {}}]),
+        ToolMessage(content=second, tool_call_id="dup", name="read_file"),
+    ]
+    OffloadingToolUsesEdit(trigger=1, keep=0, offload_dir=tmp_path).apply(
+        msgs, count_tokens=lambda _m: 10**9
+    )
+
+    cleared = [
+        m for m in msgs if isinstance(m, ToolMessage) and "moved out of context" in m.content
+    ]
+    assert len(cleared) == 2, "both results are old enough to be cleared"
+    recovered = [
+        (tmp_path / m.content.split("/cleared/")[1].split(" ")[0]).read_text(encoding="utf-8")
+        for m in cleared
+    ]
+    assert sorted(recovered) == sorted([first, second]), (
+        "each payload needs its own file: sharing one silently loses the other"
+    )
+
+
 def test_web_search_results_are_offloaded_too() -> None:
     """They were excluded only because a search cannot be re-run; now it needn't be."""
     from novacode_cli.agents.core_agent import _tool_result_clearing

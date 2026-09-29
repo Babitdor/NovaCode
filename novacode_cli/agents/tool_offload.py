@@ -18,6 +18,7 @@ the placeholder names the file so ``read_file`` can bring it back.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import time
@@ -44,6 +45,26 @@ UNSAVED = "[Old tool result cleared to save context. Re-run the tool if you need
 
 _SAFE = re.compile(r"[^A-Za-z0-9._-]+")
 _pruned = False
+
+
+def _offload_stem(name: str | None, call_id: str, text: str) -> str:
+    """Filename stem for an offloaded payload. The digest is the uniqueness claim.
+
+    ``name`` + ``call_id`` is not an identity: a resumed session reuses
+    ``tool_call_id`` values -- one archive had 444 results under 122 distinct ids
+    (see :func:`novacode_cli.agents.tool_verdicts.result_key`) -- so two results
+    with the same id would name the same file and the second would silently
+    overwrite the first, while the first result's placeholder still points at
+    it. Recovery would then hand back the wrong bytes with no sign anything went
+    wrong. Hashing the payload into the name gives distinct bytes distinct
+    files; identical bytes sharing one file is harmless.
+
+    The digest is appended *after* truncation, so a long tool name or id can
+    never cut it off -- which would put the collision straight back.
+    """
+    prefix = _SAFE.sub("-", f"{name or 'tool'}-{call_id}")[:64]
+    digest = hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:8]
+    return f"{prefix}-{digest}"
 
 
 def cleared_dir(agent_dir: Path) -> Path:
@@ -79,9 +100,12 @@ class OffloadingToolUsesEdit(ClearToolUsesEdit):
         # The payloads have to be captured BEFORE the base class overwrites
         # them; it rewrites `messages[idx]` in place with a copy carrying the
         # placeholder, so afterwards the original content is unreachable.
+        # Keyed by position rather than by tool_call_id, which is NOT unique:
+        # a resumed session reuses ids, and an id-keyed map would keep only the
+        # last payload for that id and hand it back for every result sharing it.
         before = {
-            msg.tool_call_id: (msg.name, msg.content)
-            for msg in messages
+            idx: (msg.name, msg.content)
+            for idx, msg in enumerate(messages)
             if isinstance(msg, ToolMessage)
         }
         super().apply(messages, count_tokens=count_tokens)
@@ -92,7 +116,7 @@ class OffloadingToolUsesEdit(ClearToolUsesEdit):
             # messages it just cleared — that is the marker for "this one".
             if not isinstance(msg, ToolMessage) or msg.content != self.placeholder:
                 continue
-            name, payload = before.get(msg.tool_call_id, (None, None))
+            name, payload = before.get(idx, (None, None))
             # A failed save still leaves the result cleared — the context
             # pressure is real either way — but then it must say so, not leave
             # the bare marker for the model to interpret.
@@ -100,11 +124,16 @@ class OffloadingToolUsesEdit(ClearToolUsesEdit):
             messages[idx] = msg.model_copy(update={"content": saved})
 
     def _save(self, call_id: str, name: str | None, payload: object) -> str | None:
-        """Write *payload* out; return the replacement placeholder, or None."""
+        """Write *payload* out; return the replacement placeholder, or None.
+
+        The placeholder names the file so ``read_file`` can bring the payload
+        back, so the name has to be unique per payload -- see
+        :func:`_offload_stem`.
+        """
         text = payload if isinstance(payload, str) else str(payload or "")
         if not text.strip() or self.offload_dir is None:
             return None
-        stem = _SAFE.sub("-", f"{name or 'tool'}-{call_id}")[:80]
+        stem = _offload_stem(name, call_id, text)
         path = self.offload_dir / f"{stem}.txt"
         try:
             self.offload_dir.mkdir(parents=True, exist_ok=True)
@@ -151,38 +180,55 @@ class VerdictToolUsesEdit(OffloadingToolUsesEdit):
         if self.verdicts is None:
             return
         # As in the base class: the payloads must be read before super() rewrites
-        # them in place, and the same marker identifies what it cleared.
+        # them in place, and the same marker identifies what it cleared. Keyed by
+        # position, because tool_call_id is not unique across a resumed session
+        # and an id-keyed map would restore the same payload for every result
+        # sharing that id.
         before = {
-            msg.tool_call_id: (msg.name, msg.content)
-            for msg in messages
+            idx: (msg.name, msg.content)
+            for idx, msg in enumerate(messages)
             if isinstance(msg, ToolMessage)
         }
         judged = self._judged_stale_ids(messages)
         super().apply(messages, count_tokens=count_tokens)
         self._restore_unjudged(messages, before, judged)
 
-    def _judged_stale_ids(self, messages: list[AnyMessage]) -> set[str]:
-        """Ids of results the model scored stale and this edit may clear."""
+    def _judged_stale_ids(self, messages: list[AnyMessage]) -> set[int]:
+        """Positions of the results the model scored stale and this edit may clear.
+
+        Positions, not ``tool_call_id`` values: the id is not unique across a resumed
+        session, so an id-keyed set would mark every result sharing an id as
+        judged once any one of them scored stale, and the others would be cleared
+        without ever being judged.
+        """
         cleared = {
-            message.tool_call_id
-            for message in messages
+            index
+            for index, message in enumerate(messages)
             if isinstance(message, ToolMessage)
             and message.response_metadata.get("context_editing", {}).get("cleared")
         }
         # The base class clears everything but the last `keep` results (and only
         # when the pool exceeds `keep` at all), before any verdict is consulted.
-        # A restored result keeps unmarked metadata, so the *position* of a
-        # result — not its metadata — is the record of past clearing: a result
-        # that sits inside the retained tail must never be re-cleared later.
-        results = [message for message in messages if isinstance(message, ToolMessage)]
+        #
+        # `cleared` marks a result the base class has already reached. It is not
+        # unset by _restore_unjudged -- that only rewrites content and name -- so
+        # a result restored on an earlier pass still carries it, and is skipped
+        # here. Two consequences worth knowing: a result judged stale is never
+        # re-judged, and a result restored as "no verdict" is never re-judged
+        # either, so it stays verbatim even once a verdict exists for it.
+        results = [
+            (index, message)
+            for index, message in enumerate(messages)
+            if isinstance(message, ToolMessage)
+        ]
         if self.keep >= len(results):
             return set()
         window = results[: len(results) - self.keep]
         excluded = set(self.exclude_tools)
 
-        judged: set[str] = set()
-        for message in window:
-            if message.tool_call_id in cleared:
+        judged: set[int] = set()
+        for index, message in window:
+            if index in cleared:
                 continue
             if (message.name or "") in excluded:
                 continue
@@ -194,14 +240,14 @@ class VerdictToolUsesEdit(OffloadingToolUsesEdit):
                 logger.debug("Could not read a verdict", exc_info=True)
                 stale = None
             if stale:
-                judged.add(message.tool_call_id)
+                judged.add(index)
         return judged
 
     def _restore_unjudged(
         self,
         messages: list[AnyMessage],
-        before: dict[str, tuple[str | None, object]],
-        judged: set[str],
+        before: dict[int, tuple[str | None, object]],
+        judged: set[int],
     ) -> None:
         """Put back every result the base class touched without a stale verdict.
 
@@ -209,18 +255,17 @@ class VerdictToolUsesEdit(OffloadingToolUsesEdit):
         is restored byte-for-byte, so a message the model never judged is
         indistinguishable from one it scored as still needed.
 
-        The marker is *identity* -- ``OffloadingToolUsesEdit`` replaces the
-        message with a copy carrying a fresh offload note, so two results share
-        the placeholder only before the base class runs. It only ever touches
-        results that carry a matching tool call in an earlier ``AIMessage``, and
-        restoring is a no-op when the bytes are already right.
+        Identity here is *position*, not ``tool_call_id``: the base class rewrites
+        ``messages[idx]`` in place, so the index is the only handle that survives
+        its edit, and the id is not unique across a resumed session. Restoring is
+        a no-op when the bytes are already right.
         """
         for index, msg in enumerate(messages):
             if not isinstance(msg, ToolMessage):
                 continue
-            if msg.tool_call_id in judged:
+            if index in judged:
                 continue
-            name, payload = before.get(msg.tool_call_id, (None, None))
+            name, payload = before.get(index, (None, None))
             content = payload if isinstance(payload, str) else str(payload or "")
             if msg.content == content and msg.name == name:
                 continue

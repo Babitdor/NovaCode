@@ -69,6 +69,17 @@ def _contents(messages: list) -> list[str]:
     ]
 
 
+def _offloaded(placeholder: str, root) -> str:  # noqa: ANN001 - a Path
+    """Read back the payload a placeholder points at.
+
+    Asserting on the *bytes* rather than on the filename keeps the test honest
+    about what it claims: the placeholder has to name a file that really holds
+    this payload. Pinning the name instead would pass even if nothing was written.
+    """
+    name = placeholder.split("/cleared/", 1)[1].split(" ", 1)[0]
+    return (root / name).read_text(encoding="utf-8")
+
+
 def test_only_the_stale_results_are_cleared(tmp_path) -> None:
     messages = _history(4)
     # c1 stays needed, c2 and c3 are stale. c4 is inside keep=1's window.
@@ -86,9 +97,10 @@ def test_only_the_stale_results_are_cleared(tmp_path) -> None:
     edit.apply(messages, count_tokens=_big_tokens)
 
     contents = _contents(messages)
+    root = cleared_dir(tmp_path)
     assert contents[0] == "1" * 100, "a verdict above the threshold keeps it verbatim"
-    assert "read_file-c2.txt" in contents[1], "stale results are offloaded"
-    assert "read_file-c3.txt" in contents[2]
+    assert _offloaded(contents[1], root) == "2" * 100, "stale results are offloaded, recoverably"
+    assert _offloaded(contents[2], root) == "3" * 100
     assert contents[3] == "4" * 100, "the newest keep=1 result is never touched"
     assert "[cleared]" not in " ".join(contents), "the bare marker must never ship"
 
@@ -108,7 +120,8 @@ def test_an_unscored_result_is_kept_not_cleared(tmp_path) -> None:
     edit.apply(messages, count_tokens=_big_tokens)
 
     contents = _contents(messages)
-    assert "read_file-c1.txt" in contents[0], "the judged one is cleared"
+    root = cleared_dir(tmp_path)
+    assert _offloaded(contents[0], root) == "1" * 100, "the judged one is offloaded"
     assert contents[1] == "2" * 100, "unscored keeps its bytes"
     assert contents[2] == "3" * 100
 
@@ -189,3 +202,73 @@ def test_excluded_tools_are_never_cleared_even_when_judged_stale(tmp_path) -> No
     edit.apply(messages, count_tokens=_big_tokens)
 
     assert _contents(messages) == [reasoning]
+
+
+# ── a re-used tool_call_id is not an identity ───────────────────────────────
+
+
+def _same_id_history(first: str, second: str) -> list:
+    """Two results sharing one ``tool_call_id``, as a resumed session produces."""
+    return [
+        HumanMessage(content="ask", id="h1"),
+        AIMessage(
+            content="",
+            id="a1",
+            tool_calls=[{"id": "dup", "name": "read_file", "args": {}}],
+        ),
+        ToolMessage(content=first, tool_call_id="dup", name="read_file", id="t1"),
+        AIMessage(
+            content="",
+            id="a2",
+            tool_calls=[{"id": "dup", "name": "read_file", "args": {}}],
+        ),
+        ToolMessage(content=second, tool_call_id="dup", name="read_file", id="t2"),
+    ]
+
+
+def test_a_reused_tool_call_id_keeps_each_results_own_content(tmp_path) -> None:
+    """Identity is *position*: a resumed session reuses ``tool_call_id``s.
+
+    Captured by id, the payload map held one entry per id and every result
+    sharing it was restored from that single entry, so the later payload replaced
+    the earlier one in the context -- a silent corruption of what the model sees.
+    """
+    first, second = _payload(1) * 100, _payload(2) * 100
+    messages = _same_id_history(first, second)
+    edit = VerdictToolUsesEdit(
+        trigger=0,
+        keep=0,
+        placeholder="[cleared]",
+        offload_dir=tmp_path,
+        verdicts=ToolVerdictCache(path=None),  # nothing scored: both are kept
+    )
+
+    edit.apply(messages, count_tokens=_big_tokens)
+
+    assert _contents(messages) == [first, second], (
+        "each result must keep its own payload, not the last one captured under its id"
+    )
+
+
+def test_a_stale_verdict_does_not_clear_a_same_id_sibling(tmp_path) -> None:
+    """One judgement must not spill onto another result that shares its id."""
+    stale, needed = _payload(1) * 100, _payload(2) * 100
+    cache = ToolVerdictCache(path=tmp_path / "tool_verdicts.json")
+    cache.put(ToolMessage(stale, tool_call_id="dup", name="read_file"), 0.0)
+    cache.put(ToolMessage(needed, tool_call_id="dup", name="read_file"), 1.0)
+    messages = _same_id_history(stale, needed)
+    edit = VerdictToolUsesEdit(
+        trigger=0,
+        keep=0,
+        placeholder="[cleared]",
+        offload_dir=tmp_path,
+        verdicts=cache,
+    )
+
+    edit.apply(messages, count_tokens=_big_tokens)
+
+    contents = _contents(messages)
+    assert _offloaded(contents[0], tmp_path) == stale, (
+        "the judged-stale one goes, and its file holds ITS bytes, not its sibling's"
+    )
+    assert contents[1] == needed, "its same-id sibling stays, byte for byte"

@@ -17,6 +17,32 @@ from novacode_cli.config.config import Settings, console
 #: directories (which is also what an ``/eval`` fan-out dispatches).
 ROLE_NAMES: tuple[str, ...] = ("main", "subagent", "async", "dynamic")
 
+#: Strings a hand-edited boolean key may hold. Python treats every non-empty
+#: string as true, so a bare ``bool(...)`` reads ``"false"`` as "on" -- switching
+#: *on* a feature somebody had just tried to switch off. A value in neither set
+#: (an unrecognised string, a list, ``None``) falls back to the safe default.
+_TRUTHY_STRINGS: frozenset[str] = frozenset({"true", "1", "yes", "on"})
+_FALSY_STRINGS: frozenset[str] = frozenset({"false", "0", "no", "off", ""})
+
+
+def _config_bool(value: Any, *, default: bool = False) -> bool:
+    """Read a boolean config value, failing *closed* on anything unrecognised.
+
+    The setters always write a real JSON boolean, so a string or a list only
+    reaches here from a hand-edited config file -- which is exactly where the
+    ``bool("false") is True`` trap lives.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in _FALSY_STRINGS:
+            return False
+        return text in _TRUTHY_STRINGS
+    return default
+
 
 def _role_key(role: str) -> str:
     """Config key holding one role's model.
@@ -442,8 +468,14 @@ class NovaConfig:
     TOOL_VERDICT_DEFAULT_ENDPOINT = "http://localhost:11434/v1/systemone"
 
     def get_tool_verdicts_enabled(self) -> bool:
-        """Whether the tool-result reducer consults a decision model."""
-        return bool(self._config.get("tool_verdicts_enabled", False))
+        """Whether the tool-result reducer consults a decision model.
+
+        Parsed strictly rather than with ``bool()``: ``bool("false")`` is ``True``,
+        and this is the master switch for a feature that is off by default, so a
+        hand-edited string must never be able to turn it on by accident. See
+        :func:`_config_bool`.
+        """
+        return _config_bool(self._config.get("tool_verdicts_enabled", False))
 
     def set_tool_verdicts_enabled(self, enabled: bool) -> None:
         """Persist the decision-model pruning flag."""

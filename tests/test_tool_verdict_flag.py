@@ -157,3 +157,44 @@ def test_the_middleware_queues_scoring_and_never_blocks_the_call() -> None:
 
     # A broken scorer: the call STILL runs. Scoring is never worth a turn.
     assert asyncio.run(run(Exploding())) == "ran"
+
+
+# ── the switch itself must fail closed ─────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [
+        (True, True),
+        (False, False),
+        (1, True),
+        (0, False),
+        ("true", True),
+        ("false", False),
+        ("no", False),
+        ("0", False),
+        ("on", True),
+        ("", False),
+        ("maybe", False),
+        (None, False),
+        ([], False),
+        ({"enabled": True}, False),
+    ],
+)
+def test_only_an_explicit_yes_enables_the_flag(config, stored, expected) -> None:
+    """``bool("false")`` is ``True``, and this switch turns on a measured-worse path.
+
+    A hand-edited value must be able to turn the feature *off*, and anything the
+    parser does not recognise has to leave it off rather than on: fail closed, so
+    a typo cannot silently start pruning the context.
+    """
+    config._config["tool_verdicts_enabled"] = stored
+    assert config.get_tool_verdicts_enabled() is expected
+
+
+def test_the_setter_writes_a_real_boolean(config) -> None:
+    """A round trip through the config file must not produce a truthy string."""
+    config.set_tool_verdicts_enabled(True)
+    assert config._config["tool_verdicts_enabled"] is True
+    config.set_tool_verdicts_enabled(False)
+    assert config._config["tool_verdicts_enabled"] is False

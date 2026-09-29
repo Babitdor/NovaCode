@@ -75,9 +75,12 @@ DEFAULT_KEEP_THRESHOLD = 0.5
 #: cover the ``keep`` results the edit pins anyway, so it leaves about seven
 #: results a verdict can actually act on.
 #:
-#: Results older than the window are **not** judged: they keep whatever the
-#: heuristic decides, which is the previous behaviour. Verdicts improve the
-#: window they can see; they never make an older result's fate worse.
+#: Results older than the window are **not** judged, and an unjudged result is
+#: kept rather than cleared (``VerdictToolUsesEdit`` fails open). So once the
+#: reducer is enabled, the heuristic's clearing only applies *within* this
+#: window: a result the model was never asked about stays verbatim instead of
+#: being cleared on age alone. Verdicts never make an older result's fate worse,
+#: but they do mean far fewer results are cleared in total.
 MAX_VERDICT_WINDOW = 12
 
 #: Model name at the endpoint.
@@ -235,8 +238,8 @@ def collect_candidates(
     ``window`` caps how far back a verdict may be asked about, because the state
     for a whole long session does not fit the model's context at all (see
     :data:`MAX_VERDICT_WINDOW`). Results older than the window are simply absent
-    from the returned list, so no verdict is ever asked about them and the
-    heuristic keeps deciding their fate.
+    from the returned list, so no verdict is ever asked about them -- and since
+    an unjudged result is kept rather than cleared, they stay verbatim.
     """
     calls: dict[str, tuple[str, dict[str, Any], int]] = {}
     for index, message in enumerate(messages):
