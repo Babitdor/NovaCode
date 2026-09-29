@@ -3018,6 +3018,48 @@ def test_tui_tool_group_coalescing():
     asyncio.run(_drive_tool_group_coalescing())
 
 
+async def _drive_tool_group_survives_closed_group():
+    """Adding a shell call after the group has closed must not crash.
+
+    `_ensure_tool_group` assigns `self._tool_group` BEFORE its mount awaits
+    complete, so a concurrent `_close_tool_group` (a turn boundary, a queued
+    non-tool event) can null it while the shell branch of
+    `_add_tool_group_call` still runs. That dereference used to be unguarded
+    and raised `AttributeError: 'NoneType' object has no attribute 'collapsed'`.
+    """
+    import novacode_cli.ui_events as ev
+
+    from novacode_cli.tui.app import NovaApp
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    app = NovaApp(
+        agent=_FakeAgent(),
+        assistant_id="nova-agent",
+        session_state=_SS(),
+        backend=None,
+        token_tracker=TokenTracker(),
+        image_tracker=None,
+        model_name="m",
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        for _ in range(3):
+            await pilot.pause()
+        # Open a tool group, then close it out from under the add path.
+        await app._ensure_tool_group()
+        app._close_tool_group()
+        assert app._tool_group is None
+        # This used to raise AttributeError on the unguarded .collapsed write.
+        app._add_tool_group_call("c1", "shell(ls)", "shell")
+        await pilot.pause()
+
+
+def test_tui_tool_group_survives_closed_group():
+    if not _HAS_TEXTUAL:
+        return
+    asyncio.run(_drive_tool_group_survives_closed_group())
+
+
 def test_tui_tool_group_line_cache():
     if not _HAS_TEXTUAL:
         return

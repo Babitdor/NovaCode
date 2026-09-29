@@ -3840,7 +3840,11 @@ class NovaApp(App):
             "run_command",
             "run_tests",
             "start_dev_server",
-        }:
+        } and self._tool_group is not None:
+            # Guard against a concurrently-closed group: _ensure_tool_group sets
+            # self._tool_group before its awaits complete, so _close_tool_group
+            # (a turn boundary, a queued non-tool event) can null it while this
+            # path still runs. Mirrors the guard in _mark_tool_group_result.
             self._tool_group.collapsed = False
             try:
                 log_widget = self._tool_group_body.query_one("#tool-group-log", RichLog)
