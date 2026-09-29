@@ -46,14 +46,15 @@ _HEADER_PREFIX = "#hdr:"
 class _Pick:
     """What a selectable row in the model picker means.
 
-    Two different selections share one list, so the row has to say which kind it
-    is: ``"model"`` switches the chat model and hot-swaps the agent, while
-    ``"voice"`` reconfigures speech I/O and rebuilds the (cached) voice pipeline.
-    Treating a voice row as a model row would send a voice provider id into
-    ``MODEL_PRESETS``, which does not contain it.
+    Three different selections share one list, so the row has to say which kind it
+    is: ``"model"`` switches the chat model and hot-swaps the agent, ``"voice"``
+    reconfigures speech I/O and rebuilds the (cached) voice pipeline, and ``"role"``
+    retargets which agent the next model pick is for. Treating a voice row as a
+    model row would send a voice provider id into ``MODEL_PRESETS``, which does not
+    contain it.
 
     Attributes:
-        kind: ``"model"`` or ``"voice"``.
+        kind: ``"model"``, ``"voice"`` or ``"role"``.
         provider: Provider id, or voice-provider id (``deepgram``, ``elevenlabs``).
         name: Model id, or the voice/model name for a voice provider.
         space: ``"stt"`` or ``"tts"`` for voice rows; empty for model rows.
@@ -414,6 +415,9 @@ class ModelScreen(ModalScreen[dict | None]):
         #: reports an index, so this is the mapping back to a choice.
         self._targets: dict[int, _Pick] = {}
         self._filter = ""
+        #: Which role a model pick applies to. ``"main"`` keeps /model's original
+        #: meaning, so nothing changes until a role row is used.
+        self._role_target = "main"
 
     def compose(self) -> ComposeResult:
         with Vertical(id="modal-box"):
@@ -563,6 +567,35 @@ class ModelScreen(ModalScreen[dict | None]):
             return "No voice options match your filter."
         return "No models match your filter."
 
+    def _add_role_section(self, option_list: OptionList) -> int:
+        """The rows that say, and change, which agent a model pick applies to.
+
+        Rendered as a compact aligned table rather than sentences: the target leads so
+        it is findable at a glance, the role names form a column, and provenance is a
+        two-word suffix ("via main", "via subagents") instead of repeating a full model
+        id or a documentation note on every row. Returns rows added, header included.
+
+        The marker lives in the label rather than in `_pick_row`'s trailing marker,
+        because a trailing marker lands at a different column on every row.
+        """
+        from novacode_cli.config.role_models import describe_roles, role_provenance
+
+        rows = describe_roles(self._current_provider or "", self._current_model or "")
+        width = max(len(label) for _role, label, _effective in rows)
+        option_list.add_option(
+            self._disabled_row("Roles — the next pick applies to the marked row")
+        )
+        for role, label, effective in rows:
+            marker = "▸" if role == self._role_target else " "
+            provenance = role_provenance(role)
+            # `name` stays the role id (the pick payload and `_is_current` rely on it);
+            # only the display carries the marker and the padding.
+            shown = f"{marker} {label:<{width}}  {effective}"
+            if provenance:
+                shown += f"  {provenance}"
+            self._add_pick(option_list, _Pick("role", "", role, label=shown))
+        return len(rows) + 1
+
     def _add_model_sections(
         self,
         option_list: OptionList,
@@ -578,6 +611,12 @@ class ModelScreen(ModalScreen[dict | None]):
         """
         shown = 0
         seen: set[str] = set()
+
+        # Roles first, because they decide what a model pick *means*. Only on an
+        # unfiltered list: while someone is typing a model name, four role rows
+        # between them and the matches are just noise.
+        if not needle:
+            shown += self._add_role_section(option_list)
 
         # Recent picks are a personal signal, so they stay pinned above the
         # providers and are de-duplicated from the sections below. Suppressed
@@ -732,18 +771,22 @@ class ModelScreen(ModalScreen[dict | None]):
         """
         current = self._is_current(pick)
         text = Text(pick.display, style="italic" if current else "")
-        if pick.label and pick.name not in pick.label:
+        if pick.kind != "role" and pick.label and pick.name not in pick.label:
             # Show the stored value when the label does not already contain it
             # (an ElevenLabs voice id would otherwise be invisible).
             text.append(f"  {pick.name}", style="dim")
-        if current:
+        if current and pick.kind != "role":
+            # A role row already carries a leading marker, so it needs no trailing one;
+            # its italic styling is what marks it as the target.
             text.append("  (current)", style="dim")
         return Option(text, id=pick.spec)
 
     def _is_current(self, pick: _Pick) -> bool:
-        """Whether this row is the model, or the voice, the session runs on."""
+        """Whether this row is the model, the voice, or the targeted role."""
         if pick.kind == "model":
             return self._is_current_model(pick)
+        if pick.kind == "role":
+            return pick.name == self._role_target
         return self._is_current_voice(pick)
 
     def _is_current_model(self, pick: _Pick) -> bool:
@@ -928,6 +971,23 @@ class ModelScreen(ModalScreen[dict | None]):
         switch would fail at model construction with an SDK-level message. The
         app turns ``needs_auth`` into a trip through ``/auth`` for this provider.
         """
+        if pick.kind == "role":
+            # Retarget rather than close: the user's next action is picking the
+            # model for this role, and closing would lose that intent. The title
+            # carries the confirmation, because a marker moving down a list is too
+            # quiet to be sure the pick was understood.
+            from novacode_cli.config.role_models import ROLE_LABELS
+
+            self._role_target = pick.name
+            label = ROLE_LABELS.get(pick.name, pick.name)
+            try:
+                self.query_one("#modal-title", Static).update(
+                    f"Switch model  \u2014  aiming at {label}"
+                )
+            except Exception:  # noqa: BLE001 — title is cosmetic, never block the retarget
+                pass
+            self._repaint()
+            return
         status = self._statuses.get(pick.provider)
         if status is not None and not status.is_usable:
             self.dismiss({"provider": pick.provider, "needs_auth": True, "kind": pick.kind})
@@ -940,6 +1000,9 @@ class ModelScreen(ModalScreen[dict | None]):
         if pick.kind == "voice":
             payload["space"] = pick.space
             payload["field"] = pick.field
+        # Always present, so the app never guesses. "main" means hot-swap the live
+        # agent, exactly as /model has always done.
+        payload["role"] = self._role_target
         self.dismiss(payload)
 
 
@@ -2363,27 +2426,48 @@ class AgentsScreen(ModalScreen[None]):
             self._update_preview(event.option_index)
 
     def _update_preview(self, idx: int | None) -> None:
+        """Preview the highlighted agent.
+
+        Scheduled as a worker rather than run inline: building the preview reads
+        `agent.md` three times over (description, front matter, tools), and all of
+        that is blocking filesystem work that must not run on the event loop.
+        """
+        self.run_worker(self._render_agent_preview(idx), group="agent-preview", exclusive=True)
+
+    async def _render_agent_preview(self, idx: int | None) -> None:
+        """Read the agent's files off the loop, then paint the preview."""
+        import asyncio
+
         preview = self.query_one("#agent-detail-preview", Static)
         if idx is None or not self._agents or not (0 <= idx < len(self._agents)):
             preview.update("")
             return
 
         name, path, scope = self._agents[idx]
-        from novacode_cli.commands.agents_commands import extract_agent_description
-
-        desc = ""
-        system_prompt = ""
-        color = ""
         agent_md = path / "agent.md"
-        try:
-            from novacode_cli.agents.agent_file import read_agent
 
-            desc = extract_agent_description(agent_md)
-            front, system_prompt = read_agent(agent_md)
-            system_prompt = system_prompt.strip()
-            color = str(front.get("color") or "")
-        except Exception as e:
-            system_prompt = f"(error reading system prompt: {e})"
+        def _read() -> tuple[str, str, str, Any]:
+            """Every filesystem touch for this preview, on a worker thread."""
+            from novacode_cli.agents.agent_file import agent_tools, read_agent
+            from novacode_cli.commands.agents_commands import extract_agent_description
+
+            desc = ""
+            system_prompt = ""
+            color = ""
+            try:
+                desc = extract_agent_description(agent_md)
+                front, system_prompt = read_agent(agent_md)
+                system_prompt = system_prompt.strip()
+                color = str(front.get("color") or "")
+            except Exception as e:  # noqa: BLE001
+                system_prompt = f"(error reading system prompt: {e})"
+            try:
+                chosen = agent_tools(agent_md.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001
+                chosen = None
+            return desc, system_prompt, color, chosen
+
+        desc, system_prompt, color, chosen = await asyncio.to_thread(_read)
 
         preview_text = Text()
         preview_text.append(f"Name: ", style="bold")
@@ -2398,12 +2482,6 @@ class AgentsScreen(ModalScreen[None]):
         if desc:
             preview_text.append(f"Description: ", style="bold")
             preview_text.append(f"{desc}\n", style="dim")
-        try:
-            from novacode_cli.agents.agent_file import agent_tools
-
-            chosen = agent_tools(agent_md.read_text(encoding="utf-8"))
-        except Exception:  # noqa: BLE001
-            chosen = None
         preview_text.append("Tools: ", style="bold")
         preview_text.append(f"{_tools_summary(chosen)}\n\n", style="cyan")
         preview_text.append(f"System Prompt:\n", style="bold")
@@ -2425,23 +2503,45 @@ class AgentsScreen(ModalScreen[None]):
                 self._edit_tools()
 
     def _edit_tools(self) -> None:
-        """Change the highlighted agent's tools (writes its agent.md)."""
+        """Change the highlighted agent's tools (writes its agent.md).
+
+        Runs as a worker because it reads `agent.md` first, and that read is
+        blocking filesystem work; the picker is pushed once it is off the loop.
+        """
+        self.run_worker(self._edit_tools_worker(), group="agent-tools", exclusive=True)
+
+    async def _edit_tools_worker(self) -> None:
+        """Read the agent's current tools off the loop, then open the picker."""
+        import asyncio
+
         idx = self.query_one("#agents-list", OptionList).highlighted
         if idx is None or not (0 <= idx < len(self._agents)):
             return
         name, path, _scope = self._agents[idx]
         agent_md = path / "agent.md"
-        from novacode_cli.agents.agent_file import agent_tools, set_agent_tools
 
-        try:
-            current = agent_tools(agent_md.read_text(encoding="utf-8"))
-        except OSError:
+        # Sentinel, not None: `agent_tools` may legitimately return a falsy value,
+        # and the original aborted only when reading agent.md raised OSError.
+        missing = object()
+
+        def _read() -> Any:
+            from novacode_cli.agents.agent_file import agent_tools
+
+            try:
+                return agent_tools(agent_md.read_text(encoding="utf-8"))
+            except OSError:
+                return missing
+
+        current = await asyncio.to_thread(_read)
+        if current is missing:
             return
 
         def _save(result: dict | None) -> None:
             if result is None:
                 return
             try:
+                from novacode_cli.agents.agent_file import set_agent_tools
+
                 set_agent_tools(agent_md, result["tools"])
             except Exception as e:  # noqa: BLE001
                 self.query_one("#agents-hint", Static).update(
@@ -3038,6 +3138,17 @@ class SkillsScreen(ModalScreen[None]):
         self._archive_marked()
 
     def _update_preview(self, idx: int | None) -> None:
+        """Preview the highlighted skill.
+
+        Runs as a worker: finding the SKILL.md walks several skill directories
+        and then reads the file, all blocking filesystem work.
+        """
+        self.run_worker(self._render_skill_preview(idx), group="skill-preview", exclusive=True)
+
+    async def _render_skill_preview(self, idx: int | None) -> None:
+        """Locate and read the skill off the loop, then paint the preview."""
+        import asyncio
+
         preview = self.query_one("#skill-detail-preview", Static)
         names = self.app._get_skill_names()
         if idx is None or not names or not (0 <= idx < len(names)):
@@ -3046,60 +3157,67 @@ class SkillsScreen(ModalScreen[None]):
 
         skill_name = names[idx]
 
-        from pathlib import Path
-        from novacode_cli.config.config import Settings, settings
+        def _read() -> tuple[str, str, str]:
+            """Walk the skill dirs and read SKILL.md. Runs on a worker thread."""
+            from pathlib import Path
 
-        skill_path = None
-        scope = "unknown"
+            from novacode_cli.config.config import Settings, settings
 
-        search_dirs = []
-        try:
-            search_dirs.append((settings.ensure_user_skills_dir(), "global"))
-        except Exception:
-            pass
-        try:
-            claude_dir = Settings.get_global_claude_skills_dir()
-            if claude_dir.exists():
-                search_dirs.append((claude_dir, "global"))
-        except Exception:
-            pass
-        try:
-            for d in settings.get_project_skills_dirs():
-                search_dirs.append((Path(d), "project"))
-        except Exception:
-            pass
-        try:
-            from novacode_cli.plugins.claude_plugins import plugin_skill_dirs
+            skill_path = None
+            scope = "unknown"
 
-            for _pname, pd in plugin_skill_dirs():
-                search_dirs.append((Path(pd), "plugin"))
-        except Exception:
-            pass
-
-        for d, sc in search_dirs:
-            if d and (d / skill_name / "SKILL.md").exists():
-                skill_path = d / skill_name / "SKILL.md"
-                scope = sc
-                break
-
-        desc = ""
-        instructions = ""
-        if skill_path:
+            search_dirs = []
             try:
-                content = skill_path.read_text(encoding="utf-8")
-                if content.startswith("---"):
-                    parts = content.split("---", 2)
-                    if len(parts) >= 3:
-                        instructions = parts[2].strip()
-                        for line in parts[1].splitlines():
-                            if line.strip().startswith("description:"):
-                                desc = line.split(":", 1)[1].strip()
-                else:
-                    instructions = content.strip()
-            except Exception as e:
-                instructions = f"(error reading skill: {e})"
-        else:
-            instructions = "(SKILL.md file not found)"
+                search_dirs.append((settings.ensure_user_skills_dir(), "global"))
+            except Exception:
+                pass
+            try:
+                claude_dir = Settings.get_global_claude_skills_dir()
+                if claude_dir.exists():
+                    search_dirs.append((claude_dir, "global"))
+            except Exception:
+                pass
+            try:
+                for d in settings.get_project_skills_dirs():
+                    search_dirs.append((Path(d), "project"))
+            except Exception:
+                pass
+            try:
+                from novacode_cli.plugins.claude_plugins import plugin_skill_dirs
+
+                for _pname, pd in plugin_skill_dirs():
+                    search_dirs.append((Path(pd), "plugin"))
+            except Exception:
+                pass
+
+            for d, sc in search_dirs:
+                if d and (d / skill_name / "SKILL.md").exists():
+                    skill_path = d / skill_name / "SKILL.md"
+                    scope = sc
+                    break
+
+            desc = ""
+            instructions = ""
+            if skill_path:
+                try:
+                    content = skill_path.read_text(encoding="utf-8")
+                    if content.startswith("---"):
+                        parts = content.split("---", 2)
+                        if len(parts) >= 3:
+                            instructions = parts[2].strip()
+                            for line in parts[1].splitlines():
+                                if line.strip().startswith("description:"):
+                                    desc = line.split(":", 1)[1].strip()
+                    else:
+                        instructions = content.strip()
+                except Exception as e:
+                    instructions = f"(error reading skill: {e})"
+            else:
+                instructions = "(SKILL.md file not found)"
+
+            return scope, desc, instructions
+
+        scope, desc, instructions = await asyncio.to_thread(_read)
 
         preview_text = Text()
         preview_text.append(f"Name: ", style="bold")
@@ -3342,6 +3460,17 @@ class WikiScreen(ModalScreen[None]):
         self._update_preview()
 
     def _update_preview(self) -> None:
+        """Preview the selected wiki page or inbox source.
+
+        Runs as a worker: both branches read a file (a wiki page, or a source
+        document), which is blocking filesystem work.
+        """
+        self.run_worker(self._render_wiki_preview(), group="wiki-preview", exclusive=True)
+
+    async def _render_wiki_preview(self) -> None:
+        """Read the selected page/source off the loop, then paint the preview."""
+        import asyncio
+
         preview = self.query_one("#wiki-detail-preview", Static)
         hint = self.query_one("#wiki-hint", Static)
 
@@ -3352,17 +3481,23 @@ class WikiScreen(ModalScreen[None]):
                 idx = 0
             if idx is not None and 0 <= idx < len(self._pages):
                 topic, path, summary = self._pages[idx]
-                from novacode_cli.wiki.manager import WikiManager
 
-                try:
-                    mgr = WikiManager()
-                    content = mgr.read_page(path)
-                    if content:
-                        preview.update(Text(content))
-                    else:
-                        preview.update(Text("Could not load page content.", style="red"))
-                except Exception as ex:
-                    preview.update(Text(f"Error loading page: {ex}", style="red"))
+                def _read_page() -> tuple[str, str]:
+                    """Read the wiki page. Returns (markdown, error). Off-loop."""
+                    from novacode_cli.wiki.manager import WikiManager
+
+                    try:
+                        return WikiManager().read_page(path), ""
+                    except Exception as ex:
+                        return "", str(ex)
+
+                content, err = await asyncio.to_thread(_read_page)
+                if err:
+                    preview.update(Text(f"Error loading page: {err}", style="red"))
+                elif content:
+                    preview.update(Text(content))
+                else:
+                    preview.update(Text("Could not load page content.", style="red"))
                 hint.update(Text("Press Ask About Page to query this page.", style="dim"))
             else:
                 preview.update(Text("Select a page from the list to preview.", style="dim"))
@@ -3374,15 +3509,23 @@ class WikiScreen(ModalScreen[None]):
                 idx = 0
             if idx is not None and 0 <= idx < len(self._sources):
                 source_path = self._sources[idx]
-                from novacode_cli.wiki.ingest import IngestEngine
 
-                try:
-                    engine = IngestEngine()
-                    source_full = engine.resolve_source(source_path)
-                    content = source_full.read_text(encoding="utf-8")
+                def _read_source() -> tuple[str, str]:
+                    """Resolve and read the source document. Returns (text, error)."""
+                    from novacode_cli.wiki.ingest import IngestEngine
+
+                    try:
+                        engine = IngestEngine()
+                        resolved = engine.resolve_source(source_path)
+                        return resolved.read_text(encoding="utf-8"), ""
+                    except Exception as ex:
+                        return "", str(ex)
+
+                content, err = await asyncio.to_thread(_read_source)
+                if err:
+                    preview.update(Text(f"Error loading source: {err}", style="red"))
+                else:
                     preview.update(Text(content))
-                except Exception as ex:
-                    preview.update(Text(f"Error loading source: {ex}", style="red"))
                 hint.update(Text("Press Ingest Selected to parse this source.", style="dim"))
             else:
                 preview.update(Text("Select a source file to preview.", style="dim"))

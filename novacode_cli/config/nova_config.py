@@ -11,6 +11,27 @@ from typing import Any
 from novacode_cli.config.config import Settings, console
 
 
+#: The agent roles a model can be chosen for. ``main`` is the agent the user talks
+#: to; ``subagent`` the in-process roster it delegates to; ``async`` the remote
+#: graphs on the LangGraph server; ``dynamic`` the agents discovered in the agent
+#: directories (which is also what an ``/eval`` fan-out dispatches).
+ROLE_NAMES: tuple[str, ...] = ("main", "subagent", "async", "dynamic")
+
+
+def _role_key(role: str) -> str:
+    """Config key holding one role's model.
+
+    One top-level key per role, so ``_save`` merges them independently. ``main``
+    deliberately reuses the existing ``model`` key rather than duplicating it.
+    """
+    return "model" if role == "main" else f"model_role_{role}"
+
+
+def _require_role(role: str) -> None:
+    if role not in ROLE_NAMES:
+        raise ValueError(f"Unknown model role {role!r}. Valid roles: {', '.join(ROLE_NAMES)}")
+
+
 class NovaConfig:
     """Manages persistent configuration for Nova CLI."""
 
@@ -113,6 +134,57 @@ class NovaConfig:
         if "model" in self._config:
             del self._config["model"]
             self._save()
+
+    # ── Per-role models ─────────────────────────────────────────────────────
+    #
+    # A role with no saved entry inherits the main agent's model, which is what
+    # every role did before this existed, so an untouched config behaves exactly
+    # as it did. Each role lives under its own top-level key because `_save`
+    # merges per top-level key: one nested `roles` map would let two Nova
+    # processes clobber each other's roles, the same way the `credentials`
+    # setter re-reads the file to avoid.
+
+    def get_role_model(self, role: str) -> dict[str, str] | None:
+        """Saved model for *role*, or None when the role inherits the main one."""
+        _require_role(role)
+        self._load()  # fresh: another instance or process may have set it
+        entry = self._config.get(_role_key(role))
+        return dict(entry) if isinstance(entry, dict) else None
+
+    def set_role_model(
+        self, role: str, provider: str, model: str, base_url: str | None = None
+    ) -> None:
+        """Save a model for one role.
+
+        ``provider`` + ``model`` are stored separately because that is how the
+        rest of Nova resolves them; deepagents is handed the joined
+        ``provider:model`` spec, which is the form it documents.
+        """
+        _require_role(role)
+        self._load()
+        entry: dict[str, str] = {"provider": provider, "model": model}
+        if base_url:
+            entry["base_url"] = base_url
+        self._config[_role_key(role)] = entry
+        self._save()
+
+    def clear_role_model(self, role: str) -> None:
+        """Drop a role's saved model so it inherits the main agent's again."""
+        _require_role(role)
+        self._load()
+        if _role_key(role) in self._config:
+            del self._config[_role_key(role)]
+            self._save()
+
+    def all_role_models(self) -> dict[str, dict[str, str]]:
+        """Every role that has an explicit model, keyed by role name."""
+        self._load()
+        found: dict[str, dict[str, str]] = {}
+        for role in ROLE_NAMES:
+            entry = self._config.get(_role_key(role))
+            if isinstance(entry, dict):
+                found[role] = dict(entry)
+        return found
 
     # ── Credential metadata ─────────────────────────────────────────────────
     #

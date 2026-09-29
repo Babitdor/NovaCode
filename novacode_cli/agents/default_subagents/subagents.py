@@ -118,12 +118,23 @@ def retrieve_core_subagents(
         ("technical-researcher", TECHNICAL_RESEARCHER),
     ]
 
+    # The model for the subagent role, if the user chose one. Absent means
+    # deepagents has every subagent inherit the main agent's model, which is what
+    # they all did before per-role models existed.
+    from novacode_cli.config.role_models import subagent_spec
+
+    subagent_model = subagent_spec()
+
     subagents: list[SubAgent] = [
         {
             "name": name,
             "description": config["description"],
             "system_prompt": config["prompt"],
             "tools": _filter_tools(all_tools, config["tools"]),
+            # Conditionally spread, so the key is simply absent when the role
+            # inherits. deepagents documents `model` as a 'provider:model-name'
+            # spec string, which is exactly what this resolves to.
+            **({"model": subagent_model} if subagent_model else {}),
         }
         for name, config in subagent_configs
     ]

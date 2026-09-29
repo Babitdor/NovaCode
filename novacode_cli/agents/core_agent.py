@@ -300,6 +300,17 @@ def build_named_subagents(
             )
             return None
 
+    def _parse_frontmatter_value(content: str, key: str) -> str | None:
+        """Read one frontmatter value without re-reading the file."""
+        match = re.match(r"^---\s*\n(.*?)\n---\s*\n", content, re.DOTALL)
+        if not match:
+            return None
+        for line in match.group(1).split("\n"):
+            kv = re.match(rf"^{key}:\s*(.+)$", line.strip())
+            if kv:
+                return kv.group(1).strip().strip('"').strip("'")
+        return None
+
     def _parse_color_from_content(content: str) -> str | None:
         """Extract color from YAML frontmatter without re-reading the file."""
         match = re.match(r"^---\s*\n(.*?)\n---\s*\n", content, re.DOTALL)
@@ -350,12 +361,32 @@ def build_named_subagents(
         if agent_color:
             subagent["color"] = agent_color  # type: ignore
 
+        # Model, in precedence order: the agent's own frontmatter, then the
+        # "dynamic" role (which itself falls back to the "subagent" role), then
+        # nothing at all, meaning inherit the main agent's model as before.
+        from novacode_cli.config.role_models import dynamic_spec
+
+        agent_model = _parse_frontmatter_value(system_prompt, "model") or dynamic_spec()
+        if agent_model:
+            subagent["model"] = agent_model
+
         subagents.append(subagent)
 
     # Cache the result
     _named_subagents_cache[cache_key] = (now, subagents)
 
     return subagents
+
+
+def clear_named_subagents_cache() -> None:
+    """Drop the built subagent specs so the next build picks up a changed role.
+
+    Without this, a per-role model change waits out `_NAMED_SUBAGENTS_CACHE_TTL`
+    (60s) before it takes effect, which reads as the setting being ignored. Called
+    by whatever sets a role, rather than from the config layer, so config never has
+    to import the agent stack.
+    """
+    _named_subagents_cache.clear()
 
 
 def list_agents() -> None:

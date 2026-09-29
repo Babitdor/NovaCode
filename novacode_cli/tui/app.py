@@ -1389,14 +1389,17 @@ class NovaApp(App):
         self._restored_messages = list(restored_messages or [])
         self._seen: set[str] = set()
         self._speech_lock = asyncio.Lock()
-        self._live_buf = ""  # accumulating streamed answer prose
-        self._reasoning_buf = ""  # accumulating reasoning trace
+        # Ropes, not plain strings: both accumulate one fragment per model delta,
+        # and an attribute-level `+=` is quadratic (see the _live_buf property).
+        self._live_buf_parts: list[str] = []
+        self._reasoning_buf_parts: list[str] = []
         self._stream_msg: ChatMessage | None = None  # in-progress Nova answer widget
         self._reason_msg: ChatMessage | None = None  # in-progress reasoning widget
         self._current_assistant_id: str | None = None
         # Streaming coalescing: deltas append to the buffers above, but the widget
-        # is only repainted on a ~50ms timer (see _flush_stream) so a fast token
-        # stream doesn't trigger a full re-render + scroll per token.
+        # is only repainted on a 100ms timer (see _schedule_stream_flush) so a fast
+        # token stream doesn't trigger a full re-render + scroll per token. The
+        # first fragment of a stream paints immediately instead of waiting it out.
         self._stream_flush_scheduled = False
         # Transcript pruning is coalesced onto a zero-delay timer: a burst of
         # mounts/log lines produces ONE prune instead of one per widget (see
@@ -1750,7 +1753,7 @@ class NovaApp(App):
             with suppress(Exception):  # a colour must never break a repaint
                 apply_markdown_theme(console, theme)
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         import threading
 
         self._thread_id = threading.get_ident()
@@ -1836,14 +1839,17 @@ class NovaApp(App):
         self.set_interval(3.0, self._refresh_info_bar)
         # Load slash commands contributed by enabled plugins (TUI dispatch).
         self._load_plugin_commands()
-        # Animate the live status (~5 fps) while a turn is active.
+        # Animate the live status at 20Hz (50ms) while a turn is active.
         self.set_interval(0.05, self._tick)
         self.query_one("#prompt", PromptInput).focus()
         # Show ASCII art banner on home screen
         self._show_home_banner()
         # If voice is enabled in config, pre-download models at startup
-        # so the first push-to-talk or spoken reply is instant.
-        self._eager_voice_warmup()
+        # so the first push-to-talk or spoken reply is instant. Awaited (hence
+        # the async on_mount) rather than fired as a worker: the blocking config
+        # read is offloaded inside the call, and a worker could outlive its
+        # caller and resolve config paths after a caller's patching was undone.
+        await self._eager_voice_warmup()
         # Replay prior conversation when resuming a session.
         self._replay_history()
         # ...and measure what that history costs, so a continued session opens
@@ -3191,14 +3197,65 @@ class NovaApp(App):
         self._current_assistant_id = None
         self._accumulated_reply = ""
 
+    @staticmethod
+    def _rope_join(parts: list[str]) -> str:
+        """Collapse accumulated fragments into one string, in place.
+
+        Joining is deferred until a read, so a stream pays one O(n) copy per
+        repaint instead of one per delta, and collapsing the list keeps later
+        reads O(1). Appending to a list is amortised O(1), which is the point.
+        """
+        if len(parts) > 1:
+            joined = "".join(parts)
+            parts.clear()
+            parts.append(joined)
+        return parts[0] if parts else ""
+
+    # Streamed text is appended one fragment per model delta, so this is the
+    # hottest write in the TUI. A plain `self._buf += fragment` is quadratic:
+    # CPython's in-place-resize optimisation only applies to a *local* with a
+    # refcount of 1, never to an attribute, so each delta copies the whole
+    # buffer. Measured on this machine (10-char deltas, best of 3):
+    #
+    #     2,000 deltas   20k chars    0.74 ms    (0.37 ms per 1k deltas)
+    #     8,000 deltas   80k chars    9.29 ms    (1.16 ms per 1k deltas)
+    #    20,000 deltas  200k chars   55.13 ms    (2.76 ms per 1k deltas)
+    #
+    # The per-1k cost rising with N is the quadratic term; the local-variable
+    # equivalent stays flat at ~0.09 ms per 1k. A list append plus a join on
+    # read makes the same work linear.
+
+    @property
+    def _live_buf(self) -> str:
+        """Streamed answer prose (rope; see _rope_join)."""
+        return self._rope_join(self._live_buf_parts)
+
+    @_live_buf.setter
+    def _live_buf(self, value: str) -> None:
+        self._live_buf_parts = [value] if value else []
+
+    @property
+    def _reasoning_buf(self) -> str:
+        """Streamed reasoning trace (rope; see _rope_join)."""
+        return self._rope_join(self._reasoning_buf_parts)
+
+    @_reasoning_buf.setter
+    def _reasoning_buf(self, value: str) -> None:
+        self._reasoning_buf_parts = [value] if value else []
+
     def _flush_stream(self) -> None:
+        """Coalescing-timer callback: repaint, then clear the pending latch."""
+        self._stream_flush_scheduled = False
+        self._paint_stream()
+
+    def _paint_stream(self) -> None:
         """Repaint the in-progress stream/reasoning widgets from their buffers.
 
-        Called on a coalescing ~100ms timer (and forced at finalize) so a fast
-        token stream triggers ~10 repaints/sec instead of one per token. Updates
-        both live widgets in one pass and scrolls once.
+        Updates both live widgets in one pass and scrolls once. Called by
+        :meth:`_flush_stream` on a coalescing 100ms timer, so a fast token stream
+        triggers ~10 repaints/sec instead of one per token, and called directly
+        at the start of a stream so the first fragment appears immediately.
         """
-        self._stream_flush_scheduled = False
         painted = False
         if self._stream_msg is not None:
             # Tail only: repainting the whole buffer every 100ms is quadratic in
@@ -3353,8 +3410,12 @@ class NovaApp(App):
                 if not getattr(task, field, None):
                     setattr(task, field, getattr(existing, field, None))
         if task.model is None:
-            # Subagents inherit the session model: Nova sets no per-subagent one.
-            task.model = self.model_name
+            # Resolved by role, not blanket-inherited: a subagent or async row may
+            # run on a model of its own now. Falls back to the session model when
+            # the role is unset, which is what this used to always show.
+            from novacode_cli.config.role_models import panel_row_model
+
+            task.model = panel_row_model(task.phase_kind, self.model_name)
         if task.phase_id and task.phase_id not in self._subagent_phase_order:
             self._subagent_phase_order.append(task.phase_id)
         self._subagent_rows[task.task_id] = task
@@ -3466,7 +3527,8 @@ class NovaApp(App):
 
         They refresh on the watcher's existing cadence (it polls the runs every
         few seconds), so these rows are near-live rather than live, and they carry
-        no duration or model — the remote thread knows neither to us.
+        no duration. Their model belongs to the server rather than to this session,
+        so the row names the stored async role, or the server's own default.
         """
         if not isinstance(tasks, dict):
             return
@@ -3476,7 +3538,12 @@ class NovaApp(App):
             row = subagent_tasks.task_from_async_entry(entry, now=now, model=None)
             if row is None:
                 continue
-            row.model = None  # rendered as an unknown, not as the local model
+            # The server decides this one's model, so naming the async role (or
+            # the server default) is the honest label. It was blanked as unknown,
+            # which was right only while a local model was all a row could mean.
+            from novacode_cli.config.role_models import panel_row_model
+
+            row.model = panel_row_model("async", self.model_name)
             self._subagent_rows[row.task_id] = row
             if row.phase_id and row.phase_id not in self._subagent_phase_order:
                 self._subagent_phase_order.append(row.phase_id)
@@ -5134,16 +5201,21 @@ class NovaApp(App):
         if pending:
             self._set_nova_indicator("✓ voice models ready", style="dim green", auto_clear=3.0)
 
-    def _eager_voice_warmup(self) -> None:
+    async def _eager_voice_warmup(self) -> None:
         """Pre-load STT/TTS/VAD models at startup whenever voice will be used.
 
         Mirrors main.py's boot-banner preload: `enabled` (always-listening),
         `speak_responses` (Nova talks), or push-to-talk all use voice, so warm
         the models now instead of paying the load inline on the first PTT/reply.
+
+        Async because reading the config is filesystem work: constructing
+        `NovaConfig` resolves the project root by walking parent directories, and
+        doing that on the loop stalled the UI during `on_mount`. The caller
+        schedules this as a worker, so mount is not held up either.
         """
         from novacode_cli.config.nova_config import NovaConfig
 
-        cfg = NovaConfig().get_voice_config()
+        cfg = await asyncio.to_thread(lambda: NovaConfig().get_voice_config())
         voice_wanted = bool(
             cfg.get("enabled") or cfg.get("speak_responses") or cfg.get("mode") == "push_to_talk"
         )
@@ -6484,7 +6556,11 @@ class NovaApp(App):
                 # Resolve the source (Clipping/ or raw/), then stream as a turn.
                 source_full = engine.resolve_source(arg)
                 rel = source_full.relative_to(engine._mgr.root).as_posix()
-                source_content = source_full.read_text(encoding="utf-8")
+                # Off the loop: resolving and reading a source can touch a large
+                # file, and this runs while the transcript is live.
+                source_content = await asyncio.to_thread(
+                    lambda: source_full.read_text(encoding="utf-8")
+                )
                 prompt = (
                     "Please analyze this source and create a wiki page at "
                     "/.nova/wiki/ for it.\n\n"
@@ -6748,7 +6824,10 @@ class NovaApp(App):
                     print(f"\n--- Executing command in {cwd.name} ---")
                     print(f"> {cmd}\n")
                 try:
-                    res = subprocess.run(cmd, shell=True, cwd=cwd)
+                    # Off the loop: the child still inherits this terminal, but a
+                    # synchronous run here freezes the agent stream, the status
+                    # tick and the stall watchdog for the whole command.
+                    res = await asyncio.to_thread(subprocess.run, cmd, shell=True, cwd=cwd)
                     exit_code = res.returncode
                 except Exception as ex:  # noqa: BLE001
                     exit_code = -1
@@ -6764,8 +6843,16 @@ class NovaApp(App):
             # Fallback for non-interactive/headless test environments where suspend is not supported
             cwd = settings.get_workspace_root()
             try:
-                res = subprocess.run(
-                    cmd, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                # Same reason as the suspend path, and this is the branch every
+                # headless/`run_test()` environment takes, so a synchronous run
+                # put a blocking subprocess on the loop in every such test.
+                res = await asyncio.to_thread(
+                    subprocess.run,
+                    cmd,
+                    shell=True,
+                    cwd=cwd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                 )
                 exit_code = res.returncode
             except Exception:  # noqa: BLE001
@@ -7535,6 +7622,11 @@ class NovaApp(App):
             self._apply_voice_pick(result)
             return
 
+        role = str(result.get("role") or "main")
+        if role != "main":
+            self._apply_role_pick(result, role)
+            return
+
         provider = result["provider"]
         preset = MODEL_PRESETS[provider]
         model = result["model"] or preset["default_model"]
@@ -7591,6 +7683,44 @@ class NovaApp(App):
             )
         except Exception as ex:  # noqa: BLE001
             self._log(Text(f"Model switch failed: {ex}", style="red"))
+
+    def _apply_role_pick(self, result: dict, role: str) -> None:
+        """Save a model for one non-main role, and say when it takes effect.
+
+        The main agent keeps ``/model``'s original behaviour and hot-swaps the live
+        agent. Every other role is a setting that applies when it is next used, so
+        this writes it, drops the cached subagent specs (they are cached for 60s,
+        which would otherwise make the change look ignored), and reports both facts
+        rather than implying the running agent changed.
+        """
+        from novacode_cli.config.nova_config import NovaConfig
+        from novacode_cli.config.role_models import ROLE_LABELS
+
+        provider = str(result.get("provider") or "")
+        model = str(result.get("model") or "")
+        if not provider or not model:
+            self._log(Text("That row had no usable model to save.", style="red"))
+            return
+        try:
+            NovaConfig().set_role_model(role, provider, model, self._credential_base_url(provider))
+            from novacode_cli.agents.core_agent import clear_named_subagents_cache
+
+            clear_named_subagents_cache()
+        except Exception as ex:  # noqa: BLE001 — a pick must never crash the TUI
+            label = ROLE_LABELS.get(role, role)
+            self._log(Text(f"Could not set the {label} model: {ex}", style="red"))
+            return
+        when = (
+            "on the next server launch (recreate the container to pick it up)"
+            if role == "async"
+            else "on the next dispatch"
+        )
+        self._log(
+            Text(
+                f"✓ {ROLE_LABELS.get(role, role)} → {provider}:{model} — takes effect {when}",
+                style="green",
+            )
+        )
 
     def _apply_voice_pick(self, result: dict) -> None:
         """Persist a voice row chosen in the picker and rebuild the pipeline.
@@ -8339,31 +8469,43 @@ class NovaApp(App):
             except _re.error as e:
                 self._log(Text(f"Invalid pattern: {e}", style="red"))
                 return
-            t = Text()
-            t.append(f"grep '{pattern}'\n", style="bold")
-            hits = 0
-            for run_dir in _list_runs(runs_dir):
-                turns_dir = run_dir / "turns"
-                if not turns_dir.exists():
-                    continue
-                for turn in sorted(turns_dir.iterdir()):
-                    for fname in ("prompt.txt", "response.json"):
-                        fpath = turn / fname
-                        if not fpath.exists():
-                            continue
-                        content = fpath.read_text(encoding="utf-8", errors="replace")
-                        for lineno, line in enumerate(content.splitlines(), 1):
-                            if rx.search(line):
-                                t.append(
-                                    f"  {run_dir.name[:16]}/{turn.name}/{fname}:{lineno}  ",
-                                    style="dim",
-                                )
-                                t.append(f"{line.strip()[:120]}\n")
-                                hits += 1
-                                if hits >= limit:
-                                    t.append(f"  … stopped at {limit} hits\n", style="dim")
-                                    self._log(t)
-                                    return
+
+            def _scan() -> tuple[Text, int]:
+                """Walk the run history and build the report, off the loop.
+
+                Every call in here is synchronous filesystem work (`_list_runs`,
+                `iterdir`, `exists`, `read_text`), so running it on the loop
+                blocks the whole TUI for the length of the walk. It returns the
+                report and the hit count instead of logging, because `self._log`
+                touches widgets and must not run on a worker thread.
+                """
+                out = Text()
+                out.append(f"grep '{pattern}'\n", style="bold")
+                found = 0
+                for run_dir in _list_runs(runs_dir):
+                    turns_dir = run_dir / "turns"
+                    if not turns_dir.exists():
+                        continue
+                    for turn in sorted(turns_dir.iterdir()):
+                        for fname in ("prompt.txt", "response.json"):
+                            fpath = turn / fname
+                            if not fpath.exists():
+                                continue
+                            content = fpath.read_text(encoding="utf-8", errors="replace")
+                            for lineno, line in enumerate(content.splitlines(), 1):
+                                if rx.search(line):
+                                    out.append(
+                                        f"  {run_dir.name[:16]}/{turn.name}/{fname}:{lineno}  ",
+                                        style="dim",
+                                    )
+                                    out.append(f"{line.strip()[:120]}\n")
+                                    found += 1
+                                    if found >= limit:
+                                        out.append(f"  … stopped at {limit} hits\n", style="dim")
+                                        return out, found
+                return out, found
+
+            t, hits = await asyncio.to_thread(_scan)
             if hits == 0:
                 t.append(f"  (no matches for '{pattern}')\n", style="dim")
             self._log(t)
@@ -10336,11 +10478,15 @@ class NovaApp(App):
             cp.VOTING: "Anonymous ranked vote",
             cp.JUDGING: "Judge scoring against the rubric",
         }
+        # Read the project context off the loop: `_council_context` does sync
+        # filesystem work (cwd lookup, is_file, read_text) and this runs while the
+        # user is watching the transcript, so it would stall the UI.
+        council_context = await asyncio.to_thread(self._council_context)
         try:
             async for event in cp.run_planning_council(
                 prompt,
                 model,
-                context=self._council_context(),
+                context=council_context,
                 store=store,
                 run=run,
             ):
@@ -10637,25 +10783,31 @@ class NovaApp(App):
             self._set_status(e.message or "ready")
         elif isinstance(e, ev.ReasoningDelta):
             # Stream the model's reasoning into a dim, transient message widget.
-            # The actual repaint is coalesced (~20fps) via _schedule_stream_flush.
-            self._reasoning_buf += e.text
+            # The repaint is coalesced to 10fps via _schedule_stream_flush.
+            self._reasoning_buf_parts.append(e.text)
             if self._reason_msg is None:
                 self._reason_msg = ChatMessage(
                     Text("💭 musing…", style="dim italic"), "reason", collapsible=True
                 )
                 await self._mount(self._reason_msg)
+                # Leading edge: show the first fragment now rather than waiting
+                # out the coalescing interval.
+                self._paint_stream()
             self._schedule_stream_flush()
             thinking_line = status_phrases.status_line("thinking", sticky_phrase=True)
             if self._activity != thinking_line:
                 self._set_status(thinking_line)
         elif isinstance(e, ev.TextDelta):
             # Stream incremental prose into the in-progress Nova message widget.
-            # Coalesced repaint (~20fps) — see _schedule_stream_flush/_flush_stream.
-            self._live_buf += e.text
+            # Coalesced repaint (10fps) — see _schedule_stream_flush/_paint_stream.
+            self._live_buf_parts.append(e.text)
             if self._stream_msg is None:
                 name, color = self._current_agent_info()
                 self._stream_msg = ChatMessage(Text(name, style=f"bold {color}"), "nova")
                 await self._mount(self._stream_msg)
+                # Leading edge: show the first fragment now rather than waiting
+                # out the coalescing interval.
+                self._paint_stream()
             self._schedule_stream_flush()
             responding_line = status_phrases.status_line("responding", sticky_phrase=True)
             if self._activity != responding_line:

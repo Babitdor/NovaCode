@@ -97,6 +97,17 @@ def server_extra_available() -> bool:
     return importlib.util.find_spec("langgraph_cli") is not None
 
 
+def async_server_env() -> dict[str, str]:
+    """The stored async-role model, as the environment the graphs read.
+
+    Imported lazily: this module is on the startup path, and the config layer is
+    only needed once a server is actually being spawned.
+    """
+    from novacode_cli.config.role_models import async_server_env as _env
+
+    return _env()
+
+
 def get_server_url(host: str = DEFAULT_HOST, port: int = EPHEMERAL_PORT) -> str:
     """``http://host:port`` for a server bound at *host* and *port*."""
     return f"http://{host}:{port}"
@@ -152,6 +163,11 @@ def build_env(overrides: dict[str, str] | None = None) -> dict[str, str]:
     Nova sets itself.
     """
     env = {key: value for key, value in os.environ.items() if key not in _ENV_DENYLIST}
+    # Nova's stored model for the async role, unless the user already set that
+    # variable: an explicit environment variable is the more specific instruction,
+    # and either way it is the environment the graphs read at import.
+    for key, value in async_server_env().items():
+        env.setdefault(key, value)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     # A local server has no auth; without this the CLI's default auth would make
     # the client's unauthenticated requests fail.
