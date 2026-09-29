@@ -118,6 +118,8 @@ def test_a_fan_out_becomes_one_phase_with_a_row_per_task():
     # One phase, six tasks, each named.
     assert out["phases"] == ["call_eval_1"]
     assert "research: docling-0" in out["body"]
+    # The type must not be prefixed on top of the label's own kind prefix.
+    assert "researcher: research:" not in out["body"], out["body"]
     assert "research: docling-4" in out["body"]
     # The failure text is the reason the row exists.
     assert "charmap" in out["body"]

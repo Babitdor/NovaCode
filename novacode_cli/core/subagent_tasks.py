@@ -304,7 +304,11 @@ def task_row(
     """One table row: glyph, task name (with its error), model, time."""
     name_width, model_width, _time_width = column_widths(width)
     name = task.label or task.description or task.subagent_type or task.task_id
-    if task.subagent_type and not name.startswith(f"{task.subagent_type}:"):
+    # Producers' labels already open with a kind prefix ("research: docling",
+    # "tests: pkg/x"), and a matching subagent type on top of one reads as a
+    # duplicate: "researcher: research: docling-0". So the type is only added to a
+    # label that does not carry a prefix of its own.
+    if task.subagent_type and not _has_kind_prefix(name):
         name = f"{task.subagent_type}: {name}"
     if task.status == "failed" and task.error:
         # The failure text is the whole point of the row, so it gets the space
@@ -495,6 +499,11 @@ def _pad(text: Text | None, width: int) -> Text:
     clipped.append_text(text)
     clipped.truncate(width - 1, overflow="ellipsis")
     return clipped
+
+
+def _has_kind_prefix(name: str) -> bool:
+    """Whether a label already opens with its own ``kind:`` prefix."""
+    return name.split(maxsplit=1)[0].endswith(":")
 
 
 def _fit(text: str, width: int) -> str:
