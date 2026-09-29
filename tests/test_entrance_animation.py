@@ -246,3 +246,148 @@ def test_a_faded_in_modal_leaves_its_buttons_readable():
     assert ratio >= 3.0, (
         f"the button label is unreadable on its own background (contrast {ratio:.2f}:1)"
     )
+
+
+# ---------------------------------------------------------------------------
+# ...and the frames the fade passes through on the way there
+# ---------------------------------------------------------------------------
+
+
+def _modal_fade_samples() -> list[tuple[float, float, tuple[int, int, int], tuple[int, int, int]]]:
+    """Sample a modal fade every frame: ``(opacity, contrast, label fg, label bg)``.
+
+    Fading the modal in is the only way to catch the frames the end-state test
+    above cannot see. The repair used to run once, after the fade, so every frame
+    *before* it painted the transparent blend the descendant had cached at
+    ``opacity: 0`` — the "black stripe" a ``/model`` screenshot showed.
+    """
+
+    async def drive():
+        from textual.app import App, ComposeResult
+        from textual.containers import Vertical
+        from textual.screen import ModalScreen
+        from textual.widgets import Button
+
+        from novacode_cli.tui.animations import animate_modal_screen
+        from novacode_cli.tui.widgets import NOVA_TOKYO_NIGHT
+
+        class _Host(App):
+            def compose(self) -> ComposeResult:
+                return []
+
+        class _Modal(ModalScreen[None]):
+            def compose(self) -> ComposeResult:
+                with Vertical(id="modal-box"):
+                    yield Button("Switch", id="switch", variant="success")
+
+            def on_mount(self) -> None:
+                animate_modal_screen(self)
+
+        app = _Host()
+        app.register_theme(NOVA_TOKYO_NIGHT)
+        app.theme = "tokyo-night"
+
+        samples = []
+        async with app.run_test(size=(120, 24)) as pilot:
+            app.push_screen(_Modal())
+            for _ in range(400):
+                await asyncio.sleep(0.005)
+                await pilot.pause()
+                boxes = list(app.screen.query("#modal-box"))
+                buttons = list(app.screen.query("#switch"))
+                if not (boxes and buttons):
+                    continue
+                opacity = float(boxes[0].styles.opacity)
+                style = buttons[0].visual_style.rich_style
+                if style.color is None or style.bgcolor is None:
+                    continue
+                samples.append(
+                    (
+                        opacity,
+                        _contrast_ratio(style.color, style.bgcolor),
+                        _rgb(style.color),
+                        _rgb(style.bgcolor),
+                    )
+                )
+        return samples
+
+    return asyncio.run(drive())
+
+
+def test_the_fade_paints_the_buttons_own_fill_on_every_frame():
+    """Every frame of the fade must show the button's fill, not the screen behind it.
+
+    Two properties, because either alone can be satisfied by a broken fade: the
+    painted fill has to *move* with the opacity (a stale cache holds one value for
+    the whole fade while the opacity rises), and the label must clear 3:1 once the
+    modal is more than half way in.
+
+    The readability bar starts at half opacity on purpose. Measured on a correct
+    fade, the ratio is 2.3:1 at 0.31, 3.3:1 at 0.56 and 10.5:1 settled — a frame at
+    a third opacity is a modal that is barely on screen, and every colour in it is
+    dimmed by design. Asserting 3:1 there would fail a fade that is working. The
+    bug this pins measured 1.1:1 at *every* opacity, including fully faded in.
+    """
+    if not _HAS_TEXTUAL:
+        return
+    samples = _modal_fade_samples()
+    mid = [s for s in samples if 0.25 <= s[0] < 1.0]
+    assert len(mid) >= 3, f"only {len(mid)} frames landed inside the fade: {samples[:6]}"
+
+    fills = {sample[3] for sample in mid}
+    assert len(fills) > 1, (
+        "the button's painted fill never moved while the opacity rose — it is "
+        f"painting a stale (transparent) blend: {[(round(s[0], 2), s[3]) for s in mid]}"
+    )
+
+    dim = [sample for sample in samples if sample[0] >= 0.5]
+    unreadable = [(round(o, 2), round(c, 2)) for o, c, _fg, _bg in dim if c < 3.0]
+    assert not unreadable, f"the label is unreadable at opacity >= 0.5: {unreadable}"
+
+
+def test_a_skipped_entrance_still_clears_a_stale_paint():
+    """Fades are dropped under load; a stale blend must be dropped with them.
+
+    The skip exists so a burst does not stack animations — not so that a widget
+    keeps whatever it cached while an ancestor was transparent, which is the state
+    that has no other way back (nothing bumps a descendant's cache key).
+    """
+    if not _HAS_TEXTUAL:
+        return
+
+    async def drive():
+        from textual.app import App, ComposeResult
+        from textual.containers import Vertical
+        from textual.widgets import Button
+
+        from novacode_cli.tui import animations
+
+        class _Host(App):
+            def compose(self) -> ComposeResult:
+                with Vertical(id="modal-box"):
+                    yield Button("Switch", id="switch", variant="success")
+
+        app = _Host()
+        async with app.run_test(size=(80, 24)) as pilot:
+            box = app.query_one("#modal-box")
+            button = app.query_one("#switch", Button)
+            for _ in range(60):
+                await pilot.pause()
+                if button._visual_style is not None:
+                    break
+            painted = button._visual_style is not None
+
+            original = animations._entrances_in_flight
+            animations._entrances_in_flight = lambda _widget: 99
+            try:
+                animations.animate_entrance(box, "zoom")
+                skipped = float(box.styles.opacity) == 1.0
+                cleared = button._visual_style is None
+            finally:
+                animations._entrances_in_flight = original
+        return painted, skipped, cleared
+
+    painted, skipped, cleared = asyncio.run(drive())
+    assert painted, "the button never painted, so there was no cache to go stale"
+    assert skipped, "the load skip did not engage"
+    assert cleared, "a skipped entrance left the stale paint in place"

@@ -52,6 +52,16 @@ _MAX_CONCURRENT_ENTRANCES = 6
 _FADE_REPAIR_MARGIN = 0.05
 _FADE_REPAIR_ATTEMPTS = 12
 
+#: Repair cadence for surfaces that must be legible *while* they fade
+#: (``repair_each_frame``, used by modals). Every frame, not just at the end: a
+#: descendant that paints its own fill caches the blend it last saw, and for the
+#: first ~18 frames of a fade that blend is the transparent one — the button
+#: arrives as a black stripe with an invisible label. Re-caching each frame also
+#: makes the fade itself read correctly, since the fill then tracks the opacity
+#: the way every other widget's does. Bounded at ~5 s of fade.
+_FADE_REPAIR_FRAME = 1.0 / 60.0
+_FADE_REPAIR_FRAMES = 300
+
 
 def _refresh_cached_paints(root: Widget) -> None:
     """Drop *root*'s subtree cache of painted styles.
@@ -62,8 +72,12 @@ def _refresh_cached_paints(root: Widget) -> None:
     they cached on the way up, and that blend is the plain screen background. A
     variant Button (``-success``, ``-primary``) then fills with the screen colour
     instead of its own, while its label — an auto-contrast colour chosen for the
-    light fill — arrives dark on dark, i.e. invisible. Rebinding the cache once
-    the fade has finished repaints them with their real colours.
+    light fill — arrives dark on dark, i.e. invisible.
+
+    Rebinding the cache makes each node recompute against the opacity *now*, so it
+    has to be repeated as an animation advances (see
+    :func:`_repair_paints_after_fade`): one repair at the end fixes the settled
+    state, but leaves the whole fade painting the transparent blend.
     """
     for node in root.walk_children(with_self=True):
         # No guard needed: this only ever runs on a mounted subtree, and a node
@@ -73,24 +87,31 @@ def _refresh_cached_paints(root: Widget) -> None:
             node.refresh()
 
 
-def _repair_paints_after_fade(widget: Widget, duration: float, attempt: int = 1) -> None:
-    """Re-cache *widget*'s subtree once the fade it just started is opaque.
+def _repair_paints_after_fade(
+    widget: Widget, duration: float, attempt: int = 1, *, per_frame: bool = False
+) -> None:
+    """Re-cache *widget*'s subtree as the fade it just started advances.
 
     Re-arms itself while the fade is still running so the repair cannot land
-    early and be undone by the frames that follow.
+    early and be undone by the frames that follow. With ``per_frame`` it re-arms
+    on the next animation frame instead of waiting out the fade, which is what a
+    surface whose descendants paint their own fills needs — waiting until the end
+    leaves every frame before it rendering the transparent blend.
     """
 
     def repair() -> None:
         try:
-            opaque = float(widget.styles.opacity) >= 1.0
+            opacity = float(widget.styles.opacity)
         except Exception:  # noqa: BLE001 — unmounted mid-fade
             return
-        if opaque or attempt >= _FADE_REPAIR_ATTEMPTS:
-            _refresh_cached_paints(widget)
+        _refresh_cached_paints(widget)
+        limit = _FADE_REPAIR_FRAMES if per_frame else _FADE_REPAIR_ATTEMPTS
+        if opacity >= 1.0 or attempt >= limit:
             return
-        _repair_paints_after_fade(widget, duration, attempt + 1)
+        _repair_paints_after_fade(widget, duration, attempt + 1, per_frame=per_frame)
 
-    widget.set_timer(duration + _FADE_REPAIR_MARGIN, repair)
+    delay = _FADE_REPAIR_FRAME if per_frame else duration + _FADE_REPAIR_MARGIN
+    widget.set_timer(delay, repair)
 
 
 
@@ -102,7 +123,9 @@ def _entrances_in_flight(widget: Widget) -> int:
         return 0
 
 
-def animate_entrance(widget: Widget, style: str = "slide") -> None:
+def animate_entrance(
+    widget: Widget, style: str = "slide", *, repair_each_frame: bool = False
+) -> None:
     """Fade *widget* in as it first appears, using Textual's ``animate()``.
 
     Note: Textual 8.2.7 has **no ``scale`` style**, and animating ``offset``
@@ -134,12 +157,16 @@ def animate_entrance(widget: Widget, style: str = "slide") -> None:
     """
     duration = {"fade": 0.25, "slide": 0.32, "zoom": 0.28}.get(style, 0.28)
     if _entrances_in_flight(widget) > _MAX_CONCURRENT_ENTRANCES:
-        # Under load: show it at once rather than adding another animation.
+        # Under load: show it at once rather than adding another animation. The
+        # repair still runs: this widget is being made opaque without a fade, and
+        # if it had already cached a transparent blend (a modal re-shown, a
+        # widget re-entering) nothing else would ever refresh it.
         widget.styles.opacity = 1.0
+        _refresh_cached_paints(widget)
         return
     widget.styles.opacity = 0.0
     widget.styles.animate("opacity", 1.0, duration=duration, easing="out_cubic")
-    _repair_paints_after_fade(widget, duration)
+    _repair_paints_after_fade(widget, duration, per_frame=repair_each_frame)
 
 
 def animate_modal_screen(screen: Any) -> None:
@@ -147,10 +174,20 @@ def animate_modal_screen(screen: Any) -> None:
 
     Must be called from ``on_mount`` (the DOM is ready, and the animation
     fires before the user sees the modal).
+
+    This is the one entrance that repairs its subtree every frame. A modal's
+    buttons paint their own fills, and a variant Button's label is auto-contrast
+    for that fill, so a single repair at the end of the fade left the whole fade
+    painting the screen background: a black stripe with an unreadable label, which
+    is what ``/model`` showed for ~0.3 s after opening (longer under load, which
+    is when it gets photographed). Chat messages keep the cheaper end-of-fade
+    repair — they are backgroundless, so a frame of transparent blend behind them
+    is invisible, and they animate in bursts where the per-frame walk would cost
+    real time.
     """
     try:
         box = screen.query_one("#modal-box")
-        animate_entrance(box, "zoom")
+        animate_entrance(box, "zoom", repair_each_frame=True)
     except Exception:  # noqa: BLE001
         pass
 

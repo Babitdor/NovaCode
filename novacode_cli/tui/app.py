@@ -1669,6 +1669,34 @@ class NovaApp(App):
         with suppress(Exception):  # a repaint must never break a theme switch
             self._refresh_status()
             self._refresh_info_bar()
+        self._apply_markdown_theme()
+
+    def _apply_markdown_theme(self) -> None:
+        """Point Rich's markdown elements at the active theme's colours.
+
+        A reply's headings and code arrive through ``rich.markdown.Markdown``,
+        which resolves ``markdown.h2`` / ``markdown.code`` against the console's
+        theme. Those defaults are ANSI (``underline magenta``), so headings were
+        whatever the terminal paints for magenta and no ``/theme`` ever moved
+        them.
+
+        Called from the theme watcher, which Textual fires at startup too — even
+        for an assignment that does not change the value, which is what makes one
+        hook enough. Both consoles are armed: the app's renders the transcript's
+        Rich renderables, and the global one backs ``_capture`` for the tool
+        panels and the interrupts that print markdown.
+        """
+        from novacode_cli.tui.palette import apply_markdown_theme
+
+        try:
+            theme = self.get_theme(self.theme)
+        except Exception:  # noqa: BLE001
+            return
+        if theme is None:
+            return
+        for console in (self.console, _rich_console):
+            with suppress(Exception):  # a colour must never break a repaint
+                apply_markdown_theme(console, theme)
 
     def on_mount(self) -> None:
         import threading
