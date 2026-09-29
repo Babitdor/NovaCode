@@ -31,7 +31,7 @@ from scripts.measure_tool_verdicts import (  # noqa: E402
 )
 
 ENDPOINT = "http://127.0.0.1:11434/v1/systemone"
-MODEL = "tev1:0.8b"
+MODEL = "tev1:4b"
 TRIGGER = 1024
 KEEP = 5
 THRESHOLDS = (0.5, 0.6, 0.65, 0.7, 0.8)
