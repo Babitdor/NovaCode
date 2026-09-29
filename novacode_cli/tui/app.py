@@ -424,10 +424,7 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
         "subagents": SlashCommand(
             "_run_subagents", "toggle the dynamic subagents panel", wants_text=False
         ),
-        "agent-server": SlashCommand(
-            "_run_agent_server",
-            "local LangGraph server for async subagents (status/start/stop/restart/logs)",
-        ),
+    "agent-server": SlashCommand("_run_agent_server", "local LangGraph server for subagents"),
     "tasks": SlashCommand("_run_tasks", "open the background tasks panel", wants_text=False),
     "cowork": SlashCommand(
         "_run_cowork", "launch the Nova Cowork desktop app (/cowork [task])", aliases=("desktop",)
@@ -7977,7 +7974,8 @@ class NovaApp(App):
             async_agents_available,
         )
 
-        action = (text or "").strip().split(maxsplit=1)[0].lower()
+        parts = (text or "").strip().split(maxsplit=1)
+        action = parts[0].lower() if parts else ""
         status = server_launcher.agent_server_status()
 
         if action in ("", "status"):
@@ -7998,7 +7996,7 @@ class NovaApp(App):
                 lines.append(f"log          : {status['log_path']}")
             if status["graphs"]:
                 lines.append(f"graphs       : {len(status['graphs'])} registered")
-            self._log(Text("agent server", style=f"bold {self._palette().primary}"))
+            self._log(Text("agent server", style=f"bold {self._palette.primary}"))
             for line in lines:
                 self._log(Text(line, style="dim"))
             return
@@ -8008,7 +8006,7 @@ class NovaApp(App):
                 self._log(Text("no agent server log: nothing has been launched", style="dim"))
                 return
             tail = await asyncio.to_thread(_read_tail, str(status["log_path"]))
-            self._log(Text("agent server log (tail)", style=f"bold {self._palette().primary}"))
+            self._log(Text("agent server log (tail)", style=f"bold {self._palette.primary}"))
             for line in tail.splitlines()[-20:]:
                 self._log(Text(line, style="dim"))
             return
@@ -8028,7 +8026,7 @@ class NovaApp(App):
                     Text(
                         "agent server: not started - another server already answers, "
                         "or the agents-server extra is not installed",
-                        style=f"bold {self._palette().warning}",
+                        style=f"bold {self._palette.warning}",
                     )
                 )
                 return
@@ -8038,7 +8036,7 @@ class NovaApp(App):
         self._log(
             Text(
                 "usage: /agent-server [status|start|stop|restart|logs]",
-                style=f"bold {self._palette().warning}",
+                style=f"bold {self._palette.warning}",
             )
         )
 
