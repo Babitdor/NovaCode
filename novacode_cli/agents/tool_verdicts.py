@@ -37,9 +37,10 @@ import logging
 import math
 import re
 import threading
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Protocol, Sequence
+from typing import Any, Protocol
 
 from langchain_core.messages import (
     AIMessage,
@@ -596,22 +597,27 @@ def parse_answers(payload: Any) -> dict[str, float]:
     """Pull ``answers[name].noul`` out of a System One response.
 
     Raises rather than guessing: a missing or non-numeric answer must surface as
-    "no verdict" so the caller keeps the result.
+    "no verdict" so the caller keeps the result. ``TypeError`` marks a shape the
+    response cannot have (not an object, an answer that is not an object, a
+    ``noul`` that is not a number); ``ValueError`` marks a well-formed number
+    that is not usable (infinite). Callers that only want to know "did I get a
+    verdict" catch both, but the distinction is there for a caller that wants to
+    report a malformed endpoint separately from a bad value.
     """
     if not isinstance(payload, dict):
-        raise ValueError("System One response is not an object")
+        raise TypeError("System One response is not an object")
     answers = payload.get("answers")
     if not isinstance(answers, dict):
-        raise ValueError("System One response is missing answers")
+        raise TypeError("System One response is missing answers")
     parsed: dict[str, float] = {}
     for name, answer in answers.items():
         if not isinstance(answer, dict):
-            raise ValueError(f"invalid System One answer for {name}")
+            raise TypeError(f"invalid System One answer for {name}")
         value = answer.get("noul")
         if not isinstance(value, (int, float)) or isinstance(value, bool):
-            raise ValueError(f"invalid System One answer for {name}")
+            raise TypeError(f"invalid System One answer for {name}")
         if not math.isfinite(float(value)):
-            raise ValueError(f"invalid System One answer for {name}")
+            raise ValueError(f"non-finite System One answer for {name}")
         parsed[str(name)] = float(value)
     return parsed
 
@@ -1003,3 +1009,31 @@ def _slice_to_window(
     ):
         cutoff -= 1
     return list(messages[cutoff:])
+
+
+def build_verdict_middleware(scorer: VerdictScorer) -> Any:
+    """Wrap a :class:`VerdictScorer` as an ``AgentMiddleware``.
+
+    Scoring happens in ``awrap_model_call`` — the moment before a turn is sent —
+    because that is the only place the full message list is available, and it is
+    where the results the edit will read are already in place. The work itself is
+    handed to the scorer's background thread and this returns immediately, so a
+    slow or unreachable model costs the turn nothing: the results simply stay
+    unscored, which the edit reads as "keep".
+
+    Imported lazily so a disabled flag never pays for the middleware base class.
+    """
+    from langchain.agents.middleware import AgentMiddleware
+
+    class _VerdictMiddleware(AgentMiddleware):  # type: ignore[misc]
+        """Hands each turn's messages to the scorer, off the critical path."""
+
+        async def awrap_model_call(self, request: Any, handler: Any) -> Any:
+            """Queue a scoring pass, then run the model call unchanged."""
+            try:
+                scorer.maybe_score(request.messages)
+            except Exception:  # noqa: BLE001 - scoring never blocks or fails a turn
+                logger.debug("Could not queue a scoring pass", exc_info=True)
+            return await handler(request)
+
+    return _VerdictMiddleware()

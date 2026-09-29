@@ -1165,19 +1165,29 @@ CLEARED_TOOL_RESULT = _UNSAVED_TOOL_RESULT
 _CLEARING_MARKER = "[cleared]"
 
 
-def _tool_result_clearing(context_window: int, offload_dir: Path | None = None):  # noqa: ANN202
+def _tool_result_clearing(
+    context_window: int,
+    offload_dir: Path | None = None,
+    verdicts: object | None = None,
+):  # noqa: ANN202
     """The tool-result clearing edit Nova runs before whole-history compaction.
 
     Restorable: the payload is written to ``offload_dir`` and the placeholder
     names it, so clearing costs context but never information. Without an
     offload directory it degrades to the plain "re-run the tool" placeholder.
+
+    With ``verdicts`` (a :class:`~novacode_cli.agents.tool_verdicts.
+    ToolVerdictCache`) the *selection* changes: only results the decision model
+    scored stale are cleared, and anything unscored is kept. Without it the
+    behaviour is exactly as before. That path is OFF by default -- see
+    :meth:`NovaConfig.get_tool_verdicts_enabled` for the measurement behind it.
     """
     from novacode_cli.agents.tool_offload import OffloadingToolUsesEdit
 
-    return OffloadingToolUsesEdit(
-        trigger=_context_edit_trigger(context_window),
-        keep=5,  # keep last 5 tool results
-        clear_tool_inputs=False,
+    common = {
+        "trigger": _context_edit_trigger(context_window),
+        "keep": 5,  # keep last 5 tool results
+        "clear_tool_inputs": False,
         # read_file is NOT excluded: file reads are the largest results in a
         # coding session, and an old one is exactly the observation masking
         # should drop (Anthropic's context editing, JetBrains' "Complexity
@@ -1188,9 +1198,20 @@ def _tool_result_clearing(context_window: int, offload_dir: Path | None = None):
         # a search is the one result you CANNOT re-run deterministically — and
         # now it isn't dropped, it's offloaded. `think` stays excluded: it is
         # the model's own reasoning, not an observation, and it is small.
-        exclude_tools=["think"],
-        placeholder=_CLEARING_MARKER if offload_dir else CLEARED_TOOL_RESULT,
-        offload_dir=offload_dir,
+        "exclude_tools": ["think"],
+        "placeholder": _CLEARING_MARKER if offload_dir else CLEARED_TOOL_RESULT,
+        "offload_dir": offload_dir,
+    }
+    if verdicts is None:
+        return OffloadingToolUsesEdit(**common)
+
+    from novacode_cli.agents.tool_offload import VerdictToolUsesEdit
+    from novacode_cli.config.nova_config import NovaConfig
+
+    return VerdictToolUsesEdit(
+        **common,
+        verdicts=verdicts,
+        keep_threshold=NovaConfig().get_tool_verdict_keep_threshold(),
     )
 
 
@@ -1285,6 +1306,32 @@ def _build_middleware_stack(
     from novacode_cli.config.nova_config import NovaConfig
 
     _learning_enabled = NovaConfig().get_learning_enabled()
+
+    # Decision-model tool-result pruning: opt-in, off by default, because it was
+    # measured and lost (see NovaConfig.get_tool_verdicts_enabled). When it is
+    # on, a scorer is built here and the tool-result edit is judged by it; when
+    # it is off, NOTHING below changes -- no client, no cache, no middleware.
+    _verdict_cache = None
+    _verdict_scorer = None
+    if NovaConfig().get_tool_verdicts_enabled():
+        from novacode_cli.agents.tool_verdicts import (
+            SystemOneClient,
+            ToolVerdictCache,
+            VerdictScorer,
+            build_verdict_middleware,
+        )
+
+        _verdict_config = NovaConfig()
+        _verdict_cache = ToolVerdictCache(
+            path=(agent_dir / "tool_verdicts.json") if agent_dir else None
+        )
+        _verdict_scorer = VerdictScorer(
+            SystemOneClient(
+                endpoint=_verdict_config.get_tool_verdict_endpoint(),
+                model=_verdict_config.get_tool_verdict_model(),
+            ),
+            _verdict_cache,
+        )
 
     import warnings as _warnings
 
@@ -1384,6 +1431,7 @@ def _build_middleware_stack(
                 _tool_result_clearing(
                     context_window,
                     cleared_dir(agent_dir) if agent_dir else None,
+                    _verdict_cache,
                 )
             ]
         ),
@@ -1436,6 +1484,27 @@ def _build_middleware_stack(
             TodoListMiddleware(
                 system_prompt="## `write_todos`\n\nRules for the todo list are in <todo_management>."
             ),
+        )
+
+    # Decision-model scoring, when enabled: hands each turn's messages to a
+    # background scorer so the tool-result edit has verdicts to read by the time
+    # it runs. Inserted BEFORE ContextEditingMiddleware, and only when the flag
+    # is on -- off by default, so the stack is exactly as it was.
+    #
+    # Appended here rather than unpacked into the literal above: `*_([...])` is
+    # not valid inside a list literal (ruff caught it as an undefined name), and
+    # an insert keeps the middleware's position relative to the edit explicit.
+    if _verdict_scorer is not None:
+        _clearing_index = next(
+            (
+                index
+                for index, entry in enumerate(agent_middleware)
+                if type(entry).__name__ == "ContextEditingMiddleware"
+            ),
+            len(agent_middleware),
+        )
+        agent_middleware.insert(
+            _clearing_index, build_verdict_middleware(_verdict_scorer)
         )
 
     return agent_middleware

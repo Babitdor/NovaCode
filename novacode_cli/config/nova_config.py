@@ -419,6 +419,82 @@ class NovaConfig:
         self._config["memory_index_chars"] = int(chars)
         self._save()
 
+    # ── Decision-model tool-result pruning (OFF by default) ─────────────────
+    #
+    # When enabled, the tool-result reducer clears only the results a local
+    # decision model scored stale, instead of everything older than the trigger
+    # except the newest few. It is OFF because it was measured and did not win:
+    # on six real sessions, capped to the same window the model can be asked
+    # about, the existing rule cleared 70 results / 72,682 chars at 0.19
+    # regretted per 1k, against 49 / 18,364 at 0.44 for the verdicts. The model
+    # itself is good (tev1:4b passes a 12-question positive control 12/12 with a
+    # 0.866 margin); the limiting factor is that its ~2,000-token context holds
+    # only the newest ~12 results of a session that holds 65-308.
+    #
+    # Kept behind a flag so it can be tried in a live session, and so the
+    # decision stays re-measurable rather than becoming a claim in a comment.
+
+    #: Model name at the endpoint. `tev1:4b` is the separated one; the 0.8B puts
+    #: plainly-false statements at 0.476-0.524, straddling any 0.5 threshold.
+    TOOL_VERDICT_DEFAULT_MODEL = "tev1:4b"
+
+    #: Where the decisions are asked of. Ollama serves the System One shape.
+    TOOL_VERDICT_DEFAULT_ENDPOINT = "http://localhost:11434/v1/systemone"
+
+    def get_tool_verdicts_enabled(self) -> bool:
+        """Whether the tool-result reducer consults a decision model."""
+        return bool(self._config.get("tool_verdicts_enabled", False))
+
+    def set_tool_verdicts_enabled(self, enabled: bool) -> None:
+        """Persist the decision-model pruning flag."""
+        self._config["tool_verdicts_enabled"] = bool(enabled)
+        self._save()
+
+    def get_tool_verdict_endpoint(self) -> str:
+        """System One endpoint the verdicts are asked of."""
+        value = self._config.get("tool_verdict_endpoint")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return self.TOOL_VERDICT_DEFAULT_ENDPOINT
+
+    def set_tool_verdict_endpoint(self, endpoint: str) -> None:
+        """Persist the System One endpoint."""
+        self._config["tool_verdict_endpoint"] = str(endpoint).strip()
+        self._save()
+
+    def get_tool_verdict_model(self) -> str:
+        """Model name at the endpoint."""
+        value = self._config.get("tool_verdict_model")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return self.TOOL_VERDICT_DEFAULT_MODEL
+
+    def set_tool_verdict_model(self, model: str) -> None:
+        """Persist the decision-model name."""
+        self._config["tool_verdict_model"] = str(model).strip()
+        self._save()
+
+    def get_tool_verdict_keep_threshold(self) -> float:
+        """Minimum probability that a result is still needed for it to survive.
+
+        Thresholds do not transfer between models, or between the two Tev1
+        sizes, so this is separately settable rather than shared with the
+        heuristic's ``keep`` count.
+        """
+        from novacode_cli.agents.tool_verdicts import DEFAULT_KEEP_THRESHOLD
+
+        raw = self._config.get("tool_verdict_keep_threshold")
+        try:
+            value = float(raw)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return DEFAULT_KEEP_THRESHOLD
+        return value if 0.0 < value < 1.0 else DEFAULT_KEEP_THRESHOLD
+
+    def set_tool_verdict_keep_threshold(self, threshold: float) -> None:
+        """Persist the keep threshold."""
+        self._config["tool_verdict_keep_threshold"] = float(threshold)
+        self._save()
+
     # ── Voice config (local STT / VAD / TTS) ────────────────────────────────
 
     VOICE_DEFAULTS: dict[str, Any] = {  # noqa: RUF012

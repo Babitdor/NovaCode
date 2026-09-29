@@ -215,15 +215,21 @@ def test_stale_is_below_the_threshold() -> None:
 def test_answers_are_read_by_name_and_must_be_numeric() -> None:
     assert parse_answers({"answers": {"q": {"noul": 0.4}}}) == {"q": 0.4}
     assert parse_answers({"answers": {}}) == {}, "no answers means no verdicts"
-    for broken in (
+
+    # A shape the response cannot have is a TypeError: the caller may want to
+    # report a malformed endpoint separately from a bad value.
+    for malformed in (
         {},
         {"answers": {"q": {"noul": "high"}}},
         {"answers": {"q": {"noul": None}}},
         {"answers": {"q": 0.4}},
-        {"answers": {"q": {"noul": float("inf")}}},
     ):
-        with pytest.raises(ValueError):
-            parse_answers(broken)
+        with pytest.raises(TypeError):
+            parse_answers(malformed)
+
+    # A well-formed but unusable number is a ValueError.
+    with pytest.raises(ValueError):
+        parse_answers({"answers": {"q": {"noul": float("inf")}}})
 
 
 # ── the endpoint ───────────────────────────────────────────────────────────
@@ -246,7 +252,7 @@ class _HTTP:
         self.response = response
         self.calls: list[dict] = []
 
-    def post(self, url, json=None, headers=None):  # noqa: A002 - httpx's kwarg name
+    def post(self, url, json=None, headers=None):
         self.calls.append({"url": url, "json": json, "headers": headers})
         return self.response
 
