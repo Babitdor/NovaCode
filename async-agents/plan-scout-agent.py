@@ -11,14 +11,13 @@ Exports:
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
 from deepagents import create_deep_agent
 from deepagents.backends.filesystem import FilesystemBackend
 from langchain_core.tools import tool
-from langchain_ollama import ChatOllama
+from novacode_cli.config.model_create import build_async_agent_model
 
 
 @tool
@@ -179,8 +178,7 @@ plan agent will merge, so be dense and factual.
 
 
 def _resolve_model() -> Any:
-    model_id = os.environ.get("PLAN_SCOUT_MODEL", "gemma4:31b-cloud")
-    return ChatOllama(model=model_id)
+    return build_async_agent_model(per_agent_model_var="PLAN_SCOUT_MODEL")
 
 
 def _build_agent() -> Any:

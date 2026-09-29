@@ -212,6 +212,11 @@ testpaths = ["tests"]
 timeout = 10  # Default timeout for all tests (can be overridden per-test)
 timeout_method = "thread"  # Forcefully interrupt hung tests on Windows
 asyncio_mode = "auto"
+markers = [
+    # Opt out of the autouse `no_blocking_io` guard in tests/conftest.py, for a
+    # test that arms its own BlockBuster and asserts on it directly.
+    "own_blockbuster_guard: test arms its own blocking-I/O guard and asserts on it",
+]
 
 [dependency-groups]
 dev = [
@@ -221,6 +226,11 @@ dev = [
     "black>=24.0.0",
     "ruff>=0.8.0",
     "mypy>=1.13.0",
+    # Test-only guard that fails a test when the TUI makes a blocking call on its
+    # event loop. Pinned to the range the langgraph dev runtime arms, so the guard
+    # and the runtime agree on what counts as blocking. Not a runtime dependency:
+    # tests match the error by class name so it can be absent in production.
+    "blockbuster>=1.5.26,<1.6",
 ]
 
 [tool.mypy]

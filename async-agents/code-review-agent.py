@@ -9,7 +9,6 @@ Exports:
 
 from __future__ import annotations
 
-import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -17,7 +16,7 @@ from typing import Any
 from deepagents import create_deep_agent
 from deepagents.backends.filesystem import FilesystemBackend
 from langchain_core.tools import tool
-from langchain_ollama import ChatOllama
+from novacode_cli.config.model_create import build_async_agent_model
 
 
 @tool
@@ -96,8 +95,7 @@ Your purpose is to review code changes and provide actionable feedback:
 
 
 def _resolve_model() -> Any:
-    model_id = os.environ.get("DOC_AGENT_MODEL", "gemma4:31b-cloud")
-    return ChatOllama(model=model_id)
+    return build_async_agent_model()
 
 
 def _build_agent() -> Any:

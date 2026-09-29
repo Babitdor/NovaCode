@@ -305,7 +305,7 @@ mypy novacode_cli/
 |---------|-------------|
 | `/init` | Generate/update project documentation and graph |
 | `/mcp` | Interactive MCP server management menu |
-| `/model` | Display current model configuration |
+| `/model` | Switch the model for the main agent, the subagents, the async agents or the dynamic agents |
 | `/hooks` | Manage lifecycle hooks (list, add, remove, enable, disable) |
 | `/skills` | Interactive skills manager |
 | `/agents` | Custom agent management (view, create, delete) |
@@ -1032,9 +1032,59 @@ Control it from inside the TUI with `/agent-server`:
 ```
 
 `--no-agent-server` turns the automatic launch off for a run, and
-`--agent-server-port N` pins the port instead of picking a free one. The graphs
-default to an Ollama model (`DOC_AGENT_MODEL`, `PLAN_SCOUT_MODEL`), so a reachable
-Ollama is still required for them to do any work.
+`--agent-server-port N` pins the port instead of picking a free one.
+
+### Which model each agent runs on
+
+`/model` covers four roles. The list opens with a **Roles** section; the row marked
+`target` is where the next model pick goes. Choosing a role row retargets the picker
+instead of closing it, so the flow is: pick the role, then pick the model.
+
+| Role | Covers | Takes effect |
+|---|---|---|
+| Main agent | the agent you talk to | immediately (hot-swapped) |
+| Subagents | in-process delegation via the `task` tool | on the next dispatch |
+| Async agents | the six remote graphs on the LangGraph server | on the next server launch; the container route needs a recreate |
+| Dynamic agents | agents discovered in the agent directories, which is also what an `/eval` fan-out dispatches | on the next dispatch |
+
+Any role you leave unset keeps its previous behaviour, which is what every role did before
+this existed, so an untouched setup behaves exactly as before: the subagents and the dynamic
+agents inherit the main agent's model, while the async agents keep their own server default
+rather than borrowing the main one. A discovered
+agent can also name its own model in `agent.md` frontmatter, and that wins over the
+dynamic role:
+
+```markdown
+---
+name: custom-agent
+model: anthropic:claude-sonnet-4-5-20250929
+---
+```
+
+The roles live in `~/.nova/Nova.config.json`, one key per role, and the panel above
+the transcript reports each task's real model rather than assuming the session one.
+
+### Which model the async agents run on
+
+The graphs build their model from the environment through Nova's shared model
+constructor, so any provider Nova supports can run them. Ollama is the default,
+which means an existing setup is unaffected.
+
+| Variable | Meaning | Default |
+|---|---|---|
+| `ASYNC_AGENT_PROVIDER` | `ollama`, `openai`, `anthropic`, `google`, `openrouter`, `opencode`, `nvidia` | `ollama` |
+| `ASYNC_AGENT_MODEL` | model id for that provider | `DOC_AGENT_MODEL`, then a per-provider default |
+| `PLAN_SCOUT_MODEL` | per-agent override, plan-scout only | `ASYNC_AGENT_MODEL` |
+| the provider's key var | e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | read from the environment or the keychain |
+
+Running on OpenAI, for example:
+
+```bash
+ASYNC_AGENT_PROVIDER=openai ASYNC_AGENT_MODEL=gpt-4o-mini OPENAI_API_KEY=sk-... uv run nova
+```
+
+With the container, set the same variables in `.env`: compose forwards the ones
+it lists, so a variable it does not forward never reaches the graphs.
 
 ## Dependencies
 

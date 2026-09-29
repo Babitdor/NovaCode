@@ -9,6 +9,7 @@ import pytest
 
 from novacode_cli.config.model_create import (
     PROVIDER_KEY_ENV,
+    build_async_agent_model,
     build_chat_model,
     create_model_from_config,
 )
@@ -104,3 +105,75 @@ def test_model_manager_path_matches_direct_path(provider, model):
     assert type(direct) is type(managed)
     for attr in ("max_retries", "max_tokens", "num_ctx", "keep_alive"):
         assert getattr(direct, attr, None) == getattr(managed, attr, None), attr
+
+
+# ── async-agent graphs: provider-agnostic model resolution ─────────────────────
+#
+# The six remote graphs used to build ``ChatOllama`` themselves, so "which model
+# runs my background research" was an Ollama question. These pin the resolution
+# order and the three failure messages, which is the whole contract callers rely on.
+
+_FALLBACK_VARS = ("ASYNC_AGENT_MODEL", "DOC_AGENT_MODEL", "PLAN_SCOUT_MODEL")
+
+
+def _clear(monkeypatch, *names):
+    for name in names:
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_async_agent_defaults_to_ollama_and_its_historical_model(monkeypatch):
+    _clear(monkeypatch, "ASYNC_AGENT_PROVIDER", *_FALLBACK_VARS)
+    model = build_async_agent_model()
+    assert type(model).__name__ == "ChatOllama"
+    assert model.model == "gemma4:31b-cloud"
+
+
+def test_async_agent_model_beats_doc_agent_model(monkeypatch):
+    _clear(monkeypatch, "ASYNC_AGENT_PROVIDER")
+    monkeypatch.setenv("DOC_AGENT_MODEL", "from-the-legacy-var")
+    monkeypatch.setenv("ASYNC_AGENT_MODEL", "from-the-new-var")
+    assert build_async_agent_model().model == "from-the-new-var"
+
+
+def test_async_agent_still_honours_doc_agent_model(monkeypatch):
+    _clear(monkeypatch, "ASYNC_AGENT_PROVIDER", "ASYNC_AGENT_MODEL", "PLAN_SCOUT_MODEL")
+    monkeypatch.setenv("DOC_AGENT_MODEL", "legacy-model")
+    assert build_async_agent_model().model == "legacy-model"
+
+
+def test_per_agent_variable_wins(monkeypatch):
+    _clear(monkeypatch, "ASYNC_AGENT_PROVIDER")
+    monkeypatch.setenv("ASYNC_AGENT_MODEL", "shared-model")
+    monkeypatch.setenv("PLAN_SCOUT_MODEL", "scout-only-model")
+    model = build_async_agent_model(per_agent_model_var="PLAN_SCOUT_MODEL")
+    assert model.model == "scout-only-model"
+
+
+def test_async_agent_runs_on_a_non_ollama_provider(monkeypatch):
+    monkeypatch.setenv("ASYNC_AGENT_PROVIDER", "openai")
+    monkeypatch.setenv("ASYNC_AGENT_MODEL", "gpt-5-mini")
+    model = build_async_agent_model()
+    assert type(model).__name__ == "ChatOpenAI"
+    assert model.model_name == "gpt-5-mini"
+    assert model.max_retries == 5  # same constructor, same kwargs as the main agent
+
+
+def test_unknown_async_agent_provider_names_the_variable(monkeypatch):
+    monkeypatch.setenv("ASYNC_AGENT_PROVIDER", "nonsense")
+    with pytest.raises(ValueError, match="ASYNC_AGENT_PROVIDER"):
+        build_async_agent_model()
+
+
+def test_async_agent_missing_key_names_its_key_variable(monkeypatch):
+    monkeypatch.setenv("ASYNC_AGENT_PROVIDER", "anthropic")
+    monkeypatch.setenv("ASYNC_AGENT_MODEL", "claude-sonnet-4-5-20250929")
+    _clear(monkeypatch, "ANTHROPIC_API_KEY")
+    with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
+        build_async_agent_model()
+
+
+def test_provider_without_a_known_default_asks_for_a_model(monkeypatch):
+    monkeypatch.setenv("ASYNC_AGENT_PROVIDER", "nvidia")
+    _clear(monkeypatch, *_FALLBACK_VARS)
+    with pytest.raises(ValueError, match="ASYNC_AGENT_MODEL"):
+        build_async_agent_model()

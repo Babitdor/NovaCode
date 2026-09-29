@@ -15,7 +15,6 @@ Exports:
 
 from __future__ import annotations
 
-import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -25,7 +24,7 @@ from deepagents.backends import CompositeBackend
 from deepagents.backends.filesystem import FilesystemBackend
 from deepagents.backends.store import StoreBackend
 from langchain_core.tools import tool
-from langchain_ollama import ChatOllama
+from novacode_cli.config.model_create import build_async_agent_model
 from langgraph.store.memory import InMemoryStore
 
 # ── Tools ──────────────────────────────────────────────────────────────────────
@@ -189,13 +188,13 @@ def _build_backend() -> CompositeBackend:
 
 
 def _resolve_model() -> Any:
-    """Resolve the Ollama chat model.
+    """Resolve this graph's chat model.
 
-    Uses ``gemma4:31b-cloud`` by default. Override with the ``DOC_AGENT_MODEL``
-    environment variable (e.g. ``llama3.2:3b``).
+    Provider and model come from the environment (``ASYNC_AGENT_PROVIDER``,
+    ``ASYNC_AGENT_MODEL``, falling back to ``DOC_AGENT_MODEL``); Ollama stays the
+    default. See :func:`novacode_cli.config.model_create.build_async_agent_model`.
     """
-    model_id = os.environ.get("DOC_AGENT_MODEL", "gemma4:31b-cloud")
-    return ChatOllama(model=model_id)
+    return build_async_agent_model()
 
 
 def _build_agent() -> Any:

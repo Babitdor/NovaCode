@@ -582,3 +582,80 @@ def get_current_model_name() -> str:
     from novacode_cli.config.model_manager import DEFAULT_OLLAMA_MODEL
 
     return os.environ.get("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
+
+
+# ── async-agent graphs ────────────────────────────────────────────────────────
+#
+# The six remote graphs (async-agents/*.py, hosted by the LangGraph server) used to
+# build ``ChatOllama`` themselves, in six near-identical copies, so the model behind
+# background work was an Ollama decision. They now delegate here, which is also how
+# they inherit every provider quirk this module already handles.
+
+#: Which provider the async-agent graphs build their model with.
+ASYNC_AGENT_PROVIDER_ENV = "ASYNC_AGENT_PROVIDER"
+
+#: Model id for those graphs, falling back to the older DOC_AGENT_MODEL.
+ASYNC_AGENT_MODEL_ENV = "ASYNC_AGENT_MODEL"
+
+#: Providers an async graph may run on: Ollama plus everything with a key variable.
+VALID_ASYNC_PROVIDERS: tuple[str, ...] = ("ollama", *PROVIDER_KEY_ENV)
+
+#: Model used when nothing overrides it. Only providers whose default Nova can stand
+#: behind are listed; for the rest, asking for ASYNC_AGENT_MODEL beats guessing an id
+#: that may not exist at the provider.
+PROVIDER_DEFAULT_MODEL: dict[str, str] = {
+    "ollama": "gemma4:31b-cloud",  # the historical default, deliberately unchanged
+    "openai": "gpt-4o-mini",
+    "anthropic": "claude-sonnet-4-5-20250929",
+    "google": "gemini-3-pro-preview",
+    "openrouter": "z-ai/glm-5.2",
+}
+
+
+def build_async_agent_model(*, per_agent_model_var: str | None = None) -> BaseChatModel:
+    """The chat model one async-agent graph runs on.
+
+    Resolution, highest priority first:
+
+    1. ``per_agent_model_var`` if given and set (e.g. ``PLAN_SCOUT_MODEL``)
+    2. ``ASYNC_AGENT_MODEL``
+    3. ``DOC_AGENT_MODEL``, what these graphs read before the move
+    4. the provider's entry in :data:`PROVIDER_DEFAULT_MODEL`
+
+    The provider comes from ``ASYNC_AGENT_PROVIDER`` and defaults to ``ollama``, so an
+    existing deployment is unaffected. Failures are raised rather than worked around:
+    a background agent that quietly ran on the wrong provider would be worse than one
+    that refuses to start, because its results would still look plausible.
+    """
+    provider = (os.environ.get(ASYNC_AGENT_PROVIDER_ENV) or "").strip().lower() or "ollama"
+    if provider not in VALID_ASYNC_PROVIDERS:
+        message = (
+            f"Unknown {ASYNC_AGENT_PROVIDER_ENV}={provider!r}. Valid providers: "
+            + ", ".join(VALID_ASYNC_PROVIDERS)
+        )
+        raise ValueError(message)
+
+    model_name = ""
+    for var in (per_agent_model_var, ASYNC_AGENT_MODEL_ENV, "DOC_AGENT_MODEL"):
+        if var:
+            model_name = (os.environ.get(var) or "").strip()
+            if model_name:
+                break
+    if not model_name:
+        model_name = PROVIDER_DEFAULT_MODEL.get(provider, "")
+    if not model_name:
+        message = (
+            f"No model set for provider {provider!r}: set {ASYNC_AGENT_MODEL_ENV} "
+            "(there is no default model for this provider)."
+        )
+        raise ValueError(message)
+
+    key_var = PROVIDER_KEY_ENV.get(provider)
+    if key_var and not (os.environ.get(key_var) or "").strip():
+        message = (
+            f"Provider {provider!r} needs an API key: set {key_var} (in .env for the "
+            "container, or in the environment for a server Nova launches itself)."
+        )
+        raise ValueError(message)
+
+    return build_chat_model(provider, model_name)
