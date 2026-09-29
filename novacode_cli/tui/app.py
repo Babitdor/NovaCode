@@ -1161,9 +1161,20 @@ class NovaApp(App):
        Switch/Cancel buttons, so it gets a bounded height and its own scroll —
        otherwise a long list pushes the buttons out of the modal and they can't
        be clicked. Kept in sync with the reference layout's 16-row cap. */
-    #model-tabs { height: auto; margin-bottom: 1; }
+    /* Height MUST be explicit, for the reason spelled out on #session-tabs above:
+       the Tabs widget's inner tabs-scroll is height:1fr, and a 1fr child inside
+       this box's `height: auto` grows to the whole box. Measured: the bar took 32
+       of the modal's 36 rows and pushed the filter, the list, the free-text field
+       and the Switch/Cancel buttons clean out of view, so /model rendered as a
+       titled empty frame with a working-looking tab bar at the top of it. */
+    #model-tabs { height: 2; width: 100%; margin-bottom: 1; }
     #model-options {
-        height: auto; max-height: 16;
+        /* 16 was the cap while the list was the only thing above the free-text
+           field; the tab bar spends 3 rows of the same budget (2 + margin), so it
+           drops to 13 rather than pushing Switch/Cancel past the bottom of a
+           short terminal. Measured at 120x40: at 16 the buttons were clipped by
+           the box's `max-height: 90%`, at 13 they are inside it. */
+        height: auto; max-height: 13;
         border: round $accent 50%; margin-bottom: 1;
         scrollbar-gutter: stable;
     }

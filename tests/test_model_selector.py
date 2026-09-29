@@ -12,7 +12,9 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
+    from textual.app import App
     from textual.pilot import Pilot
+    from textual.widgets import Widget
 
     from novacode_cli.tui.screens import ModelScreen
 
@@ -698,3 +700,71 @@ async def test_the_cursor_lands_on_the_providers_rows_when_no_model_matches():
         highlighted = option_list.get_option_at_index(option_list.highlighted).id
 
         assert str(highlighted).startswith("opencode:")
+
+
+class _StyledHost:
+    """An App carrying NovaApp's stylesheet, for the layout tests.
+
+    Every other test in this file mounts ModelScreen in a bare ``App``, which
+    exercises the widget logic but none of NovaApp's CSS. That is the right
+    trade for the row/filter/selection tests, but it means a layout rule can be
+    wrong without a single test noticing, so the tests about how the modal is
+    *laid out* mount here instead.
+    """
+
+    @staticmethod
+    def build() -> App:
+        from textual.app import App
+
+        from novacode_cli.tui.app import NovaApp
+
+        class _Host(App):
+            CSS = NovaApp.CSS
+
+            def compose(self) -> list[Widget]:
+                return []
+
+        return _Host()
+
+
+async def test_the_picker_body_and_footer_are_laid_out_at_a_short_terminal_size():
+    """The tab bar must not eat the modal, and Switch/Cancel must stay clickable.
+
+    Regression: ``#model-tabs`` had ``height: auto`` inside a ``height: auto`` box.
+    The Tabs widget's inner tabs-scroll is ``height: 1fr``, so the bar grew to the
+    whole box (measured 32 of its 36 rows), which pushed the filter, the list, the
+    free-text field and the buttons clean out of view: /model rendered as a titled
+    empty frame with a working-looking tab bar at the top. A bare-App test could
+    not see any of it, so this one mounts the real stylesheet at the size where the
+    budget is tightest (120x40).
+    """
+    from textual.widgets import OptionList
+
+    app = _StyledHost.build()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _open(pilot, app)
+
+        box = screen.query_one("#modal-box")
+        # Wait out the entrance zoom: mid-flight, sizes and regions are not the
+        # ones the user ends up seeing.
+        for _ in range(120):
+            await pilot.pause()
+            if float(box.styles.opacity) >= 1.0:
+                break
+
+        tabs = screen.query_one("#model-tabs")
+        options = screen.query_one("#model-options", OptionList)
+        buttons = screen.query_one("#modal-buttons")
+
+        # The tab bar takes its own height, not the box's.
+        assert tabs.size.height <= 3, f"tab bar is {tabs.size.height} rows tall"
+        # The body survives: the list still has room to show rows.
+        assert options.size.height >= 5, f"list is {options.size.height} rows tall"
+        # The invariant the CSS comment exists for: the buttons are reachable
+        # without scrolling the modal.
+        assert buttons.region.bottom <= box.region.bottom
+
+        # And it is what is actually painted, not just what is in the tree.
+        painted = "\n".join(strip.text for strip in app.screen._compositor.render_strips())
+        assert "gpt-5-mini" in painted, "no model row reached the screen"
+        assert "Cancel" in painted, "the footer never reached the screen"
