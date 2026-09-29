@@ -1005,6 +1005,37 @@ docker build -t novacode-cli .
 docker run -it --rm -v "$(pwd):/workspace" novacode-cli
 ```
 
+## Async subagents without Docker
+
+The six async subagents (code review, test generation, documentation updates and
+the rest) talk Agent Protocol to a LangGraph server. That server can be the
+container above, or one NOVA launches itself:
+
+```bash
+uv sync --extra agents-server   # once: installs langgraph-cli, the dev server
+```
+
+With that extra installed, starting NOVA with no server already answering launches
+one from `langgraph.json` on a free ephemeral port, points the subagents at it,
+and stops it on exit. Docker is not needed, and nothing changes for anyone
+running it: if a server already answers (the container, or one you started), NOVA
+uses that instead of launching a second one.
+
+Control it from inside the TUI with `/agent-server`:
+
+```
+/agent-server status     is a server running, which port, which log
+/agent-server start      launch one now (blocking, first run can take a minute)
+/agent-server stop       stop this session's server
+/agent-server restart    stop, then start on a fresh port
+/agent-server logs       the last 20 lines of the server log
+```
+
+`--no-agent-server` turns the automatic launch off for a run, and
+`--agent-server-port N` pins the port instead of picking a free one. The graphs
+default to an Ollama model (`DOC_AGENT_MODEL`, `PLAN_SCOUT_MODEL`), so a reachable
+Ollama is still required for them to do any work.
+
 ## Dependencies
 
 This package depends on the `deepagents` library for core agent functionality, which is automatically installed as a dependency. Core dependencies include LangChain ecosystem (LangGraph, LangSmith), Rich, Textual, prompt-toolkit, and various integration libraries.

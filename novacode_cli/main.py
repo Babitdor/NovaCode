@@ -215,6 +215,30 @@ def check_cli_dependencies() -> None:
         sys.exit(1)
 
 
+def _add_agent_server_args(parser: argparse.ArgumentParser) -> None:
+    """The local-agent-server flags, kept out of parse_args' statement count."""
+    parser.add_argument(
+        "--no-agent-server",
+        action="store_true",
+        help="Do not launch a local LangGraph server for the async subagents",
+    )
+    parser.add_argument(
+        "--agent-server-port",
+        type=int,
+        default=None,
+        help="Port for the local agent server (default: a free ephemeral port)",
+    )
+
+
+def _stop_agent_server() -> None:
+    """Stop the locally launched agent server, if this session started one."""
+    from novacode_cli.agents.server_launcher import shutdown_agent_server
+
+    preserved = shutdown_agent_server()
+    if preserved is not None:
+        logging.getLogger(__name__).info("agent server log kept at %s", preserved)
+
+
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
@@ -468,6 +492,7 @@ def parse_args():
     # its own git worktree purely by the cwd it is spawned in. Not for humans.
     parser.add_argument("--session-worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--session-id", default=None, help=argparse.SUPPRESS)
+    _add_agent_server_args(parser)
     parser.add_argument(
         "--version",
         action="version",
@@ -542,6 +567,8 @@ async def _shutdown_background_services(session_state) -> None:
     steps: list = []
 
     steps.append(_guard(stop_vixie_server()))
+
+    steps.append(_guard(asyncio.to_thread(_stop_agent_server)))
 
     try:
         steps.append(_guard(ProcessManager.get_instance().stop_all()))
@@ -1079,6 +1106,9 @@ async def main(
     sandbox_fs_capacity_bytes: int | None = None,
     sandbox_snapshot: str | None = None,
     sandbox_snapshot_id: str | None = None,
+    *,
+    agent_server: bool = True,
+    agent_server_port: int | None = None,
 ) -> None:
     """Main entry point with conditional sandbox support.
 
@@ -1142,6 +1172,18 @@ async def main(
     # Skipped in headless mode — it's an interactive desktop-pet feature.
     if not getattr(session_state, "headless", False):
         await start_vixie_server()
+
+    # Dynamic (remote) subagents talk Agent Protocol to a LangGraph server. That
+    # server has been the `novacode` Docker container; when nothing is answering
+    # and the optional `agents-server` extra is installed, launch the same graphs
+    # from langgraph.json locally instead, so `start_async_task` works without
+    # Docker. Skipped entirely when a server is already reachable (Docker, or one
+    # the user started) and soft-fails otherwise, so no existing path changes.
+    # Must run before the agent is built: the async subagent specs are read while
+    # the agent is constructed.
+    from novacode_cli.agents.server_launcher import ensure_agent_server
+
+    await ensure_agent_server(enabled=agent_server, port=agent_server_port)
 
     from novacode_cli.session.session_persistence import SessionManager
     from novacode_cli.session.session_restore import restore_session
@@ -2051,6 +2093,8 @@ def cli_main() -> None:
                     sandbox_fs_capacity_bytes=args.sandbox_fs_capacity_bytes,
                     sandbox_snapshot=args.sandbox_snapshot,
                     sandbox_snapshot_id=args.sandbox_snapshot_id,
+                    agent_server=not args.no_agent_server,
+                    agent_server_port=args.agent_server_port,
                 )
             )
             # main() returned normally — every teardown step has run (session

@@ -103,6 +103,14 @@ server = [
     "fastapi>=0.115.0",
     "uvicorn>=0.34.0",
 ]
+# Optional: lets Nova launch its own `langgraph dev` server for the async
+# (remote) subagents, instead of requiring the Docker container. Deliberately
+# NOT a core dependency, matching the Dockerfile, which installs the same thing
+# on top of the frozen sync. Pulls langgraph-api, so it is opt-in:
+#   uv sync --extra agents-server
+agents-server = [
+    "langgraph-cli[inmem]",
+]
 
 [project.urls]
     Homepage = "https://github.com/Babitdor/NovaCode"

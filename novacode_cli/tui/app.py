@@ -424,6 +424,10 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
         "subagents": SlashCommand(
             "_run_subagents", "toggle the dynamic subagents panel", wants_text=False
         ),
+        "agent-server": SlashCommand(
+            "_run_agent_server",
+            "local LangGraph server for async subagents (status/start/stop/restart/logs)",
+        ),
     "tasks": SlashCommand("_run_tasks", "open the background tasks panel", wants_text=False),
     "cowork": SlashCommand(
         "_run_cowork", "launch the Nova Cowork desktop app (/cowork [task])", aliases=("desktop",)
@@ -515,6 +519,15 @@ _TUI_COMMAND_ALIASES: dict[str, str] = {
 
 # Autocomplete entries — derived; plugin commands append at registration time.
 _TUI_SLASH_COMMANDS = [f"/{name}" for name in TUI_COMMANDS]
+
+
+def _read_tail(path: str, lines: int = 40) -> str:
+    """The last *lines* of a file, for ``/agents logs``. Never raises."""
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    return "\n".join(text.splitlines()[-lines:])
 
 from novacode_cli import ui_events as ev
 from novacode_cli.agent_stream import run_agent_stream
@@ -7951,6 +7964,83 @@ class NovaApp(App):
     async def _run_subagents(self) -> None:
         """Collapse/expand the dynamic-subagents panel (same as alt+s)."""
         self.action_toggle_subagents()
+
+    async def _run_agent_server(self, text: str = "") -> None:
+        """The local LangGraph server the async subagents run on.
+
+        Status is the default; the actions exist because a launch that fails is
+        otherwise invisible (it soft-fails to the in-process subagents), so there
+        has to be somewhere to look.
+        """
+        from novacode_cli.agents import server_launcher
+        from novacode_cli.agents.default_subagents.async_subagents import (
+            async_agents_available,
+        )
+
+        action = (text or "").strip().split(maxsplit=1)[0].lower()
+        status = server_launcher.agent_server_status()
+
+        if action in ("", "status"):
+            reachable = await asyncio.to_thread(async_agents_available, refresh=True)
+            lines = [
+                f"local server : {'running' if status['running'] else 'stopped'}"
+                + (f" at {status['url']}" if status["url"] else ""),
+                f"async agents : {'available' if reachable else 'unavailable'}"
+                + (" (this session's server)" if status["running"] else ""),
+                "extra        : "
+                + (
+                    "installed"
+                    if server_launcher.server_extra_available()
+                    else "missing (uv sync --extra agents-server)"
+                ),
+            ]
+            if status["log_path"]:
+                lines.append(f"log          : {status['log_path']}")
+            if status["graphs"]:
+                lines.append(f"graphs       : {len(status['graphs'])} registered")
+            self._log(Text("agent server", style=f"bold {self._palette().primary}"))
+            for line in lines:
+                self._log(Text(line, style="dim"))
+            return
+
+        if action == "logs":
+            if not status["log_path"]:
+                self._log(Text("no agent server log: nothing has been launched", style="dim"))
+                return
+            tail = await asyncio.to_thread(_read_tail, str(status["log_path"]))
+            self._log(Text("agent server log (tail)", style=f"bold {self._palette().primary}"))
+            for line in tail.splitlines()[-20:]:
+                self._log(Text(line, style="dim"))
+            return
+
+        if action == "stop":
+            preserved = await asyncio.to_thread(server_launcher.shutdown_agent_server)
+            note = f" (log kept at {preserved})" if preserved else ""
+            self._log(Text(f"agent server: stopped{note}", style="dim"))
+            return
+
+        if action in ("start", "restart"):
+            if action == "restart":
+                await asyncio.to_thread(server_launcher.shutdown_agent_server)
+            started = await server_launcher.ensure_agent_server()
+            if started is None:
+                self._log(
+                    Text(
+                        "agent server: not started - another server already answers, "
+                        "or the agents-server extra is not installed",
+                        style=f"bold {self._palette().warning}",
+                    )
+                )
+                return
+            self._log(Text(f"agent server: running at {started.url}", style="dim"))
+            return
+
+        self._log(
+            Text(
+                "usage: /agent-server [status|start|stop|restart|logs]",
+                style=f"bold {self._palette().warning}",
+            )
+        )
 
     async def _run_tasks(self) -> None:
         """Open the Background Tasks panel (same as clicking the ⚙ indicator)."""
