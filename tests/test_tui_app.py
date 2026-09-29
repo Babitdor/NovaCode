@@ -149,10 +149,14 @@ async def _wait_for_screen(app, pilot, expected_type, timeout: float = 20.0) -> 
     (the loop exits as soon as the screen appears) and removes the race.
     """
     loop = asyncio.get_running_loop()
+    # Progress the event loop through the *pilot*, not `asyncio.sleep`: a bare
+    # sleep wakes this task but leaves the app's own loop untouched, so a screen
+    # push driven by a worker never advances. Alternate the two: `asyncio.sleep(0)`
+    # lets pending callbacks run, then the pause drains the app's message queue.
     deadline = loop.time() + timeout
     while loop.time() < deadline and not isinstance(app.screen, expected_type):
+        await asyncio.sleep(0)
         await pilot.pause()
-        await asyncio.sleep(0.02)
 
 
 async def _drive():
@@ -1569,6 +1573,179 @@ def test_tui_stream_coalescing():
     asyncio.run(_drive_stream_coalescing())
 
 
+async def _drive_stream_leading_edge() -> None:
+    """The FIRST delta of a stream paints immediately; later ones do not.
+
+    Without the leading edge the first fragment waits out the whole coalescing
+    interval, so a reply appears up to 100ms after the model started talking.
+    Timers are stubbed, so anything painted here was painted eagerly.
+    """
+    import novacode_cli.ui_events as ev
+    from textual.widgets import Static
+
+    from novacode_cli.tui.app import NovaApp
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    app = NovaApp(
+        agent=_FakeAgent(),
+        assistant_id="nova-agent",
+        session_state=_SS(),
+        backend=None,
+        token_tracker=TokenTracker(),
+        image_tracker=None,
+        model_name="m",
+    )
+    async with app.run_test() as pilot:
+        timers = {"n": 0}
+        app.set_timer = lambda delay, fn, *a, **k: timers.__setitem__("n", timers["n"] + 1)
+
+        await app._render(ev.TextDelta("first "))
+        assert app._stream_msg is not None
+        body = app._stream_msg.query_one(".body", Static)
+        assert "first" in str(body.render()), (
+            "leading edge missing: the first fragment was not painted before "
+            "the coalescing timer could fire"
+        )
+        assert timers["n"] == 1, timers
+
+        # A later delta must be BATCHED, not painted eagerly, and must not arm
+        # a second timer (that would defeat the coalescing contract).
+        await app._render(ev.TextDelta("second"))
+        assert "second" not in str(body.render()), (
+            "a later delta painted eagerly; the coalescing batch is broken"
+        )
+        assert app._live_buf == "first second"
+        assert timers["n"] == 1, "a later delta armed a second timer"
+        await pilot.pause()
+
+
+def test_tui_stream_leading_edge():
+    if not _HAS_TEXTUAL:
+        return
+    asyncio.run(_drive_stream_leading_edge())
+
+
+async def _drive_live_buf_is_a_rope() -> None:
+    """The streamed-text buffers are ropes, and stay str-in / str-out.
+
+    `+=` on an attribute is quadratic (measured 0.37 -> 2.76 ms per 1k deltas as
+    the buffer grows), so appends go to a list and the join is deferred to a
+    read. The str-in/str-out contract matters too: SessionPane.save_from and
+    load_into getattr/setattr over STATEFUL_ATTRS, which must see a plain str.
+    """
+    import novacode_cli.ui_events as ev
+
+    from novacode_cli.tui.app import NovaApp
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    app = NovaApp(
+        agent=_FakeAgent(),
+        assistant_id="nova-agent",
+        session_state=_SS(),
+        backend=None,
+        token_tracker=TokenTracker(),
+        image_tracker=None,
+        model_name="m",
+    )
+    async with app.run_test() as pilot:
+        app.set_timer = lambda delay, fn, *a, **k: None
+
+        for part in ("a", "b", "c"):
+            await app._render(ev.TextDelta(part))
+        # Appends accumulated fragments instead of re-copying a growing string.
+        assert app._live_buf_parts == ["a", "b", "c"], app._live_buf_parts
+        # A read joins AND collapses, so later reads are O(1).
+        assert app._live_buf == "abc"
+        assert app._live_buf_parts == ["abc"], app._live_buf_parts
+
+        # Writes go through the setter and normalise (pane save/restore path).
+        app._live_buf = ""
+        assert app._live_buf == "" and app._live_buf_parts == []
+        app._live_buf = "round trip"
+        assert app._live_buf == "round trip"
+        assert app._live_buf_parts == ["round trip"]
+
+        # The reasoning buffer follows the same contract.
+        await app._render(ev.ReasoningDelta("r1"))
+        await app._render(ev.ReasoningDelta("r2"))
+        assert app._reasoning_buf_parts == ["r1", "r2"], app._reasoning_buf_parts
+        assert app._reasoning_buf == "r1r2"
+        await pilot.pause()
+
+
+def test_tui_live_buf_is_a_rope():
+    if not _HAS_TEXTUAL:
+        return
+    asyncio.run(_drive_live_buf_is_a_rope())
+
+
+async def _drive_stream_accumulation_is_linear() -> None:
+    """Regression guard for the quadratic streamed-text append.
+
+    `self._buf += fragment` on an ATTRIBUTE copies the whole buffer on every
+    delta (CPython's in-place-resize optimisation only applies to a local with a
+    refcount of 1), so the per-delta cost grows with the stream length. With the
+    rope it is flat. Measured end-to-end through the real `_render` path:
+
+        deltas    before     after
+         2,000     4.7 ms    1.9 ms
+         8,000    44.9 ms    8.4 ms
+        20,000   172.7 ms   19.4 ms
+
+    Asserts a RATIO rather than an absolute, so it means the same thing on any
+    machine: a linear implementation grows ~8x for an 8x longer stream, a
+    quadratic one ~64x. The 16x span keeps the fixed per-burst overhead from
+    diluting the signal. Measured here: rope ~8x, pre-rope append 19.7x, so the
+    12.0 threshold sits well clear of both.
+    """
+    import time
+
+    import novacode_cli.ui_events as ev
+
+    from novacode_cli.tui.app import NovaApp
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    app = NovaApp(
+        agent=_FakeAgent(),
+        assistant_id="nova-agent",
+        session_state=_SS(),
+        backend=None,
+        token_tracker=TokenTracker(),
+        image_tracker=None,
+        model_name="m",
+    )
+    async with app.run_test() as pilot:
+        app.set_timer = lambda delay, fn, *a, **k: None
+        chunk = ev.TextDelta("word " * 2)
+
+        async def burst(n: int) -> float:
+            """Best-of-3 seconds to feed n deltas through _render."""
+            best = float("inf")
+            for _ in range(3):
+                app._live_buf = ""
+                started = time.perf_counter()
+                for _ in range(n):
+                    await app._render(chunk)
+                best = min(best, time.perf_counter() - started)
+            return best
+
+        small = await burst(2_000)
+        large = await burst(16_000)
+        ratio = large / small
+        assert ratio < 12.0, (
+            f"streamed-text accumulation looks super-linear: 8x the deltas cost "
+            f"{ratio:.1f}x the time (linear ~8x, quadratic ~64x). "
+            f"small={small * 1000:.2f}ms large={large * 1000:.2f}ms"
+        )
+        await pilot.pause()
+
+
+def test_tui_stream_accumulation_is_linear():
+    if not _HAS_TEXTUAL:
+        return
+    asyncio.run(_drive_stream_accumulation_is_linear())
+
+
 async def _drive_custom_agent_stream_and_color():
     """Verify that a custom assistant (e.g. 'ralph') streams and commits with correct name and color."""
     import novacode_cli.ui_events as ev
@@ -1924,7 +2101,13 @@ def test_tui_palette_noop():
 
 
 async def _drive_startup_info():
-    """The native startup panel renders model/cwd on mount."""
+    """The startup info bar renders the model and cwd on mount.
+
+    The startup *log lines* this test once asserted were deliberately removed in
+    04b4e0b ("Remove startup log lines from TUI") - the model name and workspace
+    now render in the info bar (``#info-model`` / ``#info-workspace``) rather
+    than as transcript ``.logline`` widgets, so assert there.
+    """
     from textual.widgets import Static
 
     from novacode_cli.tui.app import NovaApp, NovaStatusBar
@@ -1942,8 +2125,12 @@ async def _drive_startup_info():
     )
     async with app.run_test() as pilot:
         await pilot.pause()
-        blob = " ".join(str(w.render()) for w in app.query("#transcript .logline").results(Static))
-        assert "session" in blob and "deepseek-v4" in blob, blob
+        # `_refresh_info_bar` runs on mount; if it did not, these cells stay empty
+        # (the model cell's initial value) and the assertions below catch it.
+        model = str(app.query_one("#info-model", Static).render())
+        workspace = str(app.query_one("#info-workspace", Static).render())
+        assert model == "deepseek-v4", model
+        assert workspace not in ("", "\u2014"), workspace
 
 
 def test_tui_startup_info():

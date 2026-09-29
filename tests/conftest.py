@@ -50,6 +50,53 @@ def _restore_credential_env_vars() -> Iterator[None]:
             os.environ[name] = value
 
 
+@pytest.fixture
+def no_blocking_io(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Fail the test if the TUI makes a blocking call on the event loop.
+
+    BlockBuster raises ``BlockingError`` when a patched blocking call (file read,
+    subprocess, socket, ``time.sleep``) runs while an asyncio loop is active.
+    Nova's TUI shares that loop with the agent, so a synchronous read or
+    subprocess in a handler freezes the whole UI rather than one request.
+
+    Scoped to the ``novacode_cli.tui`` package, because BlockBuster only fires
+    when a frame from a scanned module is on the stack: a package scans its whole
+    directory, so this covers ``app.py``, ``screens.py`` and the rest while
+    leaving Textual's own internals alone.
+
+    Opt-in, NOT autouse, because the modal screens still do synchronous
+    filesystem work in some of their action handlers. Arming this run-wide today
+    fails ~25 tests that are unrelated to any change under review. Measured
+    sites, all in ``novacode_cli/tui/screens.py`` plus one callee:
+
+      - ``_create_agent``      -> ``ensure_project_agents_dir``, ``exists``, write
+      - ``_delete_agent``      -> unlink / rmtree
+      - ``_reload`` (skills)   -> ``skills_prefs.load_disabled`` -> ``exists``
+      - ``_reload`` (wiki)     -> ``WikiManager`` listing
+      - ``_enter_prune`` / ``_archive_marked`` -> prefs + moves
+      - ``_save`` (agents)     -> ``set_agent_tools`` writes ``agent.md``
+
+    Convert those the same way the preview readers were (a sync helper run with
+    ``asyncio.to_thread``, or a ``run_worker``), then make this autouse: the
+    scaffolding (including the marker below) is already in place.
+
+    A test that arms BlockBuster itself marks ``@pytest.mark.own_blockbuster_guard``
+    and this stands down: two BlockBusters patch the same functions, and
+    ``BlockBusterFunction.deactivate`` restores the captured original with no
+    reference count, so nesting them is unsafe.
+    """
+    if request.node.get_closest_marker("own_blockbuster_guard"):
+        yield
+        return
+    try:
+        from blockbuster import blockbuster_ctx
+    except ImportError:  # pragma: no cover - the guard is test-only
+        yield
+        return
+    with blockbuster_ctx(scanned_modules=["novacode_cli.tui"]):
+        yield
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _guard_the_real_user_config() -> Iterator[None]:
     """Fail the run if anything writes the developer's real Nova.config.json.

@@ -105,6 +105,60 @@ async def _drive_a_fan_out() -> dict:
     return out
 
 
+async def _seconds_until_visible(dock, *, deadline: float) -> float | None:
+    """Sample the dock's classes while time passes, the way a live turn does.
+
+    Deliberately no ``pilot.pause()`` and no sleep-for-the-paint-timer: the point is
+    to measure when the panel paints by itself, not to give it a chance to.
+    """
+    t0 = time.time()
+    while time.time() - t0 < deadline:
+        await asyncio.sleep(0.02)
+        if dock.has_class("active"):
+            return time.time() - t0
+    return None
+
+
+def test_a_running_row_is_visible_before_the_turn_ends():
+    """The panel is for reading *while* work runs, so assert the timing, not the result.
+
+    The other tests in this file sleep 0.15s (and in one case feed every completion)
+    before asserting, which also passes if the panel only ever paints once the turn is
+    over. This one asserts the panel becomes visible on its own, from a running row,
+    with no Done event and nothing else to trigger it, while the row is still running.
+    """
+    if not _HAS_TEXTUAL:
+        return
+
+    async def _run() -> tuple[float | None, bool, str | None, str]:
+        app = _app()
+        async with app.run_test(size=(120, 44)) as pilot:
+            for _ in range(4):
+                await pilot.pause()
+            dock = app.query_one("#subagents-dock")
+            assert not dock.has_class("active"), "the panel was visible before any dispatch"
+
+            await app._render(
+                ev.SubagentTask(
+                    task_id="t1", status="running", label="research: one", started_at=time.time()
+                )
+            )
+            visible_after = await _seconds_until_visible(dock, deadline=2.0)
+            still_running = app._subagent_rows["t1"].status == "running"
+            collapsed = dock.has_class("collapsed")
+            title = str(app.query_one("#subagents-title").render())
+        return visible_after, still_running, collapsed, title
+
+    visible_after, still_running, collapsed, title = asyncio.run(_run())
+
+    assert visible_after is not None, (
+        "the panel never became visible while a row was running: it is only appearing "
+        "once the work is done"
+    )
+    assert still_running, "the panel only painted after the row had already finished"
+    assert not collapsed, f"the panel painted folded shut while work was in flight: {title!r}"
+
+
 def test_a_fan_out_becomes_one_phase_with_a_row_per_task():
     if not _HAS_TEXTUAL:
         return
