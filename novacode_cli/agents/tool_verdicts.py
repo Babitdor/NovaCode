@@ -37,6 +37,7 @@ import logging
 import math
 import re
 import threading
+import time
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -708,6 +709,14 @@ _PAGE_SIZE = 32
 # bounded rather than unbounded: the oldest cycles are dropped when it is hit.
 MAX_CACHED_VERDICTS = 2_000
 
+# How long a scan of the store directory is reused before the read path looks
+# again. Reads happen on the UI's event loop (``ContextEdit.apply`` runs on every
+# model call), so the listing is memoised; this bounds how long a *different*
+# process writing to the same agent directory stays invisible to this one.
+# Missing a fresh cycle is safe -- an unscored result is kept, not cleared --
+# it only means less pruning for a moment.
+_LISTING_TTL_SECONDS = 2.0
+
 
 def result_key(message: ToolMessage) -> str:
     """Identity of a result: its id *and* its bytes.
@@ -734,6 +743,11 @@ class ToolVerdictCache:
     window, so removing the newest cycle is an ``unlink`` and reading is newest
     first. Window size bounds a cycle's size, which bounds every read.
 
+    Both halves of the read path are memoised (the directory scan and each
+    parsed cycle) because ``ContextEdit.apply`` reads on **every model call**,
+    synchronously, on the event loop the UI shares -- see
+    :meth:`_cycle_entries` for what that cost before.
+
     Every filesystem error is swallowed, following the ``token_cache.json``
     pattern in :mod:`novacode_cli.token_utils`: a cache that cannot be written
     must slow the feature down, never break a turn.
@@ -744,6 +758,12 @@ class ToolVerdictCache:
     window: int = MAX_VERDICT_WINDOW
     _memory: dict[str, float] = field(default_factory=dict)
     _loaded_cycle: int = -1
+    # Cycle files parsed this session, and the directory scan the read path is
+    # answering from. Both are for the same reason: reads run on the event loop
+    # the UI shares, so neither may cost the filesystem more than once.
+    _cycles: dict[int, dict[str, float]] = field(default_factory=dict)
+    _listing: list[tuple[int, Path]] | None = None
+    _listing_at: float = 0.0
 
     # ── paths ───────────────────────────────────────────────────────────
     @property
@@ -755,12 +775,30 @@ class ToolVerdictCache:
             return None
         return self.path.with_name(f"{self.path.stem}-{cycle}{self.path.suffix}")
 
-    def cycle_files(self) -> list[tuple[int, Path]]:
-        """Existing cycle files, highest cycle first, highest within a page."""
+    def cycle_files(self, *, fresh: bool = False) -> list[tuple[int, Path]]:
+        """Existing cycle files, highest cycle first, highest within a page.
+
+        Memoised for ``_LISTING_TTL_SECONDS``: a lookup that misses asks about
+        every cycle, so a fresh scan per lookup was a scan per *result in the
+        window*. ``fresh=True`` reads the directory now -- pruning deletes files
+        and must decide from the directory, not from the scan it is about to
+        replace.
+        """
         if self.path is None:
             return []
+        now = time.monotonic()
+        if fresh or self._listing is None or now - self._listing_at >= _LISTING_TTL_SECONDS:
+            self._listing = self._scan_cycle_files()
+            self._listing_at = now
+        return list(self._listing)
+
+    def _scan_cycle_files(self) -> list[tuple[int, Path]]:
+        """The directory, read once: existing cycles, highest first."""
+        path = self.path
+        if path is None:
+            return []
         found: list[tuple[int, Path]] = []
-        for candidate in self.path.parent.glob(f"{self.path.stem}-*{self.path.suffix}"):
+        for candidate in path.parent.glob(f"{path.stem}-*{path.suffix}"):
             tail = candidate.stem.rsplit("-", 1)[-1]
             try:
                 found.append((int(tail), candidate))
@@ -784,17 +822,22 @@ class ToolVerdictCache:
         subtracted a cycle budget from a page-size multiple, which is a unit
         mismatch that silently disabled pruning entirely.
         """
-        files = self.cycle_files()
+        files = self.cycle_files(fresh=True)
         if not files:
             return
         max_cycles = max(1, MAX_CACHED_VERDICTS // max(1, self._cycle_size))
         if len(files) <= max_cycles:
             return
+        removed = False
         for _, path in files[max_cycles:]:
             try:
                 path.unlink(missing_ok=True)
+                removed = True
             except OSError:
                 pass
+        if removed:
+            # The memoised listing still names files this call just deleted.
+            self._listing = None
 
     @property
     def _cycle_size(self) -> int:
@@ -812,6 +855,9 @@ class ToolVerdictCache:
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps({key: float(noul)}) + "\n")
+            # These bytes may have created the current cycle's file, so the
+            # memoised listing can no longer be trusted.
+            self._listing = None
             self._prune()
         except OSError:
             logger.debug("Could not append a verdict to %s", path, exc_info=True)
@@ -821,6 +867,28 @@ class ToolVerdictCache:
 
     # ── reading ─────────────────────────────────────────────────────────
     def _cycle_entries(self, cycle: int) -> dict[str, float]:
+        """The verdicts one cycle holds, read from disk at most once.
+
+        ``ContextEdit.apply`` runs on every model call, on the event loop the UI
+        shares, and a lookup that misses asks *every* cycle file. Measured on a
+        real store (67 cycles, a 30-result window, every result a miss) against
+        the pre-fix read path: 2,010 cycle parses and 6,030 filesystem calls per
+        model call, ~1.0 s of the loop, 13 s on the first call. With the memo:
+        one parse per cycle once, then nothing. A written cycle is append-only,
+        so a parse of it cannot go out of date in a way that matters -- bytes
+        appended by *another* process after this read are not seen, and a verdict
+        that looks absent is read as "keep", which is the direction this whole
+        edit fails in.
+        """
+        entries = self._cycles.get(cycle)
+        if entries is not None:
+            return entries
+        entries = self._read_cycle(cycle)
+        self._cycles[cycle] = entries
+        return entries
+
+    def _read_cycle(self, cycle: int) -> dict[str, float]:
+        """One cycle file, parsed. An unreadable or absent file is empty."""
         path = self._cycle_path(cycle)
         if path is None or not path.exists():
             return {}

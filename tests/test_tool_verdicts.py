@@ -9,6 +9,7 @@ because Nova clears results only -- see the module docstring.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -368,6 +369,97 @@ def test_old_cycles_are_pruned_to_bound_the_store(tmp_path) -> None:
     assert len(remaining) <= MAX_CACHED_VERDICTS, "the store stays bounded"
     assert min(remaining) > 1, "the oldest cycles are gone"
     assert cache.get(_result(f"c{cycles}", f"payload {cycles}")) == 0.5
+
+
+# ── the read path's cost ───────────────────────────────────────────────────
+
+
+def _count_filesystem_calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    """Count what the read path asks of the filesystem. ``monkeypatch`` undoes it."""
+    counts = {"open": 0, "exists": 0, "glob": 0}
+    real_open = Path.open
+    real_exists = Path.exists
+    real_glob = Path.glob
+
+    def counting_open(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        counts["open"] += 1
+        return real_open(self, *args, **kwargs)
+
+    def counting_exists(self, *args, **kwargs) -> bool:  # noqa: ANN001, ANN002, ANN003
+        counts["exists"] += 1
+        return real_exists(self, *args, **kwargs)
+
+    def counting_glob(self, pattern, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        counts["glob"] += 1
+        return real_glob(self, pattern, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", counting_open)
+    monkeypatch.setattr(Path, "exists", counting_exists)
+    monkeypatch.setattr(Path, "glob", counting_glob)
+    return counts
+
+
+def test_a_window_of_misses_reads_each_cycle_file_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The read path may cost the filesystem per *cycle*, never per result.
+
+    ``ContextEdit.apply`` calls this for every result in the window, on **every
+    model call**, synchronously, on the event loop the UI shares. Measured on a
+    real store before it was memoised -- 67 cycles, a 30-result window, every
+    result a miss: 2,010 cycle parses and 6,030 filesystem calls per model call,
+    ~1.0 s of the loop (13 s on the first, before the filesystem had cached the
+    directory). That is what "the TUI lags whenever the agent is working" turned
+    out to be, and a miss is the worst case because it asks about every cycle,
+    so that is what this drives.
+    """
+    path = tmp_path / "tool_verdicts.json"
+    cycles = 8
+    for cycle in range(1, cycles + 1):
+        (tmp_path / f"tool_verdicts-{cycle}.json").write_text(
+            json.dumps({f"unrelated-{cycle}": 0.1}) + "\n", encoding="utf-8"
+        )
+    cache = ToolVerdictCache(path=path)
+    counts = _count_filesystem_calls(monkeypatch)
+
+    window = [_result(f"c{index}", f"payload {index}") for index in range(30)]
+    assert [cache.get(message) for message in window] == [None] * len(window)
+    assert counts["open"] == cycles, (
+        f"{counts['open']} opens for {cycles} cycle files and {len(window)} results"
+    )
+    assert counts["exists"] == cycles, "and one stat each, not one per result"
+
+    # The next model call, with the same window: nothing is read again.
+    assert [cache.get(message) for message in window] == [None] * len(window)
+    assert counts["open"] == cycles, "the parse is kept for the session"
+    assert counts["glob"] <= 2, "the directory scan is reused, not repeated per lookup"
+
+
+def test_a_cycle_written_by_another_process_arrives_when_the_scan_expires(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The memo may not hide another session's verdicts for the rest of a session.
+
+    Two TUIs share an agent directory, so a verdict a second process writes has
+    to become visible here. Reads reuse the directory scan for
+    ``_LISTING_TTL_SECONDS``: inside that window the new cycle is invisible --
+    which fails open, an unscored result is *kept* -- and once it expires the
+    verdict is found, without going back to a filesystem call per result.
+    """
+    from novacode_cli.agents import tool_verdicts
+
+    path = tmp_path / "tool_verdicts.json"
+    cache = ToolVerdictCache(path=path)
+    message = _result("c1", "payload")
+    assert cache.get(message) is None, "the scan is read and memoised"
+
+    # Another process scores it, appending to a cycle this one has never listed.
+    (tmp_path / "tool_verdicts-1.json").write_text(
+        json.dumps({result_key(message): 0.2}) + "\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(tool_verdicts, "_LISTING_TTL_SECONDS", 0.0)
+
+    assert cache.get(message) == 0.2
 
 
 # ── the window ─────────────────────────────────────────────────────────────
