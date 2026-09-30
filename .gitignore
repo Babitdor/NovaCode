@@ -99,6 +99,11 @@ dmypy.json
 # Playwright MCP runtime logs
 .playwright-mcp/
 
+# Vendored reference material: kept on disk, deliberately out of history.
+# Root-anchored so a future novacode_cli/code/ package is not caught by these.
+/code/
+/fast-jev-compaction/
+
 # Temporary files
 *.tmp
 *.temp
