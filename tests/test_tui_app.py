@@ -1053,7 +1053,8 @@ async def _drive_home_banner():
     from novacode_cli.tui.app import MatrixRain, NovaApp
     from novacode_cli.ui.ui_elements import TokenTracker
 
-    # The config banner exists and carries the NOVA name.
+    # The config banner exists and carries the NOVA name in the wordmark and the
+    # portrait's own caption (the standalone version caption no longer repeats it).
     assert "NOVA" in get_responsive_ascii(width=80)
 
     app = NovaApp(

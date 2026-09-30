@@ -69,19 +69,30 @@ def test_wide_art_is_the_lockup_and_narrow_art_uses_the_compact_mark():
     assert any("\u2800" <= ch <= "\u28ff" for ch in narrow), "portrait dropped at 50 cols"
 
 
-def test_art_always_contains_a_literal_nova():
-    """The block art spells NOVA in box glyphs, so the *text* must carry it too.
+def test_the_lockup_does_not_repeat_the_name_it_draws():
+    """No tier spells the name twice: the wordmark *is* NOVA, so text must not repeat it.
 
-    ``tests/test_tui_app.py`` asserts ``"NOVA" in get_responsive_ascii(...)``;
-    that only holds because the caption is a real word.
+    The lockup used to end with a full-width caption reading
+    ``NOVA · a terminal coding agent · v<version>``: the wordmark directly above
+    it already spells NOVA in 42 cells, so two thirds of the caption were a
+    second and third telling of what the art shows. The tier now carries the
+    version alone.
     """
-    for width in (20, 40, 59, 60, 80, 200):
-        assert "NOVA" in brand.art_for(width)
+    wide = brand.art_for(200, "9.9.9")
+    assert "NOVA" not in wide, "the lockup repeats its own name in text"
+    assert "v9.9.9" in wide
+
+    # The narrow tiers still spell the name in text -- they have no wordmark.
+    assert "NOVA" in brand.art_for(20)
+    assert "NOVA" in brand.art_for(50)
 
 
-def test_tagline_line_appends_version_only_when_given():
-    assert brand.tagline_line() == f"NOVA · {brand.TAGLINE}"
-    assert brand.tagline_line("9.9.9").endswith("v9.9.9")
+def test_version_line_is_just_the_version():
+    """The caption collapsed to the version: the other two thirds repeated the art."""
+    assert brand.version_line() == ""
+    assert brand.version_line("9.9.9") == "v9.9.9"
+    assert "NOVA" not in brand.version_line("9.9.9")
+    assert brand.TAGLINE not in brand.version_line("9.9.9")
 
 
 # ── the accent ──────────────────────────────────────────────────────────────

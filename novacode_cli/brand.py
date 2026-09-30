@@ -17,10 +17,13 @@ Two defects prompted this module:
 Layout: the art is **one lockup**, centred as a unit --::
 
     <portrait>   <wordmark>
-                 <tagline>
+                 v<version>
 
-with the portrait kept and the tagline in its own column beside the wordmark,
-rather than indented to a ragged gutter part-way into the portrait.
+with the portrait kept, and the version alone under the wordmark rather than a
+caption row running the width of the lockup. The wordmark already spells ``NOVA``
+in box glyphs, so a trailing ``NOVA · a terminal coding agent · v<version>`` line
+repeats the lockup's own ink twice over and is gone; only the version remains,
+because it is the one fact the art cannot draw.
 
 Deliberately **Textual-free**: ``config/config.py`` renders the pre-TUI boot
 screen, and importing Textual there would drag it into the startup import graph
@@ -49,7 +52,7 @@ __all__ = [
     "get_accent_hex",
     "lockup",
     "responsive_art",
-    "tagline_line",
+    "version_line",
     "wordmark",
 ]
 
@@ -89,17 +92,45 @@ def compact_mark() -> str:
     return "◆ NOVA"
 
 
-def tagline_line(version: str | None = None) -> str:
-    """The caption under the art: name, tagline, and version.
+def version_line(version: str | None = None) -> str:
+    """The caption under the wordmark: ``v<version>``, or empty without one.
 
-    Carries a literal ``NOVA`` on purpose -- the block art spells NOVA out of
-    box-drawing glyphs, so anything searching the *text* of the banner needs one
-    real occurrence of the name.
+    Just the version. The lockup's old caption was
+    ``NOVA · a terminal coding agent · v<version>``, two thirds of which repeated
+    what the art above it already draws -- the wordmark spells NOVA in 42 cells.
     """
-    parts = ["NOVA", TAGLINE]
-    if version:
-        parts.append(f"v{version}")
-    return " · ".join(parts)
+    return f"v{version}" if version else ""
+
+
+def _lockup_rows(version: str | None) -> list[str]:
+    """The lockup rows, with *version*'s caption in the right-hand column."""
+    column = [_pad(row, _COLUMN_WIDTH) for row in WORDMARK_LINES]
+    blank, caption = " " * _COLUMN_WIDTH, _pad(version_line(version), _COLUMN_WIDTH)
+    # The caption sits directly under the wordmark when there is one, and takes
+    # the blank spacer row's place when there is not, so a versionless lockup is
+    # exactly as tall as a versioned one -- the rain grid must not resize when a
+    # version appears.
+    column.append(blank)
+    column.append(caption)
+
+    height = len(_PORTRAIT)
+    if len(column) > height:
+        msg = f"caption column is {len(column)} rows, portrait is {height}"
+        raise ValueError(msg)
+    # The wordmark is pinned to the portrait's **top** edge rather than centred
+    # against it: the two blocks read as one lockup only when their first rows
+    # align, and centring a 6-row wordmark against a 12-row portrait would float
+    # NOVA into the middle of the face. The rest of the column is blank.
+    column.extend(" " * _COLUMN_WIDTH for _ in range(height - len(column)))
+
+    rows: list[str] = []
+    for i, portrait_row in enumerate(_PORTRAIT):
+        row = _pad(portrait_row, PORTRAIT_WIDTH) + " " * _GAP + column[i]
+        if cell_len(row) != LOCKUP_WIDTH:  # pragma: no cover - defensive
+            msg = f"row {i} is {cell_len(row)} cells, expected {LOCKUP_WIDTH}"
+            raise ValueError(msg)
+        rows.append(row)
+    return rows
 
 
 # ── the portrait ────────────────────────────────────────────────────────────
@@ -119,34 +150,44 @@ _TRANSCRIPT_INSET = 4
 #: Interior blanks are braille blanks (U+2800), which the rain compositor paints;
 #: only the padding is a real space, and only real spaces are transparent.
 _PORTRAIT: tuple[str, ...] = (
-    "⣿⣿⣿⣿⣟⠊⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⢿⣿  ",
-    "⣿⣿⣿⡏⠁⠀⠀⠀⠀⠀⠀⢀⣰⣶⣶⡄⠀⠀⠀⠀⠀⠀⢀⠀⠀⠈⢻  ",
-    "⣿⣿⣿⠁⠄⠀⠀⠀⠀⠀⣤⣾⣿⣿⣿⣿⡂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠽ ",
-    "⣿⣿⡏⣸⠀⠀⠀⠀⢀⣼⣿⣿⣿⣿⣿⣿⣿⡆⠀⠀⠈⠀⠀⠀⠀⠀⠀⠰ ",
-    "⣿⣿⡇⠁⠀⠀⠀⣤⣍⣙⣿⣿⣏⣠⠄⠲⠲⠦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢻",
-    "⣿⣿⠁⠀⠀⠀⠀⠀⢤⠙⣿⣿⣿⣇⣀⡐⢂⣠⡄⠠⠀⠀⠀⠀⠀⠀⡀⢠⢸",
-    "⣿⣿⠀⠀⠐⠀⣶⣷⣷⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀⠀⠐⠈⠀⠀⠀⠉⠘⣼",
-    "⣿⣿⠀⠈⠀⠀⣿⣿⣿⡿⣿⠿⢿⣿⣿⣿⣿⣿⣿⣧⡀⠀⢄⠲⠀⠀⠀⣱ ",
-    "⣿⣿⡆⠀⠀⠀⠈⣿⣿⣷⣶⣼⣾⣿⣿⣿⣿⣿⣿⣿⣷⠂⠀⠀⠂⢀⢲  ",
-    "⣿⣿⣿⡆⠀⠀⠀⠙⣿⠋⠠⠄⢀⠉⣹⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⣿  ",
-    "⣿⣿⣿⣿⣦⠀⠀⠀⠘⣿⣤⣤⣶⣿⣿⣿⣿⣿⠟⣛⡽⠀⠀⠀⠠⣸   ",
-    "⣿⣿⣿⣿⣿⣷⡀⠀⠀⠈⠻⣿⣿⣿⠿⠛⠋⠐⠚⠛⠃   ⣰⣿   ",
+    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⠿⠿⠻⠟⠿⠿⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿",
+    "⣿⣿⣿⣿⣿⣿⡟⠋⢔⠈⠀⠀⠀⠀⠀⠀⠐⠉⠻⣿⣿⣿⣿⣿⣿",
+    "⣿⣿⣿⣿⣿⠏⠀⠀⠀⠢⢄⡀⠀⠀⠀⠀⠀⠀⠀⣉⢿⣿⣿⣿⣿",
+    "⣿⣿⣿⣿⠃⠀⠘⠄⠀⠀⠀⠑⠡⡆⠀⡀⣦⡐⠞⠈⢌⢻⣿⣿⣿",
+    "⣿⣿⣿⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⡠⢀⣴⣿⡷⢄⠀⠀⡌⢿⣿⣿",
+    "⣿⣿⣿⠂⠀⠀⠀⠀⠀⠀⠀⠀⣀⣥⣬⣿⣿⡕⠉⠂⠀⠠⢸⣿⣿",
+    "⣿⣿⡟⠀⠀⠀⠀⠀⠀⠀⣴⡋⣥⠀⢠⣿⣿⣅⣀⡃⠀⠀⠍⢻⣿",
+    "⣿⣿⠀⠀⠀⠀⠀⢷⡰⢄⢻⣿⣞⣾⣿⣿⣿⣸⣿⠆⠀⠀⠈⡌⣿",
+    "⡿⠁⠀⠀⠀⠀⠀⠀⠉⠁⡱⡻⡟⢿⣿⣭⣽⣾⠟⠀⠀⠀⠀⠘⡘",
+    "⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠑⣽⣾⣳⣯⡙⠛⠁⠀⠀⠀⠆⠀⠀⠁",
+    "⣧⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠙⢿⣿⣿⡆⠀⠀⠀⠀⠀⠀⢀⣾",
+    "⣿⣷⣤⠀⠀⠀⠀⠀⠀⠀⠀⣠⠻⡄⣿⣿⡇⠄⠀⠀⠀⠀⢐⢻⣿",
+    "⣿⣿⣇⢿⣿⣶⣄⠀⠀⠀⠀⠘⠿⢸⣿⣿⡇⠀⠀⠀⠀⢀⣿⢗⣽",
+    "⣿⣿⣿⣧⣝⠿⣿⣦⠀⠀⠀⠀⢀⣾⣿⣿⠁⠀⠀⠀⠀⢋⣵⣿⣿",
+    "⣿⣿⣿⣿⣿⣿⣶⣮⣥⣀⣀⣀⣼⣿⣿⣿⣀⣀⣤⣶⣿⣿⣿⣿⣿",
 )
 
-#: The original art's prose tagline, kept verbatim.
-_LOCKUP_TAGLINE: tuple[str, ...] = (
-    "~ Secrets, Locks, Firewalls",
-    "Everything has a weakness.",
-    "The right code just knows where to look.",
-    "♥ NOVA ~",
-)
+#: The lockup's right-hand column carries the wordmark and nothing else. The
+#: original art's four-line prose tagline used to sit under it, but it described
+#: the same tool a second time behind the wordmark's own name. Empty on purpose:
+#: the tuple is the seam a future caption would use, and ``lockup()`` still
+#: honours it.
+_LOCKUP_TAGLINE: tuple[str, ...] = ()
+
+#: The version ``lockup()`` renders. The shipped startup art is versionless --
+#: only ``art_for(width, version)`` supplies one -- so this stays ``None`` and
+#: exists so the layout tests and ad-hoc renders can exercise the caption slot.
+_LOCKUP_VERSION: str | None = None
 
 #: The one-line name, for terminals too narrow even for the portrait.
 _NAME_LINE = "♥ NOVA ~"
 
-#: The right-hand column must hold the widest of the wordmark and the tagline.
-_TAGLINE_WIDTH = max(cell_len(line) for line in _LOCKUP_TAGLINE)
-_COLUMN_WIDTH = max(WORDMARK_WIDTH, _TAGLINE_WIDTH)
+#: The right-hand column must hold the version caption as well as the wordmark.
+#: ``v<version>`` is well under the wordmark's 42 cells, but the width is
+#: computed rather than assumed so an over-long version cannot overflow the field
+#: and raise.
+_CAPTION_WIDTH = max(cell_len(line) for line in (" ".join(_LOCKUP_TAGLINE), version_line("0.0.0")))
+_COLUMN_WIDTH = max(WORDMARK_WIDTH, _CAPTION_WIDTH)
 
 #: The lockup's total width -- uniform across every row, by construction.
 LOCKUP_WIDTH = PORTRAIT_WIDTH + _GAP + _COLUMN_WIDTH
@@ -155,7 +196,7 @@ LOCKUP_WIDTH = PORTRAIT_WIDTH + _GAP + _COLUMN_WIDTH
 def _pad(text: str, width: int) -> str:
     """Right-pad *text* to *width* **cells** with real spaces.
 
-    Uses :func:`rich.cells.cell_len` rather than ``len``: the tagline contains
+    Uses :func:`rich.cells.cell_len` rather than ``len``: a caption may carry
     U+2665, and any character where the two disagree would be padded to a width
     that is uniform in Python and ragged on screen. (U+2665 followed by its
     U+FE0E variation selector is exactly such a pair -- two codepoints, one
@@ -175,7 +216,7 @@ def _pad(text: str, width: int) -> str:
 
 @lru_cache(maxsize=1)
 def lockup() -> tuple[str, ...]:
-    """The full art: portrait and wordmark side by side, tagline beneath.
+    """The full art: portrait and wordmark side by side, caption beneath.
 
     Returns:
         One string per row, every row exactly :data:`LOCKUP_WIDTH` cells wide.
@@ -184,35 +225,14 @@ def lockup() -> tuple[str, ...]:
         ValueError: If a source block is wider than its field, meaning the art
             and this module's geometry have diverged.
     """
-    column = [_pad(row, _COLUMN_WIDTH) for row in WORDMARK_LINES]
-    column.append(" " * _COLUMN_WIDTH)
-    column.extend(_pad(line.center(_COLUMN_WIDTH), _COLUMN_WIDTH) for line in _LOCKUP_TAGLINE)
-
-    height = len(_PORTRAIT)
-    if len(column) > height:
-        msg = f"caption column is {len(column)} rows, portrait is {height}"
-        raise ValueError(msg)
-    # Centre the column against the portrait so the lockup's optical centre
-    # matches its geometric centre.
-    top = (height - len(column)) // 2
-
-    rows: list[str] = []
-    for i, portrait_row in enumerate(_PORTRAIT):
-        j = i - top
-        right = column[j] if 0 <= j < len(column) else " " * _COLUMN_WIDTH
-        row = _pad(portrait_row, PORTRAIT_WIDTH) + " " * _GAP + right
-        if cell_len(row) != LOCKUP_WIDTH:  # pragma: no cover - defensive
-            msg = f"row {i} is {cell_len(row)} cells, expected {LOCKUP_WIDTH}"
-            raise ValueError(msg)
-        rows.append(row)
-    return tuple(rows)
+    return tuple(_lockup_rows(_LOCKUP_VERSION))
 
 
 @lru_cache(maxsize=1)
 def compact_art() -> tuple[str, ...]:
     """The portrait with the name beneath it, for terminals too narrow to lockup.
 
-    Drops the wordmark and the prose tagline, which cannot fit beside the
+    Drops the wordmark and the version caption, which cannot fit beside the
     portrait, but keeps the portrait itself -- the art is the point of the
     banner, so the narrow variant should not throw it away.
 
@@ -230,7 +250,10 @@ def art_for(width: int | None = None, version: str | None = None) -> str:
 
     Args:
         width: Terminal width in cells. ``None`` is treated as 80.
-        version: Optional version, appended as a caption row under the lockup.
+        version: Optional version, printed as a caption just under the wordmark.
+            This is the only caption the lockup gets: the appended
+            ``NOVA · a terminal coding agent · v<version>`` row was dropped as a
+            repeat of the wordmark the art draws directly above it.
 
     Returns:
         The lockup on wide terminals, the portrait alone when the lockup cannot
@@ -243,11 +266,7 @@ def art_for(width: int | None = None, version: str | None = None) -> str:
     columns = width or 80
     usable = columns - _TRANSCRIPT_INSET
     if usable >= LOCKUP_WIDTH:
-        rows = [*lockup()]
-        if version:
-            caption = tagline_line(version)
-            rows.append(_pad(caption.center(LOCKUP_WIDTH), LOCKUP_WIDTH))
-        return "\n" + "\n".join(rows) + "\n"
+        return "\n" + "\n".join(_lockup_rows(version)) + "\n"
     if usable >= PORTRAIT_WIDTH:
         return "\n" + "\n".join(compact_art()) + "\n"
     return f"\n{compact_mark()}\n"

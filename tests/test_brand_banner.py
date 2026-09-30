@@ -86,16 +86,51 @@ def test_lockup_keeps_the_portrait_beside_the_wordmark() -> None:
         assert portrait_end < wordmark_start, f"blocks interleaved: {row!r}"
 
 
-def test_lockup_has_the_tagline_beneath_the_wordmark() -> None:
-    """The caption must sit in the right-hand column, not in the portrait."""
-    rows = brand.lockup()
-    caption_rows = [r for r in rows if "weakness" in r]
-    assert len(caption_rows) == 1, "the caption line is missing from the lockup"
-    caption = caption_rows[0]
-    # The caption starts to the right of the portrait's 29-column field.
-    assert caption.index("Everything") >= brand.PORTRAIT_WIDTH
+def test_lockup_captions_the_wordmark_with_only_the_version() -> None:
+    """The caption collapsed to the version, and it sits under the wordmark.
+
+    It used to be ``NOVA · a terminal coding agent · v<version>`` on its own
+    full-width row beneath the whole lockup: the wordmark directly above already
+    spells NOVA, and the tagline described the tool a third time, so two thirds
+    of the row were redundant against the art itself. It now carries the one
+    fact the art cannot show, in the right-hand column under the wordmark.
+    """
+    rows = [r for r in brand.art_for(200, "9.9.9").split("\n") if r]
+    assert brand.TAGLINE not in "\n".join(rows), "the tagline came back"
+    # Exactly one caption row, and its version sits right of the portrait field.
+    caption_rows = [r for r in rows if "v9.9.9" in r]
+    assert len(caption_rows) == 1, "the version caption is missing or repeated"
+    assert caption_rows[0].index("v9.9.9") >= brand.PORTRAIT_WIDTH
+    # ...directly under the wordmark: the wordmark's last row is above it.
+    wordmark_rows = [i for i, r in enumerate(rows) if "\u2588" in r or "\u255a\u2550" in r]
+    assert wordmark_rows, "no wordmark rows"
+    assert max(wordmark_rows) < rows.index(caption_rows[0]), "caption is not under the wordmark"
     # ...and its row is still full width, so the edge stays straight.
-    assert cell_len(caption) == brand.LOCKUP_WIDTH
+    assert cell_len(caption_rows[0]) == brand.LOCKUP_WIDTH
+
+
+def test_the_wordmark_is_pinned_to_the_portraits_top_edge() -> None:
+    """The two blocks read as one lockup only if their first rows line up.
+
+    Dropping the tagline shortened the right-hand column; centring what is left
+    against the 12-row portrait would float the wordmark into the middle of the
+    face instead of aligning it with the portrait's crown.
+    """
+    rows = brand.lockup()
+    top_wordmark = min(i for i, r in enumerate(rows) if "\u2588" in r)
+    assert top_wordmark == 0, "the wordmark drifted off the portrait's top row"
+
+
+def test_a_versionless_lockup_is_the_same_shape_as_a_versioned_one() -> None:
+    """The rain grid must not resize when a version appears.
+
+    The caption takes the blank spacer row's place rather than adding a row, so
+    the tier chosen for a width is identical with and without a version.
+    """
+    plain = [r for r in brand.art_for(200).split("\n") if r]
+    versioned = [r for r in brand.art_for(200, "9.9.9").split("\n") if r]
+    assert len(plain) == len(versioned)
+    assert "9.9.9" not in brand.art_for(200)
 
 
 def test_narrow_tiers_keep_the_portrait_and_fit() -> None:
