@@ -321,3 +321,50 @@ def test_remote_async_tasks_show_in_the_same_panel():
     assert out["phases"] == ["async"]
     assert "doc-writer" in out["body"]
     assert "auditor" in out["body"]
+
+
+async def _drive_a_dropped_paint_timer() -> dict:
+    """A coalescing timer that is dropped must not wedge the panel.
+
+    Textual runs a ``set_timer`` callback as a ``call_next`` job, so it is lost if
+    the app stops draining those (the callback never runs, and the handle it would
+    have cleared stays set). Gating the coalescer on that handle means one dropped
+    timer silently disables every later repaint, for the rest of the session.
+    """
+    out: dict = {}
+    app = _app()
+    async with app.run_test(size=(120, 44)) as pilot:
+        for _ in range(4):
+            await pilot.pause()
+        dock = app.query_one("#subagents-dock")
+        await app._render(_task("first", status="running", label="research: one"))
+        # Drop the pending one-shot the way Textual does when it stops
+        # processing messages: the timer is stopped and its callback never runs.
+        timer = app._subagents_paint_timer
+        out["had_timer"] = timer is not None
+        if timer is not None:
+            timer.stop()
+        # Past the coalescing window, so a later dispatch is a *new* schedule.
+        await asyncio.sleep(0.2)
+        await pilot.pause()
+        out["painted_after_drop"] = dock.has_class("active")
+
+        await app._render(_task("second", status="running", label="research: two"))
+        await asyncio.sleep(0.3)
+        await pilot.pause()
+        out["active"] = dock.has_class("active")
+        out["body"] = str(app.query_one("#subagents-body").render())
+    return out
+
+
+def test_a_dropped_paint_timer_does_not_wedge_the_panel():
+    if not _HAS_TEXTUAL:
+        return
+    out = asyncio.run(_drive_a_dropped_paint_timer())
+
+    assert out["had_timer"], "the first dispatch scheduled no coalescing timer at all"
+    assert out["active"], (
+        "a dropped coalescing timer left the panel permanently unpainted: the "
+        "next dispatch could not schedule a repaint"
+    )
+    assert "research: two" in out["body"], out["body"]

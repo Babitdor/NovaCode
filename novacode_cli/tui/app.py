@@ -1543,6 +1543,13 @@ class NovaApp(App):
         self._subagents_stale = False
         self._subagents_rows_by_line: list[tuple[str | None, str | None]] = []
         self._subagents_paint_timer: Any = None
+        #: Monotonic deadline for the coalesced repaint. The coalescer is gated on
+        #: this rather than on the timer handle, because the handle is cleared only
+        #: by the callback: a one-shot timer dropped by Textual (its callback is a
+        #: ``call_next`` job, so it is lost if the app stops processing messages)
+        #: would otherwise stay set and block every later repaint for the rest of
+        #: the session. A deadline simply expires.
+        self._subagents_paint_due: float = 0.0
         self._subagents_tick: Any = None
 
     def _current_agent_info(self) -> tuple[str, str]:
@@ -3434,14 +3441,23 @@ class NovaApp(App):
         return rows
 
     def _schedule_subagents_paint(self) -> None:
-        """Coalesce repaints: a fan-out delivers its start events in a burst."""
-        if self._subagents_paint_timer is not None:
+        """Coalesce repaints: a fan-out delivers its start events in a burst.
+
+        Gated on a deadline, not on the timer handle: the handle can only be
+        cleared by the callback, so a one-shot timer that never runs would block
+        every later repaint for the rest of the session. A deadline expires, so
+        the worst case is one skipped frame.
+        """
+        now = time.monotonic()
+        if now < self._subagents_paint_due:
             return
+        self._subagents_paint_due = now + 0.1
         self._subagents_paint_timer = self.set_timer(0.1, self._paint_subagents)
 
     def _paint_subagents(self) -> None:
         """The single place the panel is written."""
         self._subagents_paint_timer = None
+        self._subagents_paint_due = 0.0
         try:
             dock = self._w("#subagents-dock", SubagentsDock)
             title = self._w("#subagents-title", Static)

@@ -52,6 +52,7 @@ from novacode_cli.core.subagent_tracking import (
     get_status_icon,
 )
 from novacode_cli.core.subagent_tasks import (
+    task_from_async_entry,
     task_from_custom_event,
     task_from_sync_completion,
     task_from_sync_dispatch,
@@ -416,6 +417,10 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
             pending_interrupts: list[tuple[str, str, Any]] = []
             subagent_tracker.clear()
             current_ai_message_id = None
+            # task_id -> last status emitted for an async (remote) dispatch. The
+            # launch/check/update tools each write the task back into graph state,
+            # so the same entry arrives repeatedly; only a status change is news.
+            emitted_async: dict[str, str] = {}
 
             _current_stream_gen = scoped_stream(
                 agent.astream(
@@ -467,6 +472,27 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                                     agent_name=_node_state.get("agent_name"),
                                 )
                                 break
+
+                    # Async (remote) subagents, at dispatch rather than at turn end.
+                    # `start_async_task` returns a Command whose state update carries
+                    # the new task, so the row is available here the moment the
+                    # launch tool returns. The Done-time watcher is the only other
+                    # source, which is why these rows used to appear a whole turn
+                    # late. It still owns completion notifications (6s polling).
+                    for _node_state in data.values():
+                        if not isinstance(_node_state, dict):
+                            continue
+                        _async_tasks = _node_state.get("async_tasks")
+                        if not isinstance(_async_tasks, dict):
+                            continue
+                        for _entry in _async_tasks.values():
+                            _row = task_from_async_entry(_entry, now=time.time())
+                            if _row is None:
+                                continue
+                            if emitted_async.get(_row.task_id) == _row.status:
+                                continue
+                            emitted_async[_row.task_id] = _row.status
+                            yield _row
 
                     if "__interrupt__" in data:
                         interrupts: list[Interrupt] = data["__interrupt__"]

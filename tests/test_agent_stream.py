@@ -991,6 +991,156 @@ def test_a_held_lease_does_not_block_the_turn():
     assert isinstance(evts[-1], ev.Done), "turn did not complete while the lease was held"
 
 
+def test_quickjs_custom_events_become_panel_rows():
+    """The eval fan-out's own events reach the panel, live.
+
+    ``langchain-quickjs`` publishes one ``subagent`` event per ``task()`` dispatch
+    on LangGraph's ``custom`` stream. Nothing else in the loop reads that stream,
+    so without this branch a fan-out produced no panel rows at all while it ran.
+    """
+
+    class Agent:
+        async def aget_state(self, config):
+            return _State([])
+
+        async def astream(self, inp, **kw):
+            assert "custom" in kw.get("stream_mode", []), (
+                "the loop stopped subscribing to the custom stream"
+            )
+            yield (
+                (),
+                "custom",
+                {
+                    "type": "subagent",
+                    "phase": "start",
+                    "id": "ptc_task_ab12cd34",
+                    "eval_id": "call_eval_1",
+                    "subagent_type": "researcher",
+                    "label": "research: docling",
+                    "description": "research: docling",
+                },
+            )
+            yield (
+                (),
+                "custom",
+                {
+                    "type": "subagent",
+                    "phase": "complete",
+                    "id": "ptc_task_ab12cd34",
+                    "eval_id": "call_eval_1",
+                    "duration_ms": 33600,
+                },
+            )
+            # Middleware writing anything else to the custom stream must cost
+            # nothing: a foreign type, and a payload that is not even a mapping.
+            yield ((), "custom", {"type": "some_other_middleware"})
+            yield ((), "custom", "not a dict")
+
+        async def aupdate_state(self, **kw):
+            pass
+
+    rows = [e for e in _collect(Agent()) if isinstance(e, ev.SubagentTask)]
+
+    assert [r.status for r in rows] == ["running", "done"], rows
+    assert rows[0].task_id == "ptc_task_ab12cd34"
+    # eval_id is the phase, which is what groups one fan-out.
+    assert rows[0].phase_id == "call_eval_1"
+    assert rows[0].phase_kind == "eval"
+    assert rows[0].label == "research: docling"
+    # The completing event carries the duration the bridge measured.
+    assert rows[1].duration_ms == 33600
+
+
+def test_sync_task_dispatch_becomes_a_panel_row_while_it_runs():
+    """A blocking ``task`` call is on the panel from the moment it is dispatched."""
+
+    class Agent:
+        async def aget_state(self, config):
+            return _State([])
+
+        async def astream(self, inp, **kw):
+            yield (
+                (),
+                "messages",
+                (
+                    _Chunk(
+                        "m1",
+                        [
+                            {
+                                "type": "tool_call_chunk",
+                                "name": "task",
+                                "id": "tc_task_1",
+                                "args": {
+                                    "description": "review auth.py",
+                                    "subagent_type": "reviewer",
+                                },
+                                "index": 0,
+                            }
+                        ],
+                    ),
+                    {},
+                ),
+            )
+
+        async def aupdate_state(self, **kw):
+            pass
+
+    rows = [e for e in _collect(Agent()) if isinstance(e, ev.SubagentTask)]
+
+    assert len(rows) == 1, rows
+    assert rows[0].status == "running"
+    assert rows[0].phase_kind == "direct"
+    assert rows[0].task_id == "tc_task_1"
+    assert rows[0].subagent_type == "reviewer"
+    assert rows[0].label == "review auth.py"
+
+
+def test_async_subagents_appear_at_dispatch_not_at_turn_end():
+    """A remote subagent's row is emitted when ``start_async_task`` returns.
+
+    deepagents' launch tool returns ``Command(update={"async_tasks": ...})``, so
+    the entry is in the ``updates`` stream at tool time. Ingesting only from the
+    Done-time watcher is why these rows used to arrive a whole turn late.
+    """
+
+    def entry(status):
+        return {
+            "task_id": "thread-abc123",
+            "agent_name": "code-review-agent",
+            "thread_id": "thread-abc123",
+            "status": status,
+            "created_at": "2026-09-29T10:00:00Z",
+        }
+
+    class Agent:
+        async def aget_state(self, config):
+            return _State([])
+
+        async def astream(self, inp, **kw):
+            yield (
+                (),
+                "updates",
+                {"tools": {"messages": [], "async_tasks": {"thread-abc123": entry("running")}}},
+            )
+            # Every later poll rewrites the same entry; only a status change is news.
+            yield ((), "updates", {"tools": {"async_tasks": {"thread-abc123": entry("running")}}})
+            yield ((), "updates", {"tools": {"async_tasks": {"thread-abc123": entry("success")}}})
+
+        async def aupdate_state(self, **kw):
+            pass
+
+    rows = [e for e in _collect(Agent()) if isinstance(e, ev.SubagentTask)]
+
+    assert [r.status for r in rows] == ["running", "done"], rows
+    assert rows[0].task_id == "async:thread-abc123"
+    assert rows[0].phase_kind == "async"
+    assert rows[0].phase_id == "async"
+    assert rows[0].subagent_type == "code-review-agent"
+    # Running rows age against the clock; a finished one carries a duration.
+    assert rows[0].duration_ms is None
+    assert rows[1].duration_ms is not None
+
+
 if __name__ == "__main__":
     test_happy_path_text_tool_todo()
     test_question_interrupt_resumes()
@@ -998,4 +1148,7 @@ if __name__ == "__main__":
     test_plan_auto_approve_completes_turn()
     test_policy_denied_retry_loop_is_bounded()
     test_user_rejection_does_not_trip_the_guard()
+    test_quickjs_custom_events_become_panel_rows()
+    test_sync_task_dispatch_becomes_a_panel_row_while_it_runs()
+    test_async_subagents_appear_at_dispatch_not_at_turn_end()
     print("ALL TESTS PASSED")
