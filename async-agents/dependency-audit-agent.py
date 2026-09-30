@@ -18,6 +18,10 @@ from typing import Any
 from deepagents import create_deep_agent
 from deepagents.backends.filesystem import FilesystemBackend
 from langchain_core.tools import tool
+from novacode_cli.agents.async_context import (
+    AsyncModelOverrideMiddleware,
+    NovaAsyncContext,
+)
 from novacode_cli.config.model_create import build_async_agent_model
 
 
@@ -130,6 +134,10 @@ def _build_agent() -> Any:
         tools=tools,
         system_prompt=SYSTEM_PROMPT,
         backend=backend,
+        # Let a dispatch name the model to run on (see novacode_cli.agents.async_context).
+        # The environment still decides when a run arrives without a context.
+        middleware=[AsyncModelOverrideMiddleware()],
+        context_schema=NovaAsyncContext,
     )
 
 

@@ -24,6 +24,10 @@ from deepagents.backends import CompositeBackend
 from deepagents.backends.filesystem import FilesystemBackend
 from deepagents.backends.store import StoreBackend
 from langchain_core.tools import tool
+from novacode_cli.agents.async_context import (
+    AsyncModelOverrideMiddleware,
+    NovaAsyncContext,
+)
 from novacode_cli.config.model_create import build_async_agent_model
 from langgraph.store.memory import InMemoryStore
 
@@ -193,6 +197,10 @@ def _resolve_model() -> Any:
     Provider and model come from the environment (``ASYNC_AGENT_PROVIDER``,
     ``ASYNC_AGENT_MODEL``, falling back to ``DOC_AGENT_MODEL``); Ollama stays the
     default. See :func:`novacode_cli.config.model_create.build_async_agent_model`.
+
+    A *dispatch* may name the model to run on instead, by way of the run's context (see
+    :mod:`novacode_cli.agents.async_context`). This stays the last word when no context
+    arrives, so a deployment driven only by ``.env`` is unaffected.
     """
     return build_async_agent_model()
 
@@ -221,6 +229,10 @@ def _build_agent() -> Any:
         tools=tools,
         system_prompt=SYSTEM_PROMPT,
         backend=backend,
+        # Let a dispatch name the model to run on (see novacode_cli.agents.async_context).
+        # The environment still decides when a run arrives without a context.
+        middleware=[AsyncModelOverrideMiddleware()],
+        context_schema=NovaAsyncContext,
     )
 
     return agent
