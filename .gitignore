@@ -103,6 +103,10 @@ dmypy.json
 # Root-anchored so a future novacode_cli/code/ package is not caught by these.
 /code/
 /fast-jev-compaction/
+# Check/ is a copy of the deepagents-code CLI's launcher (LangChain, MIT,
+# github.com/langchain-ai/deepagents). Nothing imports it: it is the design
+# blueprint that novacode_cli/agents/server_launcher.py was adapted from.
+/Check/
 
 # Temporary files
 *.tmp
