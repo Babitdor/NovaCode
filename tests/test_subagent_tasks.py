@@ -278,7 +278,12 @@ def test_a_failed_row_carries_its_error_text():
     )
     row = st.task_row(failed, width=110, now=999.0)
     assert "✗" in row.plain
-    assert "researcher: research: chroma" in row.plain
+    # The label is shown as given: it already opens with its own kind prefix
+    # ("research: chroma"), and a matching subagent type on top of one would read as a
+    # duplicate — see subagent_tasks.task_row. Earlier this expected the type to be
+    # prefixed anyway, which the renderer has not done since it learned to detect one.
+    assert "research: chroma" in row.plain
+    assert "researcher: research: chroma" not in row.plain
     assert "charmap" in row.plain
     assert "33.6s" in row.plain
 

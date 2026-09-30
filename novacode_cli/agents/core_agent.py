@@ -184,6 +184,15 @@ import deepagents.graph as _dgraph  # noqa: E402
 
 _dgraph.SkillsMiddleware = SubagentSkillsMiddleware
 
+# An async dispatch is a `runs.create` deepagents builds itself, and it names no model,
+# so the remote graph would otherwise run on whatever its container was booted with.
+# Bind the stored `async` role onto every client it hands out, so `/model` decides.
+from novacode_cli.agents.async_context import (  # noqa: E402
+    install_async_model_context as _install_async_model_context,
+)
+
+_install_async_model_context()
+
 
 def get_shared_store() -> "BaseStore":
     """Get the shared, durable store for agent/subagent memory sharing.
