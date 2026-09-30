@@ -178,8 +178,15 @@ def test_a_fan_out_becomes_one_phase_with_a_row_per_task():
     # The failure text is the reason the row exists.
     assert "charmap" in out["body"]
     assert "33.6s" in out["body"]
-    # Subagents inherit the session model, so the column is not blank.
-    assert out["model"] == "deepseek-v4.1-flash"
+    # The MODEL column names what the row will actually run on. Since per-role models
+    # landed, a row resolves through the role resolver rather than echoing the session
+    # model, so it renders as the role's `provider:model` when that role is set. Assert
+    # against the resolver instead of a literal, or this test only passes on a machine
+    # whose subagent role is unset. Blank is the failure that matters.
+    from novacode_cli.config.role_models import panel_row_model
+
+    assert out["model"], "the MODEL column was blank"
+    assert out["model"] == panel_row_model("eval", "deepseek-v4.1-flash"), out["model"]
     # And a finished run folds down to its header rather than holding rows.
     assert out["collapsed_after_all_done"]
 
