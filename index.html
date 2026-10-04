@@ -11,6 +11,11 @@
 <meta property="og:type" content="website">
 <link rel="icon" type="image/png" href="assets/favicon.png">
 
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<script>document.documentElement.className+=' js'</script>
+
 <style>
 /* ============================================================
    Nova landing page. Terminal-native backbone, night-sky gold.
@@ -27,8 +32,12 @@
   --dim:#7b8399;        /* 4.8:1 worst case over every surface on the page */
   --gold:#e8a33d;         /* the one accent, from the logo */
   --gold-soft:#f2c98a;
+  /* Instrument Serif carries the voice (high-contrast, editorial, deliberately
+     not a dev-tool grotesque); JetBrains Mono keeps every technical surface
+     honest; Instrument Sans is the quiet text face carrying the reading. */
+  --display:"Instrument Serif","Iowan Old Style",Georgia,"Times New Roman",serif;
   --mono:"JetBrains Mono","SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
-  --sans:"Geist","Inter Tight",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  --sans:"Instrument Sans","Geist",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
   --r:10px;               /* shape lock: one radius scale */
   --maxw:1180px;
 }
@@ -43,6 +52,10 @@ body{
 img{max-width:100%;height:auto;display:block}
 a{color:inherit;text-decoration:none}
 h1,h2,h3{margin:0;line-height:1.06;letter-spacing:-.03em;font-weight:600}
+/* the serif does the shouting; body copy stays in the sans */
+h1,h2,.loop h3,.faq summary{font-family:var(--display);font-weight:400;letter-spacing:-.015em;line-height:1.04}
+h3{font-family:var(--display);font-weight:400}
+h1 em{font-style:italic;color:var(--gold)}
 p{margin:0}
 :focus-visible{outline:2px solid var(--gold);outline-offset:3px;border-radius:4px}
 
@@ -63,6 +76,40 @@ p{margin:0}
 /* soft moonlight wash from the top-right, echoing the emblem */
 .sky::after{content:"";position:absolute;inset:0;
   background:radial-gradient(900px 520px at 78% -8%,rgba(232,163,61,.10),transparent 62%)}
+/* film grain: kills the banding a big flat radial leaves behind, and gives the
+   ink some tooth. Inline SVG so it costs no extra request.
+   z-index 2, above .page (1): at 0 it painted behind the content and was
+   invisible. It is pointer-events:none, so it never intercepts a click.
+   screen, not overlay: overlay against ink this dark (#07080f) is a no-op,
+   measured at pixel variance 0.3 vs 16.6 for screen. */
+.grain{position:fixed;inset:-50%;z-index:2;pointer-events:none;opacity:.16;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E");
+  mix-blend-mode:screen;animation:grain 5s steps(6) infinite}
+@keyframes grain{
+  0%,100%{transform:translate(0,0)}   20%{transform:translate(-4%,3%)}
+  40%{transform:translate(3%,-4%)}  60%{transform:translate(-3%,-3%)}
+  80%{transform:translate(4%,2%)}
+}
+
+/* ---------------- staged page load ----------------
+   One orchestrated reveal beats a dozen scattered hover tricks: each hero
+   layer rises in reading order, so the page assembles itself.
+   Gated behind .js so a no-JS visitor never sees content stuck at opacity 0. */
+.js .hero-grid>*{opacity:0;animation:rise .72s cubic-bezier(.19,1,.22,1) forwards}
+.js .hero-copy>*{opacity:0;animation:rise .72s cubic-bezier(.19,1,.22,1) forwards}
+.js .hero-copy>*:nth-child(1){animation-delay:.05s}
+.js .hero-copy>*:nth-child(2){animation-delay:.14s}
+.js .hero-copy>*:nth-child(3){animation-delay:.23s}
+.js .hero-copy>*:nth-child(4){animation-delay:.32s}
+.js .hero-copy>*:nth-child(5){animation-delay:.41s}
+.js .hero-grid>.term{animation-delay:.3s}
+.js .stack-row{animation:slide 34s linear infinite .9s,stackFade 1s ease .9s both}
+@keyframes rise{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+@keyframes stackFade{from{opacity:0}to{opacity:1}}
+@media (prefers-reduced-motion:reduce){
+  .grain{animation:none}
+  .js .hero-grid>*,.js .hero-copy>*{animation:none;opacity:1}
+}
 
 .page{position:relative;z-index:1}
 
@@ -247,6 +294,7 @@ footer{border-top:1px solid var(--line);padding:56px 0 64px;color:var(--dim);fon
 </head>
 <body>
 <div class="sky" aria-hidden="true"></div>
+<div class="grain" aria-hidden="true"></div>
 
 <div class="page">
 
