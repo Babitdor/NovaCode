@@ -3141,10 +3141,16 @@ async def _drive_native_bash():
         await app.workers.wait_for_complete()
         for _ in range(5):
             await pilot.pause()
-        children = app.query_one("#transcript").children
-        logs = [str(c.render()) for c in children if isinstance(c, Static)]
-        assert any("Executing: !echo" in l for l in logs), logs
-        assert any("Command finished successfully" in l for l in logs), logs
+        # `!cmd` runs in the chat, inline: a `! cmd` row, then the output
+        # hanging under an elbow.
+        from textual.widgets import RichLog
+
+        block = app.query_one("#transcript").query(".bash-inline").last()
+        head = str(block.query_one(".bash-inline-head", Static).render())
+        assert head.startswith("! echo hi-from-shell"), head
+        assert "running" not in head, head
+        out = [strip.text for strip in block.query_one(RichLog).lines]
+        assert out[0].startswith("  └  hi-from-shell"), out
 
 
 def test_tui_native_diff_body():

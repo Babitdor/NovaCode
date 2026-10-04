@@ -781,6 +781,8 @@ def _paint(widget: Any, content: Any) -> None:
 _LIVE_OUTPUT_MAX_LINES = 200
 _LIVE_OUTPUT_MAX_CHARS = 20_000
 _LOG_MAX_LINES = 2_000
+#: Saved messages drawn on resume (the agent still gets the full history).
+_REPLAY_MAX_MESSAGES = 150
 
 
 def _display_tail(text: str) -> str:
@@ -1327,9 +1329,22 @@ class NovaApp(App):
     .compact-body { padding: 0 2; color: $text-muted; }
     .bgshell-card { margin: 1 0; border-left: thick $warning-muted; }
     .bgshell-card > .collapsible--title { color: $warning; background: $surface; }
+    /* Sized to its output, like the agent card: a command that prints nothing
+       (`code .`) used to reserve 30vh for an empty log, inside a body that
+       stretched the card to the full transcript height. */
     .bgshell-log {
-        height: 30vh; min-height: 8; max-height: 22;
+        height: auto; max-height: 22;
         border: none; background: $surface;
+        padding: 0 1;
+    }
+    .bgshell-card Contents > Vertical { height: auto; }
+    /* A plain `!cmd`: no card, just the command on a highlighted row and its
+       output indented beneath, the way a shell transcript reads. */
+    .bash-inline { height: auto; margin: 1 0 0 0; }
+    .bash-inline-head { width: 1fr; background: $panel; }
+    .bash-inline-log {
+        height: auto; max-height: 22;
+        border: none; background: transparent; padding: 0;
     }
     /* The agent card emits discrete progress lines, not a firehose of command
        output, so it sizes to its content instead of reserving 30vh. Capped so a
@@ -1454,6 +1469,7 @@ class NovaApp(App):
         self._sandbox_meta = sandbox_meta
         # Prior conversation turns to replay into the transcript on resume.
         self._restored_messages = list(restored_messages or [])
+        self._replaying = False  # True while _replay_history renders
         self._seen: set[str] = set()
         self._speech_lock = asyncio.Lock()
         # Ropes, not plain strings: both accumulate one fragment per model delta,
@@ -3225,7 +3241,28 @@ class NovaApp(App):
 
         return Text(name, style=agent_label_style(self._palette, name, agent_color))
 
+    def _journal(self, entry: dict[str, Any]) -> None:
+        """Record a transcript item the message history does not hold.
+
+        See ``session/transcript_journal.py``. A no-op during a replay (the
+        entries being rendered came *from* the journal) and without a session.
+        """
+        if self._replaying:
+            return
+        sessions_dir = getattr(self.session_manager, "sessions_dir", None)
+        session_id = getattr(self.session_state, "session_id", None)
+        if not sessions_dir or not session_id:
+            return
+        from novacode_cli.session import transcript_journal
+
+        transcript_journal.append(sessions_dir, str(session_id), entry)
+
     async def _add_message(self, label: Text, role_class: str, body: Any) -> ChatMessage:
+        if role_class == "user":
+            # A marker per prompt: what lets journal entries be put back after
+            # the right turn on resume.
+            text = getattr(body, "markup", None) or getattr(body, "plain", None) or ""
+            self._journal({"k": "user", "text": str(text)})
         msg = ChatMessage(label, role_class)
         await self._mount(msg)
         msg.update_body(body)
@@ -3272,11 +3309,41 @@ class NovaApp(App):
         before. The agent's own state is restored separately via the
         checkpointer / continuation prompt.
         """
-        msgs = self._restored_messages
-        if not msgs:
-            return
+        self._replaying = True
+        try:
+            await self._replay_history_inner()
+        finally:
+            self._replaying = False
+
+    async def _replay_history_inner(self) -> None:
         from novacode_cli.compaction import is_compaction_summary
         from novacode_cli.core.streaming import is_internal_context_text
+        from novacode_cli.session import transcript_journal
+
+        # The whole saved history is restored into the agent, but only its tail
+        # is drawn: the transcript holds ~200 widgets and older ones would be
+        # mounted just to be pruned.
+        msgs = self._restored_messages[-_REPLAY_MAX_MESSAGES:]
+
+        journal: list[dict[str, Any]] = []
+        sessions_dir = getattr(self.session_manager, "sessions_dir", None)
+        session_id = getattr(self.session_state, "session_id", None)
+        if sessions_dir and session_id:
+            journal = await asyncio.to_thread(transcript_journal.load, sessions_dir, str(session_id))
+        if not msgs and not journal:
+            return
+
+        def shown_text(m: Any) -> str:
+            text = self._message_text(m).strip()
+            if text and (is_compaction_summary(text) or is_internal_context_text(text)):
+                return ""
+            return text
+
+        humans = [t for m in msgs if getattr(m, "type", "") == "human" and (t := shown_text(m))]
+        per_turn, leading = transcript_journal.place(journal, humans)
+        turn = -1  # index into `humans` of the turn being rendered
+        for entry in leading:
+            await self._replay_journal_entry(entry)
 
         # Tool results arrive as separate ToolMessages; index them by call id so
         # an AIMessage's tool_calls can be paired with their output.
@@ -3300,6 +3367,12 @@ class NovaApp(App):
             if role == "human":
                 if not text:
                     continue
+                # The previous turn is complete: show what the user ran after it.
+                if turn >= 0:
+                    for entry in per_turn[turn]:
+                        await self._replay_journal_entry(entry)
+                        shown += 1
+                turn += 1
                 await self._add_message(self._user_label(), "user", Markdown(text))
                 shown += 1
             elif role == "ai":
@@ -3310,6 +3383,11 @@ class NovaApp(App):
                 if text:
                     await self._add_message(self._agent_label("Nova"), "nova", Markdown(text))
                     shown += 1
+        if 0 <= turn < len(per_turn):
+            for entry in per_turn[turn]:
+                await self._replay_journal_entry(entry)
+                shown += 1
+        shown += len(leading)
         if shown:
             self._log(
                 Text(
@@ -3317,6 +3395,47 @@ class NovaApp(App):
                     style="dim",
                 )
             )
+
+    async def _replay_journal_entry(self, entry: dict[str, Any]) -> None:
+        """Draw one restored journal entry (a ``!`` command or a background job)."""
+        kind = entry.get("k")
+        pal = self._palette
+        self._close_tool_group()
+        if kind == "bash":
+            from rich.table import Table
+
+            exit_code = entry.get("exit")
+            row = Text()
+            row.append("! ", style=f"bold {pal.accent}")
+            row.append(str(entry.get("cmd", "")))
+            if not entry.get("fg", True):
+                row.append("   background", style="dim")
+            if exit_code is None:
+                row.append("   cancelled", style=f"bold {pal.error}")
+            elif exit_code != 0:
+                row.append(f"   exit {exit_code}", style=f"bold {pal.error}")
+            log_widget = RichLog(
+                classes="bash-inline-log", highlight=False, markup=False, wrap=True, max_lines=_LOG_MAX_LINES
+            )
+            await self._transcript().mount(
+                Vertical(Static(row, classes="bash-inline-head"), log_widget, classes="bash-inline")
+            )
+            lines = entry.get("lines") or []
+            for n, line in enumerate(lines or ["(no output)"]):
+                out = Table.grid()
+                out.add_column(width=5, no_wrap=True)
+                out.add_column(ratio=1)
+                out.add_row(Text("  └" if n == 0 else "", style="dim"), Text(str(line), style="" if lines else "dim"))
+                log_widget.write(out, expand=True)
+        elif kind == "bgagent":
+            ok = entry.get("status") == "done"
+            head = Text()
+            head.append("✓ " if ok else "✗ ", style=pal.success if ok else pal.error)
+            head.append(f"background agent · {self._oneline(str(entry.get('prompt', '')))}", style="bold")
+            self._log(head)
+            summary = str(entry.get("summary") or "").strip()
+            if summary:
+                await self._add_message(self._agent_label("Nova"), "nova", Markdown(summary))
 
     async def _replay_tool_call(self, tc: dict, results: dict[str, Any]) -> None:
         """Render one restored tool call (and its result) into the tool group.
@@ -4782,7 +4901,7 @@ class NovaApp(App):
         if plan and bash:
             t = Text()
             t.append("  ⏸ PLAN  ", style=f"bold {pal.primary}")
-            t.append("$ BASH — runs in your shell", style=f"bold {pal.accent}")
+            t.append("$ BASH — runs in chat · !! for the terminal", style=f"bold {pal.accent}")
             _paint(badge, t)
             badge.display = True
         elif plan:
@@ -4791,7 +4910,7 @@ class NovaApp(App):
             )
             badge.display = True
         elif bash:
-            _paint(badge, Text("  $ BASH — runs in your shell", style=f"bold {pal.accent}"))
+            _paint(badge, Text("  $ BASH — runs in chat · !! for the terminal", style=f"bold {pal.accent}"))
             badge.display = True
         elif goal:
             short = goal if len(goal) <= 60 else goal[:57] + "…"
@@ -7014,8 +7133,22 @@ class NovaApp(App):
         )
 
     async def _run_bash(self, text: str) -> None:
-        """Run a ``!`` shell command in the system terminal by suspending the TUI app."""
+        """Run a ``!`` shell command.
+
+        ``!cmd`` runs in the chat: output streams into a card and the prompt
+        stays usable, so a long command never holds the UI (``/kill bg-<n>``
+        stops it). ``!!cmd`` hands the real terminal to the command instead, by
+        suspending the TUI, for anything that needs a keyboard (an editor, a
+        REPL, a password prompt): a card has no stdin to give it.
+        """
         cmd = text[1:].strip()
+        if not cmd:
+            return
+        if not cmd.startswith("!"):
+            self._bg_job_count += 1
+            self._bg_shell_worker(cmd, self._bg_job_count, foreground=True)
+            return
+        cmd = cmd[1:].strip()
         if not cmd:
             return
 
@@ -7078,7 +7211,7 @@ class NovaApp(App):
     # -- background shell (ctrl+b) --------------------------------------------
 
     @work(group="bgshell")
-    async def _bg_shell_worker(self, cmd: str, job_id: int) -> None:
+    async def _bg_shell_worker(self, cmd: str, job_id: int, *, foreground: bool = False) -> None:
         """Run *cmd* as a non-blocking background subprocess.
 
         Each call spawns an independent worker in group ``"bgshell"`` (no
@@ -7086,6 +7219,10 @@ class NovaApp(App):
         Output streams line-by-line into a ``RichLog`` inside a ``Collapsible``
         card.  When the process exits the card title flips to ✓/✗ and the
         process is deregistered from ProcessManager.
+
+        ``foreground`` is a plain ``!cmd``: no card, just a ``! cmd`` row with
+        the output indented under it. Either way it is registered as
+        ``bg-<job_id>``.
         """
         import os
 
@@ -7094,12 +7231,62 @@ class NovaApp(App):
 
         cwd = settings.get_workspace_root()
         short = cmd if len(cmd) <= 50 else cmd[:47] + "…"
+        label = f"bg[{job_id}]: {short}"
+        pal = self._palette
 
-        # Build the card up-front so output starts streaming immediately.
-        log_widget = RichLog(classes="bgshell-log", highlight=True, markup=True, max_lines=_LOG_MAX_LINES)
-        body = Vertical(log_widget)
-        card = Collapsible(body, title=f"⚙ bg[{job_id}]: {short}  [running]", collapsed=False)
-        card.add_class("bgshell-card")
+        # Build the widget up-front so output starts streaming immediately.
+        if foreground:
+            log_widget = RichLog(
+                classes="bash-inline-log", highlight=False, markup=False, wrap=True, max_lines=_LOG_MAX_LINES
+            )
+            head = Static(classes="bash-inline-head")
+            card: Any = Vertical(head, log_widget, classes="bash-inline")
+        else:
+            log_widget = RichLog(classes="bgshell-log", highlight=True, markup=True, max_lines=_LOG_MAX_LINES)
+            card = Collapsible(Vertical(log_widget), title="", collapsed=False)
+            card.add_class("bgshell-card")
+
+        def set_state(mark: str, state: str, *, bad: bool = False) -> None:
+            """Show where the command is: the card's title, or the inline row."""
+            if not foreground:
+                card.title = f"{mark} {label}  [{state}]"
+                return
+            row = Text()
+            row.append("! ", style=f"bold {pal.accent}")
+            row.append(cmd)
+            if state == "running":
+                row.append(f"   running · /kill bg-{job_id}", style="dim")
+            elif bad:
+                row.append(f"   {state}", style=f"bold {pal.error}")
+            _paint(head, row)
+
+        emitted = 0  # counted here: RichLog defers writes until it has a size
+        from collections import deque
+
+        from novacode_cli.session.transcript_journal import MAX_LINES
+
+        captured: deque[str] = deque(maxlen=MAX_LINES)  # for the session journal
+
+        def emit(line: str, *, style: str = "") -> None:
+            nonlocal emitted
+            if not style:  # command output, not our own "(no output)" / error notes
+                captured.append(line)
+            if not foreground:
+                log_widget.write(line)
+            else:
+                # The elbow marks where the output starts; the rest hangs under
+                # it. A two-column grid keeps a wrapped line inside the indent.
+                from rich.table import Table
+
+                row = Table.grid()
+                row.add_column(width=5, no_wrap=True)
+                row.add_column(ratio=1)
+                row.add_row(Text("  └" if not emitted else "", style="dim"), Text(line, style=style))
+                log_widget.write(row, expand=True)
+            emitted += 1
+            log_widget.scroll_end(animate=False)
+
+        set_state("⚙", "running")
         self._close_tool_group()
         await self._transcript().mount(card)
         self._prune_transcript()
@@ -7111,12 +7298,18 @@ class NovaApp(App):
                 cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
+                # No stdin: an inherited one lets the child read the keystrokes
+                # meant for the TUI, and a command that prompts would hang
+                # unseen. It gets EOF instead; `!!cmd` is the interactive path.
+                stdin=asyncio.subprocess.DEVNULL,
                 cwd=str(cwd),
                 env=os.environ.copy(),
             )
         except Exception as ex:  # noqa: BLE001
-            log_widget.write(f"[bold red]Failed to start: {ex}[/bold red]")
-            card.title = f"✗ bg[{job_id}]: {short}  [failed to start]"
+            emit(f"Failed to start: {ex}", style="bold red") if foreground else log_widget.write(
+                f"[bold red]Failed to start: {ex}[/bold red]"
+            )
+            set_state("✗", "failed to start", bad=True)
             return
 
         # Register with ProcessManager so `/kill bg-<n>` or `/kill <pid>` works.
@@ -7137,31 +7330,39 @@ class NovaApp(App):
                 line_bytes = await process.stdout.readline()
                 if not line_bytes:
                     break
-                line = line_bytes.decode("utf-8", errors="replace").rstrip()
-                log_widget.write(line)
-                log_widget.scroll_end(animate=False)
+                emit(line_bytes.decode("utf-8", errors="replace").rstrip())
         except asyncio.CancelledError:
             process.terminate()
-            card.title = f"✗ bg[{job_id}]: {short}  [cancelled]"
+            set_state("✗", "cancelled", bad=True)
+            self._journal(
+                {"k": "bash", "cmd": cmd, "lines": list(captured), "exit": None, "fg": foreground, "job": job_id}
+            )
             info.status = ProcessStatus.STOPPED
             return
 
         await process.wait()
         exit_code = process.returncode or 0
+        if not emitted:
+            emit("(no output)", style="dim") if foreground else log_widget.write("[dim](no output)[/dim]")
 
-        # Update card title and ProcessManager status.
+        # Update the title/row and ProcessManager status.
         if exit_code == 0:
-            card.title = f"✓ bg[{job_id}]: {short}  [exit 0]"
+            set_state("✓", "exit 0")
             card.add_class("bgshell-done")
             info.status = ProcessStatus.STOPPED
         else:
-            card.title = f"✗ bg[{job_id}]: {short}  [exit {exit_code}]"
+            set_state("✗", f"exit {exit_code}", bad=True)
             card.add_class("bgshell-failed")
             info.status = ProcessStatus.FAILED
-            log_widget.write(f"[bold red]Exited with code {exit_code}[/bold red]")
+            if not foreground:
+                log_widget.write(f"[bold red]Exited with code {exit_code}[/bold red]")
 
-        # Collapse finished cards automatically so they don't crowd the transcript.
-        card.collapsed = True
+        # Collapse finished background cards so they don't crowd the transcript.
+        if not foreground:
+            card.collapsed = True
+        self._journal(
+            {"k": "bash", "cmd": cmd, "lines": list(captured), "exit": exit_code, "fg": foreground, "job": job_id}
+        )
 
     # -- background agent turn (ctrl+b, non-! input) --------------------------
 
@@ -7287,6 +7488,7 @@ class NovaApp(App):
             card.title = f"✗ bg[{job_id}] · {p_short}  ·  error"
             card.add_class("bgagent-failed")
             card.collapsed = True
+            self._journal({"k": "bgagent", "prompt": prompt, "status": "error", "summary": str(ex), "job": job_id})
             return
 
         # A tool call whose result never arrived (turn ended mid-call) still needs
@@ -7298,6 +7500,9 @@ class NovaApp(App):
         card.title = f"✓ bg[{job_id}] · {p_short}  ·  done"
         card.add_class("bgagent-done")
         card.collapsed = True
+        self._journal(
+            {"k": "bgagent", "prompt": prompt, "status": "done", "summary": "\n".join(final_text)[-4000:], "job": job_id}
+        )
 
         # Report the outcome back to the main agent so it can summarise and act on
         # what the background run found, rather than the user having to relay it.
@@ -8289,7 +8494,7 @@ class NovaApp(App):
 
         # Replace the transcript with the resumed session's recent history.
         await self._transcript().remove_children()
-        self._restored_messages = list(recent_messages or [])
+        self._restored_messages = list(session_data.messages or recent_messages or [])
         self._replay_history()
         # Paint the resumed checklist. Previously the restored todos only
         # reached session_state and nothing rendered them, so a resumed
