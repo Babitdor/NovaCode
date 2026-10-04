@@ -1998,9 +1998,9 @@ This file stores your preferences and context that persist across sessions.
                 _before = _hooks.get("before_agent_setup")
                 if _before:
                     try:
-                        import asyncio
+                        from novacode_cli.utils.tasks import spawn
 
-                        asyncio.create_task(_before())
+                        spawn(_before())
                     except Exception:
                         logger = __import__("logging").getLogger("nova.plugins")
                         logger.exception("Plugin '%s' before_agent_setup hook failed", _pkg_name)
@@ -2185,9 +2185,9 @@ This file stores your preferences and context that persist across sessions.
             _after = _hooks.get("after_agent_setup")
             if _after:
                 try:
-                    import asyncio
+                    from novacode_cli.utils.tasks import spawn
 
-                    asyncio.create_task(_after(agent))  # type: ignore
+                    spawn(_after(agent))  # type: ignore
                 except Exception:
                     _log = __import__("logging").getLogger("nova.plugins")
                     _log.exception("Plugin '%s' after_agent_setup hook failed", _pkg_name)

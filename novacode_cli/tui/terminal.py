@@ -112,7 +112,9 @@ class EmbeddedTerminal(Widget):
     def on_mount(self) -> None:
         self.update_prompts()
         if self.initial_cmd:
-            asyncio.create_task(self.run_initial_cmd())
+            from novacode_cli.utils.tasks import spawn
+
+            spawn(self.run_initial_cmd())
 
     def update_prompts(self) -> None:
         proj_root = settings.get_workspace_root()
@@ -232,7 +234,9 @@ class EmbeddedTerminal(Widget):
             return
 
         # Start execution
-        asyncio.create_task(self.run_command_async(cmd))
+        from novacode_cli.utils.tasks import spawn
+
+        spawn(self.run_command_async(cmd))
 
     async def run_command_async(self, cmd: str) -> None:
         log = self.query_one("#term-log", RichLog)

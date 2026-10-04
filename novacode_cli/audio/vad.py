@@ -48,6 +48,12 @@ class SileroVad:
 
     def _ensure_model(self) -> None:
         if self._model is None:
+            # silero_vad imports torch, which Nova keeps out of start-up. The
+            # guard has to come off here or the import fails and hands-free
+            # listening never gets a model ("Voice warmup failed for VAD").
+            from novacode_cli._lazy_heavy import allow_transformers
+
+            allow_transformers()
             from silero_vad import load_silero_vad
 
             self._model = load_silero_vad()

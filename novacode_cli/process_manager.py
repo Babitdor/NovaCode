@@ -258,7 +258,9 @@ class ProcessManager:
 
             # Start output streaming task (non-blocking)
             if output_callback:
-                asyncio.create_task(self._stream_output(process, info, output_callback))
+                from novacode_cli.utils.tasks import spawn
+
+                spawn(self._stream_output(process, info, output_callback))
 
             return info
 

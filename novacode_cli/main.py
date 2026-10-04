@@ -89,7 +89,16 @@ log_dir.mkdir(parents=True, exist_ok=True)
 log_file = log_dir / "nova.log"
 
 # Configure file handler for warnings
-file_handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
+if "pytest" in _sys.modules:
+    # Tests raise on purpose ("model down", "boom"); those tracebacks do not
+    # belong in the user's log, where they bury the real errors.
+    file_handler: logging.Handler = logging.NullHandler()
+else:
+    from logging.handlers import RotatingFileHandler
+
+    file_handler = RotatingFileHandler(
+        log_file, mode="a", encoding="utf-8", maxBytes=5_000_000, backupCount=2, delay=True
+    )
 file_handler.setLevel(logging.WARNING)
 file_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
 
@@ -1482,6 +1491,8 @@ async def main(
     # Branch 1: User wants a container/cloud sandbox. "none" and "os" both run
     # locally (os = host files + OS-confined shell) and take the local branch.
     if sandbox_type not in ("none", "os"):
+        from novacode_cli.integrations.sandbox_factory import create_sandbox
+
         # Try to create sandbox
         try:
             console.print()

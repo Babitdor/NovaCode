@@ -7048,7 +7048,7 @@ class NovaApp(App):
                 if sys.stdin.isatty():
                     print("\n--- Command finished. Press Enter to return to TUI ---")
                     try:
-                        input()
+                        await asyncio.to_thread(input)
                     except (KeyboardInterrupt, EOFError):
                         pass
         except SuspendNotSupported:
@@ -10496,7 +10496,9 @@ class NovaApp(App):
         )
 
         # Launch the processing loop as a background task so the TUI stays responsive
-        asyncio.create_task(self._trello_watch_loop(server))
+        from novacode_cli.utils.tasks import spawn
+
+        spawn(self._trello_watch_loop(server))
 
     async def _run_create(self, text: str) -> None:
         """Run /create; start the Skills & Agents web UI server."""

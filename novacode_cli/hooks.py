@@ -300,15 +300,6 @@ def dispatch_hook_fire_and_forget(event: str, payload: dict[str, Any]) -> None:
     task.add_done_callback(_background_tasks.discard)
 
 
-def reload_hooks() -> None:
-    """Reload hooks configuration from disk.
-
-    Clears the cached configuration so it will be reloaded on next dispatch.
-    """
-    global _hooks_config  # noqa: PLW0603
-    _hooks_config = None
-
-
 # Event type constants for convenience
 class HookEvent:
     """Constants for hook event names."""
