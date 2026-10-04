@@ -316,11 +316,10 @@ async def _execute_browser_use_task(
         from browser_use import Agent, ChatOllama
     except ImportError as e:
         msg = (
-            f"Failed to import required libraries: {e}\n"
-            "Make sure browser-use is installed:\n"
-            "  pip install browser-use\n"
-            "Or with uv:\n"
-            "  uv pip install browser-use"
+            f"/browser-use needs the optional `browser` extra ({e}).\n"
+            "From a checkout:   uv sync --extra browser\n"
+            "Installed tool:    uv tool install --force "
+            '"novacode-cli[browser] @ git+https://github.com/Babitdor/NovaCode.git"'
         )
         raise ImportError(msg) from e
 

@@ -85,7 +85,7 @@ An open-source, terminal-based AI coding assistant built on LangGraph and the `d
 - **Process Manager**: Subprocess lifecycle, health checks, and cleanup for dev servers and background tasks
 - **LangSmith Tracing**: Built-in LangSmith integration for debugging, monitoring, and evaluating agent runs
 - **Doctor Command**: System diagnostics to verify your environment, API keys, and dependencies
-- **Onboarding System**: Interactive first-run setup with secure API key management via OS keychain
+- **Onboarding System**: First-run setup that checks what you enter before saving it: an API key is tested against the provider and an Ollama host must answer with a model installed, so a typo shows up on the setup screen, not on your first prompt. Keys go to the OS keychain
 - **Configuration Migration**: Migrate from legacy directory structure to Claude Code-compatible layout
 
 ## Quick Start (Two Commands)
@@ -1025,7 +1025,15 @@ User Input → CLI Entry (main.py) → Agent Loop (core/agent_loop.py) → UI Re
 
 ## Optional Dependencies
 
+The base install is kept lean. Heavier features are extras:
+
 ```bash
+# Real-browser automation: /browser-use and the LinkedIn scraper (~330 MB)
+pip install novacode-cli[browser]
+
+# The local server the async agents run on
+pip install novacode-cli[agents-server]
+
 # Voice I/O (STT + TTS + VAD) — ~2 GB extra
 pip install novacode-cli[voice]
 

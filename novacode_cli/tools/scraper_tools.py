@@ -225,7 +225,7 @@ def linkedin_jobs(
         from playwright.sync_api import sync_playwright
     except ImportError:  # pragma: no cover
         return {
-            "error": "Missing dependency: playwright. Install it with 'pip install playwright && playwright install chromium'",
+            "error": "Missing dependency: playwright. Install Nova's `browser` extra (uv sync --extra browser), then run 'playwright install chromium'",
             "jobs": [],
             "count": 0,
         }

@@ -6,6 +6,7 @@ Validates configuration, API keys, and connections to services.
 import json
 
 import requests
+from rich.markup import escape
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -228,10 +229,12 @@ def run_doctor() -> int:
             "ℹ": "blue",
         }.get(status, "white")
 
+        # Escaped: these are plain text, and Rich would read the `[voice]` in an
+        # install command as a style tag and print `uv tool install -e '.'`.
         table.add_row(
             f"[{status_style}]{status}[/{status_style}]",
-            check,
-            str(details) if details else "",
+            escape(str(check)),
+            escape(str(details)) if details else "",
         )
 
     console.print(table)

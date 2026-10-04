@@ -552,7 +552,11 @@ class OnboardingWizard:
         return all_passed
 
     def _save_config(
-        self, provider: str, provider_config: dict[str, Any], tavily_key: str | None
+        self,
+        provider: str,
+        provider_config: dict[str, Any],
+        tavily_key: str | None,
+        model_name: str | None = None,
     ) -> None:
         """Save configuration to config.json and secrets.
 
@@ -560,6 +564,10 @@ class OnboardingWizard:
             provider: Provider name
             provider_config: Provider configuration
             tavily_key: Tavily API key (optional)
+            model_name: The model to start on. When given it is used as it is
+                and nothing is printed: the setup screen passes the model it
+                found, and a ``console.print`` from here would land in the
+                middle of a running Textual screen.
         """
         # Build config (non-secret parts only)
         config: dict[str, Any] = {
@@ -579,7 +587,9 @@ class OnboardingWizard:
         self.config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
 
         # Also save to NovaConfig for backward compatibility
-        if provider == "ollama":
+        if model_name:
+            pass
+        elif provider == "ollama":
             # Check if Ollama models are installed
             from novacode_cli.config.model_manager import get_ollama_models
 
