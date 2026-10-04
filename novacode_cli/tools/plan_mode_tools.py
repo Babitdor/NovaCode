@@ -176,25 +176,42 @@ def _mirror_to_global_archive(plan_path: "Path", project_root: "Path") -> None:
         pass
 
 
-def _persist_approved_plan(plan: str) -> str | None:
-    """Save an approved plan to ``.nova/plans/`` named after its title.
+def persist_approved_plan(plan: str, *, auto_approved: bool = False) -> str | None:
+    """Save an approved plan as Markdown, named after its title.
+
+    Where it goes depends on who approved it:
+
+    * the **user** approved it → ``<project>/.nova/plans/`` (and mirrored to the
+      global archive so ``/plan list`` sees it). The user signed off on this
+      plan for this project, so it belongs with the project.
+    * **Nova** approved it itself (``auto_approve``: remote turns, goal mode,
+      "auto-approve" sessions) → ``~/.nova/plans/<project>/`` only. Nobody
+      reviewed it, so it must not appear in the repo as if someone had.
 
     ``# Refactor auth flow`` → ``plan-refactor-auth-flow.md``. Falls back to a
     timestamp name when the plan has no heading; appends a timestamp on
-    collision. Returns the saved path (workspace-relative) or None on failure.
+    collision. Returns the saved path (workspace-relative when inside the
+    workspace) or None when there is nothing to save.
     """
     import re
     from datetime import datetime
     from pathlib import Path
 
+    if not (plan or "").strip():
+        return None
     try:
         from novacode_cli.config.config import settings
 
         root = Path(settings.get_workspace_root())
     except Exception:  # noqa: BLE001
         root = Path.cwd()
-    plans_dir = root / ".nova" / "plans"
-    plans_dir.mkdir(parents=True, exist_ok=True)
+    if auto_approved:
+        from novacode_cli.plan_archive import global_plan_dir
+
+        plans_dir = global_plan_dir(root)
+    else:
+        plans_dir = root / ".nova" / "plans"
+        plans_dir.mkdir(parents=True, exist_ok=True)
 
     m = re.search(r"^#+\s+(.+)$", plan, re.MULTILINE)
     slug = re.sub(r"[^a-z0-9]+", "-", (m.group(1) if m else "").lower()).strip("-")[:50]
@@ -204,8 +221,13 @@ def _persist_approved_plan(plan: str) -> str | None:
     if path.exists():
         path = plans_dir / f"plan-{slug}-{stamp}.md"
     path.write_text(plan, encoding="utf-8")
-    _mirror_to_global_archive(path, root)
+    if not auto_approved:
+        _mirror_to_global_archive(path, root)
     return str(path.relative_to(root)) if path.is_relative_to(root) else str(path)
+
+
+# Back-compat alias (the name older call sites and tests use).
+_persist_approved_plan = persist_approved_plan
 
 
 @tool
@@ -215,8 +237,9 @@ def exit_plan_mode(plan: str = "") -> str:
     Pass your full implementation plan as Markdown in ``plan`` — it is shown to
     the user inline for review (Claude Code plan-mode style), so you do not need
     to write it to a file first. Execution pauses while the user reviews.
-    On approval the plan is automatically saved to ``.nova/plans/`` named
-    after the plan's title.
+    On approval the plan is saved automatically, named after its title: to
+    the project's ``.nova/plans/`` when the user approved it, to the global
+    ``~/.nova/plans/`` when it was auto-approved.
 
     Args:
         plan: The implementation plan as Markdown to present for approval.
@@ -237,12 +260,16 @@ def exit_plan_mode(plan: str = "") -> str:
 
     if isinstance(response, dict):
         if response.get("approved"):
+            # Only reached when the graph is RESUMED after approval — i.e.
+            # main-agent self-planning. A separate plan agent (/plan) is never
+            # resumed, so agent_loop persists that one itself.
             saved = None
-            if plan.strip():
-                try:
-                    saved = _persist_approved_plan(plan)
-                except Exception:  # noqa: BLE001 - persistence must never fail approval
-                    saved = None
+            try:
+                saved = persist_approved_plan(
+                    plan, auto_approved=bool(response.get("auto_approved"))
+                )
+            except Exception:  # noqa: BLE001 - persistence must never fail approval
+                saved = None
             suffix = f" (Plan saved to {saved})" if saved else ""
             return f"Plan approved. Proceed with implementation.{suffix}"
         action = response.get("action", "refine")

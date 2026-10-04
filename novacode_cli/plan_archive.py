@@ -38,17 +38,27 @@ def project_slug(root: Path) -> str:
     return f"{name}-{digest}"
 
 
+def global_plan_dir(project_root: Path) -> Path:
+    """*project_root*'s folder in the global archive, created and origin-marked.
+
+    Where a plan Nova approved on its own is stored (see
+    ``tools.plan_mode_tools.persist_approved_plan``), and where user-approved
+    plans are mirrored.
+    """
+    dest_dir = global_plans_root() / project_slug(project_root)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    _write_origin_marker(dest_dir, project_root)
+    return dest_dir
+
+
 def mirror_plan(plan_path: Path, project_root: Path) -> Path | None:
     """Copy *plan_path* into the global archive. Returns the copy, or None.
 
     Best-effort by contract — callers must not let a failure here surface.
     """
     try:
-        dest_dir = global_plans_root() / project_slug(project_root)
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / plan_path.name
+        dest = global_plan_dir(project_root) / plan_path.name
         shutil.copy2(plan_path, dest)
-        _write_origin_marker(dest_dir, project_root)
         return dest
     except Exception:  # noqa: BLE001 - a plan approval must never fail on this
         return None

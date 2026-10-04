@@ -103,3 +103,68 @@ def test_title_falls_back_to_filename(project, tmp_path):
     f = tmp_path / "plan-no-heading.md"
     f.write_text("just body text\nmore text\n", encoding="utf-8")
     assert pa._plan_title(f) == "plan-no-heading"
+
+
+# ── where a plan is stored depends on who approved it ────────────────────────
+
+
+def test_a_plan_nova_approved_itself_goes_to_the_global_folder_only(project):
+    """Nobody reviewed it, so it must not land in the repo as if someone had."""
+    proj, archive = project
+    saved = pmt.persist_approved_plan("# Auto plan\n\nbody", auto_approved=True)
+
+    assert not (proj / ".nova" / "plans").exists(), "nothing written into the project"
+    copies = list(archive.rglob("*.md"))
+    assert [c.name for c in copies] == ["plan-auto-plan.md"]
+    assert copies[0].parent.name.startswith("myproject-")
+    assert saved == str(copies[0])
+    assert pa.list_archived_plans()[0].project == str(proj), "/plan list still finds it"
+
+
+def test_a_user_approved_plan_goes_to_the_project_folder(project):
+    proj, _ = project
+    saved = pmt.persist_approved_plan("# User plan\n\nbody")
+    assert (proj / ".nova" / "plans" / "plan-user-plan.md").exists()
+    assert Path(saved) == Path(".nova/plans/plan-user-plan.md")
+
+
+def test_an_empty_plan_saves_nothing(project):
+    proj, archive = project
+    assert pmt.persist_approved_plan("   ") is None
+    assert not (proj / ".nova").exists() and not archive.exists()
+
+
+class _State:
+    def __init__(self, plan_agent=None):
+        self.plan_agent = plan_agent
+
+
+def test_a_plan_from_the_unresumed_planner_is_still_saved(project):
+    """The regression: /plan's planner is never resumed after approval, so the
+    save that sits after exit_plan_mode's interrupt() never ran — every /plan
+    approval left nothing on disk."""
+    from novacode_cli.core.agent_loop import _save_unresumed_plan
+
+    proj, archive = project
+    saved = _save_unresumed_plan(("# From the planner\n\nbody", False), _State())
+    assert saved and (proj / ".nova" / "plans" / "plan-from-the-planner.md").exists()
+
+    saved = _save_unresumed_plan(("# Self approved\n\nbody", True), _State())
+    assert (archive / pa.project_slug(proj) / "plan-self-approved.md").exists()
+    assert not (proj / ".nova" / "plans" / "plan-self-approved.md").exists()
+
+
+def test_an_auto_approved_plan_the_planner_wrote_to_disk_reaches_the_global_folder(project):
+    """No inline plan: the planner wrote its own file under .nova/plans/."""
+    from novacode_cli.core.agent_loop import _save_unresumed_plan
+
+    proj, archive = project
+    plans = proj / ".nova" / "plans"
+    plans.mkdir(parents=True)
+    (plans / "draft.md").write_text("# Written by the planner\n\nbody", encoding="utf-8")
+
+    _save_unresumed_plan(("", True), _State())
+    assert (archive / pa.project_slug(proj) / "plan-written-by-the-planner.md").exists()
+
+    assert _save_unresumed_plan(("", False), _State()) is None, "already in the project"
+    assert _save_unresumed_plan(None, _State()) is None

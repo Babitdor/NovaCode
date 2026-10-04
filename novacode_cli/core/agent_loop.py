@@ -199,6 +199,32 @@ async def _safe_stream(stream_gen: AsyncIterator[Any]) -> AsyncIterator[Any]:
         pass
 
 
+def _save_unresumed_plan(approved_plan: tuple[str, bool] | None, session_state: Any) -> str | None:
+    """Persist an approved plan whose planner will not be resumed. Best-effort.
+
+    User-approved → the project's ``.nova/plans/``; approved by Nova itself →
+    the global ``~/.nova/plans/``. A planner that passed no inline plan wrote
+    its own file under ``.nova/plans/`` (the one place plan mode lets it
+    write): that is already the right home for a user-approved plan, and is
+    read back so an auto-approved one still reaches the global folder.
+    """
+    if approved_plan is None:
+        return None
+    text, auto = approved_plan
+    try:
+        if not text.strip():
+            if not auto:
+                return None
+            from novacode_cli.ui.interrupt_handlers import resolve_plan_content
+
+            text = resolve_plan_content(None, session_state)[0] or ""
+        from novacode_cli.tools.plan_mode_tools import persist_approved_plan
+
+        return persist_approved_plan(text, auto_approved=auto)
+    except Exception:  # noqa: BLE001 — saving a plan must never break the turn
+        return None
+
+
 async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     user_input: str,
     agent,
@@ -726,6 +752,8 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
             if interrupt_occurred:
                 any_rejected = False
                 plan_approved = False
+                # (plan text, approved by Nova itself?) for the approved plan.
+                approved_plan: tuple[str, bool] | None = None
                 # When the turn auto-approves (e.g. a /remote turn sets
                 # auto_approve=True), no permission is actually being asked of the
                 # user — the interrupt is resolved automatically — so a badge /
@@ -743,9 +771,17 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                     _policy_resolutions: list[dict | None] | None = None
                     if kind == "plan" and _auto_approve:
                         # Auto-approve plan without prompting
-                        hitl_response[interrupt_id] = {"approved": True, "mode": "auto"}
+                        # auto_approved, not mode: the TUI's "approve + auto-accept
+                        # edits" choice is ALSO mode "auto", and that one is the
+                        # user approving. This flag means nobody was asked.
+                        hitl_response[interrupt_id] = {
+                            "approved": True,
+                            "mode": "auto",
+                            "auto_approved": True,
+                        }
                         command_state_update.update({"plan_mode_enabled": False})
                         plan_approved = True
+                        approved_plan = ((payload or {}).get("plan") or "", True)
 
                         # Set plan_mode_enabled=False on session_state and clear plan agent
                         session_state.plan_mode_enabled = False
@@ -879,6 +915,8 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                         # turn and potentially re-enter plan mode.
                         if resp_data.get("approved"):
                             plan_approved = True
+                            _inline = payload.get("plan") if isinstance(payload, dict) else ""
+                            approved_plan = (_inline or "", False)
 
                 if any_rejected:
                     yield ev.ErrorOutput("Command rejected. Tell the agent what to do differently.")
@@ -905,6 +943,12 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                 # execution agent (_maybe_run_approved_plan). Main-agent self-planning
                 # has no separate plan_agent and falls through to resume in-context.
                 if plan_approved and getattr(session_state, "plan_agent", None) is not None:
+                    # exit_plan_mode saves the plan AFTER its interrupt() returns —
+                    # which, since this planner is never resumed, is never. Every
+                    # /plan approval used to leave nothing on disk. Save it here.
+                    _saved = _save_unresumed_plan(approved_plan, session_state)
+                    if _saved:
+                        yield ev.ContextMessage(f"Plan saved to {_saved}", icon="✓", color="green")
                     break
 
                 stream_input = Command(
