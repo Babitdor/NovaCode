@@ -17,17 +17,6 @@ CODE_EXPLORER = {
     ],
 }
 
-SECURITY_AUDITOR_AGENT = {
-    "description": "Performs security audit for OWASP Top 10 vulnerabilities, secrets detection, input validation issues, authentication/authorization flaws, and dependency vulnerabilities. Reports critical/high/medium/low issues.",
-    "prompt": _load_prompt("security_auditor_agent.jinja"),
-    "tools": [
-        "duckduckgo_search",
-        "docs_search",
-        "fetch_url",
-        "package_info",
-    ],
-}
-
 REFACTORING_SPECIALIST_AGENT = {
     "description": "Identifies code smells (long methods, duplication, dead code), prioritizes technical debt, and creates incremental refactoring plans. Applies design patterns and SOLID principles.",
     "prompt": _load_prompt("refactoring_specialist_agent.jinja"),
@@ -44,12 +33,6 @@ BUG_FIX_AGENT = {
 
 # ── Test Agents ────────────────────────────────────────────────────────────────
 
-TESTING_AGENT = {
-    "description": "Executes and validates tests in isolated sandbox environments. Detects test framework, runs suites, parses results, and reports failures with root cause.",
-    "prompt": _load_prompt("testing_agent.jinja"),
-    "tools": [],
-}
-
 # ── Browser Automation Agent ───────────────────────────────────────────────────
 
 # NOTE: this agent receives `playwright_browser_*` MCP tools via
@@ -62,7 +45,8 @@ BROWSER_AUTOMATION_AGENT = {
     "description": (
         "Researches and extracts information from the web: plain HTTP (fetch + search) "
         "for static pages, and a real browser (playwright) for JavaScript-rendered "
-        "pages, logins, interaction, screenshots, and console/network inspection."
+        "pages, logins, interaction, screenshots, and console/network inspection. "
+        "Can also drive the desktop (cua-driver) for native dialogs and other apps."
     ),
     "prompt": _load_prompt("browser_automation_agent.jinja"),
     "tools": [

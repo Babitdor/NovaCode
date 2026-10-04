@@ -68,19 +68,10 @@ def retrieve_core_subagents(
 ) -> list[SubAgent]:
     all_tools: list[AnyTool] = tools or []
 
-    # The in-process specialists. There were thirteen; nine were removed after
-    # 583 saved sessions showed not one dispatch of any of them (out of 159, 98
-    # went to general-purpose and 26 to code-explorer). Each was a prompt the
-    # main agent already covers with a skill, or work that suits a background
-    # run better and has an async agent for it:
-    #   code-doc-Agent -> documentation-update-agent     reviewer-agent -> code-review-agent
-    #   test-writer-agent -> test-generation-agent       testing-agent -> test-runner-agent
-    #   security-auditor-agent -> security-audit-agent
-    #   code-simplifier-agent -> refactoring-specialist-agent (kept, below)
-    #   frontend-/backend-/docker-agent -> skills (frontend-design,
-    #       backend-dev-guidelines, docker-deploy) the main agent loads on demand
-    # A specialist earns its place here by needing the session: its approvals,
-    # its sandbox, or an answer in the same turn.
+    # The in-process specialists. One earns its place here by needing the
+    # session: its approvals, its sandbox, or an answer in the same turn. Work
+    # that is long and self-contained is an async agent instead
+    # (agents/async_agents/), and domain know-how is a skill the main agent loads.
     subagent_configs = [
         ("code-explorer", CODE_EXPLORER),
         ("refactoring-specialist-agent", REFACTORING_SPECIALIST_AGENT),
@@ -147,11 +138,14 @@ def retrieve_core_subagents(
         "bug-fix-agent": [
             "/skills/systematic-debugging/",
         ],
-        # No browser skills here: this agent only has fetch_url +
-        # duckduckgo_search, and agent-browser/browser-use teach driving a
-        # browser it cannot drive — which is what made it accept impossible
-        # tasks. The main agent owns real browser work (playwright_browser_*).
+        # It drives a real browser through the MCP tools it is granted (playwright
+        # and cua-driver: MCP_TOOLS_BY_SUBAGENT in core_agent.py), and, through
+        # the `execute` tool every subagent has, the agent-browser CLI and the
+        # Playwright scripts these two skills teach. The skills are the fallback
+        # when the MCP servers are absent or the browser is locked.
         "browser-automation-agent": [
+            "/skills/agent-browser/",
+            "/skills/browser-use/",
             "/skills/web-research/",
         ],
     }

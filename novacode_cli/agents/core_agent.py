@@ -1598,7 +1598,10 @@ def _build_middleware_stack(
 MCP_TOOLS_BY_SUBAGENT: dict[str, tuple[str, ...]] = {
     # Its whole purpose is driving a real browser; without playwright it can only
     # fetch HTML and had to disclaim the work in its own description.
-    "browser-automation-agent": ("playwright",),
+    # cua-driver is the second way in: it drives the desktop itself (click, type,
+    # screenshot by coordinates), for what a page's DOM cannot reach — native
+    # dialogs, another application, a browser playwright does not control.
+    "browser-automation-agent": ("playwright", "cua-driver"),
     # Semantic code navigation (LSP-backed symbol search) for repo exploration.
     "code-explorer": ("serena",),
 }

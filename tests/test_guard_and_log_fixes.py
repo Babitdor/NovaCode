@@ -42,3 +42,64 @@ def test_a_test_run_does_not_write_to_the_users_log():
     import novacode_cli.main as main
 
     assert isinstance(main.file_handler, logging.NullHandler)
+
+
+def test_headless_setup_does_not_close_stdout(tmp_path, monkeypatch):
+    """Every headless run on Windows ended in "I/O operation on closed file".
+
+    There the console writes through its own TextIOWrapper around stdout's
+    buffer. Repointing the console dropped that wrapper, and a collected
+    TextIOWrapper closes the buffer it wraps, which was stdout's.
+    """
+    import gc
+    import io
+    import os
+
+    import novacode_cli.main as main
+
+    raw = (tmp_path / "out.txt").open("wb", buffering=0)
+    buffer = io.BufferedWriter(raw)
+    stdout = io.TextIOWrapper(buffer, encoding="utf-8")
+    monkeypatch.setattr(sys, "stdout", stdout)
+    monkeypatch.setattr(main.console, "file", io.TextIOWrapper(buffer, encoding="utf-8"))
+
+    fd = main._setup_headless_io()
+    gc.collect()  # the console's old wrapper is gone now
+
+    assert not buffer.closed, "dropping the console's wrapper must not close stdout"
+    assert fd is not None, "the result descriptor must have been duplicated"
+    os.write(fd, b"pong")
+    os.close(fd)
+    stdout.detach()
+    buffer.close()
+    assert (tmp_path / "out.txt").read_bytes() == b"pong"
+
+
+def test_settings_never_print_a_credential():
+    """A crash screen prints locals; `settings` in scope put every key on screen."""
+    from dataclasses import fields, replace
+
+    from novacode_cli.config.config import settings
+
+    secret = "nvapi-" + "x" * 40
+    keyed = {f.name: secret for f in fields(settings) if f.name.endswith("_api_key")}
+    assert keyed, "expected credential fields"
+    shown = repr(replace(settings, **keyed)) + str(replace(settings, **keyed))
+    assert secret not in shown
+    assert shown.count("'<set>'") >= len(keyed)
+    assert "project_root=" in shown, "non-secret fields are still shown"
+
+
+def test_the_agents_screen_survives_a_reload_after_it_was_closed():
+    """Creating an agent finishes in a worker; the screen may be gone by then."""
+    from textual.css.query import NoMatches
+
+    from novacode_cli.tui.screens import AgentsScreen
+
+    screen = AgentsScreen.__new__(AgentsScreen)
+
+    def gone(*a, **k):  # noqa: ANN002, ANN003, ANN202
+        raise NoMatches("No nodes match '#agents-list' on AgentsScreen()")
+
+    screen.query_one = gone  # type: ignore[method-assign]
+    screen._reload()  # must return quietly, not take the app down

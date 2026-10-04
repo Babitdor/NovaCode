@@ -75,3 +75,35 @@ def test_they_cost_nothing_in_the_task_description():
     for name in RESEARCH_SWARM_AGENTS:
         assert f"- {name}:" not in desc, f"{name} is still billed on every turn"
     assert f"{len(RESEARCH_SWARM_AGENTS)} more specialist subagents" in desc
+
+
+def test_the_browser_agent_is_granted_playwright_and_cua_tools():
+    """Both MCP servers, matched by tool-name prefix, and nothing from the others."""
+    from types import SimpleNamespace
+
+    from novacode_cli.agents.core_agent import MCP_TOOLS_BY_SUBAGENT, _grant_mcp_tools
+
+    assert MCP_TOOLS_BY_SUBAGENT["browser-automation-agent"] == ("playwright", "cua-driver")
+
+    def tool(name):  # noqa: ANN001, ANN202
+        return SimpleNamespace(name=name)
+
+    mcp = [tool(n) for n in ("playwright_browser_click", "cua-driver_click", "serena_find_symbol", "apify_call-actor")]
+    specs = [
+        {"name": "browser-automation-agent", "tools": [tool("fetch_url")]},
+        {"name": "bug-fix-agent", "tools": []},
+    ]
+    _grant_mcp_tools(specs, mcp)
+    assert [t.name for t in specs[0]["tools"]] == ["fetch_url", "playwright_browser_click", "cua-driver_click"]
+    assert specs[1]["tools"] == [], "an agent absent from the map gets no MCP tools"
+
+    _grant_mcp_tools(specs, mcp)  # the specs are cached and reused: must not double up
+    assert len(specs[0]["tools"]) == 3
+
+
+def test_the_browser_agent_loads_the_skills_that_teach_driving_a_browser():
+    from novacode_cli.agents.default_subagents.subagents import retrieve_core_subagents
+
+    agent = next(s for s in retrieve_core_subagents([]) if s["name"] == "browser-automation-agent")
+    assert agent["skills"] == ["/skills/agent-browser/", "/skills/browser-use/", "/skills/web-research/"]
+    assert "cua-driver_" in agent["system_prompt"] and "playwright_browser_" in agent["system_prompt"]

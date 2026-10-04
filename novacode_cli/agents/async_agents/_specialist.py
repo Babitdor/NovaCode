@@ -1,13 +1,12 @@
-"""Run one of Nova's in-process specialists as a background graph.
+"""Build a background graph from a prompt and a list of tool names.
 
-The specialists (``default_subagents/prompt.py``) are defined once: a prompt and
-a list of tool names. This turns such a definition into an async graph, so the
-same agent can be dispatched with ``task`` (wait for the answer) or with
-``start_async_task`` (carry on, be told when it finishes) without a second
-prompt to keep in step.
+Shared by the async agents that are just that: a prompt, Nova tools named by
+string, and file access to the session's workspace. An agent that already exists
+in-process (``default_subagents/prompt.py``) can be handed over as it is, so the
+two forms never drift apart.
 
-Only specialists whose work is long and self-contained are exposed this way; one
-that edits code interactively needs the approvals that do not reach this server.
+Only work that is long and self-contained belongs here; an agent that edits code
+interactively needs the approvals that do not reach this server.
 """
 
 from __future__ import annotations
@@ -39,11 +38,11 @@ def build_specialist_graph(
     extra_tools: list[Any] | None = None,
     note: str = "",
 ) -> Any:
-    """A background graph for the specialist described by *definition*.
+    """A background graph for the agent described by *definition*.
 
     Args:
         name: The graph's agent name (its id in ``langgraph.json``).
-        definition: The specialist's ``{"prompt", "tools"}`` entry.
+        definition: A ``{"prompt", "tools"}`` entry.
         extra_tools: Tools this background form needs beyond the named ones.
         note: Anything the background form does differently from the prompt.
     """

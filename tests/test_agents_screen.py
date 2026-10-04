@@ -179,3 +179,68 @@ def test_named_subagent_gets_only_its_tools(tmp_path, monkeypatch) -> None:
     spec["_nova_tool_names"] = ["web_search", "serena_find_symbol"]
     core_agent._grant_mcp_tools([spec], [_M()])
     assert [t.name for t in spec["tools"]] == ["web_search", "serena_find_symbol"]
+
+
+def test_a_pasted_system_prompt_is_used_instead_of_generating_one(tmp_path, monkeypatch):
+    """The prompt field is the alternative to AI generation, not an input to it."""
+    import asyncio
+    import sys
+
+    sys.path.insert(0, "tests")
+    import test_tui_app as T
+    from textual.widgets import Button, Input, TextArea
+
+    import novacode_cli.commands.agents_commands as ac
+    from novacode_cli.config.config import settings
+    from novacode_cli.tui.app import AgentCreateModal, AgentsScreen, NovaApp
+    from novacode_cli.tui.widgets import PromptInput
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(settings, "get_agents_root_dir", lambda: tmp_path / "agents")
+    monkeypatch.setattr(settings, "get_project_agents_dir", lambda: None)
+
+    generated: list[str] = []
+
+    async def generate(name, desc):  # noqa: ANN001, ANN202
+        generated.append(name)
+        return "GENERATED PROMPT"
+
+    monkeypatch.setattr(ac, "_generate_agent_system_prompt", generate)
+    mine = "# Reviewer\n\nYou review diffs.\nBe terse: one finding per line."
+
+    async def create(name: str, prompt: str) -> None:
+        app = NovaApp(
+            agent=T._FakeAgent(), assistant_id="nova-agent", session_state=T._SS(), backend=None,
+            token_tracker=TokenTracker(), image_tracker=None, model_name="m",
+        )
+        async with app.run_test(size=(120, 50)) as pilot:
+            inp = app.query_one("#prompt", PromptInput)
+            inp.value = "/agents"
+            inp.focus()
+            await pilot.press("enter")
+            for _ in range(4):
+                await pilot.pause(0.05)
+            assert isinstance(app.screen, AgentsScreen)
+            app.screen.query_one("#create", Button).press()
+            for _ in range(4):
+                await pilot.pause(0.05)
+            assert isinstance(app.screen, AgentCreateModal)
+            app.screen.query_one("#agent-name", Input).value = name
+            app.screen.query_one("#agent-desc", Input).value = "Reviews code"
+            app.screen.query_one("#agent-prompt", TextArea).text = prompt
+            app.screen.query_one("#do-create", Button).press()
+            target = tmp_path / "agents" / name / "agent.md"
+            for _ in range(100):  # the create runs in a worker; poll rather than join
+                await pilot.pause(0.05)
+                if target.exists():
+                    break
+
+    asyncio.run(create("pasted-agent", mine))
+    body = (tmp_path / "agents" / "pasted-agent" / "agent.md").read_text(encoding="utf-8")
+    assert mine in body, "the pasted prompt must be written as given, line breaks included"
+    assert generated == [], "nothing may be generated when a prompt was supplied"
+
+    asyncio.run(create("generated-agent", "   "))  # blank means "generate one"
+    body = (tmp_path / "agents" / "generated-agent" / "agent.md").read_text(encoding="utf-8")
+    assert "GENERATED PROMPT" in body and generated == ["generated-agent"]

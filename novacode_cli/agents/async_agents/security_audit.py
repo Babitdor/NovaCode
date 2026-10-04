@@ -10,10 +10,15 @@ Exports:
 from __future__ import annotations
 
 from novacode_cli.agents.async_agents._specialist import build_specialist_graph
-from novacode_cli.agents.default_subagents.prompt import SECURITY_AUDITOR_AGENT
+from novacode_cli.prompts import render_template
+
+DEFINITION = {
+    "prompt": render_template("async_agents/security_audit.jinja"),
+    "tools": ["duckduckgo_search", "docs_search", "fetch_url", "package_info"],
+}
 
 graph = build_specialist_graph(
     "security-audit-agent",
-    SECURITY_AUDITOR_AGENT,
+    DEFINITION,
     note="\nThis is an audit: report what you find, with file and line. Do not change any file.\n",
 )

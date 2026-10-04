@@ -13,11 +13,13 @@ from __future__ import annotations
 
 from novacode_cli.agents.async_agents._specialist import build_specialist_graph
 from novacode_cli.agents.async_agents._test_commands import run_tests
-from novacode_cli.agents.default_subagents.prompt import TESTING_AGENT
+from novacode_cli.prompts import render_template
+
+DEFINITION = {"prompt": render_template("async_agents/test_runner.jinja"), "tools": []}
 
 graph = build_specialist_graph(
     "test-runner-agent",
-    TESTING_AGENT,
+    DEFINITION,
     extra_tools=[run_tests],
     note=(
         "\nThere is no `shell` tool in this run. Run tests with `run_tests`, which accepts"

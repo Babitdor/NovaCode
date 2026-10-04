@@ -659,15 +659,13 @@ the background and report back when they finish.
 | `code-explorer` | Navigate, understand, and query large codebases | `codebase-explorer/`, `graphify/` |
 | `refactoring-specialist-agent` | Code smells, technical debt, design patterns | `improve-codebase-architecture/` |
 | `bug-fix-agent` | Systematic bug diagnosis and fix | `systematic-debugging/` |
-| `browser-automation-agent` | Web testing, forms, screenshots, data extraction | `web-research/` |
+| `browser-automation-agent` | Web testing, forms, screenshots, data extraction; drives a real browser through the Playwright MCP tools, and the desktop through `cua-driver` | `agent-browser/`, `browser-use/`, `web-research/` |
 
 Their graphs are compiled on first use, so unused ones cost nothing at start-up.
 
-The roster used to hold thirteen. Nine were removed because they were never
-dispatched: documentation, review, test writing, test running and security audits are
-async agents now (below), and frontend, backend and Docker work is covered by skills
-(`frontend-design`, `backend-dev-guidelines`, `docker-deploy`) that the main agent
-loads on demand.
+Longer, self-contained jobs (review, documentation, tests, security audits, research)
+are async agents, below. Domain know-how such as frontend, backend or Docker work is a
+skill the main agent loads on demand.
 
 ### Research Swarm
 

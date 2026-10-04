@@ -32,7 +32,7 @@ def send_agent_message(to_agent: str, message: str, from_agent: str = "orchestra
     by name. The recipient reads it with `read_agent_messages` when it next runs.
 
     Args:
-        to_agent: The exact name of the recipient agent (e.g. "reviewer-agent").
+        to_agent: The exact name of the recipient agent (e.g. "code-explorer").
         message: The message to deliver.
         from_agent: Your own agent name, so the recipient knows who wrote it.
 

@@ -20,6 +20,7 @@ from textual import work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
+from textual.css.query import NoMatches
 from textual.widgets import (
     Button,
     Input,
@@ -29,6 +30,7 @@ from textual.widgets import (
     Static,
     Tab,
     Tabs,
+    TextArea,
 )
 from textual.widgets.option_list import Option
 
@@ -2198,6 +2200,7 @@ class AgentCreateModal(ModalScreen[dict | None]):
     AgentCreateModal #modal-buttons { dock: bottom; }
     AgentCreateModal #agent-tools-row { height: auto; margin-top: 1; }
     AgentCreateModal #agent-tools-summary { width: 1fr; padding: 1 1 0 0; }
+    AgentCreateModal #agent-prompt { height: 10; margin-bottom: 1; }
     """
 
     def __init__(self) -> None:
@@ -2249,6 +2252,16 @@ class AgentCreateModal(ModalScreen[dict | None]):
                 with Horizontal(id="agent-tools-row"):
                     yield Static(_tools_summary(None), id="agent-tools-summary")
                     yield Button("Choose tools...", id="choose-tools")
+                yield Static(
+                    Text.assemble(
+                        ("System Prompt ", "bold"),
+                        ("(optional) — paste your own, or leave empty to have one generated:", "dim"),
+                    ),
+                    id="agent-prompt-label",
+                )
+                # A TextArea, not an Input: a system prompt is many lines, and
+                # pasting into a single-line Input would flatten it.
+                yield TextArea("", id="agent-prompt", soft_wrap=True)
             yield Static("", id="agent-create-hint")
             with Horizontal(id="modal-buttons"):
                 yield Button("Create", id="do-create", variant="primary")
@@ -2319,6 +2332,11 @@ class AgentCreateModal(ModalScreen[dict | None]):
         except Exception:
             color = "#0ea5e9"
 
+        try:
+            system_prompt = self.query_one("#agent-prompt", TextArea).text.strip()
+        except Exception:
+            system_prompt = ""
+
         self.dismiss(
             {
                 "name": name,
@@ -2326,6 +2344,8 @@ class AgentCreateModal(ModalScreen[dict | None]):
                 "scope": scope,
                 "color": color,
                 "tools": self._tools,
+                # "" means "generate one from the description".
+                "system_prompt": system_prompt,
             }
         )
 
@@ -2380,10 +2400,17 @@ class AgentsScreen(ModalScreen[None]):
         except Exception:
             self._agents = []
 
-        ol = self.query_one("#agents-list", OptionList)
+        # Creating an agent generates its prompt with a model call, which takes a
+        # while. Closing the screen meanwhile removes these widgets but leaves
+        # `is_mounted` true for a moment, and the worker's final reload crashed
+        # the whole app with NoMatches. Nothing to refresh if the list is gone.
+        try:
+            ol = self.query_one("#agents-list", OptionList)
+            hint = self.query_one("#agents-hint", Static)
+        except NoMatches:
+            return
         keep = ol.highlighted
         ol.clear_options()
-        hint = self.query_one("#agents-hint", Static)
 
         if not self._agents:
             ol.add_option(Option("(no custom subagents found)"))
@@ -2591,6 +2618,10 @@ class AgentsScreen(ModalScreen[None]):
                 self.app._log(Text(f"Agent '{name}' already exists in that scope.", style="yellow"))
                 return
 
+            # The user's own prompt, used as written; only an empty one is generated.
+            system_prompt = (result.get("system_prompt") or "").strip()
+            generate = not system_prompt
+
             self._generating = True
             if self.is_mounted:
                 try:
@@ -2599,24 +2630,33 @@ class AgentsScreen(ModalScreen[None]):
                 except Exception:
                     pass
 
-                try:
-                    hint = self.query_one("#agents-hint", Static)
-                    hint.update(
-                        Text(
-                            f"Generating system prompt for @{name} using AI... Please wait.",
-                            style="bold cyan",
+                if generate:
+                    try:
+                        hint = self.query_one("#agents-hint", Static)
+                        hint.update(
+                            Text(
+                                f"Generating system prompt for @{name} using AI... Please wait.",
+                                style="bold cyan",
+                            )
                         )
-                    )
-                except Exception:
-                    pass
-            self.app._log(Text(f"Generating system prompt for @{name} using AI...", style="cyan"))
+                    except Exception:
+                        pass
+            if generate:
+                self.app._log(
+                    Text(f"Generating system prompt for @{name} using AI...", style="cyan")
+                )
 
             try:
-                from novacode_cli.commands.agents_commands import _generate_agent_system_prompt
+                if generate:
+                    from novacode_cli.commands.agents_commands import (
+                        _generate_agent_system_prompt,
+                    )
 
-                system_prompt = await _generate_agent_system_prompt(name, desc)
-                if not system_prompt:
-                    raise RuntimeError("AI generation of system prompt returned empty response.")
+                    system_prompt = await _generate_agent_system_prompt(name, desc)
+                    if not system_prompt:
+                        raise RuntimeError(
+                            "AI generation of system prompt returned empty response."
+                        )
 
                 from novacode_cli.agents.agent_file import write_agent
 

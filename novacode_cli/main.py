@@ -67,6 +67,7 @@ warnings.filterwarnings(
 )
 
 import argparse
+import contextlib
 import asyncio
 import io
 import logging
@@ -1916,11 +1917,21 @@ def _setup_headless_io() -> int | None:
     Returns the dup'd fd, or ``None`` if it can't be duplicated (the runner then
     falls back to ``sys.stdout``).
     """
-    console.file = sys.stderr
+    # Duplicate first. On Windows the console writes through its OWN
+    # TextIOWrapper around stdout's buffer (config.py); repointing it drops the
+    # last reference to that wrapper, and a collected TextIOWrapper closes the
+    # buffer it wraps, which is stdout's. fileno() then raised, this returned
+    # None, and every headless run ended in "I/O operation on closed file".
     try:
-        return os.dup(sys.stdout.fileno())
+        fd: int | None = os.dup(sys.stdout.fileno())
     except (OSError, ValueError, io.UnsupportedOperation):
-        return None
+        fd = None
+    previous = console.file
+    console.file = sys.stderr
+    if isinstance(previous, io.TextIOWrapper) and previous not in (sys.stdout, sys.__stdout__):
+        with contextlib.suppress(Exception):
+            previous.detach()  # let go of the shared buffer instead of closing it
+    return fd
 
 
 def cli_main() -> None:

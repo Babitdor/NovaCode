@@ -22,6 +22,22 @@ messages and network requests.
 **Use for:** JavaScript-rendered pages (SPAs), anything behind a login, pages
 that need interaction, and any question about how a page actually renders.
 
+### `cua-driver_*` — the desktop itself
+Drives the computer rather than a page: list and focus windows, launch apps, click,
+type, press keys, scroll, drag, read the accessibility tree, and take screenshots. It
+also has its own browser tools (`cua-driver_browser_navigate`, `_browser_click`, ...).
+
+**Use for:** what the page's DOM cannot reach — a native file or permission dialog,
+another application, a browser window playwright did not open — and as the way to
+carry on when the playwright browser is locked or unavailable.
+
+Slower and less precise than playwright, because it works on what is on screen. Check
+state before and after acting (`cua-driver_get_window_state`, `cua-driver_verify_state`).
+
+These tools exist only when the matching MCP server is configured. If a
+`playwright_browser_*` or `cua-driver_*` tool is not in your tool list, do not call it;
+use what you have, and say so if the task needs a browser you were not given.
+
 ## Choosing a Tool
 
 Start with `fetch_url` — it is far cheaper and faster. Escalate to the browser
@@ -34,6 +50,8 @@ only when HTTP cannot answer the question:
 | Content appears only after interaction | browser |
 | Login required | browser |
 | Need a screenshot, console errors, or network activity | browser |
+| Native dialog, another app, or a window playwright cannot reach | `cua-driver` |
+| Playwright browser locked or missing | `cua-driver`, or the `agent-browser` skill |
 
 ## Browser Workflow
 

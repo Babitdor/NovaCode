@@ -19,11 +19,11 @@ def _read(who, clear=True):
 
 def test_message_delivered_and_read():
     clear_mailbox()
-    assert _send("reviewer-agent", "please review PR #42", "backend-agent").startswith(
+    assert _send("code-explorer", "please review PR #42", "bug-fix-agent").startswith(
         "Message delivered"
     )
-    out = _read("reviewer-agent")
-    assert "[from backend-agent] please review PR #42" == out
+    out = _read("code-explorer")
+    assert "[from bug-fix-agent] please review PR #42" == out
 
 
 def test_read_clears_by_default():

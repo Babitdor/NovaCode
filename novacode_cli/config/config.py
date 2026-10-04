@@ -773,7 +773,7 @@ def get_default_coding_instructions() -> str:
     )
 
 
-@dataclass
+@dataclass(repr=False)
 class Settings:
     """Global settings and environment detection for deepagents-cli.
 
@@ -813,6 +813,24 @@ class Settings:
     langsmith_tracing_enabled: bool = False
 
     version: str = "1.0.0"
+
+    def __repr__(self) -> str:
+        """The settings, with every credential masked.
+
+        The dataclass default printed each key in full, and a Textual crash
+        screen prints local variables: any traceback that had ``settings`` in
+        scope put the user's API keys on screen, ready to be pasted into a bug
+        report. A key now shows only whether it is set.
+        """
+        from dataclasses import fields
+
+        parts = []
+        for f in fields(self):
+            value = getattr(self, f.name)
+            if f.name.endswith(("_api_key", "_token", "_secret")):
+                value = "<set>" if value else None
+            parts.append(f"{f.name}={value!r}")
+        return f"Settings({', '.join(parts)})"
 
     @classmethod
     def from_environment(cls, *, start_path: Path | None = None) -> "Settings":
