@@ -12,7 +12,6 @@ from typing import Any
 
 import requests
 from langchain.tools import tool
-from markdownify import markdownify
 
 from novacode_cli.tools._shared import (
     _BROWSER_USER_AGENTS,
@@ -437,7 +436,10 @@ def fetch_url(
                     pass  # Keep original content
 
             if _convert_to_markdown and is_html:
-                # Convert HTML content to markdown
+                # Convert HTML content to markdown. Imported on first use:
+                # markdownify pulls in bs4 and lxml, ~0.4 s of every start-up.
+                from markdownify import markdownify
+
                 content = markdownify(content)
 
             # For JSON responses, format as JSON code block

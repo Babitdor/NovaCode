@@ -230,3 +230,93 @@ def test_importing_nova_limits_openblas_threads_unless_already_set():
     ).stdout.strip()
     assert run(env) == "1"
     assert run({**env, "OPENBLAS_NUM_THREADS": "4"}) == "4", "an explicit setting must win"
+
+
+def test_an_app_focus_change_does_not_restyle_the_whole_screen():
+    """Alt-tab used to re-apply the stylesheet to every widget (5.4 s freeze)."""
+    import asyncio
+
+    from novacode_cli.tui.app import NovaApp
+
+    async def drive() -> tuple[int, bool]:
+        app = NovaApp.__new__(NovaApp)
+        calls = 0
+
+        class _Screen:
+            focused = None
+
+            def update_node_styles(self, animate: bool = True) -> None:
+                nonlocal calls
+                calls += 1
+
+            def set_focus(self, *a, **k) -> None:  # noqa: ANN002, ANN003
+                pass
+
+        screen = _Screen()
+        type(app).screen = property(lambda self: screen)  # type: ignore[assignment]
+        try:
+            app._last_focused_on_app_blur = None
+            app._watch_app_focus(False)
+            app._watch_app_focus(True)
+        finally:
+            del type(app).screen
+        return calls, "update_node_styles" in vars(screen)
+
+    calls, shadow_left = asyncio.run(drive())
+    assert calls == 0, "the whole-screen restyle must be skipped"
+    assert not shadow_left, "the shadow must be removed so later restyles still work"
+
+
+def test_plugin_commands_are_discovered_off_the_ui_thread(monkeypatch):
+    """Discovery scans installed packages and reads files: 2-3 s on a busy disk."""
+    import threading
+
+    from novacode_cli.tui.app import NovaApp
+
+    app = NovaApp.__new__(NovaApp)
+    seen: dict = {}
+    done = threading.Event()
+
+    def discover(self):  # noqa: ANN001, ANN202
+        seen["thread"] = threading.current_thread().name
+        return {"weather": object()}
+
+    def call_from_thread(self, fn, *a):  # noqa: ANN001, ANN002, ANN202
+        fn(*a)
+        done.set()
+
+    monkeypatch.setattr(NovaApp, "_discover_plugin_commands", discover)
+    monkeypatch.setattr(NovaApp, "call_from_thread", call_from_thread)
+    monkeypatch.setattr(NovaApp, "is_running", property(lambda self: True))
+    app._load_plugin_commands()
+    assert done.wait(5)
+    assert seen["thread"] == "nova-plugin-commands"
+    assert "weather" in app._plugin_commands
+
+
+def test_focus_returns_to_the_prompt_after_the_window_regains_focus():
+    """The trimmed focus watcher must keep Textual's own bookkeeping intact."""
+    import asyncio
+
+    import test_tui_app as T
+
+    from novacode_cli.tui.app import NovaApp, PromptInput
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    async def drive() -> tuple[bool, bool, bool]:
+        app = NovaApp(
+            agent=T._FakeAgent(), assistant_id="nova-agent", session_state=T._SS(), backend=None,
+            token_tracker=TokenTracker(), image_tracker=None, model_name="m", session_manager=None,
+        )
+        async with app.run_test(size=(140, 40)) as pilot:
+            await pilot.pause()
+            prompt = app.query_one("#prompt", PromptInput)
+            before = app.screen.focused is prompt
+            app.app_focus = False
+            await pilot.pause()
+            blurred = app.screen.focused is None
+            app.app_focus = True
+            await pilot.pause()
+            return before, blurred, app.screen.focused is prompt
+
+    assert asyncio.run(drive()) == (True, True, True)

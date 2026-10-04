@@ -46,8 +46,9 @@ def test_both_placeholder_shapes_resolve():
     tracker = PasteTracker()
     lines_id = tracker.add_paste("a\n" * 10)
     chars_id = tracker.add_paste("b" * 500)
+    ten_lines = "a\n" * 10  # a backslash inside an f-string is a SyntaxError before 3.12
     text = (
-        f"before {format_paste_placeholder(lines_id, 'a\n' * 10)} "
+        f"before {format_paste_placeholder(lines_id, ten_lines)} "
         f"middle {format_paste_placeholder(chars_id, 'b' * 500)} after"
     )
     restored = resolve_paste_placeholders(text, tracker)

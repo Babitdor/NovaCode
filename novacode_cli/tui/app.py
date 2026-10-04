@@ -2084,6 +2084,26 @@ class NovaApp(App):
         except NoMatches:
             return None
 
+    def _watch_app_focus(self, focus: bool) -> None:
+        """Textual's focus bookkeeping, minus its whole-screen restyle.
+
+        The base watcher starts with ``self.screen.update_node_styles()``, which
+        re-applies the stylesheet to every widget on screen so that rules keyed
+        on ``App:focus`` / ``App:blur`` can take effect. Nova has no such rule,
+        and with a long transcript that pass froze the UI for up to 5.4 s on
+        every alt-tab (freeze.log). The focused widget still restyles itself
+        through ``set_focus``.
+
+        ponytail: shadows one method for the duration of the call instead of
+        copying Textual's body; add an ``App:blur`` rule and this must go.
+        """
+        screen = self.screen
+        screen.update_node_styles = lambda animate=True: None  # type: ignore[method-assign]
+        try:
+            super()._watch_app_focus(focus)
+        finally:
+            del screen.update_node_styles
+
     def on_app_blur(self) -> None:
         """Pause MatrixRain when the terminal loses OS focus."""
         self._os_focused = False
@@ -7534,10 +7554,36 @@ class NovaApp(App):
     def _load_plugin_commands(self) -> None:
         """Discover slash commands from enabled plugins and register them.
 
-        Populates ``self._plugin_commands`` (name → async handler) and adds the
-        names to the autocomplete list. Built-ins are matched first in
-        :meth:`_run_slash`, so a plugin can't shadow a core command.
+        Discovery scans every installed distribution's metadata and reads each
+        plugin command file, which froze the UI for 2-3 s at start-up on a busy
+        disk (freeze.log), so it runs on a thread and only the registration
+        happens on the UI thread.
         """
+
+        def work() -> None:
+            found = self._discover_plugin_commands()
+            try:
+                if self.is_running:
+                    self.call_from_thread(self._register_plugin_commands, found)
+            except Exception:  # noqa: BLE001 — the app closed while we were scanning
+                pass
+
+        threading.Thread(target=work, name="nova-plugin-commands", daemon=True).start()
+
+    def _register_plugin_commands(self, found: dict[str, Any]) -> None:
+        self._plugin_commands = found
+        for name in found:
+            slash = f"/{name}"
+            if slash not in _TUI_SLASH_COMMANDS:
+                _TUI_SLASH_COMMANDS.append(slash)
+
+    def _discover_plugin_commands(self) -> dict[str, Any]:
+        """Name → async handler for every enabled plugin's commands. Thread-safe.
+
+        Built-ins are matched first in :meth:`_run_slash`, so a plugin can't
+        shadow a core command.
+        """
+        found: dict[str, Any] = {}
         try:
             from novacode_cli.plugins.loader import (
                 collect_plugin_commands,
@@ -7545,11 +7591,9 @@ class NovaApp(App):
             )
 
             cmds = collect_plugin_commands(discover_enabled_plugins())  # type: ignore
-            self._plugin_commands = {
-                name: c["handler"] for name, c in cmds.items() if c.get("handler")
-            }
+            found = {name: c["handler"] for name, c in cmds.items() if c.get("handler")}
         except Exception:  # noqa: BLE001 — a bad plugin must not break startup
-            self._plugin_commands = {}
+            found = {}
 
         # Claude-compatible plugin commands (commands/*.md|*.toml). Invoking one
         # streams its body — with $ARGUMENTS / {{args}} substituted — to the agent
@@ -7568,14 +7612,10 @@ class NovaApp(App):
                 return _handler
 
             for cname, _desc, body in plugin_commands():
-                self._plugin_commands.setdefault(cname, _make_claude_handler(body))
+                found.setdefault(cname, _make_claude_handler(body))
         except Exception:  # noqa: BLE001 — a bad plugin must not break startup
             pass
-
-        for name in self._plugin_commands:
-            slash = f"/{name}"
-            if slash not in _TUI_SLASH_COMMANDS:
-                _TUI_SLASH_COMMANDS.append(slash)
+        return found
 
     async def _run_plugin_command(self, text: str) -> bool:
         """Dispatch a plugin-contributed slash command. Returns True if handled.

@@ -38,10 +38,6 @@ try:
 except ImportError:  # pragma: no cover
     tenacity = None  # type: ignore[assignment]
 
-try:
-    from playwright.sync_api import sync_playwright
-except ImportError:  # pragma: no cover
-    sync_playwright = None  # type: ignore[assignment]
 
 _USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -223,7 +219,11 @@ def linkedin_jobs(
     Returns:
         Dict with "jobs" (list of job posting dicts) and "count".
     """
-    if sync_playwright is None:
+    # Imported here, not at module level: playwright costs ~0.5 s of every
+    # start-up and only this one tool uses it.
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:  # pragma: no cover
         return {
             "error": "Missing dependency: playwright. Install it with 'pip install playwright && playwright install chromium'",
             "jobs": [],
