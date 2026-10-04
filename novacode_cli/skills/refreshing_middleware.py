@@ -22,6 +22,8 @@ mid-session (``skill_manage`` / Hermes review) is usable at once (see
 
 from __future__ import annotations
 
+import asyncio
+import threading
 import logging
 import re
 from pathlib import Path
@@ -30,6 +32,8 @@ from typing import TYPE_CHECKING, Any
 from deepagents.middleware.skills import SkillsMiddleware
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import StructuredTool
+
+from pydantic import BaseModel, Field
 
 from novacode_cli.skills.retrieval import first_sentence, get_index, prewarm
 
@@ -84,6 +88,59 @@ def _text(msg: Any) -> str:
     return str(content)
 
 
+#: Parsed skill lists from earlier processes, keyed by sources + file signature.
+#: Listing parses every SKILL.md (2.4 s warm, ~10 s on a cold disk for ~1,000
+#: skills) and the first model call of a session waits for it. The signature
+#: already says whether anything changed, so an unchanged tree is one JSON read.
+_DISK_CACHE_ENTRIES = 4
+
+
+def _disk_cache_file() -> Path:
+    from novacode_cli.config import config
+
+    return config.HOME_DIR / "cache" / "skills_listing.json"
+
+
+def _disk_get(key: str) -> list | None:
+    import json
+
+    try:
+        return json.loads(_disk_cache_file().read_text(encoding="utf-8")).get(key)
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def _disk_put(key: str, skills: list) -> None:
+    """Best-effort; a missing cache only costs the parse it would have saved."""
+    import json
+    import os
+
+    if len(skills) < 50:  # small trees parse instantly (and tests use tiny ones)
+        return
+    path = _disk_cache_file()
+    try:
+        try:
+            entries = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            entries = {}
+        entries.pop(key, None)
+        entries[key] = skills
+        while len(entries) > _DISK_CACHE_ENTRIES:  # dicts keep insertion order
+            entries.pop(next(iter(entries)))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(entries), encoding="utf-8")
+        os.replace(tmp, path)
+    except (OSError, TypeError, ValueError):
+        pass
+
+
+class _SkillsSearchArgs(BaseModel):
+    """Search the skills library."""
+
+    query: str = Field(description="What you are trying to do, in plain words.")
+
+
 class RefreshingSkillsMiddleware(SkillsMiddleware):
     """Tiered skills: budgeted listing + per-turn suggestions + ``skills_search``."""
 
@@ -106,6 +163,12 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
         self._listing_chars = listing_chars
         self._usage: dict[str, int] | None = None  # read once, then frozen
         self._skills: list[SkillMetadata] = []
+        # Every skill, as loaded from disk. Held HERE, not in graph state: state
+        # is serialized into every checkpoint, and 1,089 skills are ~386 KB —
+        # written on every agent step and re-read at the start of every turn.
+        # That one key was most of a 12.7 GB checkpoint database.
+        self._all_skills: list[SkillMetadata] | None = None
+        self._load_lock = threading.Lock()
         prewarm()  # load the embedder while the user types, not on turn one
         self.tools = [
             StructuredTool.from_function(
@@ -115,6 +178,10 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
                     "Search the skill library (playbooks for specific tasks) by what you "
                     "need to do. Returns the best matches with the path of each SKILL.md."
                 ),
+                # Given, not inferred: inference builds three pydantic models per
+                # call (~6.6 ms), and deepagents creates one of these middlewares
+                # for each of ~90 subagents at agent-build time.
+                args_schema=_SkillsSearchArgs,
             )
         ]
 
@@ -138,6 +205,9 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
 
     def _format_skills_list(self, skills: list[SkillMetadata]) -> str:
         """The most-used skills that fit the budget; the rest via search."""
+        # deepagents passes state["skills_metadata"], which is deliberately empty
+        # now (see _all_skills) — the list lives on the instance.
+        skills = skills or self._skills
         usage = self._usage or {}
         ranked = sorted(skills, key=lambda s: -usage.get(s["name"], 0))  # stable: source order
         lines: list[str] = []
@@ -194,22 +264,61 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
         except Exception:  # noqa: BLE001 — ranking is a nicety, never break a turn
             logger.debug("skill usage unavailable", exc_info=True)
 
-    def _finish(
-        self, state: SkillsState, update: SkillsStateUpdate | None
-    ) -> SkillsStateUpdate | None:
+    def _load_skills(self, runtime: Runtime, config: RunnableConfig) -> None:
+        """(Re)load the skill list into the instance when files changed.
+
+        Blocking (directory walk + a parse per SKILL.md, ~2 s for 1,000 skills),
+        so the async path runs it in a worker thread.
+        """
         from novacode_cli.skills.skills_prefs import effective_disabled
 
-        skills = (update or {}).get("skills_metadata", state.get("skills_metadata")) or []
-        disabled = effective_disabled()
-        self._skills = [s for s in skills if s["name"] not in disabled]
+        with self._load_lock:
+            changed = self._skills_changed()
+            if self._all_skills is None or changed:
+                key = self._disk_key()
+                cached = _disk_get(key) if key else None
+                if cached is not None:
+                    self._all_skills = cached
+                else:
+                    # An empty state makes the base class list unconditionally.
+                    update = SkillsMiddleware.before_agent(self, {}, runtime, config)  # type: ignore[arg-type]
+                    self._all_skills = list((update or {}).get("skills_metadata") or [])
+                    if key:
+                        _disk_put(key, self._all_skills)
+            disabled = effective_disabled()
+            self._skills = [s for s in self._all_skills if s["name"] not in disabled]
+            # Build (or fetch) the search index HERE, on the worker thread. Left
+            # to _suggestions it was built on the UI's loop on first use and
+            # after every skill change: ~440 ms of BM25 + embeddings for 1,000
+            # skills, the largest single stall of a session's first turn.
+            try:
+                get_index(self._skills)
+            except Exception:  # noqa: BLE001 — suggestions are optional
+                logger.debug("skill index warm-up failed", exc_info=True)
+
+    def _disk_key(self) -> str | None:
+        """Identifies "these sources, with these exact files" for the disk cache."""
+        if self._last_signature is None:
+            return None
+        import hashlib
+
+        blob = repr((sorted(map(str, self.sources)), sorted(self._last_signature)))
+        return hashlib.sha1(blob.encode("utf-8"), usedforsecurity=False).hexdigest()
+
+    def _finish(self, state: SkillsState) -> SkillsStateUpdate | None:
+        update: dict[str, Any] = {}
+        # A thread saved before this change still carries the full list; blank
+        # it so its later checkpoints stop paying for it too.
+        if state.get("skills_metadata"):
+            update["skills_metadata"] = []
         try:
             note = self._suggestions(state, self._skills) if self._skills else None
         except Exception:  # noqa: BLE001 — retrieval must never break a turn
             logger.debug("skill suggestion failed", exc_info=True)
             note = None
-        if note is None:
-            return update
-        return {**(update or {}), "messages": [note]}  # type: ignore[typeddict-unknown-key]
+        if note is not None:
+            update["messages"] = [note]
+        return update or None  # type: ignore[return-value]
 
     # ── refresh when skill files change ────────────────────────────────────
 
@@ -222,17 +331,23 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
         """
         from novacode_cli.skills.skills_prefs import prefs_signature
 
+        import os
+
+        # os.scandir + os.stat, not Path.glob + Path.stat: this runs before
+        # every turn over ~1,000 skills, and pathlib's per-entry object churn
+        # made it the slowest part of the check (160 ms vs ~40 ms).
         sig: set[tuple[str, float]] = set()
         for directory in self._watch_dirs:
             try:
-                skill_files = list(directory.glob("*/SKILL.md"))
+                with os.scandir(directory) as entries:
+                    for entry in entries:
+                        skill_md = os.path.join(entry.path, "SKILL.md")
+                        try:
+                            sig.add((skill_md, os.stat(skill_md).st_mtime))
+                        except OSError:
+                            continue
             except OSError:
                 continue
-            for skill_md in skill_files:
-                try:
-                    sig.add((str(skill_md), skill_md.stat().st_mtime))
-                except OSError:
-                    continue
         return frozenset(sig | prefs_signature())
 
     def _skills_changed(self) -> bool:
@@ -251,18 +366,18 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
         self, state: SkillsState, runtime: Runtime, config: RunnableConfig
     ) -> SkillsStateUpdate | None:
         """Re-list if skills changed, load, then suggest for the new message."""
-        if self._skills_changed():
-            state = {k: v for k, v in state.items() if k != "skills_metadata"}  # type: ignore[assignment]
-        return self._finish(state, super().before_agent(state, runtime, config))
+        self._load_skills(runtime, config)
+        return self._finish(state)
 
     async def abefore_agent(
         self, state: SkillsState, runtime: Runtime, config: RunnableConfig
     ) -> SkillsStateUpdate | None:
         """Async twin of :meth:`before_agent` (the path the agent actually runs)."""
         await self._read_usage(runtime)
-        if self._skills_changed():
-            state = {k: v for k, v in state.items() if k != "skills_metadata"}  # type: ignore[assignment]
-        return self._finish(state, await super().abefore_agent(state, runtime, config))
+        # Off the event loop: the change check stats every SKILL.md and a reload
+        # parses them all, and this loop is the one the UI paints on.
+        await asyncio.to_thread(self._load_skills, runtime, config)
+        return self._finish(state)
 
 
 class SubagentSkillsMiddleware(RefreshingSkillsMiddleware):

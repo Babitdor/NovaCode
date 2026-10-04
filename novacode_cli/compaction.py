@@ -4,6 +4,7 @@ This module provides functionality to compress conversation history
 by generating an intelligent summary that preserves key context.
 """
 
+import asyncio
 import json
 import logging
 from datetime import UTC, datetime
@@ -470,7 +471,8 @@ async def compact_conversation(
             )
 
         messages_before = len(messages)
-        archived = _archive_messages(thread_id, messages)
+        # A long transcript is tens of MB of JSON; write it off the UI's loop.
+        archived = await asyncio.to_thread(_archive_messages, thread_id, messages)
 
         # Count original tokens using the model's tokenizer when available,
         # falling back to the rough 4-chars-per-token approximation.

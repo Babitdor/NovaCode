@@ -88,6 +88,106 @@ def find_skill_dir(name: str) -> tuple[Path, str] | None:
     return None
 
 
+#: directory -> (signature, parsed skills). Listing parses every SKILL.md's
+#: frontmatter — 11 s cold / 1.4 s warm for ~1,000 skills — and it was redone
+#: from scratch on every call (each skill invocation, each remote slash
+#: command, the /skills screen). A stat per skill answers "did anything change?"
+#: in a few milliseconds; only a changed directory is re-parsed.
+_DIR_CACHE: dict[str, tuple[frozenset, list]] = {}
+
+
+def _dir_signature(directory: Path) -> frozenset:
+    """(name, mtime, size) of every ``<skill>/SKILL.md`` directly under *directory*."""
+    import os
+
+    sig = []
+    try:
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                try:
+                    st = os.stat(os.path.join(entry.path, "SKILL.md"))
+                except OSError:
+                    continue
+                sig.append((entry.name, st.st_mtime_ns, st.st_size))
+    except OSError:
+        pass
+    return frozenset(sig)
+
+
+def _list_dir(directory: Path) -> list:
+    """Skills under *directory*, re-parsed only when a SKILL.md changed.
+
+    Returns fresh dicts: callers stamp ``source``/``path`` onto them.
+    """
+    key = str(directory)
+    signature = _dir_signature(directory)
+    hit = _DIR_CACHE.get(key)
+    if hit is None or hit[0] != signature:
+        skills = _load_persisted(key, signature)
+        if skills is None:
+            from deepagents.middleware.skills import _list_skills as list_skills_from_backend
+
+            from novacode_cli.backends import OptimizedFilesystemBackend as FilesystemBackend
+
+            backend = FilesystemBackend(root_dir=key, virtual_mode=True)
+            skills = list_skills_from_backend(backend=backend, source_path=".")
+            _persist(key, signature, skills)
+        hit = (signature, skills)
+        _DIR_CACHE[key] = hit
+    return [dict(skill) for skill in hit[1]]
+
+
+#: Directories smaller than this are not worth a disk entry (and it keeps the
+#: throwaway directories tests create out of the user's cache file).
+_PERSIST_MIN_SKILLS = 50
+
+
+def _index_file() -> Path:
+    from novacode_cli.config import config
+
+    return config.HOME_DIR / "cache" / "skill_index.json"
+
+
+def _load_persisted(key: str, signature: frozenset) -> list | None:
+    """The parsed skills for *key* from the last process, if still current.
+
+    The in-memory cache dies with the process, and a cold parse of ~1,000
+    SKILL.md files is ~10 s (reading each file, then YAML). With the index on
+    disk a fresh process pays for the stats and one JSON read instead.
+    """
+    import json
+
+    try:
+        entry = json.loads(_index_file().read_text(encoding="utf-8")).get(key)
+        if entry and frozenset(tuple(item) for item in entry["sig"]) == signature:
+            return entry["skills"]
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return None
+
+
+def _persist(key: str, signature: frozenset, skills: list) -> None:
+    """Record *key*'s parsed skills for the next process. Best-effort."""
+    import json
+    import os
+
+    if len(skills) < _PERSIST_MIN_SKILLS:
+        return
+    path = _index_file()
+    try:
+        try:
+            index = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            index = {}
+        index[key] = {"sig": sorted(signature), "skills": skills}
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(index), encoding="utf-8")
+        os.replace(tmp, path)  # atomic: a concurrent reader never sees half a file
+    except (OSError, TypeError, ValueError):
+        pass
+
+
 def list_skills(
     *,
     user_skills_dir: Path | None = None,
@@ -123,27 +223,19 @@ def list_skills(
     # Lazy deepagents imports (see module docstring): only needed when actually
     # listing skills, not at import time.
     from deepagents.middleware.skills import SkillMetadata
-    from deepagents.middleware.skills import _list_skills as list_skills_from_backend
-    from novacode_cli.backends import OptimizedFilesystemBackend as FilesystemBackend
 
     all_skills: dict[str, SkillMetadata] = {}
 
     # Load user skills first (foundation)
     if user_skills_dir and user_skills_dir.exists():
-        user_backend = FilesystemBackend(root_dir=str(user_skills_dir), virtual_mode=True)
-        user_skills = list_skills_from_backend(
-            backend=user_backend, source_path="."
-        )
+        user_skills = _list_dir(user_skills_dir)
         for skill in user_skills:
             skill["source"] = "user"  # type: ignore[typeddict-unknown-key]
             all_skills[skill["name"]] = skill
 
     # Load global Claude Code skills second (override/supplement user skills)
     if claude_skills_dir and claude_skills_dir.exists():
-        claude_backend = FilesystemBackend(root_dir=str(claude_skills_dir), virtual_mode=True)
-        claude_skills = list_skills_from_backend(
-            backend=claude_backend, source_path="."
-        )
+        claude_skills = _list_dir(claude_skills_dir)
         for skill in claude_skills:
             skill["source"] = "claude"  # type: ignore[typeddict-unknown-key]
             all_skills[skill["name"]] = skill
@@ -154,8 +246,7 @@ def list_skills(
     for plugin_dir in plugin_skills_dirs or []:
         if not (plugin_dir and plugin_dir.exists()):
             continue
-        plugin_backend = FilesystemBackend(root_dir=str(plugin_dir), virtual_mode=True)
-        for skill in list_skills_from_backend(backend=plugin_backend, source_path="."):
+        for skill in _list_dir(plugin_dir):
             skill["source"] = "plugin"  # type: ignore[typeddict-unknown-key]
             # The backend's ``path`` is virtual (rooted at plugin_dir, e.g.
             # "/foo/SKILL.md") and uses the real directory name — which can differ
@@ -167,10 +258,7 @@ def list_skills(
 
     # Load project skills last (override/augment)
     if project_skills_dir and project_skills_dir.exists():
-        project_backend = FilesystemBackend(root_dir=str(project_skills_dir), virtual_mode=True)
-        project_skills = list_skills_from_backend(
-            backend=project_backend, source_path="."
-        )
+        project_skills = _list_dir(project_skills_dir)
         for skill in project_skills:
             skill["source"] = "project"  # type: ignore[typeddict-unknown-key]
             all_skills[skill["name"]] = skill

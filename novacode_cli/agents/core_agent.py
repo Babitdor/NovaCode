@@ -124,9 +124,50 @@ def _cached_create_sub_agent(spec, *, state_schema=None, response_format=None): 
     cached = spec.get(_SUBAGENT_RUNNABLE_CACHE_KEY)
     if cached is not None and cached[0] is state_schema:
         return cached[1]
-    runnable = _original_create_sub_agent(spec, state_schema=state_schema)
+    runnable = _LazySubAgent(spec, state_schema)
     spec[_SUBAGENT_RUNNABLE_CACHE_KEY] = (state_schema, runnable)
     return runnable
+
+
+class _LazySubAgent:
+    """A subagent graph that is compiled the first time it is used.
+
+    Every spec used to be compiled at agent-build time: ~90 graphs (core, named
+    and plugin agents) at ~36 ms each, 3.3 s of a 5.5 s build — on every start
+    and every model switch — for agents a session almost never calls. deepagents
+    only ever touches the compiled graph through ``invoke``/``ainvoke`` when a
+    ``task`` call names it, so the compile can wait until then. Anything else
+    asked of it (``with_config``, ``get_graph``, …) builds it and delegates.
+
+    A broken spec now fails at its first use rather than at start-up; the
+    ``task`` tool reports that to the model like any other tool error.
+    """
+
+    def __init__(self, spec, state_schema) -> None:  # noqa: ANN001
+        self._spec = spec
+        self._state_schema = state_schema
+        self._graph = None
+        self._lock = __import__("threading").Lock()
+
+    def _built(self):  # noqa: ANN202
+        if self._graph is None:
+            with self._lock:  # parallel `task` calls may race to the first use
+                if self._graph is None:
+                    self._graph = _original_create_sub_agent(
+                        self._spec, state_schema=self._state_schema
+                    )
+        return self._graph
+
+    def invoke(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        return self._built().invoke(*args, **kwargs)
+
+    async def ainvoke(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        return await self._built().ainvoke(*args, **kwargs)
+
+    def __getattr__(self, name: str):  # noqa: ANN204
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(name)  # copy/pickle probes must not trigger a build
+        return getattr(self._built(), name)
 
 
 _dsub.create_sub_agent = _cached_create_sub_agent
@@ -916,6 +957,12 @@ def _host_drive_roots(workspace_root: Path) -> list[str]:
     return roots
 
 
+#: Routes a path-less grep/glob searches in addition to the project itself.
+#: Everything else (skills, plugins, memories, offloaded results, drive roots)
+#: is addressed by explicit prefix only.
+_PROJECT_SEARCH_ROUTES = frozenset({"/.nova/plans/", "/project-memory/"})
+
+
 def _build_composite_backend(
     *,
     sandbox: SandboxBackendProtocol | None,
@@ -1165,8 +1212,18 @@ def _build_composite_backend(
     # out, and a route's timeout fails the WHOLE search even when the project
     # part succeeded. `.routes` feeds only that fan-out; explicit paths route
     # through `.sorted_routes`, so a real absolute path still resolves.
+    #
+    # The same goes for Nova's own stores. "Find *.toml" means in the PROJECT;
+    # fanning out also walked ~/.nova skills (1,000 dirs), every plugin's
+    # skills and the agent's memory tree (25,000 files with its archives) on
+    # every path-less glob/grep — measured 0.14 s for the project alone vs
+    # 1.06 s warm and a 10 s timeout on a cold disk, stalling the UI the whole
+    # time, and it mixed skill files into project search results. They stay
+    # reachable by their explicit prefix (/skills/…, /memories/…).
     composite_backend.routes = {
-        prefix: backend for prefix, backend in _routes.items() if prefix not in _drive_routes
+        prefix: backend
+        for prefix, backend in _routes.items()
+        if prefix in _PROJECT_SEARCH_ROUTES
     }
 
     return composite_backend, _default_backend

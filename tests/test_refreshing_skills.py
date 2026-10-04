@@ -58,32 +58,55 @@ def test_skills_changed_detects_edit(tmp_path):  # noqa: ANN001
     assert mw._skills_changed() is True
 
 
-def test_before_agent_defers_when_unchanged(tmp_path):  # noqa: ANN001
+def _names(mw) -> set[str]:  # noqa: ANN001
+    return {s["name"] for s in mw._skills}
+
+
+def test_skills_are_held_on_the_instance_not_in_state(tmp_path):  # noqa: ANN001
+    """State is serialized into every checkpoint; the skill list was most of it."""
     _write_skill(tmp_path, "alpha")
     mw = _make(tmp_path)
-    upd1 = mw.before_agent({}, None, None)
-    assert upd1 is not None
-    assert "alpha" in {s["name"] for s in upd1["skills_metadata"]}
-    state = {"skills_metadata": upd1["skills_metadata"]}
-    assert mw.before_agent(state, None, None) is None  # deferred, no reload
+    upd = mw.before_agent({}, None, None)
+    assert _names(mw) == {"alpha"}
+    assert "skills_metadata" not in (upd or {}), "nothing skill-shaped goes into state"
+
+
+def test_a_stale_list_in_state_is_blanked(tmp_path):  # noqa: ANN001
+    """Threads saved before the change stop paying for the list too."""
+    _write_skill(tmp_path, "alpha")
+    mw = _make(tmp_path)
+    upd = mw.before_agent({"skills_metadata": [{"name": "old"}]}, None, None)
+    assert upd == {"skills_metadata": []}
+
+
+def test_before_agent_does_not_reload_when_unchanged(tmp_path, monkeypatch):  # noqa: ANN001
+    from deepagents.middleware.skills import SkillsMiddleware
+
+    _write_skill(tmp_path, "alpha")
+    mw = _make(tmp_path)
+    mw.before_agent({}, None, None)
+    calls = []
+    real = SkillsMiddleware.before_agent
+    monkeypatch.setattr(
+        SkillsMiddleware, "before_agent", lambda *a, **k: (calls.append(1), real(*a, **k))[1]
+    )
+    mw.before_agent({}, None, None)
+    assert not calls, "an unchanged skill tree must not be re-parsed every turn"
 
 
 def test_before_agent_refreshes_after_new_skill(tmp_path):  # noqa: ANN001
     _write_skill(tmp_path, "alpha")
     mw = _make(tmp_path)
-    upd1 = mw.before_agent({}, None, None)
-    state = {"skills_metadata": upd1["skills_metadata"]}
+    mw.before_agent({}, None, None)
     _write_skill(tmp_path, "beta")
-    upd2 = mw.before_agent(state, None, None)
-    assert upd2 is not None
-    assert {s["name"] for s in upd2["skills_metadata"]} == {"alpha", "beta"}
+    mw.before_agent({}, None, None)
+    assert _names(mw) == {"alpha", "beta"}
 
 
 async def test_abefore_agent_refreshes_after_new_skill(tmp_path):  # noqa: ANN001
     _write_skill(tmp_path, "alpha")
     mw = _make(tmp_path)
-    upd1 = await mw.abefore_agent({}, None, None)
-    state = {"skills_metadata": upd1["skills_metadata"]}
+    await mw.abefore_agent({}, None, None)
     _write_skill(tmp_path, "beta")
-    upd2 = await mw.abefore_agent(state, None, None)
-    assert "beta" in {s["name"] for s in upd2["skills_metadata"]}
+    await mw.abefore_agent({}, None, None)
+    assert "beta" in _names(mw)

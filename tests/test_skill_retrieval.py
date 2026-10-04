@@ -66,10 +66,18 @@ def _offline(monkeypatch):
     R._index_cache.clear()
 
 
+class _Loaded(RefreshingSkillsMiddleware):
+    """Test seam: the skill list lives on the instance now (it used to arrive in
+    a state update), so ``_finish(state, {"skills_metadata": ...})`` loads it."""
+
+    def _finish(self, state, update=None):  # noqa: ANN001, ANN202
+        if update is not None:
+            self._skills = list(update["skills_metadata"])
+        return super()._finish(state)
+
+
 def _mw(listing_chars: int = 600) -> RefreshingSkillsMiddleware:
-    return RefreshingSkillsMiddleware(
-        backend=None, sources=["/skills/"], listing_chars=listing_chars
-    )
+    return _Loaded(backend=None, sources=["/skills/"], listing_chars=listing_chars)
 
 
 def test_listing_stays_within_budget_and_points_at_search() -> None:

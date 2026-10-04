@@ -724,10 +724,14 @@ class MCPMiddleware(AgentMiddleware):
         """
         await self._ensure_tools_discovered()
 
-        if not self._tools_cache:
-            return None
-
-        return {"mcp_tools": self._tools_cache}
+        # Deliberately NOT written to state. The prompt section reads
+        # `state.get("mcp_tools") or self._tools_cache`, so the instance copy is
+        # enough — and state is serialized into every checkpoint, where this
+        # list was ~158 KB on every agent step. Blank what an older thread
+        # still carries so its later checkpoints shrink too.
+        if state.get("mcp_tools"):
+            return {"mcp_tools": []}
+        return None
 
     def _format_servers_list(
         self,

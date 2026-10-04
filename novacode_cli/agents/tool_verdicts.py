@@ -866,6 +866,19 @@ class ToolVerdictCache:
         """Cycle accounting is per-append; present for symmetry."""
 
     # ── reading ─────────────────────────────────────────────────────────
+    def warm(self) -> None:
+        """Parse every cycle file now, so the first lookup finds them memoised.
+
+        Lookups happen on the event loop the UI shares; the first one otherwise
+        reads the whole store there (measured: 71 files, ~120 ms). Meant for a
+        worker thread at agent-build time. Never raises.
+        """
+        try:
+            for cycle, _path in self.cycle_files():
+                self._cycle_entries(cycle)
+        except Exception:  # noqa: BLE001 — a cold cache is only slower
+            logger.debug("verdict cache warm-up failed", exc_info=True)
+
     def _cycle_entries(self, cycle: int) -> dict[str, float]:
         """The verdicts one cycle holds, read from disk at most once.
 
@@ -1094,7 +1107,11 @@ def build_verdict_middleware(scorer: VerdictScorer) -> Any:
 
     Imported lazily so a disabled flag never pays for the middleware base class.
     """
+    import threading
+
     from langchain.agents.middleware import AgentMiddleware
+
+    threading.Thread(target=scorer.cache.warm, name="nova-verdict-warm", daemon=True).start()
 
     class _VerdictMiddleware(AgentMiddleware):  # type: ignore[misc]
         """Hands each turn's messages to the scorer, off the critical path."""
