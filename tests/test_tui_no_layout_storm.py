@@ -162,3 +162,71 @@ def test_gc_tuning_is_inert_under_pytest_and_rate_limits_idle_collections(monkey
     assert gc_tuning.collect_while_idle(busy=True) is False, "never during a turn"
     assert gc_tuning.collect_while_idle() is True
     assert gc_tuning.collect_while_idle() is False, "rate-limited"
+
+
+# ── a finished answer's Markdown is rendered once per width ──────────────────
+
+
+_ANSWER = (
+    "## Findings\n\nSome **bold** text and `code`.\n\n- one\n- two\n\n"
+    "```python\nfor i in range(3):\n    print(i)\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"
+) * 4
+
+
+def _print(renderable, width: int) -> str:
+    import io
+
+    from rich.console import Console
+
+    console = Console(file=io.StringIO(), width=width, force_terminal=True, color_system="truecolor")
+    console.print(renderable)
+    return console.file.getvalue()
+
+
+def test_cached_markdown_renders_identically_to_rich():
+    from rich.markdown import Markdown
+
+    from novacode_cli.tui.widgets import CachedMarkdown
+
+    cached = CachedMarkdown(_ANSWER)
+    assert isinstance(cached, Markdown), "copy/selection code checks isinstance(Markdown)"
+    assert cached.markup == _ANSWER
+    for width in (60, 100, 140):
+        assert _print(cached, width) == _print(Markdown(_ANSWER), width), width
+
+
+def test_cached_markdown_renders_once_per_width(monkeypatch):
+    """Textual measures, then paints, then repaints: all at the same width."""
+    from novacode_cli.tui import widgets
+
+    renders: list[int] = []
+    real = widgets._UncachedMarkdown.__rich_console__
+
+    def counting(self, console, options):  # noqa: ANN001, ANN202
+        renders.append(options.max_width)
+        return real(self, console, options)
+
+    monkeypatch.setattr(widgets._UncachedMarkdown, "__rich_console__", counting)
+    cached = widgets.CachedMarkdown(_ANSWER)
+    for _ in range(5):
+        _print(cached, 100)
+    assert renders == [100], "five paints at one width must parse and highlight once"
+    _print(cached, 80)
+    assert renders == [100, 80], "a resize re-renders, as it must"
+
+
+# ── numpy must not reserve a buffer per CPU thread ───────────────────────────
+
+
+def test_importing_nova_limits_openblas_threads_unless_already_set():
+    """380 MB -> 9 MB of private memory per Nova process on a 12-thread machine."""
+    import os
+    import subprocess
+
+    code = "import os, novacode_cli; print(os.environ.get('OPENBLAS_NUM_THREADS'))"
+    env = {k: v for k, v in os.environ.items() if k != "OPENBLAS_NUM_THREADS"}
+    run = lambda e: subprocess.run(  # noqa: E731
+        [sys.executable, "-c", code], env=e, capture_output=True, text=True, timeout=120
+    ).stdout.strip()
+    assert run(env) == "1"
+    assert run({**env, "OPENBLAS_NUM_THREADS": "4"}) == "4", "an explicit setting must win"

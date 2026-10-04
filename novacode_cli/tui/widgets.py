@@ -37,6 +37,42 @@ from novacode_cli.input_utils import (
 )
 
 
+class _UncachedMarkdown:
+    """Renders a Markdown through rich's own implementation (see CachedMarkdown)."""
+
+    def __init__(self, markdown: Markdown) -> None:
+        self._markdown = markdown
+
+    def __rich_console__(self, console: Any, options: Any) -> Any:
+        return Markdown.__rich_console__(self._markdown, console, options)
+
+
+class CachedMarkdown(Markdown):
+    """A ``rich`` Markdown that renders once per width.
+
+    Textual renders a Static's content to *measure* its height and then again to
+    *paint* it, and repaints it whenever a neighbour mounts or the layout moves.
+    For Markdown each of those is a full parse-highlight-wrap: measured on six
+    long answers, 2.1 s went on height measurement (352 ms each) and 1.6 s on
+    fifteen paints (104 ms each) — over half a second of the UI loop per answer,
+    for output that is identical every time at a given width.
+
+    The segments are kept for the last width only: a resize re-renders, as it
+    must, and an old width is never asked for again.
+    """
+
+    _cache_key: Any = None
+    _cache_segments: list | None = None
+
+    def __rich_console__(self, console: Any, options: Any) -> Any:
+        key = (options.max_width, options.no_wrap, options.overflow, options.justify)
+        if self._cache_segments is None or self._cache_key != key:
+            self._cache_segments = list(console.render(_UncachedMarkdown(self), options))
+            self._cache_key = key
+        return iter(self._cache_segments)
+
+
+
 # ---------------------------------------------------------------------------
 # Matrix rain — animated home screen banner
 # ---------------------------------------------------------------------------

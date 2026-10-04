@@ -43,7 +43,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-from rich.markdown import Markdown
 from rich.markup import escape as _esc
 from rich.text import Text
 from textual import events, on, work
@@ -73,6 +72,8 @@ from novacode_cli.tui import motion
 # Widgets and modal screens were extracted verbatim into widgets.py /
 # screens.py. Re-exported here so `from novacode_cli.tui.app import X`
 # keeps working for tests, main.py, and remote code.
+# Markdown, cached per width: see CachedMarkdown for what the plain one cost.
+from novacode_cli.tui.widgets import CachedMarkdown as Markdown
 from novacode_cli.tui.widgets import (
     DEFAULT_THEME,
     NOVA_MATRIX,
@@ -1618,14 +1619,22 @@ class NovaApp(App):
         self._subagents_paint_due: float = 0.0
         self._subagents_tick: Any = None
 
-    def _current_agent_info(self) -> tuple[str, str]:
+    def _current_agent_info(self) -> tuple[str, str | None]:
+        """The speaking assistant's display name and its identity colour.
+
+        The main agent returns ``None`` rather than a hardcoded green: it has no
+        identity colour of its own, and pinning one meant its label never followed
+        ``/theme``. A named subagent still returns the colour registered from its
+        ``agent.md``, which is what keeps it distinct from the main agent.
+        """
         from novacode_cli.core.input_preparation import get_agent_display_name
-        from novacode_cli.config.config import get_agent_color
+        from novacode_cli.config.config import MAIN_AGENT_ID, get_agent_color
 
         aid = self._current_assistant_id or self.assistant_id
         name = get_agent_display_name(aid)
-        color = get_agent_color(aid) if name != "Nova" else "#10b981"
-        return name, color
+        if not aid or aid == MAIN_AGENT_ID:
+            return name, None
+        return name, get_agent_color(aid)
 
     def compose(self) -> ComposeResult:
         # One scroll region per session, swapped by a ContentSwitcher. The root
@@ -1797,7 +1806,39 @@ class NovaApp(App):
         with suppress(Exception):  # a repaint must never break a theme switch
             self._refresh_status()
             self._refresh_info_bar()
+            self._restyle_transcript_labels()
         self._apply_markdown_theme()
+
+    def _restyle_transcript_labels(self) -> None:
+        """Re-paint every mounted role header in the new theme's colours.
+
+        A role header's colour lives in a Rich ``Text`` style, which CSS never
+        touches — so without this, ``/theme`` only ever affected messages added
+        afterwards and the transcript already on screen kept the old theme's
+        hexes.
+
+        The name and the identity colour are read off the message's own ``_header``
+        (the source of truth ``update_header`` already maintains), never off the
+        mounted ``Static``'s private content, which is not a reliable handle on
+        this Textual version. A subagent's identity colour is carried through
+        unchanged — those are deliberately fixed per assistant, not theme-derived.
+        """
+        for msg in self.query(ChatMessage):
+            try:
+                header = msg._header
+                if not isinstance(header, Text):
+                    continue
+                # Collapse carets are appended to the header text; drop the suffix.
+                name = header.plain.rstrip().removesuffix("▸").removesuffix("▾").rstrip()
+                if msg.has_class("user"):
+                    restyled = self._user_label(name or "You")
+                else:
+                    # _custom_color is the identity colour parsed off the old
+                    # header; feeding it back keeps ralph pink and Nova themed.
+                    restyled = self._agent_label(name or "Nova", msg._custom_color)
+                msg.update_header(restyled)
+            except Exception:  # noqa: BLE001 — one bad header must not break /theme
+                continue
 
     def _apply_markdown_theme(self) -> None:
         """Point Rich's markdown elements at the active theme's colours.
@@ -2219,7 +2260,7 @@ class NovaApp(App):
             )
             return
 
-        await self._add_message(Text("You", style="bold cyan"), "user", Markdown(stripped))
+        await self._add_message(self._user_label(), "user", Markdown(stripped))
         if await self._supervisor().send_prompt(pane.sid, stripped) is None:
             self._log(Text("✖ that session is no longer running.", style="bold #f7768e"))
         pane.status = "running"
@@ -3137,6 +3178,33 @@ class NovaApp(App):
 
     # _init step-tracker widget removed — /init progress is now shown via _log only.
 
+    def _user_label(self, name: str = "You") -> Text:
+        """The transcript header for the user's own turn, in the theme's colours.
+
+        Was a literal ``Text("You", style="bold cyan")`` at every call site. ANSI
+        cyan is not themeable, so ``/theme`` left the user's own label on a fixed
+        terminal colour while everything around it moved.
+        """
+        from novacode_cli.tui.palette import user_label_style
+
+        return Text(name, style=user_label_style(self._palette))
+
+    def _agent_label(self, name: str, agent_color: str | None = None) -> Text:
+        """The transcript header for the agent's own turn.
+
+        Follows the theme, unless the assistant is a named subagent with an
+        explicit identity colour from its ``agent.md`` frontmatter — that colour
+        is what keeps such a subagent visually distinct from the main agent.
+
+        The main agent is recognised by *name* rather than by its caller-supplied
+        colour, because the agent loop still hands down a legacy hardcoded green
+        (``COLORS["success"]``) for it. Trusting that would reintroduce the exact
+        bug this replaced: a pinned colour that ``/theme`` can never move.
+        """
+        from novacode_cli.tui.palette import agent_label_style
+
+        return Text(name, style=agent_label_style(self._palette, name, agent_color))
+
     async def _add_message(self, label: Text, role_class: str, body: Any) -> ChatMessage:
         msg = ChatMessage(label, role_class)
         await self._mount(msg)
@@ -3212,7 +3280,7 @@ class NovaApp(App):
             if role == "human":
                 if not text:
                     continue
-                await self._add_message(Text("You", style="bold cyan"), "user", Markdown(text))
+                await self._add_message(self._user_label(), "user", Markdown(text))
                 shown += 1
             elif role == "ai":
                 # Tool calls ride on the AIMessage; replay them into the
@@ -3220,7 +3288,7 @@ class NovaApp(App):
                 for tc in getattr(m, "tool_calls", None) or []:
                     await self._replay_tool_call(tc, results)
                 if text:
-                    await self._add_message(Text("Nova", style="green"), "nova", Markdown(text))
+                    await self._add_message(self._agent_label("Nova"), "nova", Markdown(text))
                     shown += 1
         if shown:
             self._log(
@@ -6033,14 +6101,14 @@ class NovaApp(App):
 
         # Single agent at the start: delegate directly to that one subagent.
         if agent_name:
-            await self._add_message(Text(f"{agent_name}", style="bold cyan"), "user", Text(query))
+            await self._add_message(self._user_label(agent_name), "user", Text(query))
             await self._stream_prompt(
                 f"Call the '{agent_name}' subagent to do the following:\n\n{query}"
             )
             return
 
         # Plain prompt — send it to the agent as a single turn.
-        await self._add_message(Text("You", style="bold cyan"), "user", Text(text))
+        await self._add_message(self._user_label(), "user", Text(text))
         # Surface any background jobs that finished since the last turn (the user
         # sees the clean prompt; the agent sees the note prepended).
         agent_text = text
@@ -6235,7 +6303,7 @@ class NovaApp(App):
                     style="italic #9ece6a",
                 )
             )
-            await self._add_message(Text("You", style="bold cyan"), "user", Text(prompt))
+            await self._add_message(self._user_label(), "user", Text(prompt))
             await self._stream_prompt(prompt)
 
     async def _check_context(self) -> None:
@@ -10943,7 +11011,7 @@ class NovaApp(App):
             self._live_buf_parts.append(e.text)
             if self._stream_msg is None:
                 name, color = self._current_agent_info()
-                self._stream_msg = ChatMessage(Text(name, style=f"bold {color}"), "nova")
+                self._stream_msg = ChatMessage(self._agent_label(name, color), "nova")
                 await self._mount(self._stream_msg)
                 # Leading edge: show the first fragment now rather than waiting
                 # out the coalescing interval.
@@ -10966,12 +11034,14 @@ class NovaApp(App):
             # any pending coalesced flush so it can't repaint a finalized widget.
             self._stream_flush_scheduled = False
             if self._stream_msg is not None:
-                self._stream_msg.update_header(Text(e.agent_name, style=e.agent_color))
+                self._stream_msg.update_header(self._agent_label(e.agent_name, e.agent_color))
                 self._stream_msg.update_body(Markdown(e.text))
                 self._stream_msg = None
             else:
                 await self._add_message(
-                    Text(e.agent_name, style=e.agent_color), "nova", Markdown(e.text)
+                    self._agent_label(e.agent_name, e.agent_color),
+                    "nova",
+                    Markdown(e.text),
                 )
             self._live_buf = ""
             await self._remove_reasoning()
@@ -11220,7 +11290,7 @@ class NovaApp(App):
         where a finished remote agent otherwise waits for the user to ask."""
         try:
             await self._add_message(
-                Text("You", style="bold cyan"),
+                self._user_label(),
                 "user",
                 Text(f"[async agent finished — auto-reporting result]"),
             )

@@ -80,6 +80,11 @@ class FooterPalette:
     dim: str  # bracket glyphs on the meter
     surface: str  # the bar's own background
     rail: str  # vertical separator glyph colour
+    #: Speaker-label colours for the transcript's role headers. Derived from the
+    #: theme for the same reason the footer is: a hardcoded ANSI name here is not
+    #: themeable, so ``/theme`` could never move it.
+    user_label: str  # the "You" header
+    agent_label: str  # the agent's own name header
 
 
 def palette_for(theme: Theme) -> FooterPalette:
@@ -110,7 +115,67 @@ def palette_for(theme: Theme) -> FooterPalette:
         dim=_mix(fg, bg, 0.58),
         surface=surface,
         rail=_mix(fg, bg, 0.78),
+        # The two speakers are told apart by hue, not brightness: the user's own
+        # turns take the theme's primary, the agent's take the accent. Those are
+        # distinct attributes on both shipped themes (tokyo-night #7aa2f7 vs
+        # #bb9af7, matrix #00ff41 vs #39ff14), so the labels stay separable in
+        # every palette instead of collapsing into two shades of one hue.
+        user_label=_hex(getattr(theme, "primary", "") or "#7aa2f7"),
+        agent_label=_hex(getattr(theme, "accent", "") or "#bb9af7"),
     )
+
+
+# ── Speaker labels, on the transcript's role headers ─────────────────────────
+
+#: The main agent's assistant id. It has no per-agent colour of its own, so its
+#: label follows the theme rather than an identity colour.
+MAIN_AGENT_ID = "nova-agent"
+
+#: Every spelling the main agent's header goes by. ``get_agent_display_name`` title
+#: cases the id ("nova-agent" -> "Nova Agent") while the replay path and the
+#: startup banner write the short form, so both have to be recognised or the main
+#: agent silently keeps a pinned colour.
+MAIN_AGENT_LABELS = frozenset({"nova", "nova agent"})
+
+
+def user_label_style(palette: FooterPalette) -> str:
+    """Rich style for the ``You`` role header, in *palette*'s colours."""
+    return f"bold {palette.user_label}"
+
+
+def agent_label_style(palette: FooterPalette, name: str, agent_color: str | None = None) -> str:
+    """Rich style for the agent's own role header.
+
+    Args:
+        palette: Colours derived from the active theme.
+        name: The header's own name, which is what decides whose colour this is.
+        agent_color: The assistant's registered identity colour, when it has one.
+            A named subagent (ralph) carries an explicit colour from its
+            ``agent.md`` frontmatter and that colour is what distinguishes it from
+            the main agent, so it is honoured as given.
+
+    Returns:
+        A Rich style string. Never an ANSI name, so the label is always theme- or
+        identity-derived rather than a fixed terminal colour.
+
+    Notes:
+        The main agent is identified by *name* rather than by the absence of a
+        colour, because the agent loop still hands down a legacy hardcoded green
+        (``COLORS["success"]``) for it. Honouring that would reintroduce the exact
+        bug this replaces: a pinned colour no ``/theme`` can move.
+    """
+    if not is_main_agent_label(name):
+        candidate = (agent_color or "").strip()
+        # An ANSI name ("green") is not themeable and was the original bug, so only
+        # a real hex counts as an identity colour.
+        if candidate.startswith("#"):
+            return f"bold {candidate}"
+    return f"bold {palette.agent_label}"
+
+
+def is_main_agent_label(name: str) -> bool:
+    """Whether *name* is a spelling of the main agent's role header."""
+    return name.strip().lower() in MAIN_AGENT_LABELS
 
 
 # Cache keyed by (theme name, dark) so a /theme switch invalidates naturally.
