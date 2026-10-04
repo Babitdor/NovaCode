@@ -210,13 +210,30 @@ class TelegramBridge:
         *,
         thread_id: int | None = None,
         sid: str | None = None,
-    ) -> None:
-        """Send markdown ``text`` as Telegram HTML (chunked, topic-aware)."""
+    ) -> list[int]:
+        """Send markdown ``text`` as Telegram HTML (chunked, topic-aware).
+
+        Returns the ids of the messages sent, so a caller can delete them.
+        """
+        ids: list[int] = []
         for chunk in render_markdown(text):
             sent = await self._send_html(
                 "sendMessage", self._thread_params({"chat_id": chat_id}, thread_id), chunk
             )
             self._remember(sent, sid)
+            mid = (sent or {}).get("result", {}).get("message_id")
+            if mid is not None:
+                ids.append(mid)
+        return ids
+
+    async def _delete_messages(self, chat_id: int, message_ids: list[int]) -> None:
+        """Delete the bot's own messages. Best-effort: Telegram refuses after 48 h."""
+        for mid in message_ids:
+            try:
+                await self._api_call("deleteMessage", {"chat_id": chat_id, "message_id": mid})
+            except Exception as e:  # noqa: BLE001 — a leftover message is not worth a crash
+                logger.debug(f"Telegram deleteMessage failed for {mid}: {e}")
+            self._owner.pop(mid, None)
 
     async def run(self) -> None:
         """Start the Telegram long-polling loop.
@@ -307,6 +324,19 @@ class TelegramBridge:
                             _chat_id, response_text, thread_id=_route["thread"], sid=_route["sid"]
                         )
 
+                    async def ask_fn(
+                        question_text: str, _chat_id: int = chat_id, _route: dict = route
+                    ):  # noqa: ANN202
+                        """Send a question; return a coroutine fn that deletes it."""
+                        ids = await self._send_message(
+                            _chat_id, question_text, thread_id=_route["thread"], sid=_route["sid"]
+                        )
+
+                        async def retract() -> None:
+                            await self._delete_messages(_chat_id, ids)
+
+                        return retract
+
                     async def typing_fn(_chat_id: int = chat_id, _route: dict = route) -> None:
                         await self._trigger_typing(_chat_id, _route["thread"])
 
@@ -365,6 +395,7 @@ class TelegramBridge:
                         reply_fn=reply_fn,
                         typing_fn=typing_fn,
                         edit_fn=edit_fn,
+                        ask_fn=ask_fn,
                         user_mention=user_mention,
                         thread_id=thread_id,
                         reply_to_owner=reply_owner,

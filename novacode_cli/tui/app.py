@@ -747,6 +747,72 @@ def _render_bg_event(  # noqa: PLR0912, PLR0915 — one branch per event type is
             write(f"[magenta]◇ {_esc(event.message)}[/magenta]")
 
 
+def _paint(widget: Any, content: Any) -> None:
+    """``Static.update`` that re-lays-out only when the content's size changed.
+
+    ``update()`` defaults to ``layout=True`` and a layout re-arranges the whole
+    screen. For a clock or a counter the text changes every second but its
+    width and line count almost never do — those frames only need a repaint.
+    Identical content is skipped entirely.
+    """
+    if not isinstance(content, (str, Text)):
+        # A Group/Markdown/Table: its size is not knowable from text, so take
+        # the safe path.
+        widget.update(content)
+        widget._nova_painted = None
+        return
+    plain = content.plain if hasattr(content, "plain") else str(content)
+    width = content.cell_len if hasattr(content, "cell_len") else len(plain)
+    dims = (width, plain.count("\n"))
+    # Text.__eq__ compares plain text and spans but NOT the base style, so a
+    # label recoloured by a theme switch would look "identical" — include it.
+    look = (plain, str(getattr(content, "style", "")), tuple(getattr(content, "spans", ())))
+    prev = getattr(widget, "_nova_painted", None)
+    if prev is not None and prev[0] == look:
+        return
+    widget.update(content, layout=prev is None or prev[1] != dims)
+    widget._nova_painted = (look, dims)
+
+
+#: Live tool output is shown in a pane a few lines tall; rendering megabytes of
+#: it (highlighting every line) froze the UI for seconds per flush. Only the
+#: tail of each batch is drawn — the full output still reaches the model.
+_LIVE_OUTPUT_MAX_LINES = 200
+_LIVE_OUTPUT_MAX_CHARS = 20_000
+_LOG_MAX_LINES = 2_000
+
+
+def _display_tail(text: str) -> str:
+    """The part of a live-output batch worth rendering."""
+    if len(text) <= _LIVE_OUTPUT_MAX_CHARS and text.count("\n") <= _LIVE_OUTPUT_MAX_LINES:
+        return text
+    lines = text[-_LIVE_OUTPUT_MAX_CHARS:].splitlines(keepends=True)[-_LIVE_OUTPUT_MAX_LINES:]
+    return "… output trimmed, showing the tail …\n" + "".join(lines)
+
+
+def _retitle(group: Any, title: Any) -> None:
+    """Set a Collapsible's title, skipping the layout pass when its width is unchanged.
+
+    ``Collapsible.title = x`` ends in ``Static.update(layout=True)``, which
+    re-arranges the whole screen. The animated tool-group header changes colour
+    every frame but almost never changes width, so it only needs a repaint.
+    Falls back to the plain assignment for anything unexpected.
+    """
+    from textual.content import Content
+
+    head = getattr(group, "_title", None)
+    try:
+        new = Content.from_text(title)
+        old = head.label
+        if head is None or new.cell_length != old.cell_length:
+            raise ValueError  # width changed (or no title widget): real layout
+        head.set_reactive(type(head).label, new)  # no watcher -> no layout
+        symbol = head.collapsed_symbol if head.collapsed else head.expanded_symbol
+        head.update(Content.assemble(symbol, " ", new), layout=False)
+    except Exception:  # noqa: BLE001
+        group.title = title
+
+
 class NovaApp(App):
     """Phase-1 Nova chat TUI."""
 
@@ -1772,6 +1838,10 @@ class NovaApp(App):
 
             self._stall_watch = StallWatch(asyncio.get_running_loop())
             self._stall_watch.start()
+            # A GC pause is a UI freeze on this shared loop; see tui/gc_tuning.py.
+            from novacode_cli.tui import gc_tuning
+
+            gc_tuning.tune()
         except Exception:  # noqa: BLE001 — diagnostics must never stop the app
             self._stall_watch = None
         # Build the slash-autocomplete skill list off the loop now: built lazily
@@ -1928,7 +1998,7 @@ class NovaApp(App):
             pending, self._tool_out_pending = self._tool_out_pending, {}
             self._tool_out_scheduled = False
         for call_id, parts in pending.items():
-            self._write_tool_output(call_id, "".join(parts))
+            self._write_tool_output(call_id, _display_tail("".join(parts)))
 
     def _write_tool_output(self, call_id: str, text: str) -> None:
         """Append live output to the widget showing ``call_id`` (UI thread)."""
@@ -1976,6 +2046,10 @@ class NovaApp(App):
     def on_app_blur(self) -> None:
         """Pause MatrixRain when the terminal loses OS focus."""
         self._os_focused = False
+        # The user just looked away: the one moment a full GC pass is invisible.
+        from novacode_cli.tui import gc_tuning
+
+        gc_tuning.collect_while_idle(busy=self._turn_active)
         rain = self._matrix_rain()
         if rain is not None:
             rain.pause()
@@ -2674,7 +2748,11 @@ class NovaApp(App):
                 # Only touch the widget when the text actually changes.
                 if label != self._jump_latest_label:
                     self._jump_latest_label = label
-                    self._w("#jump-latest", Static).update(Text(label, style="bold"))
+                    # _paint, not update(): the count changes on every scroll
+                    # step, and update()'s default layout pass turned each step
+                    # of a scroll into a full-screen reflow instead of Textual's
+                    # visible-only fast path.
+                    _paint(self._w("#jump-latest", Static), Text(label, style="bold"))
             row.set_class(not self._follow_tail, "active")
         except NoMatches:
             pass
@@ -2984,6 +3062,7 @@ class NovaApp(App):
                 if (
                     self._remote_question_future is not None
                     and not self._remote_question_future.done()
+                    and not (getattr(m, "text", "") or "").lstrip().startswith("/")
                 ):
                     react_fn = getattr(m, "react_fn", None)
                     if react_fn is not None:
@@ -3374,14 +3453,14 @@ class NovaApp(App):
             isinstance(td, dict) and td.get("status") == "completed" for td in items
         ):
             dock.remove_class("active")
-            dock.update("")
+            _paint(dock, "")
             return
         collapsed = getattr(self, "_todos_collapsed", False)
         # rstrip: every row ends in a newline, which would leave a blank line
         # inside a dock sized to its content.
         text = self._render_todos(items, agent_name, collapsed=collapsed)
         text.rstrip()
-        dock.update(text)
+        _paint(dock, text)
         dock.set_class(collapsed, "collapsed")
         dock.add_class("active")
 
@@ -3469,16 +3548,14 @@ class NovaApp(App):
         dock.set_class(self._subagents_collapsed, "collapsed")
         if not rows:
             dock.remove_class("active")
-            title.update("")
-            body.update("")
+            _paint(title, "")
+            _paint(body, "")
             self._subagents_rows_by_line = []
             self._stop_subagents_tick()
             return
 
         now = time.time()
-        title.update(
-            subagent_tasks.panel_title(rows, collapsed=self._subagents_collapsed)
-        )
+        _paint(title, subagent_tasks.panel_title(rows, collapsed=self._subagents_collapsed))
         rendered = subagent_tasks.panel_body(
             rows,
             width=self._subagents_width(dock),
@@ -3486,9 +3563,7 @@ class NovaApp(App):
             phase_order=self._subagent_phase_order,
             collapsed_phases=self._subagent_collapsed_phases,
         )
-        body.update(
-            Text("\n").join(rendered.lines) if rendered.lines else "",
-        )
+        _paint(body, Text("\n").join(rendered.lines) if rendered.lines else "")
         self._subagents_rows_by_line = [
             (rendered.row_phases[index], rendered.row_tasks[index])
             for index in range(len(rendered.lines))
@@ -3701,7 +3776,7 @@ class NovaApp(App):
         await self._transcript().mount(comp)
         await body.mount(Static("", id="tool-group-list"))
         await body.mount(
-            RichLog(id="tool-group-log", classes="terminal-log", highlight=True, markup=True)
+            RichLog(id="tool-group-log", classes="terminal-log", highlight=True, markup=True, max_lines=_LOG_MAX_LINES)
         )
         self._prune_transcript()
         self._scroll_end()
@@ -3807,7 +3882,7 @@ class NovaApp(App):
             body = body[:-1]
 
         try:
-            self._tool_group_body.query_one("#tool-group-list", Static).update(body)
+            _paint(self._tool_group_body.query_one("#tool-group-list", Static), body)
         except Exception:
             pass
         n = len(self._tool_group_entries)
@@ -3960,7 +4035,7 @@ class NovaApp(App):
             await body.mount(Static(status_text, id="subagent-status"))
             await body.mount(Static("", id="subagent-list"))
             await body.mount(
-                RichLog(id="subagent-log", classes="terminal-log", highlight=True, markup=True)
+                RichLog(id="subagent-log", classes="terminal-log", highlight=True, markup=True, max_lines=_LOG_MAX_LINES)
             )
 
             # Initialize dynamic height tracking and entry lists
@@ -4008,14 +4083,15 @@ class NovaApp(App):
                 comp.title = f"{_esc(str(icon))}  ({dur}){remaining}"
                 if e.detail:
                     try:
-                        body.query_one("#subagent-status", Static).update(
-                            Text(e.detail, style="dim")
+                        _paint(
+                            body.query_one("#subagent-status", Static),
+                            Text(e.detail, style="dim"),
                         )
                     except Exception:
                         pass
                 else:
                     try:
-                        body.query_one("#subagent-status", Static).update(Text(""))
+                        _paint(body.query_one("#subagent-status", Static), Text(""))
                     except Exception:
                         pass
                 comp.collapsed = True
@@ -4109,7 +4185,7 @@ class NovaApp(App):
                     line = self._render_subagent_line(entry)
                     entry["_line"] = line
                 lines.append(line)
-            list_widget.update("\n".join(lines))
+            _paint(list_widget, "\n".join(lines))
         except Exception:
             pass
 
@@ -4274,8 +4350,13 @@ class NovaApp(App):
         if self._status_tail is not None:
             line.append_text(self._status_tail)
 
+        # layout=False: this bar is `width: 1fr; height: 1`, so no content can
+        # change its size. Static.update() defaults to layout=True, and a layout
+        # pass re-arranges the WHOLE screen — this call runs 20x a second while a
+        # turn is live, so the default cost two full reflows per frame (the
+        # freeze log: 1,000 of 1,822 frozen seconds were this reflow).
         try:
-            self._w("#prompt-hint-bar", Static).update(line)
+            self._w("#prompt-hint-bar", Static).update(line, layout=False)
         except NoMatches:
             pass
         # The counts live in their own right-docked widget. A Rich Text cannot
@@ -4285,8 +4366,12 @@ class NovaApp(App):
         right = self._status_right
         if self._narrow:
             right = Text()
+        right = right if right is not None else Text()
+        # `width: auto`, so a layout IS needed — but only when the width actually
+        # changes, and nothing at all when the text is identical (it is rebuilt
+        # ~4x/sec and usually comes out the same).
         try:
-            self._w("#status-counts", Static).update(right if right is not None else Text())
+            _paint(self._w("#status-counts", Static), right)
         except NoMatches:
             pass
 
@@ -4435,7 +4520,7 @@ class NovaApp(App):
     def _set_info(self, selector: str, renderable: Text) -> None:
         """Update an info-bar Static, ignoring it if not mounted yet."""
         try:
-            self._w(selector, Static).update(renderable)
+            _paint(self._w(selector, Static), renderable)
         except NoMatches:
             pass
 
@@ -4520,7 +4605,7 @@ class NovaApp(App):
                     usage_text.append(" · ", style="dim")
                 usage_text.append(label, style=style)
         try:
-            self._w("#info-quota", Static).update(usage_text)
+            _paint(self._w("#info-quota", Static), usage_text)
         except NoMatches:
             pass
 
@@ -4536,11 +4621,14 @@ class NovaApp(App):
             # mid-sweep for the whole duration of a slow tool.
             if self._tool_group is not None and self._tool_group_running:
                 try:
-                    self._tool_group.title = motion.tool_group_title(
-                        len(self._tool_group_entries),
-                        self._tool_group_running,
-                        self._spinner_frame,
-                        self._palette,
+                    _retitle(
+                        self._tool_group,
+                        motion.tool_group_title(
+                            len(self._tool_group_entries),
+                            self._tool_group_running,
+                            self._spinner_frame,
+                            self._palette,
+                        ),
                     )
                 except Exception:  # noqa: BLE001 — a title must never break a turn
                     pass
@@ -4607,22 +4695,22 @@ class NovaApp(App):
             t = Text()
             t.append("  ⏸ PLAN  ", style=f"bold {pal.primary}")
             t.append("$ BASH — runs in your shell", style=f"bold {pal.accent}")
-            badge.update(t)
+            _paint(badge, t)
             badge.display = True
         elif plan:
-            badge.update(
-                Text("  ⏸ PLAN MODE — proposing, not editing", style=f"bold {pal.primary}")
+            _paint(
+                badge, Text("  ⏸ PLAN MODE — proposing, not editing", style=f"bold {pal.primary}")
             )
             badge.display = True
         elif bash:
-            badge.update(Text("  $ BASH — runs in your shell", style=f"bold {pal.accent}"))
+            _paint(badge, Text("  $ BASH — runs in your shell", style=f"bold {pal.accent}"))
             badge.display = True
         elif goal:
             short = goal if len(goal) <= 60 else goal[:57] + "…"
-            badge.update(Text(f"  🎯 GOAL — {short}", style=f"bold {pal.warning}"))
+            _paint(badge, Text(f"  🎯 GOAL — {short}", style=f"bold {pal.warning}"))
             badge.display = True
         else:
-            badge.update("")
+            _paint(badge, "")
             badge.display = False
 
         # Drive the input look from CSS classes (bash wins over plan visually).
@@ -4634,7 +4722,7 @@ class NovaApp(App):
             prefix = self.query_one("#prompt-prefix", Static)
             prefix.set_class(bash, "bash-mode")
             prefix.set_class(plan and not bash, "plan-mode")
-            prefix.update("$ " if bash else "> ")
+            _paint(prefix, "$ " if bash else "> ")
         except NoMatches:
             pass
         try:
@@ -4698,7 +4786,7 @@ class NovaApp(App):
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id != "prompt":
             return
-        self._update_palette(event.value, event.input.cursor_position)
+        self._feed_palette(event.value, event.input.cursor_position)
         self._update_mode_badge(event.value)
 
     def on_text_area_changed(self, event: Any) -> None:
@@ -4715,8 +4803,21 @@ class NovaApp(App):
             line = text.split("\n")[row]
         except Exception:  # noqa: BLE001
             line, col = text, len(text)
-        self._update_palette(line, col)
+        self._feed_palette(line, col)
         self._update_mode_badge(text)
+
+    def _feed_palette(self, line: str, col: int) -> None:
+        """Run completion only when the line can have completions.
+
+        Candidates exist only for a leading ``/`` or an ``@token`` at the
+        cursor. Every other keystroke — i.e. ordinary typing — used to start a
+        worker, sleep 50 ms, hop to a thread and clear an empty list anyway.
+        """
+        if line.startswith("/") or self._active_at_fragment(line, col) is not None:
+            self._update_palette(line, col)
+        else:
+            self.workers.cancel_group(self, "palette")  # a stale search must not reopen it
+            self._hide_palette()
 
     def _active_at_fragment(self, value: str, cursor: int) -> tuple[int, str] | None:
         """The ``@token`` ending at the cursor, anywhere in the line.
@@ -4945,6 +5046,8 @@ class NovaApp(App):
             palette = self._w("#cmdpalette", OptionList)
         except NoMatches:
             return
+        if not palette.display and not palette.option_count:
+            return  # already hidden and empty: nothing to repaint or re-lay-out
         palette.clear_options()
         palette.display = False
 
@@ -5468,7 +5571,7 @@ class NovaApp(App):
             return
         if not active and not agents:
             bar.remove_class("active")
-            bar.update("")
+            _paint(bar, "")
             # Nothing running → stop the runtime ticker so it never interferes
             # with the rest of the UI when idle.
             if self._tasks_timer is not None:
@@ -5509,7 +5612,7 @@ class NovaApp(App):
             shown = min(len(active), 2) + min(len(agents), 2)
             if total > shown:
                 t.append(f"  +{total - shown} more", style="dim")
-        bar.update(t)
+        _paint(bar, t)
         bar.add_class("active")
 
     def _on_task_event_threadsafe(self, event: str, job: Any) -> None:
@@ -6265,6 +6368,7 @@ class NovaApp(App):
                         if (
                             self._remote_question_future is not None
                             and not self._remote_question_future.done()
+                            and not (getattr(msg, "text", "") or "").lstrip().startswith("/")
                         ):
                             react_fn = getattr(msg, "react_fn", None)
                             if react_fn is not None:
@@ -6904,7 +7008,7 @@ class NovaApp(App):
         short = cmd if len(cmd) <= 50 else cmd[:47] + "…"
 
         # Build the card up-front so output starts streaming immediately.
-        log_widget = RichLog(classes="bgshell-log", highlight=True, markup=True)
+        log_widget = RichLog(classes="bgshell-log", highlight=True, markup=True, max_lines=_LOG_MAX_LINES)
         body = Vertical(log_widget)
         card = Collapsible(body, title=f"⚙ bg[{job_id}]: {short}  [running]", collapsed=False)
         card.add_class("bgshell-card")
@@ -7028,7 +7132,7 @@ class NovaApp(App):
         bg_session = _BgSession(self.session_state)
         ag, backend = self._active_agent()
 
-        log_widget = RichLog(classes="bgagent-log", highlight=True, markup=True)
+        log_widget = RichLog(classes="bgagent-log", highlight=True, markup=True, max_lines=_LOG_MAX_LINES)
         card = Collapsible(
             Vertical(log_widget),
             title=f"⟳ bg[{job_id}] · {p_short}",
@@ -10166,7 +10270,7 @@ class NovaApp(App):
             if card is not None:
                 try:
                     card.set_classes(f"ralph-iter {status}")
-                    card.update(text)
+                    _paint(card, text)
                     updated = True
                 except Exception:  # noqa: BLE001 - card may have been pruned
                     updated = False
@@ -10718,18 +10822,34 @@ class NovaApp(App):
         a toggle reflect immediately.
         """
         now = time.monotonic()
-        if self._skill_count_cache is not None and now - self._skill_count_ts < 1.0:
-            return self._skill_count_cache
-        try:
-            from novacode_cli.skills.skills_prefs import effective_disabled
+        fresh = self._skill_count_cache is not None and now - self._skill_count_ts < 5.0
+        if not fresh and not getattr(self, "_skill_count_busy", False):
+            # Computed on a worker thread, never here: this is the status-line
+            # path, and the count needs two prefs files plus (first time) a
+            # stat of every skill directory. On a busy disk that read blocked
+            # the UI loop for up to 30 s. The status line shows the previous
+            # value until the new one lands.
+            self._skill_count_busy = True
+            self._skill_count_ts = now
 
-            disabled = effective_disabled()
-            count = sum(1 for n in self._get_skill_names() if n not in disabled)
-        except Exception:  # noqa: BLE001
-            count = 0
-        self._skill_count_cache = count
-        self._skill_count_ts = now
-        return count
+            def _compute() -> None:
+                try:
+                    from novacode_cli.skills.skills_prefs import effective_disabled
+
+                    disabled = effective_disabled()
+                    self._skill_count_last = sum(
+                        1 for n in self._get_skill_names() if n not in disabled
+                    )
+                    self._skill_count_cache = self._skill_count_last
+                except Exception:  # noqa: BLE001
+                    pass
+                finally:
+                    self._skill_count_busy = False
+
+            threading.Thread(target=_compute, name="nova-skill-count", daemon=True).start()
+        if self._skill_count_cache is not None:
+            return self._skill_count_cache
+        return getattr(self, "_skill_count_last", 0)
 
     def _cached_agent_md_count(self) -> int:
         """Project NOVA.md/CLAUDE.md count, stat'd at most ~once per second.
@@ -10879,7 +10999,7 @@ class NovaApp(App):
                     "run_tests",
                     "start_dev_server",
                 }:
-                    body = RichLog(classes="terminal-log", highlight=True, markup=True)
+                    body = RichLog(classes="terminal-log", highlight=True, markup=True, max_lines=_LOG_MAX_LINES)
                     # Starts expanded (collapsed=False) to show live output!
                     comp = Collapsible(body, title=f"{base}  · running…", collapsed=False)
                 else:
@@ -11155,26 +11275,44 @@ class NovaApp(App):
         opts = question_request.get("options") or []
         context = question_request.get("context")
 
+        from novacode_cli.ui.question_prompt import QuestionResponse
+
+        # Real markdown: the bridge renders it. Single asterisks are *italic*
+        # there, so the old "*Question:*" labels came out italic, not bold.
         lines = []
         if context:
-            lines.append(f"ℹ️ *Context:* {context}\n")
-        lines.append(f"❓ *Question:* {prompt}")
+            lines.append(f"ℹ️ **Context:** {context}\n")
+        lines.append(f"❓ **Question:** {prompt}")
         if opts:
-            lines.append("\n*Options:*")
+            lines.append("\n**Options:**")
             for i, opt in enumerate(opts, 1):
                 lines.append(f"{i}. {opt}")
-            lines.append("\n*(Please reply with the number or the exact option text)*")
+            lines.append("\n_Reply with the number or the option text._")
         message_text = "\n".join(lines)
+
+        retract = None
         try:
-            await self._remote_msg.reply_fn(message_text)
+            ask_fn = getattr(self._remote_msg, "ask_fn", None)
+            if ask_fn is not None:
+                retract = await ask_fn(message_text)
+            else:
+                await self._remote_msg.reply_fn(message_text)
         except Exception as ex:  # noqa: BLE001
+            # The user never saw the question, so waiting for their answer would
+            # hang the turn forever. Let the agent continue without one.
             self._log(Text(f"Failed to send remote question: {ex}", style="red"))
+            return {"response": QuestionResponse(answer="", selected_index=None)}
 
         self._remote_question_future = asyncio.Future()
         try:
             m = await self._remote_question_future
         finally:
             self._remote_question_future = None
+            # Answered (or the turn was cancelled): take the question down, so
+            # the chat never shows a question that is no longer open.
+            if retract is not None:
+                with contextlib.suppress(Exception):
+                    await retract()
 
         text = (getattr(m, "text", "") or "").strip()
         selected = None
@@ -11190,8 +11328,6 @@ class NovaApp(App):
                     selected = i
                     answer = opt
                     break
-
-        from novacode_cli.ui.question_prompt import QuestionResponse
 
         return {"response": QuestionResponse(answer=answer, selected_index=selected)}
 

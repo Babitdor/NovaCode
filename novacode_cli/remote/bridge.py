@@ -85,6 +85,10 @@ class RemoteMessage:
     typing_fn: Callable[[], Awaitable[None]] | None = None
     react_fn: Callable[[str], Awaitable[None]] | None = None
     edit_fn: Callable[..., Awaitable[None]] | None = None
+    # Send a question; returns an async callable that removes it again (or
+    # None when the platform cannot). A question is only useful until it is
+    # answered — left in the chat it reads as still open.
+    ask_fn: Callable[[str], Awaitable[Callable[[], Awaitable[None]] | None]] | None = None
     user_mention: str | None = None
     #: Forum topic the message was posted in (Telegram), or None.
     thread_id: int | None = None

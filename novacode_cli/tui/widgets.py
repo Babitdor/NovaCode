@@ -301,13 +301,14 @@ class MatrixRain(Static):
 
         is_testing = "pytest" in sys.modules or getattr(self.app, "_driving", False)
         try:
-            if not is_testing:
-                p = self.parent
-                visible = getattr(p, "region", None)
-                if visible is not None:
-                    r = self.region
-                    if r.height == 0 or r.bottom <= visible.y or r.y >= visible.bottom:
-                        return
+            # The compositor's visible set, NOT `self.region`. `region` goes
+            # through `screen.find_widget` -> `compositor.full_map`, which any
+            # scroll invalidates — so asking "am I on screen?" re-arranged every
+            # widget in the app, 15 times a second, for as long as the banner
+            # existed (measured: 96 full arranges in 97 ticks, ~17 ms each).
+            # `visible_widgets` is what the renderer already keeps current.
+            if not is_testing and self not in self.screen._compositor.visible_widgets:
+                return
         except Exception:  # noqa: BLE001
             pass
 
