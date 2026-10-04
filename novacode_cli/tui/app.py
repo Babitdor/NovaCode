@@ -74,6 +74,7 @@ from novacode_cli.tui import motion
 # keeps working for tests, main.py, and remote code.
 # Markdown, cached per width: see CachedMarkdown for what the plain one cost.
 from novacode_cli.tui.widgets import CachedMarkdown as Markdown
+from novacode_cli.tui.widgets import SelectableRichLog as RichLog  # noqa: F811 — selectable drop-in
 from novacode_cli.tui.widgets import (
     DEFAULT_THEME,
     NOVA_MATRIX,
@@ -8547,11 +8548,19 @@ class NovaApp(App):
 
         if action in ("", "status"):
             reachable = await asyncio.to_thread(async_agents_available, refresh=True)
+            from novacode_cli.agents.default_subagents.async_subagents import (
+                async_agents_see_workspace,
+            )
+
+            here = await asyncio.to_thread(async_agents_see_workspace)
             lines = [
                 f"local server : {'running' if status['running'] else 'stopped'}"
                 + (f" at {status['url']}" if status["url"] else ""),
                 f"async agents : {'available' if reachable else 'unavailable'}"
-                + (" (this session's server)" if status["running"] else ""),
+                + (" (this session's server)" if status["running"] else "")
+                # Reachable is not the same as usable: the server reads its own
+                # root, so in another project it is deliberately left unused.
+                + (" — not used here: the server is rooted at another project" if reachable and not here else ""),
                 "extra        : "
                 + (
                     "installed"

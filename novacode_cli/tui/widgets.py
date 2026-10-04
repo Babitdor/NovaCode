@@ -26,7 +26,7 @@ from textual.selection import Selection
 from textual.theme import Theme
 from textual.widget import Widget
 from textual.message import Message
-from textual.widgets import Input, Static, TextArea
+from textual.widgets import Input, RichLog, Static, TextArea
 
 from novacode_cli.image_utils import ImageData
 from novacode_cli.input_utils import (
@@ -618,6 +618,66 @@ class NovaStatusBar:
     pass
 
 
+def _selectable_line(widget: Widget, strip: Strip, x: int, y: int) -> Strip:
+    """Make one rendered line selectable: tag it with offsets, paint the selection.
+
+    Textual maps a mouse position to a character through an ``offset`` in each
+    segment's style meta. It writes that only for its own ``Content`` visuals; a
+    Rich renderable (Markdown, a table) or a ``RichLog`` line has none, so a
+    drag could not tell where it started and selected from the top of the widget
+    instead, which read as the whole message being one block.
+
+    ``(x, y)`` is where the strip's first cell sits in the widget's content: the
+    same coordinates ``get_selection`` extracts with.
+    """
+    selection = widget.text_selection
+    if selection is not None and (span := selection.get_span(y)) is not None:
+        start, end = span
+        width = strip.cell_length
+        start = max(0, start - x)
+        end = width if end == -1 else min(width, end - x)
+        if end > start:
+            strip = Strip.join(
+                [
+                    strip.crop(0, start),
+                    # Post style: the selection has to win over the text's own
+                    # background, or the highlight is painted and then hidden.
+                    # Background only: the theme's selection foreground is
+                    # "transparent", which resolves to the background colour
+                    # here and would make the selected text invisible.
+                    Strip(
+                        list(
+                            Segment.apply_style(
+                                strip.crop(start, end),
+                                post_style=Style(bgcolor=widget.selection_style.bgcolor),
+                            )
+                        ),
+                        end - start,
+                    ),
+                    strip.crop(end, width),
+                ]
+            )
+    return strip.apply_offsets(x, y)
+
+
+class SelectableRichLog(RichLog):
+    """A ``RichLog`` whose lines can be drag-selected and copied.
+
+    Used for command output and tool logs, which are exactly what one wants to
+    copy a few lines out of.
+    """
+
+    def render_line(self, y: int) -> Strip:
+        scroll_x, scroll_y = self.scroll_offset
+        return _selectable_line(self, super().render_line(y), scroll_x, scroll_y + y)
+
+    def get_selection(self, selection: Selection) -> tuple[str, str] | None:
+        # The compositor pads every strip to the widget width; rstrip so a
+        # copied line does not carry a screenful of trailing spaces.
+        text = "\n".join(strip.text.rstrip() for strip in self.lines)
+        return selection.extract(text), "\n"
+
+
 class SelectableStatic(Static):
     """A ``Static`` whose Rich-rendered content can be text-selected.
 
@@ -632,6 +692,16 @@ class SelectableStatic(Static):
     line up with what the user sees. Plain ``Text``/``Content`` bodies keep the
     base implementation, which is already correct and cheaper.
     """
+
+    def render_line(self, y: int) -> Strip:
+        strip = super().render_line(y)
+        from textual.visual import RichVisual
+
+        # Text/Content visuals already carry offsets; adding more would
+        # double-paint the selection.
+        if isinstance(self._render(), RichVisual):
+            strip = _selectable_line(self, strip, 0, y)
+        return strip
 
     def get_selection(self, selection: Selection) -> tuple[str, str] | None:
         """Extract the selected text, falling back to the rendered strips.
