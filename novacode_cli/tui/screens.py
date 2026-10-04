@@ -396,7 +396,7 @@ class ModelScreen(ModalScreen[dict | None]):
     #: What the free-text field will do, per axis: a model id for chat, a voice id
     #: or voice name for speech. Kept here so the field's first paint and every
     #: tab switch read from one place.
-    _MODEL_PLACEHOLDER = "…or type any model id (uses the selected provider)"
+    _MODEL_PLACEHOLDER = "…then type any model id, or provider:model"
     _VOICE_PLACEHOLDER = "…or type any voice id (uses the highlighted provider)"
 
     def __init__(
@@ -439,7 +439,14 @@ class ModelScreen(ModalScreen[dict | None]):
             # Free-type escape hatch: the curated lists cannot name a model the
             # provider has not published yet, and OpenRouter's list is a short
             # hand-picked subset of what it actually serves.
-            yield Input(placeholder=self._MODEL_PLACEHOLDER, id="model")
+            #
+            # The provider is chosen here, explicitly. It used to be whichever
+            # provider the highlighted list row belonged to, which meant scrolling
+            # ~260 rows to "select" a provider, and a provider with no listed
+            # models (nothing to highlight) could not be chosen at all.
+            with Horizontal(id="model-custom-row"):
+                yield Select([], id="model-provider", prompt="Provider", allow_blank=True)
+                yield Input(placeholder=self._MODEL_PLACEHOLDER, id="model")
             yield Static(
                 Text(
                     "↑/↓ move · Enter switch · Ctrl+R curated only · Esc cancel",
@@ -477,6 +484,12 @@ class ModelScreen(ModalScreen[dict | None]):
         field.placeholder = (
             self._VOICE_PLACEHOLDER if self._tab == "voice" else self._MODEL_PLACEHOLDER
         )
+        # A voice id belongs to the highlighted voice row, so the chat-provider
+        # dropdown has nothing to say on that tab.
+        try:
+            self.query_one("#model-provider", Select).display = self._tab != "voice"
+        except Exception:  # noqa: BLE001 — cosmetic
+            pass
 
     @work(thread=True, exclusive=True)
     def _load(self) -> None:
@@ -529,7 +542,57 @@ class ModelScreen(ModalScreen[dict | None]):
         self._models = models
         self._recent = recent
         self._voice_cfg = voice_cfg or {}
+        self._fill_provider_select()
         self._repaint()
+
+    def _fill_provider_select(self) -> None:
+        """Offer every chat provider, whether or not it lists any models."""
+        from novacode_cli.config.model_manager import MODEL_PRESETS
+
+        try:
+            select = self.query_one("#model-provider", Select)
+        except Exception:  # noqa: BLE001 — not mounted (unit tests drive the logic bare)
+            return
+        options = [(str(preset.get("name") or pid), pid) for pid, preset in MODEL_PRESETS.items()]
+        select.set_options(options)
+        if self._current_provider in MODEL_PRESETS:
+            select.value = self._current_provider
+
+    def _custom_provider(self) -> str | None:
+        """The provider chosen in the dropdown, or None when there is none."""
+        try:
+            value = self.query_one("#model-provider", Select).value
+        except Exception:  # noqa: BLE001
+            return None
+        return value if isinstance(value, str) and value else None
+
+    @staticmethod
+    def _split_spec(typed: str) -> tuple[str | None, str]:
+        """``(provider, model)`` for a typed ``provider:model``, else ``(None, typed)``.
+
+        Only a *known* provider counts as a prefix: model ids contain colons of
+        their own (``gemma4:31b-cloud``), and those must stay whole.
+        """
+        from novacode_cli.config.model_manager import MODEL_PRESETS
+
+        head, sep, rest = typed.partition(":")
+        if sep and rest.strip() and head.strip().lower() in MODEL_PRESETS:
+            return head.strip().lower(), rest.strip()
+        return None, typed
+
+    def on_option_list_option_highlighted(self, event: "OptionList.OptionHighlighted") -> None:
+        """Keep the provider dropdown on the provider being browsed."""
+        if event.option_list.id != "model-options":
+            return
+        target = self._targets.get(event.option_index)
+        if target is None or target.kind != "model":
+            return
+        try:
+            select = self.query_one("#model-provider", Select)
+            if select.value != target.provider:
+                select.value = target.provider
+        except Exception:  # noqa: BLE001 — cosmetic
+            pass
 
     def _provider_models(self, provider: str) -> list[str]:
         """Model ids to offer for *provider* under the active subset."""
@@ -954,11 +1017,19 @@ class ModelScreen(ModalScreen[dict | None]):
                 # voice id the registry does not list can still be set.
                 self._choose(replace(target, name=typed, label=""))
                 return
-            provider = target.provider if target else self._current_provider
+            # In order: a provider typed with the model, the dropdown, then the
+            # highlighted row and the current model as before.
+            spec_provider, model_id = self._split_spec(typed)
+            provider = (
+                spec_provider
+                or self._custom_provider()
+                or (target.provider if target else None)
+                or self._current_provider
+            )
             if provider is None:
-                self._show_hint("Highlight a provider row first, then retry.", error=True)
+                self._show_hint("Choose a provider in the dropdown, then retry.", error=True)
                 return
-            self._choose(_Pick("model", provider, typed))
+            self._choose(_Pick("model", provider, model_id))
             return
 
         if target is None:

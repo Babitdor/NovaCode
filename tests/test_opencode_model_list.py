@@ -243,11 +243,12 @@ def test_the_catalog_is_what_the_picker_lists(monkeypatch: pytest.MonkeyPatch) -
     out = asyncio.run(_drive_screen(monkeypatch))
 
     def providers_of(rows: list) -> set[str]:
-        """Providers behind the selectable rows, ignoring the header rows."""
+        """Providers behind the selectable rows, ignoring header and role rows."""
         return {
             str(option).split(":", 1)[0]
             for option in rows
-            if not str(option).startswith("#hdr:")
+            # A role row's id is ":<role>": it names no provider.
+            if not str(option).startswith(("#hdr:", ":"))
         }
 
     from novacode_cli.audio.providers import STT_PROVIDERS, TTS_PROVIDERS

@@ -1280,6 +1280,9 @@ class NovaApp(App):
         scrollbar-gutter: stable;
     }
     #model-filter { margin-bottom: 1; }
+    #model-custom-row { height: auto; }
+    #model-provider { width: 28; }
+    #model-custom-row > #model { width: 1fr; }
     #modelinfo { height: auto; color: $text-muted; margin-bottom: 1; }
     #model-hint { padding: 0 1; color: $text-muted; }
     /* /auth: the provider list must scroll rather than push the buttons off a

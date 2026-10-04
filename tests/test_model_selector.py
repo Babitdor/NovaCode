@@ -90,6 +90,9 @@ class _FakeConfig:
     def get_voice_config(self) -> dict:
         return dict(type(self).voice or FAKE_VOICE)
 
+    def get_role_model(self, role: str) -> dict | None:
+        return None  # every role inherits: these tests are not about roles
+
 
 @pytest.fixture(autouse=True)
 def _stubbed(monkeypatch):
@@ -104,6 +107,8 @@ def _stubbed(monkeypatch):
     _FakeConfig.recent = []
     _FakeConfig.voice = {}
     monkeypatch.setattr(nova_config, "NovaConfig", _FakeConfig)
+    # The role rows resolve their config through role_models, by its own name.
+    monkeypatch.setattr("novacode_cli.config.role_models.NovaConfig", _FakeConfig)
 
 
 async def _open(pilot, app, **kwargs):
@@ -150,11 +155,11 @@ def _options(screen):
 
 def _model_ids(screen) -> list[str]:
     """Ids of the selectable CHAT rows (voice rows are asserted separately)."""
-    voice = {pick.spec for pick in screen._targets.values() if pick.kind == "voice"}
+    other = {pick.spec for pick in screen._targets.values() if pick.kind in ("voice", "role")}
     return [
         option.id
         for option in _options(screen)
-        if option.id and not str(option.id).startswith("#hdr:") and option.id not in voice
+        if option.id and not str(option.id).startswith("#hdr:") and option.id not in other
     ]
 
 
@@ -297,7 +302,9 @@ async def test_choosing_a_model_dismisses_with_it():
         await pilot.press("enter")
         await pilot.pause()
 
-    assert got == [{"kind": "model", "provider": "anthropic", "model": "claude-opus-5"}]
+    assert got == [
+        {"kind": "model", "provider": "anthropic", "model": "claude-opus-5", "role": "main"}
+    ]
 
 
 async def test_a_provider_without_a_key_asks_to_authenticate():
@@ -352,7 +359,14 @@ async def test_a_typed_model_id_is_used_for_the_selected_provider():
 
     # The curated lists cannot name a model the provider has not published yet,
     # so a free-typed id goes through for the provider under the cursor.
-    assert got == [{"kind": "model", "provider": "anthropic", "model": "claude-opus-6-preview"}]
+    assert got == [
+        {
+            "kind": "model",
+            "provider": "anthropic",
+            "model": "claude-opus-6-preview",
+            "role": "main",
+        }
+    ]
 
 
 async def test_ctrl_r_restricts_the_list_to_the_curated_subset():
@@ -472,6 +486,7 @@ async def test_choosing_a_voice_row_dismisses_with_its_axis_and_field():
             "model": "en_US-amy-medium",
             "space": "tts",
             "field": "voice",
+            "role": "main",
         }
     ]
 
@@ -627,6 +642,7 @@ async def test_a_typed_voice_id_is_used_for_the_highlighted_voice_provider():
             "model": "EXAVITQu4vr4xnSDxMaL",
             "space": "tts",
             "field": "voice_id",
+            "role": "main",
         }
     ]
 
@@ -663,8 +679,10 @@ async def test_recent_picks_are_pinned_on_top_and_not_repeated():
         screen = await _open(pilot, app)
 
         ids = [option.id for option in _options(screen)]
-        assert ids[0] == "#hdr:Recent"
-        assert ids[1] == "anthropic:claude-opus-5"
+        # The role rows sit above everything; Recent is the first model section.
+        recent = ids.index("#hdr:Recent")
+        assert not any(i and ":" in i and not i.startswith(("#hdr:", ":")) for i in ids[:recent])
+        assert ids[recent + 1] == "anthropic:claude-opus-5"
 
         assert ids.count("anthropic:claude-opus-5") == 1
         assert ids.count("opencode:glm-5.3") == 1
