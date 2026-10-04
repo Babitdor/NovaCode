@@ -515,10 +515,11 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;color:var(--dim);fon
               <div class="body">
                 <div class="ps"><b>$</b> nova --inventory</div>
                 <dl>
-                  <div><dt>built-in tools</dt><dd>30+</dd></div>
+                  <div><dt>built-in tools</dt><dd>50+</dd></div>
                   <div><dt>subagents</dt><dd>13</dd></div>
                   <div><dt>skills</dt><dd>50+</dd></div>
-                  <div><dt>mcp servers</dt><dd>12+</dd></div>
+                  <div><dt>mcp presets</dt><dd>12</dd></div>
+                  <div><dt>model providers</dt><dd>7</dd></div>
                 </dl>
               </div>
             </div>
@@ -530,11 +531,11 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;color:var(--dim);fon
         <div class="stack-row">
           <span><b>LangGraph</b> agent loop</span><span><b>deepagents</b> framework</span>
           <span><b>Textual</b> terminal UI</span><span><b>SQLite</b> durable store</span>
-          <span><b>MCP</b> 12+ servers</span><span><b>OpenAI</b> / <b>Anthropic</b> / <b>Gemini</b> / <b>Ollama</b></span>
+          <span><b>MCP</b> 12 presets</span><span><b>OpenAI</b> / <b>Anthropic</b> / <b>Gemini</b> / <b>NVIDIA</b> / <b>OpenRouter</b> / <b>OpenCode</b> / <b>Ollama</b></span>
           <span><b>Discord</b> &amp; <b>Telegram</b> bridges</span><span><b>LangSmith</b> tracing</span>
           <span><b>LangGraph</b> agent loop</span><span><b>deepagents</b> framework</span>
           <span><b>Textual</b> terminal UI</span><span><b>SQLite</b> durable store</span>
-          <span><b>MCP</b> 12+ servers</span><span><b>OpenAI</b> / <b>Anthropic</b> / <b>Gemini</b> / <b>Ollama</b></span>
+          <span><b>MCP</b> 12 presets</span><span><b>OpenAI</b> / <b>Anthropic</b> / <b>Gemini</b> / <b>NVIDIA</b> / <b>OpenRouter</b> / <b>OpenCode</b> / <b>Ollama</b></span>
           <span><b>Discord</b> &amp; <b>Telegram</b> bridges</span><span><b>LangSmith</b> tracing</span>
         </div>
       </div>
@@ -578,9 +579,20 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;color:var(--dim);fon
             <div class="bar"><i></i><i></i><i></i><span>plans.md</span></div><div class="body">
             <h3 class="md">Plans, subagents, tools</h3>
             <p>Deep agent architecture with planning, filesystem access, and tool calling.
-              Delegate to 13 built-in specialists or run them asynchronously on a remote
-              LangGraph server and get the results back when you are idle.</p>
-            <span class="tag">subagents=13</span></div>
+              Delegate to 13 built-in specialists, or hand work to 6 async agents on a
+              LangGraph server and get the results back when you are idle. If the server
+              is not reachable, Nova falls back to the in-process subagents.</p>
+            <span class="tag">subagents=13 async=6</span></div>
+          </article>
+          <article class="holo card rv" style="--dl:.05s">
+            <div class="bar"><i></i><i></i><i></i><span>council.md</span></div><div class="body">
+            <h3 class="md">A council, and a research swarm</h3>
+            <p><code>/council</code> has several agents propose plans independently,
+              critique each other anonymously, and vote; a judge picks the top 3 and
+              nothing is implemented until you approve one. <code>/research</code> fans a
+              question out to 7 research personas and merges their findings. Plans you
+              approve are saved to <code>.nova/plans/</code>.</p>
+            <span class="tag">/council /research</span></div>
           </article>
           <article class="holo card rv" style="--dl:.1s">
             <div class="bar"><i></i><i></i><i></i><span>search.md</span></div><div class="body">
@@ -589,6 +601,18 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;color:var(--dim);fon
               graph with 5000+ nodes and blast-radius analysis, and full LSP support for
               go-to-definition, references, rename, and diagnostics.</p>
             <span class="tag">lsp --project-graph</span></div>
+          </article>
+          <article class="holo card rv" style="--dl:.15s">
+            <div class="bar"><i></i><i></i><i></i><span>context.md</span></div><div class="body">
+            <h3 class="md">Context that fits the model</h3>
+            <p>A three-stage pipeline sized to the model's actual context window: older
+              tool results are cleared first and offloaded to <code>/cleared/</code> so
+              they can be read back, then the conversation is compacted, with an 8k-token
+              reserve always kept. Optional System One compaction lets a local Tev1
+              decision model choose which results are stale, instead of clearing by age.
+              A multimodal model sees pasted images directly; a text-only one gets them
+              captioned.</p>
+            <span class="tag">/context /compact /vision</span></div>
           </article>
         </div>
       </div>
@@ -617,10 +641,10 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;color:var(--dim);fon
             <p>Automatic <code>.gitignore</code> enforcement, command-injection detection,
               URL sanitisation, snapshots before destructive operations with
               <code>/restore</code>, and human-in-the-loop approval for anything risky.
-              Sandboxes for OS, Docker, Modal, Runloop, and Daytona.</p>
+              Sandboxes for OS, Docker, Modal, Runloop, Daytona, and LangSmith.</p>
             <span class="tag">hitl-interrupts</span>
             <h3 class="md" style="margin-top:38px">Extensible end to end</h3>
-            <p>50+ built-in skills with progressive disclosure, MCP servers with
+            <p>50+ built-in tools, 50+ built-in skills with progressive disclosure, MCP servers with
               collision-free tool names, Python entry-point plugins that register slash
               commands and middleware, and a persistent project wiki at
               <code>.nova/wiki/</code>.</p>
@@ -767,9 +791,17 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;color:var(--dim);fon
           </details>
           <details>
             <summary>Which model providers work?</summary>
-            <p>OpenAI, Anthropic, Google Gemini, and local Ollama, all switchable from the
+            <p>OpenAI, Anthropic, Google Gemini, NVIDIA, OpenRouter, OpenCode, and local Ollama, all switchable from the
               <code>/model</code> picker or the first-run wizard. Reasoning effort is a hot
               swap too, via <code>/effort</code>, without restarting the session.</p>
+          </details>
+          <details>
+            <summary>Does it stay fast in a long session?</summary>
+            <p>That is what it is tuned for. Status ticks repaint in place instead of
+              reflowing the screen, rendered Markdown is cached, static data stays out of
+              checkpoints, subagent graphs compile on first use, and garbage collection
+              runs while you are idle. Any UI freeze over 1s is logged to
+              <code>~/.nova/logs/freeze.log</code>.</p>
           </details>
           <details>
             <summary>What happens if a tool call needs approval?</summary>
@@ -779,8 +811,9 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;color:var(--dim);fon
           </details>
           <details>
             <summary>Can I use it away from my machine?</summary>
-            <p>Yes. Bridge it to Discord or Telegram (Telegram takes voice notes, transcribed
-              locally), and a signed webhook endpoint lets external systems trigger a run.
+            <p>Yes. Bridge it to Discord or Telegram. Telegram takes voice notes, gives each
+              session its own forum topic, and deletes a question once you have answered
+              it. A signed webhook endpoint lets external systems trigger a run.
               A Vixie companion handles desktop notifications.</p>
           </details>
         </div>

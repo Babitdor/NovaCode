@@ -15,9 +15,15 @@ An open-source, terminal-based AI coding assistant built on LangGraph and the `d
 
 ### Core Intelligence
 - **LangGraph Agent Loop**: Deep agent architecture with planning, subagents, filesystem access, and tool-calling — all orchestrated through a shared async event loop
-- **Multi-Provider LLM Support**: OpenAI, Anthropic, Ollama, Google Gemini — configure any provider via environment variables or the onboarding wizard
+- **Multi-Provider LLM Support**: OpenAI, Anthropic, Google Gemini, NVIDIA, OpenRouter, OpenCode, and local Ollama — configure any provider via environment variables, the OS keychain, or the onboarding wizard, and switch with `/model`. Thinking models round-trip their `reasoning_content`, so multi-turn tool use works on providers that require it
 - **Autonomous Learning System (Hermes)**: Periodically reviews tool usage patterns, extracts lessons, and autonomously creates reusable skills — the agent improves itself over time without user intervention
 - **Memory System**: Two-tier persistent memory — auto-maintained markdown files (`USER.md`/`MEMORY.md`) plus a LangGraph key/value store (`remember`/`recall`) for cross-session facts
+- **Context Management**: A three-stage pipeline sized to the model's actual context window — older tool results are cleared first (and offloaded to `/cleared/` so the agent can read them back instead of losing them), then the conversation is compacted hierarchically, with a hard backstop that always keeps an 8k-token reserve. The pre-compaction transcript is archived to `~/.nova/sessions/<thread>/`, and the context meter survives `/resume`
+- **System One Compaction (experimental)**: Instead of clearing tool results by age alone, Nova can ask a small local decision model — Tev1 (`tev1:4b`) on Ollama's `/v1/systemone` endpoint — whether each old tool result is still needed, and clear only the ones it scores stale. Cleared results are still offloaded to `/cleared/`, so nothing is lost. Off by default; see [System One Compaction](#system-one-compaction)
+- **Native Vision**: A multimodal main model sees pasted images directly; a text-only one gets them captioned by an auxiliary vision model. Capability is detected from the model profile and can be overridden with `/vision`
+- **Council Planning**: `/council <task>` has several agents propose plans independently, critique each other anonymously, and vote; a judge picks the top 3 and nothing is implemented until you approve one
+- **Research Swarm**: `/research` fans a question out to 7 research personas (web researcher, fact checker, literature reviewer, market analyst, financial analyst, technical researcher, synthesizer) and merges their findings
+- **Plan Mode with Stored Plans**: Read-only investigation, then a plan you approve. A plan you approve is saved to the project's `.nova/plans/`; a plan Nova approves on its own (auto-approve) goes to the global `~/.nova/plans/<project>/` archive
 - **Steering Instructions**: Persistent user-defined directives injected into every model call — set once, always respected
 - **Inline Verification Loop**: After each task, an out-of-band LLM call grades the output against a rubric — on a failing verdict, the agent is automatically re-driven with feedback (up to 3 retries). Fail-open by design
 - **Prompt-Template Hill Climbing**: When reviews repeatedly flag the same class of misunderstanding, the system proposes a targeted rewrite of the relevant `.jinja` template, A/B tests it against the current version using verifier pass/fail as the quality signal, and promotes or discards it. Packaged templates are never modified — all overrides live in `~/.nova/prompt_history/`
@@ -33,6 +39,7 @@ An open-source, terminal-based AI coding assistant built on LangGraph and the `d
 
 ### UI & Interaction
 - **Textual TUI**: Modern terminal UI with chat messages, modals, animations, keyboard shortcuts, condensed tool groups, and click-to-copy
+- **Built to Stay Smooth**: Status ticks repaint in place instead of reflowing the screen, rendered Markdown is cached per width, static data stays out of checkpoints, subagent graphs compile on first use, the skill listing is cached across restarts, and garbage collection is tuned to run while you are idle. A watchdog logs any UI freeze over 1s to `~/.nova/logs/freeze.log`
 - **Multi-line Prompt**: The input grows with its content; `shift+enter` inserts a newline
 - **Parallel Session Panes**: Run several sessions side by side (`/session new`, `ctrl+n`, `alt+<n>`) and switch between them
 - **Docked Todo Checklist**: The todo list stays on screen and can be clicked to collapse/expand
@@ -44,7 +51,7 @@ An open-source, terminal-based AI coding assistant built on LangGraph and the `d
 - **Local Voice I/O** (optional): Speak prompts and hear Nova's prose replies, fully offline — Faster-Whisper (STT), Silero VAD (utterance endpointing), and Piper (TTS). Push-to-talk (`ctrl+g`) or hands-free always-listening (`ctrl+l`); code blocks are stripped before speaking. One-command install: `uv tool install -e .[voice]`, or `uv pip install -e '.[voice]'` for uv run; manage with `/voice`. Swappable TTS/STT providers: cloud (ElevenLabs / Deepgram), **Orpheus** — an optional, very natural LLM-based local TTS (`/voice settings tts orpheus`; `uv pip install -e '.[voice-orpheus]'` + the CPU `llama-cpp-python` wheel; ~2GB model, slower than Piper), **Parakeet** — NVIDIA's local STT via sherpa-onnx (`/voice settings stt parakeet`; `uv pip install -e '.[voice-parakeet]'`), or **Pocket TTS** — Kyutai's lightweight local TTS (`/voice settings tts pocket`; `uv pip install -e '.[voice-pocket]'`)
 
 ### Tools & Capabilities
-- **30+ Built-in Tools**: File operations, shell commands, web search (Tavily + DuckDuckGo), docs search, HTTP fetch, subagent delegation, semantic code search, project graph queries, wiki management, plan mode, artifacts, background tasks, daemons, a persistent Python kernel, and more
+- **50+ Built-in Tools**: File operations, shell commands, web search (Tavily + DuckDuckGo), docs search, HTTP fetch, subagent delegation, semantic code search, project graph queries, wiki management, plan mode, artifacts, background tasks, daemons, a persistent Python kernel, and more. Rarely used tools are deferred behind `tool_search`, so they cost no context until needed
 - **Artifacts**: Create, update, and list durable artifacts (`create_artifact`, `update_artifact`, `list_artifacts`) that persist across resume — browse them with `/artifacts`
 - **Background Tasks**: Long-running shell jobs are monitored and reported back when they finish; inspect them with `list_background_tasks`, `get_task_status`, `get_task_logs`, `terminate_task`, `restart_task`, or the `/tasks` panel
 - **Daemons**: Start, stop, and tail long-lived background processes (`daemon`) — dev servers, watchers, and the like
@@ -56,11 +63,11 @@ An open-source, terminal-based AI coding assistant built on LangGraph and the `d
 - **Project Graph**: Visualize and query your codebase architecture — 5000+ nodes, community detection, dependency analysis, blast radius tracking
 
 ### Extensibility
-- **MCP Support**: Extend capabilities with Model Context Protocol servers (12+ presets) — tools eagerly discovered with server-prefixed names to avoid collisions
+- **MCP Support**: Extend capabilities with Model Context Protocol servers (12 presets, plus any custom server) — tools eagerly discovered with server-prefixed names to avoid collisions
 - **Skills System**: 50+ built-in skills with progressive disclosure — domain-specific workflows loaded on demand. Install skills from any public GitHub repo
 - **Plugin System**: Python entry-point based plugins that can register slash commands, add middleware at defined slots, and extend the agent
-- **Custom Subagents**: 13 built-in specialized subagents (code review, security audit, refactoring, testing, browser automation, frontend/backend/docker engineering, and more)
-- **Async Subagents**: Background task execution on remote LangGraph servers — documentation updates, code reviews, test generation, dependency audits, refactoring; results are automatically reported to the user when the agent is idle
+- **Custom Subagents**: 13 built-in specialized subagents (code review, security audit, refactoring, testing, browser automation, frontend/backend/docker engineering, and more), plus the 7 research-swarm personas and any agents you define yourself
+- **Async Subagents**: 6 background agents on a LangGraph server (the Docker container, or one Nova launches itself) — documentation updates, code reviews, test generation, dependency audits, refactoring, plan scouting; results are automatically reported when the agent is idle. They are offered only while the server is reachable; otherwise Nova falls back to the in-process subagents
 - **Wiki System**: Persistent project wiki at `.nova/wiki/` — ingest web clippings (`/ingest`), ask questions with wiki context (`/ask`), file conversation knowledge as wiki pages (`/file`), and browse the vault (`/wiki`)
 
 ### Sandbox & Safety
@@ -72,7 +79,7 @@ An open-source, terminal-based AI coding assistant built on LangGraph and the `d
 
 ### Infrastructure
 - **Session Management**: Save, restore, auto-save, and resume sessions. Compact conversation history via `/compact`. Run several sessions in parallel panes (`/session new`) and resume a saved session for the current path with `/resume <id>`
-- **Remote Bridges**: Discord and Telegram integration for remote agent interaction. Telegram accepts **voice notes** — they're transcribed with your configured `/voice` STT provider and sent to the agent as an ordinary prompt (the transcript is echoed back so you can see what was heard)
+- **Remote Bridges**: Discord and Telegram integration for remote agent interaction. Telegram accepts **voice notes** — they're transcribed with your configured `/voice` STT provider and sent to the agent as an ordinary prompt (the transcript is echoed back so you can see what was heard). In a Telegram forum each session gets its own topic, and a question Nova asks you is deleted from the chat once you answer it
 - **Vixie Desktop Companion**: Background server for desktop notifications and system tray integration
 - **Hooks System**: Lifecycle hooks at key points (pre/post tool call, on message, on error) — shell commands or Python scripts
 - **Process Manager**: Subprocess lifecycle, health checks, and cleanup for dev servers and background tasks
@@ -173,6 +180,11 @@ export OPENAI_API_KEY="your-openai-api-key"
 
 # Or Anthropic
 export ANTHROPIC_API_KEY="your-anthropic-api-key"
+
+# Or Google Gemini / NVIDIA / OpenRouter
+export GOOGLE_API_KEY="your-google-api-key"
+export NVIDIA_API_KEY="your-nvidia-api-key"
+export OPENROUTER_API_KEY="your-openrouter-api-key"
 
 # Optional: Web search (Tavily)
 export TAVILY_API_KEY="your-tavily-api-key"
@@ -312,7 +324,8 @@ mypy novacode_cli/
 | `/plugins` / `/plugin` | Nova plugin management (list, enable, disable) |
 | `/middleware` | List active middleware (`/reload-plugins` to reload) |
 | `/reload-plugins` | Reload plugin registrations |
-| `/plan` | Invoke plan-mode agent for investigation & approval |
+| `/plan` | Invoke plan-mode agent for investigation & approval (approved plans are saved to `.nova/plans/`) |
+| `/agent-server` | Control the local LangGraph server for async agents — `status`, `start`, `stop`, `restart`, `logs` |
 | `/trace` | LangSmith tracing management (status, enable, projects) |
 | `/ralph` | Autonomous looping mode (background task execution) |
 | `/council <task>` | Plan a task with the council: agents propose independently, critique anonymously, vote, and a judge picks the top 3 for you to approve |
@@ -499,7 +512,8 @@ Every model call passes through this middleware chain (in order):
 | `FileTrackerMiddleware` | `tracking/` | File-op tracking, result truncation |
 | `LoopGuardMiddleware` | `tracking/loop_guard.py` | Break stuck identical tool-call loops |
 | `RubricMiddleware` | `deepagents` | Rubric self-evaluation — dormant unless a rubric is set via `/goal rubric` |
-| `ContextEditingMiddleware` | `langchain.agents.middleware` | Clear older tool-call outputs when the window-relative token trigger is reached |
+| `VerdictScorer` middleware | `agents/tool_verdicts.py` | Scores old tool results with the System One decision model so the next layer clears only the stale ones (inserted only when `tool_verdicts_enabled` is on) |
+| `ContextEditingMiddleware` | `langchain.agents.middleware` | Clear older tool-call outputs when the window-relative token trigger is reached; cleared results are offloaded to `/cleared/` (`agents/tool_offload.py`) |
 | `ShellMiddleware` | `shell.py` | Shell tool + sandbox execution |
 | `AgentMemoryMiddleware` | `memory/` | Agent memory loading (USER.md, MEMORY.md, project NOVA.md) |
 | `TaskDisciplineMiddleware` | `agents/task_discipline.py` | Todo recitation appended to the final system message |
@@ -607,9 +621,33 @@ nova skills add https://github.com/owner/repo --skill my-skill --force
 
 If the repository has no `SKILL.md`, Nova auto-generates one from the repo's README.
 
+### System One Compaction
+
+By default the context pipeline clears every tool result older than the token trigger except the newest few. System One compaction replaces that age rule with a judgement: a small decision model is shown a skeleton of the conversation and asked, per result, whether it is still needed. Only results scored below the keep threshold are cleared, and an unjudged result is always kept (the feature fails open).
+
+It runs against a local Ollama serving a Tev1 model, and is **off by default**. Enable it in `~/.nova/Nova.config.json`:
+
+```json
+{
+  "tool_verdicts_enabled": true,
+  "tool_verdict_endpoint": "http://localhost:11434/v1/systemone",
+  "tool_verdict_model": "tev1:4b",
+  "tool_verdict_keep_threshold": 0.5
+}
+```
+
+| Key | Meaning | Default |
+|---|---|---|
+| `tool_verdicts_enabled` | Master switch | `false` |
+| `tool_verdict_endpoint` | System One endpoint | `http://localhost:11434/v1/systemone` |
+| `tool_verdict_model` | Decision model (`tev1:4b` separates answers cleanly; the 0.8B size does not) | `tev1:4b` |
+| `tool_verdict_keep_threshold` | Minimum probability a result is still needed for it to survive | `0.5` |
+
+Why it is opt-in: Tev1's context is about 2,000 tokens, so it can only be asked about the newest 12 results of a session. Measured on six real sessions, the default age rule cleared more (70 results / 72,682 chars against 49 / 18,364) with fewer regretted clears (0.19 against 0.44 per 1k). The flag stays so it can be tried live and re-measured.
+
 ## Built-in Subagents
 
-NOVA includes 13 specialized subagents, each loaded with domain-relevant skills:
+NOVA includes 13 specialized subagents, each loaded with domain-relevant skills. Their graphs are compiled on first use, so unused ones cost nothing at start-up:
 
 ### Code Quality Agents
 
@@ -644,6 +682,20 @@ NOVA includes 13 specialized subagents, each loaded with domain-relevant skills:
 | `backend-agent` | API design, databases, auth, async patterns | `backend-dev-guidelines/`, `async-python-patterns/` |
 | `docker-agent` | Optimized Dockerfiles, Compose stacks | `docker-deploy/` |
 
+### Research Swarm
+
+Dispatched by `/research`; kept out of the everyday roster and loaded on demand.
+
+| Subagent | Description |
+|----------|-------------|
+| `web-researcher` | Broad web search and source gathering |
+| `fact-checker` | Verifies claims against independent sources |
+| `literature-reviewer` | Academic papers and prior work |
+| `market-analyst` | Markets, competitors, and trends |
+| `financial-analyst` | Stocks and financial data |
+| `technical-researcher` | Libraries, APIs, and technical trade-offs |
+| `research-synthesizer` | Merges the findings into one report |
+
 ### Async Background Agents (Remote LangGraph)
 
 | Subagent | Description |
@@ -655,7 +707,7 @@ NOVA includes 13 specialized subagents, each loaded with domain-relevant skills:
 | `refactoring-agent` | Analyze and improve code quality in the background |
 | `plan-scout-agent` | Read-only directory scans dispatched during plan mode |
 
-Start any with `start_async_task()`, check status with `check_async_task()`.
+Start any with `start_async_task()`, check status with `check_async_task()`. These tools appear only while the LangGraph server is reachable; when it is down, Nova delegates to the in-process subagents instead.
 
 ## Hooks System
 
@@ -970,7 +1022,10 @@ User Input → CLI Entry (main.py) → Agent Loop (core/agent_loop.py) → UI Re
 - `plugins/` — Plugin system
 - `wiki/` — Persistent project wiki: ingest, ask, file, and vault management
 - `hooks.py` — Lifecycle hook dispatch
-- `compaction.py` — Conversation summarization via LLM
+- `compaction.py` — Hierarchical conversation summarization via LLM, with a pre-compaction transcript archive
+- `agents/tool_offload.py` — Offloads cleared tool results to `/cleared/` so they stay readable
+- `agents/tool_verdicts.py` — System One compaction: a Tev1 decision model picks which tool results are stale (opt-in)
+- `tui/gc_tuning.py` — Garbage-collection tuning that keeps collection pauses out of the UI
 - `plans.py` — Plan management and persistence
 - `onboarding.py` — Interactive first-run setup
 - `doctor.py` — System diagnostics
