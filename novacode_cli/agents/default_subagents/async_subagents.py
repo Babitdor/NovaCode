@@ -3,6 +3,7 @@
 
 import logging
 import os
+from pathlib import Path
 import socket
 from urllib.parse import urlsplit
 
@@ -13,7 +14,7 @@ logger = logging.getLogger(__name__)
 # ── Base URL resolution ────────────────────────────────────────────────────────
 
 #: Where the async-subagent LangGraph server lives when nothing says otherwise.
-#: Every async graph is hosted by the one ``novacode`` container; routing is by
+#: Every async graph is hosted by one server; routing is by
 #: ``graph_id``, so a single base URL and port cover all of them.
 DEFAULT_ASYNC_AGENT_BASE_URL = "http://localhost"
 ASYNC_AGENT_PORT = 2024
@@ -61,18 +62,31 @@ def _has_port(base: str) -> bool:
         return False
 
 
+def _own_server_planned() -> bool:
+    try:
+        from novacode_cli.agents import server_launcher
+
+        return server_launcher.planned()
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def async_agents_available(*, refresh: bool = False) -> bool:
     """Whether the async-subagent server is actually reachable.
 
-    The async subagents only exist while the ``novacode`` LangGraph container is
-    running. Offering them when it is not turns every delegation into a failed
-    round-trip, so the specs are withheld instead and the agent uses its
-    ordinary in-process subagents.
+    True at once when Nova has its own server planned (it starts on the first
+    dispatch). Otherwise this probes for one that is already running. Offering
+    the agents with no server turns every delegation into a failed round-trip,
+    so the specs are withheld instead and the agent uses its ordinary in-process
+    subagents.
 
-    One TCP connect, cached for the process: the container does not come and go
-    mid-session, and this sits on the agent-build path.
+    One TCP connect, cached for the process: this sits on the agent-build path.
     """
     global _availability
+    if _own_server_planned():
+        # Nova will start its own server on the first dispatch: nothing to
+        # probe yet, and the tools must be offered for that to ever happen.
+        return True
     if _availability is not None and not refresh:
         return _availability
     try:
@@ -91,6 +105,43 @@ def async_agents_available(*, refresh: bool = False) -> bool:
         _availability = False
     logger.debug("async subagent server at %s:%s reachable=%s", host, port, _availability)
     return _availability
+
+
+#: The directory an already-running async server works in. Only needed for a
+#: server Nova did not launch itself.
+ASYNC_AGENT_ROOT_VAR = "NOVA_ASYNC_AGENT_ROOT"
+
+
+def async_agents_see_workspace() -> bool:
+    """Whether the async server works on the same files as this session.
+
+    A server Nova launches itself is told the session's workspace, so it always
+    does. One that was already running (started by hand, or on another machine)
+    works on whatever directory it was started for, and Nova cannot ask it
+    which: in the wrong project its agents would scout the wrong source and
+    report it as findings, which is worse than not running. Such a server is
+    used only when ``NOVA_ASYNC_AGENT_ROOT`` declares its directory and the
+    workspace is that directory (or inside it).
+    """
+    if _own_server_planned():
+        return True  # launched with NOVA_WORKSPACE_ROOT set to this workspace
+    try:
+        from novacode_cli.config.config import settings
+
+        declared = os.environ.get(ASYNC_AGENT_ROOT_VAR, "").strip()
+        if not declared:
+            return False
+        server_root = Path(declared).resolve()
+        workspace = Path(settings.get_workspace_root()).resolve()
+    except Exception:  # noqa: BLE001 — unknown roots: do not risk the wrong tree
+        logger.debug("could not compare the async server root to the workspace", exc_info=True)
+        return False
+    return workspace == server_root or server_root in workspace.parents
+
+
+def async_agents_usable() -> bool:
+    """Reachable *and* looking at this workspace: the condition for offering them."""
+    return async_agents_available() and async_agents_see_workspace()
 
 
 def _resolve_async_agent_headers() -> dict[str, str]:
@@ -161,6 +212,38 @@ Use this agent when:
 - You need to reduce complexity or duplication
 
 The agent scans files, runs linters, analyzes structure, and proposes incremental improvements.
+"""
+
+SECURITY_AUDIT_AGENT_DESCRIPTION = """An async agent that audits the codebase for security problems in the background.
+
+Use this agent when:
+- You want a full security pass (OWASP Top 10, secrets, input validation, auth flaws)
+- The audit covers enough of the codebase that waiting on it would stall the session
+- You want a severity-ranked report to act on later
+
+It only reads and searches; it changes nothing.
+"""
+
+TEST_RUNNER_AGENT_DESCRIPTION = """An async agent that runs the project's test suite in the background and reports failures.
+
+Use this agent when:
+- The suite takes long enough that you would rather keep working while it runs
+- You want failures grouped with their likely root cause
+- You need to know whether a change broke anything, without blocking on it
+
+It can run test-runner commands only (pytest, npm test, go test, cargo test, ...) and
+does not edit files.
+"""
+
+RESEARCH_AGENT_DESCRIPTION = """An async agent that researches a question on the web in the background.
+
+Use this agent when:
+- A question needs several searches and sources read, which takes minutes
+- You want sourced findings without stalling the current work
+- The research is independent of the code in front of you
+
+It searches, reads primary sources and reports findings with their sources. This is the
+background form of the `web-researcher` subagent; `/research` still runs the full swarm.
 """
 
 PLAN_SCOUT_AGENT_DESCRIPTION = """An async agent that scans the directory and reports planning-relevant findings.
@@ -245,6 +328,36 @@ def build_refactoring_agent() -> AsyncSubAgent:
     )
 
 
+def build_security_audit_agent() -> AsyncSubAgent:
+    """Build the security audit async subagent config."""
+    return _build_agent_spec(
+        name="security-audit-agent",
+        graph_id="security-audit-agent",
+        description=SECURITY_AUDIT_AGENT_DESCRIPTION,
+        port=2024,
+    )
+
+
+def build_test_runner_agent() -> AsyncSubAgent:
+    """Build the test runner async subagent config."""
+    return _build_agent_spec(
+        name="test-runner-agent",
+        graph_id="test-runner-agent",
+        description=TEST_RUNNER_AGENT_DESCRIPTION,
+        port=2024,
+    )
+
+
+def build_research_agent() -> AsyncSubAgent:
+    """Build the web research async subagent config."""
+    return _build_agent_spec(
+        name="research-agent",
+        graph_id="research-agent",
+        description=RESEARCH_AGENT_DESCRIPTION,
+        port=2024,
+    )
+
+
 def build_plan_scout_agent() -> AsyncSubAgent:
     """Build the plan-scout async subagent config.
 
@@ -263,18 +376,27 @@ def retrieve_async_subagents() -> list[AsyncSubAgent]:
     """Return the async subagents, or ``[]`` when their server is not running.
 
     Async subagents run on remote Agent Protocol servers and execute in the
-    background, returning a task ID immediately. That server is the ``novacode``
-    Docker container; with it stopped the tools would still be advertised and
-    every delegation would fail, so nothing is returned and the agent falls back
-    to its synchronous in-process subagents.
+    background, returning a task ID immediately. With no server to run them
+    (none planned, none answering) the tools would still be advertised and every
+    delegation would fail, so nothing is returned and the agent falls back to
+    its synchronous in-process subagents.
 
     Returns:
         List of AsyncSubAgent configurations, empty when the server is down.
     """
     if not async_agents_available():
         logger.info(
-            "Async subagent server unreachable — using synchronous subagents. "
-            "Start the novacode container to enable background delegation."
+            "No async subagent server — using synchronous subagents. Install the "
+            "agents-server extra (uv sync --extra agents-server) to enable "
+            "background delegation."
+        )
+        return []
+    if not async_agents_see_workspace():
+        logger.info(
+            "Async subagent server is rooted at a different project — using "
+            "synchronous subagents, which work in this workspace. Set %s if the "
+            "server does see this project.",
+            ASYNC_AGENT_ROOT_VAR,
         )
         return []
     return [
@@ -284,4 +406,7 @@ def retrieve_async_subagents() -> list[AsyncSubAgent]:
         build_dependency_audit_agent(),
         build_refactoring_agent(),
         build_plan_scout_agent(),
+        build_security_audit_agent(),
+        build_test_runner_agent(),
+        build_research_agent(),
     ]

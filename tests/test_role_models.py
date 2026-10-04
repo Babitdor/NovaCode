@@ -147,11 +147,8 @@ def test_describe_roles_never_says_a_bare_inherit():
         if role != "main":
             assert effective != "inherit"
     by_role = {role: effective for role, _, effective in rows}
-    # async is the one role that does not inherit the main model: unset leaves the
-    # remote graphs on their own server-side default, so claiming it inherits would
-    # send someone hunting for a setting that is not in play.
-    assert by_role["async"] == "server default"
-    assert by_role["subagent"] != by_role["async"]
+    # An unset async role follows the main agent's model, like the others.
+    assert by_role["async"] == by_role["main"]
 
 
 # ── the panel's MODEL column ─────────────────────────────────────────────────
@@ -160,10 +157,7 @@ def test_describe_roles_never_says_a_bare_inherit():
 def test_panel_rows_fall_back_to_the_session_model(monkeypatch):
     """Unset roles must show exactly what the column showed before."""
     for kind in ("direct", "eval", "async", "something-new"):
-        assert panel_row_model(kind, "ollama:gemma4:31b-cloud") in (
-            "ollama:gemma4:31b-cloud",
-            "server default",
-        )
+        assert panel_row_model(kind, "ollama:gemma4:31b-cloud") == "ollama:gemma4:31b-cloud"
     assert panel_row_model("direct", "deepseek-v4.1-flash") == "deepseek-v4.1-flash"
     assert panel_row_model("eval", "deepseek-v4.1-flash") == "deepseek-v4.1-flash"
 
@@ -181,6 +175,6 @@ def test_panel_rows_report_the_role_that_ran(tmp_config):
     assert panel_row_model("mystery", session, cfg) == session
 
 
-def test_async_rows_say_server_default_rather_than_claiming_a_model(tmp_config):
-    """The server decides its own model, so an unset role must not imply one."""
-    assert panel_row_model("async", "deepseek-v4.1-flash", NovaConfig()) == "server default"
+def test_async_rows_show_the_session_model_when_the_role_is_unset(tmp_config):
+    """An unset async role runs on the session's model, so the row says so."""
+    assert panel_row_model("async", "deepseek-v4.1-flash", NovaConfig()) == "deepseek-v4.1-flash"

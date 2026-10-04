@@ -171,12 +171,23 @@ def test_a_per_agent_variable_still_wins(monkeypatch, fake_chat_model):
 # ── the stored role ──────────────────────────────────────────────────────────
 
 
-def test_an_unset_async_role_sends_nothing(monkeypatch):
-    """`None` is "leave it to the environment" — the docker-compose path."""
+def test_an_unset_async_role_follows_the_main_model(monkeypatch):
+    """Provider-agnostic by default: no async role means "whatever the session runs on"."""
     monkeypatch.setattr(
         "novacode_cli.config.nova_config.NovaConfig.get_role_model",
         lambda self, role: None,
     )
+    monkeypatch.delenv("ASYNC_AGENT_PROVIDER", raising=False)
+    monkeypatch.delenv("ASYNC_AGENT_MODEL", raising=False)
+    monkeypatch.setattr(
+        "novacode_cli.utils.model_info.get_model_info",
+        lambda: ("anthropic", "claude-sonnet-5-5", "Sonnet"),
+    )
+    context = current_async_context()
+    assert (context.provider, context.model) == ("anthropic", "claude-sonnet-5-5")
+
+    # An explicit environment setting is still the last word for the graphs.
+    monkeypatch.setenv("ASYNC_AGENT_MODEL", "gpt-4o-mini")
     assert current_async_context() is None
 
 
@@ -351,3 +362,50 @@ def _request(context, model=None):
         runtime=type("_R", (), {"context": context})(),
         model_settings={},
     )
+
+
+def test_the_async_path_builds_the_model_off_the_event_loop(monkeypatch, fake_chat_model):
+    """Building reads settings and key files: blocking calls `langgraph dev` rejects.
+
+    On the loop the build raised BlockingError, was swallowed, and every async
+    run fell back to the graph default. It must happen on a worker thread, and
+    only once: later calls take the cached model without leaving the loop.
+    """
+    import asyncio
+    import threading
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(ac, "_MODEL_CACHE", {})
+    built_on: list[str] = []
+
+    def build(provider, model_name):  # noqa: ANN001, ANN202
+        built_on.append(threading.current_thread().name)
+        return fake_chat_model
+
+    monkeypatch.setattr("novacode_cli.config.model_create.build_chat_model", build)
+
+    class _Request:
+        runtime = SimpleNamespace(context={"provider": "opencode", "model": "m"})
+        model = None
+
+        def override(self, *, model):  # noqa: ANN001, ANN202
+            self.model = model
+            return self
+
+    async def run() -> tuple[str, list]:
+        loop_thread = threading.current_thread().name
+        seen = []
+
+        async def handler(request):  # noqa: ANN001, ANN202
+            seen.append(request.model)
+            return "ok"
+
+        mw = AsyncModelOverrideMiddleware()
+        await mw.awrap_model_call(_Request(), handler)
+        await mw.awrap_model_call(_Request(), handler)
+        return loop_thread, seen
+
+    loop_thread, seen = asyncio.run(run())
+    assert seen == [fake_chat_model, fake_chat_model]
+    assert len(built_on) == 1, "built once, then served from the cache"
+    assert built_on[0] != loop_thread, "the build must not run on the event loop"

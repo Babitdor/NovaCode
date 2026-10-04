@@ -180,3 +180,20 @@ def _reap_leaked_session_children():
             except Exception:  # noqa: BLE001 — already gone
                 pass
         sup._live.discard(child)
+
+
+@pytest.fixture(autouse=True)
+def _no_leaked_agent_server_plan():
+    """A planned agent server makes async agents count as available everywhere.
+
+    The plan is process-global, so one test that plans a server (and leaves it
+    planned, as a failed launch deliberately does) would change what every later
+    test sees.
+    """
+    import sys
+
+    yield
+    launcher = sys.modules.get("novacode_cli.agents.server_launcher")
+    if launcher is not None:
+        launcher._state["planned"] = None
+        launcher._state["process"] = None

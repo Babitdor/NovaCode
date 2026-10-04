@@ -793,6 +793,9 @@ def _harden_subagent_specs(
         # Agent-to-agent tools (see _async_mw above): the subagent can now message
         # remote agents on the LangGraph server, not just the orchestrator.
         if _async_mw is not None and not has_async:
+            from novacode_cli.agents.async_on_demand import AsyncServerOnDemandMiddleware
+
+            mw_to_add.append(AsyncServerOnDemandMiddleware())
             mw_to_add.append(_async_mw)
         # Only curate when the subagent actually has skills (either just granted
         # above or pre-declared by the spec) — no point adding a no-op clamp.
@@ -1413,7 +1416,11 @@ def _build_middleware_stack(
         _warnings.simplefilter("ignore")  # beta-API warning would print every boot
         _rubric_middleware = RubricMiddleware(model=model, max_iterations=3)
 
+    from novacode_cli.agents.async_on_demand import AsyncServerOnDemandMiddleware
+
     agent_middleware = [
+        # Starts Nova's own agent server on the first async dispatch.
+        AsyncServerOnDemandMiddleware(),
         # Retry transient model failures (rate limits / 429, timeouts, network
         # blips) with exponential backoff before surfacing an error to the user.
         # retry_on skips *permanent* failures (usage/quota cap, bad API key) so

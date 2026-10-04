@@ -59,11 +59,8 @@ def test_the_picker_offers_a_row_per_role(monkeypatch):
     # Every role row says what that role would actually run, not just its name.
     labels = {pick.name: pick.label for pick in screen._targets.values() if pick.kind == "role"}
     for role, label in labels.items():
-        if role == "async":
-            # The remote server owns this one, so it never claims the main model.
-            assert "server default" in label, (role, label)
-        else:
-            assert "gemma4:31b-cloud" in label, (role, label)
+        # Every unset role, async included, follows the main agent's model.
+        assert "gemma4:31b-cloud" in label, (role, label)
 
 
 def test_main_is_the_default_target_so_plain_model_use_is_unchanged(monkeypatch):
@@ -123,6 +120,5 @@ def test_the_main_row_shows_the_saved_model_and_the_rest_inherit_it(monkeypatch,
     labels = {pick.name: pick.label for pick in screen._targets.values() if pick.kind == "role"}
     assert "openai:gpt-5-mini" in labels["main"]
     assert "openai:gpt-5-mini" in labels["subagent"], labels["subagent"]
-    # The async row must not claim the main model: the server decides that one, and
-    # the row still names what it covers after the model.
-    assert "server default" in labels["async"], labels["async"]
+    # An unset async role follows the main agent's model.
+    assert "openai:gpt-5-mini" in labels["async"], labels["async"]

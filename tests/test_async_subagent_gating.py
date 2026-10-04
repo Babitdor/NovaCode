@@ -38,9 +38,13 @@ def test_all_specs_when_the_server_answers(monkeypatch):
         srv.bind(("127.0.0.1", 0))
         srv.listen(1)
         monkeypatch.setenv("ASYNC_AGENT_BASE_URL", f"http://127.0.0.1:{srv.getsockname()[1]}")
+        # A server Nova did not launch has to be declared as working on this project.
+        from novacode_cli.config.config import settings
+
+        monkeypatch.setenv(mod.ASYNC_AGENT_ROOT_VAR, str(settings.get_workspace_root()))
         assert mod.async_agents_available() is True
         specs = mod.retrieve_async_subagents()
-    assert len(specs) == 6
+    assert len(specs) == 9
     assert all(spec["url"] for spec in specs), "a spec without a URL cannot be reached"
 
 
@@ -110,3 +114,32 @@ def test_the_rendered_instructions_track_availability(monkeypatch):
 
     monkeypatch.setenv("ASYNC_AGENT_BASE_URL", f"http://127.0.0.1:{_closed_port()}")
     assert "start_async_task" not in get_default_coding_instructions()
+
+
+def test_async_agents_are_withheld_in_another_project(monkeypatch, tmp_path):
+    """The server reads its own root, not the session's workspace.
+
+    In a different project the scouts explored Nova's repo and reported it as
+    findings about that project. With the server up but rooted elsewhere, the
+    specs must be withheld so the in-process subagents are used instead.
+    """
+    from novacode_cli.agents.default_subagents import async_subagents as a
+    from novacode_cli.config.config import settings
+
+    monkeypatch.setattr(a, "async_agents_available", lambda **_: True)
+    other = tmp_path / "rag-harness"
+    other.mkdir()
+
+    monkeypatch.setattr(type(settings), "get_workspace_root", lambda self: other)
+    assert not a.async_agents_see_workspace()
+    assert not a.async_agents_usable()
+    assert a.retrieve_async_subagents() == []
+
+    # A server the user really has rooted at this project can be declared.
+    monkeypatch.setenv(a.ASYNC_AGENT_ROOT_VAR, str(other))
+    assert a.async_agents_see_workspace()
+    assert len(a.retrieve_async_subagents()) > 0
+
+    # ...and a subfolder of the server's root still counts.
+    monkeypatch.setattr(type(settings), "get_workspace_root", lambda self: other / "src")
+    assert a.async_agents_see_workspace()

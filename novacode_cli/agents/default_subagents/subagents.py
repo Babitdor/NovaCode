@@ -7,23 +7,10 @@ from langchain.tools import BaseTool
 from deepagents.middleware.subagents import SubAgent
 
 from .prompt import (
-    CODE_DOC_AGENT,
     CODE_EXPLORER,
-    CODE_SIMPLIFIER,
     REFACTORING_SPECIALIST_AGENT,
-    REVIEWER_AGENT,
-    SECURITY_AUDITOR_AGENT,
-    # Bug fix agent
     BUG_FIX_AGENT,
-    # Test agents
-    TEST_WRITER_AGENT,
-    TESTING_AGENT,
-    # Browser automation agent
     BROWSER_AUTOMATION_AGENT,
-    # Domain-specific engineering agents
-    FRONTEND_AGENT,
-    BACKEND_AGENT,
-    DOCKER_AGENT,
     # Research-swarm agents (dispatched by /research; see RESEARCH_SWARM_AGENTS)
     WEB_RESEARCHER,
     FACT_CHECKER,
@@ -81,26 +68,24 @@ def retrieve_core_subagents(
 ) -> list[SubAgent]:
     all_tools: list[AnyTool] = tools or []
 
-    # Define subagent configurations
+    # The in-process specialists. There were thirteen; nine were removed after
+    # 583 saved sessions showed not one dispatch of any of them (out of 159, 98
+    # went to general-purpose and 26 to code-explorer). Each was a prompt the
+    # main agent already covers with a skill, or work that suits a background
+    # run better and has an async agent for it:
+    #   code-doc-Agent -> documentation-update-agent     reviewer-agent -> code-review-agent
+    #   test-writer-agent -> test-generation-agent       testing-agent -> test-runner-agent
+    #   security-auditor-agent -> security-audit-agent
+    #   code-simplifier-agent -> refactoring-specialist-agent (kept, below)
+    #   frontend-/backend-/docker-agent -> skills (frontend-design,
+    #       backend-dev-guidelines, docker-deploy) the main agent loads on demand
+    # A specialist earns its place here by needing the session: its approvals,
+    # its sandbox, or an answer in the same turn.
     subagent_configs = [
-        # Code quality agents
-        ("code-doc-Agent", CODE_DOC_AGENT),
-        ("code-simplifier-agent", CODE_SIMPLIFIER),
         ("code-explorer", CODE_EXPLORER),
-        ("reviewer-agent", REVIEWER_AGENT),
-        ("security-auditor-agent", SECURITY_AUDITOR_AGENT),
         ("refactoring-specialist-agent", REFACTORING_SPECIALIST_AGENT),
-        # Bug fix agent
         ("bug-fix-agent", BUG_FIX_AGENT),
-        # Test agents
-        ("test-writer-agent", TEST_WRITER_AGENT),
-        ("testing-agent", TESTING_AGENT),
-        # Browser automation agent
         ("browser-automation-agent", BROWSER_AUTOMATION_AGENT),
-        # Domain-specific engineering agents
-        ("frontend-agent", FRONTEND_AGENT),
-        ("backend-agent", BACKEND_AGENT),
-        ("docker-agent", DOCKER_AGENT),
         # Research-swarm agents. These were removed once as "niche, unreferenced
         # anywhere in the codebase" — but /research references all seven by name
         # (prompts/research_swarm.jinja), so removing them silently broke that
@@ -152,57 +137,22 @@ def retrieve_core_subagents(
     # The general-purpose subagent auto-inherits the main agent's skills from
     # create_deep_agent's top-level `skills` parameter — no need to list it here.
     subagent_skills: dict[str, list[str]] = {
-        # Code quality agents
-        "code-doc-Agent": [
-            "/skills/code-documentation/",
-        ],
-        "code-simplifier-agent": [
-            "/skills/code-review-expert/",
-        ],
         "code-explorer": [
             "/skills/codebase-explorer/",
             "/skills/graphify/",
         ],
-        "reviewer-agent": [
-            "/skills/code-review-expert/",
-        ],
-        "security-auditor-agent": [
-            "/skills/web-research/",
-        ],
         "refactoring-specialist-agent": [
             "/skills/improve-codebase-architecture/",
         ],
-        # Bug fix agent
         "bug-fix-agent": [
             "/skills/systematic-debugging/",
         ],
-        # Test agents
-        "test-writer-agent": [
-            "/skills/test-driven-development/",
-        ],
-        "testing-agent": [
-            "/skills/testing-skills/",
-            "/skills/webapp-testing/",
-        ],
-        # Browser automation agent
         # No browser skills here: this agent only has fetch_url +
         # duckduckgo_search, and agent-browser/browser-use teach driving a
         # browser it cannot drive — which is what made it accept impossible
         # tasks. The main agent owns real browser work (playwright_browser_*).
         "browser-automation-agent": [
             "/skills/web-research/",
-        ],
-        # Domain-specific engineering agents
-        "frontend-agent": [
-            "/skills/frontend-design/",
-            "/skills/expert-css-skills/",
-        ],
-        "backend-agent": [
-            "/skills/backend-dev-guidelines/",
-            "/skills/async-python-patterns/",
-        ],
-        "docker-agent": [
-            "/skills/docker-deploy/",
         ],
     }
     for sa in subagents:

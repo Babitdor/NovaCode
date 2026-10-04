@@ -12,12 +12,12 @@ from __future__ import annotations
 
 import json
 import subprocess
-from pathlib import Path
 from typing import Any
 
 from deepagents import create_deep_agent
 from deepagents.backends.filesystem import FilesystemBackend
 from langchain_core.tools import tool
+from novacode_cli.agents.async_workspace import workspace_root
 from novacode_cli.agents.async_context import (
     AsyncModelOverrideMiddleware,
     NovaAsyncContext,
@@ -35,7 +35,7 @@ def check_outdated_packages() -> str:
     try:
         result = subprocess.run(
             ["uv", "pip", "list", "--outdated", "--format=json"],
-            capture_output=True, text=True, cwd=Path.cwd(), timeout=60,
+            capture_output=True, text=True, cwd=workspace_root(), timeout=60,
         )
         if result.returncode != 0:
             return f"Error: {result.stderr}"
@@ -66,7 +66,7 @@ def check_security_advisories() -> str:
     try:
         result = subprocess.run(
             ["uv", "run", "pip-audit", "--format=markdown"],
-            capture_output=True, text=True, cwd=Path.cwd(), timeout=120,
+            capture_output=True, text=True, cwd=workspace_root(), timeout=120,
         )
         if result.returncode == 0:
             return result.stdout or "No known vulnerabilities found."
@@ -89,7 +89,7 @@ def get_dependency_tree() -> str:
     try:
         result = subprocess.run(
             ["uv", "tree"],
-            capture_output=True, text=True, cwd=Path.cwd(), timeout=60,
+            capture_output=True, text=True, cwd=workspace_root(), timeout=60,
         )
         return result.stdout if result.returncode == 0 else f"Error: {result.stderr}"
     except FileNotFoundError:
@@ -126,7 +126,7 @@ def _resolve_model() -> Any:
 def _build_agent() -> Any:
     tools = [check_outdated_packages, check_security_advisories, get_dependency_tree]
 
-    backend = FilesystemBackend(root_dir=str(Path.cwd()), virtual_mode=True)
+    backend = FilesystemBackend(root_dir=str(workspace_root()), virtual_mode=True)
 
     return create_deep_agent(
         name="dependency-audit-agent",

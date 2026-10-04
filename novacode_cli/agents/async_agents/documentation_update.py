@@ -16,7 +16,6 @@ Exports:
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 from typing import Any
 
 from deepagents import create_deep_agent
@@ -24,6 +23,7 @@ from deepagents.backends import CompositeBackend
 from deepagents.backends.filesystem import FilesystemBackend
 from deepagents.backends.store import StoreBackend
 from langchain_core.tools import tool
+from novacode_cli.agents.async_workspace import workspace_root
 from novacode_cli.agents.async_context import (
     AsyncModelOverrideMiddleware,
     NovaAsyncContext,
@@ -51,7 +51,7 @@ def get_recent_commits(count: int = 10) -> str:
             ["git", "log", f"-{count}", "--pretty=format:%h %an %ad %s", "--date=short"],
             capture_output=True,
             text=True,
-            cwd=Path.cwd(),
+            cwd=workspace_root(),
             timeout=30,
         )
         if result.returncode == 0:
@@ -82,7 +82,7 @@ def get_commit_diff(commit_hash: str) -> str:
             ["git", "show", commit_hash, "--stat", "--patch"],
             capture_output=True,
             text=True,
-            cwd=Path.cwd(),
+            cwd=workspace_root(),
             timeout=60,
         )
         if result.returncode == 0:
@@ -113,7 +113,7 @@ def get_changed_files_since(tag_or_hash: str = "HEAD~1") -> str:
             ["git", "diff", "--name-status", tag_or_hash],
             capture_output=True,
             text=True,
-            cwd=Path.cwd(),
+            cwd=workspace_root(),
             timeout=30,
         )
         if result.returncode == 0:
@@ -168,11 +168,11 @@ def _build_backend() -> CompositeBackend:
     - Filesystem access to read/write project files
     - Persistent store for tracking what was last updated
     """
-    workspace_root = Path.cwd()
+    root = workspace_root()
 
     # Default: filesystem access to the project
     default_backend = FilesystemBackend(
-        root_dir=str(workspace_root),
+        root_dir=str(root),
         virtual_mode=True,
     )
 

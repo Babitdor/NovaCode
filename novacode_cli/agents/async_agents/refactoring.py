@@ -11,12 +11,12 @@ Exports:
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 from typing import Any
 
 from deepagents import create_deep_agent
 from deepagents.backends.filesystem import FilesystemBackend
 from langchain_core.tools import tool
+from novacode_cli.agents.async_workspace import workspace_root
 from novacode_cli.agents.async_context import (
     AsyncModelOverrideMiddleware,
     NovaAsyncContext,
@@ -37,7 +37,7 @@ def run_linter(file_path: str) -> str:
     try:
         result = subprocess.run(
             ["uv", "run", "ruff", "check", file_path],
-            capture_output=True, text=True, cwd=Path.cwd(), timeout=30,
+            capture_output=True, text=True, cwd=workspace_root(), timeout=30,
         )
         return result.stdout or "No linting issues found." if result.returncode == 0 else result.stdout
     except Exception as e:
@@ -55,7 +55,7 @@ def get_file_line_count(file_path: str) -> str:
         File metrics (lines, functions, classes).
     """
     try:
-        full_path = Path.cwd() / file_path
+        full_path = workspace_root() / file_path
         if not full_path.exists():
             return f"File not found: {file_path}"
         content = full_path.read_text(encoding="utf-8")
@@ -86,7 +86,7 @@ def run_format_check(file_path: str) -> str:
     try:
         result = subprocess.run(
             ["uv", "run", "ruff", "format", "--check", "--diff", file_path],
-            capture_output=True, text=True, cwd=Path.cwd(), timeout=30,
+            capture_output=True, text=True, cwd=workspace_root(), timeout=30,
         )
         if result.returncode == 0:
             return "File is properly formatted."
@@ -124,7 +124,7 @@ def _resolve_model() -> Any:
 def _build_agent() -> Any:
     tools = [run_linter, get_file_line_count, run_format_check]
 
-    backend = FilesystemBackend(root_dir=str(Path.cwd()), virtual_mode=True)
+    backend = FilesystemBackend(root_dir=str(workspace_root()), virtual_mode=True)
 
     return create_deep_agent(
         name="refactoring-agent",

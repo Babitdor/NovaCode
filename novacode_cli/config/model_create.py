@@ -586,7 +586,7 @@ def get_current_model_name() -> str:
 
 # ── async-agent graphs ────────────────────────────────────────────────────────
 #
-# The six remote graphs (async-agents/*.py, hosted by the LangGraph server) used to
+# The six remote graphs (agents/async_agents/*.py, hosted by the LangGraph server) used to
 # build ``ChatOllama`` themselves, in six near-identical copies, so the model behind
 # background work was an Ollama decision. They now delegate here, which is also how
 # they inherit every provider quirk this module already handles.

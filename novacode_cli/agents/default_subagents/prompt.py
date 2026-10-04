@@ -17,26 +17,6 @@ CODE_EXPLORER = {
     ],
 }
 
-CODE_DOC_AGENT = {
-    "description": "Generates human-readable documentation (README, API docs, docstrings) only from structured inputs such as IRs or retrieved code snippets. Does not explore the codebase independently.",
-    "prompt": _load_prompt("code_doc_agent.jinja"),
-    "tools": [],
-}
-
-CODE_SIMPLIFIER = {
-    "description": "Simplifies and refines code for clarity, consistency, and maintainability while preserving all functionality. Focuses on recently modified code unless instructed otherwise.",
-    "prompt": _load_prompt("code_simplifier.jinja"),
-    "tools": [],
-}
-
-REVIEWER_AGENT = {
-    "description": "Performs code review for correctness, security, performance, and maintainability. Provides structured feedback with critical issues, important issues, and praise.",
-    "prompt": _load_prompt("reviewer_agent.jinja"),
-    "tools": [
-        "package_info",
-    ],
-}
-
 SECURITY_AUDITOR_AGENT = {
     "description": "Performs security audit for OWASP Top 10 vulnerabilities, secrets detection, input validation issues, authentication/authorization flaws, and dependency vulnerabilities. Reports critical/high/medium/low issues.",
     "prompt": _load_prompt("security_auditor_agent.jinja"),
@@ -63,12 +43,6 @@ BUG_FIX_AGENT = {
 }
 
 # ── Test Agents ────────────────────────────────────────────────────────────────
-
-TEST_WRITER_AGENT = {
-    "description": "Creates comprehensive test coverage for untested or under-tested code. Writes happy-path, edge-case, and error-case tests following project conventions.",
-    "prompt": _load_prompt("test_writer_agent.jinja"),
-    "tools": [],
-}
 
 TESTING_AGENT = {
     "description": "Executes and validates tests in isolated sandbox environments. Detects test framework, runs suites, parses results, and reports failures with root cause.",
@@ -98,27 +72,6 @@ BROWSER_AUTOMATION_AGENT = {
 }
 
 # ── Domain-Specific Engineering Agents ─────────────────────────────────────────
-
-FRONTEND_AGENT = {
-    "description": "Senior frontend engineer specializing in React, HTML/CSS, design systems, animations, and production-grade UI development.",
-    "prompt": _load_prompt("frontend_agent.jinja"),
-    "tools": [],
-}
-
-BACKEND_AGENT = {
-    "description": "Senior backend engineer specializing in API design, databases, auth, async patterns, and production-grade server-side systems.",
-    "prompt": _load_prompt("backend_agent.jinja"),
-    "tools": [
-        "package_info",
-        "fetch_url",
-    ],
-}
-
-DOCKER_AGENT = {
-    "description": "Containerization specialist focused on building secure, efficient Docker images and orchestrating multi-service stacks with Compose.",
-    "prompt": _load_prompt("docker_agent.jinja"),
-    "tools": [],
-}
 
 # ── Research Swarm Agents ──────────────────────────────────────────────────────
 # These are NOT in the default subagent roster (see subagents.py) to keep the

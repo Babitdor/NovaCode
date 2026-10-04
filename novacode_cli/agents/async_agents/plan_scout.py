@@ -17,6 +17,7 @@ from typing import Any
 from deepagents import create_deep_agent
 from deepagents.backends.filesystem import FilesystemBackend
 from langchain_core.tools import tool
+from novacode_cli.agents.async_workspace import workspace_root
 from novacode_cli.agents.async_context import (
     AsyncModelOverrideMiddleware,
     NovaAsyncContext,
@@ -41,7 +42,7 @@ def scan_directory(directory: str = ".", max_depth: int = 4) -> str:
         "build", ".nova", ".pytest_cache", ".ruff_cache", ".mypy_cache",
         ".venv2", "site-packages", ".tox", ".eggs", "target", "coverage",
     }
-    root = Path.cwd() / directory
+    root = workspace_root() / directory
     root = root.resolve()
     if not root.exists():
         return f"Path not found: {directory}"
@@ -82,7 +83,7 @@ def summarize_file(file_path: str, max_lines: int = 80) -> str:
     Returns:
         The file's head, with a one-line header noting total length.
     """
-    full_path = (Path.cwd() / file_path).resolve()
+    full_path = (workspace_root() / file_path).resolve()
     if not full_path.exists():
         return f"File not found: {file_path}"
     try:
@@ -109,7 +110,7 @@ def search_references(pattern: str, path: str = ".", extensions: str = "py,ts,ts
         Matching lines with file:line prefixes, or "No matches found."
     """
     EXTS = {f".{e.strip().lstrip('.')}" for e in extensions.split(",") if e.strip()}
-    root = (Path.cwd() / path).resolve()
+    root = (workspace_root() / path).resolve()
     if not root.exists():
         return f"Path not found: {path}"
     hits: list[str] = []
@@ -122,7 +123,7 @@ def search_references(pattern: str, path: str = ".", extensions: str = "py,ts,ts
         try:
             for lineno, line in enumerate(file.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
                 if pattern in line:
-                    rel = file.relative_to(Path.cwd()).as_posix()
+                    rel = file.relative_to(workspace_root()).as_posix()
                     hits.append(f"{rel}:{lineno}:{line.strip()[:200]}")
                     if len(hits) >= 200:
                         hits.append("... (truncated at 200 matches)")
@@ -188,7 +189,7 @@ def _resolve_model() -> Any:
 def _build_agent() -> Any:
     tools = [scan_directory, summarize_file, search_references]
 
-    backend = FilesystemBackend(root_dir=str(Path.cwd()), virtual_mode=True)
+    backend = FilesystemBackend(root_dir=str(workspace_root()), virtual_mode=True)
 
     return create_deep_agent(
         name="plan-scout-agent",

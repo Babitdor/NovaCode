@@ -113,10 +113,9 @@ def describe_roles(
         if role == "main":
             effective = main_effective
         elif role == "async":
-            # The server resolves its own model from its environment, so an unset
-            # async role is not inheriting the main agent's model: it is leaving
-            # the graphs on their own default. Saying otherwise would be wrong.
-            effective = spec or "server default"
+            # An unset async role follows the main agent's model, sent with each
+            # dispatch (agents/async_context.current_async_context).
+            effective = spec or main_effective
         elif role == "dynamic":
             # A discovered agent follows the subagent role when it names no model of
             # its own, so this must resolve through subagents, not straight to main.
@@ -169,8 +168,8 @@ def panel_row_model(
     """
     cfg = config or NovaConfig()
     if phase_kind == "async":
-        # Server-side: a stored role only binds a server Nova launches itself.
-        return spec_of(cfg.get_role_model("async")) or "server default"
+        # The async role, or the session's model when that role is unset.
+        return spec_of(cfg.get_role_model("async")) or session_model
     if phase_kind in ("direct", "eval"):
         return subagent_spec(cfg) or dynamic_spec(cfg) or session_model
     return session_model

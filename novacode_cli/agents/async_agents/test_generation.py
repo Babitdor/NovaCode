@@ -10,11 +10,11 @@ Exports:
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from deepagents import create_deep_agent
 from deepagents.backends.filesystem import FilesystemBackend
+from novacode_cli.agents.async_workspace import workspace_root
 from novacode_cli.agents.async_context import (
     AsyncModelOverrideMiddleware,
     NovaAsyncContext,
@@ -50,7 +50,7 @@ def _resolve_model() -> Any:
 def _build_agent() -> Any:
     tools = []  # Uses built-in deepagents tools: glob, read_file, execute
 
-    backend = FilesystemBackend(root_dir=str(Path.cwd()), virtual_mode=True)
+    backend = FilesystemBackend(root_dir=str(workspace_root()), virtual_mode=True)
 
     return create_deep_agent(
         name="test-generation-agent",

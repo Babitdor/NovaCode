@@ -1,11 +1,11 @@
 """Launch a local ``langgraph dev`` server so async subagents work without Docker.
 
 Nova's dynamic (remote) subagents talk Agent Protocol to a LangGraph server
-(`agents/default_subagents/async_subagents.py`). Until now that server was the
-``novacode`` Docker container, so the six agents were silently withheld whenever
-the container was not running. This module starts the same six graphs locally,
-on demand, and points the existing client at it — the client's contract is
-unchanged, only its reachability probe starts succeeding.
+(`agents/default_subagents/async_subagents.py`). That server used to be a Docker
+container, which meant a daemon to keep running and agents that could only see
+the one directory mounted into it. This module is the server now: it starts the
+graphs in ``agents/async_agents/`` locally, on the first dispatch, working
+in the session's project, and points the client at it.
 
 Adapted from the ``deepagents_code`` CLI's launcher (``Check/launch/server.py``):
 the port selection, health/readiness polling, process-group teardown and the
@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_HOST = "127.0.0.1"
 #: 0 asks the OS for a free port, so a locally launched server never squats the
-#: well-known 2024 that the Docker container (and a user's own server) uses.
+#: well-known 2024 that a user's own server uses.
 EPHEMERAL_PORT = 0
 HEALTH_TIMEOUT = 60.0
 SHUTDOWN_TIMEOUT = 5.0
@@ -82,7 +82,9 @@ _ENV_DENYLIST = frozenset(
 
 #: The one process this module manages per session, in a mutable cell so no
 #: function needs a ``global`` statement to replace it.
-_state: dict[str, AgentServerProcess | None] = {"process": None}
+#: ``process`` is a server this session started; ``planned`` is one it will start
+#: on the first async dispatch (see :func:`plan_agent_server`).
+_state: dict[str, AgentServerProcess | None] = {"process": None, "planned": None}
 _server_lock = threading.Lock()
 
 
@@ -384,8 +386,12 @@ class AgentServerProcess:
         host: str = DEFAULT_HOST,
         port: int = EPHEMERAL_PORT,
         timeout: float = HEALTH_TIMEOUT,
+        workspace: Path | None = None,
     ) -> None:
         """Remember what to launch; nothing is started until :meth:`start`."""
+        #: The project the graphs work in (see ``agents/async_workspace.py``).
+        #: The server still runs from ``cwd``, where its config lives.
+        self.workspace = Path(workspace) if workspace is not None else None
         self.host = host
         self.port = port
         self.config_path = Path(config_path)
@@ -484,7 +490,7 @@ class AgentServerProcess:
         process = subprocess.Popen(  # noqa: S603
             command,
             cwd=str(self.cwd),
-            env=build_env(),
+            env=build_env({"NOVA_WORKSPACE_ROOT": str(self.workspace)} if self.workspace else None),
             stdout=log_handle,
             stderr=subprocess.STDOUT,
             start_new_session=(sys.platform != "win32"),
@@ -532,8 +538,12 @@ class AgentServerProcess:
 
 
 def _config_path() -> Path:
-    """Nova's ``langgraph.json``, which already registers the six graphs."""
-    return Path(__file__).resolve().parents[2] / "langgraph.json"
+    """The ``langgraph.json`` registering the async graphs.
+
+    It lives inside the package, beside the graphs, so an installed Nova (a uv
+    tool, a wheel) can launch the server too, not only a checkout of the repo.
+    """
+    return Path(__file__).resolve().parent / "async_agents" / "langgraph.json"
 
 
 def _graph_names(config_path: Path) -> list[str]:
@@ -561,25 +571,53 @@ async def ensure_agent_server(
     not installed, or the launch failed. Callers treat ``None`` as "carry on with
     the in-process subagents" and never as an error.
 
-    Blocking by design: the async-subagent specs are read while the agent is
-    built, so the server has to be up before that happens.
+    Eager: plans and starts in one go, for ``/agent-server start``. Boot uses
+    :func:`plan_agent_server` instead and lets the first dispatch start it.
     """
     if not enabled:
         return None
 
+    process = _plan(port=port, timeout=timeout)
+    if process is None:
+        return None
+    with _server_lock:
+        _state["planned"] = process
+    return process if await ensure_started(announce=True) else None
+
+
+def _session_workspace() -> Path | None:
+    try:
+        from novacode_cli.config.config import settings
+
+        return Path(settings.get_workspace_root()).resolve()
+    except Exception:  # noqa: BLE001 — without a workspace the server uses its own dir
+        return None
+
+
+def _plan(*, port: int | None = None, timeout: float = HEALTH_TIMEOUT) -> AgentServerProcess | None:
+    """The server this session should launch, or ``None`` when it needs none.
+
+    ``None`` when a server that works on this workspace already answers (one the
+    user started and declared with ``NOVA_ASYNC_AGENT_ROOT``), or when the
+    optional extra is missing. A server that answers but is rooted at
+    another project does not count: its agents would read the wrong files.
+    """
     from novacode_cli.agents.default_subagents.async_subagents import (
         async_agents_available,
+        async_agents_see_workspace,
     )
 
-    if async_agents_available(refresh=True):
-        logger.debug("an agent server is already reachable; not launching one")
+    with _server_lock:
+        if _state["process"] is not None or _state["planned"] is not None:
+            return _state["process"] or _state["planned"]
+    if async_agents_available(refresh=True) and async_agents_see_workspace():
+        logger.debug("an agent server for this workspace is already reachable")
         return None
 
     if not server_extra_available():
         logger.info(
-            "async agents need a LangGraph server: run the Docker container, or "
-            "install the optional extra (uv sync --extra agents-server) so Nova "
-            "can launch one locally"
+            "async agents need a LangGraph server: install the optional extra "
+            "(uv sync --extra agents-server) so Nova can launch one for this project"
         )
         return None
 
@@ -589,40 +627,84 @@ async def ensure_agent_server(
         logger.warning("cannot launch an agent server: %s has no graphs", config_path)
         return None
 
-    process = AgentServerProcess(
+    return AgentServerProcess(
         config_path=config_path,
         cwd=config_path.parent,
         graph_names=graphs,
-        port=EPHEMERAL_PORT if port is None else port,
+        # Reserved now, not at spawn: the specs are built with the URL long
+        # before the server exists.
+        port=find_free_port(DEFAULT_HOST) if port is None else port,
         timeout=timeout,
+        workspace=_session_workspace(),
     )
+
+
+def plan_agent_server(*, enabled: bool = True, port: int | None = None) -> bool:
+    """Decide where async agents will run, without starting anything.
+
+    Called at boot. Reserves a port and points the client at it, so the async
+    tools are offered at once; the server itself comes up on the first
+    ``start_async_task`` (``agents/async_on_demand.py``). Returns whether a
+    launch was planned.
+    """
+    if not enabled:
+        return False
+    try:
+        process = _plan(port=port)
+    except Exception:  # noqa: BLE001 — planning must never break start-up
+        logger.debug("could not plan an agent server", exc_info=True)
+        return False
+    if process is None:
+        return False
+    os.environ["ASYNC_AGENT_BASE_URL"] = process.url
+    with _server_lock:
+        _state["planned"] = process
+    return True
+
+
+def planned() -> bool:
+    """Whether this session has a server planned or running (i.e. its own)."""
+    with _server_lock:
+        return _state["planned"] is not None or _state["process"] is not None
+
+
+async def ensure_started(*, announce: bool = False) -> bool:
+    """Bring the planned server up. ``True`` when async agents can be reached.
+
+    ``True`` at once when nothing was planned (an external server is in use) or
+    it is already running. A failed launch returns ``False`` and leaves the plan
+    in place, so a later dispatch can try again.
+    """
+    with _server_lock:
+        process = _state["planned"] or _state["process"]
+    if process is None or process.running:
+        return True
+    planned_url = process.url
     started = time.monotonic()
     try:
-        # Only reached when this is really going to launch something, which is
-        # why the progress line lives here rather than at every call site: a
-        # Docker user sees nothing.
-        from novacode_cli.config.config import boot_status
+        if announce:
+            from novacode_cli.config.config import boot_status
 
-        boot_status("starting a local agent server (first run can take a minute)")
+            boot_status("starting a local agent server (first run can take a minute)")
         await process.start()
     except Exception as exc:  # noqa: BLE001 — a launch failure is never fatal
         process.stop()
         logger.warning("could not start an agent server (%s); using in-process subagents", exc)
-        return None
-
-    # Point the existing client at it: it resolves ASYNC_AGENT_BASE_URL when it
-    # builds each spec, and the availability probe has already been refreshed to
-    # True above, so the specs will be offered.
+        return False
+    if process.url != planned_url:
+        # The reserved port was taken in the meantime. Specs built earlier still
+        # name the old one; new ones pick this up.
+        logger.warning("agent server moved from %s to %s", planned_url, process.url)
     os.environ["ASYNC_AGENT_BASE_URL"] = process.url
     with _server_lock:
-        _state["process"] = process
+        _state["process"], _state["planned"] = process, None
     logger.info(
         "agent server ready at %s after %.1fs (log: %s)",
         process.url,
         time.monotonic() - started,
         process.log_path,
     )
-    return process
+    return True
 
 
 def agent_server_status() -> dict[str, object]:
@@ -643,6 +725,7 @@ def shutdown_agent_server() -> Path | None:
     """Stop any server this session launched; returns its log path if kept."""
     with _server_lock:
         process, _state["process"] = _state["process"], None
+        _state["planned"] = None
     if process is None:
         return None
     path = process.log_path

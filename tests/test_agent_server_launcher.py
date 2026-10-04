@@ -270,6 +270,11 @@ def test_ensure_does_nothing_when_a_server_already_answers(monkeypatch):
         reachable,
     )
     monkeypatch.setattr(sl, "server_extra_available", lambda: True)
+    # An answering server is used only when it is known to work on this project.
+    monkeypatch.setattr(
+        "novacode_cli.agents.default_subagents.async_subagents.async_agents_see_workspace",
+        lambda: True,
+    )
 
     assert asyncio.run(sl.ensure_agent_server()) is None
 
@@ -298,13 +303,16 @@ def test_the_status_reporter_describes_an_idle_session():
     assert sl.shutdown_agent_server() is None
 
 
-def test_graphs_come_from_the_repo_s_langgraph_json():
-    config = pathlib.Path(__file__).resolve().parents[1] / "langgraph.json"
+def test_graphs_come_from_the_packaged_langgraph_json():
+    config = sl._config_path()
+    assert config.is_file() and "novacode_cli" in config.parts, "it must ship inside the package"
+    for target in __import__("json").loads(config.read_text(encoding="utf-8"))["graphs"].values():
+        assert (config.parent / target.split(":")[0]).is_file(), target
     graphs = sl._graph_names(config)
 
     assert "documentation-update-agent" in graphs
     assert "plan-scout-agent" in graphs
-    assert len(graphs) == 6
+    assert len(graphs) == 9
     assert sl._graph_names(config.parent / "nope.json") == []
 
 

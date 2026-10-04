@@ -135,7 +135,7 @@ explicit = true
 llama-cpp-python = { index = "llama-cpp-cpu" }
 
 [tool.setuptools.package-data]
-"*" = ["*.jinja"]
+"*" = ["*.jinja", "langgraph.json"]
 
 [tool.ruff]
 line-length = 100

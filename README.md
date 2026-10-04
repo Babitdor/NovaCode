@@ -66,8 +66,8 @@ An open-source, terminal-based AI coding assistant built on LangGraph and the `d
 - **MCP Support**: Extend capabilities with Model Context Protocol servers (12 presets, plus any custom server) — tools eagerly discovered with server-prefixed names to avoid collisions
 - **Skills System**: 50+ built-in skills with progressive disclosure — domain-specific workflows loaded on demand. Install skills from any public GitHub repo
 - **Plugin System**: Python entry-point based plugins that can register slash commands, add middleware at defined slots, and extend the agent
-- **Custom Subagents**: 13 built-in specialized subagents (code review, security audit, refactoring, testing, browser automation, frontend/backend/docker engineering, and more), plus the 7 research-swarm personas and any agents you define yourself
-- **Async Subagents**: 6 background agents on a LangGraph server (the Docker container, or one Nova launches itself) — documentation updates, code reviews, test generation, dependency audits, refactoring, plan scouting; results are automatically reported when the agent is idle. They are offered only while the server is reachable; otherwise Nova falls back to the in-process subagents
+- **Custom Subagents**: 4 built-in in-process specialists (code exploration, refactoring, bug fixing, browser automation), plus the 7 research-swarm personas and any agents you define yourself. Longer, self-contained jobs go to the async agents below
+- **Async Subagents**: 9 background agents on a LangGraph server that Nova launches itself, on demand, in your project directory (no Docker needed) — documentation updates, code reviews, test generation, dependency audits, refactoring, plan scouting, security audits, test runs, web research; results are automatically reported when the agent is idle. Without a usable server Nova falls back to the in-process subagents
 - **Wiki System**: Persistent project wiki at `.nova/wiki/` — ingest web clippings (`/ingest`), ask questions with wiki context (`/ask`), file conversation knowledge as wiki pages (`/file`), and browse the vault (`/wiki`)
 
 ### Sandbox & Safety
@@ -647,40 +647,27 @@ Why it is opt-in: Tev1's context is about 2,000 tokens, so it can only be asked 
 
 ## Built-in Subagents
 
-NOVA includes 13 specialized subagents, each loaded with domain-relevant skills. Their graphs are compiled on first use, so unused ones cost nothing at start-up:
+NOVA has two kinds of subagent. **In-process specialists** run inside the session,
+behind its approvals and sandbox, and answer in the same turn. **Async agents** run in
+the background and report back when they finish.
 
-### Code Quality Agents
+### In-process Specialists
 
 | Subagent | Description | Auto-loaded Skills |
 |----------|-------------|-------------------|
+| `general-purpose` | Any delegated task; the default | — |
 | `code-explorer` | Navigate, understand, and query large codebases | `codebase-explorer/`, `graphify/` |
-| `code-doc-Agent` | Generate README, API docs, docstrings | `code-documentation/` |
-| `code-simplifier-agent` | Simplify and refine code for clarity | `code-review-expert/` |
-| `reviewer-agent` | Code review for correctness, security, SOLID | `code-review-expert/` |
-| `security-auditor-agent` | OWASP Top 10, secrets, dependency vulns | `web-research/` |
 | `refactoring-specialist-agent` | Code smells, technical debt, design patterns | `improve-codebase-architecture/` |
 | `bug-fix-agent` | Systematic bug diagnosis and fix | `systematic-debugging/` |
+| `browser-automation-agent` | Web testing, forms, screenshots, data extraction | `web-research/` |
 
-### Test Agents
+Their graphs are compiled on first use, so unused ones cost nothing at start-up.
 
-| Subagent | Description | Auto-loaded Skills |
-|----------|-------------|-------------------|
-| `test-writer-agent` | Comprehensive tests (happy, edge, error) | `test-driven-development/` |
-| `testing-agent` | Execute tests in sandboxes, report failures | `testing-skills/`, `webapp-testing/` |
-
-### Browser Automation
-
-| Subagent | Description | Auto-loaded Skills |
-|----------|-------------|-------------------|
-| `browser-automation-agent` | Web testing, forms, screenshots, data extraction | `agent-browser/`, `browser-use/` |
-
-### Engineering Agents
-
-| Subagent | Description | Auto-loaded Skills |
-|----------|-------------|-------------------|
-| `frontend-agent` | React, HTML/CSS, design systems, animations | `frontend-design/`, `expert-css-skills/` |
-| `backend-agent` | API design, databases, auth, async patterns | `backend-dev-guidelines/`, `async-python-patterns/` |
-| `docker-agent` | Optimized Dockerfiles, Compose stacks | `docker-deploy/` |
+The roster used to hold thirteen. Nine were removed because they were never
+dispatched: documentation, review, test writing, test running and security audits are
+async agents now (below), and frontend, backend and Docker work is covered by skills
+(`frontend-design`, `backend-dev-guidelines`, `docker-deploy`) that the main agent
+loads on demand.
 
 ### Research Swarm
 
@@ -706,6 +693,11 @@ Dispatched by `/research`; kept out of the everyday roster and loaded on demand.
 | `dependency-audit-agent` | Audit dependencies for updates and security vulnerabilities |
 | `refactoring-agent` | Analyze and improve code quality in the background |
 | `plan-scout-agent` | Read-only directory scans dispatched during plan mode |
+| `security-audit-agent` | Full security audit (OWASP Top 10, secrets, auth flaws); read-only |
+| `test-runner-agent` | Run the test suite and report failures with likely causes; test-runner commands only |
+| `research-agent` | Web research with sourced findings |
+
+Async agents read, search and report; the ones that write (documentation, tests, refactoring) do so unattended, so give them a self-contained task. Work that needs your approval along the way belongs with an in-process specialist, because approvals do not reach the server.
 
 Start any with `start_async_task()`, check status with `check_async_task()`. These tools appear only while the LangGraph server is reachable; when it is down, Nova delegates to the in-process subagents instead.
 
@@ -927,7 +919,9 @@ User Input → CLI Entry (main.py) → Agent Loop (core/agent_loop.py) → UI Re
 
 **Agent:**
 - `agents/core_agent.py` — Agent creation, configuration, middleware wiring
-- `agents/default_subagents/` — 13 built-in specialized subagents + async background agents
+- `agents/default_subagents/` — the in-process specialists, the research personas, and the client specs for the async agents
+- `agents/async_agents/` — the nine async agent graphs and their `langgraph.json`
+- `agents/server_launcher.py` — launches the async agents' server on demand, in the session's project
 - `agents/plan_agent/` — Plan mode agent with planning middleware
 
 **Commands:**
@@ -1047,34 +1041,29 @@ pip install novacode-cli[voice-parakeet]
 pip install novacode-cli[voice-pocket]
 ```
 
-## Docker
+## Async subagents
 
-NOVA ships with a `Dockerfile` and `docker-compose.yml` for containerized deployment:
-
-```bash
-# Build and run with docker-compose
-docker-compose up --build
-
-# Or build manually
-docker build -t novacode-cli .
-docker run -it --rm -v "$(pwd):/workspace" novacode-cli
-```
-
-## Async subagents without Docker
-
-The six async subagents (code review, test generation, documentation updates and
-the rest) talk Agent Protocol to a LangGraph server. That server can be the
-container above, or one NOVA launches itself:
+The nine async subagents (code review, test generation, documentation updates and
+the rest) talk Agent Protocol to a LangGraph server, which NOVA launches itself.
+Their graphs live in `novacode_cli/agents/async_agents/`. One optional extra
+provides the server:
 
 ```bash
 uv sync --extra agents-server   # once: installs langgraph-cli, the dev server
 ```
 
-With that extra installed, starting NOVA with no server already answering launches
-one from `langgraph.json` on a free ephemeral port, points the subagents at it,
-and stops it on exit. Docker is not needed, and nothing changes for anyone
-running it: if a server already answers (the container, or one you started), NOVA
-uses that instead of launching a second one.
+With that extra installed, NOVA runs the server itself, with no Docker involved:
+
+- **On demand.** Nothing is started at boot. NOVA reserves a port and offers the
+  async tools; the server comes up on the first `start_async_task` (a few seconds)
+  and stops when NOVA exits. A session that never delegates never pays for it.
+- **In your project.** The agents read, search and run commands in the workspace
+  NOVA was opened in, not in NOVA's own repo.
+
+A server you started yourself is used only if you declare the directory it works
+in with `NOVA_ASYNC_AGENT_ROOT=<its directory>` and that is the current project;
+otherwise NOVA launches its own. Without the extra, NOVA falls back to the
+in-process subagents.
 
 Control it from inside the TUI with `/agent-server`:
 
@@ -1099,13 +1088,12 @@ instead of closing it, so the flow is: pick the role, then pick the model.
 |---|---|---|
 | Main agent | the agent you talk to | immediately (hot-swapped) |
 | Subagents | in-process delegation via the `task` tool | on the next dispatch |
-| Async agents | the six remote graphs on the LangGraph server | on the next server launch; the container route needs a recreate |
+| Async agents | the nine graphs on the LangGraph server | on the next dispatch |
 | Dynamic agents | agents discovered in the agent directories, which is also what an `/eval` fan-out dispatches | on the next dispatch |
 
 Any role you leave unset keeps its previous behaviour, which is what every role did before
 this existed, so an untouched setup behaves exactly as before: the subagents and the dynamic
-agents inherit the main agent's model, while the async agents keep their own server default
-rather than borrowing the main one. A discovered
+agents inherit the main agent's model, and so do the async agents. A discovered
 agent can also name its own model in `agent.md` frontmatter, and that wins over the
 dynamic role:
 
@@ -1121,25 +1109,21 @@ the transcript reports each task's real model rather than assuming the session o
 
 ### Which model the async agents run on
 
-The graphs build their model from the environment through Nova's shared model
-constructor, so any provider Nova supports can run them. Ollama is the default,
-which means an existing setup is unaffected.
+Provider-agnostic: any provider NOVA supports can run them. In order of precedence:
 
-| Variable | Meaning | Default |
-|---|---|---|
-| `ASYNC_AGENT_PROVIDER` | `ollama`, `openai`, `anthropic`, `google`, `openrouter`, `opencode`, `nvidia` | `ollama` |
-| `ASYNC_AGENT_MODEL` | model id for that provider | `DOC_AGENT_MODEL`, then a per-provider default |
-| `PLAN_SCOUT_MODEL` | per-agent override, plan-scout only | `ASYNC_AGENT_MODEL` |
-| the provider's key var | e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | read from the environment or the keychain |
+1. the **Async agents** role set in `/model`;
+2. `ASYNC_AGENT_PROVIDER` / `ASYNC_AGENT_MODEL` in the environment;
+3. otherwise, the main agent's own model.
 
-Running on OpenAI, for example:
+So with nothing configured, the async agents run on whatever the session runs on,
+and a `/model` change applies to the next dispatch.
 
-```bash
-ASYNC_AGENT_PROVIDER=openai ASYNC_AGENT_MODEL=gpt-4o-mini OPENAI_API_KEY=sk-... uv run nova
-```
-
-With the container, set the same variables in `.env`: compose forwards the ones
-it lists, so a variable it does not forward never reaches the graphs.
+| Variable | Meaning |
+|---|---|
+| `ASYNC_AGENT_PROVIDER` | `ollama`, `openai`, `anthropic`, `google`, `openrouter`, `opencode`, `nvidia` |
+| `ASYNC_AGENT_MODEL` | model id for that provider |
+| `PLAN_SCOUT_MODEL` | per-agent override, plan-scout only; wins over all of the above |
+| the provider's key var | e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`; read from the environment or the keychain |
 
 ## Dependencies
 

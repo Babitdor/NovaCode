@@ -1182,17 +1182,15 @@ async def main(
     if not getattr(session_state, "headless", False):
         await start_vixie_server()
 
-    # Dynamic (remote) subagents talk Agent Protocol to a LangGraph server. That
-    # server has been the `novacode` Docker container; when nothing is answering
-    # and the optional `agents-server` extra is installed, launch the same graphs
-    # from langgraph.json locally instead, so `start_async_task` works without
-    # Docker. Skipped entirely when a server is already reachable (Docker, or one
-    # the user started) and soft-fails otherwise, so no existing path changes.
-    # Must run before the agent is built: the async subagent specs are read while
-    # the agent is constructed.
-    from novacode_cli.agents.server_launcher import ensure_agent_server
+    # Dynamic (remote) subagents talk Agent Protocol to a LangGraph server, which
+    # Nova launches itself from agents/async_agents/ when the optional
+    # `agents-server` extra is installed. Must run before the agent is built: the
+    # async subagent specs are read while the agent is constructed.
+    # Planned here, started by the first `start_async_task`: a session that never
+    # delegates never pays for a second Python process.
+    from novacode_cli.agents.server_launcher import plan_agent_server
 
-    await ensure_agent_server(enabled=agent_server, port=agent_server_port)
+    await asyncio.to_thread(plan_agent_server, enabled=agent_server, port=agent_server_port)
 
     from novacode_cli.session.session_persistence import SessionManager
     from novacode_cli.session.session_restore import restore_session

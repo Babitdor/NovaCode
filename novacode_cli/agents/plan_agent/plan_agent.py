@@ -346,6 +346,9 @@ def create_plan_agent_with_config(
 
         scout_specs = retrieve_async_subagents()
         if scout_specs:
+            from novacode_cli.agents.async_on_demand import AsyncServerOnDemandMiddleware
+
+            plan_middleware.append(AsyncServerOnDemandMiddleware())
             plan_middleware.append(
                 AsyncSubAgentMiddleware(
                     async_subagents=scout_specs,

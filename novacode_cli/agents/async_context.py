@@ -22,6 +22,7 @@ providers (``opencode``, ``nvidia``).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from dataclasses import dataclass
@@ -136,28 +137,52 @@ class AsyncModelOverrideMiddleware(AgentMiddleware):
         return handler(request if model is None else request.override(model=model))
 
     async def awrap_model_call(self, request: Any, handler: Any) -> Any:  # noqa: ANN401
-        """Async twin of :meth:`wrap_model_call`."""
-        model = self._model_for(request)
+        """Async twin of :meth:`wrap_model_call`.
+
+        The first build of a model reads Nova's settings: the working directory,
+        and each provider key through a lock file (``time.sleep``, ``os.unlink``).
+        On the server's event loop those are blocking calls, which ``langgraph
+        dev`` refuses outright, so the build failed and every run silently fell
+        back to the graph's default model. A cached model is returned inline;
+        only a miss goes to a thread.
+        """
+        key = _fields(getattr(request.runtime, "context", None))
+        if not all(key) or key in _MODEL_CACHE:  # nothing to build, or already built
+            model = self._model_for(request)
+        else:
+            model = await asyncio.to_thread(self._model_for, request)
         return await handler(request if model is None else request.override(model=model))
 
 
 def current_async_context() -> NovaAsyncContext | None:
-    """The stored ``async`` role as a run context, or ``None`` when it is unset.
+    """The model async agents should run on, as a run context.
 
-    ``None`` means "leave it to the environment", which is what a docker-compose-only
-    deployment has always relied on.
+    In order: the stored ``async`` role; else, when ``ASYNC_AGENT_PROVIDER`` or
+    ``ASYNC_AGENT_MODEL`` is set, ``None`` (the environment is an explicit
+    instruction, and the graphs read it themselves); else the main agent's own
+    model. That last step is what makes the agents follow whatever provider the
+    session runs on: they used to fall back to a fixed Ollama model, a leftover
+    of the container they ran in, which failed for anyone without Ollama.
     """
     from novacode_cli.config.nova_config import NovaConfig
 
-    role = NovaConfig().get_role_model("async")
-    if not role:
-        return None
-
+    role = NovaConfig().get_role_model("async") or {}
     provider = str(role.get("provider") or "").strip()
     model_name = str(role.get("model") or "").strip()
+    if provider and model_name:
+        return NovaAsyncContext(provider=provider, model=model_name)
+
+    if os.environ.get("ASYNC_AGENT_PROVIDER", "").strip() or os.environ.get("ASYNC_AGENT_MODEL", "").strip():
+        return None
+    try:
+        from novacode_cli.utils.model_info import get_model_info
+
+        provider, model_name, _display = get_model_info()
+    except Exception:  # noqa: BLE001 — no main model to inherit: leave it to the graphs
+        return None
     if not provider or not model_name:
         return None
-    return NovaAsyncContext(provider=provider, model=model_name)
+    return NovaAsyncContext(provider=str(provider), model=str(model_name))
 
 
 def install_async_model_context() -> None:
