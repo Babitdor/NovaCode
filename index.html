@@ -94,7 +94,9 @@ p{margin:0}
 
 /* ---------------- hero ---------------- */
 .hero{padding:84px 0 0}
-.hero-grid{display:grid;grid-template-columns:1fr 1.45fr;gap:52px;align-items:center}
+/* 1.1fr, not wider: at 1.45fr the copy column drops to 438px and the
+   headline wraps to three lines. This is the widest split that keeps it at two. */
+.hero-grid{display:grid;grid-template-columns:1fr 1.1fr;gap:52px;align-items:center}
 .eyebrow{display:inline-flex;align-items:center;gap:9px;
   font-family:var(--mono);font-size:12.5px;letter-spacing:.16em;text-transform:uppercase;
   color:var(--gold);border:1px solid rgba(232,163,61,.34);background:rgba(232,163,61,.07);
