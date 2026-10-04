@@ -516,7 +516,7 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;color:var(--dim);fon
                 <div class="ps"><b>$</b> nova --inventory</div>
                 <dl>
                   <div><dt>built-in tools</dt><dd>50+</dd></div>
-                  <div><dt>subagents</dt><dd>13</dd></div>
+                  <div><dt>subagents</dt><dd>4 + 9 async</dd></div>
                   <div><dt>skills</dt><dd>50+</dd></div>
                   <div><dt>mcp presets</dt><dd>12</dd></div>
                   <div><dt>model providers</dt><dd>7</dd></div>
@@ -579,10 +579,10 @@ footer{border-top:1px solid var(--line);padding:44px 0 56px;color:var(--dim);fon
             <div class="bar"><i></i><i></i><i></i><span>plans.md</span></div><div class="body">
             <h3 class="md">Plans, subagents, tools</h3>
             <p>Deep agent architecture with planning, filesystem access, and tool calling.
-              Delegate to 13 built-in specialists, or hand work to 6 async agents on a
-              LangGraph server and get the results back when you are idle. If the server
-              is not reachable, Nova falls back to the in-process subagents.</p>
-            <span class="tag">subagents=13 async=6</span></div>
+              Delegate to 4 in-session specialists, or hand long jobs to 9 async agents
+              that Nova runs in the background, in your project, on whatever model the
+              session uses. Results come back when you are idle. No Docker needed.</p>
+            <span class="tag">subagents=4 async=9</span></div>
           </article>
           <article class="holo card rv" style="--dl:.05s">
             <div class="bar"><i></i><i></i><i></i><span>council.md</span></div><div class="body">
