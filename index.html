@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nova, an open-source terminal coding agent</title>
+<meta name="description" content="Nova is an open-source, terminal-based AI coding assistant built on LangGraph and deepagents. Textual TUI, headless mode, remote bridges, and an autonomous learning loop.">
+<meta property="og:title" content="Nova, an open-source terminal coding agent">
+<meta property="og:description" content="A coding agent that lives in your terminal, verifies its own work, and learns from every session.">
+<meta property="og:image" content="assets/og.png">
+<meta property="og:type" content="website">
+<link rel="icon" type="image/png" href="assets/favicon.png">
+
+<style>
+/* ============================================================
+   Nova landing page. Terminal-native backbone, night-sky gold.
+   Single accent locked to --gold. No purple gradients.
+   ============================================================ */
+:root{
+  --ink:#07080f;          /* page ground */
+  --ink-2:#0b0d18;        /* raised surface */
+  --ink-3:#111524;        /* card */
+  --line:#1e2337;
+  --line-2:#2a3049;
+  --text:#e8ecf7;
+  --muted:#98a1bd;        /* 5.9:1 on --ink */
+  --dim:#7b8399;        /* 4.8:1 worst case over every surface on the page */
+  --gold:#e8a33d;         /* the one accent, from the logo */
+  --gold-soft:#f2c98a;
+  --mono:"JetBrains Mono","SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
+  --sans:"Geist","Inter Tight",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  --r:10px;               /* shape lock: one radius scale */
+  --maxw:1180px;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;background:var(--ink);color:var(--text);
+  font-family:var(--sans);font-size:17px;line-height:1.65;
+  -webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
+}
+img{max-width:100%;height:auto;display:block}
+a{color:inherit;text-decoration:none}
+h1,h2,h3{margin:0;line-height:1.06;letter-spacing:-.03em;font-weight:600}
+p{margin:0}
+:focus-visible{outline:2px solid var(--gold);outline-offset:3px;border-radius:4px}
+
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 28px}
+
+/* --- starfield: brand texture, kept faint so text always wins --- */
+.sky{position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(1.1px 1.1px at 12% 18%,rgba(255,255,255,.5),transparent 100%),
+    radial-gradient(1px 1px at 34% 62%,rgba(255,255,255,.32),transparent 100%),
+    radial-gradient(1.2px 1.2px at 58% 24%,rgba(255,255,255,.42),transparent 100%),
+    radial-gradient(1px 1px at 76% 71%,rgba(255,255,255,.3),transparent 100%),
+    radial-gradient(1.3px 1.3px at 88% 36%,rgba(255,255,255,.4),transparent 100%),
+    radial-gradient(1px 1px at 47% 88%,rgba(255,255,255,.26),transparent 100%),
+    radial-gradient(1px 1px at 22% 44%,rgba(255,255,255,.22),transparent 100%),
+    radial-gradient(1.1px 1.1px at 66% 52%,rgba(255,255,255,.3),transparent 100%);
+}
+/* soft moonlight wash from the top-right, echoing the emblem */
+.sky::after{content:"";position:absolute;inset:0;
+  background:radial-gradient(900px 520px at 78% -8%,rgba(232,163,61,.10),transparent 62%)}
+
+.page{position:relative;z-index:1}
+
+/* ---------------- nav ---------------- */
+.nav{position:sticky;top:0;z-index:50;
+  background:rgba(7,8,15,.82);backdrop-filter:blur(14px);
+  border-bottom:1px solid var(--line)}
+.nav-in{max-width:var(--maxw);margin:0 auto;padding:0 28px;height:68px;
+  display:flex;align-items:center;gap:28px}
+.brand{display:flex;align-items:center;gap:11px;flex:none}
+.brand img{width:34px;height:34px;border-radius:50%}
+.brand b{font-family:var(--mono);font-size:16px;font-weight:700;letter-spacing:.08em}
+.brand span{color:var(--gold);font-weight:400}
+.nav-links{display:flex;gap:26px;margin-left:auto;align-items:center}
+.nav-links a{color:var(--muted);font-size:15px;transition:color .16s}
+.nav-links a:hover{color:var(--text)}
+.nav-cta{margin-left:8px;flex:none}
+
+/* ---------------- buttons ---------------- */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:9px;
+  padding:12px 20px;border-radius:var(--r);font-size:15px;font-weight:600;
+  border:1px solid transparent;white-space:nowrap;cursor:pointer;
+  transition:transform .12s ease,background .16s ease,border-color .16s ease}
+.btn:active{transform:translateY(1px)}
+.btn-gold{background:var(--gold);color:#150d02}
+.btn-gold:hover{background:var(--gold-soft)}
+.btn-ghost{color:var(--text);border-color:var(--line-2);background:rgba(255,255,255,.02)}
+.btn-ghost:hover{border-color:var(--muted);background:rgba(255,255,255,.05)}
+
+/* ---------------- hero ---------------- */
+.hero{padding:84px 0 0}
+.hero-grid{display:grid;grid-template-columns:1fr 1.45fr;gap:52px;align-items:center}
+.eyebrow{display:inline-flex;align-items:center;gap:9px;
+  font-family:var(--mono);font-size:12.5px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--gold);border:1px solid rgba(232,163,61,.34);background:rgba(232,163,61,.07);
+  padding:7px 13px;border-radius:999px;margin-bottom:26px}
+.eyebrow .dot{width:6px;height:6px;border-radius:50%;background:var(--gold);flex:none}
+h1{font-size:clamp(38px,4.5vw,56px);max-width:18ch}
+h1 em{font-style:normal;color:var(--gold)}
+.lede{margin-top:22px;font-size:18.5px;line-height:1.62;color:var(--muted);max-width:48ch}
+.hero-cta{display:flex;gap:13px;margin-top:32px;flex-wrap:wrap}
+.hero-note{margin-top:16px;font-family:var(--mono);font-size:13.5px;color:var(--dim)}
+
+/* terminal frame around real product pixels */
+.term{margin:0;border:1px solid var(--line-2);border-radius:var(--r);overflow:hidden;
+  background:var(--ink-2);box-shadow:0 26px 70px -30px rgba(0,0,0,.95)}
+.term-bar{display:flex;align-items:center;gap:8px;padding:11px 14px;
+  background:#0e1120;border-bottom:1px solid var(--line)}
+.dot{width:11px;height:11px;border-radius:50%;background:#2b3150;flex:none}
+.term-bar .title{margin-left:8px;font-family:var(--mono);font-size:12.5px;color:var(--dim)}
+.term img{width:100%;display:block}
+
+/* marquee of the actual stack */
+.stack{border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+  margin-top:76px;padding:19px 0;overflow:hidden}
+.stack-row{display:flex;gap:44px;width:max-content;animation:slide 34s linear infinite;
+  font-family:var(--mono);font-size:13px;color:var(--dim);letter-spacing:.05em}
+.stack-row span{white-space:nowrap}
+.stack-row b{color:var(--muted);font-weight:400}
+@keyframes slide{to{transform:translateX(-50%)}}
+@media (prefers-reduced-motion:reduce){
+  .stack-row{animation:none}
+}
+
+/* ---------------- sections ---------------- */
+section{padding:104px 0}
+.sec-head{max-width:62ch;margin-bottom:52px}
+.sec-kicker{font-family:var(--mono);font-size:12.5px;letter-spacing:.17em;
+  text-transform:uppercase;color:var(--gold);margin-bottom:14px}
+h2{font-size:clamp(29px,3.3vw,40px);max-width:18ch}
+.sec-sub{margin-top:16px;color:var(--muted);font-size:17px}
+
+/* capability grid: borders, not floating cards */
+.feat{border-top:1px solid var(--line)}
+.feat-row{display:grid;grid-template-columns:.9fr 1.6fr;gap:52px;
+  padding:40px 0;border-bottom:1px solid var(--line);align-items:start}
+.feat-row h3{font-size:22px;letter-spacing:-.02em}
+.feat-row h3 code{font-family:var(--mono);font-size:15px;color:var(--gold);
+  background:none;border:none;padding:0}
+.feat-row p{margin-top:12px;color:var(--muted);max-width:60ch}
+.feat-tag{display:inline-block;margin-top:16px;font-family:var(--mono);font-size:12px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--dim);
+  border:1px solid var(--line-2);padding:5px 10px;border-radius:999px}
+
+/* self-learning: the differentiating feature gets its own panel */
+.loop{background:var(--ink-2);border:1px solid var(--line);border-radius:var(--r);
+  padding:46px;margin-top:12px}
+.loop-grid{display:grid;grid-template-columns:1.05fr 1fr;gap:52px;align-items:center}
+.loop h3{font-size:27px;max-width:16ch}
+.loop p{margin-top:14px;color:var(--muted);max-width:52ch}
+.chain{display:grid;gap:11px}
+.chain li{list-style:none;display:flex;gap:14px;align-items:flex-start;
+  border:1px solid var(--line-2);background:var(--ink-3);border-radius:var(--r);
+  padding:15px 17px;font-size:15px}
+.chain .n{font-family:var(--mono);font-size:12.5px;color:var(--gold);flex:none;
+  padding-top:3px;font-weight:700}
+.chain b{display:block;font-weight:600;margin-bottom:3px}
+.chain small{color:var(--muted);font-size:13.5px;line-height:1.5;display:block}
+
+/* code panel */
+.code{border:1px solid var(--line-2);border-radius:var(--r);overflow:hidden;
+  background:var(--ink-2)}
+.code-bar{display:flex;align-items:center;gap:8px;padding:11px 14px;
+  background:#0e1120;border-bottom:1px solid var(--line);
+  font-family:var(--mono);font-size:12.5px;color:var(--dim)}
+.code pre{margin:0;padding:20px;overflow-x:auto;font-family:var(--mono);
+  font-size:13.4px;line-height:1.8;color:#c9d1e8}
+.code .c{color:#767f9c}
+.code .p{color:#9b8cff}
+.code .s{color:#7fd6a2}
+.code .f{color:var(--gold)}
+.code .k{color:#6ea8ff}
+
+/* install band */
+.install{border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.install-tabs{display:flex;gap:4px;padding:12px 14px 0;background:var(--ink-2);
+  border-bottom:1px solid var(--line);overflow-x:auto}
+.tab{font-family:var(--mono);font-size:13px;color:var(--dim);background:none;
+  border:1px solid transparent;border-bottom:none;padding:9px 15px;cursor:pointer;
+  border-radius:8px 8px 0 0;transition:color .16s}
+.tab:hover{color:var(--muted)}
+.tab[aria-selected="true"]{color:var(--text);background:var(--ink);
+  border-color:var(--line);margin-bottom:-1px}
+.pane{display:none}
+.pane.on{display:block}
+.install-body{display:grid;grid-template-columns:1fr;gap:18px;padding:22px}
+.cmds{display:grid;gap:11px;font-family:var(--mono);font-size:14px}
+.cmd{display:flex;align-items:center;justify-content:space-between;gap:16px;
+  border:1px solid var(--line-2);background:var(--ink-2);border-radius:var(--r);
+  padding:13px 16px;color:#cdd5ee;overflow:hidden}
+.cmd .x{color:var(--dim);background:none;border:1px solid var(--line-2);
+  border-radius:6px;padding:4px 9px;font-size:11.5px;cursor:pointer;flex:none;
+  font-family:var(--mono);transition:color .16s,border-color .16s}
+.cmd .x:hover{color:var(--gold);border-color:var(--gold)}
+
+/* faq */
+.faq{border-top:1px solid var(--line);max-width:840px}
+.faq details{border-bottom:1px solid var(--line)}
+.faq summary{cursor:pointer;list-style:none;padding:22px 40px 22px 0;position:relative;
+  font-size:17.5px;font-weight:500}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary::after{content:"+";position:absolute;right:8px;top:50%;
+  transform:translateY(-50%);color:var(--gold);font-family:var(--mono);font-size:20px}
+.faq details[open] summary::after{content:"\2212"}
+.faq p{padding:0 40px 24px 0;color:var(--muted);max-width:70ch}
+
+/* ---------------- cta ---------------- */
+.cta{text-align:center;border-top:1px solid var(--line)}
+.cta h2{max-width:20ch;margin:0 auto}
+.cta-btns{display:flex;gap:13px;justify-content:center;margin-top:30px;flex-wrap:wrap}
+
+/* ---------------- footer ---------------- */
+footer{border-top:1px solid var(--line);padding:56px 0 64px;color:var(--dim);font-size:14.5px}
+.foot{display:flex;justify-content:space-between;gap:24px;flex-wrap:wrap;align-items:center}
+.foot-links{display:flex;gap:24px;flex-wrap:wrap}
+.foot a{transition:color .16s}
+.foot a:hover{color:var(--text)}
+.foot .mono{font-family:var(--mono);font-size:13.5px}
+
+/* ---------------- responsive ---------------- */
+@media (max-width:1000px){
+  .hero-grid{grid-template-columns:1fr;gap:44px}
+  .feat-row{grid-template-columns:1fr;gap:18px}
+  .loop{padding:34px}
+  .loop-grid{grid-template-columns:1fr;gap:32px}
+  section{padding:80px 0}
+}
+@media (max-width:760px){
+  body{font-size:16px}
+  .nav-links{display:none}
+  .hero{padding:56px 0 0}
+  .wrap,.nav-in{padding:0 20px}
+  .loop{padding:26px 22px}
+  .cmds{font-size:13px}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation:none!important;transition:none!important}
+}
+</style>
+</head>
+<body>
+<div class="sky" aria-hidden="true"></div>
+
+<div class="page">
+
+  <!-- ================= nav ================= -->
+  <header class="nav">
+    <div class="nav-in">
+      <a class="brand" href="#top">
+        <img src="assets/emblem-256.png" alt="" width="34" height="34">
+        <b>NOVA<span>·CODE</span></b>
+      </a>
+      <nav class="nav-links" aria-label="Main">
+        <a href="#capabilities">Capabilities</a>
+        <a href="#learning">Learning loop</a>
+        <a href="#headless">Headless</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+      <a class="btn btn-gold nav-cta" href="#install">Install Nova</a>
+    </div>
+  </header>
+
+  <main id="top">
+
+    <!-- ================= hero ================= -->
+    <section class="hero" style="padding-bottom:0">
+      <div class="wrap">
+        <div class="hero-grid">
+
+          <div class="hero-copy">
+            <span class="eyebrow"><span class="dot"></span>Open source &middot; MIT</span>
+
+            <h1>An agent that <em>verifies</em> its own work.</h1>
+
+            <p class="lede">
+              A terminal coding agent on LangGraph. It plans, edits, runs tools,
+              grades the result, and re-drives itself until it passes.
+            </p>
+
+            <div class="hero-cta">
+              <a class="btn btn-gold" href="#install">Install Nova</a>
+              <a class="btn btn-ghost" href="#capabilities">See what it does</a>
+            </div>
+
+            <p class="hero-note">~120 MB clone &middot; no global install &middot; Python 3.11+</p>
+          </div>
+
+          <!-- real product pixels, not a hand-built fake -->
+          <figure class="term">
+            <div class="term-bar">
+              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+              <span class="title">nova</span>
+            </div>
+            <img src="assets/session-hero.png" width="1160" height="404"
+                 alt="A live Nova session: three tool calls collapsed into one row, a six-item todo checklist, and the status bar showing workspace, branch, sandbox, model, and context usage.">
+          </figure>
+
+        </div>
+      </div>
+
+      <!-- stack marquee sits under the hero, not inside it -->
+      <div class="stack">
+        <div class="stack-row">
+          <span><b>LangGraph</b> agent loop</span>
+          <span><b>deepagents</b> framework</span>
+          <span><b>Textual</b> terminal UI</span>
+          <span><b>SQLite</b> durable store</span>
+          <span><b>MCP</b> 12+ servers</span>
+          <span><b>OpenAI</b> / <b>Anthropic</b> / <b>Gemini</b> / <b>Ollama</b></span>
+          <span><b>Discord</b> &amp; <b>Telegram</b> bridges</span>
+          <span><b>LangSmith</b> tracing</span>
+          <span><b>LangGraph</b> agent loop</span>
+          <span><b>deepagents</b> framework</span>
+          <span><b>Textual</b> terminal UI</span>
+          <span><b>SQLite</b> durable store</span>
+          <span><b>MCP</b> 12+ servers</span>
+          <span><b>OpenAI</b> / <b>Anthropic</b> / <b>Gemini</b> / <b>Ollama</b></span>
+          <span><b>Discord</b> &amp; <b>Telegram</b> bridges</span>
+          <span><b>LangSmith</b> tracing</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= capabilities ================= -->
+    <section id="capabilities">
+      <div class="wrap">
+        <div class="sec-head">
+          <h2>Everything a coding agent needs, none of the ceremony.</h2>
+          <p class="sec-sub">30+ built-in tools, one canonical agent loop, and the same
+            event stream behind the TUI, headless mode, and every remote bridge.</p>
+        </div>
+
+        <div class="feat">
+          <div class="feat-row">
+            <h3>Plans, subagents, tools</h3>
+            <div>
+              <p>Deep agent architecture with planning, filesystem access, and tool
+                calling. Delegate to 13 built-in specialists or run them asynchronously on
+                a remote LangGraph server and get the results back when you are idle.</p>
+              <span class="feat-tag">13 subagents</span>
+            </div>
+          </div>
+
+          <div class="feat-row">
+            <h3>Search that understands code</h3>
+            <div>
+              <p>Find code by description, not just exact text. Semantic search, a project
+                graph with 5000+ nodes and blast-radius analysis, and full LSP support for
+                go-to-definition, references, rename, and diagnostics.</p>
+              <span class="feat-tag">LSP + project graph</span>
+            </div>
+          </div>
+
+          <div class="feat-row">
+            <h3>Safe by construction</h3>
+            <div>
+              <p>Automatic <code>.gitignore</code> enforcement, command-injection detection,
+                URL sanitisation, snapshots before destructive operations with
+                <code>/restore</code>, and human-in-the-loop approval for anything risky.
+                Sandboxes available for OS, Docker, Modal, Runloop, and Daytona.</p>
+              <span class="feat-tag">HITL interrupts</span>
+            </div>
+          </div>
+
+          <div class="feat-row">
+            <h3>Extensible end to end</h3>
+            <div>
+              <p>50+ built-in skills with progressive disclosure, MCP servers with
+                collision-free tool names, Python entry-point plugins that register slash
+                commands and middleware, and a persistent project wiki at
+                <code>.nova/wiki/</code>.</p>
+              <span class="feat-tag">Skills, MCP, plugins</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= learning loop ================= -->
+    <section id="learning">
+      <div class="wrap">
+        <div class="sec-head">
+          <div class="sec-kicker">The differentiator</div>
+          <h2>It reviews its own sessions and changes how it works.</h2>
+        </div>
+
+        <div class="loop">
+          <div class="loop-grid">
+            <div>
+              <h3>Hermes, running out of band.</h3>
+              <p>Most agents are frozen at whatever their prompt said on release day. Nova
+                keeps an out-of-band verifier that mines tool-usage traces, extracts
+                lessons, and writes reusable skills back into the loop. It gets measurably
+                better the more you use it, without you tuning anything.</p>
+            </div>
+            <ol class="chain">
+              <li><span class="n">01</span><div><b>Trace every run</b>
+                <small>Tool calls, timings, and verdicts land in a durable SQLite store.</small></div></li>
+              <li><span class="n">02</span><div><b>Grade the output</b>
+                <small>An out-of-band model call scores each task against a rubric.</small></div></li>
+              <li><span class="n">03</span><div><b>Re-drive on failure</b>
+                <small>A failing verdict re-runs the task with the feedback, up to three times.</small></div></li>
+              <li><span class="n">04</span><div><b>Write the lesson down</b>
+                <small>Repeated mistakes become a skill, and a tuned prompt template, permanently.</small></div></li>
+            </ol>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= headless ================= -->
+    <section id="headless">
+      <div class="wrap">
+        <div class="sec-head">
+          <div class="sec-kicker">Headless</div>
+          <h2>The same agent, minus the terminal.</h2>
+          <p class="sec-sub">Script it, put it in CI, or pipe it in from a bridge. The agent
+            loop and the tool surface are identical.</p>
+        </div>
+
+        <div class="loop-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:52px;align-items:start">
+          <div class="code">
+            <div class="code-bar"><span class="dot"></span><span class="dot"></span>
+              <span class="dot"></span>&nbsp;headless.sh</div>
+            <pre><span class="c"># machine-readable output, capped at 10 turns,</span>
+<span class="c"># tool approvals auto-denied (fail-closed)</span>
+<span class="k">uv</span> run nova <span class="p">-p</span> <span class="s">"run the suite, report failures"</span> \
+  <span class="p">--output-format</span> json \
+  <span class="p">--max-turns</span> <span class="s">10</span> \
+  <span class="p">--deny-tools</span>
+
+<span class="c"># or pipe the prompt on stdin</span>
+<span class="k">echo</span> <span class="s">"explain src/main.py"</span> | uv run nova <span class="p">-p</span></pre>
+          </div>
+
+          <div>
+            <h3 style="font-size:24px;max-width:18ch">Built for pipelines, not just for chatting.</h3>
+            <p style="margin-top:14px;color:var(--muted)">
+              <code style="font-family:var(--mono);color:var(--gold)">--output-format</code>
+              emits <code style="font-family:var(--mono);color:var(--gold)">text</code>,
+              <code style="font-family:var(--mono);color:var(--gold)">json</code>, or
+              <code style="font-family:var(--mono);color:var(--gold)">stream-json</code>.
+              <code style="font-family:var(--mono);color:var(--gold)">--deny-tools</code> closes
+              the approval loop so nothing hangs waiting for a human.
+            </p>
+            <p style="margin-top:16px;color:var(--muted)">
+              Cron and heartbeat scheduling fire jobs onto the same queue as the Discord and
+              Telegram bridges, and a signed webhook server lets GitHub or Linear start a run
+              without anyone relaying a message.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= install ================= -->
+    <section id="install">
+      <div class="wrap">
+        <div class="sec-head">
+          <h2>Two commands and you are running.</h2>
+        </div>
+
+        <div class="install">
+          <div class="install-tabs" role="tablist" aria-label="Install method">
+            <button class="tab" role="tab" aria-selected="true"  id="t-bash"  aria-controls="p-bash">macOS / Linux</button>
+            <button class="tab" role="tab" aria-selected="false" id="t-win"   aria-controls="p-win">Windows</button>
+            <button class="tab" role="tab" aria-selected="false" id="t-tool"  aria-controls="p-tool">uv tool</button>
+          </div>
+
+          <div class="pane on" id="p-bash" role="tabpanel" aria-labelledby="t-bash">
+            <div class="install-body"><div class="cmds">
+              <div class="cmd"><code>git clone https://github.com/Babitdor/NovaCode.git</code>
+                <button class="x" data-copy="git clone https://github.com/Babitdor/NovaCode.git">copy</button></div>
+              <div class="cmd"><code>cd NovaCode &amp;&amp; uv sync</code>
+                <button class="x" data-copy="cd NovaCode &amp;&amp; uv sync">copy</button></div>
+              <div class="cmd"><code>uv run nova</code>
+                <button class="x" data-copy="uv run nova">copy</button></div>
+            </div></div>
+          </div>
+
+          <div class="pane" id="p-win" role="tabpanel" aria-labelledby="t-win">
+            <div class="install-body"><div class="cmds">
+              <div class="cmd"><code>git clone https://github.com/Babitdor/NovaCode.git</code>
+                <button class="x" data-copy="git clone https://github.com/Babitdor/NovaCode.git">copy</button></div>
+              <div class="cmd"><code>cd NovaCode; uv sync</code>
+                <button class="x" data-copy="cd NovaCode; uv sync">copy</button></div>
+              <div class="cmd"><code>uv run nova</code>
+                <button class="x" data-copy="uv run nova">copy</button></div>
+            </div></div>
+          </div>
+
+          <div class="pane" id="p-tool" role="tabpanel" aria-labelledby="t-tool">
+            <div class="install-body"><div class="cmds">
+              <div class="cmd"><code>uv tool install --from git+https://github.com/Babitdor/NovaCode.git novacode-cli</code>
+                <button class="x" data-copy="uv tool install --from git+https://github.com/Babitdor/NovaCode.git novacode-cli">copy</button></div>
+              <div class="cmd"><code>nova</code>
+                <button class="x" data-copy="nova">copy</button></div>
+              <div class="cmd" style="color:var(--dim);border-style:dashed">
+                <code>Voice I/O adds ~2 GB: uv pip install -e '.[voice]'</code></div>
+            </div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= faq ================= -->
+    <section id="faq" style="padding-bottom:80px">
+      <div class="wrap">
+        <div class="sec-head">
+          <h2>The things people ask first.</h2>
+        </div>
+
+        <div class="faq">
+          <details>
+            <summary>Do I need a global install?</summary>
+            <p>No. <code>uv run nova</code> always runs the current code straight from the repo,
+              so there are no stale snapshots, no PATH juggling, and no "which Python".
+              Add the repo's <code>.venv</code> to your PATH if you want a bare
+              <code>nova</code> command from anywhere.</p>
+          </details>
+          <details>
+            <summary>Which model providers work?</summary>
+            <p>OpenAI, Anthropic, Google Gemini, and local Ollama, all switchable from the
+              <code>/model</code> picker or the first-run wizard. Reasoning effort is a hot
+              swap too, via <code>/effort</code>, without restarting the session.</p>
+          </details>
+          <details>
+            <summary>What happens if a tool call needs approval?</summary>
+            <p>It interrupts and asks you, configurable per operation. Headless runs are the
+              exception: <code>--deny-tools</code> rejects everything automatically so a
+              pipeline fails closed instead of hanging.</p>
+          </details>
+          <details>
+            <summary>Can I use it away from my machine?</summary>
+            <p>Yes. Bridge it to Discord or Telegram (Telegram takes voice notes, transcribed
+              locally), and a signed webhook endpoint lets external systems trigger a run.
+              A Vixie companion handles desktop notifications.</p>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= cta ================= -->
+    <section class="cta" style="padding-top:0">
+      <div class="wrap">
+        <h2>Give it a repository and see what it does.</h2>
+        <div class="cta-btns">
+          <a class="btn btn-gold" href="#install">Install Nova</a>
+          <a class="btn btn-ghost" href="https://github.com/Babitdor/NovaCode">Read the source</a>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ================= footer ================= -->
+  <footer>
+    <div class="wrap foot">
+      <span class="mono">NOVA&middot;CODE &mdash; MIT licensed</span>
+      <nav class="foot-links" aria-label="Footer">
+        <a href="https://github.com/Babitdor/NovaCode">GitHub</a>
+        <a href="https://github.com/Babitdor/NovaCode/blob/main/README.md">Docs</a>
+        <a href="https://github.com/Babitdor/NovaCode/issues">Issues</a>
+      </nav>
+    </div>
+  </footer>
+
+</div>
+
+<script>
+// install tabs
+const tabs=[...document.querySelectorAll(".tab")];
+tabs.forEach(t=>t.addEventListener("click",()=>{
+  tabs.forEach(x=>x.setAttribute("aria-selected",String(x===t)));
+  document.querySelectorAll(".pane").forEach(p=>
+    p.classList.toggle("on",p.id===t.getAttribute("aria-controls")));
+}));
+
+// copy buttons
+document.querySelectorAll("[data-copy]").forEach(b=>b.addEventListener("click",async()=>{
+  const v=b.getAttribute("data-copy").replace(/&amp;/g,"&");
+  try{
+    await navigator.clipboard.writeText(v);
+    const t=b.textContent; b.textContent="copied"; setTimeout(()=>b.textContent=t,1400);
+  }catch(_){ b.textContent="press ⌘C"; }
+}));
+</script>
+</body>
+</html>
