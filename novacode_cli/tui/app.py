@@ -3838,11 +3838,27 @@ class NovaApp(App):
 
     def _reset_subagents(self) -> None:
         """Drop the last run's rows, so a new turn starts from an empty panel."""
+        self._stop_subagents_tick()
+        if self._subagents_paint_timer is not None:
+            self._subagents_paint_timer.stop()
+            self._subagents_paint_timer = None
+        self._subagents_paint_due = 0.0
         self._subagent_rows.clear()
         self._subagent_phase_order.clear()
         self._subagent_collapsed_phases.clear()
         self._subagents_collapsed = False
         self._subagents_stale = False
+        self._subagents_rows_by_line = []
+
+    def _stop_foreground_subagents(self) -> None:
+        """Freeze unfinished sync rows when their owning turn ends."""
+        now = time.time()
+        for row in self._subagent_rows.values():
+            if row.status == "running" and row.phase_kind != "async":
+                row.duration_ms = int(subagent_tasks.elapsed_for(row, now) * 1000)
+                row.status = "stopped"
+        self._subagents_stale = True
+        self._paint_subagents()
 
     def _ingest_async_tasks(self, tasks: object) -> None:
         """Show remote async subagents in the same panel.
@@ -6339,6 +6355,7 @@ class NovaApp(App):
                 self._log(Text(f"Error: {ex}", style="red"))
         finally:
             self._turn_active = False
+            self._stop_foreground_subagents()
             self._detach_cancelling = False
             self._set_status("ready")
             self._clear_live_steers()
@@ -9517,6 +9534,8 @@ class NovaApp(App):
 
         # Drop per-conversation UI/tracking state.
         self._reset_streaming()
+        self._reset_subagents()
+        self._paint_subagents()
         self._clear_live_steers()
         self._todos = []
         self._todos_agent = None
@@ -11528,6 +11547,7 @@ class NovaApp(App):
             await self._handle_interrupt(e)
         elif isinstance(e, ev.Cancelled):
             self._accumulated_reply = ""
+            self._stop_foreground_subagents()
             if getattr(self, "_detach_cancelling", False):
                 # The turn was cancelled by a Ctrl+B detach, not a real interrupt —
                 # the command is now running as a background task.
@@ -11570,6 +11590,7 @@ class NovaApp(App):
             self._overflow_retried = False
         elif isinstance(e, ev.Error):
             self._accumulated_reply = ""
+            self._stop_foreground_subagents()
             # Provider failures (usage/rate limit, auth, connectivity) are
             # pre-formatted into a clean notice upstream and flagged; render them
             # as a calm warning. The formatter fallback covers any Error that
@@ -11585,6 +11606,7 @@ class NovaApp(App):
             else:
                 self._log(Text(f"Error: {e.message}", style="red"))
         elif isinstance(e, ev.Done):
+            self._stop_foreground_subagents()
             if getattr(self, "_accumulated_reply", None):
                 self._speak_reply(self._accumulated_reply)
                 self._accumulated_reply = ""

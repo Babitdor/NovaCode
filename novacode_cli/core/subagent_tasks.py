@@ -42,7 +42,7 @@ PHASE_KINDS = ("eval", "direct", "async")
 
 #: Status glyphs, matching the vocabulary the rest of the TUI uses (✓ / ✗ from
 #: the tool cards, the hourglass from a running tool).
-STATUS_GLYPH = {"running": "⏳", "done": "✓", "failed": "✗"}
+STATUS_GLYPH = {"running": "⏳", "done": "✓", "failed": "✗", "stopped": "■"}
 
 #: Width of the phases pane, and the caps that keep a 32-way fan-out readable.
 PHASE_COLUMN = 18
@@ -278,6 +278,10 @@ def panel_title(tasks: list[SubagentTask], *, collapsed: bool = False) -> Text:
     if failed:
         title.append(" · ", style="dim")
         title.append(f"{failed} failed", style="bold red")
+    stopped = sum(task.status == "stopped" for task in tasks)
+    if stopped:
+        title.append(" · ", style="dim")
+        title.append(f"{stopped} stopped", style="yellow")
     return title
 
 
@@ -310,12 +314,16 @@ def task_row(
     # label that does not carry a prefix of its own.
     if task.subagent_type and not _has_kind_prefix(name):
         name = f"{task.subagent_type}: {name}"
-    if task.status == "failed" and task.error:
+    if task.status == "stopped":
+        name = f"stopped: {name}"
+    elif task.status == "failed" and task.error:
         # The failure text is the whole point of the row, so it gets the space
         # left over rather than the name being truncated to make room for it.
         name = f"{name} — {task.error}"
 
-    style = {"done": "dim", "failed": "red", "running": ""}.get(task.status, "")
+    style = {"done": "dim", "failed": "red", "running": "", "stopped": "yellow"}.get(
+        task.status, ""
+    )
     row = Text(style=style)
     row.append(status_glyph(task.status) + " ")
     row.append(_fit(name, name_width))

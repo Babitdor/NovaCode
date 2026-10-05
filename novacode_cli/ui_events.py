@@ -158,7 +158,7 @@ class SubagentTask:
     """
 
     task_id: str  # quickjs "ptc_task_<uuid8>", or the tool call id
-    status: str = "running"  # "running" | "done" | "failed"
+    status: str = "running"  # "running" | "done" | "failed" | "stopped"
     phase_id: str | None = None  # eval_id; None = a dispatch outside a fan-out
     phase_kind: str = "eval"  # "eval" | "direct" | "async" (how it was launched)
     subagent_type: str = ""

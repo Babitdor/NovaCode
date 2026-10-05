@@ -11,6 +11,8 @@ from __future__ import annotations
 import asyncio
 import time
 
+import pytest
+
 from novacode_cli import ui_events as ev
 
 try:
@@ -19,6 +21,19 @@ try:
     _HAS_TEXTUAL = True
 except ImportError:  # pragma: no cover
     _HAS_TEXTUAL = False
+
+
+@pytest.fixture(autouse=True)
+def _isolate_panel_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NOVA_DISABLE_UPDATE_CHECK", "1")
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    if _HAS_TEXTUAL:
+        from novacode_cli.tui.app import NovaApp
+
+        async def no_warmup(self: object) -> None:
+            pass
+
+        monkeypatch.setattr(NovaApp, "_eager_voice_warmup", no_warmup)
 
 
 def _app():
@@ -375,3 +390,138 @@ def test_a_dropped_paint_timer_does_not_wedge_the_panel():
         "next dispatch could not schedule a repaint"
     )
     assert "research: two" in out["body"], out["body"]
+
+
+@pytest.mark.parametrize("event", [ev.Cancelled(), ev.Error("provider stopped"), ev.Done()])
+async def test_turn_end_stops_foreground_rows_and_freezes_time(
+    event: ev.Cancelled | ev.Error | ev.Done,
+) -> None:
+    app = _app()
+    async with app.run_test(size=(120, 44)) as pilot:
+        await app._render(_task("direct", phase_kind="direct", started_at=time.time() - 5))
+        await app._render(_task("fanout", phase_kind="eval", started_at=time.time() - 4))
+        await app._render(_task("finished", status="done", duration_ms=3000))
+        app._paint_subagents()
+        assert app._subagents_tick is not None
+
+        await app._render(event)
+        for task_id in ("direct", "fanout"):
+            row = app._subagent_rows[task_id]
+            assert row.status == "stopped"
+            assert row.duration_ms is not None
+            assert row.duration_ms > 0
+        assert app._subagent_rows["finished"].status == "done"
+        assert app._subagent_rows["finished"].duration_ms == 3000
+        assert app._subagents_tick is None
+        assert app._subagents_stale
+        durations = {key: row.duration_ms for key, row in app._subagent_rows.items()}
+        await app._render(ev.Cancelled())
+        assert {key: row.duration_ms for key, row in app._subagent_rows.items()} == durations
+        title = str(app.query_one("#subagents-title").render())
+        assert "2 stopped" in title
+        before = str(app.query_one("#subagents-body").render())
+        assert "stopped" in before
+        await asyncio.sleep(1.1)
+        await pilot.pause()
+        assert str(app.query_one("#subagents-body").render()).split() == before.split()
+
+        await app._render(_task("next", started_at=time.time()))
+        app._paint_subagents()
+        assert list(app._subagent_rows) == ["next"]
+        assert app._subagents_tick is not None
+
+
+async def test_interrupt_keeps_independent_async_rows_running():
+    app = _app()
+    async with app.run_test(size=(120, 44)):
+        await app._render(_task("sync", phase_kind="direct", started_at=time.time()))
+        app._ingest_async_tasks({"a": {"task_id": "a", "status": "running"}})
+        await app._render(ev.Cancelled())
+        assert app._subagent_rows["sync"].status == "stopped"
+        assert app._subagent_rows["async:a"].status == "running"
+        assert app._subagents_tick is not None
+
+
+async def test_clear_removes_panel_rows_phases_and_timers(monkeypatch: pytest.MonkeyPatch):
+    app = _app()
+
+    async def no_learning() -> None:
+        pass
+
+    monkeypatch.setattr(app, "_consolidate_learning", no_learning)
+    async with app.run_test(size=(120, 44)) as pilot:
+        await app._render(_task("old", phase_id="phase", started_at=time.time()))
+        app._paint_subagents()
+        await app._render(_task("pending", started_at=time.time()))
+        assert app._subagents_tick is not None
+        assert app._subagents_paint_timer is not None
+        await app._run_clear()
+        await pilot.pause()
+        assert app._subagent_rows == {}
+        assert app._subagent_phase_order == []
+        assert app._subagent_collapsed_phases == set()
+        assert app._subagents_rows_by_line == []
+        assert app._subagents_tick is None
+        assert app._subagents_paint_timer is None
+        assert not app.query_one("#subagents-dock").has_class("active")
+        assert str(app.query_one("#subagents-title").render()) == ""
+        assert str(app.query_one("#subagents-body").render()) == ""
+
+
+async def test_escape_cancels_stream_and_stops_subagent_panel():
+    app = _app()
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    class HangingAgent(type(app.agent)):
+        async def astream(self, _inp, **_kw):  # noqa: ANN001, ANN003, ANN202
+            yield (
+                (), "custom", {
+                    "type": "subagent", "phase": "start", "id": "live",
+                    "label": "sync task", "subagent_type": "researcher",
+                },
+            )
+            started.set()
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+    app.agent = HangingAgent()
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        app._dispatch("run a subagent")
+        await asyncio.wait_for(started.wait(), timeout=5)
+        assert app._subagent_rows["live"].status == "running"
+        await pilot.press("escape")
+        await asyncio.wait_for(cancelled.wait(), timeout=5)
+        for _ in range(50):
+            await pilot.pause()
+            if not app._turn_active:
+                break
+        assert not app._turn_active
+        assert app._subagent_rows["live"].status == "stopped"
+        assert app._subagents_tick is None
+
+
+@pytest.mark.parametrize("failure", [asyncio.CancelledError, RuntimeError])
+async def test_worker_cleanup_stops_rows_without_a_terminal_event(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: type[BaseException],
+) -> None:
+    app = _app()
+
+    async def interrupted_stream(_text: str, _assistant_id: str | None) -> None:
+        await app._render(_task("unfinished", phase_kind="direct", started_at=time.time()))
+        raise failure()
+
+    monkeypatch.setattr(app, "_do_stream", interrupted_stream)
+    async with app.run_test(size=(120, 44)) as pilot:
+        app._dispatch("start")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert not app._turn_active
+        assert app._subagent_rows["unfinished"].status == "stopped"
+        assert app._subagent_rows["unfinished"].duration_ms is not None
+        assert app._subagents_tick is None
