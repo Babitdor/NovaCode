@@ -46,14 +46,20 @@ def _real_tool(name: str):
 
 
 class _FakeMiddleware:
-    """A middleware whose discovery yields *tools*, or raises if *boom*."""
+    """A middleware whose discovery yields *tools*, or raises if *boom*.
+
+    Discovery is driven through ``_discover_tools_async`` because that is what
+    ``_mcp_tools`` runs, in a worker thread with its own loop: the sync entry
+    point would make a blocking call on the server's event loop, which
+    ``langgraph dev``'s blockbuster turns into an exception.
+    """
 
     def __init__(self, tools: list[_FakeTool], *, boom: bool = False) -> None:
         self.tools = tools
         self._boom = boom
         self.discovered = 0
 
-    def _discover_tools_sync(self) -> None:
+    async def _discover_tools_async(self) -> None:
         self.discovered += 1
         if self._boom:
             raise RuntimeError("mcp server refused to start")
@@ -143,6 +149,76 @@ def test_a_tool_without_a_name_is_not_a_match(monkeypatch):
     _install(monkeypatch, _FakeMiddleware([_FakeTool(""), _FakeTool("serena_find_symbol")]))
     kept = _mcp_tools.mcp_tools_for(["serena_find_symbol"])
     assert [t.name for t in kept] == ["serena_find_symbol"]
+
+
+def test_discovery_does_not_block_the_callers_event_loop(monkeypatch):
+    """The bug this pins: ``langgraph dev`` installs blockbuster.
+
+    Blockbuster turns a blocking call on the event loop into an exception, and
+    spawning a stdio MCP server does exactly that — the ``mcp`` library resolves
+    the command with ``shutil.which``, which calls ``os.access``. A graph is
+    imported on the server's loop, so discovering there took the whole server
+    down. Discovery must therefore run off the loop.
+    """
+    import asyncio
+    import threading
+
+    seen: dict[str, object] = {}
+
+    class _LoopProbe:
+        tools: list[_FakeTool] = []
+
+        async def _discover_tools_async(self) -> None:
+            seen["thread"] = threading.current_thread().name
+            seen["loop"] = asyncio.get_running_loop()
+
+    monkeypatch.setattr("novacode_cli.mcp.get_shared_mcp_middleware", lambda: _LoopProbe())
+
+    async def _caller() -> None:
+        seen["caller_thread"] = threading.current_thread().name
+        seen["caller_loop"] = asyncio.get_running_loop()
+        # Called from inside a running loop, as a graph import is.
+        _mcp_tools.mcp_tools_for(["serena_find_symbol"])
+
+    asyncio.run(_caller())
+
+    assert seen["thread"] != seen["caller_thread"], "discovery ran on the caller's thread"
+    assert seen["loop"] is not seen["caller_loop"], "discovery ran on the caller's loop"
+
+
+def test_a_hung_mcp_server_does_not_stall_the_caller(monkeypatch):
+    """The timeout must actually bound the call, not just raise after it.
+
+    A ``with ThreadPoolExecutor(...)`` block calls ``shutdown(wait=True)`` on
+    exit, which waits for the worker even after ``result(timeout=...)`` has
+    raised. A hung MCP server would then stall the server's startup for as long
+    as it hung, and the timeout would bound nothing. Found by running the
+    code-reviewer agent against this module.
+    """
+    import threading
+    import time
+
+    release = threading.Event()
+
+    class _Hanging:
+        tools: list[_FakeTool] = []
+
+        async def _discover_tools_async(self) -> None:
+            # Stands in for a stdio server that never answers.
+            release.wait(timeout=30)
+
+    monkeypatch.setattr("novacode_cli.mcp.get_shared_mcp_middleware", lambda: _Hanging())
+    monkeypatch.setattr(_mcp_tools, "_DISCOVERY_TIMEOUT", 0.3)
+
+    started = time.monotonic()
+    try:
+        assert _mcp_tools.mcp_tools_for(["serena_find_symbol"]) == []
+    finally:
+        release.set()
+    elapsed = time.monotonic() - started
+
+    # Generous: the point is that it returns at all, not the exact figure.
+    assert elapsed < 5, f"caller was blocked for {elapsed:.1f}s by a hung server"
 
 
 # ── caching ─────────────────────────────────────────────────────────────────

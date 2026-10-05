@@ -41,6 +41,14 @@ logger = logging.getLogger(__name__)
 #: asking for different subsets each get exactly their own tools.
 _CACHE: dict[tuple[str, ...], list[BaseTool]] = {}
 
+#: How long discovery may take before the agent is built without MCP tools.
+#:
+#: Generous, because a cold stdio server (``npx``/``uvx``) may download a package
+#: on first run, and the same 90 s the in-process path allows is the right order
+#: of magnitude. It is a ceiling on a *background* thread, so a slow server costs
+#: this agent its MCP tools rather than the server its startup.
+_DISCOVERY_TIMEOUT = 90.0
+
 
 def mcp_tools_for(names: list[str] | tuple[str, ...]) -> list[BaseTool]:
     """The MCP tools among *names*, discovered from the user's MCP config.
@@ -78,10 +86,7 @@ def _discover(wanted: tuple[str, ...]) -> list[BaseTool]:
         from novacode_cli.mcp import get_shared_mcp_middleware
 
         middleware = get_shared_mcp_middleware()
-        # The sync entry point: this runs at graph import, where there is no
-        # running loop to await on. It does its own work in a dedicated thread.
-        middleware._discover_tools_sync()
-        available = list(middleware.tools)
+        available = list(_discover_off_loop(middleware))
     except Exception:  # noqa: BLE001 — no MCP tools is a valid outcome
         logger.warning(
             "could not discover MCP tools for a background agent; it will run without them",
@@ -100,6 +105,41 @@ def _discover(wanted: tuple[str, ...]) -> list[BaseTool]:
             ", ".join(wanted),
         )
     return kept
+
+
+def _discover_off_loop(middleware: object) -> list[BaseTool]:
+    """Discover MCP tools without blocking the caller's event loop.
+
+    ``langgraph dev`` installs ``blockbuster``, which turns a blocking call on the
+    event loop into an exception. Spawning a stdio MCP server does exactly that:
+    the ``mcp`` library resolves the command with ``shutil.which``, which calls
+    ``os.access``. So discovery is run in a worker thread with its own loop, the
+    same way the in-process path does it (``MCPMiddleware._discover_tools_sync``
+    already uses a ``ThreadPoolExecutor`` for this reason).
+
+    A graph is imported on the server's loop, so calling the sync entry point
+    directly here would trip blockbuster and take the whole server down with it.
+
+    The pool is shut down with ``wait=False`` on timeout, deliberately. A
+    ``with`` block would call ``shutdown(wait=True)`` and block until the worker
+    finished, so a hung MCP server would still stall the server's startup and
+    ``_DISCOVERY_TIMEOUT`` would bound nothing. A thread left running is the
+    lesser evil: it is one per distinct request, and the process is a dev server.
+    """
+    import asyncio
+    import concurrent.futures
+
+    def _run() -> list[BaseTool]:
+        # A fresh loop in this thread: the caller's loop is not ours to touch.
+        asyncio.run(middleware._discover_tools_async())  # type: ignore[attr-defined]
+        return list(middleware.tools)  # type: ignore[attr-defined]
+
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    try:
+        return pool.submit(_run).result(timeout=_DISCOVERY_TIMEOUT)
+    finally:
+        # wait=False: never block the caller on a worker that overran the budget.
+        pool.shutdown(wait=False)
 
 
 def _tool_name(tool: object) -> str:

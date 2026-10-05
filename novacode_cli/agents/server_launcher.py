@@ -139,12 +139,25 @@ def build_command(*, host: str, port: int, config_path: Path) -> list[str]:
     ``--no-browser`` matters in a terminal agent (it must not open a tab) and
     ``--no-reload`` matters because a reloader would re-exec the server and
     orphan the process we are tracking.
+
+    ``--allow-blocking`` is required for MCP tools to work at all. The server
+    installs ``blockbuster``, which raises on a blocking call made on the event
+    loop, and spawning a stdio MCP server does exactly that: the ``mcp`` library
+    resolves the command with ``shutil.which``, which calls ``os.access``. Every
+    MCP tool call then fails with ``Blocking call to os.access`` and takes the
+    server down with it. The call cannot be moved off the loop, because the
+    session it creates is bound to the loop that spawned it.
+
+    It must be the flag, not ``LANGGRAPH_ALLOW_BLOCKING``: ``langgraph_cli``
+    writes that variable into the child environment from this flag with
+    ``default=False``, so setting it ourselves is overwritten.
     """
     return [
         sys.executable,
         "-m",
         "langgraph_cli",
         "dev",
+        "--allow-blocking",
         "--host",
         host,
         "--port",
