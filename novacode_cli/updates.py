@@ -281,9 +281,13 @@ def update_main(arguments: list[str]) -> int:
             print(
                 f"Update available: {status.current[:12]} → {status.latest[:12]}. Run nova update."
                 if status.available
-                else "Nova is up to date."
+                else "NovaCode is up to date."
             )
         else:
+            status = check_for_update(force=True)
+            if not status.error and not status.available:
+                print("NovaCode is up to date.")
+                return 0
             log = install_update()
             if log is not None:
                 print(

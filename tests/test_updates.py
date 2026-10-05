@@ -3,6 +3,8 @@
 # Fixture arguments establish the installation and cache sandbox.
 # ruff: noqa: ARG001
 
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -243,6 +245,11 @@ def test_queued_update_is_not_reported_as_completed(
     tmp_path: Path,
     capsys: pytest.CaptureFixture,
 ) -> None:
+    monkeypatch.setattr(
+        U,
+        "check_for_update",
+        lambda **_kw: U.UpdateStatus(available=True, current="old", latest="new"),
+    )
     monkeypatch.setattr(U, "install_update", lambda: tmp_path / "update.log")
     assert U.update_main([]) == 0
     output = capsys.readouterr().out
@@ -267,13 +274,14 @@ def test_external_updater_waits_before_installing_and_records_result(
     cache = tmp_path / "cache.json"
     cache.write_text("stale", encoding="utf-8")
 
-    def install(arguments: list[str], **_kwargs: object) -> None:
+    def install(arguments: list[str]) -> bool:
         assert order == [123, 456]
         assert arguments == ["uv", "tool", "upgrade", "novacode-cli"]
         if fails:
             raise subprocess.CalledProcessError(1, "uv")
+        return True
 
-    monkeypatch.setattr(helper.subprocess, "run", install)
+    monkeypatch.setattr(helper, "run_installer", install)
     result = helper.main(
         {
             "caller_pid": 123,
@@ -295,7 +303,7 @@ def test_external_updater_never_installs_if_launcher_has_not_exited(
 
     monkeypatch.setattr(helper, "wait_for_exit", Mock(side_effect=TimeoutError("still running")))
     installer = Mock()
-    monkeypatch.setattr(helper.subprocess, "run", installer)
+    monkeypatch.setattr(helper, "run_installer", installer)
     assert (
         helper.main(
             {
@@ -308,3 +316,67 @@ def test_external_updater_never_installs_if_launcher_has_not_exited(
         == 1
     )
     installer.assert_not_called()
+
+
+def test_up_to_date_displays_message_without_starting_installer(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    monkeypatch.setattr(
+        U,
+        "check_for_update",
+        lambda **_kw: U.UpdateStatus(available=False, current="same", latest="same"),
+    )
+    installer = Mock()
+    monkeypatch.setattr(U, "install_update", installer)
+    assert U.update_main([]) == 0
+    assert capsys.readouterr().out.strip() == "NovaCode is up to date."
+    installer.assert_not_called()
+
+
+def test_noop_external_update_displays_up_to_date(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    from novacode_cli import _windows_update as helper
+
+    monkeypatch.setattr(helper, "wait_for_exit", Mock())
+    monkeypatch.setattr(helper, "run_installer", lambda _command: False)
+    assert (
+        helper.main(
+            {"caller_pid": 1, "parent_pid": 2, "command": ["uv"], "cache": str(tmp_path / "cache")}
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "NovaCode is up to date." in output
+    assert "Restart Nova" not in output
+
+
+@pytest.mark.parametrize(
+    ("output", "exit_code", "changed"),
+    [
+        ("Nothing to upgrade", 0, False),
+        ("Updated novacode-cli", 0, True),
+        ("Nothing to upgrade", 1, False),
+    ],
+)
+def test_installer_output_reports_no_upgrade_only_on_success(
+    output: str, exit_code: int, capsys: pytest.CaptureFixture, *, changed: bool
+) -> None:
+    from novacode_cli import _windows_update as helper
+
+    command = [
+        sys.executable,
+        "-c",
+        "import sys; print(sys.argv[1]); sys.exit(int(sys.argv[2]))",
+        output,
+        str(exit_code),
+    ]
+    if exit_code:
+        with pytest.raises(subprocess.CalledProcessError):
+            helper.run_installer(command)
+    else:
+        assert helper.run_installer(command) is changed
+    assert output in capsys.readouterr().out

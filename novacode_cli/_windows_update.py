@@ -54,16 +54,44 @@ def wait_for_exit(pid: int, *, launcher_only: bool = False) -> None:
         kernel.CloseHandle(handle)
 
 
+def run_installer(command: list[str]) -> bool:
+    """Stream installer output and distinguish a successful no-op upgrade."""
+    no_upgrade = False
+    with subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    ) as process:
+        if process.stdout is None:
+            message = "Could not read updater output."
+            raise OSError(message)
+        for line in process.stdout:
+            print(line, end="", flush=True)
+            if line.strip().casefold() == "nothing to upgrade":
+                no_upgrade = True
+        if process.wait() != 0:
+            raise subprocess.CalledProcessError(process.returncode, command)
+    return not no_upgrade
+
+
 def main(payload: dict) -> int:
     """Run uv only after both the Python caller and its executable wrapper exit."""
     try:
         print("Waiting for Nova's update launcher to exit…", flush=True)
         wait_for_exit(payload["caller_pid"])
         wait_for_exit(payload["parent_pid"], launcher_only=True)
-        subprocess.run(payload["command"], check=True)
+        changed = run_installer(payload["command"])
         with suppress(OSError):
             Path(payload["cache"]).unlink(missing_ok=True)
-        print("Nova updated. Restart Nova to use the new code.", flush=True)
+        print(
+            "Nova updated. Restart Nova to use the new code."
+            if changed
+            else "NovaCode is up to date.",
+            flush=True,
+        )
         return 0  # noqa: TRY300
     except (OSError, subprocess.SubprocessError) as error:
         print(f"Update failed: {error}", flush=True)
