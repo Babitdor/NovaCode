@@ -2402,17 +2402,18 @@ class AgentCreateModal(ModalScreen[dict | None]):
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id != "agent-kind":
             return
-        # The async tool limit is stated here rather than left to be discovered:
-        # a background graph resolves tools from novacode_cli.tools by name and
-        # drops the rest, so MCP tools chosen below would silently not be there.
+        # The async form resolves the same tool names the in-process one does:
+        # Nova's own tools from novacode_cli.tools, and MCP tools from the user's
+        # MCP config (see async_agents/_mcp_tools). What it cannot do is ask a
+        # question, so that is what the note warns about.
         note = self.query_one("#agent-async-note", Static)
         if event.value == "async":
             note.update(
                 Text(
                     "Async: runs on the local agent server, so it keeps working after "
-                    "you dispatch it. MCP tools (serena, playwright, cua-driver) are "
-                    "not available to it, and it needs the agents-server extra "
-                    "(uv sync --extra agents-server).",
+                    "you dispatch it. It gets the same tools as the in-process form, "
+                    "but nobody can answer a question mid-run, and it needs the "
+                    "agents-server extra (uv sync --extra agents-server).",
                     style="dim",
                 )
             )

@@ -250,10 +250,9 @@ def build_user_graph(name: str, agent_md: Path | str) -> Any:  # noqa: ANN401 â€
     # An absent `tools:` means every tool, exactly as for an in-process agent
     # (agent_tools returns None). Passing None through would also be correct
     # here, but resolving it to [] below keeps the meaning explicit at the one
-    # place that reads it. The background form resolves names from
-    # novacode_cli.tools and silently drops the rest (MCP tools in particular),
-    # which is the limit the shipped async agents share â€” that difference is
-    # reported in the create modal rather than left to be discovered here.
+    # place that reads it. A declared name is resolved against novacode_cli.tools
+    # and against the user's MCP config (see async_agents/_mcp_tools), so the
+    # background form gets the same tools the in-process subagent does.
     chosen = _chosen_tools(path)
     return build_specialist_graph(
         name,
