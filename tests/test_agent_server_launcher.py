@@ -39,6 +39,10 @@ def test_the_command_is_the_dev_server_this_interpreter_runs():
         "-m",
         "langgraph_cli",
         "dev",
+        # Without this, every MCP tool call fails with "Blocking call to
+        # os.access" and takes the server down: spawning a stdio MCP server
+        # resolves the command with shutil.which, which blockbuster rejects.
+        "--allow-blocking",
         "--host",
         "127.0.0.1",
         "--port",
