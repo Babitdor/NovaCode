@@ -135,7 +135,7 @@ agents-server = [
     Changelog = "https://github.com/Babitdor/NovaCode/blob/main/CHANGELOG.md"
 
 [project.scripts]
-nova = "novacode_cli.main:cli_main"
+nova = "novacode_cli.entrypoint:cli_main"
 
 # llama-cpp-python (used by the optional [voice-orpheus] extra) ships only an
 # sdist on PyPI — installing it from there needs a C++ toolchain. The abetlen

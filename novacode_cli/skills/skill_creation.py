@@ -1,6 +1,7 @@
 import argparse
 import re
 import shutil
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -461,7 +462,8 @@ def _list(
     """
     settings = Settings.from_environment()
     user_skills_dir = settings.get_user_skills_dir(agent)
-    project_skills_dir = settings.get_project_skills_dir()
+    project_skills_dir = settings.get_project_skills_dir() or Path.cwd() / ".nova" / "skills"
+    project_skills_dirs = settings.get_project_skills_dirs()
 
     # Determine what to show - from flags or by asking
     if project and global_scope:
@@ -485,33 +487,17 @@ def _list(
 
     # Handle project-only view
     if show_scope == "project":
-        if not project_skills_dir:
-            console.print("[yellow]Not in a project directory.[/yellow]")
-            console.print(
-                "[dim]Project skills require a .git directory in the project root.[/dim]",
-                style=COLORS["dim"],
-            )
-            return
-
-        if not project_skills_dir.exists() or not any(project_skills_dir.iterdir()):
-            console.print("[yellow]No project skills found.[/yellow]")
-            console.print(
-                f"[dim]Project skills will be created in {project_skills_dir}/ when you add them.[/dim]",
-                style=COLORS["dim"],
-            )
-            console.print(
-                "\n[dim]Create a project skill:\n  Nova skills create my-skill --project[/dim]",
-                style=COLORS["dim"],
-            )
-            return
-
-        skills = list_skills(user_skills_dir=None, project_skills_dir=project_skills_dir)
+        skills = list_skills(
+            project_skills_dir=project_skills_dir,
+            project_skills_dirs=project_skills_dirs,
+        )
         console.print("\n[bold]Project Skills:[/bold]\n", style=COLORS["primary"])
     elif show_scope == "global":
         # Load only global (nova + claude) skills
         claude_skills_dir = Settings.get_global_claude_skills_dir()
         skills = list_skills(
             user_skills_dir=user_skills_dir,
+            shared_skills_dir=Settings.get_shared_skills_dir(),
             claude_skills_dir=claude_skills_dir if claude_skills_dir.exists() else None,
             project_skills_dir=None,
         )
@@ -521,8 +507,10 @@ def _list(
         claude_skills_dir = Settings.get_global_claude_skills_dir()
         skills = list_skills(
             user_skills_dir=user_skills_dir,
+            shared_skills_dir=Settings.get_shared_skills_dir(),
             claude_skills_dir=claude_skills_dir if claude_skills_dir.exists() else None,
             project_skills_dir=project_skills_dir,
+            project_skills_dirs=project_skills_dirs,
         )
 
         if not skills:
@@ -600,7 +588,8 @@ def _info(
     """
     settings = Settings.from_environment()
     user_skills_dir = settings.get_user_skills_dir(agent)
-    project_skills_dir = settings.get_project_skills_dir()
+    project_skills_dir = settings.get_project_skills_dir() or Path.cwd() / ".nova" / "skills"
+    project_skills_dirs = settings.get_project_skills_dirs()
 
     # Determine what to search - from flags or by asking
     if project and global_scope:
@@ -624,14 +613,15 @@ def _info(
 
     # Load skills based on scope
     if search_scope == "project":
-        if not project_skills_dir:
-            console.print("[bold red]Error:[/bold red] Not in a project directory.")
-            return
-        skills = list_skills(user_skills_dir=None, project_skills_dir=project_skills_dir)
+        skills = list_skills(
+            project_skills_dir=project_skills_dir,
+            project_skills_dirs=project_skills_dirs,
+        )
     elif search_scope == "global":
         claude_skills_dir = Settings.get_global_claude_skills_dir()
         skills = list_skills(
             user_skills_dir=user_skills_dir,
+            shared_skills_dir=Settings.get_shared_skills_dir(),
             claude_skills_dir=claude_skills_dir if claude_skills_dir.exists() else None,
             project_skills_dir=None,
         )
@@ -639,8 +629,10 @@ def _info(
         claude_skills_dir = Settings.get_global_claude_skills_dir()
         skills = list_skills(
             user_skills_dir=user_skills_dir,
+            shared_skills_dir=Settings.get_shared_skills_dir(),
             claude_skills_dir=claude_skills_dir if claude_skills_dir.exists() else None,
             project_skills_dir=project_skills_dir,
+            project_skills_dirs=project_skills_dirs,
         )
 
     # Find the skill
@@ -1552,6 +1544,22 @@ def _find(query: str) -> None:
     console.print(f"\n[dim]Install with: Nova skills add <repo-url>[/dim]")
 
 
+class _SkillsCommandParser(argparse.ArgumentParser):
+    """Let upstream parse its own flags, including options before the source."""
+
+    upstream_add = False
+
+    def parse_known_args(
+        self, args: list[str] | None = None, namespace: argparse.Namespace | None = None,
+    ) -> tuple[argparse.Namespace, list[str]]:
+        """Keep the add command's argv intact for the official parser."""
+        if not self.upstream_add:
+            return super().parse_known_args(args, namespace)
+        namespace = namespace or argparse.Namespace()
+        namespace.upstream_args = list(args) if args is not None else sys.argv[1:]
+        return namespace, []
+
+
 def setup_skills_parser(
     subparsers: Any,
 ) -> argparse.ArgumentParser:
@@ -1561,7 +1569,9 @@ def setup_skills_parser(
         help="Manage agent skills",
         description="Manage agent skills - create, list, and view skill information",
     )
-    skills_subparsers = skills_parser.add_subparsers(dest="skills_command", help="Skills command")
+    skills_subparsers = skills_parser.add_subparsers(
+        dest="skills_command", help="Skills command", parser_class=_SkillsCommandParser,
+    )
 
     # Skills list
     list_parser = skills_subparsers.add_parser(
@@ -1634,44 +1644,13 @@ def setup_skills_parser(
         help="Search only in global skills (user-level)",
     )
 
-    # Skills add
+    # The add subcommand belongs to upstream; retain every argument verbatim.
     add_parser = skills_subparsers.add_parser(
         "add",
-        help="Install a skill from GitHub URL",
-        description="Install a skill from a GitHub URL",
+        help="Install skills using the official Skills CLI (requires Node.js/npx)",
+        add_help=False,
     )
-    add_parser.add_argument(
-        "url",
-        help="GitHub URL to install skill from (e.g., https://github.com/owner/repo)",
-    )
-    add_parser.add_argument(
-        "--agent",
-        default="nova-agent",
-        help="Agent identifier for skills (default: nova-agent)",
-    )
-    add_parser.add_argument(
-        "--project",
-        action="store_true",
-        help="Install skill in project directory instead of user directory",
-    )
-    add_parser.add_argument(
-        "--global",
-        dest="global_scope",
-        action="store_true",
-        help="Install skill in global directory (user-level)",
-    )
-    add_parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Force overwrite if skill already exists",
-    )
-    add_parser.add_argument(
-        "--skill",
-        dest="skill_name",
-        default=None,
-        metavar="NAME",
-        help="Override the skill name (default: derived from repo name)",
-    )
+    add_parser.upstream_add = True
     # Skills remove
     remove_parser = skills_subparsers.add_parser(
         "remove",

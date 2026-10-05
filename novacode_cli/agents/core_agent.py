@@ -915,6 +915,8 @@ def _build_skill_sources() -> tuple[list[str], Path, Path, list[Path], list[tupl
     # This ensures SkillsMiddleware.ls("/skills/") routes to the FilesystemBackend
     # instead of the default backend (which may fail outside graph context).
     skill_sources.append("/skills/")
+    if settings.get_shared_skills_dir().is_dir():
+        skill_sources.append("/shared-skills/")
     if claude_skills_dir.exists():
         skill_sources.append("/claude-skills/")
     for i, _p in enumerate(project_skills_dirs):
@@ -1057,6 +1059,12 @@ def _build_composite_backend(
     _routes: dict[str, BackendProtocol] = {  # type: ignore[name-defined]
         "/skills/": _skills_backend,
     }
+
+    shared_skills_dir = settings.get_shared_skills_dir()
+    if shared_skills_dir.is_dir():
+        _routes["/shared-skills/"] = FilesystemBackend(
+            root_dir=str(shared_skills_dir), virtual_mode=True,
+        )
 
     # Add global Claude Code skills route (~/.claude/skills/)
     if claude_skills_dir.exists():
@@ -1246,6 +1254,7 @@ def _tool_result_clearing(
     context_window: int,
     offload_dir: Path | None = None,
     verdicts: object | None = None,
+    scorer: object | None = None,
 ):  # noqa: ANN202
     """The tool-result clearing edit Nova runs before whole-history compaction.
 
@@ -1255,8 +1264,9 @@ def _tool_result_clearing(
 
     With ``verdicts`` (a :class:`~novacode_cli.agents.tool_verdicts.
     ToolVerdictCache`) the *selection* changes: only results the decision model
-    scored stale are cleared, and anything unscored is kept. Without it the
-    behaviour is exactly as before. That path is OFF by default -- see
+    scored stale are cleared, and anything unscored is kept while scoring is
+    healthy. A failed or overdue scorer switches to the default clearing edit.
+    Without verdicts the behaviour is exactly as before. That path is OFF by default -- see
     :meth:`NovaConfig.get_tool_verdicts_enabled` for the measurement behind it.
     """
     from novacode_cli.agents.tool_offload import OffloadingToolUsesEdit
@@ -1288,6 +1298,7 @@ def _tool_result_clearing(
     return VerdictToolUsesEdit(
         **common,
         verdicts=verdicts,
+        scorer=scorer,
         keep_threshold=NovaConfig().get_tool_verdict_keep_threshold(),
     )
 
@@ -1513,6 +1524,7 @@ def _build_middleware_stack(
                     context_window,
                     cleared_dir(agent_dir) if agent_dir else None,
                     _verdict_cache,
+                    _verdict_scorer,
                 )
             ]
         ),
@@ -1845,7 +1857,7 @@ def create_agent_with_config(
 
     # Build list of allowed directories for filesystem access
     # This includes the workspace root plus user directories like skills, memory, etc.
-    allowed_prefixes = [str(workspace_root)]
+    allowed_prefixes = [str(workspace_root), str(settings.get_shared_skills_dir())]
     if settings.project_root and settings.project_root != workspace_root:
         allowed_prefixes.append(str(settings.project_root))
 
@@ -2097,7 +2109,7 @@ This file stores your preferences and context that persist across sessions.
     # created mid-session (skill_manage / Hermes review) is usable this session
     # instead of only after a restart. This replaces create_deep_agent's default
     # SkillsMiddleware (see skills=None below).
-    skill_watch_dirs = [skills_dir]
+    skill_watch_dirs = [skills_dir, settings.get_shared_skills_dir()]
     if claude_skills_dir.exists():
         skill_watch_dirs.append(claude_skills_dir)
     skill_watch_dirs.extend(project_skills_dirs)

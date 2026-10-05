@@ -609,3 +609,47 @@ def test_a_failing_endpoint_leaves_the_cache_empty_and_says_so(tmp_path) -> None
 
     assert len(cache) == 0
     assert scorer.last_error and "no endpoint" in scorer.last_error
+    assert scorer.fallback_required
+
+
+def test_empty_verdict_response_activates_fallback_then_recovers() -> None:
+    class Empty:
+        def ask(self, _state, _questions) -> dict:  # noqa: ANN001
+            return {}
+
+    scorer = VerdictScorer(
+        Empty(), ToolVerdictCache(path=None), min_interval_seconds=0.0
+    )
+    assert not scorer.fallback_required
+    scorer.maybe_score(_history(20))
+    _wait(scorer)
+    assert scorer.fallback_required
+    scorer.client = FakeDecisionClient(0.1)
+    scorer.maybe_score(_history(20))
+    _wait(scorer)
+    assert scorer.last_error is None
+    assert not scorer.fallback_required
+
+
+def test_stalled_scoring_activates_fallback_without_waiting() -> None:
+    import threading
+
+    entered, release = threading.Event(), threading.Event()
+
+    class Stalled:
+        def ask(self, _state, _questions) -> dict:  # noqa: ANN001
+            entered.set()
+            release.wait(5)
+            return {}
+
+    scorer = VerdictScorer(
+        Stalled(), ToolVerdictCache(path=None), fallback_after_seconds=0.0
+    )
+    try:
+        assert scorer.maybe_score(_history(20))
+        assert entered.wait(2)
+        assert scorer.fallback_required
+        assert not scorer.maybe_score(_history(20)), "never spawn overlapping requests"
+    finally:
+        release.set()
+        _wait(scorer)

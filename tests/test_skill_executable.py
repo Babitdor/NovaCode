@@ -102,6 +102,13 @@ class TestSkillInvokeRunFlag:
             def ensure_user_skills_dir(self, _assistant_id: str | None = None) -> Path:
                 return Path()
 
+            @staticmethod
+            def get_shared_skills_dir() -> Path:
+                return Path("no-such-shared-skills-dir-xyz")
+
+            def get_project_skills_dirs(self) -> list[Path]:
+                return []
+
             def get_project_skills_dir(self) -> None:
                 return None
 

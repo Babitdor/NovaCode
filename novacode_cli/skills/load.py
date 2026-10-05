@@ -85,6 +85,10 @@ def find_skill_dir(name: str) -> tuple[Path, str] | None:
     if (claude_dir / name / "SKILL.md").is_file():
         return claude_dir / name, "claude"
 
+    shared_dir = Settings.get_shared_skills_dir()
+    if (shared_dir / name / "SKILL.md").is_file():
+        return shared_dir / name, "user"
+
     return None
 
 
@@ -194,6 +198,8 @@ def list_skills(
     project_skills_dir: Path | None = None,
     claude_skills_dir: Path | None = None,
     plugin_skills_dirs: list[Path] | None = None,
+    shared_skills_dir: Path | None = None,
+    project_skills_dirs: list[Path] | None = None,
 ) -> list[SkillMetadata]:
     """List skills from user, project, and/or global Claude directories.
 
@@ -202,8 +208,9 @@ def list_skills(
 
     Sources are loaded in this order (later overrides earlier):
     1. User skills (~/.nova/skills/) — foundation
-    2. Global Claude skills (~/.claude/skills/) — shared Claude Code skills
-    3. Project skills (.nova/skills/ or .claude/skills/) — highest priority
+    2. Shared global skills (~/.agents/skills/)
+    3. Global Claude skills (~/.claude/skills/) — shared Claude Code skills
+    4. Project skills (.agents/skills/, .nova/skills/, .claude/skills/) — highest priority
 
     When multiple sources have skills with the same name, the later source's
     skill takes precedence. Each skill includes a 'source' field indicating
@@ -214,6 +221,9 @@ def list_skills(
         project_skills_dir: Path to the project-level skills directory.
         claude_skills_dir: Path to the global Claude Code skills directory
             (~/.claude/skills/).
+        shared_skills_dir: Global canonical directory used by the Skills CLI.
+        project_skills_dirs: Project directories in increasing precedence order.
+        plugin_skills_dirs: Skill directories supplied by installed plugins.
 
     Returns:
         Merged list of skill metadata from all sources, with later sources
@@ -231,6 +241,14 @@ def list_skills(
         user_skills = _list_dir(user_skills_dir)
         for skill in user_skills:
             skill["source"] = "user"  # type: ignore[typeddict-unknown-key]
+            all_skills[skill["name"]] = skill
+
+    # Shared skills keep absolute paths so invocation also finds supporting files.
+    if shared_skills_dir and shared_skills_dir.is_dir():
+        for skill in _list_dir(shared_skills_dir):
+            skill["source"] = "user"
+            virtual_path = str(skill.get("path", "")).lstrip("/\\")
+            skill["path"] = str(shared_skills_dir / virtual_path)
             all_skills[skill["name"]] = skill
 
     # Load global Claude Code skills second (override/supplement user skills)
@@ -256,11 +274,17 @@ def list_skills(
             skill["path"] = str(plugin_dir / vpath) if vpath else str(plugin_dir / skill["name"])  # type: ignore[typeddict-unknown-key]
             all_skills[skill["name"]] = skill
 
-    # Load project skills last (override/augment)
-    if project_skills_dir and project_skills_dir.exists():
-        project_skills = _list_dir(project_skills_dir)
-        for skill in project_skills:
-            skill["source"] = "project"  # type: ignore[typeddict-unknown-key]
+    # Project sources override global sources. Include legacy callers' single root.
+    directories = list(project_skills_dirs or [])
+    if project_skills_dir and project_skills_dir not in directories:
+        directories.append(project_skills_dir)
+    for directory in directories:
+        if not directory.is_dir():
+            continue
+        for skill in _list_dir(directory):
+            skill["source"] = "project"
+            virtual_path = str(skill.get("path", "")).lstrip("/\\")
+            skill["path"] = str(directory / virtual_path)
             all_skills[skill["name"]] = skill
 
     return list(all_skills.values())

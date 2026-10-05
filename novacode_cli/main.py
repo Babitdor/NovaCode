@@ -251,6 +251,13 @@ def _stop_agent_server() -> None:
 
 def parse_args():
     """Parse command line arguments."""
+    from novacode_cli.skills.upstream import add_arguments
+
+    upstream_args = add_arguments(sys.argv[1:])
+    if upstream_args is not None:
+        return argparse.Namespace(
+            command="skills", skills_command="add", upstream_args=upstream_args,
+        )
     parser = argparse.ArgumentParser(
         description="DeepAgents - AI Coding Assistant",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -331,6 +338,8 @@ def parse_args():
 
     # Doctor command - validate setup
     subparsers.add_parser("doctor", help="Validate configuration and connections")
+    update_parser = subparsers.add_parser("update", help="Update Nova or check for new code")
+    update_parser.add_argument("--check", action="store_true", help="Check without installing")
 
     # Paths command - manage approved paths
     paths_parser = subparsers.add_parser(
@@ -1936,6 +1945,16 @@ def _setup_headless_io() -> int | None:
 
 def cli_main() -> None:
     """Entry point for console script."""
+    # Skill installation needs neither onboarding nor a model/provider setup.
+    from novacode_cli.skills.upstream import add_arguments, run_skills_cli
+
+    upstream_args = add_arguments(sys.argv[1:])
+    if upstream_args is not None:
+        raise SystemExit(run_skills_cli("add", upstream_args))
+    if sys.argv[1:2] == ["update"]:
+        from novacode_cli.updates import update_main
+
+        raise SystemExit(update_main(sys.argv[2:]))
     # Lazy imports: sandbox_factory pulls in deepagents; only needed when
     # actually resolving/launching a sandbox, not at CLI startup.
     from novacode_cli.integrations.sandbox_factory import (

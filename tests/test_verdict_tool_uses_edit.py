@@ -7,6 +7,8 @@ so the tests below pin the keep-side as hard as the clear-side.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from novacode_cli.agents.tool_offload import VerdictToolUsesEdit, cleared_dir
@@ -136,6 +138,31 @@ def test_no_cache_at_all_changes_nothing(tmp_path) -> None:
     edit.apply(messages, count_tokens=_big_tokens)
 
     assert _contents(messages) == before
+
+
+def test_failed_scorer_uses_default_clearing_even_after_unscored_pass(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    messages = _history(4)
+    messages[2].name = "think"
+    scorer = SimpleNamespace(fallback_required=False)
+    edit = VerdictToolUsesEdit(
+        trigger=0, keep=1, exclude_tools=["think"], placeholder="[cleared]",
+        offload_dir=tmp_path, verdicts=_cache(tmp_path, {}), scorer=scorer,
+    )
+    edit.apply(messages, count_tokens=_big_tokens)
+    assert _contents(messages) == [str(n) * 100 for n in range(1, 5)]
+    assert not messages[5].response_metadata.get("context_editing", {}).get("cleared")
+
+    scorer.fallback_required = True
+    edit.apply(messages, count_tokens=lambda _m: 0)
+    assert _contents(messages) == [str(n) * 100 for n in range(1, 5)]
+    edit.apply(messages, count_tokens=_big_tokens)
+    contents = _contents(messages)
+    assert contents[0] == "1" * 100, "excluded reasoning stays intact"
+    assert _offloaded(contents[1], tmp_path) == "2" * 100
+    assert _offloaded(contents[2], tmp_path) == "3" * 100
+    assert contents[3] == "4" * 100, "recent results stay intact"
 
 
 def test_below_the_trigger_no_verdict_is_consulted(tmp_path) -> None:

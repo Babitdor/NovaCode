@@ -106,6 +106,8 @@ def _resolve_skill_invocation(
 
     skills = list_skills(
         user_skills_dir=user_skills_dir,
+        shared_skills_dir=Settings.get_shared_skills_dir(),
+        project_skills_dirs=settings.get_project_skills_dirs(),
         claude_skills_dir=claude_skills_dir if claude_skills_dir.exists() else None,
         project_skills_dir=project_skills_dir,
         plugin_skills_dirs=plugin_skills_dirs,

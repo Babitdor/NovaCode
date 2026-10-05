@@ -24,6 +24,12 @@ except ImportError:  # pragma: no cover
     _HAS_TEXTUAL = False
 
 
+@pytest.fixture(autouse=True)
+def _disable_live_update_checks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """TUI tests never contact update services or write the real user cache."""
+    monkeypatch.setenv("NOVA_DISABLE_UPDATE_CHECK", "1")
+
+
 class _Chunk:
     def __init__(self, mid, blocks):
         self.id = mid
@@ -5048,3 +5054,94 @@ def test_tui_ctx_survives_a_resume():
     if not _HAS_TEXTUAL:
         return
     asyncio.run(_drive_ctx_survives_a_resume())
+
+
+async def _drive_todo_dock_scrolls_long_lists() -> None:
+    """The last wrapped item is reachable without covering the prompt."""
+    from textual.containers import VerticalScroll
+
+    import novacode_cli.ui_events as ev
+    from novacode_cli.tui.app import NovaApp
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    app = NovaApp(
+        agent=_FakeAgent(), assistant_id="nova-agent", session_state=_SS(),
+        backend=None, token_tracker=TokenTracker(), image_tracker=None, model_name="m",
+    )
+    async with app.run_test(size=(80, 30)) as pilot:
+        todos = [
+            {
+                "content": f"task {i}: " + "a long item that wraps across lines " * 3,
+                "status": "pending",
+            }
+            for i in range(24)
+        ]
+        await app._render(ev.TodoUpdate(todos=todos, agent_name=None))
+        await pilot.pause()
+        scroll = app.query_one("#todo-scroll", VerticalScroll)
+        assert scroll.max_scroll_y > 0
+        assert scroll.show_vertical_scrollbar
+        assert scroll.region.bottom <= app.query_one("#prompt-row").region.y
+
+        scroll.focus()
+        await pilot.press("end")
+        await pilot.pause()
+        assert scroll.scroll_y == scroll.max_scroll_y
+        assert scroll.scroll_y > 0
+        # Rendered content's bottom (the last todo) is now inside the viewport.
+        assert app.query_one("#todo-dock").region.bottom <= scroll.content_region.bottom
+        assert not app._todos_collapsed
+
+        app.action_toggle_todos()
+        await pilot.pause()
+        assert scroll.size.height == 1
+        assert scroll.scroll_y == 0
+        app.action_toggle_todos()
+        await pilot.pause()
+        assert scroll.max_scroll_y > 0
+
+        await app._render(ev.TodoUpdate(todos=[], agent_name=None))
+        await pilot.pause()
+        assert scroll.size.height == 0
+
+
+def test_tui_todo_dock_scrolls_long_lists():
+    if not _HAS_TEXTUAL:
+        return
+    asyncio.run(_drive_todo_dock_scrolls_long_lists())
+
+
+def test_tui_update_notice_and_manual_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import Mock
+
+    from novacode_cli import updates
+    from novacode_cli.tui.app import NovaApp
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    check = Mock(return_value=updates.UpdateStatus(available=True, current="old", latest="new"))
+    monkeypatch.setattr(updates, "check_for_update", check)
+
+    async def drive() -> None:
+        app = NovaApp(
+            agent=_FakeAgent(), assistant_id="nova-agent", session_state=_SS(),
+            backend=None, token_tracker=TokenTracker(), image_tracker=None, model_name="m",
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            check.assert_not_called()
+            notify = Mock()
+            monkeypatch.setattr(app, "notify", notify)
+            await app._run_update_check("/update")
+            check.assert_called_once_with(force=True)
+            assert "nova update" in notify.call_args.args[0]
+            assert app._notified_nova_update == "new"
+            monkeypatch.delenv("NOVA_DISABLE_UPDATE_CHECK")
+            await app._check_nova_update()
+            assert notify.call_count == 1, "one background notification per revision"
+            check.return_value = updates.UpdateStatus(
+                available=False, current="", latest="", error="offline"
+            )
+            await app._check_nova_update()
+            assert notify.call_count == 1
+
+    asyncio.run(drive())

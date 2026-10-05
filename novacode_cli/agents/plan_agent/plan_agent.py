@@ -196,6 +196,8 @@ def create_plan_agent_with_config(
 
     # Build skill sources using virtual path prefixes that match CompositeBackend routes.
     skill_sources: list[str] = ["/skills/"]
+    if settings.get_shared_skills_dir().is_dir():
+        skill_sources.append("/shared-skills/")
     for i, _p in enumerate(project_skills_dirs):
         skill_sources.append(f"/project-skills-{i}/")
 
@@ -233,6 +235,12 @@ def create_plan_agent_with_config(
     _routes: dict[str, BackendProtocol] = {  # type: ignore[name-defined]
         "/skills/": _skills_backend,
     }
+
+    shared_skills_dir = settings.get_shared_skills_dir()
+    if shared_skills_dir.is_dir():
+        _routes["/shared-skills/"] = FilesystemBackend(
+            root_dir=str(shared_skills_dir), virtual_mode=True,
+        )
 
     # Add project-level skills routes (each gets its own FilesystemBackend)
     for i, proj_skills_dir in enumerate(project_skills_dirs):

@@ -956,10 +956,8 @@ class VerdictScorer:
     message list when a turn is about to be sent, and it does its work on a
     background thread.
 
-    Failures are silence. An unreachable endpoint, a slow model or a full queue
-    all leave the newest results unscored, which the edit reads as "keep" — the
-    history is then merely *less* pruned than the heuristic, never more than the
-    model has actually judged.
+    Failures activate the normal age-based clearing edit. Scoring remains off
+    the turn's critical path, and a successful retry restores verdict selection.
     """
 
     def __init__(
@@ -972,6 +970,7 @@ class VerdictScorer:
         max_state_tokens: int = DEFAULT_MAX_STATE_TOKENS,
         max_request_tokens: int = DEFAULT_MAX_REQUEST_TOKENS,
         min_interval_seconds: float = 2.0,
+        fallback_after_seconds: float = 30.0,
     ) -> None:
         self.client = client
         self.cache = cache
@@ -980,10 +979,23 @@ class VerdictScorer:
         self.max_state_tokens = max_state_tokens
         self.max_request_tokens = max_request_tokens
         self.min_interval = min_interval_seconds
+        self.fallback_after_seconds = fallback_after_seconds
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._last_started = 0.0
         self.last_error: str | None = None
+
+    @property
+    def fallback_required(self) -> bool:
+        """Use normal clearing after a failed or overdue scoring pass."""
+        import time
+
+        with self._lock:
+            return self.last_error is not None or (
+                self._thread is not None
+                and self._thread.is_alive()
+                and time.monotonic() - self._last_started >= self.fallback_after_seconds
+            )
 
     def maybe_score(self, messages: Sequence[AnyMessage]) -> bool:
         """Score the current window in the background. Returns whether it started."""
@@ -1050,6 +1062,12 @@ class VerdictScorer:
                 for candidate in batch:
                     questions.update(questions_for(candidate))
                 answers = self.client.ask(fitted.state, questions)
+                expected = {
+                    f"result_{candidate.label}" for candidate in batch if not candidate.pinned
+                }
+                if not expected.issubset(answers):
+                    error_message = "Decision model returned incomplete tool-result verdicts"
+                    raise ValueError(error_message)  # noqa: TRY301 - activate scoring fallback
                 for name, noul in answers.items():
                     if not name.startswith("result_"):
                         continue
@@ -1102,8 +1120,8 @@ def build_verdict_middleware(scorer: VerdictScorer) -> Any:
     because that is the only place the full message list is available, and it is
     where the results the edit will read are already in place. The work itself is
     handed to the scorer's background thread and this returns immediately, so a
-    slow or unreachable model costs the turn nothing: the results simply stay
-    unscored, which the edit reads as "keep".
+    slow or unreachable model never blocks a turn. The edit uses normal clearing
+    once the scorer reports a failure or exceeds its time budget.
 
     Imported lazily so a disabled flag never pays for the middleware base class.
     """

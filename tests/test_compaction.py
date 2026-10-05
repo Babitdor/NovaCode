@@ -33,6 +33,62 @@ def test_short_conversation_is_single_pass(monkeypatch: pytest.MonkeyPatch) -> N
     assert len(m.call_input_lens) == 1  # one LLM call
 
 
+@pytest.mark.parametrize("failure", ["empty", "502", "timeout"])
+def test_summary_retries_temporary_provider_failure(
+    monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    first = AIMessage(content="") if failure == "empty" else (
+        TimeoutError() if failure == "timeout" else RuntimeError(
+            "{'message': 'Provider returned an empty response', 'code': 502, "
+            "'metadata': {'error_type': 'provider_unavailable'}}"
+        )
+    )
+    model = _MockModel()
+    model.ainvoke = AsyncMock(side_effect=[first, AIMessage(content="SUMMARY")])
+    monkeypatch.setattr(C.asyncio, "sleep", AsyncMock())
+    assert asyncio.run(C.summarize_conversation(model, [HumanMessage(content="task")])) == "SUMMARY"
+    assert model.ainvoke.call_count == 2
+
+
+def test_unavailable_summary_never_rewrites_history(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import AsyncMock
+
+    model = _MockModel()
+    model.ainvoke = AsyncMock(return_value=AIMessage(content=""))
+    monkeypatch.setattr(C.asyncio, "sleep", AsyncMock())
+    monkeypatch.setattr(C, "_archive_messages", lambda *_args: None)
+    messages = [HumanMessage(content="keep this exactly", id="h1")]
+    agent = _CompactAgent(messages)
+    result = asyncio.run(C.compact_conversation(agent, model, "test"))
+    assert not result.success
+    assert "Conversation history was kept" in result.error
+    assert model.ainvoke.call_count == 3
+    assert agent.updated == []
+    assert agent.messages == messages
+
+
+def test_stalled_summary_calls_have_a_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import AsyncMock
+
+    cancelled = []
+
+    async def stalled(_messages: list) -> None:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.append(True)
+
+    model = _MockModel()
+    model.ainvoke = stalled
+    monkeypatch.setattr(C, "SUMMARY_TIMEOUT_SECONDS", 0.001)
+    monkeypatch.setattr(C.asyncio, "sleep", AsyncMock())
+    with pytest.raises(C.SummaryUnavailableError, match="after 3 attempts"):
+        asyncio.run(C.summarize_conversation(model, [HumanMessage(content="task")]))
+    assert len(cancelled) == 3
+
+
 def test_long_conversation_summarizes_hierarchically(monkeypatch: pytest.MonkeyPatch) -> None:
     """A conversation far larger than the budget must be chunked (multiple calls)
     rather than sent in one overflowing call."""

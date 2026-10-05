@@ -663,7 +663,7 @@ _PROJECT_SKILLS_CACHE_TTL = 30.0  # seconds
 def find_project_skills(project_root: Path) -> list[Path]:
     """Find project-specific skills directories.
 
-    Checks for skills in both .claude/ and .nova/ directories.
+    Checks .agents/, .claude/, and .nova/ skills directories.
     Uses a cache with TTL to avoid repeated filesystem scans.
 
     Args:
@@ -683,6 +683,11 @@ def find_project_skills(project_root: Path) -> list[Path]:
             return cached_value
 
     skills_dirs = []
+
+    # The official Skills CLI stores shared project skills here.
+    shared_skills = project_root / ".agents" / "skills"
+    if shared_skills.is_dir():
+        skills_dirs.append(shared_skills)
 
     # Check .claude/skills/
     claude_skills = project_root / ".claude" / "skills"
@@ -1283,6 +1288,11 @@ class Settings:
         return skills_dir
 
     @staticmethod
+    def get_shared_skills_dir() -> Path:
+        """Return the official Skills CLI's global canonical directory."""
+        return Path.home() / ".agents" / "skills"
+
+    @staticmethod
     def get_global_claude_skills_dir() -> Path:
         """Get the global Claude Code skills directory path.
 
@@ -1302,19 +1312,27 @@ class Settings:
         return self.project_root / ".nova" / "skills"
 
     def get_project_skills_dirs(self) -> list[Path]:
-        """Get all project-level skills directories (both .claude/ and .nova/).
+        """Get project skills, including Skills CLI installs in the launch directory.
 
-        Checks both:
-        - {project_root}/.claude/skills/
-        - {project_root}/.nova/skills/
+        Checks .agents/, .claude/, and .nova/ under the project root and
+        nested .agents/skills directories between that root and cwd.
 
         Returns:
             List of existing skills directory paths (may be empty if not in a project)
         """
-        if not self.project_root:
-            return []
-
-        return find_project_skills(self.project_root)
+        # Upstream installs relative to cwd, including outside a Git project.
+        root = self.project_root or Path.cwd()
+        directories = list(find_project_skills(root))
+        current = Path.cwd().resolve()
+        if current.is_relative_to(root.resolve()):
+            nested = []
+            while current != root.resolve():
+                shared = current / ".agents" / "skills"
+                if shared.is_dir():
+                    nested.append(shared)
+                current = current.parent
+            directories.extend(reversed(nested))
+        return directories
 
     def ensure_project_skills_dir(self) -> Path | None:
         """Ensure project-level skills directory exists and return its path.

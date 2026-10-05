@@ -160,9 +160,8 @@ class VerdictToolUsesEdit(OffloadingToolUsesEdit):
     when its cached verdict says it is no longer needed:
 
     * no verdict (never scored, or scored under a different value) → **keep**.
-      Failing open is what makes a cold cache, a slow model or an unreachable
-      endpoint safe: the history is only ever *less* pruned than the heuristic,
-      never more than the model has actually judged.
+      A cold cache keeps results while scoring is healthy. When ``scorer``
+      reports a failed or overdue request, the normal age-based edit takes over.
     * verdict at or above ``keep_threshold`` → keep.
 
     The ``trigger`` still gates the whole edit, so nothing is cleared before the
@@ -174,9 +173,13 @@ class VerdictToolUsesEdit(OffloadingToolUsesEdit):
 
     verdicts: Any = None
     keep_threshold: float = 0.5
+    scorer: Any = None
 
     def apply(self, messages: list[AnyMessage], *, count_tokens) -> None:  # noqa: ANN001
         """Clear only judged-stale results; capture payloads before they vanish."""
+        if self.scorer is not None and self.scorer.fallback_required:
+            super().apply(messages, count_tokens=count_tokens)
+            return
         if self.verdicts is None:
             return
         # As in the base class: the payloads must be read before super() rewrites
@@ -185,7 +188,7 @@ class VerdictToolUsesEdit(OffloadingToolUsesEdit):
         # and an id-keyed map would restore the same payload for every result
         # sharing that id.
         before = {
-            idx: (msg.name, msg.content)
+            idx: msg
             for idx, msg in enumerate(messages)
             if isinstance(msg, ToolMessage)
         }
@@ -210,12 +213,9 @@ class VerdictToolUsesEdit(OffloadingToolUsesEdit):
         # The base class clears everything but the last `keep` results (and only
         # when the pool exceeds `keep` at all), before any verdict is consulted.
         #
-        # `cleared` marks a result the base class has already reached. It is not
-        # unset by _restore_unjudged -- that only rewrites content and name -- so
-        # a result restored on an earlier pass still carries it, and is skipped
-        # here. Two consequences worth knowing: a result judged stale is never
-        # re-judged, and a result restored as "no verdict" is never re-judged
-        # either, so it stays verbatim even once a verdict exists for it.
+        # `cleared` marks a result the base class has already reached. Previously
+        # retained results are restored including their original metadata, so
+        # they remain eligible for a later verdict or the default fallback.
         results = [
             (index, message)
             for index, message in enumerate(messages)
@@ -246,7 +246,7 @@ class VerdictToolUsesEdit(OffloadingToolUsesEdit):
     def _restore_unjudged(
         self,
         messages: list[AnyMessage],
-        before: dict[int, tuple[str | None, object]],
+        before: dict[int, ToolMessage],
         judged: set[int],
     ) -> None:
         """Put back every result the base class touched without a stale verdict.
@@ -265,16 +265,10 @@ class VerdictToolUsesEdit(OffloadingToolUsesEdit):
                 continue
             if index in judged:
                 continue
-            name, payload = before.get(index, (None, None))
-            content = payload if isinstance(payload, str) else str(payload or "")
-            if msg.content == content and msg.name == name:
-                continue
-            messages[index] = msg.model_copy(
-                update={
-                    "content": content,
-                    "name": name if name is not None else msg.name,
-                }
-            )
+            if index in before:
+                # Restore the clearing metadata too: a retained result must be
+                # eligible for a later verdict or the default fallback.
+                messages[index] = before[index]
 
 
 __all__ = [

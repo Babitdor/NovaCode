@@ -3280,6 +3280,7 @@ class SkillsScreen(ModalScreen[None]):
             search_dirs = []
             try:
                 search_dirs.append((settings.ensure_user_skills_dir(), "global"))
+                search_dirs.append((settings.get_shared_skills_dir(), "global"))
             except Exception:
                 pass
             try:

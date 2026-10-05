@@ -22,6 +22,13 @@ class _FakeSettings:
     def ensure_user_skills_dir(self, _assistant_id=None):
         return Path(".")
 
+    @staticmethod
+    def get_shared_skills_dir():
+        return Path("no-such-shared-skills-dir-xyz")
+
+    def get_project_skills_dirs(self):
+        return []
+
     def get_project_skills_dir(self):
         return None
 

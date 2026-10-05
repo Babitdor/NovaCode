@@ -63,6 +63,10 @@ def skill_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
             return project
 
         @staticmethod
+        def get_shared_skills_dir() -> Path:
+            return tmp_path / "shared" / "skills"
+
+        @staticmethod
         def get_global_claude_skills_dir() -> Path:
             return claude
 

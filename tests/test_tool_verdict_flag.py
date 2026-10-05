@@ -135,6 +135,8 @@ def test_the_middleware_queues_scoring_and_never_blocks_the_call() -> None:
     )
 
     class Exploding:
+        cache = ToolVerdictCache(path=None)
+
         def maybe_score(self, _messages):  # noqa: ANN001
             raise RuntimeError("scorer is broken")
 

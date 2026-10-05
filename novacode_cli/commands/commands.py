@@ -453,6 +453,11 @@ def execute_skills_command(args: argparse.Namespace) -> None:
     Args:
         args: Parsed command line arguments with skills_command attribute
     """
+    if args.skills_command == "add" and hasattr(args, "upstream_args"):
+        from novacode_cli.skills.upstream import run_skills_cli
+
+        raise SystemExit(run_skills_cli("add", args.upstream_args))
+
     from novacode_cli.skills.skill_creation import (
         _add,
         _create,

@@ -441,6 +441,9 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
         "_run_remote_screen", "manage Discord/Telegram bridges", wants_text=False
     ),
     "compact": SlashCommand("_run_compact", "summarize conversation to free context"),
+    "update": SlashCommand(
+        "_run_update_check", "check for Nova updates and show the update command"
+    ),
     "save": SlashCommand("_run_save", "save the session now", wants_text=False),
     "copy": SlashCommand("_run_copy", "copy last response (or whole chat) — or click a message"),
     "plugins": SlashCommand("_run_plugins", "install / manage plugins and marketplaces"),
@@ -1049,11 +1052,18 @@ class NovaApp(App):
        long one (real lists run 2-14 items) and scrolls inside itself. */
     /* Inside #prompt-dock (a Vertical), so it takes its own rows above the
        input instead of fighting it for the same bottom-docked rows. */
-    #todo-dock {
+    #todo-scroll {
         display: none;
         height: auto;
         max-height: 12;
+        overflow-x: hidden;
         overflow-y: auto;
+    }
+    #todo-scroll.active { display: block; }
+    #todo-scroll.collapsed { max-height: 1; overflow-y: hidden; }
+    #todo-dock {
+        display: none;
+        height: auto;
         padding: 0 2;
         background: $surface;
         /* No accent bar: the checklist reads as plain transcript chrome. The
@@ -1688,9 +1698,10 @@ class NovaApp(App):
             # dock:bottom sibling: two bottom-docked siblings both claim the
             # same rows, so the checklist rendered on top of the input and
             # only appeared after a resize forced a reflow.
-            yield Static("", id="todo-dock").with_tooltip(
-                "Todo checklist — click (or alt+t) to collapse/expand"
-            )
+            with VerticalScroll(id="todo-scroll"):
+                yield Static("", id="todo-dock").with_tooltip(
+                    "Todo checklist — scroll to view all items; click (or alt+t) to collapse/expand"
+                )
             # "Jump to latest" sits at the top-right of the footer, directly above
             # the status/skills bar. The outer row is a transparent, right-aligning
             # strip; the inner Horizontal shrinks to the text (width: auto) and the
@@ -1939,6 +1950,8 @@ class NovaApp(App):
         self._update_mode_badge()
         self._refresh_hint_bar()
         self._refresh_info_bar()
+        self.run_worker(self._check_nova_update(), name="nova-update-check", group="nova-updates")
+        self.set_interval(3600, self._schedule_nova_update_check)
         # Background tasks (Ctrl+B): observe the registry so the persistent
         # indicator + notifications update reactively; tick once a second so the
         # runtime clock advances while tasks run.
@@ -3655,6 +3668,7 @@ class NovaApp(App):
         """
         try:
             dock = self._w("#todo-dock", Static)
+            scroll = self._w("#todo-scroll", VerticalScroll)
         except NoMatches:
             return
         items = todos or []
@@ -3664,6 +3678,8 @@ class NovaApp(App):
             isinstance(td, dict) and td.get("status") == "completed" for td in items
         ):
             dock.remove_class("active")
+            scroll.remove_class("active")
+            scroll.scroll_home(animate=False)
             _paint(dock, "")
             return
         collapsed = getattr(self, "_todos_collapsed", False)
@@ -3674,6 +3690,10 @@ class NovaApp(App):
         _paint(dock, text)
         dock.set_class(collapsed, "collapsed")
         dock.add_class("active")
+        scroll.set_class(collapsed, "collapsed")
+        scroll.add_class("active")
+        if collapsed:
+            scroll.scroll_home(animate=False)
 
     def action_toggle_todos(self) -> None:
         """Collapse/expand the todo checklist (click the dock, or alt+t)."""
@@ -9291,6 +9311,37 @@ class NovaApp(App):
         self._prune_transcript()
         self._scroll_end()
 
+    def _schedule_nova_update_check(self) -> None:
+        self.run_worker(self._check_nova_update(), name="nova-update-check", group="nova-updates")
+
+    async def _check_nova_update(self, *, force: bool = False) -> None:
+        import os
+
+        from novacode_cli.updates import check_for_update
+
+        if not force and os.environ.get("NOVA_DISABLE_UPDATE_CHECK", "").lower() in {
+            "1", "true", "yes",
+        }:
+            return
+        status = await asyncio.to_thread(check_for_update, force=force)
+        if status.available:
+            message = (
+                f"Nova update available ({status.latest[:12]}). Exit Nova and run: nova update"
+            )
+            if force or getattr(self, "_notified_nova_update", None) != status.latest:
+                self._log(Text(message, style="yellow"))
+                self.notify(message, title="Nova update", timeout=12)
+                self._notified_nova_update = status.latest
+        elif force:
+            self._log(Text(
+                f"Could not check for updates: {status.error}"
+                if status.error else "Nova is up to date.",
+                style="yellow" if status.error else "dim",
+            ))
+
+    async def _run_update_check(self, _text: str) -> None:
+        await self._check_nova_update(force=True)
+
     async def _run_compact(self, text: str) -> None:
         """Compact the conversation natively (spinner + result component)."""
         from novacode_cli.compaction import compact_conversation
@@ -11101,6 +11152,7 @@ class NovaApp(App):
         dirs: list = []
         try:
             dirs.append(settings.ensure_user_skills_dir())
+            dirs.append(settings.get_shared_skills_dir())
         except Exception:  # noqa: BLE001
             pass
         try:

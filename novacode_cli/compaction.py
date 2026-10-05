@@ -29,6 +29,16 @@ from novacode_cli.prompts import render_template
 COMPACTION_SUMMARY_MARKER = "[Conversation context — previous session summarized]"
 
 logger = logging.getLogger(__name__)
+SUMMARY_TIMEOUT_SECONDS = 60.0
+SUMMARY_ATTEMPTS = 3
+
+
+class SummaryUnavailableError(RuntimeError):
+    """The provider could not produce a usable compaction summary."""
+
+    def __init__(self, message: str = "Provider returned an empty response") -> None:
+        """Describe a failed or empty summarization response."""
+        super().__init__(message)
 
 
 def is_compaction_summary(text: str) -> bool:
@@ -274,8 +284,31 @@ async def _summarize_text(
         conversation=conversation_text,
         tail_kept=tail_kept,
     )
-    response = await model.ainvoke([HumanMessage(content=prompt)])
-    return _format_message_content(response.content)
+    from novacode_cli.errors import is_retryable_model_error
+
+    for attempt in range(SUMMARY_ATTEMPTS):
+        try:
+            response = await asyncio.wait_for(
+                model.ainvoke([HumanMessage(content=prompt)]), SUMMARY_TIMEOUT_SECONDS
+            )
+            summary = _format_message_content(response.content).strip()
+            if not summary:
+                raise SummaryUnavailableError()  # noqa: TRY301 - retry empty output
+            return summary  # noqa: TRY300
+        except Exception as error:
+            if not is_retryable_model_error(error):
+                raise
+            if attempt + 1 == SUMMARY_ATTEMPTS:
+                message = (
+                    "The summary provider is unavailable after 3 attempts. "
+                    "Conversation history was kept. Try /compact again shortly "
+                    "or switch models with /model."
+                )
+                raise SummaryUnavailableError(message) from error
+            logger.debug("Retrying compaction summary", exc_info=True)
+            await asyncio.sleep(2**attempt)
+    message = "No summary attempts configured"
+    raise AssertionError(message)
 
 
 def _answer_budget(budget: int, questions: str) -> int:

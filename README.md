@@ -63,7 +63,8 @@ An open-source, terminal-based AI coding assistant built on LangGraph and the `d
 - **Project Graph**: Visualize and query your codebase architecture — 5000+ nodes, community detection, dependency analysis, blast radius tracking
 
 ### Extensibility
-- **MCP Support**: Extend capabilities with Model Context Protocol servers (12 presets, plus any custom server) — tools eagerly discovered with server-prefixed names to avoid collisions
+- **MCP Support**: Extend capabilities with Model Context Protocol servers (11 curated presets, plus any custom server) — tools eagerly discovered with server-prefixed names to avoid collisions
+  Presets: Playwright, Serena, Context7, Apify, CUA Driver, Sequential Thinking, Chrome DevTools, Firecrawl, Tavily, Exa, and [Perplexity](https://github.com/perplexityai/modelcontextprotocol). Perplexity requires an API key; select it in `/mcp` to configure it.
 - **Skills System**: 50+ built-in skills with progressive disclosure — domain-specific workflows loaded on demand. Install skills from any public GitHub repo
 - **Plugin System**: Python entry-point based plugins that can register slash commands, add middleware at defined slots, and extend the agent
 - **Custom Subagents**: 4 built-in in-process specialists (code exploration, refactoring, bug fixing, browser automation), plus the 7 research-swarm personas and any agents you define yourself. Longer, self-contained jobs go to the async agents below
@@ -167,6 +168,32 @@ nova doctor
 # Start the CLI
 nova
 ```
+
+### Update Nova
+
+```bash
+nova update --check  # check now without installing
+nova update          # update the Nova installation running this command
+```
+
+The TUI checks in the background at startup and hourly. When an update is
+available, a notification and a transcript notice tell you to exit and run
+`nova update`, then restart. `/update` checks immediately from the TUI.
+Set `NOVA_DISABLE_UPDATE_CHECK=1` to disable background checks; manual checks
+still work. Checks use a one-hour cache and stay quiet when offline.
+
+Repo and Git installs compare commits against the tracked branch (Git package
+installs use `main`), so pushing code can trigger a notification without changing
+the package version. Package-index installs check the published package version.
+For a stable release workflow, bump the version and publish the package for each
+release; repo users can receive changes directly from Git.
+
+Source checkouts must have no local changes and track the matching `origin`
+branch. Updates fetch and merge with `--ff-only`, then refresh dependencies with
+uv or pip. uv tool installations use `uv tool upgrade`; other package installs
+use the running Python environment. Pinned Git refs, forks, and archive installs
+remain managed through their original installer. Nova settings, sessions, MCPs,
+and skills remain in their existing directories.
 
 ### API Keys Setup
 
@@ -588,38 +615,54 @@ nova skills create my-skill --project
 nova skills info web-research
 ```
 
-#### Installing Skills from GitHub
+#### Installing Skills
+
+`nova skills add` runs the [official Skills CLI](https://github.com/vercel-labs/skills)
+(`npx --yes skills@latest add`) with your arguments unchanged. It requires Node.js
+(current Skills CLI: Node 22.20+), npm/npx, and Git for repository sources. The first
+run downloads the CLI; subsequent runs use npm's cache and check for updates.
+It runs without Nova onboarding or an LLM API key.
 
 ```bash
-# Install a skill from a GitHub repo
-nova skills add https://github.com/owner/repo
+# Discover skills and select which ones to install interactively
+nova skills add vercel-labs/agent-skills
 
-# Install a specific named skill from a multi-skill repo
-nova skills add https://github.com/livekit/agent-skills --skill livekit-agents
+# List available skills without installing
+nova skills add vercel-labs/agent-skills --list
 
-# Install from a specific branch
-nova skills add https://github.com/owner/repo/tree/main/my-skill
+# Select several skills; --skill selects existing names, it does not rename them
+nova skills add owner/repo --skill first-skill second-skill
 
-# Install as project-scoped
-nova skills add https://github.com/owner/repo --project
+# Install to the shared directory that Nova reads (project scope is the default)
+nova skills add owner/repo --agent universal --skill my-skill -y
 
-# Overwrite an existing skill
-nova skills add https://github.com/owner/repo --skill my-skill --force
+# Install globally for all projects
+nova skills add owner/repo --agent universal --skill my-skill -g -y
+
+# Local folders, GitHub/GitLab URLs, SSH URLs, and owner/repo@skill are supported
+nova skills add ./local-skills --agent universal --copy -y
+nova skills add owner/repo@my-skill --agent universal -y
+
+# Install every skill to every supported upstream agent
+nova skills add owner/repo --all
+
+# Alias
+nova add skill owner/repo --list
 ```
 
-**What gets installed:**
+The official installer controls selection, confirmation, copy/symlink behavior,
+complete supporting files (including binary assets), errors, and lock files.
+Nova reads shared skills from `.agents/skills/` and `~/.agents/skills/` alongside
+its existing `.nova/skills/` and Claude skill directories. For Nova-only installs,
+use `--agent universal`; other `--agent` choices target the upstream agents.
+A source without valid skills produces the upstream result; add no longer
+fabricates a skill from a README. Use `nova skills create` to author a new skill.
 
-| Directory | Contents |
-|-----------|----------|
-| `scripts/` | Shell scripts, automation helpers |
-| `examples/` | Usage examples and sample code |
-| `assets/` | Templates, config files, static resources |
-| `references/` | Docs, cheat sheets, reference material |
-| `prompts/` | Prompt templates |
-| `templates/` | Code or file templates |
-| `data/` | Data files used by the skill |
-
-If the repository has no `SKILL.md`, Nova auto-generates one from the repo's README.
+New installs use the upstream lock files and can be maintained with
+`npx skills check`, `npx skills update`, and `npx skills remove`.
+Nova's existing update command continues to manage older `.nova` lock entries.
+The previous add-only `--project` flag is unnecessary (project is the default),
+and `--force` is replaced by the upstream confirmation/`--yes` workflow.
 
 ### System One Compaction
 
