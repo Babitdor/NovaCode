@@ -192,6 +192,7 @@ from novacode_cli.agents.tool_offload import cleared_dir
 from novacode_cli.agents.default_subagents.subagents import (
     _tool_name,
     retrieve_core_subagents,
+    unique_subagent_specs,
 )
 from novacode_cli.backends import ConversationHistoryBackend
 from novacode_cli.backends import OptimizedFilesystemBackend as FilesystemBackend
@@ -1747,10 +1748,10 @@ def _build_subagent_roster(
     # subagent mid-run — see _harden_subagent_specs. Returns fresh copies (never
     # mutates the cached specs, which would accumulate middleware across builds).
     Nova_SubAgent = _harden_subagent_specs(
-        Nova_SubAgent, skill_sources, main_model_supports_images
+        unique_subagent_specs(Nova_SubAgent), skill_sources, main_model_supports_images
     )
 
-    return Nova_SubAgent + async_subagents
+    return unique_subagent_specs(Nova_SubAgent + async_subagents)  # type: ignore[arg-type]
 
 
 def create_agent_with_config(

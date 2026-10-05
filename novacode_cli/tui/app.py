@@ -3712,9 +3712,15 @@ class NovaApp(App):
         """
         existing = self._subagent_rows.get(task.task_id)
         if existing is None and self._subagents_stale:
-            # First dispatch of a new turn: the previous run's rows have been
-            # readable for a whole turn, so they give way to this one.
-            self._reset_subagents()
+            # A new turn drops finished history, but background tasks can
+            # still be running independently of the previous foreground turn.
+            self._subagent_rows = {
+                key: row for key, row in self._subagent_rows.items() if row.status == "running"
+            }
+            phases = {row.phase_id for row in self._subagent_rows.values()}
+            self._subagent_phase_order = [p for p in self._subagent_phase_order if p in phases]
+            self._subagent_collapsed_phases.intersection_update(phases)
+            self._subagents_stale = False
         if existing is not None:
             for field in (
                 "phase_id",
@@ -3736,16 +3742,15 @@ class NovaApp(App):
         if task.phase_id and task.phase_id not in self._subagent_phase_order:
             self._subagent_phase_order.append(task.phase_id)
         self._subagent_rows[task.task_id] = task
-        # A run that has finished folds down to its header, so the transcript gets
-        # its rows back without the panel disappearing mid-read.
+        # Completed and stopped rows disappear from the live panel.
         self._subagents_collapsed = not any(
             row.status == "running" for row in self._subagent_rows.values()
         )
         self._schedule_subagents_paint()
 
     def _subagent_task_list(self) -> list[Any]:
-        """Rows in arrival order, capped so a runaway fan-out cannot grow."""
-        rows = list(self._subagent_rows.values())
+        """Active rows in arrival order, capped for a runaway fan-out."""
+        rows = [row for row in self._subagent_rows.values() if row.status == "running"]
         if len(rows) > subagent_tasks.MAX_ROWS:
             rows = rows[-subagent_tasks.MAX_ROWS :]
         return rows
@@ -3887,6 +3892,9 @@ class NovaApp(App):
                 self._subagent_phase_order.append(row.phase_id)
             changed = True
         if changed:
+            self._subagents_collapsed = not any(
+                row.status == "running" for row in self._subagent_rows.values()
+            )
             self._schedule_subagents_paint()
 
     def action_toggle_subagents(self) -> None:

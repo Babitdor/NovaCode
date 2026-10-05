@@ -65,7 +65,13 @@ CORE_TOOLS = frozenset(
         "skills_search",
         "search_tools",
         "memory_search",
+        # The system prompt delegates background work proactively. Keep the
+        # entire available async lifecycle visible without a search round-trip.
+        "start_async_task",
         "check_async_task",
+        "update_async_task",
+        "cancel_async_task",
+        "list_async_tasks",
         # Artifacts: the prompt tells the agent to create these proactively, so
         # the schemas must be bound without a search_tools round-trip — otherwise
         # the instruction names tools the model cannot see.

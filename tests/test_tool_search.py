@@ -95,6 +95,23 @@ def test_frequent_tools_stay_bound() -> None:
     assert "playwright_browser_click" in _names(mw._apply(_request([HumanMessage("hi")])))
 
 
+def test_available_async_lifecycle_tools_are_bound_without_search() -> None:
+    names = {
+        "start_async_task",
+        "check_async_task",
+        "update_async_task",
+        "cancel_async_task",
+        "list_async_tasks",
+    }
+    req = _request([HumanMessage("review this change in the background")])
+    req = req.override(tools=[*TOOLS, *[_mcp(name, "Async subagent tool") for name in names]])
+    bound = _names(_mw()._apply(req))
+    assert names <= bound
+    assert "playwright_browser_navigate" not in bound
+    # A session without an async server must not acquire nonexistent tools.
+    assert not names & _names(_mw()._apply(_request([HumanMessage("hi")])))
+
+
 def test_hidden_subagents_leave_the_task_description() -> None:
     req = _mw()._apply(_request([HumanMessage("hi")]))
     desc = next(t for t in req.tools if t.name == "task").description
@@ -197,9 +214,9 @@ def test_the_whole_subagent_roster_is_deferred() -> None:
     from novacode_cli.agents.default_subagents.subagents import LISTED_SUBAGENTS
 
     assert "general-purpose" in LISTED_SUBAGENTS
-    source = (
-        Path(novacode_cli.__file__).parent / "agents" / "core_agent.py"
-    ).read_text(encoding="utf-8")
-    assert "s[\"name\"] not in LISTED_SUBAGENTS" in source, (
+    source = (Path(novacode_cli.__file__).parent / "agents" / "core_agent.py").read_text(
+        encoding="utf-8"
+    )
+    assert 's["name"] not in LISTED_SUBAGENTS' in source, (
         "the full subagent roster is still billed in the task description"
     )

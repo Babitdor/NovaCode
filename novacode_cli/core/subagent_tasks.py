@@ -272,7 +272,12 @@ def panel_title(tasks: list[SubagentTask], *, collapsed: bool = False) -> Text:
     title.append("▶ " if collapsed else "▼ ")
     title.append("dynamic subagents", style="bold")
     title.append("   ")
-    title.append(f"{done}/{total} done", style="dim")
+    title.append(
+        f"{total} running"
+        if tasks and all(task.status == "running" for task in tasks)
+        else f"{done}/{total} done",
+        style="dim",
+    )
     title.append(" · ", style="dim")
     title.append(f"{phases} phase" + ("s" if phases != 1 else ""), style="dim")
     if failed:

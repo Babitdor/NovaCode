@@ -96,7 +96,10 @@ async def _drive_a_fan_out() -> dict:
                 duration_ms=33_600,
             )
         )
-        # Five finish, so the header should read 5/6 done · 1 phase · 1 failed.
+        app._paint_subagents()
+        out["running_title"] = str(app.query_one("#subagents-title").render())
+        out["running_body"] = str(app.query_one("#subagents-body").render())
+        # Finished and failed tasks leave the live panel.
         for index in range(5):
             await app._render(
                 ev.SubagentTask(
@@ -180,19 +183,18 @@ def test_a_fan_out_becomes_one_phase_with_a_row_per_task():
     out = asyncio.run(_drive_a_fan_out())
 
     assert out["docks"] == 1, "the panel mounted more than once"
-    assert out["active"], "the panel never became visible"
-    assert "5/6 done" in out["title"], out["title"]
-    assert "1 phase" in out["title"], out["title"]
-    assert "1 failed" in out["title"], out["title"]
+    assert not out["active"], "the panel remained visible after all tasks finished"
+    assert out["title"] == ""
+    assert out["body"] == ""
+    assert "5 running" in out["running_title"], out["running_title"]
+    assert "1 phase" in out["running_title"], out["running_title"]
     # One phase, six tasks, each named.
     assert out["phases"] == ["call_eval_1"]
-    assert "research: docling-0" in out["body"]
+    assert "research: docling-0" in out["running_body"]
     # The type must not be prefixed on top of the label's own kind prefix.
-    assert "researcher: research:" not in out["body"], out["body"]
-    assert "research: docling-4" in out["body"]
-    # The failure text is the reason the row exists.
-    assert "charmap" in out["body"]
-    assert "33.6s" in out["body"]
+    assert "researcher: research:" not in out["running_body"], out["running_body"]
+    assert "research: docling-4" in out["running_body"]
+    assert "chroma" not in out["running_body"]
     # The MODEL column names what the row will actually run on. Since per-role models
     # landed, a row resolves through the role resolver rather than echoing the session
     # model, so it renders as the role's `provider:model` when that role is set. Assert
@@ -202,7 +204,7 @@ def test_a_fan_out_becomes_one_phase_with_a_row_per_task():
 
     assert out["model"], "the MODEL column was blank"
     assert out["model"] == panel_row_model("eval", "deepseek-v4.1-flash"), out["model"]
-    # And a finished run folds down to its header rather than holding rows.
+    # The dock is hidden after the final completion.
     assert out["collapsed_after_all_done"]
 
 
@@ -342,7 +344,7 @@ def test_remote_async_tasks_show_in_the_same_panel():
     assert out["rows"] == ["async:t1", "async:t2"], out["rows"]
     assert out["phases"] == ["async"]
     assert "doc-writer" in out["body"]
-    assert "auditor" in out["body"]
+    assert "auditor" not in out["body"]
 
 
 async def _drive_a_dropped_paint_timer() -> dict:
@@ -418,9 +420,10 @@ async def test_turn_end_stops_foreground_rows_and_freezes_time(
         await app._render(ev.Cancelled())
         assert {key: row.duration_ms for key, row in app._subagent_rows.items()} == durations
         title = str(app.query_one("#subagents-title").render())
-        assert "2 stopped" in title
+        assert title == ""
+        assert not app.query_one("#subagents-dock").has_class("active")
         before = str(app.query_one("#subagents-body").render())
-        assert "stopped" in before
+        assert before == ""
         await asyncio.sleep(1.1)
         await pilot.pause()
         assert str(app.query_one("#subagents-body").render()).split() == before.split()
@@ -440,6 +443,50 @@ async def test_interrupt_keeps_independent_async_rows_running():
         assert app._subagent_rows["sync"].status == "stopped"
         assert app._subagent_rows["async:a"].status == "running"
         assert app._subagents_tick is not None
+
+
+@pytest.mark.parametrize("status", ["done", "failed", "stopped"])
+async def test_terminal_rows_disappear_while_other_tasks_stay_visible(status: str):
+    app = _app()
+    async with app.run_test(size=(120, 44)):
+        await app._render(_task("finishing", label="finishing task"))
+        await app._render(_task("ongoing", label="ongoing task"))
+        await app._render(_task("finishing", status=status))
+        app._paint_subagents()
+        assert [row.task_id for row in app._subagent_task_list()] == ["ongoing"]
+        body = str(app.query_one("#subagents-body").render())
+        assert "ongoing task" in body
+        assert "finishing task" not in body
+        assert app._subagents_tick is not None
+
+
+async def test_running_async_task_survives_new_foreground_dispatch():
+    app = _app()
+    async with app.run_test(size=(120, 44)):
+        app._ingest_async_tasks(
+            {"a": {"task_id": "a", "agent_name": "reviewer", "status": "running"}}
+        )
+        await app._render(ev.Done(had_response=True))
+        await app._render(_task("new", label="new task"))
+        app._paint_subagents()
+        assert {row.task_id for row in app._subagent_task_list()} == {"async:a", "new"}
+        app._ingest_async_tasks({"a": {"task_id": "a", "status": "success"}})
+        app._paint_subagents()
+        assert [row.task_id for row in app._subagent_task_list()] == ["new"]
+        await app._render(_task("new", status="done"))
+        app._paint_subagents()
+        assert not app.query_one("#subagents-dock").has_class("active")
+        assert app._subagents_tick is None
+
+
+async def test_async_dispatch_expands_panel_after_completed_foreground_turn():
+    app = _app()
+    async with app.run_test(size=(120, 44)):
+        await app._render(_task("old", status="done"))
+        app._ingest_async_tasks({"a": {"task_id": "a", "status": "running"}})
+        app._paint_subagents()
+        assert app.query_one("#subagents-dock").has_class("active")
+        assert not app.query_one("#subagents-dock").has_class("collapsed")
 
 
 async def test_clear_removes_panel_rows_phases_and_timers(monkeypatch: pytest.MonkeyPatch):
@@ -476,9 +523,14 @@ async def test_escape_cancels_stream_and_stops_subagent_panel():
     class HangingAgent(type(app.agent)):
         async def astream(self, _inp, **_kw):  # noqa: ANN001, ANN003, ANN202
             yield (
-                (), "custom", {
-                    "type": "subagent", "phase": "start", "id": "live",
-                    "label": "sync task", "subagent_type": "researcher",
+                (),
+                "custom",
+                {
+                    "type": "subagent",
+                    "phase": "start",
+                    "id": "live",
+                    "label": "sync task",
+                    "subagent_type": "researcher",
                 },
             )
             started.set()

@@ -778,7 +778,14 @@ Dispatched by `/research`; kept out of the everyday roster and loaded on demand.
 
 Async agents read, search and report; the ones that write (documentation, tests, refactoring) do so unattended, so give them a self-contained task. Work that needs your approval along the way belongs with an in-process specialist, because approvals do not reach the server.
 
-Start any with `start_async_task()`, check status with `check_async_task()`. These tools appear only while the LangGraph server is reachable; when it is down, Nova delegates to the in-process subagents instead.
+Start any with `start_async_task()`, check status with `check_async_task()`.
+When Nova has a local server planned or a usable external server, the async
+tools stay visible to the model without a tool search. The local server starts
+on the first dispatch. Otherwise Nova uses its in-process subagents.
+
+The dynamic subagents panel shows only active tasks. Completed, failed and
+stopped rows disappear, and the panel hides when no tasks remain active.
+Background tasks remain visible across foreground turns while they are running.
 
 ## Hooks System
 

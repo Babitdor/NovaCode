@@ -1,24 +1,25 @@
 # Built-In Agents for NOVA CLI
 
+import logging
 from collections.abc import Callable
 from typing import Any
 
-from langchain.tools import BaseTool
 from deepagents.middleware.subagents import SubAgent
+from langchain.tools import BaseTool
 
 from .prompt import (
-    CODE_EXPLORER,
-    REFACTORING_SPECIALIST_AGENT,
-    BUG_FIX_AGENT,
     BROWSER_AUTOMATION_AGENT,
-    # Research-swarm agents (dispatched by /research; see RESEARCH_SWARM_AGENTS)
-    WEB_RESEARCHER,
+    BUG_FIX_AGENT,
+    CODE_EXPLORER,
     FACT_CHECKER,
-    RESEARCH_SYNTHESIZER,
+    FINANCIAL_ANALYST,
     LITERATURE_REVIEWER,
     MARKET_ANALYST,
-    FINANCIAL_ANALYST,
+    REFACTORING_SPECIALIST_AGENT,
+    RESEARCH_SYNTHESIZER,
     TECHNICAL_RESEARCHER,
+    # Research-swarm agents (dispatched by /research; see RESEARCH_SWARM_AGENTS)
+    WEB_RESEARCHER,
 )
 
 AnyTool = BaseTool | Callable[..., Any]
@@ -61,6 +62,22 @@ RESEARCH_SWARM_AGENTS = frozenset(
 #: context cost progressive disclosure exists to avoid. ``search_tools`` finds
 #: the rest by what they do.
 LISTED_SUBAGENTS = frozenset({"general-purpose"})
+
+
+def unique_subagent_specs(specs: list[SubAgent]) -> list[SubAgent]:
+    """Keep the first registration of each name without mutating cached specs."""
+    seen: set[str] = set()
+    result: list[SubAgent] = []
+    for spec in specs:
+        name = spec["name"]
+        if name in seen:
+            logging.getLogger(__name__).warning(
+                "Skipping duplicate subagent registration: %s", name
+            )
+            continue
+        seen.add(name)
+        result.append(spec)
+    return result
 
 
 def retrieve_core_subagents(

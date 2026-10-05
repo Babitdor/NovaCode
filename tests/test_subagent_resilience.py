@@ -9,11 +9,34 @@ second ``create_agent_with_config`` build would accumulate a duplicate retry
 middleware and langchain aborts with "duplicate middleware instances".
 """
 
+import pytest
 from langchain.agents.middleware import ModelRetryMiddleware
 
 from novacode_cli.agents.core_agent import _harden_subagent_specs
 from novacode_cli.bootstrap import VisionCaptionMiddleware
 from novacode_cli.security.middleware import SecurityMiddleware
+
+
+def test_roster_combines_sources_without_duplicate_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    import novacode_cli.agents.core_agent as core
+    from novacode_cli.plugins import claude_plugins
+
+    builtin = {"name": "code-explorer", "description": "Built-in", "system_prompt": "Explore"}
+    named = {**builtin, "description": "Named copy"}
+    plugin = {**builtin, "name": "plugin-agent"}
+    remote = {"name": "code-explorer", "graph_id": "explore", "url": "http://localhost"}
+    monkeypatch.setattr(core, "retrieve_core_subagents", lambda **_kw: [builtin])
+    monkeypatch.setattr(core, "build_named_subagents", lambda **_kw: [named])
+    monkeypatch.setattr(claude_plugins, "plugin_agent_specs", lambda: [plugin, plugin])
+    monkeypatch.setattr(core, "retrieve_async_subagents", lambda: [remote])
+    monkeypatch.setattr(core, "_harden_subagent_specs", lambda specs, *_args: specs)
+    result = core._build_subagent_roster(
+        assistant_id="nova", tools=[], plugin_specs=[], skill_sources=[]
+    )
+    names = [s["name"] for s in result]
+    assert len(names) == len(set(names))
+    assert {"code-explorer", "general-purpose", "plugin-agent"} <= set(names)
+    assert next(s for s in result if s["name"] == "code-explorer") is builtin
 
 
 def test_declarative_specs_get_retry_vision_security_first_and_no_interrupts():
@@ -78,18 +101,9 @@ def test_repeated_hardening_never_accumulates_middleware():
     first = _harden_subagent_specs(cache)
     second = _harden_subagent_specs(cache)
     for built in (first, second):
-        retries = [
-            m for m in built[0]["middleware"]
-            if isinstance(m, ModelRetryMiddleware)
-        ]
-        visions = [
-            m for m in built[0]["middleware"]
-            if isinstance(m, VisionCaptionMiddleware)
-        ]
-        securities = [
-            m for m in built[0]["middleware"]
-            if isinstance(m, SecurityMiddleware)
-        ]
+        retries = [m for m in built[0]["middleware"] if isinstance(m, ModelRetryMiddleware)]
+        visions = [m for m in built[0]["middleware"] if isinstance(m, VisionCaptionMiddleware)]
+        securities = [m for m in built[0]["middleware"] if isinstance(m, SecurityMiddleware)]
         # Exactly one of each — never duplicates.
         assert len(retries) == 1
         assert len(visions) == 1
@@ -145,11 +159,7 @@ def test_non_dict_entries_are_skipped():
 
 
 def _curations(spec: dict) -> list:
-    return [
-        m
-        for m in spec["middleware"]
-        if type(m).__name__ == "SkillCurationMiddleware"
-    ]
+    return [m for m in spec["middleware"] if type(m).__name__ == "SkillCurationMiddleware"]
 
 
 def test_skill_sources_grant_skills_and_curation():
@@ -181,9 +191,7 @@ def test_pre_declared_skills_are_respected_and_still_curated():
 def test_curation_not_doubled_when_already_present():
     from novacode_cli.skills.curation_middleware import SkillCurationMiddleware
 
-    specs = [
-        {"name": "a", "system_prompt": "p", "middleware": [SkillCurationMiddleware()]}
-    ]
+    specs = [{"name": "a", "system_prompt": "p", "middleware": [SkillCurationMiddleware()]}]
     out = _harden_subagent_specs(specs, ["/skills/"])
     assert len(_curations(out[0])) == 1
 
