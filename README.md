@@ -195,6 +195,15 @@ use the running Python environment. Pinned Git refs, forks, and archive installs
 remain managed through their original installer. Nova settings, sessions, MCPs,
 and skills remain in their existing directories.
 
+On Windows, uv-managed updates move the running Nova launcher aside before
+installing its replacement and restore it if installation fails. If an older
+updater reports `Failed to install entrypoint`, close all Nova sessions and run
+this from PowerShell to repair the installation:
+
+```powershell
+uv tool upgrade novacode-cli --reinstall
+```
+
 ### API Keys Setup
 
 Configure your preferred LLM provider by setting environment variables:

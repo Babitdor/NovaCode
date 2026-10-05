@@ -127,7 +127,10 @@ def test_update_uses_original_manager(
     U.install_update()
     arguments = run.call_args.args[0]
     if kind == "uv-tool":
-        assert arguments == ["uv", "tool", "upgrade", "novacode-cli"]
+        expected = ["uv", "tool", "upgrade", "novacode-cli"]
+        if U.sys.platform == "win32":
+            expected.extend(["--reinstall-package", "novacode-cli"])
+        assert arguments == expected
     elif kind == "git":
         assert "--force-reinstall" in arguments
         assert "git+https://github.com/Babitdor/NovaCode.git@main" in arguments[-1]
@@ -192,3 +195,131 @@ def test_source_detection_does_not_depend_on_cwd(
     assert installation.root == tmp_path
     assert installation.kind == "source"
     assert all(call.args[0] == tmp_path for call in git.call_args_list)
+
+
+@pytest.fixture
+def windows_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    import json
+
+    launcher = tmp_path / "bin with spaces" / "nova.exe"
+    launcher.parent.mkdir()
+    launcher.write_bytes(b"previous launcher")
+    # JSON strings are also TOML basic strings, including Windows path escapes.
+    (tmp_path / "uv-receipt.toml").write_text(
+        '[tool]\nentrypoints = [{name = "nova", from = "novacode-cli", install-path = '
+        + json.dumps(str(launcher))
+        + "}]\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(U.sys, "prefix", str(tmp_path))
+    monkeypatch.setattr(U.sys, "platform", "win32")
+    monkeypatch.setattr(U, "detect_installation", lambda: U.Installation("1.0", "uv-tool"))
+    monkeypatch.setattr(U.shutil, "which", lambda _name: "uv")
+    monkeypatch.setattr(U, "_cache_path", lambda: tmp_path / "cache.json")
+    return launcher
+
+
+def test_windows_upgrade_moves_launcher_before_installer_and_reinstalls_nova(
+    windows_tool: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def install(arguments: list[str]) -> None:
+        assert arguments == [
+            "uv",
+            "tool",
+            "upgrade",
+            "novacode-cli",
+            "--reinstall-package",
+            "novacode-cli",
+        ]
+        assert not windows_tool.exists()
+        assert len(list(windows_tool.parent.glob(".nova-update-*.exe"))) == 1
+        windows_tool.write_bytes(b"new launcher")
+
+    monkeypatch.setattr(U, "_run", install)
+    U.install_update()
+    assert windows_tool.read_bytes() == b"new launcher"
+    assert not list(windows_tool.parent.glob(".nova-update-*.exe"))
+
+
+def test_windows_failed_upgrade_restores_launcher(
+    windows_tool: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import subprocess
+
+    monkeypatch.setattr(U, "_run", Mock(side_effect=subprocess.CalledProcessError(1, "uv")))
+    with pytest.raises(subprocess.CalledProcessError):
+        U.install_update()
+    assert windows_tool.read_bytes() == b"previous launcher"
+
+
+def test_windows_noop_installer_restores_launcher_and_does_not_report_success(
+    windows_tool: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(U, "_run", Mock())
+    with pytest.raises(ValueError, match="did not recreate"):
+        U.install_update()
+    assert windows_tool.read_bytes() == b"previous launcher"
+
+
+def test_windows_upgrade_repairs_missing_launcher(
+    windows_tool: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    windows_tool.unlink()
+    monkeypatch.setattr(U, "_run", lambda _args: windows_tool.write_bytes(b"repaired"))
+    U.install_update()
+    assert windows_tool.read_bytes() == b"repaired"
+
+
+def test_windows_failed_upgrade_keeps_a_new_launcher_if_already_installed(
+    windows_tool: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import subprocess
+
+    def install(_args: list[str]) -> None:
+        windows_tool.write_bytes(b"new launcher")
+        raise subprocess.CalledProcessError(1, "uv")
+
+    monkeypatch.setattr(U, "_run", install)
+    with pytest.raises(subprocess.CalledProcessError):
+        U.install_update()
+    assert windows_tool.read_bytes() == b"new launcher"
+
+
+def test_windows_missing_launcher_is_not_false_success(
+    windows_tool: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    windows_tool.unlink()
+    monkeypatch.setattr(U, "_run", Mock())
+    with pytest.raises(ValueError, match="did not recreate"):
+        U.install_update()
+
+
+def test_non_windows_upgrade_keeps_original_command_and_launcher(
+    windows_tool: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(U.sys, "platform", "linux")
+    run = Mock()
+    monkeypatch.setattr(U, "_run", run)
+    U.install_update()
+    run.assert_called_once_with(["uv", "tool", "upgrade", "novacode-cli"])
+    assert windows_tool.read_bytes() == b"previous launcher"
+
+
+def test_windows_launcher_permission_error_has_recovery_command_and_no_install(
+    windows_tool: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = Mock()
+    monkeypatch.setattr(U, "_run", run)
+    monkeypatch.setattr(Path, "rename", Mock(side_effect=PermissionError("locked")))
+    with pytest.raises(ValueError, match="uv tool upgrade novacode-cli --reinstall"):
+        U.install_update()
+    run.assert_not_called()
+    assert windows_tool.read_bytes() == b"previous launcher"

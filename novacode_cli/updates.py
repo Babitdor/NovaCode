@@ -15,12 +15,17 @@ import shutil
 import subprocess
 import sys
 import time
-from contextlib import suppress
+import tomllib
+import uuid
+from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import NoReturn
+from typing import TYPE_CHECKING, NoReturn
 from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 REPOSITORY = "Babitdor/NovaCode"
 REPO_URL = f"https://github.com/{REPOSITORY}.git"
@@ -175,6 +180,60 @@ def _run(arguments: list[str], *, cwd: Path | None = None) -> None:
     subprocess.run(arguments, cwd=cwd, check=True)
 
 
+@contextmanager
+def _windows_uv_entrypoint() -> Iterator[None]:
+    """Move uv's own Nova launcher aside while Windows has its image loaded."""
+    receipt_path = Path(sys.prefix) / "uv-receipt.toml"
+    if sys.platform != "win32" or not receipt_path.is_file():
+        yield
+        return
+    receipt = tomllib.loads(receipt_path.read_text(encoding="utf-8"))
+    entries = receipt.get("tool", {}).get("entrypoints", [])
+    entry = next(
+        (
+            item
+            for item in entries
+            if isinstance(item, dict)
+            and item.get("name") == "nova"
+            and item.get("from") == "novacode-cli"
+        ),
+        None,
+    )
+    if entry is None:
+        _fail(
+            "Nova's uv receipt has no launcher. Repair it with: "
+            "uv tool upgrade novacode-cli --reinstall"
+        )
+    launcher = Path(entry.get("install-path", ""))
+    if not launcher.is_absolute() or launcher.name.lower() != "nova.exe" or launcher.is_symlink():
+        _fail("Cannot safely locate Nova's Windows launcher from its uv receipt.")
+    if not launcher.exists():
+        yield  # A previous failed upgrade may have already removed it.
+        if not launcher.is_file():
+            _fail("The updater did not recreate nova.exe.")
+        return
+    backup = launcher.with_name(f".nova-update-{uuid.uuid4().hex}.exe")
+    try:
+        launcher.rename(backup)
+    except PermissionError:
+        _fail(
+            "Windows could not move Nova's launcher. Close all Nova sessions, then run "
+            "from PowerShell: uv tool upgrade novacode-cli --reinstall"
+        )
+    try:
+        yield
+        if not launcher.is_file():
+            _fail("The updater did not recreate nova.exe; the previous launcher was restored.")
+    finally:
+        if not launcher.exists():
+            backup.rename(launcher)
+        else:
+            # An active session can still hold the renamed image open. Keeping
+            # its uniquely named backup is safe; never kill a session to delete it.
+            with suppress(OSError):
+                backup.unlink()
+
+
 def install_update() -> None:
     """Update with the installation's manager; never reset or stash a checkout."""
     installation = detect_installation()
@@ -213,7 +272,13 @@ def install_update() -> None:
         uv = shutil.which("uv")
         if uv is None:
             _fail("This installation is managed by uv; install uv to update it.")
-        _run([uv, "tool", "upgrade", "novacode-cli"])
+        arguments = [uv, "tool", "upgrade", "novacode-cli"]
+        if sys.platform == "win32":
+            # Reinstall just Nova so uv repairs a launcher even when an earlier
+            # failed update already advanced the installed package's version.
+            arguments.extend(["--reinstall-package", "novacode-cli"])
+        with _windows_uv_entrypoint():
+            _run(arguments)
     else:
         target = "novacode-cli"
         arguments = ["--upgrade"]
