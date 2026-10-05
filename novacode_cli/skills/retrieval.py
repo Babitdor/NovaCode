@@ -120,14 +120,15 @@ class SkillIndex:
         if not self.skills or not query.strip():
             return []
         n = len(self.skills)
-        idx, scores = self._bm25.retrieve(_tokenize([query]), k=min(20, n), show_progress=False)
+        candidates = min(max(20, k), n)
+        idx, scores = self._bm25.retrieve(_tokenize([query]), k=candidates, show_progress=False)
         bm25 = dict(zip(idx[0].tolist(), scores[0].tolist(), strict=True))
         ranked = [i for i, s in bm25.items() if s > 0]
         cosine: dict[int, float] = {}
         if self._emb is not None:
             q = self._model.encode([query])[0]
             sims = self._emb @ (q / (np.linalg.norm(q) + 1e-9))
-            dense = np.argsort(-sims)[:20].tolist()
+            dense = np.argsort(-sims)[:candidates].tolist()
             cosine = {i: float(sims[i]) for i in dense}
             fused: dict[int, float] = {}
             for rank_list in (ranked, dense):
@@ -155,7 +156,7 @@ class SkillIndex:
 
 def get_index(skills: list[dict]) -> SkillIndex:
     """A cached index for this exact skill list (rebuilt once the embedder is up)."""
-    key = tuple((s["name"], s.get("description", "")) for s in skills)
+    key = tuple((s["name"], s.get("description", ""), s.get("kind", "")) for s in skills)
     index = _index_cache.get(key)
     if index is None or (not index.dense and _model() is not None):
         index = SkillIndex(skills)

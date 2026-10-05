@@ -726,6 +726,18 @@ This feature decides which tool outputs to offload during context management. `/
 
 Why it is opt-in: the current scorer budgets about 2,000 tokens and considers only the newest 12 results, including when Jev is selected. Measured on six real sessions with Tev1, the default age rule cleared more (70 results / 72,682 chars against 49 / 18,364) with fewer regretted clears (0.19 against 0.44 per 1k). These measurements do not establish Jev's performance. The flag stays so each model can be tried live and re-measured.
 
+## Tool discovery
+
+Nova keeps less-used tool schemas out of the model's prompt and loads them with
+`search_tools`. Search covers every currently available tool, including core and
+already loaded tools, plus specialist subagents. Use a capability description,
+an exact name, a partial name, or a wildcard such as `playwright_*`.
+
+`search_tools(query="*", limit=20, offset=0)` browses the catalog; increase
+`offset` to retrieve later pages. Results load the tools for the next model call
+and indicate whether a subagent uses `task` or `start_async_task`. Search covers
+tools registered for the current session.
+
 ## Built-in Subagents
 
 NOVA has two kinds of subagent. **In-process specialists** run inside the session,

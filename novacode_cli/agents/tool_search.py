@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import logging
 import re
+from difflib import get_close_matches
+from fnmatch import fnmatchcase
 from typing import TYPE_CHECKING, Any
 
 from langchain.agents.middleware import AgentMiddleware
@@ -90,6 +92,7 @@ FREQUENT_TOOLS = 10
 FREQUENT_MIN_USES = 20
 
 LOADED_MARKER = "Loaded tools:"
+MAX_SEARCH_LIMIT = 50
 
 
 def _name(tool: Any) -> str:
@@ -111,9 +114,17 @@ def loaded_names(messages: list[Any]) -> set[str]:
         if isinstance(msg, AIMessage):
             names.update(tc["name"] for tc in msg.tool_calls or [])
         elif isinstance(msg, ToolMessage) and msg.name in ("search_tools", "tool_search"):
-            for line in str(msg.content).splitlines():
-                if line.startswith(LOADED_MARKER):
-                    names.update(n.strip() for n in line[len(LOADED_MARKER) :].split(","))
+            texts = (
+                [msg.content]
+                if isinstance(msg.content, str)
+                else [
+                    part if isinstance(part, str) else part.get("text", "") for part in msg.content
+                ]
+            )
+            for text in texts:
+                for line in text.splitlines():
+                    if line.startswith(LOADED_MARKER):
+                        names.update(n.strip() for n in line[len(LOADED_MARKER) :].split(","))
     return names
 
 
@@ -136,21 +147,29 @@ def _group(names: list[str]) -> str:
 class ToolSearchMiddleware(AgentMiddleware):
     """Bind core + frequent + loaded tools; ``search_tools`` loads the rest."""
 
-    def __init__(self, *, deferred_subagents: dict[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        deferred_subagents: dict[str, str] | None = None,
+        async_subagents: set[str] | None = None,
+    ) -> None:
         """``deferred_subagents``: name -> description, hidden from ``task`` until found."""
         super().__init__()
         self._deferred_subagents = deferred_subagents or {}
+        self._async_subagents = async_subagents or set()
         self._frequent: set[str] | None = None  # read once, then frozen
         self._note: str | None = None  # frozen: a changing prompt re-bills the cache
+        self._inventory: tuple = ()
         self._catalog: list[dict] = []
         self.tools = [
             StructuredTool.from_function(
                 self._tool_search,
                 name="search_tools",
                 description=(
-                    "Find and load tools or subagents that are available but not loaded yet "
-                    "(see 'More tools' in your instructions). Pass what you need to do, "
-                    "or exact tool names separated by commas. Loaded tools are callable "
+                    "Find and load any available tool or subagent, including loaded tools. "
+                    "Search by capability, exact names separated by commas, partial names, "
+                    "or wildcards such as playwright_*. Use query='*' to browse the catalog. "
+                    "Use limit and offset to page through results. Found tools are callable "
                     "from your next step on."
                 ),
             )
@@ -158,27 +177,96 @@ class ToolSearchMiddleware(AgentMiddleware):
 
     # ── search_tools ───────────────────────────────────────────────────────
 
-    def _tool_search(self, query: str) -> str:
-        """Find and load deferred tools and subagents.
+    def _search_matches(self, query: str) -> list[dict]:
+        """Rank the full catalog, retaining exact names ahead of semantic hits."""
+        tokens = re.findall(r"[\w.:-]+", query.casefold())
+        names = {item["name"].casefold() for item in self._catalog}
+        exact = [item for item in self._catalog if item["name"].casefold() in tokens]
+        patterns = [
+            word.strip("`\"'") for word in re.split(r"[,\s]+", query.casefold()) if "*" in word
+        ]
+        if patterns:
+            return [
+                item
+                for item in self._catalog
+                if item in exact
+                or any(fnmatchcase(item["name"].casefold(), pattern) for pattern in patterns)
+            ]
+        if tokens and set(tokens) <= names:
+            return exact
+        normalized = re.sub(r"[^\w]+|_", " ", query.casefold()).strip()
+        partial = [
+            item
+            for item in self._catalog
+            if normalized
+            and normalized in re.sub(r"[^\w]+|_", " ", item["name"].casefold()).strip()
+        ]
+        fuzzy_names = get_close_matches(query.casefold(), sorted(names), n=3, cutoff=0.8)
+        fuzzy = [item for item in self._catalog if item["name"].casefold() in fuzzy_names]
+        try:
+            ranked = [
+                item for item, _, _ in get_index(self._catalog).search(query, k=len(self._catalog))
+            ]
+        except Exception:  # noqa: BLE001 - discovery still works without the optional index
+            logger.debug("Tool retrieval index unavailable; using lexical search", exc_info=True)
+            ranked = [
+                item
+                for item in self._catalog
+                if set(tokens) & set(re.findall(r"[\w]+", item["description"].casefold()))
+            ]
+        hits: dict[tuple[str, str], dict] = {}
+        for item in [*exact, *partial, *fuzzy, *ranked]:
+            hits.setdefault((item["kind"], item["name"]), item)
+        return list(hits.values())
+
+    def _tool_search(self, query: str, limit: int = 5, offset: int = 0) -> str:
+        """Find and load available tools and subagents.
 
         Args:
-            query: What you need to do, or exact tool names separated by commas.
+            query: A capability, exact or partial names, or a wildcard; '*' lists everything.
+            limit: Results per page (1-50).
+            offset: Number of matches to skip to reach another page.
         """
-        by_name = {item["name"]: item for item in self._catalog}
-        exact = [by_name[n.strip()] for n in re.split(r"[,\s]+", query) if n.strip() in by_name]
-        hits = exact or [item for item, _, _ in get_index(self._catalog).search(query, k=5)]
+        if not 1 <= limit <= MAX_SEARCH_LIMIT or offset < 0:
+            message = "limit must be between 1 and 50, and offset must be nonnegative."
+            raise ValueError(message)
+        query = query.strip()
+        if not query:
+            return (
+                "Enter a capability or tool name, or use query='*' to browse all available tools."
+            )
+        if not self._catalog:
+            return "No tools are currently registered for discovery."
+        matches = self._search_matches(query)
+        if not matches:
+            return (
+                f"No registered tools match {query!r}. "
+                "Try a shorter name, a server prefix, or query='*' to browse."
+            )
+        hits = matches[offset : offset + limit]
         if not hits:
-            return f"Nothing matches {query!r}. Use the tools you already have."
+            return (
+                f"There are {len(matches)} matches. Retry with offset smaller than {len(matches)}."
+            )
         tools = [h for h in hits if h["kind"] == "tool"]
         agents = [h for h in hits if h["kind"] == "subagent"]
         lines = [f"- `{h['name']}`: {first_sentence(h['description'], 200)}" for h in tools]
-        lines += [
-            f'- subagent `{h["name"]}` (use `task(subagent_type="{h["name"]}")`): '
-            f"{first_sentence(h['description'], 200)}"
-            for h in agents
-        ]
+        for agent in agents:
+            name = agent["name"]
+            dispatch = "start_async_task" if name in self._async_subagents else "task"
+            lines.append(
+                f'- subagent `{name}` (use `{dispatch}(subagent_type="{name}")`): '
+                f"{first_sentence(agent['description'], 200)}"
+            )
         loaded = ", ".join(h["name"] for h in hits)
-        return f"{LOADED_MARKER} {loaded}\n" + "\n".join(lines)
+        result = f"{LOADED_MARKER} {loaded}\n" + "\n".join(lines)
+        if offset or len(matches) > len(hits):
+            result += f"\nShowing {offset + 1}-{offset + len(hits)} of {len(matches)} matches."
+            if offset + len(hits) < len(matches):
+                result += (
+                    f" Continue with the same query, limit={limit}, offset={offset + len(hits)}."
+                )
+        return result
 
     # ── binding ────────────────────────────────────────────────────────────
 
@@ -221,6 +309,22 @@ class ToolSearchMiddleware(AgentMiddleware):
         return tool.model_copy(update={"description": text})
 
     def _apply(self, request: ModelRequest) -> ModelRequest:
+        # Discovery covers the full available inventory, regardless of which
+        # schemas this particular model call already has loaded.
+        self._catalog = [
+            {"name": _name(t), "description": _description(t), "kind": "tool"}
+            for t in request.tools
+            if _name(t)
+        ] + [
+            {"name": n, "description": description, "kind": "subagent"}
+            for n, description in self._deferred_subagents.items()
+        ]
+        inventory = tuple(
+            (item["kind"], item["name"], item["description"]) for item in self._catalog
+        )
+        if inventory != self._inventory:
+            self._note = None
+            self._inventory = inventory
         loaded = loaded_names(request.messages)
         keep = CORE_TOOLS | (self._frequent or set()) | loaded
         bound, deferred = [], []
@@ -235,20 +339,22 @@ class ToolSearchMiddleware(AgentMiddleware):
         if not deferred and not hidden:
             return request
 
-        self._catalog = [
-            {"name": _name(t), "description": _description(t), "kind": "tool"} for t in deferred
-        ] + [
-            {"name": n, "description": self._deferred_subagents[n], "kind": "subagent"}
-            for n in hidden
-        ]
-        if self._note is None:  # the full deferrable set, frozen for the session
+        if self._note is None:  # changes only when available inventory changes
+            optional_names = [
+                item["name"]
+                for item in self._catalog
+                if item["kind"] == "tool" and item["name"] not in CORE_TOOLS
+            ]
             self._note = (
                 "\n\n## More tools (load on demand)\n\n"
-                f"These {len(deferred)} tools are available but not loaded, to save "
-                f"context. {len(hidden)} specialist subagents are likewise unlisted.\n"
-                f"{_group([_name(t) for t in deferred])}\n\n"
+                f"Additional tool schemas load on demand to save context. "
+                f"{len(self._deferred_subagents)} specialist subagents are searchable.\n"
+                f"{_group(optional_names)}\n\n"
                 'Call `search_tools("<what you need>")` or `search_tools("name1, name2")`; '
-                "what it returns is callable from your next step. Never guess a tool's "
+                'Search covers all available tools. Use query="*" or a wildcard '
+                'such as "playwright_*" '
+                "to browse; limit and offset retrieve further matches. "
+                "What it returns is callable from your next step. Never guess a tool's "
                 "arguments: load it first."
             )
         blocks = request.system_message.content_blocks if request.system_message else []

@@ -2172,7 +2172,12 @@ This file stores your preferences and context that persist across sessions.
         if isinstance(s, dict) and s.get("name") and s["name"] not in LISTED_SUBAGENTS
     }
     agent_middleware.append(
-        ToolSearchMiddleware(deferred_subagents=_deferred_agents)
+        ToolSearchMiddleware(
+            deferred_subagents=_deferred_agents,
+            async_subagents={
+                s["name"] for s in subagents if isinstance(s, dict) and "graph_id" in s
+            },
+        )
     )
 
     # Caller-injected middleware (e.g. Cowork's WorkspacePolicy broker) goes last

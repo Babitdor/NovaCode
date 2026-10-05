@@ -161,6 +161,166 @@ def test_loaded_tools_are_bound_from_then_on() -> None:
     assert "playwright_browser_click" in _names(mw._apply(_request(history)))
 
 
+def test_every_registered_tool_is_searchable_even_when_already_bound() -> None:
+    mw = _mw()
+    mw._frequent = {"playwright_browser_click"}
+    history = [
+        AIMessage("", tool_calls=[{"id": "1", "name": "playwright_browser_snapshot", "args": {}}])
+    ]
+    mw._apply(_request(history))
+    for t in TOOLS:
+        result = mw.tools[0].invoke({"query": t.name.upper()})
+        assert result.splitlines()[0] == f"{LOADED_MARKER} {t.name}"
+        assert t.name in loaded_names([ToolMessage(result, name="search_tools", tool_call_id="s")])
+
+
+def test_search_keeps_loaded_subagents_discoverable() -> None:
+    mw = _mw()
+    mw._apply(_request([]))
+    result = mw._tool_search("rust-reviewer")
+    mw._apply(_request([ToolMessage(result, name="search_tools", tool_call_id="s")]))
+    assert 'task(subagent_type="rust-reviewer")' in mw._tool_search("rust-reviewer")
+
+
+@pytest.mark.parametrize("query", ["browser click", "browser_click", "playwright_browser_clik"])
+def test_partial_names_and_typos_find_the_tool(query: str) -> None:
+    mw = _mw()
+    mw._apply(_request([]))
+    assert "playwright_browser_click" in mw._tool_search(query).splitlines()[0]
+
+
+def test_exact_name_does_not_hide_other_requested_capabilities() -> None:
+    capture = _mcp("capture_screen", "Capture a screenshot image of the browser.")
+    mw = _mw()
+    mw._apply(_request([]).override(tools=[*TOOLS, capture]))
+    result = mw._tool_search("read_file and capture a screenshot of the browser?")
+    assert "read_file" in result.splitlines()[0]
+    assert "capture_screen" in result.splitlines()[0]
+
+
+def test_wildcards_can_page_through_every_tool_and_load_later_results() -> None:
+    extras = [_mcp(f"server_action_{i:02d}", "A server action.") for i in range(35)]
+    mw = ToolSearchMiddleware()
+    mw._apply(_request([]).override(tools=extras))
+    found = set()
+    history = []
+    for offset in range(0, len(extras), 5):
+        result = mw.tools[0].invoke({"query": "server_*", "offset": offset})
+        message = ToolMessage(result, name="search_tools", tool_call_id=str(offset))
+        found.update(loaded_names([message]))
+        history.append(message)
+    assert found == {t.name for t in extras}
+    assert "Showing 1-5 of 35 matches" in mw._tool_search("*", limit=5)
+    assert _names(mw._apply(_request(history).override(tools=extras))) == found
+    assert "server_action_34" in mw._tool_search("server_action_34")
+
+
+def test_capability_search_can_retrieve_more_than_twenty_matches() -> None:
+    extras = [_mcp(f"integration_{i:02d}", "Encrypt stored backups securely.") for i in range(35)]
+    mw = ToolSearchMiddleware()
+    mw._apply(_request([]).override(tools=extras))
+    result = mw._tool_search("encrypt backups", limit=50)
+    assert loaded_names([ToolMessage(result, name="search_tools", tool_call_id="s")]) == {
+        t.name for t in extras
+    }
+
+
+def test_catalog_tracks_added_and_removed_tools_even_when_nothing_is_deferred() -> None:
+    mw = ToolSearchMiddleware()
+    mw._apply(_request([]))
+    added = _mcp("new_integration", "Upload a report.")
+    updated = mw._apply(_request([]).override(tools=[read_file, added]))
+    assert "new_integration" in updated.system_message.content_blocks[-1]["text"]
+    assert "new_integration" in mw._tool_search("new_integration")
+    mw._apply(_request([]).override(tools=[read_file]))
+    assert "playwright_browser_click" not in mw._tool_search("*")
+    assert "new_integration" not in mw._tool_search("*")
+    assert mw._tool_search("read_file").startswith(LOADED_MARKER)
+
+
+def test_function_dict_tools_are_discoverable() -> None:
+    tools = [
+        {
+            "type": "function",
+            "function": {"name": "checksum_file", "description": "Checksum a file."},
+        },
+        {"type": "function", "name": "check_signature", "description": "Verify a signature."},
+    ]
+    mw = ToolSearchMiddleware()
+    mw._apply(_request([]).override(tools=tools))
+    result = mw._tool_search("`CHECKSUM_FILE`, check_signature")
+    assert "checksum_file, check_signature" in result.splitlines()[0]
+
+
+def test_search_still_works_if_the_retrieval_index_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    import novacode_cli.agents.tool_search as mod
+
+    def unavailable(_catalog: list) -> None:
+        message = "index unavailable"
+        raise RuntimeError(message)
+
+    monkeypatch.setattr(mod, "get_index", unavailable)
+    mw = _mw()
+    mw._apply(_request([]))
+    assert "playwright_browser_navigate" in mw._tool_search("navigate to a url")
+    assert "playwright_browser_click" in mw._tool_search("playwright_browser_click")
+    assert "rust-reviewer" in mw._tool_search("*", limit=50)
+
+
+def test_search_results_name_the_correct_sync_or_async_dispatch_tool() -> None:
+    mw = ToolSearchMiddleware(
+        deferred_subagents={
+            "sync-review": "Review code now.",
+            "background-review": "Review code in the background.",
+        },
+        async_subagents={"background-review"},
+    )
+    mw._apply(_request([]))
+    assert 'task(subagent_type="sync-review")' in mw._tool_search("sync-review")
+    result = mw._tool_search("background-review")
+    assert 'start_async_task(subagent_type="background-review")' in result
+    assert 'use `task(subagent_type="background-review")' not in result
+
+
+def test_tool_found_in_structured_message_is_loaded_on_next_call() -> None:
+    mw = _mw()
+    mw._apply(_request([]))
+    result = mw._tool_search("playwright_browser_click")
+    message = ToolMessage(
+        content=[{"type": "text", "text": result}], name="search_tools", tool_call_id="s"
+    )
+    assert "playwright_browser_click" in _names(mw._apply(_request([message])))
+
+
+def test_empty_and_unmatched_queries_offer_catalog_browsing() -> None:
+    mw = _mw()
+    mw._apply(_request([]))
+    for query in ("", " ", "zzzz_unknown_capability", "absent_*"):
+        result = mw._tool_search(query)
+        assert "browse" in result
+        assert not result.startswith(LOADED_MARKER)
+
+
+def test_page_beyond_last_match_explains_how_to_retry_without_loading() -> None:
+    mw = _mw()
+    mw._apply(_request([]))
+    result = mw._tool_search("playwright_browser_click", offset=1)
+    assert "offset smaller than 1" in result
+    assert not result.startswith(LOADED_MARKER)
+
+
+def test_empty_inventory_reports_no_registered_tools() -> None:
+    mw = ToolSearchMiddleware()
+    mw._apply(_request([]).override(tools=[]))
+    assert "No tools are currently registered" in mw._tool_search("*")
+
+
+@pytest.mark.parametrize(("limit", "offset"), [(0, 0), (51, 0), (5, -1)])
+def test_invalid_page_parameters_are_rejected(limit: int, offset: int) -> None:
+    with pytest.raises(ValueError, match="limit must be"):
+        _mw()._tool_search("*", limit=limit, offset=offset)
+
+
 def test_a_tool_called_without_loading_stays_bound() -> None:
     history = [
         AIMessage("", tool_calls=[{"id": "1", "name": "playwright_browser_navigate", "args": {}}])

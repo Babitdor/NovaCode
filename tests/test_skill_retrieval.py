@@ -86,6 +86,20 @@ def test_listing_stays_within_budget_and_points_at_search() -> None:
     assert "more skills: `skills_search` finds them" in text
 
 
+def test_dense_search_can_return_every_match_beyond_twenty() -> None:
+    items = [_skill(f"backup-{i}", "Encrypt stored backups securely.") for i in range(35)]
+    results = R.get_index(items).search("encrypt backups", k=len(items))
+    assert {item["name"] for item, _cosine, _bm25 in results} == {item["name"] for item in items}
+
+
+def test_shared_index_does_not_confuse_tool_and_subagent_metadata() -> None:
+    tool = {"name": "reviewer", "description": "Review code.", "kind": "tool"}
+    agent = {**tool, "kind": "subagent"}
+    R.get_index([tool])
+    results = R.get_index([agent]).search("review code", k=1)
+    assert results[0][0]["kind"] == "subagent"
+
+
 def test_listing_ranks_most_used_first() -> None:
     mw = _mw(200)
     mw._usage = {"clickhouse-io": 9}
