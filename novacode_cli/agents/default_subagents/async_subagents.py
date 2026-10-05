@@ -372,6 +372,55 @@ def build_plan_scout_agent() -> AsyncSubAgent:
     )
 
 
+def _user_agent_spec(name: str, description: str) -> AsyncSubAgent:
+    """Build the spec for a user-created async subagent.
+
+    The graph id is the agent's own name: what the user typed is what they then
+    see in ``/agent-server status`` and in the main agent's tool description.
+
+    Private, and deliberately not named ``build_*_agent``: the shipped builders
+    are zero-argument (they describe a graph in the package's own config, which
+    a test pairs against that file by name), while this one describes a graph
+    that only exists in a generated config.
+    """
+    return _build_agent_spec(
+        name=name,
+        graph_id=name.lower(),
+        description=description,
+        port=2024,
+    )
+
+
+def _user_agent_specs() -> list[AsyncSubAgent]:
+    """The specs for every user ``agent.md`` marked ``async: true``.
+
+    Empty when the user has none, which is the usual case. A user agent is an
+    ordinary in-process subagent too: marking it async adds the background form
+    rather than replacing the synchronous one, because long work and work that
+    must finish inside this turn are both real needs.
+    """
+    from novacode_cli.agents.user_async_agents import (
+        async_agent_description,
+        collect_user_async_agents,
+        graph_id_for,
+    )
+
+    specs: list[AsyncSubAgent] = []
+    for name, agent_md in collect_user_async_agents():
+        try:
+            graph_id = graph_id_for(name)
+        except ValueError as exc:
+            logger.warning("not offering async agent: %s", exc)
+            continue
+        try:
+            description = async_agent_description(agent_md)
+        except Exception:  # noqa: BLE001 — one unreadable file drops one agent
+            logger.warning("could not describe async agent %r", name, exc_info=True)
+            continue
+        specs.append(_user_agent_spec(graph_id, description))
+    return specs
+
+
 def retrieve_async_subagents() -> list[AsyncSubAgent]:
     """Return the async subagents, or ``[]`` when their server is not running.
 
@@ -409,4 +458,5 @@ def retrieve_async_subagents() -> list[AsyncSubAgent]:
         build_security_audit_agent(),
         build_test_runner_agent(),
         build_research_agent(),
+        *_user_agent_specs(),
     ]

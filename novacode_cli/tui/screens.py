@@ -2296,6 +2296,7 @@ class AgentCreateModal(ModalScreen[dict | None]):
     AgentCreateModal #agent-tools-row { height: auto; margin-top: 1; }
     AgentCreateModal #agent-tools-summary { width: 1fr; padding: 1 1 0 0; }
     AgentCreateModal #agent-prompt { height: 10; margin-bottom: 1; }
+    AgentCreateModal #agent-async-note { height: auto; color: $warning; }
     """
 
     def __init__(self) -> None:
@@ -2325,6 +2326,19 @@ class AgentCreateModal(ModalScreen[dict | None]):
                     placeholder="e.g. Reviews python code for security vulnerabilities",
                     id="agent-desc",
                 )
+                # Sync is the default and the older behaviour; async is opt-in
+                # because a background agent needs the LangGraph server and gets
+                # a smaller tool set (see the note below).
+                yield Static(Text("Runs:", style="bold"), id="agent-kind-label")
+                yield Select(
+                    [
+                        ("In-process (same turn)", "sync"),
+                        ("Async (background agent server)", "async"),
+                    ],
+                    id="agent-kind",
+                    value="sync",
+                )
+                yield Static("", id="agent-async-note")
                 yield Static(Text("Storage Scope:", style="bold"), id="agent-scope-label")
                 yield Select(scope_options, id="agent-scope", value="global")
                 yield Static(Text("Color Theme:", style="bold"), id="agent-color-label")
@@ -2385,6 +2399,26 @@ class AgentCreateModal(ModalScreen[dict | None]):
         self._tools = result["tools"]
         self.query_one("#agent-tools-summary", Static).update(_tools_summary(self._tools))
 
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id != "agent-kind":
+            return
+        # The async tool limit is stated here rather than left to be discovered:
+        # a background graph resolves tools from novacode_cli.tools by name and
+        # drops the rest, so MCP tools chosen below would silently not be there.
+        note = self.query_one("#agent-async-note", Static)
+        if event.value == "async":
+            note.update(
+                Text(
+                    "Async: runs on the local agent server, so it keeps working after "
+                    "you dispatch it. MCP tools (serena, playwright, cua-driver) are "
+                    "not available to it, and it needs the agents-server extra "
+                    "(uv sync --extra agents-server).",
+                    style="dim",
+                )
+            )
+        else:
+            note.update(Text(""))
+
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "agent-name":
             self.query_one("#agent-desc", Input).focus()
@@ -2432,6 +2466,11 @@ class AgentCreateModal(ModalScreen[dict | None]):
         except Exception:
             system_prompt = ""
 
+        try:
+            kind = self.query_one("#agent-kind", Select).value
+        except Exception:
+            kind = "sync"
+
         self.dismiss(
             {
                 "name": name,
@@ -2441,6 +2480,11 @@ class AgentCreateModal(ModalScreen[dict | None]):
                 "tools": self._tools,
                 # "" means "generate one from the description".
                 "system_prompt": system_prompt,
+                # An async agent is served in the background by the agent server,
+                # and is also still usable in-process, so this adds a capability
+                # rather than choosing between two. Written as a bool so the
+                # frontmatter reads `async: true` for a human editing it.
+                "async": kind == "async",
             }
         )
 
@@ -2449,7 +2493,12 @@ class AgentCreateModal(ModalScreen[dict | None]):
 
 
 class AgentsScreen(ModalScreen[None]):
-    """Native subagents manager: list configured agents, view details, create or delete them."""
+    """Native subagents manager: list configured agents, view details, create or delete them.
+
+    Reached by both ``/agents`` and ``/subagents``: an agent is one file either
+    way, and ``async: true`` in its frontmatter is what makes it also run in the
+    background on the agent server.
+    """
 
     BINDINGS = [("escape", "close", "Close")]
     # Fixed height with the buttons docked: the details pane holds a whole
@@ -2519,16 +2568,15 @@ class AgentsScreen(ModalScreen[None]):
 
         self.query_one("#delete", Button).disabled = False
         self.query_one("#edit-tools", Button).disabled = False
-        for name, path, scope in self._agents:
-            from novacode_cli.commands.agents_commands import extract_agent_description
+        from novacode_cli.commands.agents_commands import agent_summary
 
-            desc = ""
-            try:
-                desc = extract_agent_description(path / "agent.md")
-            except Exception:
-                pass
+        for name, path, scope in self._agents:
+            desc, is_async = agent_summary(path / "agent.md")
             label = Text.assemble(
-                (f"@{name} ", "bold #73daca"), (f" · {scope} · ", "dim"), (desc, "dim")
+                (f"@{name} ", "bold #73daca"),
+                (" async ", "bold #f0b429") if is_async else (" sync ", "dim"),
+                (f"· {scope} · ", "dim"),
+                (desc, "dim"),
             )
             ol.add_option(Option(label))
 
@@ -2568,28 +2616,31 @@ class AgentsScreen(ModalScreen[None]):
         name, path, scope = self._agents[idx]
         agent_md = path / "agent.md"
 
-        def _read() -> tuple[str, str, str, Any]:
+        def _read() -> tuple[str, str, str, Any, bool]:
             """Every filesystem touch for this preview, on a worker thread."""
             from novacode_cli.agents.agent_file import agent_tools, read_agent
-            from novacode_cli.commands.agents_commands import extract_agent_description
+            from novacode_cli.agents.user_async_agents import is_async
+            from novacode_cli.commands.agents_commands import agent_summary
 
             desc = ""
             system_prompt = ""
             color = ""
+            runs_async = False
             try:
-                desc = extract_agent_description(agent_md)
+                desc, runs_async = agent_summary(agent_md)
                 front, system_prompt = read_agent(agent_md)
                 system_prompt = system_prompt.strip()
                 color = str(front.get("color") or "")
+                runs_async = is_async(front)
             except Exception as e:  # noqa: BLE001
                 system_prompt = f"(error reading system prompt: {e})"
             try:
                 chosen = agent_tools(agent_md.read_text(encoding="utf-8"))
             except Exception:  # noqa: BLE001
                 chosen = None
-            return desc, system_prompt, color, chosen
+            return desc, system_prompt, color, chosen, runs_async
 
-        desc, system_prompt, color, chosen = await asyncio.to_thread(_read)
+        desc, system_prompt, color, chosen, runs_async = await asyncio.to_thread(_read)
 
         preview_text = Text()
         preview_text.append(f"Name: ", style="bold")
@@ -2601,6 +2652,13 @@ class AgentsScreen(ModalScreen[None]):
         if color:
             preview_text.append(f"Color: ", style="bold")
             preview_text.append(f"{color}\n", style=f"bold {color}")
+        preview_text.append("Runs: ", style="bold")
+        preview_text.append(
+            "async - agent server, in the background\n"
+            if runs_async
+            else "in-process, same turn\n",
+            style="bold #f0b429" if runs_async else "dim",
+        )
         if desc:
             preview_text.append(f"Description: ", style="bold")
             preview_text.append(f"{desc}\n", style="dim")
@@ -2756,24 +2814,39 @@ class AgentsScreen(ModalScreen[None]):
                 from novacode_cli.agents.agent_file import write_agent
 
                 agent_md = agent_dir / "agent.md"
-                write_agent(
-                    agent_md,
-                    {"color": color, "description": desc, "tools": result.get("tools")},
-                    system_prompt,
-                )
+                wants_async = bool(result.get("async"))
+                # The key is written only for an async agent: an in-process agent is
+                # the default, and `async: false` in every agent.md would be noise.
+                front: dict[str, Any] = {
+                    "color": color,
+                    "description": desc,
+                    "tools": result.get("tools"),
+                }
+                if wants_async:
+                    front["async"] = True
+                write_agent(agent_md, front, system_prompt)
+
+                if wants_async:
+                    self._notify_async_agents_changed()
+                    extra = " It will also run on the agent server, in the background."
+                else:
+                    extra = ""
 
                 if self.is_mounted:
                     try:
                         hint = self.query_one("#agents-hint", Static)
                         hint.update(
                             Text(
-                                f"✓ Custom subagent '@{name}' created successfully!", style="green"
+                                f"✓ Custom subagent '@{name}' created successfully!{extra}",
+                                style="green",
                             )
                         )
                     except Exception:
                         pass
                 self.app._log(
-                    Text(f"✓ Custom subagent '@{name}' created successfully!", style="green")
+                    Text(
+                        f"✓ Custom subagent '@{name}' created successfully!{extra}", style="green"
+                    )
                 )
                 self.app._agent_names_cache = None
             except Exception as e:
@@ -2793,6 +2866,23 @@ class AgentsScreen(ModalScreen[None]):
                 except Exception:
                     pass
                 self._reload()
+
+    def _notify_async_agents_changed(self) -> None:
+        """Tell the launcher the set of async agents changed.
+
+        The server registers graphs at startup, so a newly created (or deleted)
+        async agent is only served once the server is planned again. The launcher
+        stops and re-plans, and the next dispatch starts it with the new set.
+        Never fatal: the agent still works in-process without any of this.
+        """
+        try:
+            from novacode_cli.agents.server_launcher import (
+                notify_user_async_agents_changed,
+            )
+
+            notify_user_async_agents_changed()
+        except Exception:  # noqa: BLE001 — the async form is optional
+            pass
 
     @work
     async def _delete_agent(self) -> None:
@@ -2816,7 +2906,15 @@ class AgentsScreen(ModalScreen[None]):
             import shutil
 
             try:
+                from novacode_cli.agents.user_async_agents import is_async, read_agent_safe
+
+                was_async = is_async(read_agent_safe(path / "agent.md")[0])
+            except Exception:  # noqa: BLE001 — deleting must still work
+                was_async = False
+            try:
                 shutil.rmtree(path)
+                if was_async:
+                    self._notify_async_agents_changed()
                 self.app._log(Text(f"✓ Deleted subagent '@{name}'!", style="green"))
                 self.app._agent_names_cache = None
             except Exception as e:

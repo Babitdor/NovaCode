@@ -27,6 +27,39 @@ def extract_agent_description(agent_md: Path) -> str:
     return "[unable to read]"
 
 
+def agent_summary(agent_md: Path) -> tuple[str, bool]:
+    """``(description, is_async)`` for one ``agent.md``, from a single read.
+
+    The list and the detail pane both need this, and each of them reading the
+    file separately is a blocking read on the event loop for every row.
+    """
+    from novacode_cli.agents.agent_file import _split
+    from novacode_cli.agents.user_async_agents import is_async
+
+    try:
+        content = agent_md.read_text(encoding="utf-8")
+    except Exception:  # noqa: BLE001 — a half-written file still lists, unlabelled
+        return "[unable to read]", False
+
+    front = _split(content)[0]
+    description = front.get("description")
+    summary = (
+        str(description).strip()[:80]
+        if description
+        else _first_prose_line(content)
+    )
+    return (summary or "[no description]", is_async(front))
+
+
+def _first_prose_line(content: str) -> str:
+    """The first non-heading line of a prompt, used when there is no description."""
+    for line in content.splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            return (line[:80] + "...") if len(line) > 80 else line
+    return ""
+
+
 async def handle_agents_command(cmd_args: str | None, assistant_id: str) -> bool:
     """Handle the /agents command."""
     settings = Settings.from_environment()

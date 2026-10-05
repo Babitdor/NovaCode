@@ -424,7 +424,7 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "resume": SlashCommand("_run_resume", "resume a saved session for this path (/resume <id>)"),
     "artifacts": SlashCommand("_run_artifacts", "open the artifacts list", wants_text=False),
         "subagents": SlashCommand(
-            "_run_subagents", "toggle the dynamic subagents panel", wants_text=False
+            "_run_subagents", "create/manage subagents (sync or async background)", wants_text=False
         ),
     "agent-server": SlashCommand("_run_agent_server", "local LangGraph server for subagents"),
     "tasks": SlashCommand("_run_tasks", "open the background tasks panel", wants_text=False),
@@ -8590,8 +8590,14 @@ class NovaApp(App):
         self._open_artifacts_list()
 
     async def _run_subagents(self) -> None:
-        """Collapse/expand the dynamic-subagents panel (same as alt+s)."""
-        self.action_toggle_subagents()
+        """Open the subagents manager, where both kinds are created.
+
+        One file makes either kind: an agent is in-process by default, and
+        `async: true` in its frontmatter also runs it in the background on the
+        agent server. `alt+s`, or clicking the dock, still toggles the live
+        panel.
+        """
+        await self.push_screen_wait(AgentsScreen())
 
     async def _run_agent_server(self, text: str = "") -> None:
         """The local LangGraph server the async subagents run on.

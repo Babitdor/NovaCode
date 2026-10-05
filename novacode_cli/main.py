@@ -242,11 +242,17 @@ def _add_agent_server_args(parser: argparse.ArgumentParser) -> None:
 
 def _stop_agent_server() -> None:
     """Stop the locally launched agent server, if this session started one."""
-    from novacode_cli.agents.server_launcher import shutdown_agent_server
+    from novacode_cli.agents.server_launcher import (
+        cleanup_user_config,
+        shutdown_agent_server,
+    )
 
     preserved = shutdown_agent_server()
     if preserved is not None:
         logging.getLogger(__name__).info("agent server log kept at %s", preserved)
+    # The generated graph config, if any user async agent caused one. Kept out of
+    # shutdown_agent_server because the server is also stopped mid-session.
+    cleanup_user_config()
 
 
 def parse_args():

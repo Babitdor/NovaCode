@@ -542,6 +542,10 @@ def _config_path() -> Path:
 
     It lives inside the package, beside the graphs, so an installed Nova (a uv
     tool, a wheel) can launch the server too, not only a checkout of the repo.
+
+    Only the *shipped* graphs. A user who created an async agent needs a config
+    that also registers their graphs, which cannot live in the installed
+    package: see :func:`_user_graph_config`.
     """
     return Path(__file__).resolve().parent / "async_agents" / "langgraph.json"
 
@@ -556,6 +560,81 @@ def _graph_names(config_path: Path) -> list[str]:
         return []
     graphs = data.get("graphs") if isinstance(data, dict) else None
     return list(graphs) if isinstance(graphs, dict) else []
+
+
+#: The generated config's directory, held for the process lifetime so the server
+#: can be started, stopped and started again without the directory disappearing
+#: under it. ``None`` until a user async agent forces one to exist.
+_user_config_dir: tempfile.TemporaryDirectory[str] | None = None
+
+
+def _user_graph_config() -> tuple[Path, list[str]] | None:
+    """A generated config registering the shipped graphs *and* the user's, or ``None``.
+
+    ``None`` when the user has no async agents, which is the common case and
+    leaves the shipped config in use byte for byte.
+
+    The generated config lives in a temp directory rather than beside the
+    package's own because the package directory is not Nova's to write: it is
+    read-only once installed and overwritten on upgrade. See
+    ``agents/async_agents/_config.py`` for the format.
+    """
+    global _user_config_dir  # noqa: PLW0603 — one dir per process, by design
+
+    from novacode_cli.agents.async_agents import _config
+    from novacode_cli.agents.user_async_agents import collect_user_async_agents
+
+    try:
+        user_agents = collect_user_async_agents()
+    except Exception:  # noqa: BLE001 — a bad agent file must not stop the launch
+        logger.warning("could not collect user async agents; using the shipped ones", exc_info=True)
+        return None
+    if not user_agents:
+        return None
+
+    try:
+        if _user_config_dir is None:
+            _user_config_dir = tempfile.TemporaryDirectory(prefix="nova_user_async_")
+        config_path, graph_names = _config.generate(user_agents, Path(_user_config_dir.name))
+    except Exception:  # noqa: BLE001 — fall back to the shipped graphs, still serving
+        logger.warning("could not generate an async agent config; using shipped graphs", exc_info=True)
+        return None
+    logger.info("agent server will also serve %d user async agent(s)", len(user_agents))
+    return config_path, graph_names
+
+
+def notify_user_async_agents_changed() -> None:
+    """Forget the generated config so the next launch rebuilds it.
+
+    Called when a user async agent is created or deleted. A running server has
+    already registered the previous set, and its generated directory is
+    rewritten under it, so the server is stopped as well: the next dispatch
+    starts a new one that serves the current set. With no user agents left there
+    is nothing to regenerate and the shipped config comes back on its own.
+    """
+    global _user_config_dir  # noqa: PLW0603 — mirrors _user_graph_config
+
+    with _server_lock:
+        process = _state["process"]
+        _state["process"] = None
+        _state["planned"] = None
+    if process is not None:
+        with contextlib.suppress(Exception):
+            process.stop()
+
+    stale, _user_config_dir = _user_config_dir, None
+    if stale is not None:
+        with contextlib.suppress(Exception):
+            stale.cleanup()
+
+    # Plan again immediately. `ensure_started` treats "nothing planned" as "an
+    # external server is in use" and returns True without starting anything, so
+    # simply clearing the plan would leave the next dispatch talking to a server
+    # that was never launched. Re-planning reserves the new port the rebuilt
+    # config's specs will name.
+    with contextlib.suppress(Exception):
+        plan_agent_server()
+    logger.debug("user async agents changed; the next launch rebuilds the graph config")
 
 
 async def ensure_agent_server(
@@ -623,6 +702,12 @@ def _plan(*, port: int | None = None, timeout: float = HEALTH_TIMEOUT) -> AgentS
 
     config_path = _config_path()
     graphs = _graph_names(config_path)
+    # A user's async agents cannot be registered in the package's own config, so
+    # when there are any the launcher serves a generated one instead — same
+    # graphs plus theirs.
+    generated = _user_graph_config()
+    if generated is not None:
+        config_path, graphs = generated
     if not config_path.is_file() or not graphs:
         logger.warning("cannot launch an agent server: %s has no graphs", config_path)
         return None
@@ -734,3 +819,19 @@ def shutdown_agent_server() -> Path | None:
     if path is not None and path.exists():
         return path
     return None
+
+
+def cleanup_user_config() -> None:
+    """Delete the generated async-agent config directory, if one was made.
+
+    Kept separate from :func:`shutdown_agent_server` because the server is
+    stopped and restarted inside a session (``/agent-server restart``), which must
+    not throw away the config that is about to be used again. This is for the end
+    of the session.
+    """
+    global _user_config_dir  # noqa: PLW0603 — one dir per process, by design
+
+    stale, _user_config_dir = _user_config_dir, None
+    if stale is not None:
+        with contextlib.suppress(Exception):
+            stale.cleanup()
