@@ -71,13 +71,23 @@ def mcp_tools_for(names: list[str] | tuple[str, ...]) -> list[BaseTool]:
     if wanted in _CACHE:
         return _CACHE[wanted]
 
-    tools = _discover(wanted)
-    _CACHE[wanted] = tools
+    tools, ok = _discover(wanted)
+    # Only a *successful* discovery is cached. A failure is usually transient — a
+    # server that was slow to start, or a timeout — and caching it would deny the
+    # agent its tools for the life of the process, with no way back short of a
+    # restart. A retry costs one more spawn; a permanent empty answer costs the
+    # agent the tools its prompt is written around.
+    if ok:
+        _CACHE[wanted] = tools
     return tools
 
 
-def _discover(wanted: tuple[str, ...]) -> list[BaseTool]:
+def _discover(wanted: tuple[str, ...]) -> tuple[list[BaseTool], bool]:
     """Run MCP discovery and keep the tools named in *wanted*.
+
+    Returns the tools and whether discovery itself succeeded, so the caller can
+    tell "this agent has no MCP tools" from "discovery did not work this time"
+    and cache only the former.
 
     Split out so :func:`mcp_tools_for` stays a cache lookup plus one call, and so
     the whole discovery can be wrapped in a single guard.
@@ -92,7 +102,7 @@ def _discover(wanted: tuple[str, ...]) -> list[BaseTool]:
             "could not discover MCP tools for a background agent; it will run without them",
             exc_info=True,
         )
-        return []
+        return [], False
 
     wanted_set = set(wanted)
     kept = [t for t in available if _tool_name(t) in wanted_set]
@@ -104,7 +114,8 @@ def _discover(wanted: tuple[str, ...]) -> list[BaseTool]:
             len(wanted),
             ", ".join(wanted),
         )
-    return kept
+    # Discovery worked, even if it matched nothing: that answer is worth caching.
+    return kept, True
 
 
 def _discover_off_loop(middleware: object) -> list[BaseTool]:
