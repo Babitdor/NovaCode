@@ -248,6 +248,42 @@ def test_the_cache_key_ignores_order_and_duplicates(monkeypatch):
     assert middleware.discovered == 1
 
 
+def test_a_failed_discovery_is_not_cached(monkeypatch):
+    """A transient failure must not deny the agent its tools for the process's life.
+
+    A server that was slow to start, or a timeout, is usually transient. Caching
+    that empty answer would mean the agent never gets the tools its prompt is
+    written around, with no way back short of a restart. Found by the
+    code-reviewer agent reviewing this module.
+    """
+    middleware = _FakeMiddleware([_FakeTool("serena_find_symbol")], boom=True)
+    _install(monkeypatch, middleware)
+
+    assert _mcp_tools.mcp_tools_for(["serena_find_symbol"]) == []
+    assert middleware.discovered == 1
+
+    # The server comes back; the next call must try again rather than serve the
+    # cached failure.
+    middleware._boom = False
+    kept = _mcp_tools.mcp_tools_for(["serena_find_symbol"])
+    assert [t.name for t in kept] == ["serena_find_symbol"]
+    assert middleware.discovered == 2
+
+
+def test_a_successful_discovery_that_matched_nothing_is_cached(monkeypatch):
+    """The other half: a real answer of "no such tool" is worth caching.
+
+    Otherwise a typo in the frontmatter would re-spawn every MCP server on every
+    graph build.
+    """
+    middleware = _FakeMiddleware([_FakeTool("serena_find_symbol")])
+    _install(monkeypatch, middleware)
+
+    assert _mcp_tools.mcp_tools_for(["serena_does_not_exist"]) == []
+    assert _mcp_tools.mcp_tools_for(["serena_does_not_exist"]) == []
+    assert middleware.discovered == 1
+
+
 # ── the graph actually carries them ─────────────────────────────────────────
 
 
