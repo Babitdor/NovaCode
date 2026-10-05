@@ -114,8 +114,28 @@ def _discover(wanted: tuple[str, ...]) -> tuple[list[BaseTool], bool]:
             len(wanted),
             ", ".join(wanted),
         )
-    # Discovery worked, even if it matched nothing: that answer is worth caching.
-    return kept, True
+    # "Discovery worked" is not the same as "no server answered". With servers
+    # configured but not one tool discovered, the servers are down or still
+    # starting, and caching that would turn a transient outage into a permanent
+    # "this agent has no MCP tools". Only a discovery that actually produced
+    # something, or a config with nothing to discover, is worth caching.
+    return kept, bool(available) or not _configured_servers()
+
+
+def _configured_servers() -> bool:
+    """Whether the user has any MCP server configured at all.
+
+    Used to tell "there is nothing to discover, so an empty result is the real
+    answer" from "servers are configured but none answered, so the empty result
+    is an outage". Never raises: an unreadable config is treated as "none", which
+    makes the caller cache the empty result rather than retry forever.
+    """
+    try:
+        from novacode_cli.mcp import get_shared_mcp_middleware
+
+        return bool(get_shared_mcp_middleware().mcp_config.list_servers())
+    except Exception:  # noqa: BLE001 — an unreadable config is not an outage
+        return False
 
 
 def _discover_off_loop(middleware: object) -> list[BaseTool]:

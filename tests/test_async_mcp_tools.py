@@ -284,6 +284,39 @@ def test_a_successful_discovery_that_matched_nothing_is_cached(monkeypatch):
     assert middleware.discovered == 1
 
 
+def test_an_outage_is_not_cached_as_a_real_answer(monkeypatch):
+    """Servers configured but none answering is an outage, not "no such tool".
+
+    The distinction matters: caching the outage would deny the agent its tools
+    for the life of the process, while a genuine "no such tool" is worth caching
+    so a frontmatter typo does not re-spawn every server on every graph build.
+    Found by the code-reviewer agent reviewing this module.
+    """
+    middleware = _FakeMiddleware([])  # configured, but nothing discovered
+    _install(monkeypatch, middleware)
+    monkeypatch.setattr(_mcp_tools, "_configured_servers", lambda: True)
+
+    assert _mcp_tools.mcp_tools_for(["serena_find_symbol"]) == []
+    assert middleware.discovered == 1
+
+    # The servers come up; the next call must try again.
+    middleware.tools = [_FakeTool("serena_find_symbol")]
+    kept = _mcp_tools.mcp_tools_for(["serena_find_symbol"])
+    assert [t.name for t in kept] == ["serena_find_symbol"]
+    assert middleware.discovered == 2
+
+
+def test_no_configured_servers_is_a_real_answer_and_is_cached(monkeypatch):
+    """With nothing configured there is no outage to retry, so cache it."""
+    middleware = _FakeMiddleware([])
+    _install(monkeypatch, middleware)
+    monkeypatch.setattr(_mcp_tools, "_configured_servers", lambda: False)
+
+    assert _mcp_tools.mcp_tools_for(["serena_find_symbol"]) == []
+    assert _mcp_tools.mcp_tools_for(["serena_find_symbol"]) == []
+    assert middleware.discovered == 1
+
+
 # ── the graph actually carries them ─────────────────────────────────────────
 
 
