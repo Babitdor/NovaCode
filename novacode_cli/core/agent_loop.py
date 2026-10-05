@@ -296,6 +296,8 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     _streamed_pending = False  # whether TextDelta(s) were emitted for the buffer
 
     captured = ev.UsageUpdate()
+    usage_calls: dict[object, tuple[int, int]] = {}
+    compacted = False
 
     # Drain any Nova events queued by the middleware (review cycles, skill
     # activity) into proper ContextMessage events for both UIs.
@@ -398,11 +400,11 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     pre_stream_msg_count: int | None = None
     # A summarization event already present before this turn is not news; only a
     # NEW one means the library compacted during it (see compaction detection).
-    _pre_summarization_event = False
+    _pre_summarization_event = None
     try:
         _pre_state = await agent.aget_state(config)
         _pre_msgs = _pre_state.values.get("messages", [])
-        _pre_summarization_event = bool(_pre_state.values.get("_summarization_event"))
+        _pre_summarization_event = _pre_state.values.get("_summarization_event")
         pre_stream_msg_count = len(_pre_msgs)
         for _m in _pre_msgs:
             _mid = getattr(_m, "id", None)
@@ -656,18 +658,35 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                     if is_main_agent:
                         usage = getattr(message, "usage_metadata", None)
                         if usage:
-                            cache_read = usage.get("cache_read_input_tokens", 0)
-                            cache_create = usage.get("cache_creation_input_tokens", 0)
-                            actual = usage.get("input_tokens", 0) + cache_read + cache_create
+                            details = usage.get("input_token_details") or {}
+                            cache_read = details.get(
+                                "cache_read", usage.get("cache_read_input_tokens", 0)
+                            )
+                            cache_create = details.get(
+                                "cache_creation", usage.get("cache_creation_input_tokens", 0)
+                            )
+                            actual = usage.get("input_tokens", 0)
+                            # Legacy raw Anthropic usage excludes cached input;
+                            # normalized LangChain usage already includes it.
+                            if "input_token_details" not in usage:
+                                actual += cache_read + cache_create
                             out = usage.get("output_tokens", 0)
                             if actual or out:
-                                captured.input_tokens = max(captured.input_tokens, actual)
-                                captured.output_tokens = max(captured.output_tokens, out)
-                                captured.cache_read_tokens = max(
-                                    captured.cache_read_tokens, cache_read
+                                metadata = _metadata if isinstance(_metadata, dict) else {}
+                                call_id = getattr(message, "id", None) or (
+                                    metadata.get("langgraph_step"),
+                                    metadata.get("langgraph_node"),
+                                    metadata.get("langgraph_checkpoint_ns"),
                                 )
-                                captured.cache_creation_tokens = max(
-                                    captured.cache_creation_tokens, cache_create
+                                old_input, old_output = usage_calls.get(call_id, (0, 0))
+                                usage_calls[call_id] = (
+                                    max(old_input, actual), max(old_output, out)
+                                )
+                                captured.input_tokens, captured.output_tokens = usage_calls[call_id]
+                                captured.cache_read_tokens = cache_read
+                                captured.cache_creation_tokens = cache_create
+                                captured.session_tokens = sum(
+                                    i + o for i, o in usage_calls.values()
                                 )
 
                     if not blocks:
@@ -976,11 +995,11 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                 if _post_state is not None:
                     _vals = _post_state.values
                     post_count = len(_vals.get("messages", []))
-                    _summarized = bool(_vals.get("_summarization_event"))
-                    if _summarized and not _pre_summarization_event:
-                        yield ev.CompactionNotice()
-                    elif post_count < pre_stream_msg_count - 2:
-                        yield ev.CompactionNotice()
+                    _summarized = _vals.get("_summarization_event")
+                    if (
+                        _summarized and _summarized != _pre_summarization_event
+                    ) or post_count < pre_stream_msg_count - 2:
+                        compacted = True
         except Exception:
             pass
 
@@ -1066,6 +1085,8 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
 
     if captured.input_tokens or captured.output_tokens:
         yield captured
+    if compacted:
+        yield ev.CompactionNotice()
     for _ctx in _drain_nova_events():
         yield _ctx
     yield ev.Done(had_response=has_responded)

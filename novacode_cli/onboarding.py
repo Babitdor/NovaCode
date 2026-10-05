@@ -45,6 +45,8 @@ API_KEY_NAMES = {
     # TTS backends read the environment.
     "deepgram": "deepgram_api_key",
     "elevenlabs": "elevenlabs_api_key",
+    "jev": "typesafe_api_key",
+    "systemone": "system_one_api_key",
 }
 
 

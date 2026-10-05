@@ -111,3 +111,17 @@ def test_an_ordinary_turn_emits_no_notice():
     """A turn that merely appends messages is not a compaction."""
     events = _run(_agent({"messages": _msgs(10)}, {"messages": _msgs(12)}))
     assert not any(isinstance(e, ev.CompactionNotice) for e in events)
+
+
+def test_usage_precedes_compaction_reset():
+    events = _run(_agent({"messages": _msgs(40)}, {"messages": _msgs(1)}))
+    kinds = [type(e) for e in events]
+    assert kinds.index(ev.UsageUpdate) < kinds.index(ev.CompactionNotice)
+
+
+def test_a_later_summarization_event_is_detected():
+    events = _run(_agent(
+        {"messages": _msgs(40), "_summarization_event": {"cutoff_index": 10}},
+        {"messages": _msgs(41), "_summarization_event": {"cutoff_index": 30}},
+    ))
+    assert any(isinstance(e, ev.CompactionNotice) for e in events)

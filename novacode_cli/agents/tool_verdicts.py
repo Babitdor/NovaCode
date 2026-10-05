@@ -41,7 +41,7 @@ import time
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from langchain_core.messages import (
     AIMessage,
@@ -49,6 +49,9 @@ from langchain_core.messages import (
     HumanMessage,
     ToolMessage,
 )
+
+if TYPE_CHECKING:
+    from novacode_cli.config.nova_config import NovaConfig
 
 logger = logging.getLogger(__name__)
 
@@ -620,8 +623,9 @@ def parse_answers(payload: Any) -> dict[str, float]:
         value = answer.get("noul")
         if not isinstance(value, (int, float)) or isinstance(value, bool):
             raise TypeError(f"invalid System One answer for {name}")
-        if not math.isfinite(float(value)):
-            raise ValueError(f"non-finite System One answer for {name}")
+        if not math.isfinite(float(value)) or not 0 <= value <= 1:
+            message = f"invalid System One probability for {name}"
+            raise ValueError(message)
         parsed[str(name)] = float(value)
     return parsed
 
@@ -663,6 +667,9 @@ class SystemOneClient:
         questions: dict[str, dict[str, Any]],
     ) -> dict[str, float]:
         """POST one request. Raises on any transport or shape problem."""
+        if not self.api_key:
+            message = "Jev API key is missing; add it through /auth."
+            raise ValueError(message)
         client = self._session()
         response = client.post(
             self.endpoint,
@@ -670,11 +677,35 @@ class SystemOneClient:
             headers={"authorization": f"Bearer {self.api_key}"},
         )
         if response.status_code >= 400:
-            raise ValueError(
-                f"System One request failed ({response.status_code}): "
-                f"{response.text[:200]}"
-            )
+            message = f"System One request failed ({response.status_code})."
+            raise ValueError(message)
         return parse_answers(response.json())
+
+
+def create_system_one_client(config: NovaConfig) -> SystemOneClient:
+    """Resolve credentials without sending TypeSafe keys to custom servers."""
+    from novacode_cli.config.credentials import credential_value
+    from novacode_cli.config.nova_config import NovaConfig
+
+    endpoint = config.get_tool_verdict_endpoint()
+    if endpoint == NovaConfig.TOOL_VERDICT_JEV_ENDPOINT:
+        api_key = credential_value("TYPESAFE_API_KEY")
+    else:
+        api_key = credential_value("SYSTEM_ONE_API_KEY") or "nova"
+    return SystemOneClient(
+        endpoint=endpoint, model=config.get_tool_verdict_model(), api_key=api_key
+    )
+
+
+def verdict_cache_path(agent_dir: Path | None, config: NovaConfig) -> Path | None:
+    """Keep decisions from different endpoints/models in separate caches."""
+    import hashlib
+
+    if agent_dir is None:
+        return None
+    identity = _dumps([config.get_tool_verdict_endpoint(), config.get_tool_verdict_model()])
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+    return agent_dir / "systemone" / digest / "tool_verdicts.json"
 
 
 class FakeDecisionClient:

@@ -19,7 +19,7 @@ An open-source, terminal-based AI coding assistant built on LangGraph and the `d
 - **Autonomous Learning System (Hermes)**: Periodically reviews tool usage patterns, extracts lessons, and autonomously creates reusable skills — the agent improves itself over time without user intervention
 - **Memory System**: Two-tier persistent memory — auto-maintained markdown files (`USER.md`/`MEMORY.md`) plus a LangGraph key/value store (`remember`/`recall`) for cross-session facts
 - **Context Management**: A three-stage pipeline sized to the model's actual context window — older tool results are cleared first (and offloaded to `/cleared/` so the agent can read them back instead of losing them), then the conversation is compacted hierarchically, with a hard backstop that always keeps an 8k-token reserve. The pre-compaction transcript is archived to `~/.nova/sessions/<thread>/`, and the context meter survives `/resume`
-- **System One Compaction (experimental)**: Instead of clearing tool results by age alone, Nova can ask a small local decision model — Tev1 (`tev1:4b`) on Ollama's `/v1/systemone` endpoint — whether each old tool result is still needed, and clear only the ones it scores stale. Cleared results are still offloaded to `/cleared/`, so nothing is lost. Off by default; see [System One Compaction](#system-one-compaction)
+- **System One Compaction (experimental)**: Nova can ask Jev or a compatible local/custom decision model whether each old tool result is still needed, and clear only results scored stale. Configure Jev through `/auth`, or supply a custom System One endpoint and model. Cleared results are offloaded to `/cleared/`. Off by default; see [System One Compaction](#system-one-compaction)
 - **Native Vision**: A multimodal main model sees pasted images directly; a text-only one gets them captioned by an auxiliary vision model. Capability is detected from the model profile and can be overridden with `/vision`
 - **Council Planning**: `/council <task>` has several agents propose plans independently, critique each other anonymously, and vote; a judge picks the top 3 and nothing is implemented until you approve one
 - **Research Swarm**: `/research` fans a question out to 7 research personas (web researcher, fact checker, literature reviewer, market analyst, financial analyst, technical researcher, synthesizer) and merges their findings
@@ -666,9 +666,31 @@ and `--force` is replaced by the upstream confirmation/`--yes` workflow.
 
 ### System One Compaction
 
+The TUI's CTX meter uses the latest main-model input usage when available and
+an estimated summary/tail breakdown after compaction or resume. Its percentage
+uses the selected model's detected context window. SESSION accumulates main-model
+input and output across tool-loop calls against a configured token budget (1M by
+default); it is not a provider quota or billing estimate. Compaction preserves
+SESSION usage, while `/clear` resets it. Subagents and auxiliary model calls are
+not included, and historical usage is not restored from saved sessions.
+
 By default the context pipeline clears every tool result older than the token trigger except the newest few. System One compaction replaces that age rule with a judgement: a small decision model is shown a skeleton of the conversation and asked, per result, whether it is still needed. Only results scored below the keep threshold are cleared, and an unjudged result is always kept (the feature fails open).
 
-It runs against a local Ollama serving a Tev1 model, and is **off by default**. Enable it in `~/.nova/Nova.config.json`:
+It is **off by default**. Open `/model` → **Decisions** to select **Jev**, **Tev1**, or **Custom System One**, edit the decision model and endpoint, and toggle **Enable System One tool pruning**. **Save** persists the settings and rebuilds the current agent while retaining your chat model and conversation. **Cancel** discards the changes.
+
+To use hosted Jev, open `/auth`, select **Jev (System One compaction)**, and save your TypeSafe API key. The Decisions tab's **Manage API key** button opens the same manager without discarding your draft. Keys use Nova's existing credential store as `TYPESAFE_API_KEY`. Saving a key does not change the decision model or enable pruning; those settings belong to the Decisions tab. Create keys in the [TypeSafe console](https://console.typesafe.ai/keys); the [official API reference](https://api.typesafe.ai/docs) describes the request format.
+
+For environment-based authentication, set `TYPESAFE_API_KEY` and configure:
+
+```json
+{
+  "tool_verdicts_enabled": true,
+  "tool_verdict_endpoint": "https://api.typesafe.ai/v1/systemone",
+  "tool_verdict_model": "jev-latest"
+}
+```
+
+Local and custom models remain optional. Set their full System One endpoint and the model name accepted by that server in `~/.nova/Nova.config.json`. There is no model allowlist: Kev1 and future compatible models work through the same interface. For example, the existing local Tev1 setup is:
 
 ```json
 {
@@ -686,7 +708,11 @@ It runs against a local Ollama serving a Tev1 model, and is **off by default**. 
 | `tool_verdict_model` | Decision model (`tev1:4b` separates answers cleanly; the 0.8B size does not) | `tev1:4b` |
 | `tool_verdict_keep_threshold` | Minimum probability a result is still needed for it to survive | `0.5` |
 
-Why it is opt-in: Tev1's context is about 2,000 tokens, so it can only be asked about the newest 12 results of a session. Measured on six real sessions, the default age rule cleared more (70 results / 72,682 chars against 49 / 18,364) with fewer regretted clears (0.19 against 0.44 per 1k). The flag stays so it can be tried live and re-measured.
+If a custom endpoint requires authentication, use **Custom System One (optional API key)** in `/auth`, or set `SYSTEM_ONE_API_KEY`. Local endpoints can run without a real key. TypeSafe credentials are sent only to the exact official Jev endpoint; custom endpoints use the separate custom credential. Configure the endpoint/model and toggle pruning in **Decisions**. Hand-edited configuration applies after restarting Nova; set `tool_verdicts_enabled` to `false` to disable it.
+
+This feature decides which tool outputs to offload during context management. `/compact` summary generation continues to use your active session model. Thresholds should be evaluated separately for each decision model.
+
+Why it is opt-in: the current scorer budgets about 2,000 tokens and considers only the newest 12 results, including when Jev is selected. Measured on six real sessions with Tev1, the default age rule cleared more (70 results / 72,682 chars against 49 / 18,364) with fewer regretted clears (0.19 against 0.44 per 1k). These measurements do not establish Jev's performance. The flag stays so each model can be tried live and re-measured.
 
 ## Built-in Subagents
 

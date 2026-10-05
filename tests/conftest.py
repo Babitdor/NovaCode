@@ -28,6 +28,8 @@ _CREDENTIAL_ENV_VARS = (
     # here makes a later test's provider read as "env set" instead of "stored".
     "DEEPGRAM_API_KEY",
     "ELEVENLABS_API_KEY",
+    "TYPESAFE_API_KEY",
+    "SYSTEM_ONE_API_KEY",
 )
 
 

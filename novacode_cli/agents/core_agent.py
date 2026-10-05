@@ -1403,21 +1403,19 @@ def _build_middleware_stack(
     _verdict_scorer = None
     if NovaConfig().get_tool_verdicts_enabled():
         from novacode_cli.agents.tool_verdicts import (
-            SystemOneClient,
             ToolVerdictCache,
             VerdictScorer,
             build_verdict_middleware,
+            create_system_one_client,
+            verdict_cache_path,
         )
 
         _verdict_config = NovaConfig()
         _verdict_cache = ToolVerdictCache(
-            path=(agent_dir / "tool_verdicts.json") if agent_dir else None
+            path=verdict_cache_path(agent_dir, _verdict_config)
         )
         _verdict_scorer = VerdictScorer(
-            SystemOneClient(
-                endpoint=_verdict_config.get_tool_verdict_endpoint(),
-                model=_verdict_config.get_tool_verdict_model(),
-            ),
+            create_system_one_client(_verdict_config),
             _verdict_cache,
         )
 

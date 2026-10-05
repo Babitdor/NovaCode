@@ -4822,7 +4822,7 @@ class NovaApp(App):
             budget = getattr(self.token_tracker, "session_token_budget", 0)
             parts.append(
                 (
-                    f"{pct:.0f}% of {self._fmt_tokens(budget)}",
+                    f"{pct:.0f}% of {self._fmt_tokens(budget)} budget",
                     f"bold {_pct_color(pct, pal.primary, pal)}",
                 )
             )
@@ -6367,11 +6367,12 @@ class NovaApp(App):
             return
         try:
             from novacode_cli.context import ContextManager
+            from novacode_cli.context.history import effective_messages
 
             ag, _ = self._active_agent()
             config = {"configurable": {"thread_id": self.session_state.thread_id}}
             state = await ag.aget_state(config)
-            msgs = state.values.get("messages", []) if state else []
+            msgs = effective_messages(state.values) if state else []
             if msgs:
                 # Off the loop: it can shell out to `ollama show`, which hangs
                 # while the local daemon is busy (a 42s UI freeze was measured).
@@ -8083,6 +8084,25 @@ class NovaApp(App):
             self._apply_voice_pick(result)
             return
 
+        if result.get("kind") == "decision":
+            try:
+                live_model = getattr(self.session_state, "_model", None)
+                if live_model is None:
+                    self._log(
+                        Text("Decision settings saved; used in your next session.", style="yellow")
+                    )
+                    return
+                self.agent, self.backend = await self.session_state.switch_model(live_model)
+                state = "enabled" if result.get("enabled") else "disabled"
+                self._log(
+                    Text(f"System One tool pruning {state} ({result['model']}).", style="green")
+                )
+            except Exception:  # noqa: BLE001 — settings persist even if rebuilding fails
+                self._log(
+                    Text("Decision settings saved; restart Nova to apply them.", style="yellow")
+                )
+            return
+
         role = str(result.get("role") or "main")
         if role != "main":
             self._apply_role_pick(result, role)
@@ -8134,6 +8154,7 @@ class NovaApp(App):
                 except Exception:  # noqa: BLE001
                     pass
             self._set_status("ready")
+            await self._update_context_breakdown()
             self._refresh_info_bar()  # reflect the new model in the footer at once
             self._remember_model(provider, model)
             self._log(
@@ -8294,6 +8315,8 @@ class NovaApp(App):
                 # tools/web_tools.py builds its Tavily client at import time, so
                 # a key added now only gates web_search after a restart.
                 self._log(Text("Web search picks it up after a restart.", style="yellow"))
+            if name == "jev":
+                self._log(Text("Configure Jev in /model → Decisions.", style="dim"))
         for name in screen.deleted:
             self._log(
                 Text(
@@ -11494,6 +11517,7 @@ class NovaApp(App):
                         e.output_tokens,
                         cache_read_tokens=e.cache_read_tokens,
                         cache_creation_tokens=e.cache_creation_tokens,
+                        session_tokens=e.session_tokens,
                     )
                 except Exception:  # noqa: BLE001
                     pass

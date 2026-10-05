@@ -61,7 +61,7 @@ def _require_role(role: str) -> None:
 class NovaConfig:
     """Manages persistent configuration for Nova CLI."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize configuration manager."""
         settings = Settings.from_environment()
         self.config_dir = settings.user_deepagents_dir
@@ -466,6 +466,38 @@ class NovaConfig:
 
     #: Where the decisions are asked of. Ollama serves the System One shape.
     TOOL_VERDICT_DEFAULT_ENDPOINT = "http://localhost:11434/v1/systemone"
+
+    TOOL_VERDICT_JEV_ENDPOINT = "https://api.typesafe.ai/v1/systemone"
+    TOOL_VERDICT_JEV_MODEL = "jev-latest"
+
+    def set_tool_verdict_settings(self, *, enabled: bool, endpoint: str, model: str) -> None:
+        """Persist a complete decision configuration in one write."""
+        from urllib.parse import urlsplit
+
+        endpoint, model = endpoint.strip(), model.strip()
+        try:
+            parts = urlsplit(endpoint)
+            valid = (
+                parts.scheme in {"http", "https"}
+                and bool(parts.hostname)
+                and parts.username is None
+                and parts.password is None
+            )
+            _ = parts.port
+        except ValueError:
+            valid = False
+        if not valid:
+            message = "Endpoint must be an http(s) URL without embedded credentials."
+            raise ValueError(message)
+        if not model:
+            message = "Decision model cannot be empty."
+            raise ValueError(message)
+        self._config.update(
+            tool_verdicts_enabled=bool(enabled),
+            tool_verdict_endpoint=endpoint,
+            tool_verdict_model=model,
+        )
+        self._save()
 
     def get_tool_verdicts_enabled(self) -> bool:
         """Whether the tool-result reducer consults a decision model.

@@ -140,3 +140,26 @@ def test_session_pct_is_fraction_of_budget():
     assert t.session_pct == 25.0
     t.session_token_budget = 0  # guard: no divide-by-zero
     assert t.session_pct == 0.0
+def test_session_usage_can_include_multiple_calls():
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    tracker = TokenTracker()
+    tracker.add(500, 40, session_tokens=2570)
+    assert tracker.current_context == 500
+    assert tracker.session_total_tokens == 2570
+    tracker.reset()
+    assert tracker.session_total_tokens == 2570
+
+
+def test_model_change_discards_previous_window(monkeypatch):
+    from novacode_cli.context import ContextBreakdown, ContextManager
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    tracker = TokenTracker()
+    tracker.model_name = "old-model"
+    tracker.add(50000, 1000)
+    tracker.set_breakdown(ContextBreakdown(total_tokens=50000, context_window_size=200000))
+    monkeypatch.setattr(ContextManager, "window_size", lambda self: 1000000)
+    tracker.set_model("new-model")
+    assert tracker.get_breakdown().context_window_size == 1000000
+    assert tracker.session_total_tokens == 51000

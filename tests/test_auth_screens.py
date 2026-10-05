@@ -64,6 +64,8 @@ def secrets(tmp_path, monkeypatch):
         if var:
             monkeypatch.delenv(var, raising=False)
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.delenv("SYSTEM_ONE_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     return _StubSecretManager
 
@@ -208,6 +210,75 @@ async def test_a_service_row_only_claims_what_that_service_gates(
 # ---------------------------------------------------------------------------
 # The key prompt
 # ---------------------------------------------------------------------------
+
+
+async def test_jev_save_stores_key_without_changing_decision_settings(secrets):
+    from textual.app import App
+    from textual.widgets import Input, Static
+
+    from novacode_cli.config.nova_config import NovaConfig
+    from novacode_cli.tui.auth_screens import AuthPromptScreen
+
+    app = App()
+    async with app.run_test(size=(120, 40)) as pilot:
+        prompt = AuthPromptScreen("jev")
+        app.push_screen(prompt)
+        await pilot.pause()
+        assert "Decisions" in str(prompt.query_one("#auth-desc", Static).content)
+        assert prompt.query_one("#auth-key", Input).password is True
+        prompt.query_one("#auth-key", Input).value = "test-jev-key"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert secrets.store["typesafe_api_key"] == "test-jev-key"
+        config = NovaConfig()
+        assert config.get_tool_verdicts_enabled() is False
+        assert config.get_tool_verdict_model() == "tev1:4b"
+        config.set_tool_verdict_settings(
+            enabled=True, endpoint="https://api.typesafe.ai/v1/systemone", model="jev-latest"
+        )
+        from novacode_cli.agents.tool_verdicts import create_system_one_client
+
+        # Simulate a fresh process without startup environment hydration.
+        os.environ.pop("TYPESAFE_API_KEY")
+        assert create_system_one_client(config).api_key == "test-jev-key"
+        assert "test-jev-key" not in config.config_path.read_text(encoding="utf-8")
+
+
+async def test_failed_jev_save_does_not_activate_compaction(secrets, monkeypatch):
+    from textual.app import App
+    from textual.widgets import Input
+
+    from novacode_cli.config.nova_config import NovaConfig
+    from novacode_cli.tui.auth_screens import AuthPromptScreen
+
+    monkeypatch.setattr(secrets, "store_secret", lambda *args: False)
+    app = App()
+    async with app.run_test(size=(120, 40)) as pilot:
+        prompt = AuthPromptScreen("jev")
+        app.push_screen(prompt)
+        await pilot.pause()
+        prompt.query_one("#auth-key", Input).value = "test-jev-key"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.screen is prompt
+        assert NovaConfig().get_tool_verdicts_enabled() is False
+
+
+async def test_cancelling_jev_auth_does_not_activate_compaction(secrets):
+    from textual.app import App
+
+    from novacode_cli.config.nova_config import NovaConfig
+    from novacode_cli.tui.auth_screens import AuthPromptScreen
+
+    app = App()
+    async with app.run_test(size=(120, 40)) as pilot:
+        prompt = AuthPromptScreen("jev")
+        app.push_screen(prompt)
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert secrets.store == {}
+        assert NovaConfig().get_tool_verdicts_enabled() is False
 
 
 async def test_entering_a_key_stores_it_and_exports_it(secrets):

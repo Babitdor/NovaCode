@@ -172,12 +172,13 @@ class SubagentTask:
 
 @dataclass
 class UsageUpdate:
-    """Token usage captured from the model response (main agent only)."""
+    """Latest main-model context plus cumulative usage across its calls."""
 
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
+    session_tokens: int | None = None
 
 
 @dataclass

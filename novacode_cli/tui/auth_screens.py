@@ -60,6 +60,8 @@ if TYPE_CHECKING:
 #: Tavily's "gates web search" note for them was simply wrong.
 _SERVICE_NOTES: dict[str, str] = {
     "tavily": "gates web search",
+    "jev": "decision-based tool pruning",
+    "systemone": "custom endpoint credential",
 }
 
 
@@ -415,7 +417,12 @@ class AuthPromptScreen(ModalScreen[str | None]):
             yield Static(
                 Text(
                     f"Paste the key below. It is stored in your OS credential store as "
-                    f"{env_var} and applied to this session immediately.",
+                    f"{env_var} and applied to this session immediately."
+                    + (
+                        "\nConfigure decision models in /model → Decisions."
+                        if self._name in {"jev", "systemone"}
+                        else ""
+                    ),
                     style="dim",
                 ),
                 id="auth-desc",

@@ -151,6 +151,8 @@ def test_credential_names_exclude_keyless_providers():
         "tavily",
         "deepgram",
         "elevenlabs",
+        "jev",
+        "systemone",
     }
 
 

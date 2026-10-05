@@ -36,6 +36,7 @@ from textual.widgets.option_list import Option
 
 from novacode_cli.tui.animations import animate_modal_screen
 from novacode_cli.tui.auth_display import format_auth_indicator
+from novacode_cli.tui.decision_settings import DecisionSettings
 from novacode_cli.tui.widgets import DEFAULT_THEME
 
 #: Prefix for the non-selectable rows in `ModelScreen` (provider headers and
@@ -431,8 +432,10 @@ class ModelScreen(ModalScreen[dict | None]):
             yield Tabs(
                 Tab("Models", id="tab-models"),
                 Tab("Voice", id="tab-voice"),
+                Tab("Decisions", id="tab-decisions"),
                 id="model-tabs",
             )
+            yield DecisionSettings(id="model-decisions")
             yield Input(placeholder="Filter models…", id="model-filter")
             yield Static("", id="modelinfo")
             yield OptionList(id="model-options")
@@ -471,12 +474,27 @@ class ModelScreen(ModalScreen[dict | None]):
         list before the loader has anything to put in it).
         """
         tab_id = getattr(getattr(event, "tab", None), "id", "") or ""
-        kind = "voice" if tab_id == "tab-voice" else "model"
+        kind = {"tab-voice": "voice", "tab-decisions": "decision"}.get(tab_id, "model")
         if kind == self._tab:
             return
         self._tab = kind
+        decisions = kind == "decision"
+        self.query_one("#model-decisions", DecisionSettings).display = decisions
+        for selector in ("#model-filter", "#modelinfo", "#model-options", "#model-custom-row"):
+            self.query_one(selector).display = not decisions
+        self.query_one("#switch", Button).label = "Save" if decisions else "Switch"
+        if decisions:
+            self.query_one("#model-decisions", DecisionSettings).load()
+            self._show_hint("Save to apply · Esc cancel")
+            return
+        self._show_hint("↑/↓ move · Enter switch · Ctrl+R curated only · Esc cancel")
         self._sync_free_text_placeholder()
         self._repaint()
+
+    def on_decision_settings_saved(self, event: DecisionSettings.Saved) -> None:
+        """A decision pick changes its own config, independently of chat roles."""
+        event.stop()
+        self.dismiss({"kind": "decision", "enabled": event.enabled, "model": event.model})
 
     def _sync_free_text_placeholder(self) -> None:
         """Point the free-text field at whatever this tab's rows select."""
@@ -610,6 +628,9 @@ class ModelScreen(ModalScreen[dict | None]):
         separate lists, so neither can bury the other.
         """
         from novacode_cli.config.model_manager import MODEL_PRESETS
+
+        if self._tab == "decision":
+            return
 
         option_list = self.query_one("#model-options", OptionList)
         option_list.clear_options()
@@ -1008,6 +1029,9 @@ class ModelScreen(ModalScreen[dict | None]):
 
     def _submit(self) -> None:
         """Resolve the highlighted row or the typed value and apply it."""
+        if self._tab == "decision":
+            self.query_one("#model-decisions", DecisionSettings).save()
+            return
         typed = self.query_one("#model", Input).value.strip()
         target = self._highlighted_target()
 

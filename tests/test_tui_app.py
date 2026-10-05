@@ -28,6 +28,13 @@ except ImportError:  # pragma: no cover
 def _disable_live_update_checks(monkeypatch: pytest.MonkeyPatch) -> None:
     """TUI tests never contact update services or write the real user cache."""
     monkeypatch.setenv("NOVA_DISABLE_UPDATE_CHECK", "1")
+    if _HAS_TEXTUAL:
+        from novacode_cli.tui.app import NovaApp
+
+        async def no_voice_warmup() -> None:
+            pass
+
+        monkeypatch.setattr(NovaApp, "_eager_voice_warmup", lambda self: no_voice_warmup())
 
 
 class _Chunk:
@@ -1967,6 +1974,39 @@ def test_tui_context_gauge_two_tone():
     if not _HAS_TEXTUAL:
         return
     asyncio.run(_drive_context_gauge_two_tone())
+
+
+async def test_tui_token_usage_and_compacted_context(monkeypatch: pytest.MonkeyPatch):
+    from langchain_core.messages import HumanMessage
+
+    import novacode_cli.ui_events as ev
+    from novacode_cli.tui.app import NovaApp
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    class CompactedAgent(_FakeAgent):
+        async def aget_state(self, config):
+            state = _StateVal([HumanMessage(content="x" * 40000), HumanMessage(content="tail")])
+            state.values["_summarization_event"] = {
+                "cutoff_index": 1,
+                "summary_message": HumanMessage(content="summary"),
+            }
+            return state
+
+    tracker = TokenTracker()
+    tracker.set_model("gpt-4o")
+    app = NovaApp(
+        agent=CompactedAgent(), assistant_id="nova-agent", session_state=_SS(),
+        backend=None, token_tracker=tracker, image_tracker=None, model_name="gpt-4o",
+    )
+    async with app.run_test(size=(150, 40)):
+        await app._render(ev.UsageUpdate(input_tokens=500, output_tokens=40, session_tokens=2570))
+        assert tracker.current_context == 500
+        assert tracker.session_total_tokens == 2570
+        await app._render(ev.CompactionNotice())
+        assert tracker.session_total_tokens == 2570
+        assert tracker.get_breakdown().total_tokens < 1000
+        app._refresh_quota()
+        assert "budget" in str(app.query_one("#info-quota").render())
 
 
 async def _drive_footer_follows_theme():

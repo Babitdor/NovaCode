@@ -13,7 +13,7 @@ Reading ``os.environ`` directly is what made a keychain-saved key look missing
 after a restart: the export into ``os.environ`` happens at startup, so any
 check that runs before or outside that pass sees nothing.
 
-Services (currently Tavily only) are not model providers — they back features
+Services are not chat model providers — they back features
 such as web search — but their credentials are stored the same way, so they
 appear in ``/auth`` alongside the providers.
 
@@ -110,6 +110,8 @@ SERVICE_API_KEY_ENV: dict[str, str] = {
     "tavily": "TAVILY_API_KEY",
     "deepgram": "DEEPGRAM_API_KEY",
     "elevenlabs": "ELEVENLABS_API_KEY",
+    "jev": "TYPESAFE_API_KEY",
+    "systemone": "SYSTEM_ONE_API_KEY",
 }
 """Non-model services configurable through ``/auth``, mapped to their env var.
 
@@ -124,6 +126,8 @@ SERVICE_DISPLAY_NAMES: dict[str, str] = {
     "tavily": "Tavily (web search)",
     "deepgram": "Deepgram (speech to text)",
     "elevenlabs": "ElevenLabs (text to speech)",
+    "jev": "Jev (System One compaction)",
+    "systemone": "Custom System One (optional API key)",
 }
 """Capitalized names for the services in ``/auth``.
 

@@ -271,6 +271,8 @@ async def execute_task(  # type: ignore
     has_responded = False
 
     captured_input_tokens = 0
+    captured_session_tokens = None
+    context_compacted = False
 
     captured_output_tokens = 0
 
@@ -1071,6 +1073,7 @@ async def execute_task(  # type: ignore
 
 
             elif isinstance(event, ev.CompactionNotice):
+                context_compacted = True
 
                 console.print()
 
@@ -1107,6 +1110,7 @@ async def execute_task(  # type: ignore
 
 
             elif isinstance(event, ev.UsageUpdate):
+                captured_session_tokens = event.session_tokens
 
                 captured_input_tokens = max(captured_input_tokens, event.input_tokens)
 
@@ -1257,6 +1261,7 @@ async def execute_task(  # type: ignore
                 cache_read_tokens=captured_cache_read_tokens,
 
                 cache_creation_tokens=captured_cache_creation_tokens,
+                session_tokens=captured_session_tokens,
 
             )
 
@@ -1269,6 +1274,8 @@ async def execute_task(  # type: ignore
             await _capture_fallback_usage(agent, config, token_tracker)
 
         if token_tracker:
+            if context_compacted:
+                token_tracker.reset()
 
             token_tracker.increment_assistant_messages()
 
@@ -1281,6 +1288,7 @@ async def execute_task(  # type: ignore
             try:
 
                 from novacode_cli.context import ContextManager
+                from novacode_cli.context.history import effective_messages
 
 
 
@@ -1292,7 +1300,7 @@ async def execute_task(  # type: ignore
 
                     _last_known_state = _bd_state
 
-                _bd_msgs = _bd_state.values.get("messages", [])
+                _bd_msgs = effective_messages(_bd_state.values)
 
                 if _bd_msgs and token_tracker.model_name:
 
@@ -1324,4 +1332,3 @@ async def execute_task(  # type: ignore
         except Exception:
 
             pass
-

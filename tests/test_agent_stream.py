@@ -54,6 +54,28 @@ def _collect(agent, user_input="hi", on_interrupt=None):
     return asyncio.run(_run())
 
 
+def test_usage_sums_calls_but_context_uses_latest_call():
+    class Agent:
+        async def aget_state(self, config):
+            return _State([])
+
+        async def astream(self, inp, **kw):
+            for mid, usage in [
+                ("first", {"input_tokens": 2000, "output_tokens": 20}),
+                ("first", {"input_tokens": 2000, "output_tokens": 30}),
+                ("last", {"input_tokens": 500, "output_tokens": 40,
+                          "input_token_details": {"cache_read": 100}}),
+            ]:
+                yield ((), "messages", (_Chunk(mid, [], usage=usage), {}))
+
+    updates = [e for e in _collect(Agent()) if isinstance(e, ev.UsageUpdate)]
+    assert len(updates) == 1
+    assert updates[0].input_tokens == 500
+    assert updates[0].output_tokens == 40
+    assert updates[0].cache_read_tokens == 100
+    assert updates[0].session_tokens == 2570
+
+
 def test_happy_path_text_tool_todo():
     class Agent:
         async def aget_state(self, config):
