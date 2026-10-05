@@ -196,9 +196,10 @@ remain managed through their original installer. Nova settings, sessions, MCPs,
 and skills remain in their existing directories.
 
 On Windows, uv-managed updates run in a separate process after `nova update`
-and its launcher exit. The command prints a log path containing installer
-progress and the final result; it reports a handoff rather than immediate
-success. Close other Nova sessions before updating. If an older updater reports
+and its launcher exit. Installer progress and the final result appear live in
+the same terminal. When no update is needed, Nova displays
+`NovaCode is up to date.` Close other Nova sessions before updating. If an older
+updater reports
 `Failed to install entrypoint` or `Windows could not move Nova's launcher`, run
 this directly from PowerShell after closing Nova to install the corrected updater:
 

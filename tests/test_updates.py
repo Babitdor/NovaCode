@@ -208,11 +208,11 @@ def test_windows_update_hands_off_without_touching_launcher(
     monkeypatch.setattr(U.sys, "platform", "win32")
     monkeypatch.setattr(U, "detect_installation", lambda: U.Installation("1.0", "uv-tool"))
     monkeypatch.setattr(U.shutil, "which", lambda _name: "uv")
-    spawn = Mock(return_value=tmp_path / "update.log")
+    spawn = Mock()
     run = Mock()
     monkeypatch.setattr(U, "_start_windows_update", spawn)
     monkeypatch.setattr(U, "_run", run)
-    assert U.install_update() == tmp_path / "update.log"
+    assert U.install_update() is True
     run.assert_not_called()
     spawn.assert_called_once_with(
         ["uv", "tool", "upgrade", "novacode-cli", "--reinstall-package", "novacode-cli"]
@@ -227,17 +227,18 @@ def test_windows_update_uses_independent_interpreter_and_waits_for_caller(
     import json
 
     monkeypatch.setattr(U.sys, "_base_executable", "base-python.exe")
-    monkeypatch.setattr(U.subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
     process = Mock()
     monkeypatch.setattr(U.subprocess, "Popen", process)
-    log = U._start_windows_update(["uv", "tool", "upgrade", "novacode-cli"])
+    U._start_windows_update(["uv", "tool", "upgrade", "novacode-cli"])
     args = process.call_args.args[0]
     assert args[:2] == ["base-python.exe", "-I"]
     payload = json.loads(args[-1])
     assert payload["caller_pid"] == U.os.getpid()
     assert payload["parent_pid"] == U.os.getppid()
-    assert process.call_args.kwargs["creationflags"] == U.subprocess.CREATE_NO_WINDOW
-    assert log.is_file()
+    assert process.call_args.kwargs["creationflags"] == 0
+    assert process.call_args.kwargs.get("stdout") is None
+    assert process.call_args.kwargs.get("stderr") is None
+    assert not list(tmp_path.glob("*.log"))
 
 
 def test_queued_update_is_not_reported_as_completed(
@@ -250,10 +251,10 @@ def test_queued_update_is_not_reported_as_completed(
         "check_for_update",
         lambda **_kw: U.UpdateStatus(available=True, current="old", latest="new"),
     )
-    monkeypatch.setattr(U, "install_update", lambda: tmp_path / "update.log")
+    monkeypatch.setattr(U, "install_update", lambda: True)
     assert U.update_main([]) == 0
     output = capsys.readouterr().out
-    assert "handed off" in output
+    assert "log" not in output
     assert "Nova updated" not in output
 
 

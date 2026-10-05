@@ -15,7 +15,6 @@ import shutil
 import subprocess
 import sys
 import time
-import uuid
 from contextlib import suppress
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -176,10 +175,8 @@ def _run(arguments: list[str], *, cwd: Path | None = None) -> None:
     subprocess.run(arguments, cwd=cwd, check=True)
 
 
-def _start_windows_update(arguments: list[str]) -> Path:
-    """Run uv from base Python after the calling launcher has exited."""
-    log = _cache_path().with_name(f"update-{uuid.uuid4().hex}.log")
-    log.parent.mkdir(parents=True, exist_ok=True)
+def _start_windows_update(arguments: list[str]) -> None:
+    """Release the launcher while keeping updater output in the same terminal."""
     payload = {
         "command": arguments,
         "caller_pid": os.getpid(),
@@ -188,19 +185,17 @@ def _start_windows_update(arguments: list[str]) -> Path:
     }
     interpreter = getattr(sys, "_base_executable", sys.executable)
     helper = Path(__file__).with_name("_windows_update.py")
-    with log.open("w", encoding="utf-8") as output:
-        subprocess.Popen(
-            [interpreter, "-I", "-X", "utf8", str(helper), json.dumps(payload)],
-            stdin=subprocess.DEVNULL,
-            stdout=output,
-            stderr=subprocess.STDOUT,
-            creationflags=subprocess.CREATE_NO_WINDOW,
-        )
-    return log
+    subprocess.Popen(
+        [interpreter, "-I", "-X", "utf8", str(helper), json.dumps(payload)],
+        stdin=subprocess.DEVNULL,
+        # Inherit the console and output handles so progress remains visible
+        # after nova.exe exits and releases the launcher for replacement.
+        creationflags=0,
+    )
 
 
-def install_update() -> Path | None:
-    """Update with the installation's manager; never reset or stash a checkout."""
+def install_update() -> bool:
+    """Update with the original manager; return whether a helper finishes it."""
     installation = detect_installation()
     if installation.kind == "source":
         root = installation.root
@@ -242,7 +237,8 @@ def install_update() -> Path | None:
             # Reinstall just Nova so uv repairs a launcher even when an earlier
             # failed update already advanced the installed package's version.
             arguments.extend(["--reinstall-package", "novacode-cli"])
-            return _start_windows_update(arguments)
+            _start_windows_update(arguments)
+            return True
         _run(arguments)
     else:
         target = "novacode-cli"
@@ -253,7 +249,7 @@ def install_update() -> Path | None:
         _run([*_pip_command(), *arguments, target])
     with suppress(OSError):
         _cache_path().unlink(missing_ok=True)
-    return None
+    return False
 
 
 def _pip_command() -> list[str]:
@@ -288,13 +284,7 @@ def update_main(arguments: list[str]) -> int:
             if not status.error and not status.available:
                 print("NovaCode is up to date.")
                 return 0
-            log = install_update()
-            if log is not None:
-                print(
-                    "Update handed off; it starts after this launcher exits. "
-                    f"Progress and result: {log}"
-                )
-            else:
+            if not install_update():
                 print("Nova updated. Restart Nova to use the new code.")
         return 0  # noqa: TRY300
     except (OSError, ValueError, subprocess.SubprocessError) as error:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-# The helper writes installer output and its result to the update log.
+# The helper streams installer output and its result to the inherited terminal.
 # ruff: noqa: T201, S603
 import ctypes
 import json

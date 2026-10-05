@@ -72,3 +72,57 @@ def test_updater_waits_for_locked_launcher_then_replaces_it(
         if updater is not None and updater.poll() is None:
             updater.kill()
             updater.wait(timeout=5)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows updater handoff")
+@pytest.mark.parametrize(
+    ("installer_output", "exit_code", "result"),
+    [
+        ("Updated novacode-cli", 0, "Nova updated"),
+        ("Nothing to upgrade", 0, "NovaCode is up to date."),
+        ("Installation failed", 1, "Update failed:"),
+    ],
+)
+def test_windows_handoff_streams_progress_and_result_without_log(
+    tmp_path: Path, installer_output: str, exit_code: int, result: str
+) -> None:
+    release = tmp_path / "finish-installing"
+    installer = [
+        sys.executable,
+        "-u",
+        "-c",
+        "import sys, time; from pathlib import Path; "
+        "print('Installing Nova...', flush=True); "
+        "\nwhile not Path(sys.argv[1]).exists(): time.sleep(0.01)"
+        "\nprint(sys.argv[2], flush=True); sys.exit(int(sys.argv[3]))",
+        str(release),
+        installer_output,
+        str(exit_code),
+    ]
+    caller = subprocess.Popen(  # noqa: S603
+        [
+            sys.executable,
+            "-c",
+            "import json, sys; from pathlib import Path; from novacode_cli import updates; "
+            "sys._base_executable = sys.executable; "
+            "updates._cache_path = lambda: Path(sys.argv[2]); "
+            "updates._start_windows_update(json.loads(sys.argv[1]))",
+            json.dumps(installer),
+            str(tmp_path / "cache.json"),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    try:
+        assert caller.stdout is not None
+        assert caller.stdout.readline().startswith(b"Waiting")
+        # Progress is observable before allowing the installer to finish.
+        assert caller.stdout.readline().strip() == b"Installing Nova..."
+        assert caller.wait(timeout=5) == 0
+        assert not release.exists()
+    finally:
+        release.touch()
+        output, _error = caller.communicate(timeout=10)
+    assert result.encode() in output
+    assert not list(tmp_path.glob("*.log"))
