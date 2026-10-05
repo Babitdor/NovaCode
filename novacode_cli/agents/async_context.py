@@ -151,7 +151,9 @@ class AsyncModelOverrideMiddleware(AgentMiddleware):
             model = self._model_for(request)
         else:
             model = await asyncio.to_thread(self._model_for, request)
-        return await handler(request if model is None else request.override(model=model))
+        return await handler(
+            request if model is None else request.override(model=model)
+        )
 
 
 def current_async_context() -> NovaAsyncContext | None:
@@ -172,7 +174,10 @@ def current_async_context() -> NovaAsyncContext | None:
     if provider and model_name:
         return NovaAsyncContext(provider=provider, model=model_name)
 
-    if os.environ.get("ASYNC_AGENT_PROVIDER", "").strip() or os.environ.get("ASYNC_AGENT_MODEL", "").strip():
+    if (
+        os.environ.get("ASYNC_AGENT_PROVIDER", "").strip()
+        or os.environ.get("ASYNC_AGENT_MODEL", "").strip()
+    ):
         return None
     try:
         from novacode_cli.utils.model_info import get_model_info
@@ -222,7 +227,12 @@ def install_async_model_context() -> None:
 
 def _bind_context(client: Any) -> Any:
     """Return *client* with ``runs.create`` defaulting ``context`` to the async role."""
-    runs = getattr(client, "runs", None)
+    # `getattr` with a default widens to `Any | None`, so a client that exposes no
+    # `runs` is left alone and the type is narrowed before the monkey-patch below.
+    runs: Any = getattr(client, "runs", None)
+    if runs is None:
+        return client
+
     original = getattr(runs, "create", None)
     if original is None or getattr(original, "_nova_context_bound", False):
         return client
