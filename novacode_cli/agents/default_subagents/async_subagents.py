@@ -262,6 +262,7 @@ findings report to the planner. It never edits, creates, or deletes anything.
 
 # ── Agent builders ─────────────────────────────────────────────────────────────
 
+
 def _build_agent_spec(
     name: str,
     graph_id: str,
@@ -402,20 +403,17 @@ def _user_agent_specs() -> list[AsyncSubAgent]:
     from novacode_cli.agents.user_async_agents import (
         async_agent_description,
         collect_user_async_agents,
-        graph_id_for,
     )
 
     specs: list[AsyncSubAgent] = []
-    for name, agent_md in collect_user_async_agents():
-        try:
-            graph_id = graph_id_for(name)
-        except ValueError as exc:
-            logger.warning("not offering async agent: %s", exc)
-            continue
+    # collect_user_async_agents already returns (graph_id, agent_md) pairs, and
+    # only ones the server can actually serve, so there is no name to re-derive
+    # and no graph_id to advertise that would 404 on dispatch.
+    for graph_id, agent_md in collect_user_async_agents():
         try:
             description = async_agent_description(agent_md)
         except Exception:  # noqa: BLE001 — one unreadable file drops one agent
-            logger.warning("could not describe async agent %r", name, exc_info=True)
+            logger.warning("could not describe async agent %r", graph_id, exc_info=True)
             continue
         specs.append(_user_agent_spec(graph_id, description))
     return specs

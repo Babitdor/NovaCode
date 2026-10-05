@@ -567,6 +567,13 @@ def _graph_names(config_path: Path) -> list[str]:
 #: under it. ``None`` until a user async agent forces one to exist.
 _user_config_dir: tempfile.TemporaryDirectory[str] | None = None
 
+#: Superseded generated directories, kept alive until the session ends.
+#:
+#: A ``TemporaryDirectory`` deletes itself when it is garbage collected, so a
+#: rotated-out directory has to be held onto deliberately: a plan made on another
+#: thread may still hold its path and must be able to spawn from it.
+_retired_user_config_dirs: list[tempfile.TemporaryDirectory[str]] = []
+
 
 def _user_graph_config() -> tuple[Path, list[str]] | None:
     """A generated config registering the shipped graphs *and* the user's, or ``None``.
@@ -597,7 +604,9 @@ def _user_graph_config() -> tuple[Path, list[str]] | None:
             _user_config_dir = tempfile.TemporaryDirectory(prefix="nova_user_async_")
         config_path, graph_names = _config.generate(user_agents, Path(_user_config_dir.name))
     except Exception:  # noqa: BLE001 — fall back to the shipped graphs, still serving
-        logger.warning("could not generate an async agent config; using shipped graphs", exc_info=True)
+        logger.warning(
+            "could not generate an async agent config; using shipped graphs", exc_info=True
+        )
         return None
     logger.info("agent server will also serve %d user async agent(s)", len(user_agents))
     return config_path, graph_names
@@ -611,8 +620,21 @@ def notify_user_async_agents_changed() -> None:
     rewritten under it, so the server is stopped as well: the next dispatch
     starts a new one that serves the current set. With no user agents left there
     is nothing to regenerate and the shipped config comes back on its own.
+
+    The previous directory is left on disk for the interpreter to reap rather
+    than deleted here, because a plan made concurrently on another thread may
+    still be holding its path.
     """
-    global _user_config_dir  # noqa: PLW0603 — mirrors _user_graph_config
+    # Rotate to a *new* directory rather than deleting the old one. A create or
+    # delete runs on a TUI worker while `_plan` may hold a generated path it has
+    # not yet spawned from, and on Windows a directory that is about to become a
+    # live process's cwd cannot be removed at all.
+    #
+    # The retired TemporaryDirectory is parked in _retired_user_config_dirs, not
+    # left to fall out of scope: TemporaryDirectory deletes itself when it is
+    # garbage collected, so dropping the reference here would remove the very
+    # directory a pending plan may still be holding.
+    global _user_config_dir  # noqa: PLW0603 — one dir per process, by design
 
     with _server_lock:
         process = _state["process"]
@@ -624,8 +646,8 @@ def notify_user_async_agents_changed() -> None:
 
     stale, _user_config_dir = _user_config_dir, None
     if stale is not None:
-        with contextlib.suppress(Exception):
-            stale.cleanup()
+        logger.debug("user async agents changed; rotating the generated config directory")
+        _retired_user_config_dirs.append(stale)
 
     # Plan again immediately. `ensure_started` treats "nothing planned" as "an
     # external server is in use" and returns True without starting anything, so
@@ -835,3 +857,9 @@ def cleanup_user_config() -> None:
     if stale is not None:
         with contextlib.suppress(Exception):
             stale.cleanup()
+    # The directories rotated out earlier by notify_user_async_agents_changed can
+    # go too: the session is ending, so nothing is holding a path into them.
+    while _retired_user_config_dirs:
+        retired = _retired_user_config_dirs.pop()
+        with contextlib.suppress(Exception):
+            retired.cleanup()

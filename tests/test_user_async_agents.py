@@ -197,17 +197,139 @@ def test_a_generated_module_loads_and_exposes_a_real_graph(tmp_path):
     assert hasattr(module.graph, "invoke")
 
 
-def test_an_agent_with_no_prompt_yields_a_none_graph_rather_than_killing_the_server(tmp_path):
-    """One bad user agent must not take the other graphs down with it."""
+def test_an_agent_with_no_prompt_is_not_registered_at_all(tmp_path):
+    """A graph that cannot build must never reach the config.
+
+    This is the test that would have caught the real bug. ``graph = None`` is not
+    failure isolation: langgraph loads every registered graph at startup and
+    refuses to start if one is not a graph, so registering a broken agent takes
+    the nine built-ins down with it. Asserting ``module.graph is None`` passed
+    while the server died, because nothing exercised the loader that rejects it.
+    """
+    good = tmp_path / "good" / "agent.md"
+    empty = tmp_path / "empty" / "agent.md"
+    write_agent(good, {"description": "good", "async": True}, PROMPT)
+    write_agent(empty, {"description": "no prompt", "async": True}, "")
+
+    config_path, names = _config.generate([("good", good), ("empty", empty)], tmp_path / "gen")
+
+    assert "empty" not in names, "an unbuildable agent must be left out of the config"
+    assert "good" in names
+    assert not (tmp_path / "gen" / "agent_empty.py").exists()
+
+    graphs = json.loads(config_path.read_text(encoding="utf-8"))["graphs"]
+    for graph_id in graphs:
+        module = _load(Path(graphs[graph_id].rsplit(":", 1)[0]), f"probe_{graph_id}")
+        assert module.graph is not None, f"{graph_id} is registered but has no graph"
+
+
+def test_the_real_server_loader_accepts_the_generated_config(tmp_path, monkeypatch):
+    """The end-to-end property: langgraph's own loader must not refuse to start.
+
+    Drives ``collect_graphs_from_env`` the way the langgraph CLI does, because
+    that is the code path that turns a bad registration into a dead server.
+    """
+    pytest.importorskip("langgraph_api")
+    import asyncio
+    import json as _json
+    import os
+
+    # langgraph_api reads its config at *import* time, so these must be in the
+    # environment before the first import of it anywhere in the process. Setting
+    # them here is safe because this is the only test that imports it.
+    os.environ.setdefault("REDIS_URI", "redis://localhost:6379")
+    os.environ.setdefault("LANGGRAPH_RUNTIME_EDITION", "inmem")
+
+    from langgraph_api.graph import collect_graphs_from_env, graph_exists
+
+    good = tmp_path / "good" / "agent.md"
+    bad = tmp_path / "bad" / "agent.md"
+    write_agent(good, {"description": "good", "async": True}, PROMPT)
+    write_agent(bad, {"description": "no prompt", "async": True}, "")
+
+    config_path, _names = _config.generate([("good", good), ("bad", bad)], tmp_path / "gen")
+    graphs = _json.loads(config_path.read_text(encoding="utf-8"))["graphs"]
+
+    # The langgraph CLI hands the config's "graphs" field to the loader as JSON.
+    monkeypatch.setenv("LANGSERVE_GRAPHS", _json.dumps(graphs))
+    monkeypatch.chdir(config_path.parent)
+
+    async def _load_all() -> None:
+        await collect_graphs_from_env(register=True)
+
+    asyncio.run(_load_all())
+
+    assert graph_exists("good"), "a valid user agent must be served"
+    assert not graph_exists("bad"), "an unbuildable agent must not be served"
+    # The whole point: the built-ins survive the presence of a broken agent.
+    for shipped in ("code-review-agent", "research-agent", "security-audit-agent"):
+        assert graph_exists(shipped), f"{shipped} died because of one bad user agent"
+
+
+def test_build_user_graph_still_refuses_an_empty_prompt(tmp_path):
+    """The raise stays: it is what the pre-flight uses to detect the agent."""
     agent_md = tmp_path / "empty" / "agent.md"
     write_agent(agent_md, {"description": "no prompt", "async": True}, "")
-    _config.generate([("empty", agent_md)], tmp_path / "gen")
-
-    module = _load(tmp_path / "gen" / "agent_empty.py", "agent_empty_under_test")
-
-    assert module.graph is None
     with pytest.raises(ValueError, match="no system prompt"):
         ua.build_user_graph("empty", agent_md)
+
+
+def test_a_promptless_agent_is_dropped_at_collection(tmp_path, monkeypatch):
+    """Cheapest place to reject it, and it keeps the bad case out of the log path."""
+    from novacode_cli.config.config import settings
+
+    good = tmp_path / "good" / "agent.md"
+    empty = tmp_path / "empty" / "agent.md"
+    write_agent(good, {"description": "g", "async": True}, PROMPT)
+    write_agent(empty, {"description": "e", "async": True}, "")
+    monkeypatch.setattr(
+        settings,
+        "get_all_agents",
+        _only(("good", good, "global"), ("empty", empty, "global")),
+    )
+
+    assert ua.collect_user_async_agents() == [("good", good)]
+
+
+def test_two_agents_that_map_to_one_graph_id_serve_one_not_two(tmp_path, monkeypatch):
+    """``Alpha`` and ``alpha``, or one name in both scopes, are the same graph id.
+
+    Silently overwriting one module would make the main agent offer two tools with
+    the same graph id, and one of them would run the other's prompt.
+    """
+    from novacode_cli.config.config import settings
+
+    upper = tmp_path / "Alpha" / "agent.md"
+    lower = tmp_path / "alpha" / "agent.md"
+    write_agent(upper, {"description": "U", "async": True}, PROMPT)
+    write_agent(lower, {"description": "L", "async": True}, PROMPT)
+    monkeypatch.setattr(
+        settings,
+        "get_all_agents",
+        _only(("Alpha", upper, "global"), ("alpha", lower, "project")),
+    )
+
+    collected = ua.collect_user_async_agents()
+
+    assert len(collected) == 1, f"one graph id must serve one agent, got {collected}"
+    assert len({gid for gid, _ in collected}) == 1
+
+
+def test_one_name_in_two_scopes_is_served_once(tmp_path, monkeypatch):
+    """A project agent shadowing a global one is a real setup, not a typo."""
+    from novacode_cli.config.config import settings
+
+    glob = tmp_path / "global" / "jeva" / "agent.md"
+    proj = tmp_path / "project" / "jeva" / "agent.md"
+    write_agent(glob, {"description": "global", "async": True}, PROMPT)
+    write_agent(proj, {"description": "project", "async": True}, PROMPT)
+    monkeypatch.setattr(
+        settings,
+        "get_all_agents",
+        _only(("jeva", glob, "global"), ("jeva", proj, "project")),
+    )
+
+    assert len(ua.collect_user_async_agents()) == 1
 
 
 def test_the_graph_honours_the_tools_the_agent_chose(tmp_path, monkeypatch):
@@ -358,8 +480,8 @@ def test_a_user_agent_makes_the_launcher_serve_a_generated_config(tmp_path, monk
         assert config_path.is_file()
         assert "jeva" in names
         # cwd is where the server runs from, so the generated modules must be there.
-        assert config_path.parent == Path(config_path.parent)
         assert (config_path.parent / "agent_jeva.py").is_file()
+        assert (config_path.parent / "langgraph.json").is_file()
     finally:
         sl.cleanup_user_config()
 
@@ -377,3 +499,52 @@ def test_the_generated_directory_is_removed_on_cleanup(tmp_path, monkeypatch):
     assert directory.is_dir()
     sl.cleanup_user_config()
     assert not directory.exists(), "the generated config outlived the session"
+
+
+def test_a_change_rotates_the_directory_instead_of_deleting_the_live_one(tmp_path, monkeypatch):
+    """A pending plan may still hold the old path, so it must stay valid.
+
+    ``notify_user_async_agents_changed`` runs on a TUI worker while ``_plan`` on
+    another thread can be between reading a generated path and spawning from it.
+    Deleting that directory under it either loses the spawn on Windows (a live
+    cwd cannot be removed) or points a fresh spawn at nothing.
+    """
+    from novacode_cli.agents import server_launcher as sl
+    from novacode_cli.config.config import settings
+
+    agent_md = tmp_path / "jeva" / "agent.md"
+    write_agent(agent_md, {"description": "d", "async": True}, PROMPT)
+    monkeypatch.setattr(settings, "get_all_agents", _only(("jeva", agent_md, "global")))
+    monkeypatch.setattr(sl, "plan_agent_server", lambda **_kw: None)
+
+    old_config, _names = sl._user_graph_config()
+    old_dir = old_config.parent
+
+    sl.notify_user_async_agents_changed()
+
+    assert old_dir.is_dir(), "the previous generated dir was deleted under a pending plan"
+
+    new_config, _names = sl._user_graph_config()
+    assert new_config.parent != old_dir, "the next launch must not reuse the old directory"
+    sl.cleanup_user_config()
+
+
+def test_end_of_session_removes_the_rotated_out_directories(tmp_path, monkeypatch):
+    """Rotation defers the delete; it must not leak a directory per change."""
+    from novacode_cli.agents import server_launcher as sl
+    from novacode_cli.config.config import settings
+
+    agent_md = tmp_path / "jeva" / "agent.md"
+    write_agent(agent_md, {"description": "d", "async": True}, PROMPT)
+    monkeypatch.setattr(settings, "get_all_agents", _only(("jeva", agent_md, "global")))
+    monkeypatch.setattr(sl, "plan_agent_server", lambda **_kw: None)
+
+    first, _ = sl._user_graph_config()
+    sl.notify_user_async_agents_changed()
+    second, _ = sl._user_graph_config()
+    retired = [first.parent, second.parent]
+
+    sl.cleanup_user_config()
+
+    for directory in retired:
+        assert not directory.exists(), f"{directory} outlived the session"

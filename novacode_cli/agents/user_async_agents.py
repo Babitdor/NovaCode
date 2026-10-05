@@ -125,13 +125,25 @@ def is_async(front: dict[str, Any]) -> bool:
 
 
 def collect_user_async_agents() -> list[tuple[str, Path]]:
-    """Every user agent whose ``agent.md`` sets ``async: true``.
+    """Every user agent that can actually be served, keyed by graph id.
 
     Returns:
-        ``(name, agent_md_path)`` sorted by name. An agent whose frontmatter
-        cannot be read, or whose name cannot be a graph id, is skipped with a
-        log line rather than raised: one bad file must not stop the session, and
-        the launcher treats this list as "what to serve", not as a gate.
+        ``(graph_id, agent_md_path)`` sorted by name, with no duplicates.
+
+    An agent is excluded, with a log line, rather than raised on when:
+
+    - its ``agent.md`` cannot be read, or does not set ``async: true``;
+    - its name cannot be a graph id, or collides with a shipped agent;
+    - its name collides with another *user* agent (two agents named ``Alpha``
+      and ``alpha``, or one name present in both global and project scope, map
+      to one graph id: one file would silently overwrite the other);
+    - it has no system prompt, so there is no graph to build.
+
+    That last case is why this is not simply "every agent with the flag". The
+    server loads every registered graph at startup and refuses to start if one
+    of them fails to load, so registering an agent that cannot build would take
+    the other graphs down with it. Excluding it here is the only place where
+    the decision is cheap and per-agent.
     """
     from novacode_cli.config.config import settings
 
@@ -142,20 +154,38 @@ def collect_user_async_agents() -> list[tuple[str, Path]]:
         return []
 
     out: list[tuple[str, Path]] = []
+    seen: dict[str, str] = {}
     for name, agent_dir, _scope in sorted(found, key=lambda a: a[0].lower()):
         agent_md = agent_dir / "agent.md"
         # read_agent_safe, not read_agent: an unreadable file must not raise here,
         # and an agent whose frontmatter does not parse at all simply is not an
         # async agent, which is the right reading of a file we cannot understand.
-        front, _body = read_agent_safe(agent_md)
+        front, body = read_agent_safe(agent_md)
         if not is_async(front):
             continue
         try:
-            graph_id_for(name)
+            graph_id = graph_id_for(name)
         except ValueError as exc:
             logger.warning("skipping async agent: %s", exc)
             continue
-        out.append((name, agent_md))
+        if graph_id in seen:
+            logger.warning(
+                "skipping async agent %r: %r is already served by %r",
+                name,
+                graph_id,
+                seen[graph_id],
+            )
+            continue
+        if not body.strip():
+            logger.warning(
+                "skipping async agent %r: it has no system prompt in %s, so there "
+                "is nothing for a background agent to run",
+                name,
+                agent_md,
+            )
+            continue
+        seen[graph_id] = name
+        out.append((graph_id, agent_md))
     return out
 
 
@@ -208,7 +238,6 @@ def build_user_graph(name: str, agent_md: Path | str) -> Any:  # noqa: ANN401 â€
             otherwise produce a graph that runs and reports nothing, which looks
             like the agent ignoring its task.
     """
-    from novacode_cli.agents.agent_file import agent_tools
     from novacode_cli.agents.async_agents._specialist import build_specialist_graph
 
     path = Path(agent_md)
@@ -218,24 +247,45 @@ def build_user_graph(name: str, agent_md: Path | str) -> Any:  # noqa: ANN401 â€
         message = f"async agent {name!r} has no system prompt in {path}"
         raise ValueError(message)
 
-        # An absent `tools:` means every tool, exactly as for an in-process agent
+    # An absent `tools:` means every tool, exactly as for an in-process agent
     # (agent_tools returns None). Passing None through would also be correct
     # here, but resolving it to [] below keeps the meaning explicit at the one
     # place that reads it. The background form resolves names from
     # novacode_cli.tools and silently drops the rest (MCP tools in particular),
     # which is the limit the shipped async agents share â€” that difference is
     # reported in the create modal rather than left to be discovered here.
-    chosen = agent_tools(path.read_text(encoding="utf-8"))
+    chosen = _chosen_tools(path)
     return build_specialist_graph(
         name,
         {"prompt": prompt, "tools": chosen if chosen is not None else []},
     )
 
 
+def _chosen_tools(agent_md: Path) -> list[str] | None:
+    """The tool names in ``agent_md``'s frontmatter, or None for "every tool".
+
+    Reads the raw text rather than the parsed frontmatter because ``agent_tools``
+    is what the in-process agent path uses, so both kinds of agent agree on how
+    a tool list is spelled. Guarded because the file was already read once by
+    the caller and can vanish between the two reads if the user is editing it.
+    """
+    from novacode_cli.agents.agent_file import agent_tools
+
+    try:
+        return agent_tools(agent_md.read_text(encoding="utf-8"))
+    except OSError:
+        logger.warning("could not re-read %s to resolve its tools", agent_md)
+        return None
+
+
 def module_name_for(name: str) -> str:
     """The generated module's filename stem for the async agent *name*.
 
     Keeps the graph name readable in a traceback while staying a valid Python
-    identifier, which the name itself may not be if it starts with a digit.
+    The prefix is what makes the stem a valid Python identifier: a graph id may
+    legally start with a digit, which the stem on its own would not. A hyphen is
+    allowed to survive into the filename (``agent_my-notes.py``) because the
+    server derives its own module name from the path and never imports this file
+    by stem.
     """
     return f"agent_{name.lower()}"
