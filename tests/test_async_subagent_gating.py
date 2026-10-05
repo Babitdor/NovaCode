@@ -44,7 +44,22 @@ def test_all_specs_when_the_server_answers(monkeypatch):
         monkeypatch.setenv(mod.ASYNC_AGENT_ROOT_VAR, str(settings.get_workspace_root()))
         assert mod.async_agents_available() is True
         specs = mod.retrieve_async_subagents()
-    assert len(specs) == 9
+    # The 9 shipped graphs are always advertised. User agents marked
+    # ``async: true`` are appended after them, so this asserts the shipped set is
+    # present rather than that nothing else is: the count is not fixed once the
+    # user has any async agents of their own.
+    shipped = {
+        "documentation-update-agent",
+        "code-review-agent",
+        "test-generation-agent",
+        "dependency-audit-agent",
+        "refactoring-agent",
+        "plan-scout-agent",
+        "security-audit-agent",
+        "test-runner-agent",
+        "research-agent",
+    }
+    assert shipped <= {spec["name"] for spec in specs}
     assert all(spec["url"] for spec in specs), "a spec without a URL cannot be reached"
 
 

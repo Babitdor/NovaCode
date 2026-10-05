@@ -5,6 +5,12 @@ string, and file access to the session's workspace. An agent that already exists
 in-process (``default_subagents/prompt.py``) can be handed over as it is, so the
 two forms never drift apart.
 
+A declared name is resolved against two sources, because the in-process subagent
+path does the same: ``novacode_cli.tools`` for Nova's own tools, and the user's
+MCP config for ``serena_*`` / ``playwright_*`` / ``cua-driver_*`` (see
+``_mcp_tools``). Only the first was consulted here, so an agent whose prompt is
+written around symbol navigation ran in the background with no symbol tool.
+
 Only work that is long and self-contained belongs here; an agent that edits code
 interactively needs the approvals that do not reach this server.
 """
@@ -48,13 +54,21 @@ def build_specialist_graph(
     """
     import novacode_cli.tools as nova_tools
 
+    from novacode_cli.agents.async_agents._mcp_tools import mcp_tools_for
+
+    declared = definition.get("tools", [])
     # File tools (ls / read_file / glob / grep / write_file) come from the
     # backend, so only the names that are real Nova tools are looked up.
-    named = [getattr(nova_tools, n) for n in definition.get("tools", []) if hasattr(nova_tools, n)]
+    named = [getattr(nova_tools, n) for n in declared if hasattr(nova_tools, n)]
+    # MCP tools are not in novacode_cli.tools — they are discovered from the
+    # user's MCP config — so they are resolved separately. Best-effort: an
+    # unreachable MCP server yields fewer tools, never a graph that fails to
+    # build (which would stop the whole server from starting).
+    mcp = mcp_tools_for(declared)
     return create_deep_agent(
         name=name,
         model=build_async_agent_model(),
-        tools=[*named, *(extra_tools or [])],
+        tools=[*named, *mcp, *(extra_tools or [])],
         system_prompt=definition["prompt"] + BACKGROUND_NOTE + note,
         backend=FilesystemBackend(root_dir=str(workspace_root()), virtual_mode=True),
         middleware=[AsyncModelOverrideMiddleware()],
