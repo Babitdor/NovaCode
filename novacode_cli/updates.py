@@ -15,17 +15,13 @@ import shutil
 import subprocess
 import sys
 import time
-import tomllib
 import uuid
-from contextlib import contextmanager, suppress
+from contextlib import suppress
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, NoReturn
+from typing import NoReturn
 from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
 
 REPOSITORY = "Babitdor/NovaCode"
 REPO_URL = f"https://github.com/{REPOSITORY}.git"
@@ -180,61 +176,30 @@ def _run(arguments: list[str], *, cwd: Path | None = None) -> None:
     subprocess.run(arguments, cwd=cwd, check=True)
 
 
-@contextmanager
-def _windows_uv_entrypoint() -> Iterator[None]:
-    """Move uv's own Nova launcher aside while Windows has its image loaded."""
-    receipt_path = Path(sys.prefix) / "uv-receipt.toml"
-    if sys.platform != "win32" or not receipt_path.is_file():
-        yield
-        return
-    receipt = tomllib.loads(receipt_path.read_text(encoding="utf-8"))
-    entries = receipt.get("tool", {}).get("entrypoints", [])
-    entry = next(
-        (
-            item
-            for item in entries
-            if isinstance(item, dict)
-            and item.get("name") == "nova"
-            and item.get("from") == "novacode-cli"
-        ),
-        None,
-    )
-    if entry is None:
-        _fail(
-            "Nova's uv receipt has no launcher. Repair it with: "
-            "uv tool upgrade novacode-cli --reinstall"
+def _start_windows_update(arguments: list[str]) -> Path:
+    """Run uv from base Python after the calling launcher has exited."""
+    log = _cache_path().with_name(f"update-{uuid.uuid4().hex}.log")
+    log.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "command": arguments,
+        "caller_pid": os.getpid(),
+        "parent_pid": os.getppid(),
+        "cache": str(_cache_path()),
+    }
+    interpreter = getattr(sys, "_base_executable", sys.executable)
+    helper = Path(__file__).with_name("_windows_update.py")
+    with log.open("w", encoding="utf-8") as output:
+        subprocess.Popen(
+            [interpreter, "-I", "-X", "utf8", str(helper), json.dumps(payload)],
+            stdin=subprocess.DEVNULL,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
-    launcher = Path(entry.get("install-path", ""))
-    if not launcher.is_absolute() or launcher.name.lower() != "nova.exe" or launcher.is_symlink():
-        _fail("Cannot safely locate Nova's Windows launcher from its uv receipt.")
-    if not launcher.exists():
-        yield  # A previous failed upgrade may have already removed it.
-        if not launcher.is_file():
-            _fail("The updater did not recreate nova.exe.")
-        return
-    backup = launcher.with_name(f".nova-update-{uuid.uuid4().hex}.exe")
-    try:
-        launcher.rename(backup)
-    except PermissionError:
-        _fail(
-            "Windows could not move Nova's launcher. Close all Nova sessions, then run "
-            "from PowerShell: uv tool upgrade novacode-cli --reinstall"
-        )
-    try:
-        yield
-        if not launcher.is_file():
-            _fail("The updater did not recreate nova.exe; the previous launcher was restored.")
-    finally:
-        if not launcher.exists():
-            backup.rename(launcher)
-        else:
-            # An active session can still hold the renamed image open. Keeping
-            # its uniquely named backup is safe; never kill a session to delete it.
-            with suppress(OSError):
-                backup.unlink()
+    return log
 
 
-def install_update() -> None:
+def install_update() -> Path | None:
     """Update with the installation's manager; never reset or stash a checkout."""
     installation = detect_installation()
     if installation.kind == "source":
@@ -277,8 +242,8 @@ def install_update() -> None:
             # Reinstall just Nova so uv repairs a launcher even when an earlier
             # failed update already advanced the installed package's version.
             arguments.extend(["--reinstall-package", "novacode-cli"])
-        with _windows_uv_entrypoint():
-            _run(arguments)
+            return _start_windows_update(arguments)
+        _run(arguments)
     else:
         target = "novacode-cli"
         arguments = ["--upgrade"]
@@ -288,6 +253,7 @@ def install_update() -> None:
         _run([*_pip_command(), *arguments, target])
     with suppress(OSError):
         _cache_path().unlink(missing_ok=True)
+    return None
 
 
 def _pip_command() -> list[str]:
@@ -318,8 +284,14 @@ def update_main(arguments: list[str]) -> int:
                 else "Nova is up to date."
             )
         else:
-            install_update()
-            print("Nova updated. Restart Nova to use the new code.")
+            log = install_update()
+            if log is not None:
+                print(
+                    "Update handed off; it starts after this launcher exits. "
+                    f"Progress and result: {log}"
+                )
+            else:
+                print("Nova updated. Restart Nova to use the new code.")
         return 0  # noqa: TRY300
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"Update failed: {error}", file=sys.stderr)

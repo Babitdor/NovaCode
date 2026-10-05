@@ -1,4 +1,4 @@
-"""Exercise Windows executable replacement without changing an installed tool."""
+"""Windows update waits for an unrenameable executable to exit before replacing it."""
 
 from __future__ import annotations
 
@@ -7,28 +7,24 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
 
-from novacode_cli import updates as U  # noqa: N812
+from novacode_cli import _windows_update as helper
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows executable locking")
-def test_running_executable_can_be_renamed_but_not_overwritten(
+@pytest.mark.parametrize("wait_for_parent", [False, True])
+def test_updater_waits_for_locked_launcher_then_replaces_it(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    *,
+    wait_for_parent: bool,
 ) -> None:
     command = Path(os.environ["SYSTEMROOT"]) / "System32" / "cmd.exe"
     launcher = tmp_path / "nova.exe"
     shutil.copyfile(command, launcher)
-    (tmp_path / "uv-receipt.toml").write_text(
-        '[tool]\nentrypoints = [{name = "nova", from = "novacode-cli", install-path = '
-        + json.dumps(str(launcher))
-        + "}]\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(U.sys, "prefix", str(tmp_path))
     process = subprocess.Popen(  # noqa: S603
         [str(launcher), "/c", "pause"],
         stdin=subprocess.PIPE,
@@ -36,18 +32,43 @@ def test_running_executable_can_be_renamed_but_not_overwritten(
         stderr=subprocess.PIPE,
         creationflags=subprocess.CREATE_NO_WINDOW,
     )
+    updater = None
     try:
         assert process.stdout is not None
         assert process.stdout.read(1)
-        assert process.poll() is None
-        with pytest.raises(PermissionError):
-            shutil.copyfile(command, launcher)
-        with U._windows_uv_entrypoint():
-            assert not launcher.exists()
-            backups = list(tmp_path.glob(".nova-update-*.exe"))
-            assert len(backups) == 1
-            shutil.copyfile(command, launcher)
-        assert launcher.is_file()
-        assert process.poll() is None
-    finally:
+        with launcher.open("rb"):
+            with pytest.raises(PermissionError):
+                launcher.rename(tmp_path / "backup.exe")
+            payload = {
+                "caller_pid": 0 if wait_for_parent else process.pid,
+                "parent_pid": process.pid if wait_for_parent else os.getpid(),
+                "command": [
+                    sys.executable,
+                    "-c",
+                    "from pathlib import Path; import sys; Path(sys.argv[1]).write_bytes(b'new')",
+                    str(launcher),
+                ],
+                "cache": str(tmp_path / "cache.json"),
+            }
+            updater = subprocess.Popen(  # noqa: S603
+                [sys.executable, "-I", helper.__file__, json.dumps(payload)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            assert updater.stdout is not None
+            assert updater.stdout.readline().startswith(b"Waiting")
+            time.sleep(0.3)
+            assert updater.poll() is None
+            assert launcher.read_bytes() != b"new"
         process.communicate(b"\n", timeout=5)
+        output, error = updater.communicate(timeout=10)
+        assert updater.returncode == 0, error
+        assert b"Nova updated" in output
+        assert launcher.read_bytes() == b"new"
+    finally:
+        if process.poll() is None:
+            process.communicate(b"\n", timeout=5)
+        if updater is not None and updater.poll() is None:
+            updater.kill()
+            updater.wait(timeout=5)

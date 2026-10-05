@@ -119,6 +119,7 @@ def test_update_uses_original_manager(
     monkeypatch: pytest.MonkeyPatch,
     kind: str,
 ) -> None:
+    monkeypatch.setattr(U.sys, "platform", "linux")
     monkeypatch.setattr(U, "detect_installation", lambda: U.Installation("1.0", kind))
     monkeypatch.setattr(U.shutil, "which", lambda _name: "uv")
     monkeypatch.setattr(U, "_pip_command", lambda: ["python", "-m", "pip", "install"])
@@ -197,129 +198,113 @@ def test_source_detection_does_not_depend_on_cwd(
     assert all(call.args[0] == tmp_path for call in git.call_args_list)
 
 
-@pytest.fixture
-def windows_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    import json
-
-    launcher = tmp_path / "bin with spaces" / "nova.exe"
-    launcher.parent.mkdir()
-    launcher.write_bytes(b"previous launcher")
-    # JSON strings are also TOML basic strings, including Windows path escapes.
-    (tmp_path / "uv-receipt.toml").write_text(
-        '[tool]\nentrypoints = [{name = "nova", from = "novacode-cli", install-path = '
-        + json.dumps(str(launcher))
-        + "}]\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(U.sys, "prefix", str(tmp_path))
+def test_windows_update_hands_off_without_touching_launcher(
+    update_env: Mock,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     monkeypatch.setattr(U.sys, "platform", "win32")
     monkeypatch.setattr(U, "detect_installation", lambda: U.Installation("1.0", "uv-tool"))
     monkeypatch.setattr(U.shutil, "which", lambda _name: "uv")
-    monkeypatch.setattr(U, "_cache_path", lambda: tmp_path / "cache.json")
-    return launcher
-
-
-def test_windows_upgrade_moves_launcher_before_installer_and_reinstalls_nova(
-    windows_tool: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def install(arguments: list[str]) -> None:
-        assert arguments == [
-            "uv",
-            "tool",
-            "upgrade",
-            "novacode-cli",
-            "--reinstall-package",
-            "novacode-cli",
-        ]
-        assert not windows_tool.exists()
-        assert len(list(windows_tool.parent.glob(".nova-update-*.exe"))) == 1
-        windows_tool.write_bytes(b"new launcher")
-
-    monkeypatch.setattr(U, "_run", install)
-    U.install_update()
-    assert windows_tool.read_bytes() == b"new launcher"
-    assert not list(windows_tool.parent.glob(".nova-update-*.exe"))
-
-
-def test_windows_failed_upgrade_restores_launcher(
-    windows_tool: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import subprocess
-
-    monkeypatch.setattr(U, "_run", Mock(side_effect=subprocess.CalledProcessError(1, "uv")))
-    with pytest.raises(subprocess.CalledProcessError):
-        U.install_update()
-    assert windows_tool.read_bytes() == b"previous launcher"
-
-
-def test_windows_noop_installer_restores_launcher_and_does_not_report_success(
-    windows_tool: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(U, "_run", Mock())
-    with pytest.raises(ValueError, match="did not recreate"):
-        U.install_update()
-    assert windows_tool.read_bytes() == b"previous launcher"
-
-
-def test_windows_upgrade_repairs_missing_launcher(
-    windows_tool: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    windows_tool.unlink()
-    monkeypatch.setattr(U, "_run", lambda _args: windows_tool.write_bytes(b"repaired"))
-    U.install_update()
-    assert windows_tool.read_bytes() == b"repaired"
-
-
-def test_windows_failed_upgrade_keeps_a_new_launcher_if_already_installed(
-    windows_tool: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import subprocess
-
-    def install(_args: list[str]) -> None:
-        windows_tool.write_bytes(b"new launcher")
-        raise subprocess.CalledProcessError(1, "uv")
-
-    monkeypatch.setattr(U, "_run", install)
-    with pytest.raises(subprocess.CalledProcessError):
-        U.install_update()
-    assert windows_tool.read_bytes() == b"new launcher"
-
-
-def test_windows_missing_launcher_is_not_false_success(
-    windows_tool: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    windows_tool.unlink()
-    monkeypatch.setattr(U, "_run", Mock())
-    with pytest.raises(ValueError, match="did not recreate"):
-        U.install_update()
-
-
-def test_non_windows_upgrade_keeps_original_command_and_launcher(
-    windows_tool: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(U.sys, "platform", "linux")
+    spawn = Mock(return_value=tmp_path / "update.log")
     run = Mock()
+    monkeypatch.setattr(U, "_start_windows_update", spawn)
     monkeypatch.setattr(U, "_run", run)
-    U.install_update()
-    run.assert_called_once_with(["uv", "tool", "upgrade", "novacode-cli"])
-    assert windows_tool.read_bytes() == b"previous launcher"
-
-
-def test_windows_launcher_permission_error_has_recovery_command_and_no_install(
-    windows_tool: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    run = Mock()
-    monkeypatch.setattr(U, "_run", run)
-    monkeypatch.setattr(Path, "rename", Mock(side_effect=PermissionError("locked")))
-    with pytest.raises(ValueError, match="uv tool upgrade novacode-cli --reinstall"):
-        U.install_update()
+    assert U.install_update() == tmp_path / "update.log"
     run.assert_not_called()
-    assert windows_tool.read_bytes() == b"previous launcher"
+    spawn.assert_called_once_with(
+        ["uv", "tool", "upgrade", "novacode-cli", "--reinstall-package", "novacode-cli"]
+    )
+
+
+def test_windows_update_uses_independent_interpreter_and_waits_for_caller(
+    update_env: Mock,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import json
+
+    monkeypatch.setattr(U.sys, "_base_executable", "base-python.exe")
+    monkeypatch.setattr(U.subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
+    process = Mock()
+    monkeypatch.setattr(U.subprocess, "Popen", process)
+    log = U._start_windows_update(["uv", "tool", "upgrade", "novacode-cli"])
+    args = process.call_args.args[0]
+    assert args[:2] == ["base-python.exe", "-I"]
+    payload = json.loads(args[-1])
+    assert payload["caller_pid"] == U.os.getpid()
+    assert payload["parent_pid"] == U.os.getppid()
+    assert process.call_args.kwargs["creationflags"] == U.subprocess.CREATE_NO_WINDOW
+    assert log.is_file()
+
+
+def test_queued_update_is_not_reported_as_completed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    monkeypatch.setattr(U, "install_update", lambda: tmp_path / "update.log")
+    assert U.update_main([]) == 0
+    output = capsys.readouterr().out
+    assert "handed off" in output
+    assert "Nova updated" not in output
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_external_updater_waits_before_installing_and_records_result(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+    *,
+    fails: bool,
+) -> None:
+    import subprocess
+
+    from novacode_cli import _windows_update as helper
+
+    order = []
+    monkeypatch.setattr(helper, "wait_for_exit", lambda pid, **_kw: order.append(pid))
+    cache = tmp_path / "cache.json"
+    cache.write_text("stale", encoding="utf-8")
+
+    def install(arguments: list[str], **_kwargs: object) -> None:
+        assert order == [123, 456]
+        assert arguments == ["uv", "tool", "upgrade", "novacode-cli"]
+        if fails:
+            raise subprocess.CalledProcessError(1, "uv")
+
+    monkeypatch.setattr(helper.subprocess, "run", install)
+    result = helper.main(
+        {
+            "caller_pid": 123,
+            "parent_pid": 456,
+            "command": ["uv", "tool", "upgrade", "novacode-cli"],
+            "cache": str(cache),
+        }
+    )
+    assert result == int(fails)
+    assert cache.exists() == fails
+    assert ("Update failed" if fails else "Nova updated") in capsys.readouterr().out
+
+
+def test_external_updater_never_installs_if_launcher_has_not_exited(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from novacode_cli import _windows_update as helper
+
+    monkeypatch.setattr(helper, "wait_for_exit", Mock(side_effect=TimeoutError("still running")))
+    installer = Mock()
+    monkeypatch.setattr(helper.subprocess, "run", installer)
+    assert (
+        helper.main(
+            {
+                "caller_pid": 123,
+                "parent_pid": 456,
+                "command": ["uv"],
+                "cache": str(tmp_path / "cache.json"),
+            }
+        )
+        == 1
+    )
+    installer.assert_not_called()

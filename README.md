@@ -195,10 +195,12 @@ use the running Python environment. Pinned Git refs, forks, and archive installs
 remain managed through their original installer. Nova settings, sessions, MCPs,
 and skills remain in their existing directories.
 
-On Windows, uv-managed updates move the running Nova launcher aside before
-installing its replacement and restore it if installation fails. If an older
-updater reports `Failed to install entrypoint`, close all Nova sessions and run
-this from PowerShell to repair the installation:
+On Windows, uv-managed updates run in a separate process after `nova update`
+and its launcher exit. The command prints a log path containing installer
+progress and the final result; it reports a handoff rather than immediate
+success. Close other Nova sessions before updating. If an older updater reports
+`Failed to install entrypoint` or `Windows could not move Nova's launcher`, run
+this directly from PowerShell after closing Nova to install the corrected updater:
 
 ```powershell
 uv tool upgrade novacode-cli --reinstall
