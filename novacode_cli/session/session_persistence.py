@@ -4,13 +4,22 @@ This module provides functionality to save and restore CLI sessions,
 including conversation history, todos, and tool state.
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import logging
+import os
+import threading
+import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
+from functools import wraps
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, Concatenate, ParamSpec, TypeVar
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from langchain_core.messages import (
     AIMessage,
@@ -21,6 +30,34 @@ from langchain_core.messages import (
 )
 
 logger = logging.getLogger(__name__)
+SaveArgs = ParamSpec("SaveArgs")
+SaveResult = TypeVar("SaveResult")
+
+
+def atomic_write(path: Path, content: str) -> None:
+    """Flush a complete file before replacing its previous committed version."""
+    temporary = path.with_name(f".{path.name}-{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary.open("w", encoding="utf-8") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def serialized_save(
+    method: Callable[Concatenate[SessionManager, SaveArgs], SaveResult],
+) -> Callable[Concatenate[SessionManager, SaveArgs], SaveResult]:
+    """Prevent concurrent autosave and final-save writes from interleaving."""
+
+    @wraps(method)
+    def save(self: SessionManager, /, *args: SaveArgs.args, **kwargs: SaveArgs.kwargs) -> SaveResult:
+        with self._save_lock:
+            return method(self, *args, **kwargs)
+
+    return save
 
 
 @dataclass
@@ -78,7 +115,7 @@ class SessionMeta:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "SessionMeta":
+    def from_dict(cls, data: dict[str, Any]) -> SessionMeta:
         """Create from dictionary with backward compatibility."""
         # Provide defaults for new fields to support old sessions
         defaults = {
@@ -140,6 +177,7 @@ class SessionManager:
         """
         self.sessions_dir = sessions_dir or Path.home() / ".nova" / "sessions"
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
+        self._save_lock = threading.RLock()
 
     def cleanup_old_sessions(
         self,
@@ -222,6 +260,7 @@ class SessionManager:
                 continue
         return newest
 
+    @serialized_save
     def save_session(
         self,
         session_id: str,
@@ -266,18 +305,19 @@ class SessionManager:
         session_dir = self.sessions_dir / session_id
         session_dir.mkdir(parents=True, exist_ok=True)
 
+        if not messages and task_status == "crashed":
+            previous = self.load_session(session_id)
+            if previous is not None:
+                messages = previous.messages
+
         logger.debug("Saving session %s to %s", session_id[:8], session_dir)
 
         now = datetime.now(UTC).isoformat()
 
         # Load existing meta to preserve created_at
         meta_path = session_dir / "meta.json"
-        if meta_path.exists():
-            with open(meta_path) as f:
-                existing_meta = json.load(f)
-            created_at = existing_meta.get("created_at", now)
-        else:
-            created_at = now
+        existing_meta = self.load_session_meta(session_id)
+        created_at = existing_meta.created_at if existing_meta else now
 
         # Compute hashes
         repo_hash = self._compute_repo_hash(project_root) if project_root else None
@@ -305,22 +345,36 @@ class SessionManager:
             cleared=cleared,
         )
 
-        # Save metadata
-        with open(meta_path, "w") as f:
-            json.dump(meta.to_dict(), f, indent=2)
+        self._save_snapshot(
+            session_dir,
+            meta,
+            messages,
+            {
+                "todos": todos,
+                "tool_state": tool_state,
+                "memory": memory,
+                "workspace_state": workspace_state,
+                "shared_memory": shared_memory,
+            },
+        )
+        atomic_write(meta_path, json.dumps(meta.to_dict(), indent=2))
 
         # Split messages into recent and archive
         recent_messages, archive_messages = self._split_messages(messages, recent_limit=20)
 
         # Save recent messages (for context)
         recent_path = session_dir / "recent.jsonl"
-        with open(recent_path, "w", encoding="utf-8") as f:
-            f.writelines(json.dumps(self._serialize_message(msg)) + "\n" for msg in recent_messages)
+        atomic_write(
+            recent_path,
+            "".join(json.dumps(self._serialize_message(msg)) + "\n" for msg in recent_messages),
+        )
 
         # Save archive messages (full history, not injected into context)
         archive_path = session_dir / "archive.jsonl"
-        with open(archive_path, "w", encoding="utf-8") as f:
-            f.writelines(json.dumps(self._serialize_message(msg)) + "\n" for msg in archive_messages)
+        atomic_write(
+            archive_path,
+            "".join(json.dumps(self._serialize_message(msg)) + "\n" for msg in archive_messages),
+        )
 
         # Note: conversation.jsonl is no longer written (deprecated).
         # Old sessions with conversation.jsonl are still readable via load_session().
@@ -365,18 +419,82 @@ class SessionManager:
         )
         return session_dir
 
+    def _save_snapshot(
+        self,
+        session_dir: Path,
+        meta: SessionMeta,
+        messages: list[BaseMessage],
+        supplied: dict[str, object],
+    ) -> None:
+        """Commit one authoritative snapshot before writing compatibility files."""
+        previous = self._read_snapshot(meta.session_id)
+        snapshot = {
+            "version": 1,
+            "meta": meta.to_dict(),
+            "messages": [self._serialize_message(msg) for msg in messages],
+        }
+        for key, supplied_value in supplied.items():
+            value = supplied_value
+            if value is None:
+                if previous is not None:
+                    value = previous.get(key)
+                else:
+                    path = session_dir / ("memory.md" if key == "memory" else f"{key}.json")
+                    try:
+                        content = path.read_text(encoding="utf-8")
+                        value = content if key == "memory" else json.loads(content)
+                    except (OSError, ValueError):
+                        value = None
+            snapshot[key] = value
+        atomic_write(session_dir / "snapshot.json", json.dumps(snapshot, ensure_ascii=False))
+
+    def _load_snapshot_data(self, session_id: str) -> SessionData | None:
+        """Return a complete recovery generation or allow the legacy reader to try."""
+        session_dir = self.sessions_dir / session_id
+        try:
+            snapshot = json.loads((session_dir / "snapshot.json").read_text(encoding="utf-8"))
+            if snapshot.get("version") == 1:
+                return SessionData(
+                    meta=SessionMeta.from_dict(snapshot["meta"]),
+                    messages=[
+                        msg
+                        for item in snapshot["messages"]
+                        if (msg := self._deserialize_message(item)) is not None
+                    ],
+                    **{
+                        key: snapshot.get(key)
+                        for key in (
+                            "todos",
+                            "tool_state",
+                            "memory",
+                            "workspace_state",
+                            "shared_memory",
+                        )
+                    },
+                )
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            logger.debug(
+                "No readable recovery snapshot for %s; trying legacy files",
+                session_id,
+                exc_info=True,
+            )
+        return None
+
     def load_session(self, session_id: str) -> SessionData | None:
-        """Load a session from disk.
+        """Load a complete recovery snapshot, falling back to the legacy format.
 
         Args:
-            session_id: Session identifier to load
+            session_id: Session identifier to load.
 
         Returns:
-            SessionData if found, None otherwise
+            SessionData if found, None otherwise.
         """
         session_dir = self.sessions_dir / session_id
         if not session_dir.exists():
             return None
+        restored = self._load_snapshot_data(session_id)
+        if restored is not None:
+            return restored
 
         # Load metadata
         meta_path = session_dir / "meta.json"
@@ -493,9 +611,7 @@ class SessionManager:
             shared_memory=shared_memory,
         )
 
-    def list_sessions(
-        self, limit: int = 10, *, include_cleared: bool = False
-    ) -> list[SessionMeta]:
+    def list_sessions(self, limit: int = 10, *, include_cleared: bool = False) -> list[SessionMeta]:
         """List available sessions, sorted by last_active (most recent first).
 
         ``/clear``-ed sessions are **excluded by default** so they don't reappear
@@ -520,14 +636,8 @@ class SessionManager:
             if not session_dir.is_dir():
                 continue
 
-            meta_path = session_dir / "meta.json"
-            if not meta_path.exists():
-                continue
-
-            try:
-                with open(meta_path) as f:
-                    meta = SessionMeta.from_dict(json.load(f))
-            except (json.JSONDecodeError, TypeError, KeyError):
+            meta = self.load_session_meta(session_dir.name)
+            if meta is None:
                 continue
             if not include_cleared and getattr(meta, "cleared", False):
                 continue
@@ -539,7 +649,7 @@ class SessionManager:
         return sessions[:limit]
 
     def load_session_meta(self, session_id: str) -> SessionMeta | None:
-        """Read just one session's ``meta.json``, without loading its messages.
+        """Read metadata from the committed snapshot, falling back to legacy metadata.
 
         Used at startup to learn which model a session was using *before* the
         model is built — :meth:`load_session` would also read the whole
@@ -551,13 +661,32 @@ class SessionManager:
         Returns:
             The session's ``SessionMeta``, or None if it is missing/unreadable.
         """
+        snapshot = self._read_snapshot(session_id)
+        if snapshot is not None:
+            try:
+                return SessionMeta.from_dict(snapshot["meta"])
+            except (TypeError, KeyError):
+                pass
         meta_path = self.sessions_dir / session_id / "meta.json"
-        if not meta_path.exists():
-            return None
         try:
             with open(meta_path) as f:
                 return SessionMeta.from_dict(json.load(f))
         except (json.JSONDecodeError, TypeError, KeyError, OSError):
+            snapshot = self._read_snapshot(session_id)
+            if snapshot is not None:
+                try:
+                    return SessionMeta.from_dict(snapshot["meta"])
+                except (TypeError, KeyError):
+                    pass
+            return None
+
+    def _read_snapshot(self, session_id: str) -> dict | None:
+        try:
+            snapshot = json.loads(
+                (self.sessions_dir / session_id / "snapshot.json").read_text(encoding="utf-8")
+            )
+            return snapshot if isinstance(snapshot, dict) and snapshot.get("version") == 1 else None
+        except (OSError, ValueError):
             return None
 
     def get_latest_session(self, project_root: Path | None = None) -> SessionMeta | None:
@@ -581,6 +710,7 @@ class SessionManager:
 
         return sessions[0] if sessions else None
 
+    @serialized_save
     def mark_cleared(self, session_id: str) -> None:
         """Mark a saved session as ``cleared`` without rewriting its messages.
 
@@ -595,8 +725,11 @@ class SessionManager:
             with open(meta_path) as f:
                 data = json.load(f)
             data["cleared"] = True
-            with open(meta_path, "w") as f:
-                json.dump(data, f, indent=2)
+            snapshot = self._read_snapshot(session_id)
+            if snapshot is not None:
+                snapshot["meta"]["cleared"] = True
+                atomic_write(meta_path.with_name("snapshot.json"), json.dumps(snapshot))
+            atomic_write(meta_path, json.dumps(data, indent=2))
         except (OSError, json.JSONDecodeError):
             pass
 
@@ -611,6 +744,9 @@ class SessionManager:
         """
         session_dir = self.sessions_dir / session_id
         recent_path = session_dir / "recent.jsonl"
+        if self._read_snapshot(session_id) is not None:
+            restored = self.load_session(session_id)
+            return restored.messages[-20:] if restored else []
 
         if not recent_path.exists():
             # Fallback to loading from conversation.jsonl and taking last N
@@ -835,9 +971,7 @@ class SessionManager:
         msg_id = data.get("id")
 
         if msg_type == "HumanMessage":
-            return HumanMessage(
-                content=content, additional_kwargs=additional_kwargs, id=msg_id
-            )
+            return HumanMessage(content=content, additional_kwargs=additional_kwargs, id=msg_id)
 
         if msg_type == "AIMessage":
             tool_calls = data.get("tool_calls", [])
@@ -851,9 +985,7 @@ class SessionManager:
             )
 
         if msg_type == "SystemMessage":
-            return SystemMessage(
-                content=content, additional_kwargs=additional_kwargs, id=msg_id
-            )
+            return SystemMessage(content=content, additional_kwargs=additional_kwargs, id=msg_id)
 
         if msg_type == "ToolMessage":
             tool_call_id = data.get("tool_call_id", "")

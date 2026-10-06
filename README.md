@@ -335,6 +335,7 @@ mypy novacode_cli/
 | `/save` | Save current session |
 | `/compact` | Compact conversation history with optional focus |
 | `/sessions` | List, select, or delete saved sessions |
+| `/ui` | Inspect the optional UI panels; use `patch`, `preview`, `commit`, `rollback`, or `reset` |
 | `/session` | Parallel sessions: `new` / `list` / `close` (`ctrl+n`, `alt+<n>`) |
 | `/resume` | Resume a saved session for this path (`/resume <id>`) |
 | `/restore` | Restore a previous file version from snapshots |
@@ -393,6 +394,26 @@ mypy novacode_cli/
 | `/ask` | Ask a question informed by wiki context — searches wiki and answers with relevant knowledge |
 | `/file` | File recent conversation knowledge as a wiki page under a topic path |
 | `/wiki` | List all synthesized pages in the project wiki vault |
+
+Nova saves an incoming prompt before model execution, checkpoints active sessions
+every five seconds, and saves again when a turn ends. Atomic recovery snapshots
+preserve the last complete conversation after a crash. Resume with `nova --continue`
+or choose a session with `/sessions`. Abrupt termination can lose progress since
+the last completed save and tokens the model has not yet committed to its history.
+
+The local TUI supports optional notes, workspace files, and activity panels. Ask
+Nova to customize them, or use `/ui patch` with a JSON object, then `/ui preview`
+and `/ui commit`. Panel order follows the `panels` list. Layouts are saved per
+workspace under `~/.nova/ui/`. `/ui rollback` restores the saved layout. Use
+`/ui reset`, **Ctrl+Shift+Backspace**, or start with `nova --safe-ui` for recovery.
+Custom panel shortcuts use F6–F12; custom panel commands use `/ui-<name>`.
+Conversation, input, approvals, and session controls stay protected. This first
+version uses registered components; it does not load generated Python widgets.
+
+Example: `/ui patch {"panels":[{"id":"notes","type":"notes","title":"Notes","text":"Current task"}],"width":28}`
+
+The **Active subagents** panel shows running tasks with their model and elapsed
+time. It disappears when no tasks are active; Alt+S collapses or expands it.
 
 ## Built-in Tools
 

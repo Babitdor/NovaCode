@@ -270,7 +270,7 @@ def panel_title(tasks: list[SubagentTask], *, collapsed: bool = False) -> Text:
     done, total, phases, failed = phase_summary(tasks)
     title = Text()
     title.append("▶ " if collapsed else "▼ ")
-    title.append("dynamic subagents", style="bold")
+    title.append("Active subagents", style="bold")
     title.append("   ")
     title.append(
         f"{total} running"
@@ -330,7 +330,10 @@ def task_row(
         task.status, ""
     )
     row = Text(style=style)
-    row.append(status_glyph(task.status) + " ")
+    row.append(
+        "● " if task.status == "running" else status_glyph(task.status) + " ",
+        style="cyan" if task.status == "running" else style,
+    )
     row.append(_fit(name, name_width))
     row.append("  ")
     row.append(_fit(task.model or "—", model_width), style="dim")

@@ -515,6 +515,10 @@ def parse_args():
     # Internal: how a parent Nova TUI launches a parallel session. The child
     # speaks JSONL on stdio (see novacode_cli.sessions.worker) and is bound to
     # its own git worktree purely by the cwd it is spawned in. Not for humans.
+    parser.add_argument(
+        "--safe-ui", action="store_true",
+        help="Start with the default UI, skipping saved customizations",
+    )
     parser.add_argument("--session-worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--session-id", default=None, help=argparse.SUPPRESS)
     _add_agent_server_args(parser)
@@ -790,6 +794,15 @@ async def _run_agent_session(
     )
 
     tools.extend([create_artifact, update_artifact, list_artifacts])
+    from novacode_cli.tools.ui_tools import (
+        ui_commit,
+        ui_inspect,
+        ui_patch,
+        ui_preview,
+        ui_rollback,
+    )
+
+    tools.extend([ui_inspect, ui_patch, ui_preview, ui_commit, ui_rollback])
 
     # Persistent Python kernel + detached daemon tools. Both are agent-facing
     # tools that must NEVER console.print (they run inside the live agent loop /
@@ -1071,7 +1084,7 @@ async def _run_agent_session(
                 _crash_messages: list = []
                 try:
                     _config = {"configurable": {"thread_id": session_state.thread_id}}
-                    _snap = await agent.aget_state(_config)  # type: ignore
+                    _snap = await asyncio.wait_for(agent.aget_state(_config), timeout=5.0)
                     _crash_messages = list(_snap.values.get("messages", []))
                 except Exception:
                     pass
@@ -1978,6 +1991,8 @@ def cli_main() -> None:
 
     try:
         args = parse_args()
+        if getattr(args, "safe_ui", False):
+            os.environ["NOVA_SAFE_UI"] = "1"
 
         # Headless (non-interactive) mode: resolve the prompt now and route all
         # Rich console output to stderr so stdout carries only the result.

@@ -24,6 +24,7 @@ from novacode_cli.ui import status_phrases
 import asyncio
 import contextlib
 import logging
+import json
 import re
 import threading
 import time
@@ -40,6 +41,10 @@ if TYPE_CHECKING:
     # Also annotation-only: the palette module is imported lazily at call sites
     # (see _active_palette), so this adds no module-scope import cost.
     from novacode_cli.tui.palette import FooterPalette
+    from novacode_cli.tui.session_pane import SessionPane
+
+from textual.binding import Binding
+from novacode_cli.tui.harness import HarnessDock, UIHarness, UIHarnessRequest
 
 logger = logging.getLogger(__name__)
 
@@ -408,6 +413,7 @@ class SlashCommand:
 # _passthrough_command (print-or-toggle-only commands; never read stdin or use
 # a Live spinner — those would hang or garble inside Textual).
 TUI_COMMANDS: dict[str, SlashCommand] = {
+    "ui": SlashCommand("_run_ui", "inspect / patch / preview / commit / rollback / reset UI panels"),
     "help": SlashCommand("_run_help", "show this help", wants_text=False, aliases=("?",)),
     "init": SlashCommand("_run_init", "generate NOVA.md from the codebase"),
     "model": SlashCommand("_run_model", "switch provider / model", wants_text=False),
@@ -860,7 +866,8 @@ class NovaApp(App):
        container and every row wraps — which pushed the logo down a row and then
        back up as the rain shifted. Panes are styled as a group so a spawned
        session's transcript looks identical to the root one. */
-    #panes { height: 1fr; width: 100%; }
+    #workspace-layout { height: 1fr; width: 100%; }
+    #panes { height: 1fr; width: 1fr; }
     #panes > VerticalScroll { height: 1fr; width: 100%; padding: 1 2; }
     /* Hidden until a second session exists; _refresh_tabs() toggles it.
        Height MUST be explicit: the Tabs widget's inner tabs-scroll is height:1fr,
@@ -1082,10 +1089,12 @@ class NovaApp(App):
         height: auto;
         max-height: 14;
         overflow-y: auto;
-        padding: 0 2;
+        padding: 0 1;
+        margin: 0 2;
         background: $surface;
-        border-bottom: solid $border;
+        border: round $border;
     }
+    #subagents-title { color: $accent; text-style: bold; }
     #subagents-dock.active { display: block; }
     #subagents-dock:hover { background: $boost; }
     #subagents-dock.collapsed #subagents-body { display: none; }
@@ -1404,6 +1413,8 @@ class NovaApp(App):
     """
 
     BINDINGS = [
+        Binding("ctrl+shift+backspace", "ui_reset", "Restore UI", priority=True),
+        *[Binding(f"f{i}", f"harness_key('f{i}')", show=False, priority=True) for i in range(6, 13)],
         ("ctrl+q", "quit", "Quit"),
         # ctrl+c copies the current text selection if there is one, else quits.
         # Textual captures the mouse, so the terminal's native copy doesn't work
@@ -1477,6 +1488,8 @@ class NovaApp(App):
             except Exception:  # noqa: BLE001 — never block app construction
                 self._model_provider = None
         self.session_manager = session_manager
+        self._session_save_lock = asyncio.Lock()
+        self._autosave_running = False
         # Sandbox identity for session persistence (so --continue can reconnect).
         self._sandbox_id = sandbox_id
         self._sandbox_type = sandbox_type
@@ -1687,11 +1700,13 @@ class NovaApp(App):
             Static("", id="subagents-title"),
             Static("", id="subagents-body"),
             id="subagents-dock",
-        ).with_tooltip("Dynamic subagents - click (or alt+s) to collapse/expand")
-        with ContentSwitcher(initial="transcript", id="panes"):
-            yield TranscriptScroll(id="transcript").with_tooltip(
-                "Transcript — drag to select, ctrl+c to copy"
-            )
+        ).with_tooltip("Active subagents — click (or alt+s) to collapse/expand")
+        with Horizontal(id="workspace-layout"):
+            with ContentSwitcher(initial="transcript", id="panes"):
+                yield TranscriptScroll(id="transcript").with_tooltip(
+                    "Transcript — drag to select, ctrl+c to copy"
+                )
+            yield HarnessDock(id="ui-harness-dock")
         yield OptionList(id="cmdpalette")
         with Vertical(id="prompt-dock"):
             # Todos live INSIDE the prompt dock, not as a second
@@ -1922,6 +1937,13 @@ class NovaApp(App):
         # Register Nova's palette and apply the saved (or default) theme first,
         # so the whole UI renders with the right colors from the first frame.
         self._apply_saved_theme()
+        self.set_interval(5, self._schedule_session_autosave)
+        from novacode_cli.config.config import settings
+
+        self._ui_harness = UIHarness(self, settings.get_workspace_root() or Path.cwd())
+        harness_notice = await self._ui_harness.initialize()
+        if harness_notice:
+            self._log(Text(harness_notice, style="yellow"))
         # Warm the singleton-widget cache so hot paths (streaming, status ticks,
         # keystrokes) skip the query_one DOM walk. See _w().
         for _sel, _kind in (
@@ -6188,44 +6210,103 @@ class NovaApp(App):
         except Exception:  # noqa: BLE001 — never block exit on learning
             pass
 
-    async def _save_session(self, *, cleared: bool = False) -> None:
+    def _schedule_session_autosave(self) -> None:
+        root = getattr(self, "_root_pane", None)
+        active = (
+            self._turn_active if root is getattr(self, "_active_pane", None)
+            else bool(root and root.state.get("_turn_active"))
+        )
+        if self.session_manager is not None and active and not self._autosave_running:
+            self._autosave_running = True
+            self.run_worker(self._periodic_session_save(), group="session-autosave", exit_on_error=False)
+
+    async def _periodic_session_save(self) -> None:
+        try:
+            await self._save_session(task_status="interrupted", pane=getattr(self, "_root_pane", None))
+        finally:
+            self._autosave_running = False
+
+    async def _save_session(
+        self, *, cleared: bool = False, pending_prompt: str | None = None,
+        task_status: str = "active", pane: SessionPane | None = None,
+    ) -> None:
+        if self.session_manager is None:
+            return
+        # Serialize checkpoint reads as well as disk writes. A clear/new-session
+        # transition must not race a periodic save for the old thread.
+        async with self._session_save_lock:
+            await self._save_session_snapshot(
+                cleared=cleared, pending_prompt=pending_prompt, task_status=task_status, pane=pane,
+            )
+
+    async def _save_session_snapshot(
+        self, *, cleared: bool, pending_prompt: str | None,
+        task_status: str, pane: SessionPane | None,
+    ) -> None:
         """Save the conversation to disk via the session manager (best effort).
 
         Args:
             cleared: Mark the saved session as cleared (used by /clear) so it is
                 excluded from --continue auto-resume — a cleared conversation
                 won't come back, but stays on disk for the picker.
+            pending_prompt: Incoming prompt to persist before the graph starts.
+            task_status: Recovery status for the snapshot.
+            pane: Owning pane, including a root session hidden behind another tab.
         """
         if self.session_manager is None:
             return
         try:
-            config = {"configurable": {"thread_id": self.session_state.thread_id}}
+            bundle = (
+                pane.state if pane is not None and pane is not getattr(self, "_active_pane", None)
+                else vars(self)
+            )
+            session_state = bundle["session_state"]
+            agent = bundle["agent"]
+            assistant_id = bundle["assistant_id"]
+            model_name = bundle["model_name"]
+            model_provider = bundle.get("_model_provider")
+            thread_id = session_state.thread_id
+            session_id = session_state.session_id
+            config = {"configurable": {"thread_id": thread_id}}
             # Bound the checkpointer read so a slow/contended DB can't hang /quit.
-            state = await asyncio.wait_for(self.agent.aget_state(config), timeout=5.0)
-            messages = state.values.get("messages", [])
+            try:
+                state = await asyncio.wait_for(agent.aget_state(config), timeout=5.0)
+                values = state.values or {}
+            except Exception:
+                if pending_prompt is None:
+                    raise
+                previous = await asyncio.to_thread(self.session_manager.load_session, session_id)
+                values = {"messages": previous.messages if previous else []}
+            if thread_id != session_state.thread_id:
+                return
+            messages = list(values.get("messages", []))
+            if pending_prompt is not None:
+                from langchain_core.messages import HumanMessage
+                messages.append(HumanMessage(content=pending_prompt))
             if not messages:
                 return
             from novacode_cli.config.config import settings
 
-            todos = state.values.get("todos") or getattr(self.session_state, "todos", None)
+            todos = values.get("todos") or getattr(session_state, "todos", None)
             # save_session does several synchronous file writes — run it off the
             # event loop so /save, /clear, and quit don't freeze the UI.
             await asyncio.to_thread(
                 self.session_manager.save_session,
-                session_id=self.session_state.session_id,
-                thread_id=self.session_state.thread_id,
+                session_id=session_id,
+                thread_id=thread_id,
                 messages=messages,
-                assistant_id=self.assistant_id,
+                assistant_id=assistant_id,
                 todos=todos,
-                model_name=self.model_name,
-                model_provider=self._model_provider,
+                model_name=model_name,
+                model_provider=model_provider,
                 project_root=settings.get_workspace_root(),
                 sandbox_id=self._sandbox_id,
                 sandbox_type=self._sandbox_type,
                 cleared=cleared,
+                task_status=task_status,
             )
         except Exception:  # noqa: BLE001
-            pass  # never block exit on a save failure
+            logger.warning("Session recovery save failed", exc_info=True)
 
     # -- input routing --------------------------------------------------------
     @work(exclusive=True, group="turn")
@@ -6316,6 +6397,7 @@ class NovaApp(App):
         # Remembered so a ContextOverflow can compact and re-send this exact
         # prompt rather than losing the user's message.
         self._last_user_prompt = text
+        turn_pane = getattr(self, "_active_pane", None)
         lock = getattr(self.session_state, "_remote_message_lock", None)
         self._reset_streaming()
         self._current_assistant_id = assistant_id
@@ -6328,8 +6410,10 @@ class NovaApp(App):
         try:
             if lock is not None:
                 async with lock:
+                    await self._save_session(pending_prompt=text, task_status="interrupted")
                     await self._do_stream(text, assistant_id)
             else:
+                await self._save_session(pending_prompt=text, task_status="interrupted")
                 await self._do_stream(text, assistant_id)
         except asyncio.CancelledError:
             self._reset_streaming()
@@ -6363,6 +6447,9 @@ class NovaApp(App):
                 self._log(Text(f"Error: {ex}", style="red"))
         finally:
             self._turn_active = False
+            if turn_pane is not None and turn_pane is not getattr(self, "_active_pane", None):
+                turn_pane.state["_turn_active"] = False
+            await self._save_session(pane=turn_pane)
             self._stop_foreground_subagents()
             self._detach_cancelling = False
             self._set_status("ready")
@@ -7594,6 +7681,12 @@ class NovaApp(App):
         import inspect
 
         cmd = text[1:].split(maxsplit=1)[0].lower() if len(text) > 1 else ""
+        if cmd == "ui":
+            await self._run_ui(text)
+            return
+        if cmd in self._ui_harness.applied.commands:
+            await self._ui_harness.toggle(self._ui_harness.applied.commands[cmd])
+            return
         if cmd.startswith("skill:"):
             # /skill:<name> — resolve + render natively, then stream the prompt.
             await self._run_skill(text)
@@ -7620,6 +7713,43 @@ class NovaApp(App):
                 style="yellow",
             )
         )
+
+    async def _run_ui(self, text: str) -> None:
+        parts = text.split(maxsplit=2)
+        operation = parts[1].lower() if len(parts) > 1 else "inspect"
+        try:
+            payload = json.loads(parts[2]) if len(parts) > 2 else {}
+            if not isinstance(payload, dict):
+                self._log(Text("UI patches must be JSON objects.", style="yellow"))
+                return
+            result = await self._ui_harness.execute(operation, payload)
+            self._log(Text(json.dumps(result, indent=2), style="dim"))
+        except (ValueError, OSError) as error:
+            self._log(Text(f"UI change failed: {error}", style="yellow"))
+
+    async def action_ui_reset(self) -> None:
+        """Restore the default layout through the reserved recovery shortcut."""
+        await self._run_ui("/ui reset")
+
+    async def action_harness_key(self, key: str) -> None:
+        """Handle the optional panel shortcuts without replacing core bindings."""
+        if action := self._ui_harness.applied.bindings.get(key):
+            await self._ui_harness.toggle(action)
+
+    async def on_uiharness_request(self, message: UIHarnessRequest) -> None:
+        """Serialize agent UI operations and reply on the caller's event loop."""
+        if message.future.done():
+            return
+        try:
+            result = await self._ui_harness.execute(message.operation, message.payload)
+        except Exception as error:
+            result = {"error": str(error)}
+
+        def finish() -> None:
+            if not message.future.done():
+                message.future.set_result(result)
+
+        message.future.get_loop().call_soon_threadsafe(finish)
 
     # ── Small handlers extracted from the old _run_slash elif chain ────────
     # (inline blocks became methods so every command fits the table contract)
@@ -11354,6 +11484,8 @@ class NovaApp(App):
         )
 
     async def _render(self, e: Any) -> None:
+        if harness := getattr(self, "_ui_harness", None):
+            harness.observe(e)
         if isinstance(e, ev.StatusUpdate):
             self._set_status(e.message or "ready")
         elif isinstance(e, ev.ReasoningDelta):
@@ -12028,4 +12160,10 @@ async def run_tui(
         sandbox_type=sandbox_type,
         sandbox_meta=sandbox_meta,
     )
-    await app.run_async()
+    try:
+        await app.run_async()
+    finally:
+        await app._save_session(
+            pane=getattr(app, "_root_pane", None),
+            task_status="crashed" if getattr(app, "_exception", None) else "active",
+        )

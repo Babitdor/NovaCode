@@ -291,7 +291,8 @@ def test_a_failed_row_carries_its_error_text():
 def test_glyphs_and_the_model_column():
     running = st.task_row(_task(), width=80, now=101.0)
     done = st.task_row(_task(status="done", duration_ms=38300), width=80, now=101.0)
-    assert "⏳" in running.plain
+    assert "●" in running.plain
+    assert "Active subagents" in st.panel_title([_task()]).plain
     assert "✓" in done.plain
     assert "—" in running.plain  # an unknown model is shown, not left blank
 

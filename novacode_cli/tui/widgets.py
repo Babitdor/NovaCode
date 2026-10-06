@@ -1596,4 +1596,5 @@ class SubagentsDock(Vertical):
         """Delegate the click to the app, which owns the row map."""
         handler = getattr(self.app, "_on_subagents_click", None)
         if handler is not None:
-            handler(event.y)
+            body = self.query_one("#subagents-body")
+            handler(event.screen_y - body.region.y + 1)

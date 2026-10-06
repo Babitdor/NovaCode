@@ -269,7 +269,7 @@ def test_the_panel_ticks_while_running_and_folds_on_the_key_and_a_click():
     out = asyncio.run(_drive_live_time_and_collapse())
 
     timeline = out["first_frame"]
-    assert "⏳" in timeline
+    assert "●" in timeline
     assert out["first_frame"] != out["later_frame"], (
         "a running row's TIME never moved: the panel is not ticking"
     )
@@ -570,8 +570,8 @@ async def test_worker_cleanup_stops_rows_without_a_terminal_event(
 
     monkeypatch.setattr(app, "_do_stream", interrupted_stream)
     async with app.run_test(size=(120, 44)) as pilot:
-        app._dispatch("start")
-        await app.workers.wait_for_complete()
+        turn = app._dispatch("start")
+        await turn.wait()
         await pilot.pause()
         assert not app._turn_active
         assert app._subagent_rows["unfinished"].status == "stopped"
