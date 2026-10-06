@@ -880,19 +880,9 @@ def _declare_image_support(model: object) -> None:
 
     Only called when Nova has concluded the model can see images. Never raises.
     """
-    try:
-        if not isinstance(model, BaseChatModel):
-            return
-        existing = getattr(model, "profile", None)
-        profile = dict(existing) if isinstance(existing, dict) else {}
-        if profile.get("image_inputs") is True:
-            return
-        profile["image_inputs"] = True
-        model.profile = profile  # type: ignore[assignment]
-    except Exception:  # noqa: BLE001 — never block an agent build on a profile hint
-        __import__("logging").getLogger(__name__).debug(
-            "Could not declare image support on the model profile", exc_info=True
-        )
+    from novacode_cli.config.model_capabilities import declare_multimodal_profile
+
+    declare_multimodal_profile(model, images=True)
 
 
 def _build_skill_sources() -> tuple[list[str], Path, Path, list[Path], list[tuple[str, Path]]]:

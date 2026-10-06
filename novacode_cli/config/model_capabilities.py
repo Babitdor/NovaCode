@@ -16,10 +16,32 @@ Detection is a **static pattern list** (mirroring ``MODEL_CONTEXT_WINDOWS`` in
 ``~/.nova/Nova.config.json`` (``main_model_multimodal``). The override wins, so
 an unlisted multimodal model can be declared without a code change.
 
+The answer is also written back onto the bound model's ``ModelProfile`` by
+:func:`declare_multimodal_profile`, because deepagents gates every multimodal
+block a ``read_file`` produces on that profile — Nova deciding a model is
+multimodal is not enough on its own.
+
 Pure and dependency-free: safe to import on the middleware hot path.
 """
 
 from __future__ import annotations
+
+
+def _is_chat_model(model: object) -> bool:
+    """Whether *model* is a LangChain chat model (duck-typed, import-free).
+
+    ``BaseChatModel`` is imported lazily rather than at module scope: this
+    module is on the middleware hot path and is documented as dependency-free.
+    A model that is not a chat model has no ``profile`` to seed, so the caller
+    is a no-op either way.
+    """
+    try:
+        from langchain_core.language_models import BaseChatModel
+
+        return isinstance(model, BaseChatModel)
+    except Exception:  # noqa: BLE001 — an unimportable langchain means "not a model"
+        return False
+
 
 #: Substrings that identify a known vision-capable model. Matched
 #: case-insensitively against the model name. Deliberately specific — a broad
@@ -78,6 +100,34 @@ MULTIMODAL_MODEL_PATTERNS: tuple[str, ...] = (
 #: the SAME answer) has only the config. A stale value cannot outlive a model
 #: switch — that rebuilds the agent, which re-notes it.
 _bound_profile_support: bool | None = None
+
+
+#: ``ModelProfile`` fields deepagents consults before it will attach a
+#: multimodal block from a ``read_file`` result. Each maps to the block type
+#: ``read_file`` emits for that modality (see deepagents'
+#: ``_PROFILE_FIELD_BY_BLOCK_TYPE``). A field that is absent defaults to
+#: "supported"; only an explicit ``False`` makes deepagents replace the block
+#: with ``[read_file: X was not attached because this model does not support
+#: <type> content]``.
+#:
+#: ``file`` covers PDFs (``application/pdf``) and, for the providers deepagents
+#: hard-codes as tolerant (OpenAI, Google), ``.ppt``/``.pptx`` as well.
+MULTIMODAL_PROFILE_FIELDS: tuple[str, ...] = (
+    "image_inputs",
+    "audio_inputs",
+    "video_inputs",
+    "pdf_inputs",
+)
+
+#: The same fields again, but scoped to a ``ToolMessage`` — deepagents checks
+#: these *in addition* to the fields above when the block arrives in a tool
+#: result rather than a user message. ``read_file`` always produces a
+#: ``ToolMessage``, so a profile that sets only the plain field still has the
+#: block stripped if the tool-scoped field is ``False``.
+MULTIMODAL_TOOL_PROFILE_FIELDS: tuple[str, ...] = (
+    "image_tool_message",
+    "pdf_tool_message",
+)
 
 
 def note_bound_model(model: object) -> None:
@@ -177,8 +227,62 @@ def resolve_main_model_multimodal(model: object) -> bool:
         return False
 
 
+def declare_multimodal_profile(model: object, *, images: bool) -> None:
+    """Tell deepagents which multimodal blocks *model* will accept.
+
+    deepagents gates every multimodal block a ``read_file`` produces on the
+    bound model's ``ModelProfile``. A field that is absent defaults to
+    "supported", but a provider that ships a profile with the field set to
+    ``False`` (or a model whose profile simply omits the modality) has the block
+    silently swapped for ``[read_file: X was not attached because this model does
+    not support <type> content]`` before the request leaves Nova. The model is
+    then told only that something was withheld, and does the only thing left:
+    writes a script to decode the file itself.
+
+    Nova already decides the image question (see
+    :func:`resolve_main_model_multimodal`); this records that decision on the
+    profile so deepagents agrees with it, and clears the tool-scoped fields that
+    would otherwise veto the same block inside a ``ToolMessage``.
+
+    Only the fields Nova has an opinion about are touched. ``images`` is the one
+    answer Nova actually derives; the remaining modalities are left at whatever
+    the provider's own profile said, so a model that genuinely cannot take audio
+    still gets the placeholder rather than a 400 from the provider.
+
+    Never raises — a profile hint must not block an agent build.
+
+    Args:
+        model: The bound chat model.
+        images: ``True`` when Nova has concluded the model accepts image input.
+    """
+    try:
+        if not _is_chat_model(model):
+            return
+        existing = getattr(model, "profile", None)
+        profile = dict(existing) if isinstance(existing, dict) else {}
+        changed = False
+        if images and profile.get("image_inputs") is not True:
+            profile["image_inputs"] = True
+            changed = True
+        # A tool-scoped ``False`` vetoes the block even when the plain field
+        # says yes, and ``read_file`` results are always ToolMessages.
+        for field in MULTIMODAL_TOOL_PROFILE_FIELDS:
+            if profile.get(field) is False:
+                profile[field] = True
+                changed = True
+        if changed:
+            model.profile = profile  # type: ignore[assignment]
+    except Exception:  # noqa: BLE001 — never block an agent build on a profile hint
+        __import__("logging").getLogger(__name__).debug(
+            "Could not declare multimodal support on the model profile", exc_info=True
+        )
+
+
 __all__ = [
     "MULTIMODAL_MODEL_PATTERNS",
+    "MULTIMODAL_PROFILE_FIELDS",
+    "MULTIMODAL_TOOL_PROFILE_FIELDS",
+    "declare_multimodal_profile",
     "model_supports_images",
     "note_bound_model",
     "resolve_main_model_multimodal",
