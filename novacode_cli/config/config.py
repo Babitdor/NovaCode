@@ -219,6 +219,7 @@ COMMANDS = {
     "init": "Explore codebase and create NOVA.MD file",
     "mcp": "Manage MCP servers (install presets, add custom, list, remove)",
     "model": "Manage LLM providers (view, switch between OpenAI, Anthropic, Ollama, Google)",
+    "router": "Route each turn to a model chosen by a decision model (Jev or local)",
     "hooks": "Manage hooks - list, add, remove, test, view logs (e.g., /hooks list)",
     "skills": "Manage skills - create or list (e.g., /skills, /skills create, /skills list)",
     "agents": "Manage custom agents - view, create, or delete (e.g., /agents)",

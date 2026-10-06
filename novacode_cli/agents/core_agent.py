@@ -1333,6 +1333,41 @@ def _resolve_main_model_multimodal(model: str | BaseChatModel) -> bool:
     return resolve_main_model_multimodal(model)
 
 
+def _build_router_middleware():
+    """The model-routing middleware, or ``None`` when routing is off.
+
+    Returns ``None`` in three cases, all of which mean "behave as if /router did
+    not exist": the feature is disabled, no routes are configured, or the
+    ``langchain-typesafe`` dependency is missing. The last one is why this is a
+    function rather than an inline import -- a user who never enables routing
+    should not be able to break their session by having an old environment.
+    """
+    try:
+        from novacode_cli.config.nova_config import NovaConfig
+
+        config = NovaConfig()
+        if not config.get_router_enabled():
+            return None
+        if not config.get_router_routes():
+            return None
+
+        from novacode_cli.agents.model_router import ModelRouter, ModelRouterMiddleware
+
+        return ModelRouterMiddleware(ModelRouter(config))
+    except ImportError:
+        __import__("logging").getLogger(__name__).warning(
+            "Model routing is enabled but langchain-typesafe is not installed; "
+            "running without it. Install it with: uv add langchain-typesafe",
+            exc_info=True,
+        )
+        return None
+    except Exception:  # noqa: BLE001 - routing must never prevent an agent from building
+        __import__("logging").getLogger(__name__).warning(
+            "Could not build the model router; running without it", exc_info=True
+        )
+        return None
+
+
 def _build_middleware_stack(
     *,
     model: str | BaseChatModel,
@@ -2169,6 +2204,13 @@ This file stores your preferences and context that persist across sessions.
             },
         )
     )
+
+    # Model routing (/router). Off by default, and absent from the stack entirely
+    # when off, so a session that never enables it behaves exactly as before.
+    # Placed before the caller-injected middleware so a plugin can still wrap it.
+    _router_middleware = _build_router_middleware()
+    if _router_middleware is not None:
+        agent_middleware.append(_router_middleware)
 
     # Caller-injected middleware (e.g. Cowork's WorkspacePolicy broker) goes last
     # so it wraps tool calls closest to execution — a denied call never runs.

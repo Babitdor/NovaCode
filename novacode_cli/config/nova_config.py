@@ -559,6 +559,180 @@ class NovaConfig:
         self._config["tool_verdict_keep_threshold"] = float(threshold)
         self._save()
 
+    # ── Model routing (/router, OFF by default) ─────────────────────────────
+    #
+    # When enabled, each turn is classified by a System One decision model
+    # (Jev in the cloud, or a local model such as tev1) and routed to one of
+    # the configured routes. A route is a ``provider:model`` pair plus the
+    # criteria that describe when it should be chosen, so the router is
+    # provider- and model-agnostic: any provider ``build_chat_model`` knows
+    # about can be a target.
+    #
+    # The whole block lives under one top-level ``router`` key so ``_save``'s
+    # per-key merge keeps it atomic -- a half-written route list is not a state
+    # the reader has to defend against.
+
+    #: Decision-model defaults. Deliberately the same endpoint/model as the
+    #: tool-verdict feature, so a user who already configured Jev or tev1 gets
+    #: routing working with no extra setup. Stored separately so the two
+    #: features can diverge without one silently changing the other.
+    ROUTER_DEFAULT_ENDPOINT = TOOL_VERDICT_DEFAULT_ENDPOINT
+    ROUTER_DEFAULT_MODEL = TOOL_VERDICT_DEFAULT_MODEL
+
+    #: Minimum classifier confidence for a route to be taken. Below this the
+    #: default route wins, because a coin-flip between two models is worse than
+    #: a predictable one.
+    ROUTER_DEFAULT_MIN_CONFIDENCE = 0.5
+
+    def _router_block(self) -> dict[str, Any]:
+        """The raw ``router`` block, or an empty dict when absent/malformed."""
+        block = self._config.get("router")
+        return block if isinstance(block, dict) else {}
+
+    def get_router_enabled(self) -> bool:
+        """Whether turns are routed by a decision model.
+
+        Parsed strictly rather than with ``bool()`` for the same reason as
+        :meth:`get_tool_verdicts_enabled`: ``bool("false")`` is ``True``, and
+        this is the master switch for a feature that is off by default.
+        """
+        return _config_bool(self._router_block().get("enabled", False))
+
+    def set_router_enabled(self, enabled: bool) -> None:
+        """Persist the routing flag."""
+        block = self._router_block()
+        block["enabled"] = bool(enabled)
+        self._config["router"] = block
+        self._save()
+
+    def get_router_routes(self) -> list[dict[str, Any]]:
+        """The configured routes, in the order they were added.
+
+        Returns a deep copy: callers mutate what they get back (the TUI screen
+        edits a working list), and a shared reference would let an abandoned
+        edit reach the live config.
+        """
+        routes = self._router_block().get("routes")
+        if not isinstance(routes, list):
+            return []
+        return [copy.deepcopy(r) for r in routes if isinstance(r, dict)]
+
+    def set_router_routes(self, routes: list[dict[str, Any]]) -> None:
+        """Persist the route list, validating it first.
+
+        Validation is here rather than in the UI because this is the last point
+        every writer passes through, and a route with an unknown provider would
+        otherwise fail at model-construction time -- mid-turn, in the agent,
+        where the error is far from its cause.
+
+        Raises:
+            ValueError: A route is malformed, ids collide, or a provider is
+                unknown.
+        """
+        from novacode_cli.config.model_manager import MODEL_PRESETS
+
+        cleaned: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for index, route in enumerate(routes):
+            if not isinstance(route, dict):
+                message = f"Route {index} is not an object."
+                raise ValueError(message)
+            route_id = str(route.get("id", "")).strip()
+            provider = str(route.get("provider", "")).strip()
+            model = str(route.get("model", "")).strip()
+            criteria = str(route.get("criteria", "")).strip()
+            if not route_id:
+                message = f"Route {index} has no id."
+                raise ValueError(message)
+            if route_id in seen:
+                message = f"Duplicate route id {route_id!r}."
+                raise ValueError(message)
+            if provider not in MODEL_PRESETS:
+                message = f"Route {route_id!r} has unknown provider {provider!r}."
+                raise ValueError(message)
+            if not model:
+                message = f"Route {route_id!r} has no model."
+                raise ValueError(message)
+            if not criteria:
+                message = f"Route {route_id!r} has no criteria."
+                raise ValueError(message)
+            seen.add(route_id)
+            entry: dict[str, Any] = {
+                "id": route_id,
+                "provider": provider,
+                "model": model,
+                "criteria": criteria,
+            }
+            base_url = route.get("base_url")
+            if isinstance(base_url, str) and base_url.strip():
+                entry["base_url"] = base_url.strip()
+            cleaned.append(entry)
+
+        block = self._router_block()
+        block["routes"] = cleaned
+        self._config["router"] = block
+        self._save()
+
+    def get_router_default_route(self) -> str | None:
+        """Route id used when the classifier fails or is unsure."""
+        value = self._router_block().get("default_route")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return None
+
+    def set_router_default_route(self, route_id: str | None) -> None:
+        """Persist the fallback route id (``None`` clears it)."""
+        block = self._router_block()
+        if route_id is None or not str(route_id).strip():
+            block.pop("default_route", None)
+        else:
+            block["default_route"] = str(route_id).strip()
+        self._config["router"] = block
+        self._save()
+
+    def get_router_decision_endpoint(self) -> str:
+        """System One endpoint the routing decisions are asked of."""
+        value = self._router_block().get("decision_endpoint")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return self.ROUTER_DEFAULT_ENDPOINT
+
+    def set_router_decision_endpoint(self, endpoint: str) -> None:
+        """Persist the routing decision endpoint."""
+        block = self._router_block()
+        block["decision_endpoint"] = str(endpoint).strip()
+        self._config["router"] = block
+        self._save()
+
+    def get_router_decision_model(self) -> str:
+        """Model name at the routing decision endpoint."""
+        value = self._router_block().get("decision_model")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return self.ROUTER_DEFAULT_MODEL
+
+    def set_router_decision_model(self, model: str) -> None:
+        """Persist the routing decision model name."""
+        block = self._router_block()
+        block["decision_model"] = str(model).strip()
+        self._config["router"] = block
+        self._save()
+
+    def get_router_min_confidence(self) -> float:
+        """Minimum classifier confidence for a route to be taken."""
+        raw = self._router_block().get("min_confidence")
+        try:
+            value = float(raw)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return self.ROUTER_DEFAULT_MIN_CONFIDENCE
+        return value if 0.0 < value <= 1.0 else self.ROUTER_DEFAULT_MIN_CONFIDENCE
+
+    def set_router_min_confidence(self, threshold: float) -> None:
+        """Persist the minimum routing confidence."""
+        block = self._router_block()
+        block["min_confidence"] = float(threshold)
+        self._config["router"] = block
+        self._save()
     # ── Voice config (local STT / VAD / TTS) ────────────────────────────────
 
     VOICE_DEFAULTS: dict[str, Any] = {  # noqa: RUF012

@@ -77,6 +77,9 @@ dependencies = [
     "langchain-quickjs>=0.2.0",
     # Persistent Python kernel snapshots (pickle superset: lambdas, classes).
     "dill>=0.3.8",
+    # TypeSafe classifier for /router. Pre-1.0 (0.0.1a3): only the stable
+    # `TypeSafeClassifier` is used, never `langchain_typesafe.experimental`.
+    "langchain-typesafe>=0.0.1a3",
 ]
 
 [project.optional-dependencies]
