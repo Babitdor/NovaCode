@@ -412,6 +412,12 @@ version uses registered components; it does not load generated Python widgets.
 
 Example: `/ui patch {"panels":[{"id":"notes","type":"notes","title":"Notes","text":"Current task"}],"width":28}`
 
+External histories can be viewed or imported through `/sessions`, `/import codex
+--last`, or `/import claude <id-or-file>`. Switch the loaded reference with
+`/context imported full|compact|relevant [query]`; compare histories using
+`/compare claude:<id> codex:<id>`. Startup also supports `nova --import claude
+--latest`. See [session import and adapter plugins](docs/session-import.md).
+
 The **Active subagents** panel shows running tasks with their model and elapsed
 time. It disappears when no tasks are active; Alt+S collapses or expands it.
 

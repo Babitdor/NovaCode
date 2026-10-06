@@ -519,6 +519,15 @@ def parse_args():
         "--safe-ui", action="store_true",
         help="Start with the default UI, skipping saved customizations",
     )
+    parser.add_argument(
+        "--import", dest="import_provider",
+        help="Import a local conversation (codex, claude, nova, or an installed adapter)",
+    )
+    parser.add_argument(
+        "--latest", action="store_true", help="Import the selected provider's latest session",
+    )
+    parser.add_argument("--import-session", help="Source session ID or transcript file path")
+    parser.add_argument("--import-mode", choices=("compact", "full", "relevant"), default="compact")
     parser.add_argument("--session-worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--session-id", default=None, help=argparse.SUPPRESS)
     _add_agent_server_args(parser)
@@ -530,7 +539,15 @@ def parse_args():
     )
     parser.add_argument("-h", "--help", action="help", help="Show this help message and exit")
 
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.import_provider:
+        if args.resume or args.continue_session:
+            parser.error("--import cannot be combined with --resume or --continue")
+        if bool(args.latest) == bool(args.import_session):
+            parser.error("--import requires exactly one of --latest or --import-session <id/file>")
+    elif args.latest or args.import_session:
+        parser.error("--latest and --import-session require --import <provider>")
+    return args
 
 
 def _is_rate_limit_error(e: Exception) -> bool:
@@ -959,6 +976,46 @@ async def _run_agent_session(
             logging.getLogger("novacode_cli.remote").error(
                 f"Failed to resume cron scheduler: {_cron_exc}", exc_info=True
             )
+
+    # CLI imports use the same normalized, inert reference as the TUI.
+    import_request = getattr(session_state, "_import_request", None)
+    if import_request:
+        from langchain_core.messages import HumanMessage
+
+        from novacode_cli.context import ContextManager
+        from novacode_cli.session.imported_context import MESSAGE_ID, import_budget
+        from novacode_cli.tui.session_import import load_import
+
+        imported = await asyncio.to_thread(load_import, *import_request)
+        window = ContextManager(
+            getattr(model, "model_name", None) or getattr(model, "model", "unknown"),
+        ).window_size()
+        budget = import_budget(window)
+        initial_messages = [HumanMessage(content=imported.build(budget), id=MESSAGE_ID)]
+        if session_manager is not None:
+            await asyncio.to_thread(
+                imported.save, session_manager.sessions_dir, session_state.session_id,
+            )
+        console.print(imported.describe(budget), markup=False)
+    elif session_manager is not None and getattr(session_state, "is_continued", False):
+        from novacode_cli.context import ContextManager
+        from novacode_cli.session.imported_context import (
+            MESSAGE_ID,
+            estimated_tokens,
+            import_budget,
+            restore_imported_reference,
+        )
+
+        window = ContextManager(
+            getattr(model, "model_name", None) or getattr(model, "model", "unknown"),
+        ).window_size()
+        retained = [message for message in (initial_messages or []) if message.id != MESSAGE_ID]
+        used = estimated_tokens("\n".join(str(message.content) for message in retained))
+        initial_messages = await asyncio.to_thread(
+            restore_imported_reference, list(initial_messages or []),
+            session_manager.sessions_dir, session_state.session_id,
+            import_budget(window, used),
+        )
 
     # Inject initial messages if continuing a session
     if initial_messages:
@@ -2079,6 +2136,12 @@ def cli_main() -> None:
             # The TUI is the only interactive UI; `headless` selects the
             # non-interactive path (see the branch order in main()).
             session_state.headless = headless_prompt is not None
+            if args.import_provider:
+                session_state._import_request = (
+                    args.import_provider,
+                    "--last" if args.latest else args.import_session,
+                    args.import_mode,
+                )
 
             # Parallel-session child. `headless` is reused as the umbrella
             # "non-interactive process" flag — it already suppresses the splash,

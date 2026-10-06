@@ -33,6 +33,7 @@ TESTS = [
     "tests/test_subagent_tasks.py",
     "tests/test_tui_subagent_panel.py",
     "tests/test_tui_sessions.py",
+    "tests/test_session_import.py",
 ]
 
 
@@ -42,12 +43,18 @@ class Isolation:
     @pytest.fixture(autouse=True)
     def isolated_ui(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """Keep native audio warmup and saved user profiles out of UI tests."""
+        from langgraph.store.memory import InMemoryStore
+
         from novacode_cli.tui.app import NovaApp
 
         async def no_warmup(_self: object) -> None:
             pass
 
         monkeypatch.setattr(NovaApp, "_eager_voice_warmup", no_warmup)
+        # Mock streams still exercise lease acquisition/renewal/release, but
+        # must not contend with live Nova sessions in the user's SQLite store.
+        store = InMemoryStore()
+        monkeypatch.setattr("novacode_cli.memory.store.get_durable_store", lambda: store)
         monkeypatch.setenv("NOVA_DISABLE_UPDATE_CHECK", "1")
         monkeypatch.delenv("NO_COLOR", raising=False)
         monkeypatch.setattr(
@@ -137,6 +144,7 @@ def main() -> int:
     # Normal Nova startup builds its tools before handing off to Textual. Do
     # the same here so cold provider SDK imports don't consume turn deadlines.
     importlib.import_module("novacode_cli.tools.plan_mode_tools")
+    importlib.import_module("novacode_cli.agents.core_agent")
     return int(
         pytest.main(
             [

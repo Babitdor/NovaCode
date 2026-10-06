@@ -423,7 +423,13 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
         wants_text=False,
         aliases=("connect",),
     ),
-    "sessions": SlashCommand("_run_sessions", "list / delete saved sessions", wants_text=False),
+    "sessions": SlashCommand("_run_session_import", "browse Nova and external sessions"),
+    "import": SlashCommand(
+        "_run_session_import", "import Codex / Claude / Nova history as context"
+    ),
+    "compare": SlashCommand(
+        "_run_session_import", "compare two histories (/compare claude:<id> codex:<id>)"
+    ),
     "session": SlashCommand(
         "_run_session_command", "parallel sessions: new / list / close (ctrl+n, alt+<n>)"
     ),
@@ -500,7 +506,9 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     ),
     "clear": SlashCommand("_run_clear", "clear the transcript", wants_text=False),
     "tokens": SlashCommand("_run_token_view", "show token / context usage", wants_text=False),
-    "context": SlashCommand("_run_token_view", "show context usage breakdown", wants_text=False),
+    "context": SlashCommand(
+        "_run_session_import", "usage or imported full / compact / relevant [query]"
+    ),
     "cost": SlashCommand("_run_token_view", "show session token spend", wants_text=False),
     "verbose": SlashCommand("_run_verbose", "toggle internal-context display", wants_text=False),
     "trace": SlashCommand("_run_trace", "tracing status"),
@@ -8491,6 +8499,11 @@ class NovaApp(App):
             )
         )
 
+    async def _run_session_import(self, text: str) -> None:
+        from novacode_cli.tui.session_import import dispatch_import_command
+
+        await dispatch_import_command(self, text)
+
     async def _run_sessions(self) -> None:
         """Open the saved-sessions screen (list + delete)."""
         from novacode_cli.session.session_persistence import SessionManager
@@ -8677,6 +8690,22 @@ class NovaApp(App):
         # nothing to restore, so no warning and no wasted agent rebuild.
 
         # Seed the fresh thread with the continuation history.
+        from novacode_cli.session.imported_context import (
+            MESSAGE_ID,
+            estimated_tokens,
+            import_budget,
+            restore_imported_reference,
+        )
+
+        sessions_dir = getattr(sm, "sessions_dir", None)
+        if sessions_dir is not None:
+            retained = [message for message in initial_messages if message.id != MESSAGE_ID]
+            window = getattr(self.token_tracker, "context_window_size", 128000)
+            used = estimated_tokens("\n".join(str(message.content) for message in retained))
+            initial_messages = await asyncio.to_thread(
+                restore_imported_reference, initial_messages, sessions_dir, resumed_id,
+                import_budget(window, used),
+            )
         config = {"configurable": {"thread_id": self.session_state.thread_id}}
         try:
             await self.agent.aupdate_state(config, values={"messages": initial_messages})
