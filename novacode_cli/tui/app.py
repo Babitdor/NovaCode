@@ -20,6 +20,7 @@ from __future__ import annotations
 from novacode_cli.core import subagent_tasks
 from novacode_cli.prompts import render_template
 from novacode_cli.ui import status_phrases
+from novacode_cli.tui.output_buffer import MAX_PENDING_CALLS, OutputTail
 
 import asyncio
 import contextlib
@@ -34,6 +35,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
+    from textual.timer import Timer
+
     # Annotation-only: the clipboard image is passed straight to the tracker, so
     # the module is never imported at runtime on this path.
     from novacode_cli.image_utils import ImageData
@@ -119,6 +122,7 @@ from novacode_cli.tui.screens import (
     RouterScreen,
     ServersScreen,
     SessionsScreen,
+    SettingsScreen,
     SkillCreateModal,
     SkillsScreen,
     ThemeScreen,
@@ -519,6 +523,7 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "trace": SlashCommand("_run_trace", "tracing status"),
     "log": SlashCommand("_run_log", "recent runs"),
     "theme": SlashCommand("_run_theme", "switch color theme", wants_text=False),
+    "settings": SlashCommand("_run_settings", "open app settings", wants_text=False),
     "quit": SlashCommand("action_quit", "exit the TUI", wants_text=False),
     "exit": SlashCommand("action_quit", "exit the TUI", wants_text=False),
     # Wiki commands
@@ -2037,12 +2042,12 @@ class NovaApp(App):
         self.set_interval(3.0, self._refresh_info_bar)
         # Load slash commands contributed by enabled plugins (TUI dispatch).
         self._load_plugin_commands()
-        # Idle sessions should not run the active-turn animation loop.
+        # Poll slowly while idle; animate focused active turns at 10 Hz.
         self._schedule_status_tick()
         self.query_one("#prompt", PromptInput).focus()
         # Show ASCII art banner on home screen
         self._show_home_banner()
-        # Initialize explicitly enabled voice; models stay lazy until used.
+        # Initialize explicitly enabled voice; native models remain lazy.
         await self._eager_voice_warmup()
         # Replay prior conversation when resuming a session.
         self._replay_history()
@@ -2107,7 +2112,7 @@ class NovaApp(App):
             buffer = self._tool_out_pending.get(call_id)
             if buffer is None:
                 if len(self._tool_out_pending) >= MAX_PENDING_CALLS:
-                    # This is only the live display backlog. Final tool results
+                    # Only the live display is trimmed; final tool results
                     # still arrive through the normal event/session path.
                     self._tool_out_pending.pop(next(iter(self._tool_out_pending)))
                 buffer = self._tool_out_pending[call_id] = OutputTail()
@@ -4633,6 +4638,7 @@ class NovaApp(App):
     #: Cached right-docked status counts (see _refresh_status). Class-level so a
     #: read before the first tail rebuild yields an empty Text, not AttributeError.
     _status_right: Text | None = None
+    _status_timer: Timer | None = None
 
     def _set_status(self, activity: str) -> None:
         self._activity = activity
@@ -5738,8 +5744,7 @@ class NovaApp(App):
                     tts_voice=cfg.get("tts_voice", "en_US-lessac-medium"),
                 )
             self._voice_speak_responses = bool(cfg["speak_responses"])
-            # Providers load only when that direction is used. Speaking must
-            # not preload Whisper/VAD, and PTT must not preload unused TTS.
+            # Voice providers stay lazy: speaking must not preload input models.
         return True
 
     @work(group="voice_warmup", exclusive=True)
@@ -5767,10 +5772,10 @@ class NovaApp(App):
             self._set_nova_indicator("● voice models ready", style="dim green", auto_clear=3.0)
 
     async def _eager_voice_warmup(self) -> None:
-        """Initialize explicitly enabled voice without preloading native models.
+        """Initialize enabled voice without preloading models.
 
-        The default PTT mode and speak-responses preference do not mean voice
-        was enabled. Reading configuration remains off the UI loop.
+        Default push-to-talk and reply preferences do not mean voice is enabled.
+        Reading configuration stays off the UI loop.
         """
         from novacode_cli.config.nova_config import NovaConfig
 
@@ -7931,6 +7936,20 @@ class NovaApp(App):
         # as long as the modal is on screen, blocking every later command.
         self.push_screen(ThemeScreen())
 
+    def _run_settings(self) -> None:
+        """Open app preferences without holding the turn worker open."""
+        self.push_screen(SettingsScreen())
+
+    def _matrix_rain_enabled(self) -> bool:
+        """Read saved animation preference with environment fallback."""
+        return SettingsScreen._rain_enabled()
+
+    def _set_matrix_rain_enabled(self, enabled: bool) -> None:
+        """Apply a Matrix Rain preference immediately to the visible banner."""
+        rain = self._home_banner
+        if isinstance(rain, MatrixRain):
+            rain.set_animation_enabled(enabled)
+
     def _run_token_view(self) -> None:
         self._log(self._token_text())
 
@@ -9967,7 +9986,7 @@ class NovaApp(App):
                 width = None
             art = get_responsive_ascii(width=width)
 
-            rain = MatrixRain(art=art, width=width)
+            rain = MatrixRain(art=art, width=width, animate=self._matrix_rain_enabled())
             self._home_banner = rain
             self._transcript().mount(rain)
             self._prune_transcript()
