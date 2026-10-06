@@ -94,8 +94,11 @@ class MatrixRain(Static):
 
     KATAKANA = "ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜｦﾝｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅ"
 
-    def __init__(self, art: str = "", width: int | None = None) -> None:
+    def __init__(
+        self, art: str = "", width: int | None = None, *, animate: bool | None = None
+    ) -> None:
         super().__init__("", id="matrix-rain")
+        self._animation_enabled = animate
         self._columns: list[dict] = []
         self._chars = list(MatrixRain.KATAKANA)
         self._width: int | None = None
@@ -175,6 +178,13 @@ class MatrixRain(Static):
             self._init_columns()  # rebuild rain columns for the new width
             self._apply_size()  # the grid changed, so the widget box must too
             self._needs_layout = True  # next frame must re-layout (size changed)
+            self.redraw_frame()
+
+    def redraw_frame(self, _theme: Theme | None = None) -> None:
+        """Refresh the logo on resize/theme changes, even with animation off."""
+        self._strips = self._build_strips()
+        self.refresh(layout=self._needs_layout)
+        self._needs_layout = False
 
     def _theme_base_color(self):
         """The active theme's primary color as a Textual ``Color`` object.
@@ -265,10 +275,43 @@ class MatrixRain(Static):
         self._apply_size()
         self._strips = self._build_strips()  # paint something on the first frame
         self._needs_layout = True  # first frame must establish the widget size
+        self.app.theme_changed_signal.subscribe(self, self.redraw_frame)
         # ~15 fps: column speeds are scaled so the fall rate looks the same as
         # the old 25 fps, but each second costs 40% fewer frame builds and —
         # more importantly — 40% fewer Textual repaints on the main thread.
+        # An idle terminal should not continuously repaint a decorative banner.
+        # Keep its first themed frame, with the original rain available opt-in.
+        if self._animation_enabled is None:
+            import os
+
+            self._animation_enabled = (
+                os.environ.get("NOVA_ANIMATIONS", "").strip().lower()
+                in {"1", "true", "yes"}
+            )
+        # Start the timer directly: ``is_mounted`` is still False inside
+        # ``on_mount``, so ``set_animation_enabled`` would return early and the
+        # rain would never run even when it was asked for.
+        if self._animation_enabled:
+            self._start_timer()
+
+    def set_animation_enabled(self, enabled: bool) -> None:
+        """Start or stop the rain timer without rebuilding the banner."""
+        self._animation_enabled = enabled
+        if not self.is_mounted:
+            return
+        if enabled and self._timer is None:
+            self._start_timer()
+        elif not enabled and self._timer is not None:
+            self._timer.stop()
+            self._timer = None
+
+    def _start_timer(self) -> None:
+        """Create the rain timer, honouring the current OS-focus state."""
+        if self._timer is not None:
+            return
         self._timer = self.set_interval(0.066, self._tick)
+        if not getattr(self.app, "_os_focused", True):
+            self._timer.pause()
 
     def pause(self) -> None:
         """Pause the rain timer (called when the app loses OS focus or rain is
@@ -429,6 +472,9 @@ class MatrixRain(Static):
 
     def _frame_text(self) -> Text:
         """Render the buffers as text, without advancing the simulation."""
+        if not hasattr(self, "_frame_lines"):
+            # Textual may measure content before on_mount allocates the grid.
+            return Text("\n".join(self._art_lines), style=self._art_style())
         cols = self._col_count
         text = Text()
         for y in range(self._row_count):

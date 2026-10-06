@@ -11,6 +11,11 @@ import os as _os
 # ~9 MB. It applies to every Nova process — the TUI and each spawned session.
 # setdefault, so an explicit setting in the environment still wins.
 _os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+# Other numerical backends also default to machine-wide thread pools. Multiple
+# Nova processes should not each occupy every core; explicit user values win.
+_os.environ.setdefault("OMP_NUM_THREADS", "1")
+_os.environ.setdefault("MKL_NUM_THREADS", "1")
+_os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
 # Must run before langchain_core is imported: it pulls in `transformers` (and
 # therefore torch/numpy/PIL) at module scope for a fallback tokenizer Nova never

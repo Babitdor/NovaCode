@@ -28,6 +28,7 @@ from textual.widgets import (
     Select,
     SelectionList,
     Static,
+    Switch,
     Tab,
     Tabs,
     TextArea,
@@ -2172,6 +2173,63 @@ class ThemeScreen(ModalScreen[None]):
         except Exception:  # noqa: BLE001
             pass
         self._reload()
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
+class SettingsScreen(ModalScreen[None]):
+    """Quick app preferences that apply immediately and persist."""
+
+    BINDINGS = [("escape", "close", "Close")]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="modal-box"):
+            yield Static(Text("Settings", style="bold"), id="modal-title")
+            with Horizontal():
+                yield Switch(value=self._rain_enabled(), id="matrix-rain-toggle")
+                yield Static("Matrix Rain animation")
+            yield Static("Decorative animation on the home banner.", classes="dim")
+            with Horizontal(id="modal-buttons"):
+                yield Button("Close", id="close")
+
+    @staticmethod
+    def _rain_enabled() -> bool:
+        """Read the saved preference, falling back to the legacy environment flag."""
+        import os
+
+        try:
+            from novacode_cli.config.nova_config import NovaConfig
+
+            saved = NovaConfig().get("matrix_rain_enabled")
+            if isinstance(saved, bool):
+                return saved
+        except Exception:  # noqa: BLE001
+            pass
+        return os.environ.get("NOVA_ANIMATIONS", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+
+    def on_mount(self) -> None:
+        animate_modal_screen(self)
+
+    def on_switch_changed(self, event: Switch.Changed) -> None:
+        if event.switch.id != "matrix-rain-toggle":
+            return
+        enabled = event.value
+        try:
+            from novacode_cli.config.nova_config import NovaConfig
+
+            NovaConfig().set("matrix_rain_enabled", enabled)
+        except Exception as exc:  # noqa: BLE001
+            self.app._log(Text(f"Could not save settings: {exc}", style="red"))
+        self.app._set_matrix_rain_enabled(enabled)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "close":
+            self.dismiss(None)
 
     def action_close(self) -> None:
         self.dismiss(None)

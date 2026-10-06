@@ -880,10 +880,8 @@ async def _run_agent_session(
             sandbox=sandbox_backend,
         )
 
-        # Eagerly preload voice models at the boot banner whenever voice will be
-        # used — `enabled` (always-listening) OR `speak_responses` (Nova talks)
-        # OR push-to-talk. Gating on `enabled` alone meant PTT / speak-only users
-        # paid the (large) model load inline on first use instead of at startup.
+        # Keep native voice models out of text-session startup. Explicitly
+        # enabled voice gets a lightweight pipeline; models load on first use.
         from novacode_cli.config.nova_config import NovaConfig
         from novacode_cli import audio
 
@@ -891,14 +889,10 @@ async def _run_agent_session(
         # No audio in headless mode — never preload the (large) voice models.
         _voice_wanted = bool(
             not getattr(session_state, "headless", False)
-            and (
-                cfg.get("enabled")
-                or cfg.get("speak_responses")
-                or cfg.get("mode") == "push_to_talk"
-            )
+            and cfg.get("enabled")
         )
         if _voice_wanted and audio.is_voice_available():
-            boot_status("voice: preloading models (downloading if not present)…")
+            boot_status("voice: enabled (models load on demand)")
             try:
                 from novacode_cli.audio.pipeline import VoicePipeline
 
@@ -910,9 +904,8 @@ async def _run_agent_session(
                     stt_device=cfg.get("stt_device", "auto"),
                     tts_voice=cfg.get("tts_voice", "en_US-lessac-medium"),
                 )
-                await voice_pipeline.warmup()
                 session_state._voice_pipeline = voice_pipeline
-                boot_status("voice: stack ready", "ok")
+                boot_status("voice: pipeline ready", "ok")
             except Exception as e:
                 boot_status(f"voice: warmup failed ({e})", "warn")
 

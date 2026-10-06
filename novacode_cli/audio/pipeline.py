@@ -147,6 +147,11 @@ class VoicePipeline:
         return self._tts_active
 
     def _ensure_components(self) -> None:
+        self._ensure_input_components()
+        self._ensure_tts()
+
+    def _ensure_input_components(self) -> None:
+        """Build microphone components only when capturing or preloading input."""
         from novacode_cli.audio.capture import AudioCapture
         from novacode_cli.audio.vad import SileroVad
 
@@ -156,6 +161,9 @@ class VoicePipeline:
             self._vad = SileroVad()
         if self._stt is None:
             self._stt = self._build_stt()
+
+    def _ensure_tts(self) -> None:
+        """Build the speech provider without allocating the input stack."""
         if self._tts is None:
             self._tts = self._build_tts()
 
@@ -207,19 +215,24 @@ class VoicePipeline:
         msg = f"Unknown TTS provider: {provider!r}"
         raise ValueError(msg)
 
-    async def warmup(self) -> None:
+    async def warmup(self, *, input_audio: bool = True) -> None:
         """Pre-load VAD + STT + TTS models off the loop so first use isn't laggy.
 
         Only the local providers have models to pre-load (cloud providers have
         nothing to warm up). Best-effort: any load error is logged and ignored —
         the model simply loads on first real use instead.
         """
-        self._ensure_components()
+        if input_audio:
+            self._ensure_components()
+        else:
+            self._ensure_tts()
         # (label, awaitable-or-None) — cloud providers expose no eager loader.
         _stt_load = getattr(self._stt, "_ensure_model", None)
         _tts_load = getattr(self._tts, "_ensure_voice", None)
-        tasks: list[tuple[str, Any]] = [("VAD", self._vad.ensure_model_async())]
-        if _stt_load is not None:
+        tasks: list[tuple[str, Any]] = []
+        if input_audio:
+            tasks.append(("VAD", self._vad.ensure_model_async()))
+        if input_audio and _stt_load is not None:
             tasks.append(("STT", asyncio.to_thread(_stt_load)))
         if _tts_load is not None:
             tasks.append(("TTS", asyncio.to_thread(_tts_load)))
@@ -233,7 +246,7 @@ class VoicePipeline:
         self, *, should_stop: Callable[[], bool] | None = None
     ) -> str | None:
         """Push-to-talk: record one utterance, return its transcript (or ``None``)."""
-        self._ensure_components()
+        self._ensure_input_components()
         self._capture.start()
         self._capture.drain()
         try:
@@ -250,7 +263,7 @@ class VoicePipeline:
         """Speak ``text`` aloud, flagging ``tts_active`` for the duration."""
         if not text.strip():
             return
-        self._ensure_components()
+        self._ensure_tts()
         self._tts_active = True
         try:
             await self._tts.speak(text)
@@ -267,7 +280,7 @@ class VoicePipeline:
 
         Pauses capture while ``tts_active`` so Nova never hears itself.
         """
-        self._ensure_components()
+        self._ensure_input_components()
         self._capture.start()
         try:
             while True:
@@ -302,13 +315,14 @@ class VoicePipeline:
     @property
     def tts_needs_download(self) -> bool:
         """Whether the TTS provider needs to download files before speaking."""
-        self._ensure_components()
+        self._ensure_tts()
         return getattr(self._tts, "needs_download", False)
 
     @property
     def stt_needs_download(self) -> bool:
         """Whether the STT provider needs to download its model before use."""
-        self._ensure_components()
+        if self._stt is None:
+            self._stt = self._build_stt()
         return getattr(self._stt, "needs_download", False)
 
     def downloads_pending(self) -> list[str]:
