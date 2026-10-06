@@ -557,20 +557,27 @@ class FileTrackerMiddleware(AgentMiddleware):
         else:
             return result
 
-        # Convert PDF and other "file" type content blocks to text.
+        # Convert PDF "file" content blocks to text.
         # Ollama (and some other backends) don't support type="file" content
         # blocks, so we extract text from PDFs before they enter the message
         # history — preventing a fatal "Blocks of type file not supported" crash.
+        # Non-PDF blocks (pptx, provider-managed references) and image/audio/
+        # video blocks are left intact for the model and its provider.
         if isinstance(content, list) and tool_name == "read_file":
             from novacode_cli.utils.pdf_extraction import convert_file_content_block_to_text
 
             converted = convert_file_content_block_to_text(content)
-            if converted is not content:  # something was converted
-                # Rebuild ToolMessage with converted content and preserve metadata
+            if converted is not content:  # a PDF was converted
+                # Rebuild ToolMessage with converted content and preserve metadata.
+                # ``additional_kwargs`` carries ``read_file_path`` /
+                # ``read_file_media_type``, which the vision router and the
+                # deepagents scrubber both read; dropping it here made a
+                # converted read look like an anonymous tool result.
                 result = ToolMessage(
                     content=converted,
                     tool_call_id=result.tool_call_id,
                     name=result.name if hasattr(result, "name") else None,
+                    additional_kwargs=getattr(result, "additional_kwargs", {}),
                 )
                 content = converted
 
