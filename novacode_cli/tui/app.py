@@ -73,6 +73,7 @@ from novacode_cli.tui.animations import (
     animate_entrance,
 )
 from novacode_cli.tui import motion
+from novacode_cli.tui.output_buffer import MAX_PENDING_CALLS, OutputTail
 
 # Widgets and modal screens were extracted verbatim into widgets.py /
 # screens.py. Re-exported here so `from novacode_cli.tui.app import X`
@@ -115,6 +116,7 @@ from novacode_cli.tui.screens import (
     RalphScreen,
     RememberRuleModal,
     RemoteScreen,
+    RouterScreen,
     ServersScreen,
     SessionsScreen,
     SkillCreateModal,
@@ -417,6 +419,9 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "help": SlashCommand("_run_help", "show this help", wants_text=False, aliases=("?",)),
     "init": SlashCommand("_run_init", "generate NOVA.md from the codebase"),
     "model": SlashCommand("_run_model", "switch provider / model", wants_text=False),
+    "router": SlashCommand(
+        "_run_router", "route each turn to a model by decision", wants_text=False
+    ),
     "auth": SlashCommand(
         "_run_auth",
         "manage provider / service API keys",
@@ -819,7 +824,7 @@ def _display_tail(text: str) -> str:
     if len(text) <= _LIVE_OUTPUT_MAX_CHARS and text.count("\n") <= _LIVE_OUTPUT_MAX_LINES:
         return text
     lines = text[-_LIVE_OUTPUT_MAX_CHARS:].splitlines(keepends=True)[-_LIVE_OUTPUT_MAX_LINES:]
-    return "… output trimmed, showing the tail …\n" + "".join(lines)
+    return "… output trimmed (truncated), showing the tail …\n" + "".join(lines)
 
 
 def _retitle(group: Any, title: Any) -> None:
@@ -1574,7 +1579,7 @@ class NovaApp(App):
         # Live tool output arrives on the shell's background loop thread, one
         # ~1KB chunk at a time. It is buffered here and painted in batches.
         self._tool_out_lock = threading.Lock()
-        self._tool_out_pending: dict[str, list[str]] = {}
+        self._tool_out_pending: dict[str, OutputTail] = {}
         self._tool_out_scheduled = False
         # Voice I/O (lazy: only built when first used; None when deps absent).
         self._voice_pipeline: Any = None
@@ -1660,6 +1665,7 @@ class NovaApp(App):
         self._nova_status_style: str = "dim"
         self._nova_indicator_timer: Any = None
         self._os_focused = True
+        self._status_timer: Any = None
         # Dynamic-subagents panel. Rows are upserted by task id (a dispatch is
         # emitted twice, at start and at completion), and the phase order is the
         # order phases first appeared, which is the order they were watched.
@@ -2031,16 +2037,12 @@ class NovaApp(App):
         self.set_interval(3.0, self._refresh_info_bar)
         # Load slash commands contributed by enabled plugins (TUI dispatch).
         self._load_plugin_commands()
-        # Animate the live status at 20Hz (50ms) while a turn is active.
-        self.set_interval(0.05, self._tick)
+        # Idle sessions should not run the active-turn animation loop.
+        self._schedule_status_tick()
         self.query_one("#prompt", PromptInput).focus()
         # Show ASCII art banner on home screen
         self._show_home_banner()
-        # If voice is enabled in config, pre-download models at startup
-        # so the first push-to-talk or spoken reply is instant. Awaited (hence
-        # the async on_mount) rather than fired as a worker: the blocking config
-        # read is offloaded inside the call, and a worker could outlive its
-        # caller and resolve config paths after a caller's patching was undone.
+        # Initialize explicitly enabled voice; models stay lazy until used.
         await self._eager_voice_warmup()
         # Replay prior conversation when resuming a session.
         self._replay_history()
@@ -2102,7 +2104,14 @@ class NovaApp(App):
     def _on_tool_output(self, call_id: str, text: str) -> None:
         """Queue a chunk of live tool output; it is painted in batches (<=20/s)."""
         with self._tool_out_lock:
-            self._tool_out_pending.setdefault(call_id, []).append(text)
+            buffer = self._tool_out_pending.get(call_id)
+            if buffer is None:
+                if len(self._tool_out_pending) >= MAX_PENDING_CALLS:
+                    # This is only the live display backlog. Final tool results
+                    # still arrive through the normal event/session path.
+                    self._tool_out_pending.pop(next(iter(self._tool_out_pending)))
+                buffer = self._tool_out_pending[call_id] = OutputTail()
+            buffer.append(text)
             if self._tool_out_scheduled:
                 return
             self._tool_out_scheduled = True
@@ -2112,8 +2121,8 @@ class NovaApp(App):
         with self._tool_out_lock:
             pending, self._tool_out_pending = self._tool_out_pending, {}
             self._tool_out_scheduled = False
-        for call_id, parts in pending.items():
-            self._write_tool_output(call_id, _display_tail("".join(parts)))
+        for call_id, buffer in pending.items():
+            self._write_tool_output(call_id, _display_tail(buffer.drain()))
 
     def _write_tool_output(self, call_id: str, text: str) -> None:
         """Append live output to the widget showing ``call_id`` (UI thread)."""
@@ -2181,6 +2190,7 @@ class NovaApp(App):
     def on_app_blur(self) -> None:
         """Pause MatrixRain when the terminal loses OS focus."""
         self._os_focused = False
+        self._schedule_status_tick()
         # The user just looked away: the one moment a full GC pass is invisible.
         from novacode_cli.tui import gc_tuning
 
@@ -2192,6 +2202,7 @@ class NovaApp(App):
     def on_app_focus(self) -> None:
         """Resume MatrixRain when the terminal regains OS focus."""
         self._os_focused = True
+        self._schedule_status_tick()
         rain = self._matrix_rain()
         if rain is not None:
             vp = getattr(self, "_voice_pipeline", None)
@@ -4626,6 +4637,22 @@ class NovaApp(App):
     def _set_status(self, activity: str) -> None:
         self._activity = activity
         self._refresh_status()
+        self._schedule_status_tick()
+
+    def _schedule_status_tick(self) -> None:
+        """Use a single timer: 10 Hz while focused/busy, 2 Hz otherwise."""
+        if self._status_timer is not None:
+            self._status_timer.stop()
+        if not self.is_mounted:
+            self._status_timer = None
+            return
+        delay = 0.1 if self._turn_active and self._os_focused else 0.5
+        self._status_timer = self.set_timer(delay, self._status_tick)
+
+    def _status_tick(self) -> None:
+        """Poll background state and schedule the next adaptive refresh."""
+        self._tick()
+        self._schedule_status_tick()
 
     def _event_color(self, name: str) -> str:
         """Map a Nova event's semantic colour name to the active theme's palette.
@@ -5028,7 +5055,7 @@ class NovaApp(App):
     def _tick(self) -> None:
         refresh = False
         tail_dirty = False
-        if self._turn_active:
+        if self._turn_active and self._os_focused:
             self._spinner_frame += 1
             refresh = True
             # A tool group with a live tool also animates, so re-title it every
@@ -5711,9 +5738,8 @@ class NovaApp(App):
                     tts_voice=cfg.get("tts_voice", "en_US-lessac-medium"),
                 )
             self._voice_speak_responses = bool(cfg["speak_responses"])
-            # Pre-load the heavy models in the background so the first PTT /
-            # spoken reply doesn't pay the load cost inline.
-            self._voice_warmup()
+            # Providers load only when that direction is used. Speaking must
+            # not preload Whisper/VAD, and PTT must not preload unused TTS.
         return True
 
     @work(group="voice_warmup", exclusive=True)
@@ -5741,23 +5767,15 @@ class NovaApp(App):
             self._set_nova_indicator("● voice models ready", style="dim green", auto_clear=3.0)
 
     async def _eager_voice_warmup(self) -> None:
-        """Pre-load STT/TTS/VAD models at startup whenever voice will be used.
+        """Initialize explicitly enabled voice without preloading native models.
 
-        Mirrors main.py's boot-banner preload: `enabled` (always-listening),
-        `speak_responses` (Nova talks), or push-to-talk all use voice, so warm
-        the models now instead of paying the load inline on the first PTT/reply.
-
-        Async because reading the config is filesystem work: constructing
-        `NovaConfig` resolves the project root by walking parent directories, and
-        doing that on the loop stalled the UI during `on_mount`. The caller
-        schedules this as a worker, so mount is not held up either.
+        The default PTT mode and speak-responses preference do not mean voice
+        was enabled. Reading configuration remains off the UI loop.
         """
         from novacode_cli.config.nova_config import NovaConfig
 
         cfg = await asyncio.to_thread(lambda: NovaConfig().get_voice_config())
-        voice_wanted = bool(
-            cfg.get("enabled") or cfg.get("speak_responses") or cfg.get("mode") == "push_to_talk"
-        )
+        voice_wanted = bool(cfg.get("enabled"))
         if voice_wanted:
             self._ensure_voice_pipeline()
 
@@ -5874,7 +5892,7 @@ class NovaApp(App):
             self._set_nova_indicator("🔊 downloading voice…", style="dim cyan")
             # Force the pipeline warmup (downloads the voice model)
             try:
-                await pipeline.warmup()
+                await pipeline.warmup(input_audio=False)
             except Exception as w_err:  # noqa: BLE001
                 self._log(Text(f"[🔊 TTS error] Voice download failed: {w_err}", style="red"))
                 self._set_nova_indicator("🔊 tts error", style="red", auto_clear=3.0)
@@ -7038,6 +7056,7 @@ class NovaApp(App):
             "mcp",
             "theme",
             "remote",
+            "router",
             "agents",
             "skills",
             "init",
@@ -8460,6 +8479,54 @@ class NovaApp(App):
             )
         except Exception as ex:  # noqa: BLE001
             self._log(Text(f"Model switch failed: {ex}", style="red"))
+
+    async def _run_router(self) -> None:
+        """Native /router: configure per-turn model routing, then rebuild the agent.
+
+        The screen owns the editing and dismisses a payload; this method owns the
+        writing, matching the ``/model`` contract. Routing is a middleware, so a
+        change only takes effect once the agent is rebuilt -- which is why the
+        hot-swap below is not optional.
+        """
+        from novacode_cli.config.nova_config import NovaConfig
+
+        config = NovaConfig()
+        result = await self.push_screen_wait(RouterScreen(config))
+        if not result:
+            return
+
+        try:
+            config.set_router_routes(result["routes"])
+            config.set_router_enabled(bool(result["enabled"]))
+            config.set_router_default_route(result.get("default_route"))
+            config.set_router_decision_endpoint(result["endpoint"])
+            config.set_router_decision_model(result["model"])
+        except ValueError as ex:
+            self._log(Text(f"Router settings not saved: {ex}", style="red"))
+            return
+
+        if not result["enabled"]:
+            self._log(Text("Model routing disabled.", style="green"))
+        else:
+            self._log(
+                Text(
+                    f"Model routing enabled · {len(result['routes'])} route(s) · "
+                    f"decided by {result['model']}",
+                    style="green",
+                )
+            )
+
+        # The router is middleware, so the running agent has to be rebuilt for the
+        # change to apply. Rebuild on the live model rather than a fresh
+        # create_model(): the user's /model choice is not what changed here.
+        live_model = getattr(self.session_state, "_model", None)
+        if live_model is None:
+            self._log(Text("Saved; applies from your next session.", style="yellow"))
+            return
+        try:
+            self.agent, self.backend = await self.session_state.switch_model(live_model)
+        except Exception:  # noqa: BLE001 — settings persist even if rebuilding fails
+            self._log(Text("Saved; restart Nova to apply them.", style="yellow"))
 
     def _apply_role_pick(self, result: dict, role: str) -> None:
         """Save a model for one non-main role, and say when it takes effect.

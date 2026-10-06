@@ -4897,3 +4897,243 @@ class BackgroundTasksScreen(ModalScreen[dict | None]):
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+
+class RouterScreen(ModalScreen[dict | None]):
+    """Native ``/router``: configure per-turn model routing.
+
+    The screen edits a working copy and dismisses a payload; the app writes it.
+    That split is the ``ModelScreen`` contract, and it is what makes Cancel free
+    of side effects -- nothing reaches the config until the payload is returned.
+
+    A route is a ``provider:model`` pair plus the criteria that describe when it
+    should be chosen. The criteria are the whole point: they are what the
+    decision model reads to pick between routes, so a route without them is
+    rejected rather than silently never chosen.
+    """
+
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    #: Decision-model presets, mirroring the System One panel in ``/model``.
+    _PRESETS: tuple[tuple[str, str], ...] = (
+        ("Jev · TypeSafe API", "jev"),
+        ("Tev1 · local Ollama", "tev1"),
+        ("Custom System One", "custom"),
+    )
+
+    def __init__(self, config: Any) -> None:
+        """Load the current routing config into a working copy."""
+        super().__init__()
+        self._config = config
+        self._routes: list[dict[str, Any]] = config.get_router_routes()
+        self._enabled = config.get_router_enabled()
+        self._default_route = config.get_router_default_route()
+        self._endpoint = config.get_router_decision_endpoint()
+        self._model = config.get_router_decision_model()
+        self._editing: int | None = None
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="modal-box"):
+            yield Static(Text("Model routing", style="bold"), id="modal-title")
+            yield Static(
+                Text(
+                    "Each turn is classified and sent to the route whose criteria fit it.",
+                    style="dim",
+                )
+            )
+            yield Static("", id="router-status")
+            yield OptionList(id="router-routes")
+            yield Static("Route id", id="router-id-label")
+            yield Input(placeholder="fast", id="router-id")
+            yield Static("Provider", id="router-provider-label")
+            yield Select([], id="router-provider", allow_blank=True)
+            yield Static("Model", id="router-model-label")
+            yield Input(placeholder="gpt-5-mini, qwen3-vl:235b-cloud, …", id="router-model")
+            yield Static("Criteria — when should this route be chosen?", id="router-criteria-label")
+            yield Input(placeholder="Direct lookups and small edits.", id="router-criteria")
+            yield Static("Decision model", id="router-decision-label")
+            yield Select(list(self._PRESETS), value="tev1", allow_blank=False, id="router-preset")
+            yield Input(placeholder="tev1:4b, jev-latest, …", id="router-decision-model")
+            yield Static("System One endpoint", id="router-endpoint-label")
+            yield Input(placeholder="https://…/v1/systemone", id="router-endpoint")
+            with Horizontal(id="modal-buttons"):
+                yield Button("Add route", id="router-add")
+                yield Button("Remove", id="router-remove")
+                yield Button("Toggle on/off", id="router-toggle")
+                yield Button("Save", id="router-save", variant="success")
+                yield Button("Cancel", id="router-cancel")
+
+    def on_mount(self) -> None:
+        """Populate the provider list and the current values."""
+        from novacode_cli.config.model_manager import MODEL_PRESETS
+
+        self.query_one("#router-provider", Select).set_options(
+            [(preset["name"], provider) for provider, preset in MODEL_PRESETS.items()]
+        )
+        self.query_one("#router-decision-model", Input).value = self._model
+        self.query_one("#router-endpoint", Input).value = self._endpoint
+        preset = "custom"
+        if self._endpoint == self._config.TOOL_VERDICT_JEV_ENDPOINT:
+            preset = "jev"
+        elif self._endpoint == self._config.ROUTER_DEFAULT_ENDPOINT and self._model.startswith(
+            "tev1"
+        ):
+            preset = "tev1"
+        self.query_one("#router-preset", Select).value = preset
+        self._refresh()
+        animate_modal_screen(self)
+
+    def _refresh(self) -> None:
+        """Repaint the route list and the status line."""
+        ol = self.query_one("#router-routes", OptionList)
+        ol.clear_options()
+        for index, route in enumerate(self._routes):
+            marker = "●" if route["id"] == self._default_route else " "
+            label = f"{marker} {route['id']}  {route['provider']}:{route['model']}"
+            ol.add_option(Option(label, id=f"route:{index}"))
+        if self._routes:
+            ol.highlighted = 0
+
+        state = "enabled" if self._enabled else "disabled"
+        default = self._default_route or "none"
+        self.query_one("#router-status", Static).update(
+            Text(
+                f"Routing {state} · {len(self._routes)} route(s) · fallback: {default}",
+                style="green" if self._enabled else "dim",
+            )
+        )
+
+    def _selected_index(self) -> int | None:
+        """Index of the highlighted route, or ``None`` when the list is empty."""
+        ol = self.query_one("#router-routes", OptionList)
+        if ol.highlighted is None or not self._routes:
+            return None
+        return ol.highlighted
+
+    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        """Load the highlighted route into the fields for editing."""
+        if event.option_list.id != "router-routes":
+            return
+        index = event.option_index
+        if index is None or index >= len(self._routes):
+            return
+        route = self._routes[index]
+        self._editing = index
+        self.query_one("#router-id", Input).value = str(route["id"])
+        self.query_one("#router-provider", Select).value = str(route["provider"])
+        self.query_one("#router-model", Input).value = str(route["model"])
+        self.query_one("#router-criteria", Input).value = str(route["criteria"])
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Add, remove, save or cancel."""
+        button = event.button.id
+        if button == "router-cancel":
+            self.dismiss(None)
+        elif button == "router-add":
+            self._add_route()
+        elif button == "router-remove":
+            self._remove_route()
+        elif button == "router-toggle":
+            self._enabled = not self._enabled
+            self._refresh()
+        elif button == "router-save":
+            self._save()
+
+    def _read_fields(self) -> dict[str, str] | None:
+        """The route currently described by the fields, or ``None`` if incomplete."""
+        route_id = self.query_one("#router-id", Input).value.strip()
+        provider = self.query_one("#router-provider", Select).value
+        model = self.query_one("#router-model", Input).value.strip()
+        criteria = self.query_one("#router-criteria", Input).value.strip()
+        if not route_id or not model or not criteria or provider in (Select.BLANK, Select.NULL):
+            self._hint("A route needs an id, a provider, a model and criteria.", error=True)
+            return None
+        return {
+            "id": route_id,
+            "provider": str(provider),
+            "model": model,
+            "criteria": criteria,
+        }
+
+    def _add_route(self) -> None:
+        """Append the described route, or replace the one being edited."""
+        route = self._read_fields()
+        if route is None:
+            return
+        if self._editing is not None and self._editing < len(self._routes):
+            self._routes[self._editing] = route
+        else:
+            if any(r["id"] == route["id"] for r in self._routes):
+                self._hint(f"Route {route['id']!r} already exists.", error=True)
+                return
+            self._routes.append(route)
+        self._editing = None
+        self._clear_fields()
+        self._refresh()
+        self._hint(f"Route {route['id']!r} staged. Save to apply.")
+
+    def _remove_route(self) -> None:
+        """Drop the highlighted route from the working copy."""
+        index = self._selected_index()
+        if index is None:
+            self._hint("No route selected.", error=True)
+            return
+        removed = self._routes.pop(index)
+        if self._default_route == removed["id"]:
+            self._default_route = None
+        self._editing = None
+        self._clear_fields()
+        self._refresh()
+        self._hint(f"Route {removed['id']!r} staged for removal. Save to apply.")
+
+    def _clear_fields(self) -> None:
+        """Empty the route fields, so the next Add starts clean."""
+        for field in ("#router-id", "#router-model", "#router-criteria"):
+            self.query_one(field, Input).value = ""
+
+    def _hint(self, message: str, *, error: bool = False) -> None:
+        """Show a one-line message under the list."""
+        self.query_one("#router-status", Static).update(
+            Text(message, style="red" if error else "dim")
+        )
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        """Presets are conveniences; the model and endpoint stay editable."""
+        event.stop()
+        if event.select.id != "router-preset":
+            return
+        if event.value == "jev":
+            self.query_one("#router-endpoint", Input).value = self._config.TOOL_VERDICT_JEV_ENDPOINT
+            self.query_one("#router-decision-model", Input).value = (
+                self._config.TOOL_VERDICT_JEV_MODEL
+            )
+        elif event.value == "tev1":
+            self.query_one("#router-endpoint", Input).value = (
+                self._config.TOOL_VERDICT_DEFAULT_ENDPOINT
+            )
+            self.query_one("#router-decision-model", Input).value = (
+                self._config.TOOL_VERDICT_DEFAULT_MODEL
+            )
+
+    def _save(self) -> None:
+        """Validate the working copy and dismiss with it."""
+        endpoint = self.query_one("#router-endpoint", Input).value.strip()
+        model = self.query_one("#router-decision-model", Input).value.strip()
+        if not endpoint or not model:
+            self._hint("A decision endpoint and model are required.", error=True)
+            return
+        if self._enabled and not self._routes:
+            self._hint("Enable routing only after adding at least one route.", error=True)
+            return
+        self.dismiss(
+            {
+                "enabled": self._enabled,
+                "routes": self._routes,
+                "default_route": self._default_route,
+                "endpoint": endpoint,
+                "model": model,
+            }
+        )
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
