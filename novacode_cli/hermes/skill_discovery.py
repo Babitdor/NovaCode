@@ -44,8 +44,8 @@ def _emit_tui_event(event_type: str, message: str) -> None:
     - nova_skill_error: Error in skill creation/refinement
     """
     event_config = {
-        "nova_skill_created": {"icon": "🧠", "color": "green"},
-        "nova_skill_refined": {"icon": "🛠", "color": "yellow"},
+        "nova_skill_created": {"icon": "●", "color": "green"},
+        "nova_skill_refined": {"icon": "◐", "color": "yellow"},
         "nova_skill_error": {"icon": "⚠", "color": "red"},
     }
     config = event_config.get(event_type, {"icon": "•", "color": "cyan"})

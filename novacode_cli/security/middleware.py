@@ -41,7 +41,7 @@ def _emit_security_event(message: str) -> None:
     try:
         from novacode_cli.events import nova_event_log
 
-        nova_event_log.append(("nova_security", "🛡", "yellow", message))
+        nova_event_log.append(("nova_security", "⛨", "yellow", message))
     except Exception:  # noqa: BLE001
         logger.debug("security notice (not surfaced): %s", message)
 

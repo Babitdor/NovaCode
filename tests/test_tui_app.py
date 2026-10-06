@@ -883,7 +883,9 @@ async def _drive_live_render():
         await app._render(
             ev.ToolResult(preview="1 result", is_error=False, full_output="line1\nline2")
         )
-        assert app._tool_group_entries[0]["mark"] == "✓"
+        # The mark is a state name, not a glyph — the glyph is picked at render
+        # time from the theme (see _render_tool_line).
+        assert app._tool_group_entries[0]["mark"] == "done"
         assert len(app.query("Collapsible.tool")) == 1
         await app._render(ev.TextDelta("hi"))
         # prose starts → the tool group is closed so ordering stays correct
@@ -2006,7 +2008,15 @@ async def test_tui_token_usage_and_compacted_context(monkeypatch: pytest.MonkeyP
         assert tracker.session_total_tokens == 2570
         assert tracker.get_breakdown().total_tokens < 1000
         app._refresh_quota()
-        assert "budget" in str(app.query_one("#info-quota").render())
+        # The cumulative figure is a COUNT, not a percentage of a budget: the
+        # old "N% of 1.0M budget" meter divided by a hardcoded 1M that nothing
+        # read or enforced, and since the count is monotonic it was guaranteed
+        # to read past 100% in a long session (observed at 1087%). Assert the
+        # count renders and that no budget/percentage language survives.
+        quota = str(app.query_one("#info-quota").render())
+        assert "3k used" in quota  # 2570 tokens, rounded by _fmt_tokens
+        assert "budget" not in quota
+        assert "% of" not in quota
 
 
 async def _drive_footer_follows_theme():
@@ -2106,6 +2116,16 @@ async def _drive_palette_noop():
         model_name="m",
     )
     async with app.run_test() as pilot:
+        # Keep prompt state consistent with the completion request; cursor events
+        # also refresh completion, so an empty prompt would hide this palette.
+        from novacode_cli.tui.app import PromptInput
+
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.value = "/h"
+        prompt.cursor_position = 2
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        app._hide_palette()
         palette = app._w("#cmdpalette", OptionList)
         rebuilds = {"n": 0}
         _orig_clear = palette.clear_options
@@ -2300,8 +2320,10 @@ async def _drive_parallel_fileops():
         await app._render(ev.FileOp(record=None, full_output="content-B", call_id="c2"))
         comps = list(app.query("Collapsible.tool"))
         assert len(comps) == 1, len(comps)
-        # both lines finalized (✓), tracked individually by call_id
-        assert [e["mark"] for e in app._tool_group_entries] == ["✓", "✓"]
+        # both lines finalized, tracked individually by call_id. The mark is a
+        # state name ("done"/"failed"/"running"), not a glyph: the glyph is
+        # chosen at render time from the theme (see _render_tool_line).
+        assert [e["mark"] for e in app._tool_group_entries] == ["done", "done"]
         assert "running" not in str(comps[0].title)
 
 
@@ -2350,7 +2372,7 @@ async def _drive_diff_component():
         comps = list(app.query("Collapsible.tool"))
         assert len(comps) == 1
         title = str(comps[0].title)
-        assert "+96 / -0" in title and "✓" in title and "running" not in title, title
+        assert "+96 / -0" in title and "•" in title and "running" not in title, title
         assert len(app._tool_components) == 0
 
 
@@ -2933,8 +2955,12 @@ async def _drive_tool_group_line_cache():
         for _ in range(2):
             await pilot.pause()
         lst = app._tool_group_body.query_one("#tool-group-list", _Static)
-        assert "⏳" in str(lst.render()), "running line should show the hourglass"
-
+        # The status mark is a theme-coloured bullet, not an emoji: ⏳/✓/✗ are
+        # painted by the terminal's own font, so /theme could not move them.
+        # A running call is the pending colour; a finished one is ok/fail.
+        running_txt = str(lst.render())
+        assert "•" in running_txt, "running line should show a bullet"
+        assert "⏳" not in running_txt, "the hourglass emoji should be gone"
         await app._render(
             ev.ToolResult(preview="42 lines", is_error=False, full_output="x", call_id="c1")
         )
@@ -2946,10 +2972,9 @@ async def _drive_tool_group_line_cache():
         for _ in range(2):
             await pilot.pause()
         txt = str(lst.render())
-        assert "✓" in txt, "result did not replace the running mark"
-        assert "⏳" not in txt, "stale cached line — hourglass survived the result"
+        assert "•" in txt, "result did not replace the running mark"
+        assert "✓" not in txt, "the check emoji should be gone"
         assert "42 lines" in txt, "result detail missing"
-
         await app._render(
             ev.ToolCall(
                 name="shell",
@@ -2965,7 +2990,9 @@ async def _drive_tool_group_line_cache():
         )
         for _ in range(2):
             await pilot.pause()
-        assert "✗" in str(lst.render()), "error mark missing"
+        err_txt = str(lst.render())
+        assert "✗" not in err_txt, "the cross emoji should be gone"
+        assert "boom" in err_txt, "the failed call's detail should still render"
 
 
 async def _drive_tool_group_coalescing():
@@ -3037,7 +3064,7 @@ async def _drive_tool_group_coalescing():
             ev.ToolResult(preview="boom", is_error=True, full_output="x", call_id="e1")
         )
         await pilot.pause()  # ONE pause — deliberately no timer window
-        assert "✗" in str(lst.render()), "error did not paint immediately"
+        assert "boom" in str(lst.render()), "error did not paint immediately"
 
         # Closing the group must flush a pending paint, or the last result is
         # lost (the timer would fire after _tool_group is None).
@@ -3063,6 +3090,88 @@ def test_tui_tool_group_coalescing():
     if not _HAS_TEXTUAL:
         return
     asyncio.run(_drive_tool_group_coalescing())
+
+
+async def _drive_tool_error_detail_is_shown():
+    """A failed call's full output renders under its line, not just the summary.
+
+    The one-line ``detail`` is a 110-char summary; a traceback is what the user
+    actually needs to diagnose a failure, and it used to be truncated away.
+    """
+    import novacode_cli.ui_events as ev
+    from textual.widgets import Static as _Static
+
+    from novacode_cli.tui.app import NovaApp
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    app = NovaApp(
+        agent=_FakeAgent(),
+        assistant_id="nova-agent",
+        session_state=_SS(),
+        backend=None,
+        token_tracker=TokenTracker(),
+        image_tracker=None,
+        model_name="m",
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app._render(
+            ev.ToolCall(
+                name="shell",
+                display_str="bad cmd",
+                icon="*",
+                is_main_agent=True,
+                args={},
+                call_id="e1",
+            )
+        )
+        await app._render(
+            ev.ToolResult(
+                preview="boom",
+                is_error=True,
+                full_output="Traceback (most recent call last):\n  File x.py line 3\nValueError: nope",
+                call_id="e1",
+            )
+        )
+        # The error path paints immediately (no coalescing timer), but the mount
+        # of the group itself is async, so give it a beat.
+        await asyncio.sleep(0.15)
+        for _ in range(3):
+            await pilot.pause()
+        lst = app._tool_group_body.query_one("#tool-group-list", _Static)
+        txt = str(lst.render())
+        assert "boom" in txt, "the one-line summary should still render"
+        assert "ValueError: nope" in txt, "the full error output should be shown"
+        assert "Traceback" in txt, "the traceback head should be shown"
+
+        # A successful call must NOT carry an error block.
+        await app._render(
+            ev.ToolCall(
+                name="read_file",
+                display_str="read a.py",
+                icon="*",
+                is_main_agent=True,
+                args={},
+                call_id="ok1",
+            )
+        )
+        await app._render(
+            ev.ToolResult(preview="42 lines", is_error=False, full_output="x", call_id="ok1")
+        )
+        await asyncio.sleep(0.15)
+        for _ in range(3):
+            await pilot.pause()
+        ok_txt = str(lst.render())
+        assert "42 lines" in ok_txt
+        # The earlier failure's block is still in the group (correct — the group
+        # is a log). What must NOT happen is the successful call growing a block
+        # of its own, so assert the error text appears exactly once.
+        assert ok_txt.count("Traceback") == 1, "a success must not inherit the error block"
+
+
+def test_tui_tool_error_detail_is_shown():
+    if not _HAS_TEXTUAL:
+        return
+    asyncio.run(_drive_tool_error_detail_is_shown())
 
 
 async def _drive_tool_group_survives_closed_group():
@@ -4253,7 +4362,9 @@ async def _drive_subagent_terminal_preview():
         )
         await pilot.pause()
         assert "tool_call_1" not in app._subagent_tool_to_task
-        assert "✓ 🔧 grep_search" in str(list_widget.render())
+        # The status mark is a theme-coloured bullet, not the ✓ the event text
+        # carries (see _render_subagent_line).
+        assert "● 🔧 grep_search" in str(list_widget.render())
 
         # 5. Complete subagent
         await app._render(
@@ -4430,7 +4541,8 @@ def test_tui_bg_agent_card_explains_progress():  # noqa: PLR0915 — one block p
     assert len(body) == 1, f"call+result must be one line, got {body}"
     assert "read_file(/src/a.ts)" in body[0], body
     assert "Read 42 lines" in body[0], body
-    assert "✓" in body[0], body
+    # A theme-coloured bullet, not the ✓ this used to emit (see _render_bg_event).
+    assert "●" in body[0], body
 
     # An error result is marked as an error, still on one line.
     body.clear()
@@ -4451,7 +4563,7 @@ def test_tui_bg_agent_card_explains_progress():  # noqa: PLR0915 — one block p
     assert len(body) == 1, body
     assert "shell(pytest)" in body[0], body
     assert "3 failed" in body[0], body
-    assert "✗" in body[0], body
+    assert "✖" in body[0], body
 
     # A FileOp result also joins its call on one line.
     body.clear()

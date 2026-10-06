@@ -75,7 +75,7 @@ def _emit_tui_event(event_type: str, message: str) -> None:
     try:
         from novacode_cli.events import nova_event_log
 
-        nova_event_log.append((event_type, "🔧", "cyan", message))
+        nova_event_log.append((event_type, "◐", "cyan", message))
     except Exception:  # noqa: BLE001
         logger.debug("refine event (not surfaced): %s", message)
 
@@ -561,13 +561,13 @@ async def run_refine(store: BaseStore, tracker: ToolUsageTracker) -> dict[str, o
     # Cheap pre-plan gate: skip the whole run when the trajectory is noise.
     should, gate_reason = await should_refine(store, tracker)
     if not should:
-        _emit_tui_event("nova_review_complete", f"✨ /refine: skipped ({gate_reason})")
+        _emit_tui_event("nova_review_complete", f"✦ /refine: skipped ({gate_reason})")
         return summary
 
     plan = await plan_refinements(store, tracker)
     summary["planned"] = len(plan)
     if not plan:
-        _emit_tui_event("nova_review_complete", "✨ /refine: no changes proposed")
+        _emit_tui_event("nova_review_complete", "✦ /refine: no changes proposed")
         return summary
 
     evidence = await _gather_evidence(store, tracker)
@@ -637,7 +637,7 @@ async def run_refine(store: BaseStore, tracker: ToolUsageTracker) -> dict[str, o
 
     _emit_tui_event(
         "nova_review_complete",
-        f"✨ /refine: {summary['accepted']} applied, "
+        f"✦ /refine: {summary['accepted']} applied, "
         f"{summary['rolled_back']} rolled back, {summary['planned']} proposed",
     )
     return summary

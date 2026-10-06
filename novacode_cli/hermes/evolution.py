@@ -71,9 +71,9 @@ _BODY_RE = re.compile(r"<body>(.*?)</body>", re.DOTALL | re.IGNORECASE)
 def _emit(event_type: str, message: str) -> None:
     """Append an evolution event to the shared Nova buffer (TUI-safe)."""
     icons = {
-        "nova_skill_unlocked": ("🧬", "green"),
-        "nova_skill_leveled": ("⬆️", "cyan"),
-        "nova_evolution_gate": ("✨", "dim"),
+        "nova_skill_unlocked": ("✦", "green"),
+        "nova_skill_leveled": ("↑", "cyan"),
+        "nova_evolution_gate": ("✦", "dim"),
     }
     icon, color = icons.get(event_type, ("•", "cyan"))
     try:
@@ -198,7 +198,7 @@ class EvolutionEngine:
 
             _emit(
                 "nova_evolution_gate",
-                f"✨ Complex task complete (score {score}) — evolving…",
+                f"✦ Complex task complete (score {score}) — evolving…",
             )
             messages = list((state or {}).get("messages") or [])[-_MAX_CONTEXT_MESSAGES:]
             self._skill_manager.spawn_task(self.run_evolution(messages, breakdown))
@@ -296,7 +296,7 @@ class EvolutionEngine:
                 return  # critic rejected — do not freeze
             name = await write_skill_from_spec(revised, self._skills_dir, self._store)
             if name:
-                _emit("nova_skill_unlocked", f"🧬 New skill unlocked: {name}")
+                _emit("nova_skill_unlocked", f"✦ New skill unlocked: {name}")
                 await self._record("unlock", name, messages, breakdown)
 
     async def _level_up(self, skill_dir: Path, new_body: str) -> bool:
@@ -317,7 +317,7 @@ class EvolutionEngine:
         except OSError:
             logger.exception("Failed to write levelled-up skill '%s'", skill_dir.name)
             return False
-        _emit("nova_skill_leveled", f"⬆️ Skill levelled up: {skill_dir.name}")
+        _emit("nova_skill_leveled", f"↑ Skill levelled up: {skill_dir.name}")
         return True
 
     # -- Persistence --------------------------------------------------------

@@ -39,6 +39,30 @@ from novacode_cli.ui.ui_elements import (
 )
 
 
+def _event_color(name: str) -> str:
+    """Map a Nova event's semantic colour name to this renderer's palette.
+
+    The learning feature emits events with an ANSI colour name (``"cyan"``,
+    ``"green"``, …), which resolves against the terminal's own 16 colours rather
+    than the console palette. Mapping it here keeps a learning notice the same
+    colour as the rest of the console output.
+
+    Args:
+        name: The event's colour name, or any unrecognised string.
+
+    Returns:
+        A colour from :data:`COLORS`, falling back to the accent.
+    """
+    return {
+        "cyan": COLORS["accent"],
+        "green": COLORS["success"],
+        "yellow": COLORS["warning"],
+        "red": COLORS["error"],
+        "magenta": COLORS["subagent"],
+        "dim": COLORS["dim"],
+    }.get(name, COLORS["accent"])
+
+
 async def _react_to_context_pressure(agent, session_state, token_tracker, breakdown) -> None:
     """Warn about high context usage and auto-compact where appropriate.
 
@@ -1097,7 +1121,7 @@ async def execute_task(  # type: ignore
 
                     f"{event.icon}  {event.message}",
 
-                    style=event.color,
+                    style=_event_color(event.color),
 
                 )
 

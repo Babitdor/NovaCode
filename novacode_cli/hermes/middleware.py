@@ -472,7 +472,7 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
 
             _emit_event(
                 "nova_review_start",
-                "🔄 Nova review cycle starting...",
+                "◐ Nova review cycle starting...",
             )
             task = asyncio.create_task(self._review.run_review_task(request))
             self._skill_manager._refinement_tasks.add(task)

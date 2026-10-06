@@ -35,9 +35,9 @@ def _debate_enabled() -> bool:
 def _emit(verdict: str, name: str) -> None:
     """Surface the debate outcome via the shared Nova event buffer (TUI-safe)."""
     messages = {
-        "approved": f"🧪 Skill '{name}' debated → approved",
-        "revised": f"🧪 Skill '{name}' debated → revised",
-        "rejected": f"🧪 Skill '{name}' debated → rejected (not saved)",
+        "approved": f"◇ Skill '{name}' debated → approved",
+        "revised": f"◇ Skill '{name}' debated → revised",
+        "rejected": f"◇ Skill '{name}' debated → rejected (not saved)",
     }
     message = messages.get(verdict)
     if not message:
@@ -45,7 +45,7 @@ def _emit(verdict: str, name: str) -> None:
     try:
         from novacode_cli.events import nova_event_log
 
-        nova_event_log.append(("nova_skill_debate", "🧪", "cyan", message))
+        nova_event_log.append(("nova_skill_debate", "◇", "cyan", message))
     except Exception:  # noqa: BLE001
         logger.debug("debate event not surfaced: %s %s", verdict, name)
 

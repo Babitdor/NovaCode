@@ -130,9 +130,9 @@ class SkillManager:
                 nova_event_log.append(
                     (
                         "nova_skill_refinement",
-                        "🛠",
+                        "◐",
                         "yellow",
-                        f"🧹 Nova: removed {len(removed)} legacy auto-skill(s) "
+                        f"▤ Nova: removed {len(removed)} legacy auto-skill(s) "
                         "(opaque nova-* patterns; replaced by episode-grounded skills)",
                     )
                 )
@@ -179,9 +179,9 @@ class SkillManager:
                 nova_event_log.append(
                     (
                         "nova_skill_refinement",
-                        "🛠",
+                        "◐",
                         "yellow",
-                        f"🛠 Nova: skill '{skill_name}' needs refinement ({issue})",
+                        f"◐ Nova: skill '{skill_name}' needs refinement ({issue})",
                     )
                 )
                 self.spawn_task(

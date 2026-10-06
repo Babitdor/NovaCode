@@ -1883,7 +1883,7 @@ class PluginsScreen(ModalScreen[None]):
         for name, spec in self._plugins:
             on = name in enabled
             opt = Text()
-            opt.append("✓ enabled  " if on else "○ disabled ", style="green" if on else "dim")
+            opt.append("● enabled  " if on else "○ disabled ", style="green" if on else "dim")
             opt.append(str(name), style="bold")
             desc = spec.get("description", "") if isinstance(spec, dict) else ""
             if desc:
@@ -2838,7 +2838,7 @@ class AgentsScreen(ModalScreen[None]):
                         hint = self.query_one("#agents-hint", Static)
                         hint.update(
                             Text(
-                                f"✓ Custom subagent '@{name}' created successfully!{extra}",
+                                f"● Custom subagent '@{name}' created successfully!{extra}",
                                 style="green",
                             )
                         )
@@ -2846,7 +2846,7 @@ class AgentsScreen(ModalScreen[None]):
                         pass
                 self.app._log(
                     Text(
-                        f"✓ Custom subagent '@{name}' created successfully!{extra}", style="green"
+                        f"● Custom subagent '@{name}' created successfully!{extra}", style="green"
                     )
                 )
                 self.app._agent_names_cache = None
@@ -2916,7 +2916,7 @@ class AgentsScreen(ModalScreen[None]):
                 shutil.rmtree(path)
                 if was_async:
                     self._notify_async_agents_changed()
-                self.app._log(Text(f"✓ Deleted subagent '@{name}'!", style="green"))
+                self.app._log(Text(f"● Deleted subagent '@{name}'!", style="green"))
                 self.app._agent_names_cache = None
             except Exception as e:
                 self.app._log(Text(f"Failed to delete subagent: {e}", style="red"))
@@ -3221,7 +3221,7 @@ class SkillsScreen(ModalScreen[None]):
         marked = sorted(self._marked)
         results = prune_mod.archive_many(marked)
         for _name, ok, msg in results:
-            self.app._log(Text(("✓ " if ok else "✗ ") + msg, style="green" if ok else "red"))
+            self.app._log(Text(("● " if ok else "✖ ") + msg, style="green" if ok else "red"))
 
         done = sum(1 for _, ok, _ in results if ok)
         self._marked.clear()
@@ -3265,7 +3265,7 @@ class SkillsScreen(ModalScreen[None]):
             return
 
         ok, msg = prune_mod.restore_skill(chosen)
-        self.app._log(Text(("✓ " if ok else "✗ ") + msg, style="green" if ok else "red"))
+        self.app._log(Text(("● " if ok else "✖ ") + msg, style="green" if ok else "red"))
         if ok:
             self.app._skill_names_cache = None
             self.app._skill_count_cache = None
@@ -3548,10 +3548,10 @@ class SkillsScreen(ModalScreen[None]):
                 if self.is_mounted:
                     try:
                         hint = self.query_one("#skills-hint", Static)
-                        hint.update(Text(f"✓ Skill '{name}' created successfully!", style="green"))
+                        hint.update(Text(f"● Skill '{name}' created successfully!", style="green"))
                     except Exception:
                         pass
-                self.app._log(Text(f"✓ Skill '{name}' created successfully!", style="green"))
+                self.app._log(Text(f"● Skill '{name}' created successfully!", style="green"))
             except Exception as e:
                 if self.is_mounted:
                     try:
@@ -3962,7 +3962,7 @@ class HooksScreen(ModalScreen[None]):
             command = " ".join(h.get("command", []))
             events = ", ".join(h.get("events", ["<all>"]))
             enabled = h.get("enabled", True)
-            status = "✓" if enabled else "✗"
+            status = "●" if enabled else "✖"
             status_style = "bold green" if enabled else "bold red"
             label = Text.assemble(
                 (f"{status} ", status_style),
@@ -4033,7 +4033,7 @@ class HooksScreen(ModalScreen[None]):
             ok = _save_hooks(self._hooks)
             self.app._log(
                 Text(
-                    f"✓ Hook added: {' '.join(result['command'])}"
+                    f"● Hook added: {' '.join(result['command'])}"
                     if ok
                     else "Failed to save hook configuration",
                     style="green" if ok else "red",
@@ -4054,7 +4054,7 @@ class HooksScreen(ModalScreen[None]):
             action = "enabled" if h["enabled"] else "disabled"
             self.app._log(
                 Text(
-                    f"✓ Hook {action}: {' '.join(h['command'])}"
+                    f"● Hook {action}: {' '.join(h['command'])}"
                     if ok
                     else "Failed to save hook configuration",
                     style="green" if ok else "red",
@@ -4081,10 +4081,10 @@ class HooksScreen(ModalScreen[None]):
             try:
                 await dispatch_hook("test", test_payload)
                 self.app._log(
-                    Text("✓ Test event fired successfully! Check hook logs.", style="green")
+                    Text("● Test event fired successfully! Check hook logs.", style="green")
                 )
             except Exception as e:
-                self.app._log(Text(f"✗ Test failed: {e}", style="red"))
+                self.app._log(Text(f"✖ Test failed: {e}", style="red"))
 
     @work
     async def _remove_hook(self) -> None:
@@ -4105,7 +4105,7 @@ class HooksScreen(ModalScreen[None]):
                 saved = _save_hooks(self._hooks)
                 self.app._log(
                     Text(
-                        f"✓ Removed hook: {' '.join(removed.get('command', []))}"
+                        f"● Removed hook: {' '.join(removed.get('command', []))}"
                         if saved
                         else "Failed to save hook configuration",
                         style="green" if saved else "red",
@@ -4117,7 +4117,7 @@ class HooksScreen(ModalScreen[None]):
         from novacode_cli.hooks import reload_hooks
 
         reload_hooks()
-        self.app._log(Text("✓ Hooks configuration reloaded from disk", style="green"))
+        self.app._log(Text("● Hooks configuration reloaded from disk", style="green"))
         self._reload()
 
     def action_close(self) -> None:
@@ -4249,7 +4249,7 @@ class ServersScreen(ModalScreen[None]):
             import webbrowser
 
             webbrowser.open(self._servers[idx].url)
-            self.app._log(Text(f"✓ Opened {self._servers[idx].url}", style="green"))
+            self.app._log(Text(f"● Opened {self._servers[idx].url}", style="green"))
 
     @work
     async def _stop_server(self) -> None:
@@ -4264,7 +4264,7 @@ class ServersScreen(ModalScreen[None]):
             ok = await stop_server(pid=s.pid)
             self.app._log(
                 Text(
-                    f"✓ Stopped '{s.name}' (PID {s.pid})"
+                    f"● Stopped '{s.name}' (PID {s.pid})"
                     if ok
                     else f"Failed to stop server '{s.name}'",
                     style="green" if ok else "red",
@@ -4279,7 +4279,7 @@ class ServersScreen(ModalScreen[None]):
         count = await ProcessManager.get_instance().stop_all()
         self.app._log(
             Text(
-                f"✓ Stopped {count} managed server(s)" if count else "No managed servers to stop",
+                f"● Stopped {count} managed server(s)" if count else "No managed servers to stop",
                 style="green" if count else "yellow",
             )
         )
@@ -4371,7 +4371,7 @@ class RemoteScreen(ModalScreen[None]):
             t.append("\n💾 Saved Configurations:\n", style="bold magenta")
             if "discord" in saved:
                 d = saved["discord"]
-                tok = "✓ Configured" if d.get("token") else "✗ Missing Token"
+                tok = "● Configured" if d.get("token") else "✖ Missing Token"
                 tok_style = "green" if d.get("token") else "red"
                 t.append("  Discord", style="bold #5865F2")  # Discord brand color
                 t.append(" · Token: ")
@@ -4381,7 +4381,7 @@ class RemoteScreen(ModalScreen[None]):
                 t.append("\n")
             if "telegram" in saved:
                 tg = saved["telegram"]
-                tok = "✓ Configured" if tg.get("token") else "✗ Missing Token"
+                tok = "● Configured" if tg.get("token") else "✖ Missing Token"
                 tok_style = "green" if tg.get("token") else "red"
                 t.append("  Telegram", style="bold #24A1DE")  # Telegram brand color
                 t.append(" · Token: ")
@@ -4466,8 +4466,8 @@ class RalphScreen(ModalScreen[None]):
 
     _ITER_GLYPH = {
         "running": ("▶", "yellow"),
-        "done": ("✓", "green"),
-        "failed": ("✗", "red"),
+        "done": ("●", "green"),
+        "failed": ("✖", "red"),
     }
 
     DEFAULT_CSS = """
@@ -4642,9 +4642,9 @@ class RalphScreen(ModalScreen[None]):
         table.add_column("Elapsed", justify="right")
         table.add_column("Task")
         glyphs = {
-            "running": ("⏳", "yellow"),
-            "completed": ("✓", "green"),
-            "failed": ("✗", "red"),
+            "running": ("◐", "yellow"),
+            "completed": ("●", "green"),
+            "failed": ("✖", "red"),
         }
         for row in snap.rows:
             g, color = glyphs.get(row.status, ("•", "dim"))

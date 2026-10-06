@@ -216,7 +216,7 @@ class PromptEvolutionEngine:
             body = _parse_new_template(raw if isinstance(raw, str) else str(raw))
             if body and body.strip() != current.strip():
                 await self._write_candidate(name, body)
-                _emit(f"🧪 Prompt candidate proposed for {name}")
+                _emit(f"◇ Prompt candidate proposed for {name}")
         except Exception:
             logger.exception("Prompt evolution failed for %s", name)
 
@@ -242,7 +242,7 @@ class PromptEvolutionEngine:
         decision = _decide_ab(records)
         if decision == "promote":
             if await self.promote(name):
-                _emit(f"⬆️ Prompt candidate promoted: {name}")
+                _emit(f"↑ Prompt candidate promoted: {name}")
             return decision
         if decision == "discard":
             if await self.discard(name):
@@ -492,7 +492,7 @@ class PromptEvolutionEngine:
 def _emit(message: str) -> None:
     """Surface a prompt-evolution notice through the TUI-safe event log."""
     try:
-        nova_event_log.append(("nova_prompt_evolved", "🧬", "magenta", message))
+        nova_event_log.append(("nova_prompt_evolved", "✦", "magenta", message))
         cap_event_log()
     except Exception:
         logger.exception("Failed to emit prompt-evolution event")

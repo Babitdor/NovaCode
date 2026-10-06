@@ -141,14 +141,14 @@ class WebhookServer:
             return web.json_response({"status": "rejected"}, status=401)
 
         await self._queue.put(message)
-        _emit_webhook_event(f"🪝 Webhook ({source}) triggered: {message.text[:80]}")
+        _emit_webhook_event(f"⇥ Webhook ({source}) triggered: {message.text[:80]}")
         return web.json_response({"status": "accepted"}, status=202)
 
 
 def _emit_webhook_event(message: str) -> None:
     """Surface a webhook-received notice through the TUI-safe event log."""
     try:
-        nova_event_log.append(("nova_webhook_received", "🪝", "cyan", message))
+        nova_event_log.append(("nova_webhook_received", "⇥", "cyan", message))
         cap_event_log()
     except Exception:
         logger.exception("Failed to emit webhook event")

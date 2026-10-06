@@ -81,10 +81,10 @@ def _window_recovered(window: list[dict]) -> bool:
 
 # Icon / color mapping for TUI events emitted by this module.
 _EVENT_CONFIG: dict[str, dict[str, str]] = {
-    "nova_review_start": {"icon": "🔄", "color": "cyan"},
+    "nova_review_start": {"icon": "◐", "color": "cyan"},
     "nova_review_complete": {"icon": "✓", "color": "green"},
-    "nova_skill_created": {"icon": "🧠", "color": "green"},
-    "nova_skill_refinement": {"icon": "🛠", "color": "yellow"},
+    "nova_skill_created": {"icon": "●", "color": "green"},
+    "nova_skill_refinement": {"icon": "◐", "color": "yellow"},
 }
 
 

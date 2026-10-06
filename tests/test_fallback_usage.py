@@ -132,14 +132,16 @@ def test_live_window_supersedes_stale_startup_window():
     assert t.context_window_size == 1_048_576  # stored copy refreshed for direct readers
 
 
-def test_session_pct_is_fraction_of_budget():
+def test_session_count_has_no_artificial_ceiling():
     t = TokenTracker()
-    t.session_token_budget = 10_000
-    assert t.session_pct == 0.0
-    t.add(2000, 500)  # 2500 / 10_000
-    assert t.session_pct == 25.0
-    t.session_token_budget = 0  # guard: no divide-by-zero
-    assert t.session_pct == 0.0
+    for _ in range(12):
+        t.add(90_000, 10_000)
+    assert t.session_total_tokens == 1_200_000
+    assert t.current_context == 90_000
+    t.reset()
+    assert t.session_total_tokens == 1_200_000
+
+
 def test_session_usage_can_include_multiple_calls():
     from novacode_cli.ui.ui_elements import TokenTracker
 

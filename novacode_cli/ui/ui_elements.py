@@ -496,9 +496,14 @@ class TokenTracker:
         # Cumulative session usage: input+output summed over every turn. Unlike
         # current_context (bounded by the window, drops on compaction), this only
         # ever climbs — it's the "how much have I used this session" number.
+        #
+        # Rendered as a count, never a percentage. It used to be divided by a
+        # hardcoded 1M ``session_token_budget`` to produce a "N% of 1.0M budget"
+        # meter, but nothing read that budget to gate or warn on anything, and
+        # because this count is monotonic the meter was guaranteed to read past
+        # 100% in any long session (observed at 1087%) and then stay in the error
+        # colour for the rest of the run. A count has no ceiling to exceed.
         self.session_total_tokens = 0
-        # Budget the session meter is a percentage of. Configurable; 1M default.
-        self.session_token_budget = 1_000_000
 
         # Prompt-caching breakdown (Anthropic only, 0 for other providers)
         self.last_cache_read = 0  # tokens read from prompt cache this turn
@@ -518,13 +523,6 @@ class TokenTracker:
 
         # Detailed breakdown from post-turn analysis
         self._last_breakdown: ContextBreakdown | None = None
-
-    @property
-    def session_pct(self) -> float:
-        """Session usage as a percentage of the configured budget."""
-        if not self.session_token_budget:
-            return 0.0
-        return self.session_total_tokens / self.session_token_budget * 100
 
     def set_model(self, model_name: str) -> None:
         """Set the model name for context window calculation.

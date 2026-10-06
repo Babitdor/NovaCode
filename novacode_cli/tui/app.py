@@ -326,7 +326,7 @@ _TOOL_CATEGORIES: tuple[tuple[str, str, frozenset[str]], ...] = (
     ),
     (
         "Tasks",
-        "⚙",
+        "●",
         frozenset(
             {
                 "get_task_status",
@@ -673,7 +673,7 @@ def _render_bg_event(  # noqa: PLR0912, PLR0915 — one branch per event type is
     dispatches all go into the body, while ``set_phase`` keeps a one-line live
     status in the card title (visible even when the card is collapsed).
 
-    A tool call and its result are rendered as ONE line (``✓ read_file(x) · Read
+    A tool call and its result are rendered as ONE line (``● read_file(x) · Read
     42 lines``) rather than two. RichLog cannot rewrite a line, so the call is
     buffered in ``pending`` and only written when its result arrives; a call with
     no result yet is flushed as-is by the caller when the turn ends.
@@ -696,6 +696,8 @@ def _render_bg_event(  # noqa: PLR0912, PLR0915 — one branch per event type is
         ToolCall,
         ToolResult,
     )
+
+    pal = _active_palette()
 
     def _flush_pending() -> None:
         """Write any buffered tool call that never got a result."""
@@ -741,15 +743,19 @@ def _render_bg_event(  # noqa: PLR0912, PLR0915 — one branch per event type is
             # No matching call (e.g. a result for a call we never saw): stand alone.
             prefix = "[dim]·[/dim]"
         if event.is_error:
-            write(f"[red]✗[/red] {prefix} [red]· {_esc(event.preview)}[/red]")
+            write(f"[{pal.tool_fail}]✖[/{pal.tool_fail}] {prefix} [red]· {_esc(event.preview)}[/red]")
         elif event.preview:
-            write(f"[green]✓[/green] {prefix} [dim]· {_esc(event.preview)}[/dim]")
+            write(f"[{pal.tool_ok}]●[/{pal.tool_ok}] {prefix} [dim]· {_esc(event.preview)}[/dim]")
         else:
-            write(f"[green]✓[/green] {prefix}")
+            write(f"[{pal.tool_ok}]●[/{pal.tool_ok}] {prefix}")
     elif isinstance(event, FileOp):
         rec = event.record
         errored = bool(getattr(rec, "error", None)) or (getattr(rec, "status", "") == "error")
-        mark = "[red]✗[/red]" if errored else "[green]✓[/green]"
+        mark = (
+            f"[{pal.tool_fail}]✖[/{pal.tool_fail}]"
+            if errored
+            else f"[{pal.tool_ok}]●[/{pal.tool_ok}]"
+        )
         prefix = pending.pop(event.call_id or "", None)
         if prefix is not None:
             write(f"{mark} {prefix} [dim]· {_esc(fileop_summary(rec))}[/dim]")
@@ -799,6 +805,11 @@ def _paint(widget: Any, content: Any) -> None:
 _LIVE_OUTPUT_MAX_LINES = 200
 _LIVE_OUTPUT_MAX_CHARS = 20_000
 _LOG_MAX_LINES = 2_000
+#: Cap on a failed tool call's stored output, so one enormous traceback cannot
+#: bloat the entry (and the group's repaint) without bound.
+_TOOL_ERROR_MAX_CHARS = 6_000
+#: How many lines of that output the group renders inline before summarising.
+_TOOL_ERROR_MAX_LINES = 12
 #: Saved messages drawn on resume (the agent still gets the full history).
 _REPLAY_MAX_MESSAGES = 150
 
@@ -1794,7 +1805,7 @@ class NovaApp(App):
                     yield Static("MODEL", classes="info-label")
                     yield Static("", id="info-model", classes="info-value")
                 with Vertical(classes="info-col").with_tooltip(
-                    "Context window fill, then cumulative session usage — "
+                    "Context window fill, then tokens spent this session — "
                     "/context for the full breakdown"
                 ):
                     yield Static("SESSION", classes="info-label")
@@ -2385,7 +2396,7 @@ class NovaApp(App):
         "idle": "●",
         "running": "◐",
         "needs-approval": "⚠",
-        "starting": "⏳",
+        "starting": "◌",
         "crashed": "✖",
         "exited": "○",
     }
@@ -2535,7 +2546,7 @@ class NovaApp(App):
             return
 
         sid = f"s-{uuid.uuid4().hex[:8]}"
-        self._log(Text(f"⏳ preparing worktree for “{name}”…", style="#7aa2f7"))
+        self._log(Text(f"◌ preparing worktree for “{name}”…", style=self._palette.primary))
 
         try:
             info = await asyncio.to_thread(
@@ -3011,14 +3022,14 @@ class NovaApp(App):
                 await reply(f"No session “{name}”. {self._remote_sessions_text(msg)}")
                 return True
             router.default[msg.chat_id] = sid
-            await reply(f"✓ Plain messages here now go to **{sessions[sid]}**.")
+            await reply(f"● Plain messages here now go to **{sessions[sid]}**.")
             return True
         if low.startswith("/new"):
             name, _, task = text[4:].strip().partition(":")
             if not name.strip():
                 await reply("Usage: `/new <name>` or `/new <name>: <task>`")
                 return True
-            await reply(f"⏳ Starting session **{name.strip()}**…")
+            await reply(f"◌ Starting session **{name.strip()}**…")
             await self.spawn_session(name.strip(), task.strip())
             return True
 
@@ -3093,7 +3104,7 @@ class NovaApp(App):
         if len(pane.remote_turns) > 1:
             with contextlib.suppress(Exception):
                 await msg.reply_fn(
-                    f"⏳ Queued for **{pane.title}** behind {len(pane.remote_turns) - 1} more."
+                    f"◌ Queued for **{pane.title}** behind {len(pane.remote_turns) - 1} more."
                 )
         self._remote_react("🤔", msg)
         pane.status = "running"
@@ -3206,7 +3217,7 @@ class NovaApp(App):
                     if reply_fn is not None:
                         try:
                             await reply_fn(
-                                "⏳ Busy with the current task — send "
+                                "◐ Busy with the current task — send "
                                 "`/steer <text>` (or just text) to add to it."
                             )
                         except Exception:  # noqa: BLE001
@@ -3477,7 +3488,7 @@ class NovaApp(App):
         elif kind == "bgagent":
             ok = entry.get("status") == "done"
             head = Text()
-            head.append("✓ " if ok else "✗ ", style=pal.success if ok else pal.error)
+            head.append("● " if ok else "✖ ", style=pal.success if ok else pal.error)
             head.append(f"background agent · {self._oneline(str(entry.get('prompt', '')))}", style="bold")
             self._log(head)
             summary = str(entry.get("summary") or "").strip()
@@ -4051,7 +4062,7 @@ class NovaApp(App):
         self._tool_group_last_idx = None
         self._tool_group_log_lines = 0
         body = Vertical(classes="toolbody")
-        comp = Collapsible(body, title="⚙ tool calls", collapsed=True)
+        comp = Collapsible(body, title="● tool calls", collapsed=True)
         comp.add_class("tool")
         animate_entrance(comp, "zoom")
         self._tool_group = comp
@@ -4082,19 +4093,59 @@ class NovaApp(App):
         self._tool_group_last_idx = None
         self._tool_group_log_lines = 0
 
-    @staticmethod
-    def _render_tool_line(entry: dict) -> Text:
-        """One compact line for a single tool call in the group body."""
-        mark = entry["mark"]
+    def _render_tool_line(self, entry: dict) -> Text:
+        """One compact line for a single tool call in the group body.
+
+        The status mark is a bullet coloured from the active theme rather than an
+        emoji: ``⏳``/``✓``/``✗`` are painted by the terminal's own font, so
+        ``/theme`` could not move them and they sat at a different weight and
+        baseline from the rest of the line. A ``•`` in the theme's success/error/
+        warning colour reads as one piece with the text around it.
+        """
+        pal = self._palette
         err = entry["error"]
-        mark_style = "red" if err else ("green" if mark == "✓" else "yellow")
-        body_style = "red" if err else "dim"
+        mark = entry["mark"]
+        if err:
+            mark_style = f"bold {pal.tool_fail}"
+        elif mark == "done":
+            mark_style = f"bold {pal.tool_ok}"
+        else:
+            mark_style = f"bold {pal.tool_pending}"
+        body_style = pal.tool_fail if err else pal.dim
         t = Text()
-        t.append(f"{mark} ", style=mark_style)
+        t.append("• ", style=mark_style)
         t.append(entry["base"], style=body_style)
         if entry["detail"]:
             t.append(f"  — {entry['detail']}", style=body_style)
         return t
+
+    def _render_error_detail(self, detail: str) -> Text:
+        """A failed call's full output, indented under its line.
+
+        Rendered as a bordered, indented block rather than a nested
+        ``Collapsible``: the group body is a single ``Static`` holding one
+        ``Text``, so a real widget cannot be mounted inside it without rebuilding
+        the whole panel as a container. The block is capped so one enormous
+        traceback cannot push the rest of the group off screen, and the cap is
+        stated in the text rather than applied silently.
+        """
+        pal = self._palette
+        lines = detail.splitlines() or [detail]
+        cap = _TOOL_ERROR_MAX_LINES
+        shown = lines[:cap]
+        out = Text()
+        for line in shown:
+            out.append("    │ ", style=pal.faint)
+            out.append(line, style=pal.tool_fail)
+            out.append("\n")
+        if len(lines) > cap:
+            out.append("    │ ", style=pal.faint)
+            out.append(f"… {len(lines) - cap} more lines", style=pal.dim)
+            out.append("\n")
+        # Drop the trailing newline; the caller adds its own separator.
+        if out.plain.endswith("\n"):
+            out = out[:-1]
+        return out
 
     def _schedule_tool_group_refresh(self, *, running: str | None = None) -> None:
         """Coalesce a burst of tool events into one repaint (~100ms), like
@@ -4146,14 +4197,15 @@ class NovaApp(App):
             sections.setdefault(entry.get("category") or _OTHER_CATEGORY, []).append(entry)
 
         body = Text()
+        heading_style = f"bold {self._palette.tool_heading}"
         first_section = True
         for cat, items in sections.items():
             if not first_section:
                 body.append("\n")
             first_section = False
             # Heading: "→ Explored — 3 reads"
-            body.append(f"{_category_glyph(cat)} ", style="bold #7aa2f7")
-            body.append(cat, style="bold #7aa2f7")
+            body.append(f"{_category_glyph(cat)} ", style=heading_style)
+            body.append(cat, style=heading_style)
             body.append(f" — {len(items)} {self._category_noun(cat, len(items))}\n", style="dim")
             for entry in items:
                 line = entry.get("_line")
@@ -4162,6 +4214,14 @@ class NovaApp(App):
                     entry["_line"] = line
                 body.append_text(line)
                 body.append("\n")
+                # A failed call's full output, indented under its line. The
+                # one-line detail is a 110-char summary; a traceback is what the
+                # user actually needs, and truncating it away was the reason
+                # failures were hard to diagnose from the transcript.
+                detail = entry.get("error_detail")
+                if detail:
+                    body.append_text(self._render_error_detail(detail))
+                    body.append("\n")
         # Drop the trailing newline from the last line.
         if body.plain.endswith("\n"):
             body = body[:-1]
@@ -4196,7 +4256,7 @@ class NovaApp(App):
         """Append a 'running' line for a new tool call."""
         entry = {
             "base": self._oneline(base),
-            "mark": "⏳",
+            "mark": "running",
             "detail": "",
             "error": False,
             "category": _tool_category(name),
@@ -4247,12 +4307,12 @@ class NovaApp(App):
                 self._log(
                     Text(
                         f"  ⎿  {self._oneline(detail)}",
-                        style="red" if is_error else "dim",
+                        style=self._palette.tool_fail if is_error else self._palette.dim,
                     )
                 )
             return
         entry = self._tool_group_entries[idx]
-        entry["mark"] = "✗" if is_error else "✓"
+        entry["mark"] = "failed" if is_error else "done"
         entry["error"] = is_error
         entry["detail"] = self._oneline(detail)
         entry["_line"] = None  # fields changed → drop the cached render
@@ -4266,28 +4326,57 @@ class NovaApp(App):
         else:
             self._schedule_tool_group_refresh()
 
+    def _set_tool_error_detail(self, call_id: str | None, full_output: str) -> None:
+        """Attach a failed call's full output so the group can expand it.
+
+        The one-line ``detail`` is a 110-char summary; a traceback or a compiler
+        error is far longer and is exactly what the user needs to read. Storing
+        the full text on the entry lets :meth:`_refresh_tool_group` render it
+        under a nested ``Collapsible`` instead of truncating it away.
+        """
+        idx: int | None = None
+        if call_id is not None and call_id in self._tool_group_lines:
+            idx = self._tool_group_lines[call_id]
+        elif self._tool_group_last_idx is not None:
+            idx = self._tool_group_last_idx
+        if idx is None or idx >= len(self._tool_group_entries):
+            return
+        text = (full_output or "").strip()
+        if not text:
+            return
+        if len(text) > _TOOL_ERROR_MAX_CHARS:
+            text = text[:_TOOL_ERROR_MAX_CHARS] + "\n… (truncated)"
+        self._tool_group_entries[idx]["error_detail"] = text
+
     def _finalize_tool(
         self, call_id: str | None, preview: str, full_output: str, *, is_error: bool
     ) -> None:
         entry = self._pop_tool(call_id)
         if entry is None:
-            self._log(Text(f"  ⎿  {preview}", style="red" if is_error else "dim"))
+            self._log(
+                Text(
+                    f"  ⎿  {preview}",
+                    style=self._palette.tool_fail if is_error else self._palette.dim,
+                )
+            )
             return
         comp, body, base = entry
-        mark = "✗" if is_error else "✓"
+        pal = self._palette
+        mark = "•"
         comp.title = f"{base}  {mark} {_esc(preview)}"
         out = full_output or "(no output)"
-        if len(out) > 6000:
-            out = out[:6000] + "\n… (truncated)"
+        if len(out) > _TOOL_ERROR_MAX_CHARS:
+            out = out[:_TOOL_ERROR_MAX_CHARS] + "\n… (truncated)"
+        body_style = pal.tool_fail if is_error else ""
         if isinstance(body, RichLog):
             body.clear()
-            body.write(Text(out, style="red" if is_error else ""))
+            body.write(Text(out, style=body_style))
             body.scroll_end(animate=False)
         else:
-            body.update(Text(out, style="red" if is_error else ""))
-        # Animate border to settled state
-
-        final_color = "#f7768e" if is_error else "#73daca"  # error / success
+            body.update(Text(out, style=body_style))
+        # Animate border to settled state. Theme-derived, not the tokyo-night
+        # hexes this used to hardcode — those survived /theme.
+        final_color = pal.tool_fail if is_error else pal.tool_ok
         try:
             comp.styles.animate("border_left", f"thick {final_color}", duration=0.35)
         except Exception:  # noqa: BLE001
@@ -4414,7 +4503,7 @@ class NovaApp(App):
                         entry = {
                             "type": "tool",
                             "display": e.message,
-                            "mark": "⏳",
+                            "mark": "running",
                             "detail": "",
                             "error": False,
                         }
@@ -4430,7 +4519,7 @@ class NovaApp(App):
                         idx = tool_lines[e.detail]
                         entry = log_entries[idx]
                         is_error = e.color == "#f7768e"
-                        entry["mark"] = "✗" if is_error else "✓"
+                        entry["mark"] = "failed" if is_error else "done"
                         entry["detail"] = e.message
                         entry["error"] = is_error
                         entry.pop("_line", None)  # invalidate the cached render
@@ -4466,31 +4555,46 @@ class NovaApp(App):
             lines = []
             for entry in log_entries:
                 line = entry.get("_line")
-                if line is None:
+                # The rendered line embeds theme colours, so a /theme switch must
+                # invalidate the cache — key it on the active theme name.
+                if line is None or entry.get("_line_theme") != self.theme:
                     line = self._render_subagent_line(entry)
                     entry["_line"] = line
+                    entry["_line_theme"] = self.theme
                 lines.append(line)
             _paint(list_widget, "\n".join(lines))
         except Exception:
             pass
 
-    @staticmethod
-    def _render_subagent_line(entry: dict) -> str:
-        """Render one subagent log entry to a markup line (cached by the caller)."""
+    def _render_subagent_line(self, entry: dict) -> str:
+        """Render one subagent log entry to a markup line (cached by the caller).
+
+        Colours come from the active theme rather than the tokyo-night hexes this
+        used to hardcode, and the status mark is a geometric glyph rather than
+        ``✓``/``✗`` — the emoji are painted by the terminal's own font, so
+        ``/theme`` could not move them.
+        """
         if entry.get("type") == "status":
             return f"⟐ {entry['display']}"
+        pal = self._palette
         mark = entry["mark"]
         display = entry["display"]
         detail = entry["detail"]
         error = entry["error"]
-        color = "#f7768e" if error else ("#73daca" if mark == "✓" else "#bb9af7")
+        if error:
+            color = pal.tool_fail
+        elif mark in ("done", "●"):
+            color = pal.tool_ok
+        else:
+            color = pal.accent
+        glyph = "✖" if error else ("●" if mark in ("done", "●") else "◐")
 
-        line = f"[{color}]{mark}[/{color}] {display}"
+        line = f"[{color}]{glyph}[/{color}] {display}"
         if detail:
             clean_detail = detail
-            if clean_detail in ("✓", "✗"):
+            if clean_detail in ("●", "✖", "done", "failed"):
                 clean_detail = ""
-            if clean_detail.startswith("✓ ") or clean_detail.startswith("✗ "):
+            if clean_detail.startswith(("● ", "✖ ")):
                 clean_detail = clean_detail[2:]
             if clean_detail:
                 line += f" [dim]· {clean_detail}[/dim]"
@@ -4522,6 +4626,31 @@ class NovaApp(App):
     def _set_status(self, activity: str) -> None:
         self._activity = activity
         self._refresh_status()
+
+    def _event_color(self, name: str) -> str:
+        """Map a Nova event's semantic colour name to the active theme's palette.
+
+        The learning feature emits events with an ANSI colour name (``"cyan"``,
+        ``"green"``, …). Those resolve against the *terminal's* 16-colour palette,
+        not the Textual theme, so a ``/theme`` switch left every learning notice
+        the same colour while the CSS border around it recoloured. Mapping the
+        name here — the one place that has a theme — keeps the two in step.
+
+        Args:
+            name: The event's colour name, or any unrecognised string.
+
+        Returns:
+            A palette colour, falling back to the theme's accent.
+        """
+        pal = self._palette
+        return {
+            "cyan": pal.accent,
+            "green": pal.success,
+            "yellow": pal.warning,
+            "red": pal.error,
+            "magenta": pal.agent_label,
+            "dim": pal.dim,
+        }.get(name, pal.accent)
 
     def _set_nova_indicator(
         self, text: str, *, style: str = "dim", auto_clear: float | None = None
@@ -4850,12 +4979,20 @@ class NovaApp(App):
 
         * **ctx** — how full the context window is right now. Bounded, and it
           DROPS when /compact summarizes the conversation.
-        * **session** — cumulative input+output over every turn ÷ budget.
-          Monotonic: it tracks total spend, so /compact deliberately leaves it
-          alone (see ``TokenTracker.reset``).
+        * **used** — cumulative input+output over every turn. Monotonic: it
+          tracks total spend, so /compact deliberately leaves it alone (see
+          ``TokenTracker.reset``).
 
         Showing only the cumulative number made /compact look like a no-op, so
         both are rendered side by side.
+
+        The cumulative figure is a COUNT, not a percentage. It used to render as
+        ``{pct}% of {budget} budget`` against ``TokenTracker.session_token_budget``
+        — a hardcoded 1M that nothing reads, enforces, or lets the user configure.
+        Because the count is monotonic, that meter was guaranteed to read past
+        100% in any long session (observed at 1087%) and then sat in the error
+        colour for the rest of the run, which is a meter reporting its own
+        brokenness rather than a limit. A count has no ceiling to exceed.
         """
         parts: list[tuple[str, str]] = []
         pal = self._palette
@@ -4869,17 +5006,11 @@ class NovaApp(App):
             ctx_pct = bd.usage_percentage
             parts.append((f"ctx {ctx_pct:.0f}%", f"bold {_pct_color(ctx_pct, pal.success, pal)}"))
 
-        # Cumulative session usage (monotonic; survives compaction).
+        # Cumulative session usage (monotonic; survives compaction). Rendered as
+        # a count, not a percentage of a budget — see the docstring.
         tot = getattr(self.token_tracker, "session_total_tokens", 0)
         if tot:
-            pct = getattr(self.token_tracker, "session_pct", 0.0)
-            budget = getattr(self.token_tracker, "session_token_budget", 0)
-            parts.append(
-                (
-                    f"{pct:.0f}% of {self._fmt_tokens(budget)} budget",
-                    f"bold {_pct_color(pct, pal.primary, pal)}",
-                )
-            )
+            parts.append((f"{self._fmt_tokens(tot)} used", f"bold {pal.primary}"))
 
         if not parts:
             usage_text = Text("—", style=pal.dim)
@@ -5607,7 +5738,7 @@ class NovaApp(App):
         with suppress(Exception):
             await self._voice_pipeline.warmup()
         if pending:
-            self._set_nova_indicator("✓ voice models ready", style="dim green", auto_clear=3.0)
+            self._set_nova_indicator("● voice models ready", style="dim green", auto_clear=3.0)
 
     async def _eager_voice_warmup(self) -> None:
         """Pre-load STT/TTS/VAD models at startup whenever voice will be used.
@@ -5836,7 +5967,7 @@ class NovaApp(App):
 
     # ── Background tasks (persistent indicator + panel) ──────────────────
     def _refresh_tasks_bar(self) -> None:
-        """Rebuild the ``⚙`` indicator: background shell jobs (●) + running async
+        """Rebuild the ``●`` indicator: background shell jobs (●) + running async
         subagents (◇), with live runtime + count. Runs on the 1s timer (live
         clock) and on every registry event."""
         active = []
@@ -5873,30 +6004,31 @@ class NovaApp(App):
             except Exception:  # noqa: BLE001
                 self._tasks_timer = None
         t = Text()
+        pal = self._palette
         total = len(active) + len(agents)
         if total == 1 and active:
             job = active[0]
-            t.append("⚙ Background  ", style="bold #7aa2f7")
-            t.append("● ", style="cyan")
-            t.append(job.command[:48], style="#c0caf5")
-            t.append(f"  ⏱ {fmt_runtime(job.runtime())}", style="dim")
+            t.append("● Background  ", style=f"bold {pal.primary}")
+            t.append("● ", style=pal.success)
+            t.append(job.command[:48], style=pal.text)
+            t.append(f"  {fmt_runtime(job.runtime())}", style=pal.dim)
         elif total == 1 and agents:
             a = agents[0]
-            t.append("◇ Async agent  ", style="bold #bb9af7")
-            t.append("● ", style="#bb9af7")
-            t.append(str(a["agent_name"])[:36], style="#c0caf5")
-            t.append(f"  ⏱ {fmt_runtime(a['runtime'])}", style="dim")
+            t.append("◇ Async agent  ", style=f"bold {pal.accent}")
+            t.append("● ", style=pal.accent)
+            t.append(str(a["agent_name"])[:36], style=pal.text)
+            t.append(f"  {fmt_runtime(a['runtime'])}", style=pal.dim)
         else:
-            t.append(f"⚙ Tasks ({total})  ", style="bold #7aa2f7")
+            t.append(f"● Tasks ({total})  ", style=f"bold {pal.primary}")
             segs = []
             for job in active[:2]:
                 segs.append(f"● {job.command.split()[0][:14]} {fmt_runtime(job.runtime())}")
             for a in agents[:2]:
                 segs.append(f"◇ {str(a['agent_name'])[:14]} {fmt_runtime(a['runtime'])}")
-            t.append("  ·  ".join(segs), style="#c0caf5")
+            t.append("  ·  ".join(segs), style=pal.text)
             shown = min(len(active), 2) + min(len(agents), 2)
             if total > shown:
-                t.append(f"  +{total - shown} more", style="dim")
+                t.append(f"  +{total - shown} more", style=pal.dim)
         _paint(bar, t)
         bar.add_class("active")
 
@@ -5915,9 +6047,9 @@ class NovaApp(App):
         if event == "started" and job is not None:
             self._log(
                 Text.assemble(
-                    ("⚙ Running in background: ", "bold #7aa2f7"),
-                    (f"{job.command[:70]}\n", "#c0caf5"),
-                    (f"Task ID: {job.task_id}", "dim"),
+                    ("● Running in background: ", f"bold {self._palette.primary}"),
+                    (f"{job.command[:70]}\n", self._palette.text),
+                    (f"Task ID: {job.task_id}", self._palette.dim),
                 )
             )
             # Clarify for the agent on its next turn (a Ctrl+B detach ends the
@@ -5930,7 +6062,7 @@ class NovaApp(App):
             )
         elif event in ("completed", "failed", "terminated") and job is not None:
             ok = event == "completed"
-            glyph = "✓" if ok else "✗"
+            glyph = "●" if ok else "✖"
             verb = {"completed": "completed", "failed": "failed", "terminated": "terminated"}[event]
             self._log(
                 Text(
@@ -6017,8 +6149,8 @@ class NovaApp(App):
                 tail = "\n".join(job.output.splitlines()[-40:]) or "(no output yet)"
                 self._log(
                     Text.assemble(
-                        (f"⚙ {job.task_id} logs ({job.status}):\n", "bold #7aa2f7"),
-                        (tail, "#c0caf5"),
+                        (f"● {job.task_id} logs ({job.status}):\n", f"bold {self._palette.primary}"),
+                        (tail, self._palette.text),
                     )
                 )
 
@@ -6214,7 +6346,7 @@ class NovaApp(App):
             if mw is None:
                 return
             if await mw.consolidate_session():
-                self._log(Text("✓ Session learnings consolidated.", style="dim"))
+                self._log(Text("● Session learnings consolidated.", style="dim"))
         except Exception:  # noqa: BLE001 — never block exit on learning
             pass
 
@@ -6740,7 +6872,7 @@ class NovaApp(App):
                             if reply_fn is not None:
                                 try:
                                     await reply_fn(
-                                        "⏳ Busy with the current task — send "
+                                        "◐ Busy with the current task — send "
                                         "`/steer <text>` (or just text) to add to it."
                                     )
                                 except Exception:
@@ -7349,7 +7481,7 @@ class NovaApp(App):
                 exit_code = -1
 
         if exit_code == 0:
-            self._log(Text("✓ Command finished successfully.", style="green"))
+            self._log(Text("● Command finished successfully.", style="green"))
         else:
             self._log(Text(f"❌ Command exited with code {exit_code}.", style="red"))
 
@@ -7362,7 +7494,7 @@ class NovaApp(App):
         Each call spawns an independent worker in group ``"bgshell"`` (no
         ``exclusive=True``) so multiple Ctrl+B jobs run in true parallel.
         Output streams line-by-line into a ``RichLog`` inside a ``Collapsible``
-        card.  When the process exits the card title flips to ✓/✗ and the
+        card.  When the process exits the card title flips to ●/✖ and the
         process is deregistered from ProcessManager.
 
         ``foreground`` is a plain ``!cmd``: no card, just a ``! cmd`` row with
@@ -7431,7 +7563,7 @@ class NovaApp(App):
             emitted += 1
             log_widget.scroll_end(animate=False)
 
-        set_state("⚙", "running")
+        set_state("◐", "running")
         self._close_tool_group()
         await self._transcript().mount(card)
         self._prune_transcript()
@@ -7454,7 +7586,7 @@ class NovaApp(App):
             emit(f"Failed to start: {ex}", style="bold red") if foreground else log_widget.write(
                 f"[bold red]Failed to start: {ex}[/bold red]"
             )
-            set_state("✗", "failed to start", bad=True)
+            set_state("✖", "failed to start", bad=True)
             return
 
         # Register with ProcessManager so `/kill bg-<n>` or `/kill <pid>` works.
@@ -7478,7 +7610,7 @@ class NovaApp(App):
                 emit(line_bytes.decode("utf-8", errors="replace").rstrip())
         except asyncio.CancelledError:
             process.terminate()
-            set_state("✗", "cancelled", bad=True)
+            set_state("✖", "cancelled", bad=True)
             self._journal(
                 {"k": "bash", "cmd": cmd, "lines": list(captured), "exit": None, "fg": foreground, "job": job_id}
             )
@@ -7492,11 +7624,11 @@ class NovaApp(App):
 
         # Update the title/row and ProcessManager status.
         if exit_code == 0:
-            set_state("✓", "exit 0")
+            set_state("●", "exit 0")
             card.add_class("bgshell-done")
             info.status = ProcessStatus.STOPPED
         else:
-            set_state("✗", f"exit {exit_code}", bad=True)
+            set_state("✖", f"exit {exit_code}", bad=True)
             card.add_class("bgshell-failed")
             info.status = ProcessStatus.FAILED
             if not foreground:
@@ -7626,11 +7758,11 @@ class NovaApp(App):
                         final_text.append(e.text)
                     _render_bg_event(e, _write, _set_phase, self._fileop_summary, pending)
         except asyncio.CancelledError:
-            card.title = f"✗ bg[{job_id}] · {p_short}  ·  cancelled"
+            card.title = f"✖ bg[{job_id}] · {p_short}  ·  cancelled"
             return
         except Exception as ex:  # noqa: BLE001
             _write(f"[bold red]Error: {ex}[/bold red]")
-            card.title = f"✗ bg[{job_id}] · {p_short}  ·  error"
+            card.title = f"✖ bg[{job_id}] · {p_short}  ·  error"
             card.add_class("bgagent-failed")
             card.collapsed = True
             self._journal({"k": "bgagent", "prompt": prompt, "status": "error", "summary": str(ex), "job": job_id})
@@ -7642,7 +7774,7 @@ class NovaApp(App):
             _write(prefix)
         pending.clear()
 
-        card.title = f"✓ bg[{job_id}] · {p_short}  ·  done"
+        card.title = f"● bg[{job_id}] · {p_short}  ·  done"
         card.add_class("bgagent-done")
         card.collapsed = True
         self._journal(
@@ -7674,7 +7806,7 @@ class NovaApp(App):
         self._pending_job_notes.append(note)
         self._log(
             Text(
-                f"✓ Background agent bg[{job_id}] finished — the agent will be told "
+                f"● Background agent bg[{job_id}] finished — the agent will be told "
                 f"on its next turn.",
                 style="green",
             )
@@ -7851,12 +7983,12 @@ class NovaApp(App):
                     if _re.fullmatch(r"[\w.-]+@[\w.-]+", arg)
                     else cp.install(arg)
                 )
-                log(f"✓ Installed {name}", "green")
+                log(f"● Installed {name}", "green")
                 log(fmt(cp.plugin_components(name)), "cyan")
                 log("Restart Nova to activate.", "dim")
             elif sub == "remove":
                 log(
-                    f"✓ Removed {arg}" if cp.remove(arg) else f"No plugin named '{arg}'",
+                    f"● Removed {arg}" if cp.remove(arg) else f"No plugin named '{arg}'",
                     "green" if arg else "yellow",
                 )
             elif sub == "search":
@@ -7881,12 +8013,12 @@ class NovaApp(App):
                 if msub == "add":
                     name = mp.add(marg)
                     log(
-                        f"✓ Added marketplace {name} ({len(mp.list_marketplace_plugins())} plugins — /plugins search)",
+                        f"● Added marketplace {name} ({len(mp.list_marketplace_plugins())} plugins — /plugins search)",
                         "green",
                     )
                 elif msub == "remove":
                     log(
-                        f"✓ Removed marketplace {marg}"
+                        f"● Removed marketplace {marg}"
                         if mp.remove_marketplace(marg)
                         else f"No marketplace '{marg}'",
                         "green" if marg else "yellow",
@@ -7938,7 +8070,7 @@ class NovaApp(App):
         n = len(cp.list_plugins())
         self._log(
             Text(
-                f"✓ Reloaded {n} plugin(s) — skills, subagents, MCP, hooks, commands refreshed.",
+                f"● Reloaded {n} plugin(s) — skills, subagents, MCP, hooks, commands refreshed.",
                 style="green",
             )
         )
@@ -8322,7 +8454,7 @@ class NovaApp(App):
             self._remember_model(provider, model)
             self._log(
                 Text(
-                    f"✓ Switched to {preset['name']} · {self.model_name}",
+                    f"● Switched to {preset['name']} · {self.model_name}",
                     style="green",
                 )
             )
@@ -8362,7 +8494,7 @@ class NovaApp(App):
         )
         self._log(
             Text(
-                f"✓ {ROLE_LABELS.get(role, role)} → {provider}:{model} — takes effect {when}",
+                f"● {ROLE_LABELS.get(role, role)} → {provider}:{model} — takes effect {when}",
                 style="green",
             )
         )
@@ -8407,7 +8539,7 @@ class NovaApp(App):
 
         label = meta.get("name") or provider
         axis = "speech to text" if space == "stt" else "text to speech"
-        self._log(Text(f"✓ {label} · {name} for {axis}", style="green"))
+        self._log(Text(f"● {label} · {name} for {axis}", style="green"))
         if meta.get("requires_key"):
             self._log(Text("Used on the next capture; /voice test to check it.", style="dim"))
 
@@ -8472,7 +8604,7 @@ class NovaApp(App):
 
         for name in screen.saved:
             self._log(
-                Text(f"✓ Saved the API key for {provider_display_name(name)}", style="green")
+                Text(f"● Saved the API key for {provider_display_name(name)}", style="green")
             )
             if name == "tavily":
                 # tools/web_tools.py builds its Tavily client at import time, so
@@ -8675,7 +8807,7 @@ class NovaApp(App):
                             pass
                     self._log(
                         Text(
-                            f"✓ Restored session model "
+                            f"● Restored session model "
                             f"{resumed_provider}:{self.model_name}.",
                             style="green",
                         )
@@ -8746,7 +8878,7 @@ class NovaApp(App):
             self._log(Text(f"⚠ {w}", style="yellow dim"))
         self._log(
             Text(
-                f"✓ Resumed session {resumed_id[:8]} — "
+                f"● Resumed session {resumed_id[:8]} — "
                 f"{len(recent_messages or [])} recent message(s) replayed.",
                 style="green",
             )
@@ -8853,7 +8985,7 @@ class NovaApp(App):
         )
 
     async def _run_tasks(self) -> None:
-        """Open the Background Tasks panel (same as clicking the ⚙ indicator)."""
+        """Open the Background Tasks panel (same as clicking the ● indicator)."""
         self._open_tasks_panel()
 
     async def _run_cowork(self, text: str) -> None:
@@ -8977,7 +9109,7 @@ class NovaApp(App):
             self._set_status("ready")
 
         if nova_md_path.exists():
-            self._log(Text(f"✓ NOVA.md ready → {nova_md_path}", style="green"))
+            self._log(Text(f"● NOVA.md ready → {nova_md_path}", style="green"))
 
     async def _run_trace(self, text: str) -> None:
         """Native LangSmith tracing: status / enable / disable / projects / traces."""
@@ -9004,7 +9136,7 @@ class NovaApp(App):
             cfg = configure_tracing(api_key=api_key, project_name=project_name, enable=True)
             if cfg.is_configured():
                 t = Text()
-                t.append("✓ LangSmith tracing enabled\n", style="green")
+                t.append("● LangSmith tracing enabled\n", style="green")
                 t.append(f"  project: {cfg.project_name}\n", style="dim")
                 t.append("  set LANGSMITH_API_KEY in .env to persist\n", style="dim")
                 self._log(t)
@@ -9020,7 +9152,7 @@ class NovaApp(App):
             os.environ["LANGSMITH_TRACING"] = "false"
             self._log(
                 Text(
-                    "✓ LangSmith tracing disabled for this session "
+                    "● LangSmith tracing disabled for this session "
                     "(set LANGSMITH_TRACING=false in .env to persist).",
                     style="green",
                 )
@@ -9316,7 +9448,7 @@ class NovaApp(App):
                 self.session_state.reset_conversation()
                 await self._transcript().remove_children()
                 self._show_home_banner()
-                self._log(Text("✓ Plan approved — starting fresh execution…", style="cyan"))
+                self._log(Text("● Plan approved — starting fresh execution…", style="cyan"))
                 _tid = getattr(self.session_state, "thread_id", "?")
                 self._log(
                     Text(
@@ -9629,7 +9761,7 @@ class NovaApp(App):
             card = Collapsible(
                 Static(body, classes="compact-body"),
                 title=(
-                    f"✓ Conversation compacted  ·  "
+                    f"● Conversation compacted  ·  "
                     f"{result.messages_before} → {result.messages_after} msgs  ·  "
                     f"~{result.tokens_saved:,} tokens saved"
                 ),
@@ -9657,7 +9789,7 @@ class NovaApp(App):
         sid = str(getattr(self.session_state, "session_id", "") or "")[:8]
         self._log(
             Text(
-                f"✓ Session saved — resume with:  nova --continue {sid}",
+                f"● Session saved — resume with:  nova --continue {sid}",
                 style="green",
             )
         )
@@ -9746,7 +9878,7 @@ class NovaApp(App):
 
         self._log(
             Text(
-                "✓ Started a new chat" + (" — previous conversation saved." if saved else "."),
+                "● Started a new chat" + (" — previous conversation saved." if saved else "."),
                 style="green",
             )
         )
@@ -9870,7 +10002,7 @@ class NovaApp(App):
 
         cfg.set_learning_enabled(want)
         t = Text(
-            f"✓ Nova learning {'enabled' if want else 'disabled'} and saved to config.\n",
+            f"● Nova learning {'enabled' if want else 'disabled'} and saved to config.\n",
             style="green",
         )
 
@@ -9886,7 +10018,7 @@ class NovaApp(App):
 
         if applied:
             t.append(
-                "✓ Applied to this session." if want else "✓ Stopped for this session.",
+                "● Applied to this session." if want else "● Stopped for this session.",
                 style="green",
             )
         else:
@@ -9924,7 +10056,7 @@ class NovaApp(App):
             return
 
         nova_config.set("reasoning_effort", val)
-        t = Text(f"✓ Reasoning effort set to '{val}' and saved to config.\n", style="green")
+        t = Text(f"● Reasoning effort set to '{val}' and saved to config.\n", style="green")
 
         # Hot-swap the model
         if self.session_state is not None:
@@ -9941,7 +10073,7 @@ class NovaApp(App):
                         self.token_tracker.set_model(self.model_name)
                     except Exception:  # noqa: BLE001
                         pass
-                t.append("✓ Model recreated with new reasoning effort dynamically!", style="green")
+                t.append("● Model recreated with new reasoning effort dynamically!", style="green")
             except Exception as e:
                 t.append(f"⚠ Could not recreate model dynamically: {e}", style="yellow")
                 t.append(
@@ -9998,7 +10130,7 @@ class NovaApp(App):
         instr.append(SteeringInstruction(label=label, instruction=args))
         self._log(
             Text(
-                f"✓ Added steering [{label}]: {args}\n"
+                f"● Added steering [{label}]: {args}\n"
                 f"  {len(instr)} active — injected into every turn.",
                 style="green",
             )
@@ -10384,7 +10516,7 @@ class NovaApp(App):
             _reset_index()
             idx = await asyncio.to_thread(_get_index, workspace)
             if idx is not None:
-                self._log(Text(f"✓ Code search index rebuilt for {workspace}", style="green"))
+                self._log(Text(f"● Code search index rebuilt for {workspace}", style="green"))
             else:
                 self._log(Text("Failed to build code search index.", style="red"))
         except Exception as ex:  # noqa: BLE001
@@ -10536,7 +10668,7 @@ class NovaApp(App):
             result = await run_tests(command=command, working_dir=working_dir, output_callback=_cb)
             t = Text()
             t.append(
-                "✓ Tests passed\n" if result.success else "✗ Tests failed\n",
+                "● Tests passed\n" if result.success else "✖ Tests failed\n",
                 style="green" if result.success else "red",
             )
             stats = []
@@ -10601,7 +10733,7 @@ class NovaApp(App):
                 ok = await manager.stop_process(pid)
                 self._log(
                     Text(
-                        (f"✓ Killed process {pid}" if ok else f"No process with PID {pid}"),
+                        (f"● Killed process {pid}" if ok else f"No process with PID {pid}"),
                         style="green" if ok else "yellow",
                     )
                 )
@@ -10611,7 +10743,7 @@ class NovaApp(App):
             ok = await manager.stop_by_name(arg)
             self._log(
                 Text(
-                    f"✓ Killed process '{arg}'" if ok else f"No process named '{arg}'",
+                    f"● Killed process '{arg}'" if ok else f"No process named '{arg}'",
                     style="green" if ok else "yellow",
                 )
             )
@@ -10629,7 +10761,7 @@ class NovaApp(App):
             self._log(
                 Text(
                     (
-                        f"✓ Killed '{info.name}' (PID {info.pid})"
+                        f"● Killed '{info.name}' (PID {info.pid})"
                         if ok
                         else "Failed to kill process"
                     ),
@@ -10667,7 +10799,7 @@ class NovaApp(App):
             self._log(
                 Text(
                     (
-                        f"✓ Restored {entry.original_path}"
+                        f"● Restored {entry.original_path}"
                         if ok
                         else f"Failed to restore {entry.original_path}"
                     ),
@@ -10738,8 +10870,8 @@ class NovaApp(App):
     # --- /ralph native widgets -------------------------------------------
     _RALPH_ITER_GLYPH = {
         "running": ("▶", "yellow"),
-        "done": ("✓", "green"),
-        "failed": ("✗", "red"),
+        "done": ("●", "green"),
+        "failed": ("✖", "red"),
     }
 
     def _ralph_mount(self, widget: Widget) -> None:
@@ -10806,9 +10938,9 @@ class NovaApp(App):
         table.add_column("Elapsed", justify="right")
         table.add_column("Task")
         glyphs = {
-            "running": ("⏳", "yellow"),
-            "completed": ("✓", "green"),
-            "failed": ("✗", "red"),
+            "running": ("◐", self._palette.tool_pending),
+            "completed": ("●", self._palette.tool_ok),
+            "failed": ("✖", self._palette.tool_fail),
         }
         for row in snap.rows:
             g, color = glyphs.get(row.status, ("•", "dim"))
@@ -11144,9 +11276,9 @@ class NovaApp(App):
         try:
             plan = cp.approve(run, int(rest.split(" ")[0]), store=store)
         except cp.CouncilApprovalError as exc:
-            self._log(Text(f"✗ {exc}", style="red"))
+            self._log(Text(f"✖ {exc}", style="red"))
             return
-        self._log(Text(f"✓ Plan approved — {run.approved_proposal_id}", "bold green"))
+        self._log(Text(f"● Plan approved — {run.approved_proposal_id}", "bold green"))
         self._log(Text(f"  saved to .nova/council/{run.id}/approved-plan.md", style="dim"))
         self._log(Text("Handing the approved plan to the coding agent…", "cyan"))
         # The executor is told the plan carries the user's authorization, so it
@@ -11214,17 +11346,17 @@ class NovaApp(App):
                     if label:
                         self._log(Text(f"  → {label}", style="cyan"))
                 elif name == "proposal.created":
-                    self._log(Text(f"    ✓ {payload['proposal_id']} — {payload['title']}", "dim"))
+                    self._log(Text(f"    ● {payload['proposal_id']} — {payload['title']}", "dim"))
                 elif name == "agent.failed":
                     # With the reason: "dropped out" alone leaves the user
                     # unable to tell a slow model from an unreachable one.
                     why = payload.get("reason") or "no reply"
-                    self._log(Text(f"    ✗ {payload['name']} — {why}", style="yellow"))
+                    self._log(Text(f"    ✖ {payload['name']} — {why}", style="yellow"))
                 elif name == "vote.tallied":
                     entropy = payload["tally"].get("entropy", 0.0)
                     self._log(Text(f"    ballots in · disagreement {entropy:.2f}", "dim"))
                 elif name == "council.failed":
-                    self._log(Text(f"✗ {payload['reason']}", style="red"))
+                    self._log(Text(f"✖ {payload['reason']}", style="red"))
                 elif name == "plans.selected":
                     latest = store.load(event["run_id"])
                     if latest is not None:
@@ -11335,7 +11467,7 @@ class NovaApp(App):
                 self._log(Text("Council server is not running.", style="yellow"))
                 return
             stop_chat_server()
-            self._log(Text("✓ Council server stopped.", style="green"))
+            self._log(Text("● Council server stopped.", style="green"))
             return
 
         if is_server_running():
@@ -11623,6 +11755,11 @@ class NovaApp(App):
                 self._finalize_tool(e.call_id, e.preview, e.full_output, is_error=e.is_error)
             else:
                 self._mark_tool_group_result(e.call_id, is_error=e.is_error, detail=e.preview)
+                if e.is_error:
+                    # Keep the untruncated output so the group can expand it
+                    # (see _set_tool_error_detail). Must run AFTER the mark,
+                    # which is what registers the entry's index.
+                    self._set_tool_error_detail(e.call_id, e.full_output)
             self._scroll_end()
         elif isinstance(e, ev.FileOp):
             # File ops are the result of their tool call. Write/edit (a dedicated
@@ -11635,7 +11772,9 @@ class NovaApp(App):
                 comp, body, base = self._tool_components.pop(e.call_id)
                 if self._last_tool is not None and self._last_tool[0] is comp:
                     self._last_tool = None
-                mark = "✗" if errored else "✓"
+                # A bullet, not ✓/✗: the emoji are painted by the terminal's own
+                # font, so /theme could not move them (see _render_tool_line).
+                mark = "•"
                 comp.title = f"{base}  {mark} {_esc(self._fileop_summary(rec))}".rstrip()
                 # Expand on failure (surface the error) AND on a successful change
                 # with a diff — these dedicated write/edit panels exist precisely
@@ -11675,15 +11814,18 @@ class NovaApp(App):
             # surface them on the live indicator above the input instead of
             # letting them scroll away in the transcript.
             if e.event_type == "nova_review_start":
-                self._set_nova_indicator(f"{e.icon} {e.message}", style=e.color)
+                self._set_nova_indicator(f"{e.icon} {e.message}", style=self._event_color(e.color))
                 return
             if e.event_type == "nova_review_complete":
                 # Show briefly, then fade so the indicator doesn't linger.
-                self._set_nova_indicator(f"{e.icon} {e.message}", style=e.color, auto_clear=4.0)
+                self._set_nova_indicator(
+                    f"{e.icon} {e.message}", style=self._event_color(e.color), auto_clear=4.0
+                )
                 return
 
-            t = Text(e.icon + " ", style=e.color)
-            t.append(e.message, style=e.color)
+            color = self._event_color(e.color)
+            t = Text(e.icon + " ", style=color)
+            t.append(e.message, style=color)
             # Map event_type (e.g. "nova_skill_refinement") to the CSS modifier
             # class ("nova-skill-refinement"): strip the leading "nova_"
             # namespace and convert underscores to hyphens so the per-event
@@ -11726,7 +11868,7 @@ class NovaApp(App):
             if getattr(self, "_detach_cancelling", False):
                 # The turn was cancelled by a Ctrl+B detach, not a real interrupt —
                 # the command is now running as a background task.
-                self._log(Text("⚙ Command moved to background — agent is idle.", style="cyan"))
+                self._log(Text("● Command moved to background — agent is idle.", style="cyan"))
             else:
                 self._log(Text("Interrupted.", style="yellow"))
         elif isinstance(e, ev.ContextOverflow):
@@ -12038,7 +12180,7 @@ class NovaApp(App):
                     name, args = ar.get("name", ""), ar.get("args", {})
                     if choice == "session":
                         apply_remember("session", name, args)
-                        self._log(Text(f"✓ Allowed `{name}` for this session.", style="green"))
+                        self._log(Text(f"● Allowed `{name}` for this session.", style="green"))
                     else:
                         rule = synthesize_rule(name, args)
                         out = await self.push_screen_wait(RememberRuleModal(rule))
@@ -12048,7 +12190,7 @@ class NovaApp(App):
                                 "always", name, args, target=out["target"], rule=edited
                             )
                             if res.saved_path is not None:
-                                self._log(Text(f"✓ Saved to {res.saved_path}", style="green"))
+                                self._log(Text(f"● Saved to {res.saved_path}", style="green"))
                             else:
                                 self._log(
                                     Text(
@@ -12070,7 +12212,7 @@ class NovaApp(App):
             if choice == "auto":
                 # Approve everything for the rest of this session.
                 self.session_state.auto_approve = True
-                self._log(Text("✓ Auto-approve enabled for this session.", style="green"))
+                self._log(Text("● Auto-approve enabled for this session.", style="green"))
             e.future.set_result(
                 {
                     "decisions": [{"type": "approve"} for _ in action_requests],

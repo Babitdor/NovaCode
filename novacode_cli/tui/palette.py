@@ -85,6 +85,14 @@ class FooterPalette:
     #: themeable, so ``/theme`` could never move it.
     user_label: str  # the "You" header
     agent_label: str  # the agent's own name header
+    #: Tool-call rendering. The category heading used to be a literal ``#7aa2f7``
+    #: and the status marks were emoji (⏳/✓/✗), neither of which ``/theme`` could
+    #: touch — the heading stayed tokyo-night blue under every palette, and the
+    #: emoji rendered in the terminal's own colour, not the theme's.
+    tool_heading: str  # the "Explored — 3 reads" category heading
+    tool_ok: str  # a succeeded call's bullet
+    tool_fail: str  # a failed call's bullet
+    tool_pending: str  # a still-running call's bullet
 
 
 def palette_for(theme: Theme) -> FooterPalette:
@@ -122,6 +130,14 @@ def palette_for(theme: Theme) -> FooterPalette:
         # every palette instead of collapsing into two shades of one hue.
         user_label=_hex(getattr(theme, "primary", "") or "#7aa2f7"),
         agent_label=_hex(getattr(theme, "accent", "") or "#bb9af7"),
+        # Tool calls: the heading takes the theme's primary (the same attribute
+        # the footer's model name uses, so the two read as one family), and the
+        # status bullets take the theme's own success/error/warning so a failed
+        # call is the same red as a failed context meter.
+        tool_heading=_hex(getattr(theme, "primary", "") or "#7aa2f7"),
+        tool_ok=_hex(getattr(theme, "success", "") or "#9ece6a"),
+        tool_fail=_hex(getattr(theme, "error", "") or "#f7768e"),
+        tool_pending=_hex(getattr(theme, "warning", "") or "#e0af68"),
     )
 
 

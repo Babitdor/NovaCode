@@ -12,7 +12,7 @@ Usage::
 
     from novacode_cli.events import nova_event_log
 
-    nova_event_log.append(("nova_security", "🛡", "yellow", "Blocked spoofed domain"))
+    nova_event_log.append(("nova_security", "⛨", "yellow", "Blocked spoofed domain"))
 
 The list is cleared after each drain by ``iterate_agent_events`` in
 ``core/agent_loop.py``.
@@ -91,4 +91,4 @@ def emit_tool_output(call_id: str, text: str) -> None:
         try:
             cb(call_id, text)
         except Exception:
-            pass
+            pass

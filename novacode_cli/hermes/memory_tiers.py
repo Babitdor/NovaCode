@@ -36,7 +36,7 @@ from novacode_cli.memory.limits import MAX_MEMORY_CHARS
 logger = logging.getLogger("nova.hermes.memory_tiers")
 
 
-def _emit_memory_event(message: str, icon: str = "📝") -> None:
+def _emit_memory_event(message: str, icon: str = "●") -> None:
     """Surface a memory-tier note without printing to the console.
 
     These writes run inside Hermes's *out-of-band* review, so a direct
@@ -136,7 +136,7 @@ def compact_memory_file(path: Path, max_chars: int = MAX_MEMORY_CHARS) -> bool:
 
     _emit_memory_event(
         f"Compacted {path.name} ({len(content)} → {len(truncated)} chars)",
-        icon="📦",
+        icon="▣",
     )
     return True
 
@@ -340,7 +340,7 @@ def record_habit(agent_dir: Path, bullets: str) -> None:
     entry = f"\n## Review — {timestamp}\n\n{deduped}\n"
     habits_file.write_text(before.rstrip() + "\n" + entry + after, encoding="utf-8")
 
-    _emit_memory_event("Recorded good habit to HABITS.md", icon="✨")
+    _emit_memory_event("Recorded good habit to HABITS.md", icon="✦")
     compact_memory_file(habits_file)
 
 

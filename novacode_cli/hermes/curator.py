@@ -42,9 +42,9 @@ def _emit(event_type: str, message: str) -> None:
         from novacode_cli.events import nova_event_log
 
         icons = {
-            "nova_skill_archived": ("🗄", "yellow"),
-            "nova_skill_overlap": ("🔀", "cyan"),
-            "nova_skill_topused": ("⭐", "cyan"),
+            "nova_skill_archived": ("▤", "yellow"),
+            "nova_skill_overlap": ("⇄", "cyan"),
+            "nova_skill_topused": ("★", "cyan"),
         }
         icon, color = icons.get(event_type, ("•", "cyan"))
         nova_event_log.append((event_type, icon, color, message))
@@ -145,7 +145,7 @@ async def run_curation(
             skills.pop(name, None)
             _emit(
                 "nova_skill_archived",
-                f"🗄 Curator archived unused skill '{name}' "
+                f"▤ Curator archived unused skill '{name}' "
                 f"(0 invocations, {age_days:.0f}d old) — recoverable",
             )
 
@@ -159,7 +159,7 @@ async def run_curation(
                 overlaps.append({"a": items[i][0], "b": items[j][0], "score": round(score, 2)})
                 _emit(
                     "nova_skill_overlap",
-                    f"🔀 Curator: '{items[i][0]}' and '{items[j][0]}' overlap "
+                    f"⇄ Curator: '{items[i][0]}' and '{items[j][0]}' overlap "
                     f"({score:.0%}) — consider merging",
                 )
 
@@ -173,7 +173,7 @@ async def run_curation(
     top_used = top_used[:_TOP_USED_N]
     if top_used:
         summary = ", ".join(f"{t['name']} ({t['invocations']})" for t in top_used)
-        _emit("nova_skill_topused", f"⭐ Most-used skills: {summary}")
+        _emit("nova_skill_topused", f"★ Most-used skills: {summary}")
 
     # Continuous tracking: append to the curation log.
     if archived or overlaps or top_used:

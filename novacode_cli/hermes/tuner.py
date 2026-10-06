@@ -200,7 +200,7 @@ class ThresholdTuner:
 def _emit_tuned_event(message: str) -> None:
     """Surface a threshold-tuned notice through the TUI-safe event log."""
     try:
-        nova_event_log.append(("nova_threshold_tuned", "🎚", "cyan", message))
+        nova_event_log.append(("nova_threshold_tuned", "⇅", "cyan", message))
         cap_event_log()
     except Exception:
         logger.exception("Failed to emit threshold-tuned event")
