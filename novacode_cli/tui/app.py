@@ -4957,6 +4957,21 @@ class NovaApp(App):
                 line.append_text(self._ctx_gauge(p, pal))
                 line.append(f"  {p:.0f}%", style=f"bold {ctx_color}")
 
+        if self.token_tracker is not None:
+            cache_summary_fn = getattr(self.token_tracker, "cache_summary", None)
+            cache_summary = (
+                cache_summary_fn(compact=self._narrow or self._compact)
+                if callable(cache_summary_fn)
+                else None
+            )
+            if cache_summary:
+                _divider()
+                hit_rate = getattr(self.token_tracker, "cache_hit_percentage", None)
+                cache_color = (
+                    pal.success if hit_rate else pal.dim
+                )
+                line.append(cache_summary, style=f"bold {cache_color}")
+
         # Nova learning status (review cycle).
         if self._nova_status:
             _divider()

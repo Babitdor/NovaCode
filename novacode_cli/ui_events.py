@@ -179,6 +179,7 @@ class UsageUpdate:
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
     session_tokens: int | None = None
+    session_input_tokens: int | None = None
 
 
 @dataclass

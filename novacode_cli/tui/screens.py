@@ -2493,8 +2493,6 @@ class ContextScreen(ModalScreen[None]):
             status += " · threshold reached"
         output = int(getattr(tracker, "last_output", 0))
         session_total = int(getattr(tracker, "session_total_tokens", 0))
-        cache_read = int(getattr(tracker, "last_cache_read", 0))
-        cache_write = int(getattr(tracker, "last_cache_creation", 0))
         metrics = Text()
         metrics.append("Session total  ", style="dim")
         metrics.append(f"{session_total:,} tokens", style="bold")
@@ -2507,11 +2505,9 @@ class ContextScreen(ModalScreen[None]):
             style="dim",
         )
         metrics.append(status, style="yellow" if compact_pct and pct >= compact_pct else "dim")
-        if cache_read or cache_write:
-            metrics.append(
-                f"\nLast call prompt cache  ·  {cache_read:,} read  ·  {cache_write:,} written",
-                style="dim",
-            )
+        cache_summary = tracker.cache_summary() if hasattr(tracker, "cache_summary") else None
+        if cache_summary:
+            metrics.append(f"\n{cache_summary}", style="dim")
         self.query_one("#context-metrics", Static).update(metrics)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

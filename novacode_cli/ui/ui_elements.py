@@ -505,9 +505,12 @@ class TokenTracker:
         # colour for the rest of the run. A count has no ceiling to exceed.
         self.session_total_tokens = 0
 
-        # Prompt-caching breakdown (Anthropic only, 0 for other providers)
+        # Prompt-caching usage reported by the provider across this run.
         self.last_cache_read = 0  # tokens read from prompt cache this turn
         self.last_cache_creation = 0  # tokens written to prompt cache this turn
+        self.session_input_tokens = 0
+        self.session_cache_read_tokens = 0
+        self.session_cache_creation_tokens = 0
 
         # Whether we've received at least one real API response
         self.has_api_data = False
@@ -566,6 +569,9 @@ class TokenTracker:
         self._last_breakdown = None
         if reset_session:
             self.session_total_tokens = 0
+            self.session_input_tokens = 0
+            self.session_cache_read_tokens = 0
+            self.session_cache_creation_tokens = 0
 
     def add(
         self,
@@ -575,6 +581,7 @@ class TokenTracker:
         cache_read_tokens: int = 0,
         cache_creation_tokens: int = 0,
         session_tokens: int | None = None,
+        session_input_tokens: int | None = None,
     ) -> None:
         """Add tokens from an API response.
 
@@ -592,11 +599,47 @@ class TokenTracker:
         self.last_cache_read = cache_read_tokens
         self.last_cache_creation = cache_creation_tokens
         self.has_api_data = True
+        self.session_input_tokens += (
+            input_tokens if session_input_tokens is None else session_input_tokens
+        )
+        self.session_cache_read_tokens += cache_read_tokens
+        self.session_cache_creation_tokens += cache_creation_tokens
         # Context describes the latest call; session usage includes every call
         # in a tool loop, with repeated streaming snapshots counted only once.
         self.session_total_tokens += (
             input_tokens + output_tokens if session_tokens is None else session_tokens
         )
+
+    @property
+    def cache_hit_percentage(self) -> int | None:
+        """Provider-reported prompt-cache reads as a share of input tokens."""
+        if self.session_input_tokens <= 0 or not (
+            self.session_cache_read_tokens or self.session_cache_creation_tokens
+        ):
+            return None
+        return round(self.session_cache_read_tokens / self.session_input_tokens * 100)
+
+    @staticmethod
+    def _format_token_count(tokens: int) -> str:
+        """Compact cumulative counts for the status bar and context panel."""
+        if tokens >= 1_000_000:
+            value = f"{tokens / 1_000_000:.1f}".rstrip("0").rstrip(".")
+            return f"{value}M"
+        if tokens >= 1_000:
+            value = f"{tokens / 1_000:.1f}".rstrip("0").rstrip(".")
+            return f"{value}K"
+        return f"{tokens:,}"
+
+    def cache_summary(self, *, compact: bool = False) -> str | None:
+        """Format actual provider cache usage; unavailable providers show nothing."""
+        hit_rate = self.cache_hit_percentage
+        if hit_rate is None:
+            return None
+        if compact:
+            return f"CACHE {hit_rate}%"
+        read = self._format_token_count(self.session_cache_read_tokens)
+        written = self._format_token_count(self.session_cache_creation_tokens)
+        return f"CACHE {hit_rate}% hit · {read} read / {written} write"
 
     def increment_user_messages(self) -> None:
         """Increment user message count."""

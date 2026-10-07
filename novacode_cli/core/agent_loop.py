@@ -296,7 +296,7 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     _streamed_pending = False  # whether TextDelta(s) were emitted for the buffer
 
     captured = ev.UsageUpdate()
-    usage_calls: dict[object, tuple[int, int]] = {}
+    usage_calls: dict[object, tuple[int, int, int, int]] = {}
     compacted = False
 
     # Drain any Nova events queued by the middleware (review cycles, skill
@@ -659,9 +659,13 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                         usage = getattr(message, "usage_metadata", None)
                         if usage:
                             details = usage.get("input_token_details") or {}
-                            cache_read = details.get(
-                                "cache_read", usage.get("cache_read_input_tokens", 0)
-                            )
+                            cache_read = details.get("cache_read")
+                            if cache_read is None:
+                                cache_read = details.get("priority_cache_read")
+                            if cache_read is None:
+                                cache_read = details.get("flex_cache_read")
+                            if cache_read is None:
+                                cache_read = usage.get("cache_read_input_tokens", 0)
                             cache_create = details.get(
                                 "cache_creation", usage.get("cache_creation_input_tokens", 0)
                             )
@@ -678,15 +682,26 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                                     metadata.get("langgraph_node"),
                                     metadata.get("langgraph_checkpoint_ns"),
                                 )
-                                old_input, old_output = usage_calls.get(call_id, (0, 0))
-                                usage_calls[call_id] = (
-                                    max(old_input, actual), max(old_output, out)
+                                old_input, old_output, old_cache_read, old_cache_create = (
+                                    usage_calls.get(call_id, (0, 0, 0, 0))
                                 )
-                                captured.input_tokens, captured.output_tokens = usage_calls[call_id]
-                                captured.cache_read_tokens = cache_read
-                                captured.cache_creation_tokens = cache_create
+                                usage_calls[call_id] = (
+                                    max(old_input, actual),
+                                    max(old_output, out),
+                                    max(old_cache_read, int(cache_read or 0)),
+                                    max(old_cache_create, int(cache_create or 0)),
+                                )
+                                call_usage = usage_calls[call_id]
+                                captured.input_tokens, captured.output_tokens = call_usage[:2]
+                                captured.cache_read_tokens = sum(u[2] for u in usage_calls.values())
+                                captured.cache_creation_tokens = sum(
+                                    u[3] for u in usage_calls.values()
+                                )
                                 captured.session_tokens = sum(
-                                    i + o for i, o in usage_calls.values()
+                                    i + o for i, o, _, _ in usage_calls.values()
+                                )
+                                captured.session_input_tokens = sum(
+                                    i for i, _, _, _ in usage_calls.values()
                                 )
 
                     if not blocks:

@@ -304,6 +304,8 @@ async def execute_task(  # type: ignore
 
     captured_cache_creation_tokens = 0
 
+    captured_session_input_tokens = None
+
     current_todos = None
 
     _prev_auto_approve: bool | None = None
@@ -1136,6 +1138,8 @@ async def execute_task(  # type: ignore
             elif isinstance(event, ev.UsageUpdate):
                 captured_session_tokens = event.session_tokens
 
+                captured_session_input_tokens = event.session_input_tokens
+
                 captured_input_tokens = max(captured_input_tokens, event.input_tokens)
 
                 captured_output_tokens = max(captured_output_tokens, event.output_tokens)
@@ -1286,6 +1290,7 @@ async def execute_task(  # type: ignore
 
                 cache_creation_tokens=captured_cache_creation_tokens,
                 session_tokens=captured_session_tokens,
+                session_input_tokens=captured_session_input_tokens,
 
             )
 

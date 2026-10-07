@@ -818,7 +818,7 @@ class Settings:
     langsmith_workspace_id: str | None = None
     langsmith_tracing_enabled: bool = False
 
-    version: str = "1.4.0"
+    version: str = "1.0.1"
 
     def __repr__(self) -> str:
         """The settings, with every credential masked.
