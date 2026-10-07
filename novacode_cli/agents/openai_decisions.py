@@ -113,3 +113,32 @@ class OpenAIDecisionsClient:
         # Probabilities are optional diagnostics; API versions can represent them
         # differently. The validated choice and confidence determine routing.
         return {"answers": {"route": {"choice": choice, "confidence": confidence}}}
+
+    def ask_choice(
+        self,
+        state: dict[str, Any],
+        *,
+        name: str,
+        instructions: str,
+        choices: dict[str, str],
+    ) -> dict[str, Any]:
+        """Ask a named, constrained choice question and validate its answer."""
+        answer = self._request(
+            state,
+            [
+                {
+                    "type": "choice",
+                    "name": name,
+                    "instructions": instructions,
+                    "choices": [
+                        {"value": value, "description": description}
+                        for value, description in choices.items()
+                    ],
+                }
+            ],
+        )[name]
+        choice = answer.get("choice")
+        if not isinstance(choice, str) or choice not in choices:
+            raise ValueError("OpenAI Decisions chose an unknown option")
+        confidence = _probability(answer.get("confidence"))
+        return {"choice": choice, "confidence": confidence}

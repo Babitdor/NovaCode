@@ -12,6 +12,7 @@ Exit codes: ``0`` success, ``1`` error during execution, ``2`` max-turns hit.
 from __future__ import annotations
 
 import contextlib
+import asyncio
 import time
 from pathlib import Path
 
@@ -31,22 +32,24 @@ EXIT_ERROR = 1
 EXIT_MAX_TURNS = 2
 
 
-def _resolve_interrupt(event: ev.InterruptRequest, session_state, *, deny_tools: bool) -> None:
+async def _resolve_interrupt(event: ev.InterruptRequest, session_state, *, deny_tools: bool) -> None:
     """Resolve a human-in-the-loop interrupt without a human.
 
-    Tool interrupts auto-approve (honouring the policy/plan-mode gate via
-    :func:`evaluate_tool_actions`, which short-circuits to all-approve when
-    ``auto_approve`` is set) unless ``deny_tools`` forces a fail-closed reject.
+    Tool interrupts follow :func:`evaluate_tool_actions`, including optional
+    decision-model review for auto-approve sessions, unless ``deny_tools``
+    forces a fail-closed reject.
     Question/plan interrupts resolve to the benign default — there is nobody to
     answer them. Always resolves in ``finally`` so the agent loop never hangs.
     """
     try:
         if event.kind == "tool" and not deny_tools:
             payload = event.payload if isinstance(event.payload, dict) else {}
-            decisions = evaluate_tool_actions(
+            decisions = await asyncio.to_thread(
+                evaluate_tool_actions,
                 payload,
                 session_state,
                 plan_mode_enabled=getattr(session_state, "plan_mode_enabled", False),
+                user_request=getattr(session_state, "headless_prompt", "") or "",
             )
             # A None verdict means "ask the user" — impossible headless, so
             # approve (auto_approve is forced on for non-deny headless runs).
@@ -129,7 +132,7 @@ async def run_headless(  # noqa: PLR0912, PLR0915 — single linear event loop
             out.handle_event(event)
 
             if isinstance(event, ev.InterruptRequest):
-                _resolve_interrupt(event, session_state, deny_tools=deny_tools)
+                await _resolve_interrupt(event, session_state, deny_tools=deny_tools)
                 continue
 
             if isinstance(event, ev.UsageUpdate):

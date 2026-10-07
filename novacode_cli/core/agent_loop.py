@@ -840,12 +840,12 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
 
                     if kind == "tool":
                         try:
-                            _policy_resolutions = evaluate_tool_actions(
+                            _policy_resolutions = await asyncio.to_thread(
+                                evaluate_tool_actions,
                                 payload,
                                 session_state,
-                                plan_mode_enabled=getattr(
-                                    session_state, "plan_mode_enabled", False
-                                ),
+                                plan_mode_enabled=getattr(session_state, "plan_mode_enabled", False),
+                                user_request=message_content,
                             )
                         except Exception:  # noqa: BLE001 — never break the turn
                             _policy_resolutions = None
@@ -856,6 +856,39 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                             hitl_response[interrupt_id] = {"decisions": _decided}
                             if any(d.get("type") == "reject" for d in _decided):
                                 any_rejected = True
+                            action_requests = (
+                                payload.get("action_requests", [])
+                                if isinstance(payload, dict)
+                                else []
+                            )
+                            for index, decision in enumerate(_decided):
+                                source = decision.get("approval_source")
+                                if source not in {"decision_model", "safety_filter", "unavailable"}:
+                                    continue
+                                action = (
+                                    action_requests[index]
+                                    if index < len(action_requests)
+                                    and isinstance(action_requests[index], dict)
+                                    else {}
+                                )
+                                approved = decision.get("type") == "approve"
+                                action_name = action.get("name", "tool action")
+                                if approved:
+                                    model_name = decision.get("decision_model", "Decision model")
+                                    message = f"Decision model {model_name} approved {action_name}"
+                                    icon, color = "✓", "green"
+                                else:
+                                    if source == "safety_filter":
+                                        message = f"Safety filter rejected {action_name}"
+                                    elif source == "unavailable":
+                                        message = f"Decision model unavailable; rejected {action_name}"
+                                    else:
+                                        model_name = decision.get("decision_model", "Decision model")
+                                        message = f"Decision model {model_name} rejected {action_name}"
+                                    icon, color = "✗", "red"
+                                    if decision.get("reason"):
+                                        message += f" · {decision['reason']}"
+                                yield ev.ContextMessage(message, icon=icon, color=color)
                             continue
 
                     fut: asyncio.Future = loop.create_future()

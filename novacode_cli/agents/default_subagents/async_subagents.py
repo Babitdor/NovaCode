@@ -259,6 +259,28 @@ The agent is strictly read-only: it inspects files and returns a structured
 findings report to the planner. It never edits, creates, or deletes anything.
 """
 
+BUG_INVESTIGATION_AGENT_DESCRIPTION = """An async agent that traces a reported bug to a likely root cause.
+
+Use this agent when:
+- A bug is intermittent, spans several modules, or needs substantial investigation
+- You want evidence from the implementation and tests before changing code
+- You can continue other work while the investigation runs
+
+It is read-only and returns ranked root-cause hypotheses, relevant file/line references,
+reproduction clues, and a minimal fix direction. It does not modify files.
+"""
+
+PERFORMANCE_AUDIT_AGENT_DESCRIPTION = """An async agent that investigates performance and resource bottlenecks.
+
+Use this agent when:
+- The application is slow, memory-heavy, or resource usage grows over time
+- You need to trace latency, blocking work, repeated scans, task cleanup, or memory retention
+- You want a separate evidence-based audit while implementation continues
+
+It is read-only and returns ranked findings with code references, likely impact, and
+measurement or optimization suggestions. It does not modify files or run benchmarks.
+"""
+
 
 # ── Agent builders ─────────────────────────────────────────────────────────────
 
@@ -373,6 +395,26 @@ def build_plan_scout_agent() -> AsyncSubAgent:
     )
 
 
+def build_bug_investigation_agent() -> AsyncSubAgent:
+    """Build the background root-cause investigation specialist."""
+    return _build_agent_spec(
+        name="bug-investigation-agent",
+        graph_id="bug-investigation-agent",
+        description=BUG_INVESTIGATION_AGENT_DESCRIPTION,
+        port=2024,
+    )
+
+
+def build_performance_audit_agent() -> AsyncSubAgent:
+    """Build the background performance and resource audit specialist."""
+    return _build_agent_spec(
+        name="performance-audit-agent",
+        graph_id="performance-audit-agent",
+        description=PERFORMANCE_AUDIT_AGENT_DESCRIPTION,
+        port=2024,
+    )
+
+
 def _user_agent_spec(name: str, description: str) -> AsyncSubAgent:
     """Build the spec for a user-created async subagent.
 
@@ -456,5 +498,7 @@ def retrieve_async_subagents() -> list[AsyncSubAgent]:
         build_security_audit_agent(),
         build_test_runner_agent(),
         build_research_agent(),
+        build_bug_investigation_agent(),
+        build_performance_audit_agent(),
         *_user_agent_specs(),
     ]

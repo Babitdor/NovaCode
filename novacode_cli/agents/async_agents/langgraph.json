@@ -8,7 +8,9 @@
     "plan-scout-agent": "./plan_scout.py:graph",
     "security-audit-agent": "./security_audit.py:graph",
     "test-runner-agent": "./test_runner.py:graph",
-    "research-agent": "./research.py:graph"
+    "research-agent": "./research.py:graph",
+    "bug-investigation-agent": "./bug_investigation.py:graph",
+    "performance-audit-agent": "./performance_audit.py:graph"
   },
   "dependencies": [
     "."

@@ -2205,6 +2205,7 @@ class SettingsScreen(ModalScreen[None]):
         "submit_on_enter": True,
         "autocomplete_enabled": True,
         "low_resource_mode": False,
+        "auto_approve_decisions_enabled": False,
     }
 
     def __init__(self) -> None:
@@ -2255,6 +2256,19 @@ class SettingsScreen(ModalScreen[None]):
                     yield Switch(value=self._preference("low_resource_mode"), id="low-resource-toggle")
                     yield Static("Lower active refresh rate", classes="settings-label")
                 yield Static("Use 5 Hz status updates during a turn instead of 10 Hz.", classes="settings-description")
+
+                yield Static("AUTOMATION", classes="settings-section")
+                with Horizontal(classes="settings-row"):
+                    yield Switch(
+                        value=self._preference("auto_approve_decisions_enabled"),
+                        id="auto-approve-decisions-toggle",
+                    )
+                    yield Static("Ask a decision model in auto-approve mode", classes="settings-label")
+                yield Static(
+                    "The configured Decisions model approves or rejects actions that need review. "
+                    "Policy denials stay blocked; configure the model in /model → Decisions.",
+                    classes="settings-description",
+                )
             with Horizontal(id="modal-buttons"):
                 yield Button("Close", id="close")
 
@@ -2273,6 +2287,7 @@ class SettingsScreen(ModalScreen[None]):
             "submit-enter-toggle": "submit_on_enter",
             "autocomplete-toggle": "autocomplete_enabled",
             "low-resource-toggle": "low_resource_mode",
+            "auto-approve-decisions-toggle": "auto_approve_decisions_enabled",
         }
         key = key_by_id.get(event.switch.id)
         if key is None:

@@ -516,6 +516,15 @@ class NovaConfig:
         self._config["tool_verdicts_enabled"] = bool(enabled)
         self._save()
 
+    def get_auto_approve_decisions_enabled(self) -> bool:
+        """Whether auto-approve asks the configured decision model for approval."""
+        return _config_bool(self._config.get("auto_approve_decisions_enabled", False))
+
+    def set_auto_approve_decisions_enabled(self, enabled: bool) -> None:
+        """Persist the opt-in decision-model approval setting."""
+        self._config["auto_approve_decisions_enabled"] = bool(enabled)
+        self._save()
+
     def get_tool_verdict_endpoint(self) -> str:
         """System One endpoint the verdicts are asked of."""
         value = self._config.get("tool_verdict_endpoint")

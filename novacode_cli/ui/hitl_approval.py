@@ -86,6 +86,7 @@ def evaluate_tool_actions(
     session_state,
     *,
     plan_mode_enabled: bool = False,
+    user_request: str = "",
 ) -> list[dict | None]:
     """Evaluate tool actions against policy and return decisions.
 
@@ -125,12 +126,6 @@ def evaluate_tool_actions(
                 decisions.append({"type": "reject", "reason": f"Write blocked in plan mode: {tool_name}"})
                 continue
 
-        # Auto-approve: skip all prompts (checked before policy so auto_approve
-        # short-circuits even policy-denied actions — the user explicitly opted in).
-        if getattr(session_state, "auto_approve", False) and policy.evaluate(tool_name, args).tier != "deny":
-            decisions.append({"type": "approve"})
-            continue
-
         # Policy evaluation: allow → approve, deny → reject, ask → None (HITL)
         try:
             verdict = policy.evaluate(tool_name, args)
@@ -142,7 +137,40 @@ def evaluate_tool_actions(
                 decisions.append({"type": "reject", "reason": f"Policy denied: {tool_name}"})
                 continue
         except Exception:  # noqa: BLE001 — never break the turn
-            pass
+            tier = "ask"
+
+        # Auto-approve keeps hard denials authoritative. Existing policy allows
+        # are still immediate; only actions that normally ask the user are
+        # delegated when the opt-in setting is enabled.
+        if getattr(session_state, "auto_approve", False):
+            if tier == "allow":
+                decisions.append({"type": "approve"})
+                continue
+            try:
+                from novacode_cli.config.nova_config import NovaConfig
+
+                use_decision_model = NovaConfig().get_auto_approve_decisions_enabled()
+            except Exception:  # noqa: BLE001 — preserve the legacy auto mode
+                use_decision_model = False
+            if use_decision_model:
+                from novacode_cli.agents.approval_decisions import decide_tool_approval
+
+                model_name = NovaConfig().get_tool_verdict_model()
+                verdict = decide_tool_approval(
+                    tool_name, args, user_request=user_request
+                )
+                result = {
+                    "type": "approve" if verdict["decision"] == "approve" else "reject",
+                    "approval_source": verdict["source"],
+                }
+                if verdict["source"] == "decision_model":
+                    result["decision_model"] = model_name
+                result["reason"] = verdict["reason"]
+                decisions.append(result)
+                continue
+            if tier != "deny":
+                decisions.append({"type": "approve"})
+                continue
 
         # Check session allow rules (remembered for this session)
         try:

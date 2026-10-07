@@ -653,8 +653,13 @@ def get_system_prompt(
         The system prompt string (without NOVA.md content)
     """
     shell_info = _get_shell_platform_info(sandbox_type, exec_sandbox=exec_sandbox)
+    from novacode_cli.agents.default_subagents.async_subagents import async_agents_usable
 
-    return render_template("core_agent_system.jinja", **shell_info)
+    return render_template(
+        "core_agent_system.jinja",
+        **shell_info,
+        has_async_agents=async_agents_usable(),
+    )
 
 
 def _harden_subagent_specs(
