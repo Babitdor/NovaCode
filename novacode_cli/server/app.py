@@ -269,7 +269,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(
     title="Nova Agent API",
-    version="1.0.0",
+    version="1.4.0",
     lifespan=lifespan,
 )
 
