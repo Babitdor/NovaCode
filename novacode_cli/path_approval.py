@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import sys
 import warnings
 from pathlib import Path
 
@@ -174,6 +175,18 @@ class PathApprovalManager:
         return self._approved_paths.copy()
 
     async def prompt_for_approval(self, path: Path) -> bool:
+        """Use the native startup screen when attached to an interactive terminal."""
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            from novacode_cli.tui.workspace_approval import WorkspaceApprovalApp
+
+            choice = await WorkspaceApprovalApp(path).run_async()
+            if choice not in {"recursive", "only"}:
+                return False
+            await asyncio.to_thread(self.approve_path, path, recursive=choice == "recursive")
+            return True
+        return await self._prompt_for_approval_text(path)
+
+    async def _prompt_for_approval_text(self, path: Path) -> bool:
         """Prompt user to approve a path.
 
         Args:
