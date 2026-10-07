@@ -33,7 +33,6 @@
 - **`OutputTail` extracted to `novacode_cli/tui/output_buffer.py`**: Self-contained (no TUI imports) so the bounded buffer can be tested and reused independently of the app that consumes it
 - **Test coverage**: `tests/test_resource_efficiency.py` pins the thread-pool caps, lazy voice loading, the opt-in banner, and the buffer ceilings; `tests/test_model_router.py` covers route selection, fallback, and config round-trips
 - **Measurement scripts**: `scripts/benchmark_idle.py` measures an idle process, `scripts/verify_resource_efficiency.py` checks the claims against a running build, and `scripts/mutate_resource_efficiency.py` re-injects each defect to prove the tests are not vacuous
-- **Documentation**: `Performance-Spec.md` states the acceptance criteria the work was implemented against and `Performance-Evidence.md` records what was measured against them - including that the originally reported freeze was not reproduced, so the fix is not claimed to resolve it
 
 ---
 
