@@ -32,7 +32,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from langchain.agents.middleware.types import AgentMiddleware
+from langchain.agents.middleware.types import AgentMiddleware, AgentState
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -152,6 +152,19 @@ class ModelRouter:
         is configured but never enabled should not touch the keychain.
         """
         if self._client is None:
+            from novacode_cli.agents.openai_decisions import (
+                OPENAI_DECISIONS_ENDPOINT,
+                OpenAIDecisionsClient,
+            )
+
+            if self._config.get_router_decision_endpoint() == OPENAI_DECISIONS_ENDPOINT:
+                from novacode_cli.config.credentials import credential_value
+
+                self._client = OpenAIDecisionsClient(
+                    model=self._config.get_router_decision_model(),
+                    api_key=credential_value("OPENAI_API_KEY"),
+                )
+                return self._client
             from novacode_cli.agents.tool_verdicts import SystemOneClient
 
             self._client = SystemOneClient(
@@ -202,6 +215,11 @@ class ModelRouter:
             return self._fallback("no message to classify")
 
         try:
+            from novacode_cli.agents.openai_decisions import OpenAIDecisionsClient
+
+            client = self._decision_client()
+            if isinstance(client, OpenAIDecisionsClient):
+                return self._interpret(client.ask_route({"messages": state}, criteria), criteria)
             # Imported here rather than at module scope so a missing dependency
             # degrades to "routing unavailable" instead of breaking the import of
             # every module that touches the agent.
@@ -247,10 +265,20 @@ class ModelRouter:
             probabilities = {
                 str(k): float(v) for k, v in (answer.get("probabilities") or {}).items()
             }
-        except (KeyError, TypeError, ValueError) as exc:
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
             logger.warning("Unreadable routing response; using the default route", exc_info=True)
             return self._fallback(f"unreadable response: {type(exc).__name__}")
 
+        import math
+
+        if (
+            not math.isfinite(confidence)
+            or not 0 <= confidence <= 1
+            or any(
+                not math.isfinite(value) or not 0 <= value <= 1 for value in probabilities.values()
+            )
+        ):
+            return self._fallback("invalid classifier probability")
         if choice not in criteria:
             return self._fallback(f"classifier chose unknown route {choice!r}")
 
@@ -308,6 +336,12 @@ def build_route_model(route: dict[str, Any]) -> BaseChatModel | None:
     return built
 
 
+class RouterState(AgentState):
+    """Persist the selected route in the compiled graph's checkpoint schema."""
+
+    model_route: str | None
+
+
 class ModelRouterMiddleware(AgentMiddleware):
     """Run each turn on the model the router chose for it.
 
@@ -318,14 +352,14 @@ class ModelRouterMiddleware(AgentMiddleware):
     for no benefit, since the request has not changed.
     """
 
+    state_schema = RouterState
+
     def __init__(self, router: ModelRouter) -> None:
         """Bind the middleware to a router."""
         super().__init__()
         self._router = router
-        #: The decision for the run in flight. Set in ``before_agent``, read in
-        #: ``wrap_model_call``. A single slot is correct because a run is
-        #: sequential; a concurrent run would overwrite it, and the worst case is
-        #: one turn routed by the other's decision.
+        #: Compatibility for direct calls without a ModelRequest state. Compiled
+        #: runs read their checkpoint route, so simultaneous threads stay isolated.
         self._current: RouteDecision | None = None
 
     def before_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
@@ -333,8 +367,6 @@ class ModelRouterMiddleware(AgentMiddleware):
         messages = state.get("messages", []) if isinstance(state, dict) else []
         decision = self._router.decide(messages)
         self._current = decision
-        if decision.route_id is None:
-            return None
         return {"model_route": decision.route_id}
 
     def _model_for_current_route(self) -> BaseChatModel | None:
@@ -344,9 +376,20 @@ class ModelRouterMiddleware(AgentMiddleware):
             return None
         return self._router.model_for(decision.route_id)
 
+    async def abefore_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
+        """Keep decision HTTP requests and credential reads off the event loop."""
+        import asyncio
+
+        return await asyncio.to_thread(self.before_agent, state, runtime)
+
     def wrap_model_call(self, request: Any, handler: Any) -> Any:
         """Run the call on the routed model when one was chosen."""
-        model = self._model_for_current_route()
+        state = getattr(request, "state", None)
+        model = (
+            (self._router.model_for(state["model_route"]) if state.get("model_route") else None)
+            if isinstance(state, dict)
+            else self._model_for_current_route()
+        )
         return handler(request if model is None else request.override(model=model))
 
     async def awrap_model_call(self, request: Any, handler: Any) -> Any:
@@ -358,8 +401,10 @@ class ModelRouterMiddleware(AgentMiddleware):
         """
         import asyncio
 
-        decision = self._current
-        if decision is None or decision.route_id is None:
-            return await handler(request)
-        model = await asyncio.to_thread(self._model_for_current_route)
+        state = getattr(request, "state", None)
+        if isinstance(state, dict):
+            route_id = state.get("model_route")
+            model = await asyncio.to_thread(self._router.model_for, route_id) if route_id else None
+        else:
+            model = await asyncio.to_thread(self._model_for_current_route)
         return await handler(request if model is None else request.override(model=model))

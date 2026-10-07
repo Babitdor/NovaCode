@@ -7,9 +7,10 @@ from rich.text import Text
 from textual import on, events
 from textual.app import ComposeResult
 from textual.containers import Horizontal
-from textual.widgets import Button, Input, RichLog, Static
+from textual.widgets import Button, Input, Static
 from textual.widget import Widget
 
+from novacode_cli.tui.widgets import OutputLog
 from novacode_cli.config.config import settings
 
 
@@ -104,7 +105,7 @@ class EmbeddedTerminal(Widget):
             with Horizontal(id="term-buttons"):
                 yield Button("Kill", id="btn-kill", variant="error")
                 yield Button("Clear", id="btn-clear")
-        yield RichLog(id="term-log", highlight=True, markup=True)
+        yield OutputLog(id="term-log", highlight=True, markup=True)
         with Horizontal(id="term-input-container"):
             yield Static("nova-cli $ ", id="term-prompt")
             yield Input(placeholder="Type command and press Enter...", id="term-input")
@@ -135,7 +136,7 @@ class EmbeddedTerminal(Widget):
     async def run_initial_cmd(self) -> None:
         # Give textual a frame to mount elements
         await asyncio.sleep(0.05)
-        log = self.query_one("#term-log", RichLog)
+        log = self.query_one("#term-log", OutputLog)
         
         prompt_text = f"{self.cwd.name} $ "
         log.write(Text.assemble(
@@ -189,7 +190,7 @@ class EmbeddedTerminal(Widget):
         term_input = self.query_one("#term-input", Input)
         term_input.value = ""
 
-        log = self.query_one("#term-log", RichLog)
+        log = self.query_one("#term-log", OutputLog)
 
         # Show the command being executed
         prompt_text = f"{self.cwd.name} $ "
@@ -239,7 +240,7 @@ class EmbeddedTerminal(Widget):
         spawn(self.run_command_async(cmd))
 
     async def run_command_async(self, cmd: str) -> None:
-        log = self.query_one("#term-log", RichLog)
+        log = self.query_one("#term-log", OutputLog)
         
         try:
             self.current_process = await asyncio.create_subprocess_shell(
@@ -255,7 +256,7 @@ class EmbeddedTerminal(Widget):
                 if not line_bytes:
                     break
                 line = line_bytes.decode("utf-8", errors="replace").rstrip()
-                log.write(line)
+                log.write(Text(line))
                 log.scroll_end(animate=False)
                 
             await self.current_process.wait()
@@ -271,7 +272,7 @@ class EmbeddedTerminal(Widget):
 
     @on(Button.Pressed, "#btn-kill")
     def kill_process(self) -> None:
-        log = self.query_one("#term-log", RichLog)
+        log = self.query_one("#term-log", OutputLog)
         if self.current_process is not None:
             try:
                 self.current_process.terminate()
@@ -283,4 +284,4 @@ class EmbeddedTerminal(Widget):
 
     @on(Button.Pressed, "#btn-clear")
     def clear_log(self) -> None:
-        self.query_one("#term-log", RichLog).clear()
+        self.query_one("#term-log", OutputLog).clear()

@@ -690,7 +690,7 @@ function addActivity(kind, title, body){
 }
 
 /* ---- markdown rendering (offline, XSS-safe: escape first, then format) ---- */
-function mdEscape(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function mdEscape(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function mdInline(s){
   return s
     .replace(/`([^`]+)`/g, '<code>$1</code>')

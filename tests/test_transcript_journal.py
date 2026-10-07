@@ -47,7 +47,8 @@ def test_a_torn_last_line_does_not_lose_the_journal(tmp_path):
 
 def test_a_bang_command_comes_back_on_resume(tmp_path):
     from langchain_core.messages import AIMessage, HumanMessage
-    from textual.widgets import RichLog, Static
+    from novacode_cli.tui.widgets import OutputLog
+    from textual.widgets import Static
 
     import test_tui_app as T
     from novacode_cli.session import transcript_journal as tj
@@ -90,7 +91,7 @@ def test_a_bang_command_comes_back_on_resume(tmp_path):
             ]
             block = app.query_one(".bash-inline")
             head = str(block.query_one(".bash-inline-head", Static).render())
-            return order, head, [s.text.rstrip() for s in block.query_one(RichLog).lines]
+            return order, head, [s.text.rstrip() for s in block.query_one(OutputLog).lines]
 
     asyncio.run(first_run())
     tj.flush()

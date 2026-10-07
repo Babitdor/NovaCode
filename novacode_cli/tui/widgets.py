@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import random
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich.cells import cell_len
 from rich.markdown import Markdown
@@ -26,7 +26,10 @@ from textual.selection import Selection
 from textual.theme import Theme
 from textual.widget import Widget
 from textual.message import Message
-from textual.widgets import Input, RichLog, Static, TextArea
+from textual.widgets import Input, Static, TextArea
+
+if TYPE_CHECKING:
+    from novacode_cli.tui.app import NovaApp
 
 from novacode_cli.image_utils import ImageData
 from novacode_cli.input_utils import (
@@ -443,7 +446,7 @@ class MatrixRain(Static):
                 while j < cols and st[j] is s:
                     j += 1
                 segments.append(
-                    Segment("".join(line[x:j]) if s else " " * (j - x), s)
+                    Segment("".join(line[x:j]) if s else " " * (j - x), s or Style.null())
                 )
                 x = j
             strips.append(Strip(segments, cols))
@@ -669,7 +672,7 @@ def _selectable_line(widget: Widget, strip: Strip, x: int, y: int) -> Strip:
 
     Textual maps a mouse position to a character through an ``offset`` in each
     segment's style meta. It writes that only for its own ``Content`` visuals; a
-    Rich renderable (Markdown, a table) or a ``RichLog`` line has none, so a
+    Rich renderable (Markdown or a table) has none, so a
     drag could not tell where it started and selected from the top of the widget
     instead, which read as the whole message being one block.
 
@@ -704,24 +707,6 @@ def _selectable_line(widget: Widget, strip: Strip, x: int, y: int) -> Strip:
                 ]
             )
     return strip.apply_offsets(x, y)
-
-
-class SelectableRichLog(RichLog):
-    """A ``RichLog`` whose lines can be drag-selected and copied.
-
-    Used for command output and tool logs, which are exactly what one wants to
-    copy a few lines out of.
-    """
-
-    def render_line(self, y: int) -> Strip:
-        scroll_x, scroll_y = self.scroll_offset
-        return _selectable_line(self, super().render_line(y), scroll_x, scroll_y + y)
-
-    def get_selection(self, selection: Selection) -> tuple[str, str] | None:
-        # The compositor pads every strip to the widget width; rstrip so a
-        # copied line does not carry a screenful of trailing spaces.
-        text = "\n".join(strip.text.rstrip() for strip in self.lines)
-        return selection.extract(text), "\n"
 
 
 class SelectableStatic(Static):
@@ -781,6 +766,97 @@ class SelectableStatic(Static):
         except Exception:  # noqa: BLE001 — selection must never break rendering
             return super().get_selection(selection)
         return selection.extract(text), "\n"
+
+
+class OutputLog(VerticalScroll):
+    """Bounded, selectable output built from Textual scroll and Static widgets.
+
+    Store logical lines immediately, even when hidden. Coalesce paints instead
+    of retaining width-dependent rendered strips for every historical write.
+    """
+
+    DEFAULT_CSS = """
+    OutputLog { height: auto; max-height: 20; }
+    OutputLog > .output-text { height: auto; width: 1fr; }
+    """
+
+    def __init__(self, *, max_lines: int = 1000, max_chars: int = 200000,
+                 highlight: bool = False, markup: bool = False, wrap: bool = True,
+                 auto_scroll: bool = True, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        from collections import deque
+
+        self.max_lines = max(1, max_lines)
+        self.max_chars = max(2, max_chars)
+        self.markup = markup
+        if highlight:
+            from rich.highlighter import ReprHighlighter
+            self._highlighter = ReprHighlighter()
+        else:
+            self._highlighter = None
+        self.auto_scroll = auto_scroll
+        self._output_lines: Any = deque()
+        self._output_chars = 0
+        self._paint_timer: Any = None
+        self._output_body = SelectableStatic("", classes="output-text", markup=False)
+
+    def compose(self) -> ComposeResult:
+        yield self._output_body
+
+    @property
+    def lines(self) -> list[Strip]:
+        """Logical output lines, independent of visibility and terminal width."""
+        return [Strip([Segment(line.plain)]) for line in self._output_lines]
+
+    def write(self, content: Any) -> OutputLog:
+        if isinstance(content, Text):
+            text = content.copy()
+        elif isinstance(content, str):
+            try:
+                text = Text.from_markup(content) if self.markup else Text.from_ansi(content)
+            except Exception:  # noqa: BLE001 — malformed output stays visible
+                text = Text(content)
+            if self._highlighter is not None:
+                self._highlighter.highlight(text)
+        else:
+            from rich.console import Console
+            console = Console(width=max(20, self.size.width or 80), record=True)
+            with console.capture() as capture:
+                console.print(content)
+            text = Text.from_ansi(capture.get())
+        text = text[-(self.max_chars - 1):]
+        for line in text.split("\n"):
+            self._output_lines.append(line)
+            self._output_chars += len(line) + 1
+        while len(self._output_lines) > self.max_lines or self._output_chars > self.max_chars:
+            self._output_chars -= len(self._output_lines.popleft()) + 1
+        if self.is_mounted and self._paint_timer is None:
+            self._paint_timer = self.set_timer(0.05, self._flush_output)
+        return self
+
+    def on_mount(self) -> None:
+        self._flush_output()
+
+    def _flush_output(self) -> None:
+        self._paint_timer = None
+        follow = self.auto_scroll and (self.is_vertical_scroll_end or not self._output_body.content)
+        self._output_body.update(Text("\n").join(self._output_lines))
+        if follow:
+            self.call_after_refresh(self.scroll_end, animate=False)
+
+    def clear(self) -> OutputLog:
+        self._output_lines.clear()
+        self._output_chars = 0
+        if self._paint_timer is not None:
+            self._paint_timer.stop()
+            self._paint_timer = None
+        self._output_body.update("")
+        return self
+
+    def on_unmount(self) -> None:
+        if self._paint_timer is not None:
+            self._paint_timer.stop()
+            self._paint_timer = None
 
 
 class TranscriptScroll(VerticalScroll):

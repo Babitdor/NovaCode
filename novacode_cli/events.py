@@ -23,13 +23,29 @@ from __future__ import annotations
 
 _MAX_EVENT_LOG = 200  # Cap to prevent unbounded growth if drain stalls
 
+
+class _CappedEventLog(list[tuple[str, str, str, str]]):
+    """List-compatible event queue that enforces the bound on every append."""
+
+    def append(self, event: tuple[str, str, str, str]) -> None:
+        super().append(event)
+        overflow = len(self) - _MAX_EVENT_LOG
+        if overflow > 0:
+            del self[:overflow]
+
+    def extend(self, events) -> None:
+        super().extend(events)
+        overflow = len(self) - _MAX_EVENT_LOG
+        if overflow > 0:
+            del self[:overflow]
+
 # Module-level event buffer for Nova events (review cycles, skill activity,
 # security notices, memory operations).
 # The middleware appends ``(event_type, icon, color, message)`` tuples here, and
 # ``iterate_agent_events`` in ``core/agent_loop.py`` drains them into proper
 # :class:`~novacode_cli.ui_events.ContextMessage` events that both the Rich
 # console renderer and the Textual TUI consume.
-nova_event_log: list[tuple[str, str, str, str]] = []
+nova_event_log: list[tuple[str, str, str, str]] = _CappedEventLog()
 """``(event_type, icon, color, message)`` log drained by the agent event loop.
 
 The list is cleared after each drain.  Event types:

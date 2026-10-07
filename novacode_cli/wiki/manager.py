@@ -140,18 +140,25 @@ class WikiManager:
             topic_dir = self._root / "wiki" / topic / subtopic
         else:
             topic_dir = self._root / "wiki" / topic
-        topic_dir.mkdir(parents=True, exist_ok=True)
-
         page = topic_dir / f"{title}"
+        page = self._contained_page(page)
+        page.parent.mkdir(parents=True, exist_ok=True)
         page.write_text(content.strip() + "\n", encoding="utf-8")
         return page
 
     def read_page(self, virtual_path: str | Path) -> str | None:
         """Read a wiki page given a path like ``technologies/LangGraph.md``."""
-        full = self._root / "wiki" / virtual_path
+        full = self._contained_page(self._root / "wiki" / virtual_path)
         if not full.exists():
             return None
         return full.read_text(encoding="utf-8")
+
+    def _contained_page(self, path: Path) -> Path:
+        root = (self._root / "wiki").resolve()
+        resolved = path.resolve()
+        if resolved == root or not resolved.is_relative_to(root):
+            raise ValueError("Wiki page path escapes wiki directory")
+        return resolved
 
     # -- index operations ----------------------------------------------------
 

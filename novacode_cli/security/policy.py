@@ -84,7 +84,7 @@ _DEFAULT_TOOL_TIERS: dict[str, Tier] = {
 
 # Built-in shell allowlist — safe, read-only-ish commands that should run silently.
 _DEFAULT_SHELL_ALLOW: list[str] = [
-    r"^\s*git\s+(status|diff|log|show|branch\b|remote\s+-v|rev-parse|describe|blame|shortlog)",
+    r"^\s*git\s+(status|diff|log|show|remote\s+-v|rev-parse|describe|blame|shortlog)",
     r"^\s*ls\b",
     r"^\s*pwd\b",
     r"^\s*cat\b",
@@ -94,13 +94,7 @@ _DEFAULT_SHELL_ALLOW: list[str] = [
     r"^\s*wc\b",
     r"^\s*grep\b",
     r"^\s*rg\b",
-    r"^\s*find\b",
     r"^\s*which\b",
-    r"^\s*pytest\b",
-    r"^\s*ruff\b",
-    r"^\s*mypy\b",
-    r"^\s*uv\s+run\b",
-    r"^\s*npm\s+(test|run\s+test)\b",
     r"^\s*node\s+--version\b",
     r"^\s*python\s+--version\b",
 ]
@@ -218,6 +212,8 @@ class ApprovalPolicy:
     def evaluate(self, tool_name: str, args: dict[str, Any]) -> ApprovalDecision:
         """Resolve a tool call to an :class:`ApprovalDecision`."""
         args = args or {}
+        if self.tool_default(tool_name) == "deny":
+            return ApprovalDecision("deny", rule="tool-default")
         if tool_name in _SHELL_TOOLS:
             return self._eval_shell(tool_name, args)
         if tool_name in _PATH_TOOLS:
@@ -261,6 +257,9 @@ class ApprovalPolicy:
             if dangerous.lower() in low:
                 return ApprovalDecision("ask", why, dangerous)
         # allow: explicit allowlist
+        import re
+        if re.search(r"[;&|<>`\r\n$%!()]|--(pre|ext-diff|textconv|exec|output)\b", command):
+            return ApprovalDecision("ask", "Compound shell syntax requires approval", "shell-syntax")
         for pat in self._shell_allow_re:
             if pat.search(command):
                 return ApprovalDecision("allow", "Matches an allowed command", pat.pattern)
@@ -381,7 +380,7 @@ def load_policy(project_root: Path | None = None) -> ApprovalPolicy:
     domain_allow: list[str] = []
     domain_deny = list(_DEFAULT_DOMAIN_DENY)
 
-    for cfg in _config_files(project_root):
+    for index, cfg in enumerate(_config_files(project_root)):
         data = _read_json(cfg)
         if not data:
             continue
@@ -389,17 +388,23 @@ def load_policy(project_root: Path | None = None) -> ApprovalPolicy:
             {
                 tool: tier
                 for tool, tier in (data.get("tools") or {}).items()
-                if tier in ("allow", "ask", "deny")
+                if tier in ("allow", "ask", "deny") and (
+                    index == 0 or {"allow": 0, "ask": 1, "deny": 2}[tier]
+                    >= {"allow": 0, "ask": 1, "deny": 2}[tool_tiers.get(tool, "ask")]
+                )
             }
         )
         shell = data.get("shell") or {}
-        shell_allow += list(shell.get("allow", []))
+        if index == 0:
+            shell_allow += list(shell.get("allow", []))
         shell_deny += list(shell.get("deny", []))
         paths = data.get("paths") or {}
-        path_allow += list(paths.get("allow", []))
+        if index == 0:
+            path_allow += list(paths.get("allow", []))
         path_deny += list(paths.get("deny", []))
         domains = data.get("domains") or {}
-        domain_allow += list(domains.get("allow", []))
+        if index == 0:
+            domain_allow += list(domains.get("allow", []))
         domain_deny += list(domains.get("deny", []))
 
     return ApprovalPolicy(

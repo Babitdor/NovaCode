@@ -29,6 +29,13 @@ _EXEC_TOOLS = frozenset({"shell", "bash", "execute"})
 _PATH_KEYS = ("file_path", "path", "target", "dir", "directory")
 
 
+def confine_backend(backend):
+    """Remove global/drive mounts: virtual paths must resolve beneath the grant."""
+    from deepagents.backends import CompositeBackend
+
+    return CompositeBackend(default=backend.default, routes={})
+
+
 class CoworkBrokerMiddleware(AgentMiddleware):
     """Deny any tool operation outside the granted workspaces."""
 
@@ -53,14 +60,21 @@ class CoworkBrokerMiddleware(AgentMiddleware):
             name = tc.get("name", "")
             args = tc.get("args", {}) or {}
         except Exception:  # noqa: BLE001 — malformed request → fail closed
-            return ToolMessage(content="[Cowork broker] malformed tool call denied", tool_call_id="", status="error")
+            return ToolMessage(
+                content="[Cowork broker] malformed tool call denied",
+                tool_call_id="",
+                status="error",
+            )
 
         checks: list[tuple[Path, str]] = []
         if name in _READ_TOOLS or name in _WRITE_TOOLS:
             op = "write" if name in _WRITE_TOOLS else "read"
             raw = next((args[k] for k in _PATH_KEYS if args.get(k)), None)
             if raw is None:
-                return None  # nothing path-like to gate (defensive: allow)
+                if name in {"ls", "glob", "grep"}:
+                    raw = "/"
+                else:
+                    return self._error(name, tc, "SANDBOX_UNAVAILABLE", "Missing filesystem path")
             try:
                 checks.append((self._to_real(raw), op))
             except Exception:  # noqa: BLE001
@@ -73,9 +87,39 @@ class CoworkBrokerMiddleware(AgentMiddleware):
                 except Exception:  # noqa: BLE001
                     return self._error(name, tc, "SANDBOX_UNAVAILABLE", f"cannot resolve {dst!r}")
         elif name in _EXEC_TOOLS:
-            checks.append((self._root, "execute"))
+            return self._error(
+                name, tc, "SANDBOX_UNAVAILABLE", "Shell requires an enforced OS filesystem sandbox"
+            )
+        elif name in {
+            "wiki_read",
+            "wiki_write",
+            "read_memory",
+            "write_memory",
+            "run_tests",
+            "start_dev_server",
+            "daemon",
+            "python_repl",
+        }:
+            return self._error(
+                name, tc, "SANDBOX_UNAVAILABLE", "Tool has no workspace-confined implementation"
+            )
         else:
-            return None  # non-filesystem/shell tool: not gated by the workspace broker
+            if name not in {
+                "task",
+                "think",
+                "write_todos",
+                "web_search",
+                "docs_search",
+                "duckduckgo_search",
+                "fetch_url",
+                "tool_search",
+                "send_agent_message",
+                "read_agent_messages",
+            }:
+                return self._error(
+                    name, tc, "SANDBOX_UNAVAILABLE", "Tool has no verified workspace authorization"
+                )
+            return None
 
         pol = get_policy()
         for path, op in checks:

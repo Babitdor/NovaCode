@@ -469,6 +469,8 @@ class NovaConfig:
 
     TOOL_VERDICT_JEV_ENDPOINT = "https://api.typesafe.ai/v1/systemone"
     TOOL_VERDICT_JEV_MODEL = "jev-latest"
+    TOOL_VERDICT_OPENAI_ENDPOINT = "https://api.openai.com/v1/decisions"
+    TOOL_VERDICT_OPENAI_MODEL = "gpt-6-luna"
 
     def set_tool_verdict_settings(self, *, enabled: bool, endpoint: str, model: str) -> None:
         """Persist a complete decision configuration in one write."""

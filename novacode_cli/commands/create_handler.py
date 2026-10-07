@@ -44,7 +44,7 @@ async def handle_create_command(
         console.print()
         console.print(
             f"[yellow]Create UI is already running at "
-            f"[cyan]http://localhost:{existing_server.port}[/cyan][/yellow]"
+            f"[cyan]{existing_server.url}[/cyan][/yellow]"
         )
         console.print("[dim]Use /create stop to stop it.[/dim]")
         console.print()
@@ -52,21 +52,21 @@ async def handle_create_command(
 
     # Start the server
     server = CreateServer()
-    port = await server.start()
+    await server.start()
 
     # Store on session_state for lifecycle management
     session_state.create_server = server
 
     # Open browser
     try:
-        webbrowser.open(f"http://localhost:{port}")
+        webbrowser.open(f"{server.url}")
     except Exception:
         pass  # Browser opening is best-effort
 
     console.print()
     console.print(
         f"[green]✓[/green] Create UI started at "
-        f"[cyan]http://localhost:{port}[/cyan]"
+        f"[cyan]{server.url}[/cyan]"
     )
     console.print(
         "[dim]Browse, preview, edit, and create skills & agents in the browser.[/dim]"

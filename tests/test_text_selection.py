@@ -65,7 +65,7 @@ def test_part_of_a_markdown_reply_can_be_selected():
 
 
 def test_lines_of_command_output_can_be_selected():
-    from textual.widgets import RichLog
+    from novacode_cli.tui.widgets import OutputLog
 
     cmd = f'"{sys.executable}" -c "print(chr(10).join(\'row-%02d value\' % i for i in range(8)))"'
 
@@ -77,7 +77,7 @@ def test_lines_of_command_output_can_be_selected():
             await app.workers.wait_for_complete()
             for _ in range(6):
                 await pilot.pause()
-            log = app.query_one(".bash-inline").query_one(RichLog)
+            log = app.query_one(".bash-inline").query_one(OutputLog)
             # Output sits after the 5-cell gutter: "row-02 value" starts at x=5.
             return await _drag(pilot, log, (5, 2), (10, 3))
 

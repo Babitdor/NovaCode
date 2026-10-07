@@ -46,6 +46,22 @@ class TestNovaEventLog:
             f"Expected first entry message '{expected_first}', got '{first_msg}'"
         )
 
+    def test_buffer_caps_uncapped_producer_appends_automatically(self):
+        for i in range(_MAX_EVENT_LOG + 7):
+            nova_event_log.append(("background", "•", "cyan", str(i)))
+
+        assert len(nova_event_log) == _MAX_EVENT_LOG
+        assert nova_event_log[0][3] == "7"
+
+    def test_extend_also_enforces_the_buffer_limit(self):
+        nova_event_log.extend(
+            ("background", "•", "cyan", str(i))
+            for i in range(_MAX_EVENT_LOG + 7)
+        )
+
+        assert len(nova_event_log) == _MAX_EVENT_LOG
+        assert nova_event_log[0][3] == "7"
+
     def test_cap_is_idempotent(self):
         """Calling cap_event_log twice is safe."""
         for i in range(_MAX_EVENT_LOG + 30):

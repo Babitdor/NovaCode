@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 SubagentStack = list[tuple[str, str]]  # [(tool_call_id, subagent_type), ...]
 SubagentActivity = dict  # {"name": str, "calls": list, "files_read": list, ...}
 ActiveSubagents = dict[str, tuple[str, str, float]]  # tool_call_id -> (type, desc, start_time)
+_MAX_ACTIVITY_PATHS = 10
 
 
 class SubagentTracker:
@@ -44,9 +45,6 @@ class SubagentTracker:
 
         # Track when each tool call was first displayed (for elapsed-time display)
         self.tool_call_start_times: dict[str, float] = {}
-
-        # Track last displayed activity line for each subagent (for in-place updates)
-        self.subagent_last_line: dict[tuple, str] = {}
 
         # Deferred subagent completion banners — printed together just before main-agent synthesis
         self.pending_completions: list[dict] = []
@@ -95,10 +93,11 @@ class SubagentTracker:
         if activity is None:
             activity = {
                 "name": subagent_type or "subagent",
-                "calls": [],
                 "files_read": [],
+                "files_read_count": 0,
                 "files_written": [],
-                "errors": [],
+                "files_written_count": 0,
+                "error_count": 0,
                 "categories": {},
             }
             self.subagent_activity_by_ns[namespace] = activity
@@ -115,16 +114,19 @@ class SubagentTracker:
         """Record a tool call in subagent activity tracking."""
         activity = self.get_or_create_activity(namespace, subagent_type)
         category = tool_categories.get(tool_name, "other")
-        activity["calls"].append((tool_name, category))
         activity["categories"][category] = activity["categories"].get(category, 0) + 1
 
         # Track specific paths for file operations
         if category == "files_read":
             path = tool_args.get("path") or tool_args.get("file_path") or "?"
-            activity["files_read"].append(path)
+            activity["files_read_count"] += 1
+            if len(activity["files_read"]) < _MAX_ACTIVITY_PATHS:
+                activity["files_read"].append(path)
         elif category == "files_written":
             path = tool_args.get("path") or tool_args.get("file_path") or "?"
-            activity["files_written"].append(path)
+            activity["files_written_count"] += 1
+            if len(activity["files_written"]) < _MAX_ACTIVITY_PATHS:
+                activity["files_written"].append(path)
 
     def record_error(
         self,
@@ -134,7 +136,7 @@ class SubagentTracker:
         """Record an error in subagent activity tracking."""
         activity = self.subagent_activity_by_ns.get(namespace)
         if activity:
-            activity["errors"].append(tool_name)
+            activity["error_count"] = activity.get("error_count", 0) + 1
 
     def claim_namespace_for_tool_call(
         self,

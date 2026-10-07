@@ -105,3 +105,37 @@ def test_no_resume_while_the_agent_is_mid_turn():
     out = asyncio.run(_run(agent_launched=True, resume_on_done=False, turn_active=True))
     assert out["resumed"] == 0, "resumed while a turn was already active"
     assert any("completed" in n for n in out["notes"]), out["notes"]
+
+
+def test_registry_observer_can_be_removed():
+    from novacode_cli.shell.jobs import JobRegistry
+
+    reg = JobRegistry()
+    events: list[str] = []
+
+    class ObserverOwner:
+        def observe(self, event: str, _job: object) -> None:
+            events.append(event)
+
+    owner = ObserverOwner()
+    reg.add_observer(owner.observe)
+    reg.add_observer(owner.observe)
+    reg.add("first", "shell")
+    reg.remove_observer(owner.observe)
+    reg.add("second", "shell")
+
+    assert events == ["started"]
+    assert reg._observers == []
+
+
+def test_process_manager_unregisters_external_process():
+    from novacode_cli.process_manager import ProcessInfo, ProcessManager
+
+    manager = ProcessManager()
+    info = ProcessInfo(pid=987654321, name="bg-test", command="true")
+    manager.register_process(info)
+
+    manager.unregister_process(info.pid)
+
+    assert manager.get_process(info.pid) is None
+    assert manager.get_by_name("bg-test") is None

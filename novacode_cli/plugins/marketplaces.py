@@ -18,7 +18,6 @@ clones marketplaces and resolves a plugin's ``source`` to something
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 from novacode_cli.plugins import claude_plugins as cp
@@ -57,9 +56,9 @@ def add(source: str) -> str:
     ref = cp.fetch(source, staging)
     fallback = Path(ref.rstrip("/")).name.removesuffix(".git")
     name = _marketplace_json(staging).get("name") or fallback
-    name = re.sub(r"[^\w.-]", "-", str(name))
+    name = cp._safe_name(str(name))
 
-    dest = MARKETPLACES_DIR / name
+    dest = cp._storage_path(MARKETPLACES_DIR, name)
     cp._force_rmtree(dest)
     staging.rename(dest)
 
@@ -77,7 +76,7 @@ def remove_marketplace(name: str) -> bool:
     m = _load()
     if name not in m:
         return False
-    cp._force_rmtree(MARKETPLACES_DIR / name)
+    cp._force_rmtree(cp._storage_path(MARKETPLACES_DIR, name))
     del m[name]
     _save(m)
     return True

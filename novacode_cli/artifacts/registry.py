@@ -182,7 +182,12 @@ class ArtifactRegistry:
 
     # -- observers ---------------------------------------------------------
     def add_observer(self, cb: Observer) -> None:
-        self._observers.append(cb)
+        if cb not in self._observers:
+            self._observers.append(cb)
+
+    def remove_observer(self, cb: Observer) -> None:
+        """Detach an observer when its UI/session owner shuts down."""
+        self._observers = [observer for observer in self._observers if observer != cb]
 
     def _notify(self, event: str, art: Artifact) -> None:
         for cb in list(self._observers):

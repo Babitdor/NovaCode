@@ -311,7 +311,7 @@ def fetch_url(
             # Build request kwargs
             req_kwargs: dict[str, Any] = {
                 "timeout": (timeout // 2, timeout),  # (connect timeout, read timeout)
-                "allow_redirects": follow_redirects,
+                "allow_redirects": False,
                 "stream": True,
                 "verify": verify_ssl,
             }
@@ -339,6 +339,25 @@ def fetch_url(
                 headers=request_headers,
                 **req_kwargs,
             )
+
+            # Reauthorize each target before connecting. Never forward caller
+            # credentials or request bodies through a cross-origin redirect.
+            from urllib.parse import urljoin, urlsplit
+            from novacode_cli.security.policy import get_policy
+            for redirect_count in range(11):
+                if response.status_code not in {301, 302, 303, 307, 308}:
+                    break
+                if not follow_redirects:
+                    break
+                target = urljoin(response.url, response.headers.get("Location", ""))
+                if redirect_count == 10 or method != "GET" or urlsplit(target).scheme not in {"http", "https"}:
+                    response.close()
+                    return {"success": False, "error": "Unsafe or excessive redirect", "url": url}
+                if get_policy().evaluate("fetch_url", {"url": target}).tier == "deny":
+                    response.close()
+                    return {"success": False, "error": "Redirect denied by URL policy", "url": url}
+                response.close()
+                response = session.request("GET", target, timeout=(timeout // 2, timeout), allow_redirects=False, stream=True, verify=verify_ssl)
 
             # Check for HTTP errors (4xx, 5xx)
             if response.status_code >= 400:

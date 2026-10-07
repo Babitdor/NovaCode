@@ -116,6 +116,15 @@ class BridgeConfig:
     chat_id: str | int
     allowed_ids: set[str | int] = field(default_factory=set)
     ping: bool = True
+    allowed_user_ids: set[str | int] = field(default_factory=set)
+
+    def __post_init__(self) -> None:
+        """Read shared-chat sender permissions from the existing remote config."""
+        if not self.allowed_user_ids:
+            from novacode_cli.remote.config import load_remote_config
+            values = load_remote_config().get(self.platform.value, {}).get("allowed_user_ids", [])
+            if isinstance(values, list):
+                self.allowed_user_ids = {str(value) for value in values if isinstance(value, (str, int))}
 
 
 # ---------------------------------------------------------------------------

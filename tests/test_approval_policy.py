@@ -95,8 +95,8 @@ def test_shell_allow_safe_commands():
     p = _default_policy()
     assert p.evaluate("shell", {"command": "git status"}).tier == "allow"
     assert p.evaluate("shell", {"command": "ls -la"}).tier == "allow"
-    assert p.evaluate("shell", {"command": "pytest tests/"}).tier == "allow"
-    assert p.evaluate("shell", {"command": "uv run nova"}).tier == "allow"
+    assert p.evaluate("shell", {"command": "pytest tests/"}).tier == "ask"
+    assert p.evaluate("shell", {"command": "uv run nova"}).tier == "ask"
 
 
 def test_shell_unknown_falls_to_ask():
@@ -155,7 +155,7 @@ def test_project_can_set_tool_tier(tmp_path: Path):
     cfg.parent.mkdir(parents=True)
     cfg.write_text(json.dumps({"tools": {"write_file": "allow"}}), encoding="utf-8")
     p = load_policy(project_root=tmp_path)
-    assert p.evaluate("write_file", {"file_path": "/src/x.py"}).tier == "allow"
+    assert p.evaluate("write_file", {"file_path": "/src/x.py"}).tier == "ask"
     # ...but a denied path still wins over a loosened tier.
     assert p.evaluate("write_file", {"file_path": "/etc/x"}).tier == "deny"
 
@@ -201,7 +201,7 @@ def test_gate_ask_returns_none_slot():
 def test_gate_auto_approve_approves_all():
     reset_policy_cache()
     res = evaluate_tool_actions(_req(("shell", {"command": "rm -rf /"})), _SS(auto_approve=True))
-    assert res == [{"type": "approve"}]  # auto_approve short-circuits before policy
+    assert res == [{"type": "reject", "reason": "Policy denied: shell"}]
 
 
 def test_gate_plan_mode_blocks(monkeypatch):

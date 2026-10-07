@@ -28,7 +28,7 @@ import json
 import threading
 import uuid
 from datetime import UTC, datetime
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import HTTPServer
 from typing import Any
 
 _VALID_STATUS = ("loaded", "processing", "done")
@@ -633,7 +633,7 @@ async function addTask(description) {
   try {
     await fetch('/api/tasks', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Nova-Request': '1' },
       body: JSON.stringify({ description })
     });
     await fetchState();
@@ -647,7 +647,7 @@ async function moveTask(id, status) {
   try {
     await fetch('/api/tasks/' + id, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Nova-Request': '1' },
       body: JSON.stringify({ status })
     });
     await fetchState();
@@ -656,7 +656,7 @@ async function moveTask(id, status) {
 
 async function deleteTask(id) {
   try {
-    await fetch('/api/tasks/' + id, { method: 'DELETE' });
+    await fetch('/api/tasks/' + id, { method: 'DELETE', headers: {'X-Nova-Request': '1'} });
     await fetchState();
   } catch (e) { console.error('delete failed', e); }
 }
@@ -665,7 +665,7 @@ async function setAutoAdvance(on) {
   try {
     await fetch('/api/settings', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Nova-Request': '1' },
       body: JSON.stringify({ auto_advance: on })
     });
     await fetchState();
@@ -847,7 +847,10 @@ setInterval(fetchState, 2000);
 </html>"""
 
 
-class TrelloRequestHandler(BaseHTTPRequestHandler):
+from novacode_cli.security.local_http import LocalRequestHandler
+
+
+class TrelloRequestHandler(LocalRequestHandler):
     """HTTP request handler. Reads task state from ``self.server.backend``."""
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
@@ -867,6 +870,8 @@ class TrelloRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
     def _send_html(self, html: str, status: int = 200) -> None:
+        from novacode_cli.security.local_http import secure_html
+        html = secure_html(html)
         payload = html.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -969,6 +974,8 @@ class TrelloServer:
     async def start(self) -> int:
         """Start the HTTP server in a background daemon thread; return the port."""
         self._server = HTTPServer(("127.0.0.1", 0), TrelloRequestHandler)
+        import secrets
+        self._server.auth_token = secrets.token_urlsafe(32)
         self._server.backend = self  # type: ignore[attr-defined]
         self.port = self._server.server_address[1]
         self.is_running = True
@@ -979,6 +986,10 @@ class TrelloServer:
         )
         self._thread.start()
         return self.port
+
+    @property
+    def url(self) -> str:
+        return f"http://localhost:{self.port}/?token={self._server.auth_token}" if self._server else ""
 
     def stop(self) -> None:
         """Stop the HTTP server."""

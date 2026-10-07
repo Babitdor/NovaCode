@@ -19,6 +19,7 @@ import subprocess
 from typing import Any
 
 from deepagents import create_deep_agent
+from novacode_cli.security.delegated_approval import DelegatedApprovalMiddleware
 from deepagents.backends import CompositeBackend
 from deepagents.backends.filesystem import FilesystemBackend
 from deepagents.backends.store import StoreBackend
@@ -231,7 +232,7 @@ def _build_agent() -> Any:
         backend=backend,
         # Let a dispatch name the model to run on (see novacode_cli.agents.async_context).
         # The environment still decides when a run arrives without a context.
-        middleware=[AsyncModelOverrideMiddleware()],
+        middleware=[AsyncModelOverrideMiddleware(), DelegatedApprovalMiddleware()],
         context_schema=NovaAsyncContext,
     )
 

@@ -330,9 +330,14 @@ def test_route_models_are_cached():
     assert first is second
 
 
-def test_an_unbuildable_route_returns_none_rather_than_raising():
+def test_an_unbuildable_route_returns_none_rather_than_raising(monkeypatch):
     """A route that cannot be built leaves the run on its current model."""
-    assert build_route_model({"provider": "openai", "model": "gpt-5-mini"}) is None
+
+    def unavailable(*args, **kwargs):
+        raise ValueError("Provider unavailable")
+
+    monkeypatch.setattr("novacode_cli.config.model_create.build_chat_model", unavailable)
+    assert build_route_model({"provider": "openai", "model": "unavailable-test"}) is None
     assert build_route_model({"provider": "", "model": ""}) is None
 
 
@@ -358,10 +363,17 @@ def test_middleware_swaps_in_the_routed_model():
     assert type(model).__name__ == "ChatOllama"
 
 
-def test_middleware_leaves_the_model_alone_when_the_route_cannot_be_built():
+def test_middleware_leaves_the_model_alone_when_the_route_cannot_be_built(monkeypatch):
     """Fail-open: an unbuildable route must not fail the run."""
+
+    def unavailable(*args, **kwargs):
+        raise ValueError("Provider unavailable")
+
+    monkeypatch.setattr("novacode_cli.config.model_create.build_chat_model", unavailable)
     cfg = _configured(
-        routes=[{"id": "cloud", "provider": "openai", "model": "gpt-5-mini", "criteria": "Cloud."}]
+        routes=[
+            {"id": "cloud", "provider": "openai", "model": "unavailable-test", "criteria": "Cloud."}
+        ]
     )
     middleware = ModelRouterMiddleware(
         ModelRouter(cfg, client=FakeDecisionClient(_answer("cloud")))
@@ -394,7 +406,8 @@ def test_wrap_model_call_overrides_only_when_a_model_was_chosen():
             return "overridden"
 
     # No decision yet: the request is handed through untouched.
-    assert middleware.wrap_model_call(Request(), lambda r: r) == Request.__name__ or True
+    request = Request()
+    assert middleware.wrap_model_call(request, lambda r: r) is request
     assert seen == []
 
     middleware.before_agent({"messages": [HumanMessage("Local please.")]}, None)
@@ -402,6 +415,100 @@ def test_wrap_model_call_overrides_only_when_a_model_was_chosen():
     assert result == "overridden"
     assert len(seen) == 1
     assert type(seen[0]["model"]).__name__ == "ChatOllama"
+
+
+@pytest.mark.asyncio
+async def test_compiled_router_routes_each_turn_and_persists_selection(monkeypatch):
+    """Exercise the real LangChain graph, not just middleware methods."""
+    from langchain.agents import create_agent
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    models = {
+        "fast": FakeMessagesListChatModel(responses=[AIMessage(content="fast answer")]),
+        "deep": FakeMessagesListChatModel(responses=[AIMessage(content="deep answer")]),
+    }
+    cfg = _configured()
+    client = FakeDecisionClient(_answer("deep"))
+    router = ModelRouter(cfg, client=client)
+    monkeypatch.setattr(router, "model_for", lambda route_id: models.get(route_id))
+    graph = create_agent(
+        model=models["fast"],
+        middleware=[ModelRouterMiddleware(router)],
+        checkpointer=InMemorySaver(),
+    )
+    config = {"configurable": {"thread_id": "route-test"}}
+    first = await graph.ainvoke({"messages": [HumanMessage("Difficult code problem")]}, config)
+    assert first["messages"][-1].content == "deep answer"
+    assert (await graph.aget_state(config)).values["model_route"] == "deep"
+    client._response = _answer("fast")
+    second = await graph.ainvoke({"messages": [HumanMessage("Simple follow-up")]}, config)
+    assert second["messages"][-1].content == "fast answer"
+    assert second["model_route"] == "fast"
+    assert len(client.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_router_uses_each_requests_route_in_concurrent_runs(monkeypatch):
+    import asyncio
+
+    router = ModelRouter(_configured(), client=FakeDecisionClient(_answer("deep")))
+    monkeypatch.setattr(router, "model_for", lambda route_id: route_id)
+    middleware = ModelRouterMiddleware(router)
+    middleware.before_agent({"messages": [HumanMessage("Other run")]}, None)
+
+    class Request:
+        def __init__(self, route):
+            self.state = {"model_route": route}
+
+        def override(self, **kwargs):
+            return kwargs["model"]
+
+    async def handler(request):
+        return request
+
+    assert await asyncio.gather(
+        middleware.awrap_model_call(Request("fast"), handler),
+        middleware.awrap_model_call(Request("deep"), handler),
+    ) == ["fast", "deep"]
+
+
+@pytest.mark.asyncio
+async def test_compiled_router_keeps_route_through_tool_loop(monkeypatch):
+    from langchain.agents import create_agent
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.tools import tool
+
+    class ToolModel(FakeMessagesListChatModel):
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+    @tool
+    def read_example() -> str:
+        """Read a small example."""
+        return "example contents"
+
+    routed = ToolModel(
+        responses=[
+            AIMessage("", tool_calls=[{"name": "read_example", "args": {}, "id": "call-1"}]),
+            AIMessage("routed final answer"),
+        ]
+    )
+    base = ToolModel(responses=[AIMessage("wrong model")])
+    client = FakeDecisionClient(_answer("deep"))
+    router = ModelRouter(_configured(), client=client)
+    monkeypatch.setattr(router, "model_for", lambda route_id: routed)
+    graph = create_agent(
+        model=base, tools=[read_example], middleware=[ModelRouterMiddleware(router)]
+    )
+    result = await graph.ainvoke({"messages": [HumanMessage("Read example and explain")]})
+    assert result["messages"][-1].content == "routed final answer"
+    assert any(
+        isinstance(msg, ToolMessage) and msg.content == "example contents"
+        for msg in result["messages"]
+    )
+    assert result["model_route"] == "deep"
+    assert len(client.calls) == 1
 
 
 # ── agent wiring ────────────────────────────────────────────────────────────

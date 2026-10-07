@@ -14,8 +14,9 @@ from rich.text import Text
 from textual import work
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, OptionList, RichLog, Static
+from textual.widgets import Button, Input, OptionList, Static
 
+from novacode_cli.tui.widgets import OutputLog
 from novacode_cli.session.adapters import ImportedSession, SessionInfo, adapters
 from novacode_cli.session.imported_context import (
     MESSAGE_ID,
@@ -40,7 +41,7 @@ class TranscriptScreen(ModalScreen[None]):
         width: 90%; height: 85%; padding: 1 2;
         background: $surface; border: round $accent;
     }
-    TranscriptScreen RichLog { height: 1fr; }
+    TranscriptScreen OutputLog { height: 1fr; }
     """
 
     def __init__(self, session: ImportedSession) -> None:
@@ -52,15 +53,15 @@ class TranscriptScreen(ModalScreen[None]):
         """Build the session controls."""
         with Vertical(id="import-preview"):
             yield Static(Text(f"{self.session.provider} · {self.session.session_id}", style="bold"))
-            yield RichLog(id="import-history", wrap=True, markup=False)
+            yield OutputLog(id="import-history", wrap=True, markup=False)
             yield Button("Close", id="close")
 
     def on_mount(self) -> None:
         # Bound rendering separately; the normalized source remains complete.
         """Load the historical session content."""
-        self.query_one(RichLog).write(Text(transcript(self.session)[:200000]))
+        self.query_one(OutputLog).write(Text(transcript(self.session)[:200000]))
         if len(transcript(self.session)) > 200000:
-            self.query_one(RichLog).write(Text("Preview limited to 200,000 characters."))
+            self.query_one(OutputLog).write(Text("Preview limited to 200,000 characters."))
 
     def on_button_pressed(self, _event: Button.Pressed) -> None:
         """Handle viewing, importing, or closing."""

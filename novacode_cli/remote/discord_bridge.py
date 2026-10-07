@@ -131,6 +131,14 @@ class DiscordBridge:
             # Ignore our own messages
             if message.author == client.user:
                 return
+            if message.author.bot:
+                return
+            # Shared guild channels need explicit sender authorization. Private
+            # DMs are already scoped to their channel counterpart.
+            if getattr(message, "guild", None) is not None and str(message.author.id) not in {
+                str(i) for i in self._config.allowed_user_ids
+            }:
+                return
 
             # Only process messages in the allowlisted channel
             channel_id_str = str(message.channel.id)

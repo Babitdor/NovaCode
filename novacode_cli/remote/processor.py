@@ -252,7 +252,8 @@ async def remote_message_processor(
                         status.start()
 
                     _prev_auto_approve = getattr(session_state, "auto_approve", False)
-                    session_state.auto_approve = True
+                    # Remote messages retain the user's approval preference.
+                    session_state.auto_approve = _prev_auto_approve
 
                     _tool_names: list[str] = []
 

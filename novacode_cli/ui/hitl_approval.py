@@ -127,7 +127,7 @@ def evaluate_tool_actions(
 
         # Auto-approve: skip all prompts (checked before policy so auto_approve
         # short-circuits even policy-denied actions — the user explicitly opted in).
-        if getattr(session_state, "auto_approve", False):
+        if getattr(session_state, "auto_approve", False) and policy.evaluate(tool_name, args).tier != "deny":
             decisions.append({"type": "approve"})
             continue
 

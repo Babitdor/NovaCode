@@ -11,7 +11,6 @@ import asyncio
 import copy
 import contextlib
 import re
-import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -1195,6 +1194,10 @@ class McpScreen(ModalScreen[None]):
     when needed) or remove configured servers — all in the TUI."""
 
     BINDINGS = [("escape", "close", "Close")]
+    DEFAULT_CSS = """
+    McpScreen #modal-box { width: 90%; max-width: 110; height: 90%; }
+    McpScreen #mcp-content { height: 1fr; min-height: 3; }
+    """
 
     def __init__(self) -> None:
         super().__init__()
@@ -1205,11 +1208,12 @@ class McpScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="modal-box"):
             yield Static(Text("MCP Management", style="bold"), id="modal-title")
-            yield Static(Text("Configured Servers:", style="bold cyan"), id="mcp-section")
-            yield OptionList(id="mcp-configured")
-            yield Static(Text("Available Presets:", style="bold yellow"), id="preset-section")
-            yield OptionList(id="mcp-presets")
-            yield Static("", id="mcp-hint")
+            with VerticalScroll(id="mcp-content"):
+                yield Static(Text("Configured Servers:", style="bold cyan"), id="mcp-section")
+                yield OptionList(id="mcp-configured")
+                yield Static(Text("Available Presets:", style="bold yellow"), id="preset-section")
+                yield OptionList(id="mcp-presets")
+                yield Static("", id="mcp-hint")
             with Horizontal(id="modal-buttons"):
                 yield Button("Install", id="install", variant="primary")
                 yield Button("Add Custom", id="add-custom")
@@ -2184,7 +2188,8 @@ class SettingsScreen(ModalScreen[None]):
 
     BINDINGS = [("escape", "close", "Close")]
     DEFAULT_CSS = """
-    SettingsScreen #modal-box { width: 76%; max-width: 76; }
+    SettingsScreen #modal-box { width: 90%; max-width: 90; height: 90%; }
+    SettingsScreen #settings-content { height: 1fr; min-height: 3; }
     SettingsScreen .settings-section {
         height: auto; margin-top: 1; margin-bottom: 1;
         color: $primary; text-style: bold;
@@ -2224,31 +2229,32 @@ class SettingsScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="modal-box"):
             yield Static(Text("Settings", style="bold"), id="modal-title")
-            yield Static("APPEARANCE", classes="settings-section")
-            with Horizontal(classes="settings-row"):
-                yield Switch(value=self._preference("matrix_rain_enabled"), id="matrix-rain-toggle")
-                yield Static("Matrix Rain animation", classes="settings-label")
-            yield Static("Animate the home banner.", classes="settings-description")
-            with Horizontal(classes="settings-row"):
-                yield Button("Change theme…", id="settings-theme")
-                yield Static("Choose Nova's color theme.", classes="settings-description")
+            with VerticalScroll(id="settings-content"):
+                yield Static("APPEARANCE", classes="settings-section")
+                with Horizontal(classes="settings-row"):
+                    yield Switch(value=self._preference("matrix_rain_enabled"), id="matrix-rain-toggle")
+                    yield Static("Matrix Rain animation", classes="settings-label")
+                yield Static("Animate the home banner.", classes="settings-description")
+                with Horizontal(classes="settings-row"):
+                    yield Button("Change theme…", id="settings-theme")
+                    yield Static("Choose Nova's color theme.", classes="settings-description")
 
-            yield Static("INPUT", classes="settings-section")
-            with Horizontal(classes="settings-row"):
-                yield Switch(value=self._preference("submit_on_enter"), id="submit-enter-toggle")
-                yield Static("Enter sends the prompt", classes="settings-label")
-            yield Static("Turn off to make Enter insert a line; Ctrl+Enter sends.", classes="settings-description")
-            with Horizontal(classes="settings-row"):
-                yield Switch(
-                    value=self._preference("autocomplete_enabled"), id="autocomplete-toggle"
-                )
-                yield Static("Show slash and @ suggestions", classes="settings-label")
+                yield Static("INPUT", classes="settings-section")
+                with Horizontal(classes="settings-row"):
+                    yield Switch(value=self._preference("submit_on_enter"), id="submit-enter-toggle")
+                    yield Static("Enter sends the prompt", classes="settings-label")
+                yield Static("Turn off to make Enter insert a line; Ctrl+Enter sends.", classes="settings-description")
+                with Horizontal(classes="settings-row"):
+                    yield Switch(
+                        value=self._preference("autocomplete_enabled"), id="autocomplete-toggle"
+                    )
+                    yield Static("Show slash and @ suggestions", classes="settings-label")
 
-            yield Static("PERFORMANCE", classes="settings-section")
-            with Horizontal(classes="settings-row"):
-                yield Switch(value=self._preference("low_resource_mode"), id="low-resource-toggle")
-                yield Static("Lower active refresh rate", classes="settings-label")
-            yield Static("Use 5 Hz status updates during a turn instead of 10 Hz.", classes="settings-description")
+                yield Static("PERFORMANCE", classes="settings-section")
+                with Horizontal(classes="settings-row"):
+                    yield Switch(value=self._preference("low_resource_mode"), id="low-resource-toggle")
+                    yield Static("Lower active refresh rate", classes="settings-label")
+                yield Static("Use 5 Hz status updates during a turn instead of 10 Hz.", classes="settings-description")
             with Horizontal(id="modal-buttons"):
                 yield Button("Close", id="close")
 
@@ -2294,11 +2300,82 @@ class SettingsScreen(ModalScreen[None]):
         self.dismiss(None)
 
 
+class UpdateScreen(ModalScreen[None]):
+    """Check updates off the UI loop and show a clear, retryable result."""
+
+    DEFAULT_CSS = """
+    UpdateScreen #modal-box { width: 90%; max-width: 76; height: auto; max-height: 90%; }
+    UpdateScreen #update-content { height: auto; max-height: 24; }
+    UpdateScreen #update-status { height: auto; padding: 1 2; border: round $accent; }
+    UpdateScreen #update-detail { height: auto; padding: 1 2; }
+    UpdateScreen #update-command { height: auto; padding: 1 2; background: $boost; }
+    """
+    BINDINGS = [("escape", "close", "Close")]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="modal-box"):
+            yield Static("NovaCode updates", id="modal-title")
+            with VerticalScroll(id="update-content"):
+                yield Static("Checking for updates…", id="update-status")
+                yield Static("Contacting the update source", id="update-detail")
+                yield Static("", id="update-command")
+            with Horizontal(id="modal-buttons"):
+                yield Button("Check again", id="update-retry", disabled=True)
+                yield Button("Close", id="close", variant="primary")
+
+    def on_mount(self) -> None:
+        animate_modal_screen(self)
+        self.check_update()
+
+    @work(exclusive=True, group="update-check")
+    async def check_update(self) -> None:
+        from novacode_cli.updates import check_for_update
+
+        retry = self.query_one("#update-retry", Button)
+        retry.disabled = True
+        self.query_one("#update-status", Static).update("Checking for updates…")
+        self.query_one("#update-detail", Static).update("Contacting the update source")
+        self.query_one("#update-command", Static).update("")
+        try:
+            status = await asyncio.to_thread(check_for_update, force=True)
+            if status.error:
+                title, color = "Could not check for updates", "yellow"
+                detail = Text(status.error)
+                command = "Check your connection, then try again."
+            elif status.available:
+                title, color = "Update available", "green"
+                detail = Text(f"Installed  {status.current[:12] or 'Unknown'}\nLatest     {status.latest[:12]}")
+                command = "Exit Nova, then run in your terminal:\n\nnova update"
+                self.app._notified_nova_update = status.latest
+            else:
+                title, color = "NovaCode is up to date.", "green"
+                detail = Text(f"Installed  {status.current[:12] or 'Current release'}")
+                command = "You are running the latest available version."
+            self.query_one("#update-status", Static).update(Text(title, style=f"bold {color}"))
+            self.query_one("#update-detail", Static).update(detail)
+            self.query_one("#update-command", Static).update(Text(command))
+        except Exception as exc:  # noqa: BLE001 — leave a retryable screen
+            self.query_one("#update-status", Static).update(Text("Could not check for updates", style="bold yellow"))
+            self.query_one("#update-detail", Static).update(Text(str(exc)))
+        finally:
+            retry.disabled = False
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "update-retry":
+            self.check_update()
+        elif event.button.id == "close":
+            self.dismiss(None)
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
 class ContextScreen(ModalScreen[None]):
     """Show current context-window use, its sources, and session metrics."""
 
     DEFAULT_CSS = """
-    ContextScreen #modal-box { width: 90%; max-width: 104; }
+    ContextScreen #modal-box { width: 90%; max-width: 104; height: 90%; }
+    ContextScreen #context-content { height: 1fr; min-height: 3; }
     ContextScreen #context-hero {
         height: auto; padding: 1 2; margin-bottom: 1;
         border: round $accent; background: $boost;
@@ -2323,16 +2400,17 @@ class ContextScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="modal-box"):
             yield Static(Text("Context Window", style="bold #7aa2f7"), id="modal-title")
-            yield Static("", id="context-hero")
-            yield Static("Where the context goes", classes="context-section-title")
-            yield Static("", id="context-breakdown")
-            yield Static("", id="context-metrics")
-            yield Static(
-                "System prompt (including injected memory) and tool schemas are sent on model calls; "
-                "conversation and tool results carry forward. Token allocation "
-                "by category is estimated; provider input usage is exact when available.",
-                id="context-explainer",
-            )
+            with VerticalScroll(id="context-content"):
+                yield Static("", id="context-hero")
+                yield Static("Where the context goes", classes="context-section-title")
+                yield Static("", id="context-breakdown")
+                yield Static("", id="context-metrics")
+                yield Static(
+                    "System prompt (including injected memory) and tool schemas are sent on model calls; "
+                    "conversation and tool results carry forward. Token allocation "
+                    "by category is estimated; provider input usage is exact when available.",
+                    id="context-explainer",
+                )
             with Horizontal(id="modal-buttons"):
                 yield Button("Close", id="close", variant="primary")
 
@@ -2362,7 +2440,7 @@ class ContextScreen(ModalScreen[None]):
         bar = Text("█" * filled, style="bold #7aa2f7")
         bar.append("░" * (40 - filled), style="#3b4261")
         hero = Text()
-        model = self._model_name or getattr(tracker, "model_name", None) or "Model unknown"
+        model = getattr(tracker, "model_name", None) or self._model_name or "Model unknown"
         hero.append(f"{model}\n", style="bold")
         hero.append_text(bar)
         hero.append(f"  {pct:.1f}%\n", style="bold #7aa2f7")
@@ -2390,6 +2468,9 @@ class ContextScreen(ModalScreen[None]):
         details = Text()
         for label, attribute, color in categories:
             count = max(0, int(getattr(breakdown, attribute, 0)))
+            if attribute == "system_prompt_tokens":
+                count += max(0, int(getattr(breakdown, "user_memory_tokens", 0)))
+                count += max(0, int(getattr(breakdown, "project_memory_tokens", 0)))
             share = count / used * 100 if used else 0.0
             row = Text(f"{label:<20} {count:>9,}  {share:>5.1f}%  ", style="dim")
             row.append("▰" * min(16, round(share / 100 * 16)), style=color)
@@ -2908,14 +2989,14 @@ class AgentsScreen(ModalScreen[None]):
         desc, system_prompt, color, chosen, runs_async = await asyncio.to_thread(_read)
 
         preview_text = Text()
-        preview_text.append(f"Name: ", style="bold")
+        preview_text.append("Name: ", style="bold")
         preview_text.append(f"@{name}\n", style="bold #73daca")
-        preview_text.append(f"Scope: ", style="bold")
+        preview_text.append("Scope: ", style="bold")
         preview_text.append(
             f"{scope}\n", style="bold yellow" if scope == "project" else "bold blue"
         )
         if color:
-            preview_text.append(f"Color: ", style="bold")
+            preview_text.append("Color: ", style="bold")
             preview_text.append(f"{color}\n", style=f"bold {color}")
         preview_text.append("Runs: ", style="bold")
         preview_text.append(
@@ -2925,11 +3006,11 @@ class AgentsScreen(ModalScreen[None]):
             style="bold #f0b429" if runs_async else "dim",
         )
         if desc:
-            preview_text.append(f"Description: ", style="bold")
+            preview_text.append("Description: ", style="bold")
             preview_text.append(f"{desc}\n", style="dim")
         preview_text.append("Tools: ", style="bold")
         preview_text.append(f"{_tools_summary(chosen)}\n\n", style="cyan")
-        preview_text.append(f"System Prompt:\n", style="bold")
+        preview_text.append("System Prompt:\n", style="bold")
         preview_text.append(system_prompt, style="italic dim")
 
         preview.update(preview_text)
@@ -3333,6 +3414,14 @@ class _ArchivePickerModal(ModalScreen["Path | None"]):
 class SkillsScreen(ModalScreen[None]):
     """Native skills manager: list/toggle/view installed skills, create new skills."""
 
+    DEFAULT_CSS = """
+    SkillsScreen #modal-box { width: 90%; max-width: 104; height: 90%; }
+    SkillsScreen #skills-content { height: 1fr; min-height: 3; }
+    SkillsScreen #skills-list { height: 1fr; min-height: 3; max-height: 100%; }
+    SkillsScreen #skill-detail-preview { max-height: 8; }
+    SkillsScreen.short #skill-detail-preview { max-height: 3; }
+    """
+
     BINDINGS = [
         ("escape", "close", "Close"),
         ("space", "toggle", "Toggle on/off"),
@@ -3355,18 +3444,19 @@ class SkillsScreen(ModalScreen[None]):
 
         with Vertical(id="modal-box"):
             yield Static(Text("Skills Manager", style="bold"), id="modal-title")
-            yield Static(Text("Installed Skills:", style="bold cyan"), id="skills-section")
-            if in_project:
-                yield Select(
-                    [("Global (all projects)", "global"), ("Project (this repo)", "project")],
-                    id="skill-scope-toggle",
-                    value="global",
-                    allow_blank=False,
-                )
-            yield OptionList(id="skills-list")
-            yield Static(Text("Skill Details:", style="bold yellow"), id="skill-detail-header")
-            yield Static("", id="skill-detail-preview", classes="preview-box")
-            yield Static("", id="skills-hint")
+            with VerticalScroll(id="skills-content"):
+                yield Static(Text("Installed Skills:", style="bold cyan"), id="skills-section")
+                if in_project:
+                    yield Select(
+                        [("Global (all projects)", "global"), ("Project (this repo)", "project")],
+                        id="skill-scope-toggle",
+                        value="global",
+                        allow_blank=False,
+                    )
+                yield OptionList(id="skills-list")
+                yield Static(Text("Skill Details:", style="bold yellow"), id="skill-detail-header")
+                yield Static("", id="skill-detail-preview", classes="preview-box")
+                yield Static("", id="skills-hint")
             with Horizontal(id="modal-buttons"):
                 yield Button("Toggle", id="toggle", variant="primary")
                 yield Button("Prune", id="prune")
@@ -3719,16 +3809,16 @@ class SkillsScreen(ModalScreen[None]):
         scope, desc, instructions = await asyncio.to_thread(_read)
 
         preview_text = Text()
-        preview_text.append(f"Name: ", style="bold")
+        preview_text.append("Name: ", style="bold")
         preview_text.append(f"{skill_name}\n", style="bold #e0af68")
-        preview_text.append(f"Scope: ", style="bold")
+        preview_text.append("Scope: ", style="bold")
         preview_text.append(
             f"{scope}\n", style="bold yellow" if scope == "project" else "bold blue"
         )
         if desc:
-            preview_text.append(f"Description: ", style="bold")
+            preview_text.append("Description: ", style="bold")
             preview_text.append(f"{desc}\n\n", style="dim")
-        preview_text.append(f"Instructions / Content:\n", style="bold")
+        preview_text.append("Instructions / Content:\n", style="bold")
         preview_text.append(
             instructions[:1000] + "..." if len(instructions) > 1000 else instructions,
             style="italic dim",
@@ -3846,6 +3936,12 @@ class WikiScreen(ModalScreen[None]):
     """Native wiki manager: browse synthesized wiki pages, view details, ingest raw sources."""
 
     BINDINGS = [("escape", "close", "Close")]
+    DEFAULT_CSS = """
+    WikiScreen #modal-box { width: 90%; max-width: 110; height: 90%; }
+    WikiScreen #wiki-content { height: 1fr; min-height: 3; }
+    WikiScreen #wiki-detail-preview { max-height: 8; }
+    WikiScreen.short #wiki-detail-preview { max-height: 3; }
+    """
 
     def __init__(self) -> None:
         super().__init__()
@@ -3857,21 +3953,22 @@ class WikiScreen(ModalScreen[None]):
         with Vertical(id="modal-box"):
             yield Static(Text("Obsidian LLM Wiki Browser", style="bold"), id="modal-title")
 
-            with Horizontal(id="wiki-tab-buttons"):
-                yield Button("Synthesized Pages", id="tab-pages", variant="primary")
-                yield Button("Web Clipper Inbox", id="tab-inbox")
+            with VerticalScroll(id="wiki-content"):
+                with Horizontal(id="wiki-tab-buttons"):
+                    yield Button("Synthesized Pages", id="tab-pages", variant="primary")
+                    yield Button("Web Clipper Inbox", id="tab-inbox")
 
-            with Vertical(id="pages-container"):
-                yield Static(Text("Synthesized Pages:", style="bold cyan"), id="pages-header")
-                yield OptionList(id="wiki-pages-list")
+                with Vertical(id="pages-container"):
+                    yield Static(Text("Synthesized Pages:", style="bold cyan"), id="pages-header")
+                    yield OptionList(id="wiki-pages-list")
 
-            with Vertical(id="inbox-container"):
-                yield Static(Text("Clipper Inbox / raw:", style="bold cyan"), id="inbox-header")
-                yield OptionList(id="wiki-inbox-list")
+                with Vertical(id="inbox-container"):
+                    yield Static(Text("Clipper Inbox / raw:", style="bold cyan"), id="inbox-header")
+                    yield OptionList(id="wiki-inbox-list")
 
-            yield Static(Text("Preview:", style="bold yellow"), id="wiki-detail-header")
-            yield Static("", id="wiki-detail-preview", classes="preview-box")
-            yield Static("", id="wiki-hint")
+                yield Static(Text("Preview:", style="bold yellow"), id="wiki-detail-header")
+                yield Static("", id="wiki-detail-preview", classes="preview-box")
+                yield Static("", id="wiki-hint")
 
             with Horizontal(id="modal-buttons"):
                 yield Button("Ask About Page", id="ask-btn", variant="primary")
@@ -3964,8 +4061,10 @@ class WikiScreen(ModalScreen[None]):
         Runs as a worker: both branches read a file (a wiki page, or a source
         document), which is blocking filesystem work.
         """
-        self.run_worker(self._render_wiki_preview(), group="wiki-preview", exclusive=True)
+        if self.is_mounted:
+            self._render_wiki_preview()
 
+    @work(group="wiki-preview", exclusive=True)
     async def _render_wiki_preview(self) -> None:
         """Read the selected page/source off the loop, then paint the preview."""
         import asyncio
@@ -4169,6 +4268,12 @@ class HooksScreen(ModalScreen[None]):
     """Native hooks manager: list, toggle, remove, test, add and reload hooks."""
 
     BINDINGS = [("escape", "close", "Close")]
+    DEFAULT_CSS = """
+    HooksScreen #modal-box { width: 90%; max-width: 110; height: 90%; }
+    HooksScreen #hooks-content { height: 1fr; min-height: 3; }
+    HooksScreen #hook-detail-preview { max-height: 8; }
+    HooksScreen.short #hook-detail-preview { max-height: 3; }
+    """
 
     def __init__(self) -> None:
         super().__init__()
@@ -4177,11 +4282,12 @@ class HooksScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="modal-box"):
             yield Static(Text("Hook Management", style="bold"), id="modal-title")
-            yield Static(Text("Configured Hooks:", style="bold cyan"), id="hooks-section")
-            yield OptionList(id="hooks-list")
-            yield Static(Text("Hook Details:", style="bold yellow"), id="hook-detail-header")
-            yield Static("", id="hook-detail-preview", classes="preview-box")
-            yield Static("", id="hooks-hint")
+            with VerticalScroll(id="hooks-content"):
+                yield Static(Text("Configured Hooks:", style="bold cyan"), id="hooks-section")
+                yield OptionList(id="hooks-list")
+                yield Static(Text("Hook Details:", style="bold yellow"), id="hook-detail-header")
+                yield Static("", id="hook-detail-preview", classes="preview-box")
+                yield Static("", id="hooks-hint")
             with Horizontal(id="modal-buttons"):
                 yield Button("Add Hook", id="add", variant="primary")
                 yield Button("Toggle Enable", id="toggle", variant="default")
@@ -4446,7 +4552,7 @@ class ServersScreen(ModalScreen[None]):
         for s in self._servers:
             ext = s.pid == 0 and "external" in s.name
             status_style = "bold green" if s.status.value == "healthy" else "bold yellow"
-            pid_label = f"external" if ext else f"PID {s.pid}"
+            pid_label = "external" if ext else f"PID {s.pid}"
             label = Text.assemble(
                 (f"{s.name} ", "bold #73daca"),
                 (f" · {pid_label} · ", "dim"),
@@ -5078,6 +5184,10 @@ class BackgroundTasksScreen(ModalScreen[dict | None]):
         ("c", "copy", "Copy cmd"),
         ("x", "clear", "Clear done"),
     ]
+    DEFAULT_CSS = """
+    BackgroundTasksScreen #modal-box { width: 90%; max-width: 110; height: 90%; }
+    BackgroundTasksScreen #tasks-list { height: 1fr; min-height: 3; max-height: 100%; }
+    """
 
     def __init__(self) -> None:
         super().__init__()
@@ -5177,9 +5287,21 @@ class RouterScreen(ModalScreen[dict | None]):
     """
 
     BINDINGS = [("escape", "cancel", "Cancel")]
+    DEFAULT_CSS = """
+    RouterScreen #modal-box { width: 90%; max-width: 110; height: 90%; }
+    RouterScreen #router-body { height: 1fr; min-height: 3; }
+    RouterScreen #router-routes { height: auto; min-height: 3; max-height: 8; }
+    RouterScreen #router-profile-name { width: 1fr; }
+    RouterScreen #router-profile-add { width: auto; }
+    RouterScreen #router-provider { width: 1fr; }
+    RouterScreen #router-model, RouterScreen #router-decision-model,
+    RouterScreen #router-endpoint, RouterScreen #router-criteria,
+    RouterScreen #router-id { width: 1fr; }
+    """
 
     #: Decision-model presets, mirroring the System One panel in ``/model``.
     _PRESETS: tuple[tuple[str, str], ...] = (
+        ("OpenAI · Decisions API", "openai"),
         ("Jev · TypeSafe API", "jev"),
         ("Tev1 · local Ollama", "tev1"),
         ("Custom System One", "custom"),
@@ -5206,37 +5328,38 @@ class RouterScreen(ModalScreen[dict | None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="modal-box"):
             yield Static(Text("Model routing", style="bold"), id="modal-title")
-            yield Static(
-                Text(
-                    "Each turn is classified and sent to the route whose criteria fit it.",
-                    style="dim",
+            with VerticalScroll(id="router-body"):
+                yield Static(
+                    Text(
+                        "Each turn is classified and sent to the route whose criteria fit it.",
+                        style="dim",
+                    )
                 )
-            )
-            yield Static("Router profile · separate route sets for different workflows")
-            yield Select(
-                [(profile["name"], profile["id"]) for profile in self._profiles],
-                value=self._profile_id,
-                allow_blank=False,
-                id="router-profile",
-            )
-            with Horizontal():
-                yield Input(placeholder="New profile name (e.g. Coding)", id="router-profile-name")
-                yield Button("Add profile", id="router-profile-add")
-            yield Static("", id="router-status")
-            yield OptionList(id="router-routes")
-            yield Static("Route id", id="router-id-label")
-            yield Input(placeholder="fast", id="router-id")
-            yield Static("Provider", id="router-provider-label")
-            yield Select([], id="router-provider", allow_blank=True)
-            yield Static("Model", id="router-model-label")
-            yield Input(placeholder="gpt-5-mini, qwen3-vl:235b-cloud, …", id="router-model")
-            yield Static("Criteria — when should this route be chosen?", id="router-criteria-label")
-            yield Input(placeholder="Direct lookups and small edits.", id="router-criteria")
-            yield Static("Decision model", id="router-decision-label")
-            yield Select(list(self._PRESETS), value="tev1", allow_blank=False, id="router-preset")
-            yield Input(placeholder="tev1:4b, jev-latest, …", id="router-decision-model")
-            yield Static("System One endpoint", id="router-endpoint-label")
-            yield Input(placeholder="https://…/v1/systemone", id="router-endpoint")
+                yield Static("Router profile · separate route sets for different workflows")
+                yield Select(
+                    [(profile["name"], profile["id"]) for profile in self._profiles],
+                    value=self._profile_id,
+                    allow_blank=False,
+                    id="router-profile",
+                )
+                with Horizontal(id="router-profile-row"):
+                    yield Input(placeholder="New profile name (e.g. Coding)", id="router-profile-name")
+                    yield Button("Add profile", id="router-profile-add")
+                yield Static("", id="router-status")
+                yield OptionList(id="router-routes")
+                yield Static("Route id", id="router-id-label")
+                yield Input(placeholder="fast", id="router-id")
+                yield Static("Provider", id="router-provider-label")
+                yield Select([], id="router-provider", allow_blank=True)
+                yield Static("Model", id="router-model-label")
+                yield Input(placeholder="gpt-5-mini, qwen3-vl:235b-cloud, …", id="router-model")
+                yield Static("Criteria — when should this route be chosen?", id="router-criteria-label")
+                yield Input(placeholder="Direct lookups and small edits.", id="router-criteria")
+                yield Static("Decision model", id="router-decision-label")
+                yield Select(list(self._PRESETS), value="tev1", allow_blank=False, id="router-preset")
+                yield Input(placeholder="tev1:4b, jev-latest, …", id="router-decision-model")
+                yield Static("System One endpoint", id="router-endpoint-label")
+                yield Input(placeholder="https://…/v1/systemone", id="router-endpoint")
             with Horizontal(id="modal-buttons"):
                 yield Button("Add route", id="router-add")
                 yield Button("Update selected", id="router-update")
@@ -5255,7 +5378,9 @@ class RouterScreen(ModalScreen[dict | None]):
         self.query_one("#router-decision-model", Input).value = self._model
         self.query_one("#router-endpoint", Input).value = self._endpoint
         preset = "custom"
-        if self._endpoint == self._config.TOOL_VERDICT_JEV_ENDPOINT:
+        if self._endpoint == self._config.TOOL_VERDICT_OPENAI_ENDPOINT:
+            preset = "openai"
+        elif self._endpoint == self._config.TOOL_VERDICT_JEV_ENDPOINT:
             preset = "jev"
         elif self._endpoint == self._config.ROUTER_DEFAULT_ENDPOINT and self._model.startswith(
             "tev1"
@@ -5337,7 +5462,6 @@ class RouterScreen(ModalScreen[dict | None]):
 
     def _add_profile(self) -> None:
         """Stage a new empty profile without persisting until Save."""
-        import re
 
         name_input = self.query_one("#router-profile-name", Input)
         name = name_input.value.strip()
@@ -5403,7 +5527,10 @@ class RouterScreen(ModalScreen[dict | None]):
             return
         if event.select.id != "router-preset":
             return
-        if event.value == "jev":
+        if event.value == "openai":
+            self.query_one("#router-endpoint", Input).value = self._config.TOOL_VERDICT_OPENAI_ENDPOINT
+            self.query_one("#router-decision-model", Input).value = self._config.TOOL_VERDICT_OPENAI_MODEL
+        elif event.value == "jev":
             self.query_one("#router-endpoint", Input).value = self._config.TOOL_VERDICT_JEV_ENDPOINT
             self.query_one("#router-decision-model", Input).value = self._config.TOOL_VERDICT_JEV_MODEL
         elif event.value == "tev1":

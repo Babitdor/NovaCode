@@ -56,17 +56,8 @@ def _atomic_write_json(path: Path, data: Any) -> None:
     Uses Path.replace (os.replace), not rename: on Windows rename raises
     FileExistsError when the target exists; replace overwrites atomically.
     """
-    tmp_path = path.with_suffix(".tmp." + str(os.getpid()))
-    try:
-        tmp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        tmp_path.replace(path)
-    except Exception:
-        # Clean up temp file on failure
-        try:
-            tmp_path.unlink(missing_ok=True)
-        except Exception:
-            pass
-        raise
+    from novacode_cli.security.secret_files import write_secret_json
+    write_secret_json(path, data)
 
 
 def _acquire_lock(lock_path: Path, timeout: float = 5.0) -> bool:

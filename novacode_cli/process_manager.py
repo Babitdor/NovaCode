@@ -289,6 +289,10 @@ class ProcessManager:
             # Only clear the name mapping if it still points at this pid.
             self._name_to_pid.pop(info.name, None)
 
+    def unregister_process(self, pid: int) -> None:
+        """Forget an externally managed process after its owner reaps it."""
+        self._remove_process(pid)
+
     async def _stream_output(
         self,
         process: asyncio.subprocess.Process,

@@ -22,7 +22,8 @@ def _app():
 
 def test_a_bang_command_does_not_block_the_prompt_and_gets_no_stdin():
     """A slow command must leave the UI usable, and must not be able to read keys."""
-    from textual.widgets import RichLog, Static
+    from novacode_cli.tui.widgets import OutputLog
+    from textual.widgets import Static
 
     # Reads stdin (EOF at once, since there is none), then outlives the await.
     slow = f'"{sys.executable}" -c "import sys,time; print(repr(sys.stdin.read())); time.sleep(1.5); print(\'late\')"'
@@ -40,7 +41,7 @@ def test_a_bang_command_does_not_block_the_prompt_and_gets_no_stdin():
             await app.workers.wait_for_complete()
             for _ in range(5):
                 await pilot.pause()
-            out = "\n".join(strip.text for strip in card.query_one(RichLog).lines)
+            out = "\n".join(strip.text for strip in card.query_one(OutputLog).lines)
             return still_running, out, "running" not in str(head.render())
 
     still_running, out, ok = asyncio.run(drive())
@@ -69,7 +70,8 @@ def test_a_double_bang_takes_the_terminal_path_not_the_card():
 
 def test_a_command_with_no_output_gets_a_small_card():
     """`code .` prints nothing; its card used to fill the whole transcript."""
-    from textual.widgets import RichLog, Static
+    from novacode_cli.tui.widgets import OutputLog
+    from textual.widgets import Static
 
     silent = f'"{sys.executable}" -c "pass"'
     chatty = f'"{sys.executable}" -c "print(chr(10).join(str(i) for i in range(200)))"'
@@ -87,7 +89,7 @@ def test_a_command_with_no_output_gets_a_small_card():
                 card = app.query_one("#transcript").query(".bash-inline").last()
                 heights.append(card.size.height)
             first = app.query_one("#transcript").query(".bash-inline").first()
-            text = " ".join(strip.text for strip in first.query_one(RichLog).lines)
+            text = " ".join(strip.text for strip in first.query_one(OutputLog).lines)
             return heights[0], text, heights[1]
 
     silent_h, text, chatty_h = asyncio.run(drive())
@@ -98,7 +100,8 @@ def test_a_command_with_no_output_gets_a_small_card():
 
 def test_output_is_shown_literally_and_a_failure_is_marked(tmp_path):
     """Brackets in output are text, not Rich markup; a non-zero exit shows on the row."""
-    from textual.widgets import RichLog, Static
+    from novacode_cli.tui.widgets import OutputLog
+    from textual.widgets import Static
 
     script = tmp_path / "fail.py"
     script.write_text("print('[bold] x [/nope]'); raise SystemExit(3)", encoding="utf-8")
@@ -114,7 +117,7 @@ def test_output_is_shown_literally_and_a_failure_is_marked(tmp_path):
                 await pilot.pause()
             block = app.query_one("#transcript").query(".bash-inline").last()
             head = str(block.query_one(".bash-inline-head", Static).render())
-            return head, [strip.text for strip in block.query_one(RichLog).lines]
+            return head, [strip.text for strip in block.query_one(OutputLog).lines]
 
     head, out = asyncio.run(drive())
     assert head.rstrip().endswith("exit 3"), head

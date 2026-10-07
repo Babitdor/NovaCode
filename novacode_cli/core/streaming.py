@@ -200,7 +200,7 @@ def format_condensed_activity(activity: dict, max_items: int = 3) -> str:
     if files_read:
         # Get just filenames, not full paths
         filenames = [Path(f).name for f in files_read[:max_items]]
-        remaining = len(files_read) - max_items
+        remaining = activity.get("files_read_count", len(files_read)) - max_items
         if remaining > 0:
             parts.append(f"📖 {', '.join(filenames)}, +{remaining}")
         else:
@@ -209,7 +209,7 @@ def format_condensed_activity(activity: dict, max_items: int = 3) -> str:
     files_written = activity.get("files_written", [])
     if files_written:
         filenames = [Path(f).name for f in files_written[:max_items]]
-        remaining = len(files_written) - max_items
+        remaining = activity.get("files_written_count", len(files_written)) - max_items
         if remaining > 0:
             parts.append(f"✏️ {', '.join(filenames)}, +{remaining}")
         else:
@@ -226,9 +226,9 @@ def format_condensed_activity(activity: dict, max_items: int = 3) -> str:
             parts.append(f"{icon} {count}")
 
     # Show errors count
-    errors = activity.get("errors", [])
-    if errors:
-        parts.append(f"❌ {len(errors)}")
+    error_count = activity.get("error_count", len(activity.get("errors", [])))
+    if error_count:
+        parts.append(f"❌ {error_count}")
 
     return " • ".join(parts) if parts else "starting..."
 

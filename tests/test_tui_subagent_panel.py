@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -577,3 +578,21 @@ async def test_worker_cleanup_stops_rows_without_a_terminal_event(
         assert app._subagent_rows["unfinished"].status == "stopped"
         assert app._subagent_rows["unfinished"].duration_ms is not None
         assert app._subagents_tick is None
+
+
+def test_subagent_log_trims_completed_rows_and_keeps_active_call() -> None:
+    from novacode_cli.tui.app import NovaApp
+
+    comp = SimpleNamespace(
+        _log_entries=[
+            {"mark": "running" if i == 0 else "done", "id": i}
+            for i in range(400)
+        ],
+        _tool_lines={"active": 0, "finished": 1},
+    )
+
+    NovaApp._trim_subagent_log(comp)
+
+    assert len(comp._log_entries) == 301
+    assert comp._log_entries[0]["id"] == 0
+    assert comp._tool_lines == {"active": 0}

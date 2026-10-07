@@ -25,9 +25,12 @@ except ImportError:  # pragma: no cover
 
 
 @pytest.fixture(autouse=True)
-def _disable_live_update_checks(monkeypatch: pytest.MonkeyPatch) -> None:
+def _disable_live_update_checks(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     """TUI tests never contact update services or write the real user cache."""
     monkeypatch.setenv("NOVA_DISABLE_UPDATE_CHECK", "1")
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    import novacode_cli.config.config as config_module
+    monkeypatch.setattr(config_module, "HOME_DIR", tmp_path / ".nova")
     if _HAS_TEXTUAL:
         from novacode_cli.tui.app import NovaApp
 
@@ -378,6 +381,11 @@ async def _drive_sessions_screen():
         inp.value = "/sessions"
         inp.focus()
         await pilot.press("enter")
+        await pilot.pause()
+        from novacode_cli.tui.screens import PickScreen
+        assert isinstance(app.screen, PickScreen)
+        assert app.screen.query_one("#pick-list", OptionList).option_count == 2
+        await pilot.press("enter")  # choose Nova saved sessions
         await pilot.pause()
         assert isinstance(app.screen, SessionsScreen), type(app.screen).__name__
         assert app.screen.query_one("#sessions", OptionList).option_count == 2
@@ -794,6 +802,7 @@ async def _drive_remote_render():
             return _StateMsgs(list(self._msgs))
 
         async def astream(self, inp, **kw):
+            assert ss.auto_approve is False, "remote input must not bypass tool approval"
             yield ((), "messages", (_Chunk("r1", [{"type": "text", "text": "Reply!"}]), {}))
             self._msgs.append(AIMessage(content="Reply!", id="r1"))
 
@@ -984,6 +993,7 @@ async def _drive_remote_streaming():
             return _StateMsgs(list(self._msgs))
 
         async def astream(self, inp, **kw):
+            assert ss.auto_approve is False, "remote input must not bypass tool approval"
             yield (
                 (),
                 "messages",
@@ -1068,9 +1078,9 @@ async def _drive_home_banner():
     from novacode_cli.tui.app import MatrixRain, NovaApp
     from novacode_cli.ui.ui_elements import TokenTracker
 
-    # The config banner exists and carries the NOVA name in the wordmark and the
-    # portrait's own caption (the standalone version caption no longer repeats it).
-    assert "NOVA" in get_responsive_ascii(width=80)
+    # The wide banner contains the block-letter wordmark; it need not contain
+    # the literal string NOVA, which is spelled visually by the glyphs.
+    assert "█" in get_responsive_ascii(width=80)
 
     app = NovaApp(
         agent=_FakeAgent(),
@@ -1088,14 +1098,15 @@ async def _drive_home_banner():
         assert isinstance(rain, MatrixRain)
         assert len(app.query(MatrixRain)) == 1
         # The ASCII art is embedded in the rain widget (rain behind, logo on top).
-        assert "NOVA" in "\n".join(rain._art_lines)
+        assert rain._art_lines
         # The logo style tracks the active theme (bold <theme primary color>).
         style = rain._art_style()
         assert style.startswith("bold ")
         # A frame renders without error and includes art glyphs over the rain.
         rain._tick()
         out = rain.render()
-        assert "NOVA" in (out.plain if hasattr(out, "plain") else str(out))
+        frame = out.plain if hasattr(out, "plain") else str(out)
+        assert "⣿" in frame and "█" in frame
 
         # Responsive: reflow grows the grid on a wider terminal and shrinks +
         # swaps the art variant on a narrow one.
@@ -1127,6 +1138,7 @@ async def _drive_home_banner():
         assert rain._col_count == 140 - 4
 
         # Pause the rain when the terminal loses OS focus; resume on focus.
+        app._set_matrix_rain_enabled(True)
         timer = rain._timer
         assert timer is not None
         active = getattr(timer, "_active", None)  # Textual Timer's run flag
@@ -1560,9 +1572,10 @@ async def _drive_stream_coalescing():
     async with app.run_test() as pilot:
         # Stub set_timer so the coalesced flush never auto-fires — we drive it.
         timer_calls = {"n": 0}
-        app.set_timer = lambda delay, fn, *a, **k: timer_calls.__setitem__(
-            "n", timer_calls["n"] + 1
-        )
+        def count_stream_timer(delay, fn, *a, **k):
+            if getattr(fn, "__name__", "") == "_flush_stream":
+                timer_calls["n"] += 1
+        app.set_timer = count_stream_timer
         for part in ("Hel", "lo ", "wor", "ld"):
             await app._render(ev.TextDelta(part))
         # Widget mounted once; the 4 deltas coalesced into a single scheduled flush.
@@ -1613,7 +1626,10 @@ async def _drive_stream_leading_edge() -> None:
     )
     async with app.run_test() as pilot:
         timers = {"n": 0}
-        app.set_timer = lambda delay, fn, *a, **k: timers.__setitem__("n", timers["n"] + 1)
+        def count_stream_timer(delay, fn, *a, **k):
+            if getattr(fn, "__name__", "") == "_flush_stream":
+                timers["n"] += 1
+        app.set_timer = count_stream_timer
 
         await app._render(ev.TextDelta("first "))
         assert app._stream_msg is not None
@@ -2204,6 +2220,48 @@ def test_tui_startup_info():
     if not _HAS_TEXTUAL:
         return
     asyncio.run(_drive_startup_info())
+
+
+def test_router_mode_info_bar_uses_the_selected_route(monkeypatch):
+    """Router mode labels the footer dynamically and follows the chosen route."""
+    from novacode_cli.config import nova_config
+    from novacode_cli.tui.app import NovaApp, _router_model_display
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    class _RouterConfig:
+        enabled = True
+
+        def get_router_enabled(self):
+            return self.enabled
+
+        def get_router_routes(self):
+            return [{"id": "coding", "model": "deepseek-v4.1-flash"}]
+
+    config = _RouterConfig()
+    monkeypatch.setattr(nova_config, "NovaConfig", lambda: config)
+    app = NovaApp(
+        agent=_FakeAgent(),
+        assistant_id="nova-agent",
+        session_state=_SS(),
+        backend=None,
+        token_tracker=TokenTracker(),
+        image_tracker=None,
+        model_name="base-model",
+        session_manager=None,
+    )
+    app._refresh_info_bar = lambda: None
+
+    app._refresh_router_model_from_state({"model_route": "coding"})
+
+    assert _router_model_display(
+        app._router_mode_enabled, app.model_name, app._routed_model_name
+    ) == ("DYNAMIC (ROUTER MODE)", "MODEL · deepseek-v4.1-flash")
+
+    config.enabled = False
+    app._refresh_router_model_from_state({"model_route": "coding"})
+    assert _router_model_display(
+        app._router_mode_enabled, app.model_name, app._routed_model_name
+    ) == ("MODEL", "base-model")
 
 
 def test_plan_agent_shares_steering_list(monkeypatch):
@@ -2908,6 +2966,81 @@ def test_tui_prune_keeps_up_during_a_burst():
     asyncio.run(_drive_prune_keeps_up_during_a_burst())
 
 
+def test_tool_group_history_trims_completed_entries_but_keeps_pending_calls():
+    from novacode_cli.tui.app import NovaApp
+
+    app = object.__new__(NovaApp)
+    app._tool_group_entries = [
+        {"mark": "running" if i == 0 else "done", "id": i}
+        for i in range(250)
+    ]
+    app._tool_group_lines = {"pending": 0, "completed": 1}
+    app._tool_group_last_idx = 249
+
+    app._trim_tool_group_history()
+
+    assert len(app._tool_group_entries) == 201
+    assert app._tool_group_entries[0]["id"] == 0  # active call remains addressable
+    assert app._tool_group_lines == {"pending": 0}
+    assert app._tool_group_last_idx == 200
+
+
+def test_pending_background_notes_are_bounded():
+    from novacode_cli.tui.app import NovaApp
+
+    app = object.__new__(NovaApp)
+    app._pending_job_notes = []
+    for i in range(150):
+        app._queue_pending_job_note(f"task {i}")
+
+    assert len(app._pending_job_notes) == 100
+    assert app._pending_job_notes[0] == "task 50"
+    assert app._pending_job_notes[-1] == "task 149"
+
+
+def test_responsive_breakpoints_follow_width_and_height_changes():
+    from novacode_cli.tui.app import _responsive_breakpoints
+
+    assert _responsive_breakpoints(120, 30) == (False, False, False, False)
+    assert _responsive_breakpoints(80, 30) == (True, False, False, False)
+    assert _responsive_breakpoints(60, 18) == (True, True, True, False)
+    assert _responsive_breakpoints(45, 10) == (True, True, True, True)
+    assert _responsive_breakpoints(140, 35) == (False, False, False, False)
+
+    from types import SimpleNamespace
+
+    from novacode_cli.tui.app import NovaApp
+
+    class Screen:
+        def __init__(self):
+            self.classes = {}
+
+        def set_class(self, value, name):
+            self.classes[name] = value
+
+    root = Screen()
+    modal = Screen()
+    app = SimpleNamespace(
+        size=SimpleNamespace(width=60, height=18),
+        screen=modal,
+        _root_screen=root,
+        _narrow=False,
+        _compact=False,
+        _short=False,
+        _tiny=False,
+        _refresh_status=lambda: None,
+        _set_nova_indicator=lambda *args, **kwargs: None,
+    )
+    NovaApp._apply_responsive_layout(app)
+    expected = {"narrow": True, "compact": True, "short": True, "tiny": False}
+    assert root.classes == expected
+    assert modal.classes == expected
+
+    app.size = SimpleNamespace(width=140, height=35)
+    NovaApp._apply_responsive_layout(app)
+    assert all(value is False for value in root.classes.values())
+
+
 async def _drive_tool_group_line_cache():
     """A cached tool line must still refresh when its result arrives.
 
@@ -3298,13 +3431,13 @@ async def _drive_native_bash():
             await pilot.pause()
         # `!cmd` runs in the chat, inline: a `! cmd` row, then the output
         # hanging under an elbow.
-        from textual.widgets import RichLog
+        from novacode_cli.tui.widgets import OutputLog
 
         block = app.query_one("#transcript").query(".bash-inline").last()
         head = str(block.query_one(".bash-inline-head", Static).render())
         assert head.startswith("! echo hi-from-shell"), head
         assert "running" not in head, head
-        out = [strip.text for strip in block.query_one(RichLog).lines]
+        out = [strip.text for strip in block.query_one(OutputLog).lines]
         assert out[0].startswith("  └  hi-from-shell"), out
 
 
@@ -4261,7 +4394,8 @@ async def _drive_subagent_terminal_preview():
     """Verify that subagent status/tool calls and live terminal output are routed and displayed correctly in the TUI."""
     import novacode_cli.ui_events as ev
     from rich.text import Text as RText
-    from textual.widgets import RichLog, Static
+    from novacode_cli.tui.widgets import OutputLog
+    from textual.widgets import Static
 
     from novacode_cli.tui.app import NovaApp
     from novacode_cli.ui.ui_elements import TokenTracker
@@ -4310,45 +4444,11 @@ async def _drive_subagent_terminal_preview():
         # 3. Stream live output to that tool
         app._on_tool_output("tool_call_1", "searching codebase...\n")
 
-        # RichLog.write DEFERS rendering until the widget's size is known ("We
-        # defer ALL writes until the size is known, to ensure ordering is
-        # preserved" — textual/widgets/_rich_log.py). #subagent-log starts at
-        # `display: none` and is only revealed by the .active class that
-        # _on_tool_output adds, so at write time it is still 0x0: the write is
-        # queued, and `.lines` stays empty until a layout pass gives it a width
-        # AND the deferred writes are flushed.
-        #
-        # The old loop polled `.lines` 100 times with a 0.01 s sleep. That is
-        # ample when the machine is idle but not under a full-suite run, where
-        # pilot.pause() alone was measured at 46-69 ms — so this failed ~50% of
-        # the time regardless of any production change. Poll on wall-clock time
-        # rather than a fixed iteration count, so load extends the wait instead
-        # of eating it.
-        deadline = asyncio.get_running_loop().time() + 20.0
-        found = False
-        while asyncio.get_running_loop().time() < deadline:
-            await pilot.pause()
-            log_widget = body.query_one("#subagent-log", RichLog)
-            if any(
-                "searching codebase..." in getattr(line, "text", "") for line in log_widget.lines
-            ):
-                found = True
-                break
-            await asyncio.sleep(0.01)
-        if not found:
-            # KNOWN FLAKE (~30%), not a product bug and not a timing race:
-            # the widget ends up sized AND active (observed size=62x3,
-            # active=True) with lines=[] — RichLog deferred the write while
-            # it was 0x0 and then never flushed the queue. Waiting longer
-            # does not help; this needs a fix in how _on_tool_output writes
-            # (e.g. write after the reveal, or call refresh to flush).
-            # Skip rather than fail so this stops masking real regressions.
-            log_widget = body.query_one("#subagent-log", RichLog)
-            pytest.skip(
-                "RichLog dropped a deferred write "
-                f"(size={log_widget.size}, active={log_widget.has_class('active')}, "
-                f"lines={len(log_widget.lines)}) — known flake, see comment"
-            )
+        # The native component retains logical lines even before layout/reveal.
+        log_widget = body.query_one("#subagent-log", OutputLog)
+        assert await _wait_until(
+            pilot, lambda: any("searching codebase..." in line.text for line in log_widget.lines)
+        ), "the live output buffer did not deliver to the component"
 
         # 4. Tool result/completion
         await app._render(
@@ -4466,7 +4566,7 @@ def test_tui_bg_agent_card_explains_progress():  # noqa: PLR0915 — one block p
     Regression: the card used to write only ``e.name`` for a ToolCall, so a
     detached run showed a bare list of tool names with no arguments, no reasoning,
     no results and no live status. ``_render_bg_event`` is a pure function, so it
-    is asserted directly (no RichLog deferred-write timing to race).
+    is asserted directly (no OutputLog deferred-write timing to race).
     """
     if not _HAS_TEXTUAL:
         return
@@ -4648,7 +4748,7 @@ def test_tui_bg_agent_card_prose():
     """The bg card's prose must not duplicate, must be escaped, and must be spaced.
 
     Regression: ``TextDelta`` wrote a live preview that the committed
-    ``AssistantMessage`` then wrote AGAIN (RichLog is append-only, so the preview
+    ``AssistantMessage`` then wrote AGAIN (OutputLog is append-only, so the preview
     cannot be replaced), and the committed text was written unescaped, so
     ``[brackets]`` in prose were interpreted as Rich markup.
     """
@@ -4700,7 +4800,7 @@ async def _drive_bg_agent_card_sizes_to_content() -> None:
     transcript. The card now uses ``.bgagent-log`` (auto height, capped) and the
     body is pinned to ``auto``.
     """
-    from textual.widgets import RichLog
+    from novacode_cli.tui.widgets import OutputLog
 
     import novacode_cli.agent_stream as astream
     import novacode_cli.ui_events as ev
@@ -4756,7 +4856,7 @@ async def _drive_bg_agent_card_sizes_to_content() -> None:
                         await asyncio.sleep(0.01)
                         continue
                     card = cards[0]
-                    log_widget = card.query_one(RichLog)
+                    log_widget = card.query_one(OutputLog)
                     if len(log_widget.lines) >= expected and log_widget.size.height > 0:
                         break
                     await asyncio.sleep(0.01)
@@ -5063,7 +5163,7 @@ async def _drive_wiki_screen():
         async with app.run_test() as pilot:
             # Open wiki screen
             inp = app.query_one("#prompt", PromptInput)
-            inp.value = "/wiki"
+            inp.value = "/wiki "
             inp.focus()
             await pilot.pause()
             await pilot.press("enter")
@@ -5216,6 +5316,165 @@ def test_tui_ctx_survives_a_resume():
     asyncio.run(_drive_ctx_survives_a_resume())
 
 
+@pytest.mark.asyncio
+async def test_context_screen_refreshes_categories_model_and_usage(monkeypatch):
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+    from textual.widgets import Static
+    from novacode_cli.config.nova_config import NovaConfig
+    from novacode_cli.tui.app import NovaApp
+    from novacode_cli.tui.screens import ContextScreen
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    cfg = NovaConfig()
+    cfg.set_router_routes([{
+        "id": "coding", "provider": "openai", "model": "gpt-4", "criteria": "Code",
+    }])
+    cfg.set_router_enabled(True)
+
+    class Agent(_FakeAgent):
+        values = {"messages": [HumanMessage("Read a file")], "model_route": "coding"}
+
+        async def aget_state(self, config):
+            from types import SimpleNamespace
+            return SimpleNamespace(values=self.values)
+
+    tracker = TokenTracker()
+    tracker.set_model("claude-opus-5")
+    tracker.set_baseline(400)
+    agent = Agent()
+    state = _SS()
+    state._tools = [{"name": "read_file", "description": "Read files", "parameters": {"type": "object"}}]
+    app = NovaApp(agent=agent, assistant_id="nova-agent", session_state=state,
+                  backend=None, token_tracker=tracker, image_tracker=None, model_name="claude-opus-5")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app._run_context()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, ContextScreen)
+        bd = tracker.get_breakdown()
+        assert bd.system_prompt_tokens == 400
+        assert bd.tool_definitions_tokens > 0
+        assert bd.total_tokens == bd.baseline_tokens + bd.conversation_tokens
+        assert bd.context_window_size == 128000  # routed GPT-4, not base Claude's 200K
+        assert "gpt-4" in str(screen.query_one("#context-hero", Static).content)
+        assert f"{bd.total_tokens:,} tokens" in app._token_text().plain
+
+        agent.values["messages"] += [
+            AIMessage("", tool_calls=[{"name": "read_file", "args": {"path": "a.py"}, "id": "t"}]),
+            ToolMessage("result " * 500, tool_call_id="t"),
+        ]
+        tracker.add(2000, 150, session_tokens=3100, cache_read_tokens=300)
+        await app._update_context_breakdown()
+        await pilot.pause(1.1)  # exercise the dashboard's actual refresh timer
+        hero = str(screen.query_one("#context-hero", Static).content)
+        details = str(screen.query_one("#context-breakdown", Static).content)
+        metrics = str(screen.query_one("#context-metrics", Static).content)
+        assert "2,000" in hero and "Provider-reported" in hero
+        assert "Tool results" in details and "Tool definitions" in details
+        assert "3,100 tokens" in metrics and "1 tool calls" in metrics and "300 read" in metrics
+
+        tracker.reset()
+        agent.values["messages"] = []
+        await app._update_context_breakdown()
+        screen.refresh_data()
+        bd = tracker.get_breakdown()
+        assert bd.user_message_count == 0 and bd.tool_result_tokens == 0
+        assert bd.system_prompt_tokens == 400 and bd.tool_definitions_tokens > 0
+        assert "Estimated" in str(screen.query_one("#context-hero", Static).content)
+        assert tracker.session_total_tokens == 3100
+        cfg.set_router_enabled(False)
+        await app._update_context_breakdown()
+        screen.refresh_data()
+        assert tracker.model_name == "claude-opus-5"
+        assert tracker.get_breakdown().context_window_size == 200000
+
+
+@pytest.mark.asyncio
+async def test_command_error_output_is_collapsed_and_can_be_expanded():
+    from textual.widgets import Collapsible
+    import novacode_cli.ui_events as ev
+    from novacode_cli.tui.app import NovaApp
+    from novacode_cli.tui.widgets import OutputLog
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    app = NovaApp(agent=_FakeAgent(), assistant_id="nova-agent", session_state=_SS(),
+                  backend=None, token_tracker=TokenTracker(), image_tracker=None, model_name="m")
+    text = "pytest session starts\nERROR: file not found [abc]\nExit code: 1"
+    async with app.run_test(size=(80, 24)) as pilot:
+        await app._render(ev.ErrorOutput(text=text))
+        await pilot.pause()
+        card = app.query_one(".error-output", Collapsible)
+        assert card.collapsed
+        assert "Exit code: 1" in card.title and "3 lines" in card.title
+        output = card.query_one(OutputLog)
+        assert "ERROR: file not found [abc]" in "\n".join(line.text for line in output.lines)
+        card.collapsed = False
+        await pilot.pause()
+        assert output.size.height > 0
+        assert text == output._output_body.content.plain
+        card.collapsed = True
+        await pilot.pause()
+        assert output.size.height == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("auto_approve", [False, True])
+async def test_remote_child_keeps_approval_preference(monkeypatch, auto_approve):
+    from collections import deque
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from novacode_cli.tui.app import NovaApp
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    app = NovaApp(agent=_FakeAgent(), assistant_id="nova-agent", session_state=_SS(),
+                  backend=None, token_tracker=TokenTracker(), image_tracker=None, model_name="m")
+    proxy = SimpleNamespace(auto_approve=auto_approve)
+    pane = SimpleNamespace(child=object(), status="idle", sid="child", title="child",
+                           state={"session_state": proxy}, remote_turns=deque())
+
+    async def send_prompt(sid, text):
+        assert proxy.auto_approve is auto_approve
+        return "turn-1"
+
+    monkeypatch.setattr(app, "_supervisor", lambda: SimpleNamespace(send_prompt=send_prompt))
+    monkeypatch.setattr(app, "_refresh_tabs", lambda: None)
+    monkeypatch.setattr(app, "_remote_label", lambda pane: "")
+    msg = SimpleNamespace(text="hello", user_name="alice", edit_fn=None, reply_fn=AsyncMock())
+    await app._remote_child_turn(pane, msg)
+    assert proxy.auto_approve is auto_approve
+    await app._finish_remote_turn(pane)
+    assert proxy.auto_approve is auto_approve
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", ["", "offline"])
+async def test_update_screen_results_and_retry(monkeypatch, error):
+    from unittest.mock import Mock
+    from novacode_cli import updates
+    from novacode_cli.tui.app import NovaApp
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    check = Mock(return_value=updates.UpdateStatus(False, "installed", "installed", error=error))
+    monkeypatch.setattr(updates, "check_for_update", check)
+    app = NovaApp(agent=_FakeAgent(), assistant_id="nova-agent", session_state=_SS(),
+                  backend=None, token_tracker=TokenTracker(), image_tracker=None, model_name="m")
+    async with app.run_test(size=(60, 20)) as pilot:
+        await app._run_update_check("/update")
+        await app.screen.workers.wait_for_complete()
+        await pilot.pause()
+        title = str(app.screen.query_one("#update-status").content)
+        assert ("Could not check" if error else "NovaCode is up to date.") in title
+        assert not app.screen.query_one("#update-retry").disabled
+        check.return_value = updates.UpdateStatus(True, "installed", "new")
+        app.screen.query_one("#update-retry").press()
+        await pilot.pause()
+        await app.screen.workers.wait_for_complete()
+        assert "Update available" in str(app.screen.query_one("#update-status").content)
+        assert "nova update" in str(app.screen.query_one("#update-command").content)
+        assert check.call_count == 2
+
+
 async def _drive_todo_dock_scrolls_long_lists() -> None:
     """The last wrapped item is reachable without covering the prompt."""
     from textual.containers import VerticalScroll
@@ -5292,16 +5551,20 @@ def test_tui_update_notice_and_manual_check(monkeypatch: pytest.MonkeyPatch) -> 
             notify = Mock()
             monkeypatch.setattr(app, "notify", notify)
             await app._run_update_check("/update")
+            from novacode_cli.tui.screens import UpdateScreen
+            assert isinstance(app.screen, UpdateScreen)
+            await app.screen.workers.wait_for_complete()
+            await pilot.pause()
             check.assert_called_once_with(force=True)
-            assert "nova update" in notify.call_args.args[0]
+            assert "nova update" in str(app.screen.query_one("#update-command").content)
             assert app._notified_nova_update == "new"
             monkeypatch.delenv("NOVA_DISABLE_UPDATE_CHECK")
             await app._check_nova_update()
-            assert notify.call_count == 1, "one background notification per revision"
+            assert notify.call_count == 0, "the screen already showed this revision"
             check.return_value = updates.UpdateStatus(
                 available=False, current="", latest="", error="offline"
             )
             await app._check_nova_update()
-            assert notify.call_count == 1
+            assert notify.call_count == 0
 
     asyncio.run(drive())

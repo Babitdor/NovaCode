@@ -218,11 +218,7 @@ class ContextBreakdown:
     @property
     def conversation_tokens(self) -> int:
         """Tokens used by conversation content (user/assistant/tool messages)."""
-        return (
-            self.user_message_tokens
-            + self.assistant_message_tokens
-            + self.tool_result_tokens
-        )
+        return self.user_message_tokens + self.assistant_message_tokens + self.tool_result_tokens
 
     @property
     def remaining_tokens(self) -> int:
@@ -267,23 +263,28 @@ class ContextBreakdown:
         does not make a category exact — it makes the parts agree with the
         whole, which is what the bars are read for.
         """
-        estimated = (
-            self.baseline_tokens + self.conversation_tokens
-        )
+        estimated = self.baseline_tokens + self.conversation_tokens
         if total_tokens <= 0 or estimated <= 0:
             return replace(self, total_tokens=max(0, total_tokens) or self.total_tokens)
-        factor = total_tokens / estimated
-        return replace(
-            self,
-            system_prompt_tokens=round(self.system_prompt_tokens * factor),
-            user_memory_tokens=round(self.user_memory_tokens * factor),
-            project_memory_tokens=round(self.project_memory_tokens * factor),
-            tool_definitions_tokens=round(self.tool_definitions_tokens * factor),
-            user_message_tokens=round(self.user_message_tokens * factor),
-            assistant_message_tokens=round(self.assistant_message_tokens * factor),
-            tool_result_tokens=round(self.tool_result_tokens * factor),
-            total_tokens=total_tokens,
+        fields = (
+            "system_prompt_tokens",
+            "user_memory_tokens",
+            "project_memory_tokens",
+            "tool_definitions_tokens",
+            "user_message_tokens",
+            "assistant_message_tokens",
+            "tool_result_tokens",
         )
+        # Largest-remainder allocation keeps the displayed categories adding
+        # up exactly, even for small totals where independent rounding drifts.
+        numerators = {name: getattr(self, name) * total_tokens for name in fields}
+        scaled = {name: value // estimated for name, value in numerators.items()}
+        remainder = total_tokens - sum(scaled.values())
+        for name in sorted(fields, key=lambda name: numerators[name] % estimated, reverse=True)[
+            :remainder
+        ]:
+            scaled[name] += 1
+        return replace(self, **scaled, total_tokens=total_tokens)
 
 
 @dataclass
@@ -376,9 +377,7 @@ def get_context_window_size(model_name: str, use_dynamic: bool = True) -> int:
     from novacode_cli.context._dynamic import is_ollama_cloud_model
 
     cloud_api_prefixes = ("claude-", "gpt-", "gemini-", "o1", "o3", "o4")
-    is_cloud_api_model = any(
-        model_name.lower().startswith(p) for p in cloud_api_prefixes
-    )
+    is_cloud_api_model = any(model_name.lower().startswith(p) for p in cloud_api_prefixes)
     # Ollama cloud models (`:cloud`) run on Ollama's servers — not loaded into
     # local VRAM, so `ollama ps` won't list them and the local `num_ctx` cap
     # doesn't apply. Their window is the model maximum from `ollama show`.
@@ -395,9 +394,7 @@ def get_context_window_size(model_name: str, use_dynamic: bool = True) -> int:
 
             running = get_ollama_running_context(model_name)
             if running:
-                logger.debug(
-                    f"Allocated context for {model_name}: {running:,} (ollama ps)"
-                )
+                logger.debug(f"Allocated context for {model_name}: {running:,} (ollama ps)")
                 return running
         except Exception as e:  # noqa: BLE001
             logger.debug(f"ollama ps probe failed for {model_name}: {e}")
@@ -412,13 +409,10 @@ def get_context_window_size(model_name: str, use_dynamic: bool = True) -> int:
             detected = get_ollama_context_length(model_name)
             if detected:
                 arch_window = detected
-                logger.debug(
-                    f"Dynamic context for {model_name}: {detected:,} tokens (max)"
-                )
+                logger.debug(f"Dynamic context for {model_name}: {detected:,} tokens (max)")
         except Exception as e:  # noqa: BLE001
             logger.debug(
-                f"Dynamic context detection failed for {model_name}: {e}, "
-                f"falling back to hardcoded"
+                f"Dynamic context detection failed for {model_name}: {e}, falling back to hardcoded"
             )
     # Ollama didn't recognize it (arch_window is None) AND it isn't a cloud-API
     # model → it's a gateway model (OpenCode / OpenRouter / other OpenAI-compatible
@@ -451,10 +445,7 @@ def get_context_window_size(model_name: str, use_dynamic: bool = True) -> int:
 
     effective = min(arch_window, get_ollama_num_ctx())
     if effective != arch_window:
-        logger.debug(
-            f"Capping {model_name} window {arch_window:,} → {effective:,} "
-            f"(num_ctx)"
-        )
+        logger.debug(f"Capping {model_name} window {arch_window:,} → {effective:,} (num_ctx)")
     return effective
 
 
@@ -668,5 +659,3 @@ def build_context_breakdown(
         assistant_message_count=assistant_count,
         tool_call_count=tool_count,
     )
-
-

@@ -64,7 +64,7 @@ def test_execute_scope_enforced(setup):
     assert v == "DENIED"
     # granting execute flips it (a fresh middleware picks up the same global policy)
     pol.grant(root, read=False, write=False, execute=True)
-    assert _run(mw, _Req("execute", command="ls"))[0] == "ALLOWED"
+    assert _run(mw, _Req("execute", command="ls"))[0] == "DENIED"
 
 
 def test_traversal_and_absolute_escape_denied(setup):

@@ -36,6 +36,7 @@ pip-log.txt
 pip-delete-this-directory.txt
 
 # Unit test / coverage reports
+.tmp-pytest*/
 htmlcov/
 .tox/
 .nox/
@@ -162,3 +163,12 @@ tmp/
 # Screenshots used while iterating on the TUI — not documentation, not shipped.
 /UI.png
 /UI-*.png
+/Pro.png
+/.tmp-final-validation.xml
+
+# Local investigation and implementation notes.
+/OPENAI_DECISIONS.md
+/OPENAI_DECISIONS_SPEC.md
+/SECURITY_AUDIT.md
+/SECURITY_REMEDIATION.md
+/SECURITY_REMEDIATION_SPEC.md

@@ -83,10 +83,27 @@ def _plugin_name(plugin_dir: Path, fallback: str) -> str:
     try:
         name = json.loads(manifest.read_text(encoding="utf-8")).get("name")
         if name:
-            return re.sub(r"[^\w.-]", "-", str(name))
+            return _safe_name(str(name))
     except (OSError, json.JSONDecodeError, AttributeError):
         pass
-    return re.sub(r"[^\w.-]", "-", fallback)
+    return _safe_name(fallback)
+
+
+def _safe_name(name: str) -> str:
+    cleaned = re.sub(r"[^\w.-]", "-", name)
+    if cleaned.casefold() in {"", ".", "..", ".staging", "installed.json", "marketplaces.json"} or cleaned.endswith(".") or re.match(r"^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)", cleaned, re.I):
+        raise ValueError("Invalid plugin or marketplace name")
+    return cleaned
+
+
+def _storage_path(root: Path, name: str) -> Path:
+    """Validate destructive destinations, including existing symlink targets."""
+    if _safe_name(name) != name:
+        raise ValueError("Invalid stored plugin name")
+    dest = root / name
+    if dest.resolve().parent != root.resolve() or dest.is_symlink():
+        raise ValueError("Plugin destination escapes storage directory")
+    return dest
 
 
 def fetch(source: str, dest: Path) -> str:
@@ -122,7 +139,7 @@ def install(source: str) -> str:
     ref = fetch(source, staging)
     fallback = Path(ref.rstrip("/")).name.removesuffix(".git")
     name = _plugin_name(staging, fallback)
-    dest = PLUGINS_DIR / name
+    dest = _storage_path(PLUGINS_DIR, name)
     _force_rmtree(dest)
     staging.rename(dest)
 
@@ -139,9 +156,10 @@ def remove(name: str) -> bool:
     m = _load_manifest()
     if name not in m:
         return False
+    destination = _storage_path(PLUGINS_DIR, name)
     _remove_mcp(name)
     _remove_hooks(name)
-    _force_rmtree(PLUGINS_DIR / name)
+    _force_rmtree(destination)
     del m[name]
     _save_manifest(m)
     return True

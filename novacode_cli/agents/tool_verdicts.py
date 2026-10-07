@@ -375,8 +375,7 @@ def goal_from_messages(messages: Sequence[AnyMessage]) -> str:
     prompts = [
         truncate(_format_content(message.content), 500)
         for message in messages
-        if isinstance(message, HumanMessage)
-        and _format_content(message.content).strip()
+        if isinstance(message, HumanMessage) and _format_content(message.content).strip()
     ]
     return "\n".join(prompts[-3:])
 
@@ -562,15 +561,11 @@ def build_verdict_state(
         if pinned_entry(entry) or entry.get("tool_calls"):
             continue
         left_out.add(index)
-        remaining = [
-            item for position, item in enumerate(history) if position not in left_out
-        ]
+        remaining = [item for position, item in enumerate(history) if position not in left_out]
         if fits(remaining):
             return fitted(remaining, "old messages left out")
 
-    remaining = [
-        item for position, item in enumerate(history) if position not in left_out
-    ]
+    remaining = [item for position, item in enumerate(history) if position not in left_out]
     merged = _merge_call_runs(remaining, pinned_entry)
     if fits(merged):
         return fitted(merged, "old calls merged")
@@ -671,23 +666,39 @@ class SystemOneClient:
             message = "Jev API key is missing; add it through /auth."
             raise ValueError(message)
         client = self._session()
+        normalized = {
+            name: question.model_dump() if hasattr(question, "model_dump") else question
+            for name, question in questions.items()
+        }
         response = client.post(
             self.endpoint,
-            json={"model": self.model, "state": state, "questions": questions},
+            json={"model": self.model, "state": state, "questions": normalized},
             headers={"authorization": f"Bearer {self.api_key}"},
         )
         if response.status_code >= 400:
             message = f"System One request failed ({response.status_code})."
             raise ValueError(message)
-        return parse_answers(response.json())
+        payload = response.json()
+        if any(question.get("type") == "choice" for question in normalized.values()):
+            return payload
+        return parse_answers(payload)
 
 
-def create_system_one_client(config: NovaConfig) -> SystemOneClient:
+def create_system_one_client(config: NovaConfig) -> DecisionClient:
     """Resolve credentials without sending TypeSafe keys to custom servers."""
     from novacode_cli.config.credentials import credential_value
     from novacode_cli.config.nova_config import NovaConfig
 
     endpoint = config.get_tool_verdict_endpoint()
+    from novacode_cli.agents.openai_decisions import (
+        OPENAI_DECISIONS_ENDPOINT,
+        OpenAIDecisionsClient,
+    )
+
+    if endpoint == OPENAI_DECISIONS_ENDPOINT:
+        return OpenAIDecisionsClient(
+            model=config.get_tool_verdict_model(), api_key=credential_value("OPENAI_API_KEY")
+        )
     if endpoint == NovaConfig.TOOL_VERDICT_JEV_ENDPOINT:
         api_key = credential_value("TYPESAFE_API_KEY")
     else:
@@ -722,10 +733,7 @@ class FakeDecisionClient:
     ) -> dict[str, float]:
         self.calls.append({"state": state, "questions": questions})
         rule = self._answer
-        return {
-            name: float(rule(name)) if callable(rule) else float(rule)
-            for name in questions
-        }
+        return {name: float(rule(name)) if callable(rule) else float(rule) for name in questions}
 
 
 # ── the verdict cache ───────────────────────────────────────────────────────
@@ -1071,9 +1079,7 @@ class VerdictScorer:
     ) -> None:
         """The worker: fit a bounded state, ask, append. Never raises."""
         try:
-            recent = _slice_to_window(
-                messages, self.window + self.keep, candidates
-            )
+            recent = _slice_to_window(messages, self.window + self.keep, candidates)
             renumbered = collect_candidates(
                 recent, preserve_recent_results=self.keep, window=self.window
             )
@@ -1129,11 +1135,7 @@ def _slice_to_window(
     Cut back to the assistant turn that made the oldest kept call, so every
     result in the slice still has the call the state describes it with.
     """
-    indices = [
-        index
-        for index, message in enumerate(messages)
-        if isinstance(message, ToolMessage)
-    ]
+    indices = [index for index, message in enumerate(messages) if isinstance(message, ToolMessage)]
     if len(indices) <= results:
         return list(messages)
     cutoff = indices[-results]

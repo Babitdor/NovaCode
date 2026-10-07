@@ -127,23 +127,23 @@ async def handle_trello_command(
         console.print()
         console.print(
             f"[yellow]Kanban board is already running at "
-            f"[cyan]http://localhost:{existing_server.port}[/cyan][/yellow]"
+            f"[cyan]{existing_server.url}[/cyan][/yellow]"
         )
         console.print("[dim]Use /trello stop to stop it.[/dim]")
         console.print()
         return True
 
     server = TrelloServer()
-    port = await server.start()
+    await server.start()
     session_state.trello_server = server
 
     try:
-        webbrowser.open(f"http://localhost:{port}")
+        webbrowser.open(f"{server.url}")
     except Exception:
         pass  # Browser opening is best-effort
 
     console.print()
-    console.print(f"[green]✓[/green] Kanban board started at [cyan]http://localhost:{port}[/cyan]")
+    console.print(f"[green]✓[/green] Kanban board started at [cyan]{server.url}[/cyan]")
     console.print(
         "[dim]Add tasks, then drag a card to Processing (or toggle Auto-advance). "
         "The agent processes them one at a time.[/dim]"
@@ -192,7 +192,7 @@ def _handle_status(session_state: Any) -> bool:
 
     console.print()
     console.print("[bold]📋 Kanban Board Status[/bold]")
-    console.print(f"  Server: [cyan]http://localhost:{server.port}[/cyan]")
+    console.print(f"  Server: [cyan]{server.url}[/cyan]")
     console.print(f"  Auto-advance: [bold]{'on' if server.auto_advance else 'off'}[/bold]")
     console.print(f"  📥 Loaded:    [bold]{counts['loaded']}[/bold]")
     console.print(f"  ⚙️ Processing: [bold]{counts['processing']}[/bold]")

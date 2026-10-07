@@ -25,11 +25,10 @@ import os
 import re
 import socket
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import HTTPServer
 from typing import Any
 
 from novacode_cli.config.config import Settings
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -972,7 +971,7 @@ let searchQuery = '';
 // ── API Helpers ─────────────────────────────────────────────
 
 async function api(method, path, body) {
-  const opts = { method, headers: {} };
+  const opts = { method, headers: {'X-Nova-Request': '1'} };
   if (body) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
@@ -1296,7 +1295,10 @@ loadData();
 # ---------------------------------------------------------------------------
 
 
-class CreateRequestHandler(BaseHTTPRequestHandler):
+from novacode_cli.security.local_http import LocalRequestHandler
+
+
+class CreateRequestHandler(LocalRequestHandler):
     """HTTP request handler for the Create web UI API and static page."""
 
     # Shared state — set by CreateServer
@@ -1315,6 +1317,8 @@ class CreateRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(data).encode("utf-8"))
 
     def _send_html(self, html: str, status: int = 200) -> None:
+        from novacode_cli.security.local_http import secure_html
+        html = secure_html(html)
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.end_headers()
@@ -1335,6 +1339,8 @@ class CreateRequestHandler(BaseHTTPRequestHandler):
         path = self.path.rstrip("/")
         parts = path.split("/")
         parts = [p for p in parts if p]
+        if len(parts) == 3 and parts[0] == "api" and not _is_valid_name(parts[2]):
+            return []
         return parts
 
     # ── CORS ────────────────────────────────────────────────────────
@@ -1896,6 +1902,8 @@ class CreateServer:
         CreateRequestHandler.settings = Settings.from_environment()
 
         self._server = HTTPServer(("127.0.0.1", port), CreateRequestHandler)
+        import secrets
+        self._server.auth_token = secrets.token_urlsafe(32)
         self.port = port
         self.is_running = True
 
@@ -1907,6 +1915,10 @@ class CreateServer:
         self._thread.start()
 
         return port
+
+    @property
+    def url(self) -> str:
+        return f"http://localhost:{self.port}/?token={self._server.auth_token}" if self._server else ""
 
     def stop(self) -> None:
         """Stop the HTTP server."""

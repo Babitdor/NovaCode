@@ -53,9 +53,10 @@ class DecisionSettings(VerticalScroll):
         )
         with Horizontal():
             yield Switch(value=False, id="decision-enabled", disabled=True)
-            yield Static("Enable System One tool pruning")
+            yield Static("Enable decision-based tool pruning")
         yield Select(
             [
+                ("OpenAI · Decisions API", "openai"),
                 ("Jev · TypeSafe API", "jev"),
                 ("Tev1 · local Ollama", "tev1"),
                 ("Custom System One", "custom"),
@@ -67,7 +68,7 @@ class DecisionSettings(VerticalScroll):
         )
         yield Static("Decision model")
         yield Input(id="decision-model", placeholder="jev-latest, tev1:4b, kev1, …", disabled=True)
-        yield Static("System One endpoint")
+        yield Static("Decision endpoint")
         yield Input(id="decision-endpoint", placeholder="https://…/v1/systemone", disabled=True)
         yield Button("Manage API key", id="decision-auth")
         yield Static("Loading decision settings…", id="decision-status")
@@ -100,7 +101,9 @@ class DecisionSettings(VerticalScroll):
         self.query_one("#decision-model", Input).value = model
         self.query_one("#decision-endpoint", Input).value = endpoint
         preset = "custom"
-        if endpoint == NovaConfig.TOOL_VERDICT_JEV_ENDPOINT:
+        if endpoint == NovaConfig.TOOL_VERDICT_OPENAI_ENDPOINT:
+            preset = "openai"
+        elif endpoint == NovaConfig.TOOL_VERDICT_JEV_ENDPOINT:
             preset = "jev"
         elif endpoint == NovaConfig.TOOL_VERDICT_DEFAULT_ENDPOINT and model.startswith("tev1"):
             preset = "tev1"
@@ -125,7 +128,12 @@ class DecisionSettings(VerticalScroll):
         ):
             return
         self._preset = str(event.value)
-        if event.value == "jev":
+        if event.value == "openai":
+            self.query_one(
+                "#decision-endpoint", Input
+            ).value = NovaConfig.TOOL_VERDICT_OPENAI_ENDPOINT
+            self.query_one("#decision-model", Input).value = NovaConfig.TOOL_VERDICT_OPENAI_MODEL
+        elif event.value == "jev":
             self.query_one("#decision-endpoint", Input).value = NovaConfig.TOOL_VERDICT_JEV_ENDPOINT
             self.query_one("#decision-model", Input).value = NovaConfig.TOOL_VERDICT_JEV_MODEL
         elif event.value == "tev1":
@@ -152,6 +160,8 @@ class DecisionSettings(VerticalScroll):
 
         endpoint = self.query_one("#decision-endpoint", Input).value.strip()
         provider = "jev" if endpoint == NovaConfig.TOOL_VERDICT_JEV_ENDPOINT else "systemone"
+        if endpoint == NovaConfig.TOOL_VERDICT_OPENAI_ENDPOINT:
+            provider = "openai"
         await self.app.push_screen_wait(AuthManagerScreen(focus=provider))
 
     @work(exclusive=True, group="decision-save")
@@ -165,6 +175,13 @@ class DecisionSettings(VerticalScroll):
         enabled = self.query_one("#decision-enabled", Switch).value
         endpoint = self.query_one("#decision-endpoint", Input).value.strip()
         model = self.query_one("#decision-model", Input).value.strip()
+        if (
+            enabled
+            and endpoint == NovaConfig.TOOL_VERDICT_OPENAI_ENDPOINT
+            and not await asyncio.to_thread(credential_value, "OPENAI_API_KEY")
+        ):
+            self._hint("Add an OpenAI API key through /auth before enabling Decisions.", error=True)
+            return
         if (
             enabled
             and endpoint == NovaConfig.TOOL_VERDICT_JEV_ENDPOINT

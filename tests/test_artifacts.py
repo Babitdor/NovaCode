@@ -32,6 +32,25 @@ def test_registry_create_update_observer() -> None:
     assert [e[0] for e in events] == ["created", "created", "updated"]
 
 
+def test_registry_observer_can_be_removed() -> None:
+    r = ArtifactRegistry()
+    events: list[str] = []
+
+    class ObserverOwner:
+        def observe(self, event: str, _artifact: object) -> None:
+            events.append(event)
+
+    owner = ObserverOwner()
+    r.add_observer(owner.observe)
+    r.add_observer(owner.observe)
+    r.create("first", "markdown", "one")
+    r.remove_observer(owner.observe)
+    r.create("second", "markdown", "two")
+
+    assert events == ["created"]
+    assert r._observers == []
+
+
 def test_html_artifact_is_sandboxed_and_escaped() -> None:
     r = ArtifactRegistry()
     art = r.create("x", "html", "<h1>Hi</h1><script>steal()</script>")

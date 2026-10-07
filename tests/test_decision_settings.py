@@ -69,6 +69,27 @@ async def test_decisions_tab_is_separate_and_cancel_does_not_save():
         assert NovaConfig().get_tool_verdicts_enabled() is False
 
 
+async def test_openai_preset_saved_without_changing_chat_model(monkeypatch):
+    monkeypatch.setattr(
+        "novacode_cli.config.credentials.credential_value",
+        lambda name: "dummy" if name == "OPENAI_API_KEY" else "",
+    )
+    app = App()
+    async with app.run_test(size=(100, 35)) as pilot:
+        screen, panel = await open_decisions(app, pilot)
+        panel.query_one("#decision-preset", Select).value = "openai"
+        await pilot.pause()
+        assert panel.query_one("#decision-model", Input).value == "gpt-6-luna"
+        assert (
+            panel.query_one("#decision-endpoint", Input).value
+            == NovaConfig.TOOL_VERDICT_OPENAI_ENDPOINT
+        )
+        panel.query_one("#decision-enabled", Switch).value = True
+        await save_and_settle(screen, pilot)
+        assert NovaConfig().get_tool_verdict_endpoint() == NovaConfig.TOOL_VERDICT_OPENAI_ENDPOINT
+        assert NovaConfig().get_model_config() is None
+
+
 @pytest.mark.parametrize("enabled", [True, False])
 async def test_toggle_and_future_custom_model_are_persisted(enabled: bool):  # noqa: FBT001
     app = App()
@@ -200,7 +221,8 @@ async def test_nested_auth_preserves_the_decision_draft():
 
 @pytest.mark.parametrize("enabled", [True, False])
 async def test_decision_save_rebuilds_agent_without_changing_chat_model(
-    monkeypatch: pytest.MonkeyPatch, enabled: bool  # noqa: FBT001
+    monkeypatch: pytest.MonkeyPatch,
+    enabled: bool,  # noqa: FBT001
 ):
     from types import SimpleNamespace
 

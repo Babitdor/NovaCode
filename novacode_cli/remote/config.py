@@ -82,14 +82,18 @@ def save_remote_config(config: dict[str, Any], *, merge: bool = True) -> None:
 
     if merge and config:
         existing = load_remote_config()
-        existing.update(config)
+        for platform, values in config.items():
+            if isinstance(values, dict) and isinstance(existing.get(platform), dict):
+                existing[platform] = {**existing[platform], **values}
+            else:
+                existing[platform] = values
         data_to_write = existing
     else:
         data_to_write = config
 
     try:
-        with open(_CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(data_to_write, f, indent=2)
+        from novacode_cli.security.secret_files import write_secret_json
+        write_secret_json(_CONFIG_FILE, data_to_write)
 
         try:
             os.chmod(_CONFIG_FILE, stat.S_IRUSR | stat.S_IWUSR)

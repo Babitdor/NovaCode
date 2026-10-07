@@ -66,7 +66,6 @@ from textual.widgets import (
     Input,
     OptionList,
     Static,
-    RichLog,
     Tab,
     Tabs,
 )
@@ -83,7 +82,7 @@ from novacode_cli.tui.output_buffer import MAX_PENDING_CALLS, OutputTail
 # keeps working for tests, main.py, and remote code.
 # Markdown, cached per width: see CachedMarkdown for what the plain one cost.
 from novacode_cli.tui.widgets import CachedMarkdown as Markdown
-from novacode_cli.tui.widgets import SelectableRichLog as RichLog  # noqa: F811 — selectable drop-in
+from novacode_cli.tui.widgets import OutputLog
 from novacode_cli.tui.widgets import (
     DEFAULT_THEME,
     NOVA_MATRIX,
@@ -154,8 +153,29 @@ _SUBAGENT_LIST_TAIL = 100
 # bar sheds its widest columns and the status line drops its right-side counts;
 # below the _MIN_* floor the layout can't fit and we surface a "too small" note.
 _NARROW_WIDTH = 90
+_COMPACT_WIDTH = 68
 _MIN_WIDTH = 50
 _MIN_HEIGHT = 12
+_SHORT_HEIGHT = 20
+
+
+def _responsive_breakpoints(width: int, height: int) -> tuple[bool, bool, bool, bool]:
+    """Map a terminal size to (narrow, compact, short, tiny) layout classes."""
+    return (
+        width < _NARROW_WIDTH,
+        width < _COMPACT_WIDTH,
+        height < _SHORT_HEIGHT,
+        width < _MIN_WIDTH or height < _MIN_HEIGHT,
+    )
+
+
+def _router_model_display(
+    router_enabled: bool, current_model: str | None, routed_model: str | None
+) -> tuple[str, str]:
+    """Return the info-bar label and model value for the current router state."""
+    if router_enabled:
+        return "DYNAMIC (ROUTER MODE)", f"MODEL · {routed_model or current_model or '—'}"
+    return "MODEL", current_model or "—"
 
 # Tools whose result is a code change worth seeing in full: these keep their own
 # Collapsible with a colored diff body so the user can review what the agent
@@ -710,7 +730,7 @@ def _render_bg_event(  # noqa: PLR0912, PLR0915 — one branch per event type is
     status in the card title (visible even when the card is collapsed).
 
     A tool call and its result are rendered as ONE line (``● read_file(x) · Read
-    42 lines``) rather than two. RichLog cannot rewrite a line, so the call is
+    42 lines``) rather than two. OutputLog cannot rewrite a line, so the call is
     buffered in ``pending`` and only written when its result arrives; a call with
     no result yet is flushed as-is by the caller when the turn ends.
 
@@ -752,7 +772,7 @@ def _render_bg_event(  # noqa: PLR0912, PLR0915 — one branch per event type is
         set_phase("responding")
     elif isinstance(event, TextDelta) and event.text:
         # Deliberately NOT written. The committed AssistantMessage carries the
-        # same text, and RichLog is append-only (no replace), so rendering the
+        # same text, and OutputLog is append-only (no replace), so rendering the
         # live preview here would duplicate every paragraph. The card title's
         # "responding" phase is the live signal instead.
         set_phase("responding")
@@ -841,6 +861,8 @@ def _paint(widget: Any, content: Any) -> None:
 _LIVE_OUTPUT_MAX_LINES = 200
 _LIVE_OUTPUT_MAX_CHARS = 20_000
 _LOG_MAX_LINES = 2_000
+_SUBAGENT_LOG_MAX_ENTRIES = 300
+_PENDING_JOB_NOTE_MAX = 100
 #: Cap on a failed tool call's stored output, so one enormous traceback cannot
 #: bloat the entry (and the group's repaint) without bound.
 _TOOL_ERROR_MAX_CHARS = 6_000
@@ -904,7 +926,7 @@ class NovaApp(App):
        never reaches the bar and it still paints (as a black column).
        The `scrollbar-gutter: stable` rules below keep the reserved column so
        content width does not shift when a scrollable region appears. */
-    VerticalScroll, RichLog, OptionList, TextArea, Collapsible, SelectionList,
+    VerticalScroll, OutputLog, OptionList, TextArea, Collapsible, SelectionList,
     Select, DataTable, Log, Markdown, Tree, DirectoryTree, TabbedContent {
         scrollbar-color: transparent;
         scrollbar-background: transparent;
@@ -1269,6 +1291,37 @@ class NovaApp(App):
        instead of being squeezed to a few clipped characters. Toggled by
        _apply_responsive_layout adding the `narrow` class to the screen. */
     .narrow #col-workspace, .narrow #col-sandbox { display: none; }
+    .compact #col-branch, .compact #col-artifacts { display: none; }
+    .tiny #info-bar { display: none; }
+    .short #info-bar, .short #jump-latest-row { display: none; }
+    .short #prompt { max-height: 5; }
+    .short #todo-scroll { max-height: 4; }
+    .short #subagents-dock { max-height: 6; }
+    .short #question-options { max-height: 5; }
+    .short #cmdpalette { max-height: 30vh; margin-bottom: 3; }
+    .short #model-options { max-height: 6; }
+    .short #model-decisions { max-height: 7; }
+    .tiny #transcript { padding: 0 1; }
+    .tiny #prompt { padding: 0 1; max-height: 3; }
+    .tiny #prompt-prefix { width: 2; }
+    ModalScreen.narrow #modal-box, ModalScreen.compact #modal-box {
+        width: 96%; max-width: 110; padding: 1 2;
+    }
+    ModalScreen.short #modal-box { max-height: 96%; padding: 0 2; }
+    .narrow #modal-buttons, .short #modal-buttons {
+        layout: grid; grid-size: 2; grid-columns: 1fr 1fr; grid-gutter: 0 1;
+    }
+    .narrow #modal-buttons Button, .short #modal-buttons Button {
+        width: 1fr; margin: 0;
+    }
+    .short .preview-box { max-height: 4; }
+    .short #sessions, .short #pick-list, .short #infolist,
+    .short #mcp-configured, .short #mcp-presets, .short #plugins,
+    .short #cplugins-list, .short #agents-list, .short #servers-list,
+    .short #hooks-list, .short #wiki-pages-list, .short #wiki-inbox-list,
+    .short #tasks-list {
+        max-height: 25%;
+    }
     .session-header {
         height: auto;
         padding: 1 2;
@@ -1304,7 +1357,7 @@ class NovaApp(App):
     #modal-title { margin-bottom: 1; padding: 0 0; }
     #modal-body { padding: 0 0; }
     /* Long lists scroll inside the box instead of overflowing the screen. */
-    #sessions, #pick-list, #infolist, #mcp-configured, #mcp-presets, #plugins, #cplugins-list, #agents-list, #skills-list, #servers-list, #hooks-list, #wiki-pages-list, #wiki-inbox-list {
+    #sessions, #pick-list, #infolist, #mcp-configured, #mcp-presets, #plugins, #cplugins-list, #agents-list, #skills-list, #servers-list, #hooks-list, #wiki-pages-list, #wiki-inbox-list, #tasks-list {
         height: auto; max-height: 40%;
         padding: 0 2;
     }
@@ -1526,6 +1579,13 @@ class NovaApp(App):
         # back to full text on submit. Shared helpers with the legacy input.
         self.paste_tracker = PasteTracker()
         self.model_name = model_name or "unknown"
+        self._routed_model_name: str | None = None
+        try:
+            from novacode_cli.config.nova_config import NovaConfig
+
+            self._router_mode_enabled = NovaConfig().get_router_enabled()
+        except Exception:  # noqa: BLE001 — the footer must not block app startup
+            self._router_mode_enabled = False
         # Provider of the live model, recorded on save so a resume can rebuild
         # the exact model instead of falling back to the global config. Derived
         # from the same precedence chain that built the model; kept in sync by
@@ -1661,7 +1721,10 @@ class NovaApp(App):
         self._agent_names_cache: list[str] | None = None
         # Responsive layout flags, driven by _apply_responsive_layout on resize.
         self._narrow = False
+        self._compact = False
+        self._short = False
         self._tiny = False
+        self._root_screen = None
         # Live status state (animated spinner + elapsed while a turn runs).
         self._activity = "ready"
         self._turn_active = False
@@ -1809,16 +1872,16 @@ class NovaApp(App):
                     # the rest of the labels stay dim so the values carry the eye.
                     yield Static("◆ WORKSPACE", classes="info-label first")
                     yield Static("", id="info-workspace", classes="info-value")
-                with Vertical(classes="info-col"):
+                with Vertical(id="col-branch", classes="info-col"):
                     yield Static("BRANCH", classes="info-label")
                     yield Static("", id="info-branch", classes="info-value")
                 with Vertical(id="col-sandbox", classes="info-col"):
                     yield Static("SANDBOX", classes="info-label")
                     yield Static("", id="info-sandbox", classes="info-value")
-                with Vertical(classes="info-col"):
-                    yield Static("MODEL", classes="info-label")
+                with Vertical(id="col-model", classes="info-col"):
+                    yield Static("MODEL", id="info-model-label", classes="info-label")
                     yield Static("", id="info-model", classes="info-value")
-                with Vertical(classes="info-col"):
+                with Vertical(id="col-session", classes="info-col"):
                     yield Static("SESSION", classes="info-label")
                     yield Static("", id="info-quota", classes="info-value")
                 # Persistent artifacts component — fixed in the footer, click (or
@@ -1988,6 +2051,7 @@ class NovaApp(App):
             ("#info-workspace", Static),
             ("#info-branch", Static),
             ("#info-sandbox", Static),
+            ("#info-model-label", Static),
             ("#info-model", Static),
             ("#info-quota", Static),
         ):
@@ -1996,6 +2060,7 @@ class NovaApp(App):
             except NoMatches:
                 pass
         self.query_one("#cmdpalette", OptionList).display = False
+        self._root_screen = self.screen
         self._init_root_pane()
         self._set_status("ready")
         self._update_mode_badge()
@@ -2009,7 +2074,8 @@ class NovaApp(App):
         try:
             from novacode_cli.shell.jobs import get_registry
 
-            get_registry().add_observer(self._on_task_event_threadsafe)
+            self._task_registry = get_registry()
+            self._task_registry.add_observer(self._on_task_event_threadsafe)
         except Exception:  # noqa: BLE001
             pass
         self._refresh_tasks_bar()
@@ -2024,7 +2090,8 @@ class NovaApp(App):
                 getattr(self.session_state, "session_id", "") or "",
                 getattr(self.session_manager, "sessions_dir", None),
             )
-            _get_art_registry().add_observer(self._on_artifact_event_threadsafe)
+            self._artifact_registry = _get_art_registry()
+            self._artifact_registry.add_observer(self._on_artifact_event_threadsafe)
             if _restored_artifacts:
                 self._log(
                     Text(
@@ -2132,18 +2199,18 @@ class NovaApp(App):
         """Append live output to the widget showing ``call_id`` (UI thread)."""
         if call_id in self._tool_components:
             comp, body, base = self._tool_components[call_id]
-            if isinstance(body, RichLog):
-                body.write(text)
+            if isinstance(body, OutputLog):
+                body.write(Text(text))
                 body.scroll_end(animate=False)
         elif call_id in self._subagent_tool_to_task:
             subagent_cid = self._subagent_tool_to_task[call_id]
             if subagent_cid in self._subagent_widgets:
                 comp, body, stype, start_time = self._subagent_widgets[subagent_cid]
                 try:
-                    log_widget = body.query_one("#subagent-log", RichLog)
+                    log_widget = body.query_one("#subagent-log", OutputLog)
                     if not log_widget.has_class("active"):
                         log_widget.add_class("active")
-                    log_widget.write(text)
+                    log_widget.write(Text(text))
                     log_widget.scroll_end(animate=False)
                     comp._log_lines = getattr(comp, "_log_lines", 0) + text.count("\n")
                     log_widget.styles.height = min(max(comp._log_lines + 2, 5), 8)
@@ -2151,9 +2218,9 @@ class NovaApp(App):
                     pass
         elif self._tool_group_body is not None:
             try:
-                log_widget = self._tool_group_body.query_one("#tool-group-log", RichLog)
+                log_widget = self._tool_group_body.query_one("#tool-group-log", OutputLog)
                 if log_widget.has_class("active"):
-                    log_widget.write(text)
+                    log_widget.write(Text(text))
                     log_widget.scroll_end(animate=False)
                     self._tool_group_log_lines += text.count("\n")
                     log_widget.styles.height = min(max(self._tool_group_log_lines + 2, 5), 8)
@@ -3097,18 +3164,14 @@ class NovaApp(App):
                 "user",
                 Text(msg.text),
             )
-        proxy = pane.state.get("session_state")
         turn = SimpleNamespace(
             msg=msg,
             status=None,
             answer="",
-            prev_auto=getattr(proxy, "auto_approve", False),
         )
         if getattr(msg, "edit_fn", None) is not None:
             turn.status = RemoteStatusLine(msg.edit_fn, label=self._remote_label(pane))
         pane.remote_turns.append(turn)
-        if proxy is not None:
-            proxy.auto_approve = True  # remote turns have no one to ask
         if await self._supervisor().send_prompt(pane.sid, msg.text) is None:
             pane.remote_turns.remove(turn)
             with contextlib.suppress(Exception):
@@ -3139,10 +3202,6 @@ class NovaApp(App):
         with contextlib.suppress(Exception):
             await turn.msg.reply_fn(reply)
         self._remote_react("✖" if error else "✅", turn.msg)
-        if not pane.remote_turns:
-            proxy = pane.state.get("session_state")
-            if proxy is not None:
-                proxy.auto_approve = turn.prev_auto
 
     def _remote_telegram_bridges(self) -> list:
         from novacode_cli.remote.bridge import RemotePlatform
@@ -3475,8 +3534,6 @@ class NovaApp(App):
         pal = self._palette
         self._close_tool_group()
         if kind == "bash":
-            from rich.table import Table
-
             exit_code = entry.get("exit")
             row = Text()
             row.append("! ", style=f"bold {pal.accent}")
@@ -3487,7 +3544,7 @@ class NovaApp(App):
                 row.append("   cancelled", style=f"bold {pal.error}")
             elif exit_code != 0:
                 row.append(f"   exit {exit_code}", style=f"bold {pal.error}")
-            log_widget = RichLog(
+            log_widget = OutputLog(
                 classes="bash-inline-log", highlight=False, markup=False, wrap=True, max_lines=_LOG_MAX_LINES
             )
             await self._transcript().mount(
@@ -3495,11 +3552,9 @@ class NovaApp(App):
             )
             lines = entry.get("lines") or []
             for n, line in enumerate(lines or ["(no output)"]):
-                out = Table.grid()
-                out.add_column(width=5, no_wrap=True)
-                out.add_column(ratio=1)
-                out.add_row(Text("  └" if n == 0 else "", style="dim"), Text(str(line), style="" if lines else "dim"))
-                log_widget.write(out, expand=True)
+                out = Text("  └  " if n == 0 else "     ", style="dim")
+                out.append(str(line), style="" if lines else "dim")
+                log_widget.write(out)
         elif kind == "bgagent":
             ok = entry.get("status") == "done"
             head = Text()
@@ -4087,7 +4142,7 @@ class NovaApp(App):
         await self._transcript().mount(comp)
         await body.mount(Static("", id="tool-group-list"))
         await body.mount(
-            RichLog(id="tool-group-log", classes="terminal-log", highlight=True, markup=True, max_lines=_LOG_MAX_LINES)
+            OutputLog(id="tool-group-log", classes="terminal-log", highlight=True, markup=True, max_lines=_LOG_MAX_LINES)
         )
         self._prune_transcript()
         self._scroll_end()
@@ -4298,16 +4353,39 @@ class NovaApp(App):
             # path still runs. Mirrors the guard in _mark_tool_group_result.
             self._tool_group.collapsed = False
             try:
-                log_widget = self._tool_group_body.query_one("#tool-group-log", RichLog)
+                log_widget = self._tool_group_body.query_one("#tool-group-log", OutputLog)
                 log_widget.clear()
                 log_widget.add_class("active")
-                log_widget.write(f"$ {base}\n")
+                log_widget.write(Text(f"$ {base}\n"))
                 self._tool_group_log_lines = 1 + base.count("\n")
                 log_widget.styles.height = min(max(self._tool_group_log_lines + 2, 5), 8)
             except Exception:
                 pass
 
         self._schedule_tool_group_refresh(running=name)
+
+    def _trim_tool_group_history(self) -> None:
+        """Bound completed tool rows while preserving any still-running calls."""
+        entries = self._tool_group_entries
+        if len(entries) <= 200:
+            return
+        keep_from = len(entries) - 200
+        kept_indices = [
+            index
+            for index, entry in enumerate(entries)
+            if index >= keep_from or entry.get("mark") == "running"
+        ]
+        if len(kept_indices) == len(entries):
+            return
+        remap = {old: new for new, old in enumerate(kept_indices)}
+        self._tool_group_entries = [entries[index] for index in kept_indices]
+        self._tool_group_lines = {
+            call_id: remap[index]
+            for call_id, index in self._tool_group_lines.items()
+            if index in remap
+        }
+        if self._tool_group_last_idx is not None:
+            self._tool_group_last_idx = remap.get(self._tool_group_last_idx)
 
     def _mark_tool_group_result(self, call_id: str | None, *, is_error: bool, detail: str) -> None:
         """Finalize the matching tool line with its status + a short result."""
@@ -4383,7 +4461,7 @@ class NovaApp(App):
         if len(out) > _TOOL_ERROR_MAX_CHARS:
             out = out[:_TOOL_ERROR_MAX_CHARS] + "\n… (truncated)"
         body_style = pal.tool_fail if is_error else ""
-        if isinstance(body, RichLog):
+        if isinstance(body, OutputLog):
             body.clear()
             body.write(Text(out, style=body_style))
             body.scroll_end(animate=False)
@@ -4419,12 +4497,12 @@ class NovaApp(App):
             await self._mount(comp)
             animate_entrance(comp, "fade")
 
-            # Mount a Static for status text, a Static for subagent-list, and a RichLog for the progress log
+            # Mount a Static for status text, a Static for subagent-list, and a OutputLog for the progress log
             status_text = Text(e.detail or "", style="dim") if e.detail else Text("")
             await body.mount(Static(status_text, id="subagent-status"))
             await body.mount(Static("", id="subagent-list"))
             await body.mount(
-                RichLog(id="subagent-log", classes="terminal-log", highlight=True, markup=True, max_lines=_LOG_MAX_LINES)
+                OutputLog(id="subagent-log", classes="terminal-log", highlight=True, markup=True, max_lines=_LOG_MAX_LINES)
             )
 
             # Initialize dynamic height tracking and entry lists
@@ -4432,7 +4510,7 @@ class NovaApp(App):
             comp._log_entries = []
             comp._tool_lines = {}
             try:
-                log_widget = body.query_one("#subagent-log", RichLog)
+                log_widget = body.query_one("#subagent-log", OutputLog)
                 log_widget.styles.height = 5
             except Exception:
                 pass
@@ -4524,10 +4602,11 @@ class NovaApp(App):
                         }
                         idx = len(log_entries)
                         log_entries.append(entry)
-                        if e.detail:
-                            tool_lines[e.detail] = idx
+                    if e.detail:
+                        tool_lines[e.detail] = idx
                     comp._log_entries = log_entries
                     comp._tool_lines = tool_lines
+                    self._trim_subagent_log(comp)
                     self._refresh_subagent_list(cid)
                 elif e.kind == "tool_result":
                     if e.detail and e.detail in tool_lines:
@@ -4538,8 +4617,10 @@ class NovaApp(App):
                         entry["detail"] = e.message
                         entry["error"] = is_error
                         entry.pop("_line", None)  # invalidate the cached render
+                        tool_lines.pop(e.detail, None)
                     comp._log_entries = log_entries
                     comp._tool_lines = tool_lines
+                    self._trim_subagent_log(comp)
                     self._refresh_subagent_list(cid)
                 else:  # status
                     log_entries.append(
@@ -4549,6 +4630,7 @@ class NovaApp(App):
                         }
                     )
                     comp._log_entries = log_entries
+                    self._trim_subagent_log(comp)
                     self._refresh_subagent_list(cid)
             else:
                 self._log(Text(f"  ⟐ {e.message}", style=color))
@@ -4580,6 +4662,28 @@ class NovaApp(App):
             _paint(list_widget, "\n".join(lines))
         except Exception:
             pass
+
+    @staticmethod
+    def _trim_subagent_log(comp: Any) -> None:
+        """Bound a subagent card's event history while retaining active calls."""
+        entries = getattr(comp, "_log_entries", [])
+        if len(entries) <= _SUBAGENT_LOG_MAX_ENTRIES:
+            return
+        keep_from = len(entries) - _SUBAGENT_LOG_MAX_ENTRIES
+        kept_indices = [
+            index
+            for index, entry in enumerate(entries)
+            if index >= keep_from or entry.get("mark") == "running"
+        ]
+        if len(kept_indices) == len(entries):
+            return
+        remap = {old: new for new, old in enumerate(kept_indices)}
+        comp._log_entries = [entries[index] for index in kept_indices]
+        comp._tool_lines = {
+            call_id: remap[index]
+            for call_id, index in getattr(comp, "_tool_lines", {}).items()
+            if index in remap
+        }
 
     def _render_subagent_line(self, entry: dict) -> str:
         """Render one subagent log entry to a markup line (cached by the caller).
@@ -4813,7 +4917,7 @@ class NovaApp(App):
         # `auto` right cell does — so the counts sit flush against the edge
         # instead of trailing the status text wherever it happens to end.
         right = self._status_right
-        if self._narrow:
+        if self._narrow or self._compact:
             right = Text()
         right = right if right is not None else Text()
         # `width: auto`, so a layout IS needed — but only when the width actually
@@ -4898,8 +5002,8 @@ class NovaApp(App):
         # Right-docked counts. Skills shows the *enabled* set so it reflects
         # /skills toggles, not the full installed list. Dropped on narrow
         # terminals where there is no room for them.
-        skill_count = 0 if self._narrow else self._cached_enabled_skill_count()
-        file_count = 0 if self._narrow else self._cached_agent_md_count()
+        skill_count = 0 if self._narrow or self._compact else self._cached_enabled_skill_count()
+        file_count = 0 if self._narrow or self._compact else self._cached_agent_md_count()
 
         if file_count:
             right.append(
@@ -4956,9 +5060,13 @@ class NovaApp(App):
             sandbox_text = Text("no sandbox", style=pal.warning)
         self._set_info("#info-sandbox", sandbox_text)
 
-        self._set_info(
-            "#info-model", Text(str(self.model_name or "—"), style=f"bold {pal.primary}")
+        router_enabled = bool(getattr(self, "_router_mode_enabled", False))
+        label, model = _router_model_display(
+            router_enabled, self.model_name, getattr(self, "_routed_model_name", None)
         )
+        label_color = pal.accent if router_enabled else pal.muted
+        self._set_info("#info-model-label", Text(label, style=f"bold {label_color}"))
+        self._set_info("#info-model", Text(model, style=f"bold {pal.primary}"))
         self._refresh_quota()
         # The artifacts cell is otherwise only repainted by its registry observer,
         # so a /theme switch left it carrying the previous theme's colour while
@@ -6115,7 +6223,7 @@ class NovaApp(App):
             # Clarify for the agent on its next turn (a Ctrl+B detach ends the
             # current turn, so the tool call is patched as "cancelled" — this note
             # corrects that: the command is still running as a background task).
-            self._pending_job_notes.append(
+            self._queue_pending_job_note(
                 f"You moved {job.task_id} to the background; it is still running "
                 f"(command: {job.command}). Check it with get_task_status('{job.task_id}') "
                 f"or get_task_logs('{job.task_id}')."
@@ -6158,7 +6266,7 @@ class NovaApp(App):
                 self._log(Text(f"↻ Resuming — {job.task_id} finished.", style="cyan"))
                 self._continue_after_task(job)
             else:
-                self._pending_job_notes.append(
+                self._queue_pending_job_note(
                     f"Background {job.task_id} {verb} (exit {job.exit_code}). "
                     f"Command: {job.command}. Use get_task_logs('{job.task_id}') for output."
                 )
@@ -6331,6 +6439,16 @@ class NovaApp(App):
         a slow exit can be diagnosed from the log instead of merely felt.
         """
         started = time.monotonic()
+        # Registries outlive this TUI process-wide; retaining bound callbacks
+        # would keep every closed App and its widget tree alive indefinitely.
+        for registry_attr, callback in (
+            ("_task_registry", self._on_task_event_threadsafe),
+            ("_artifact_registry", self._on_artifact_event_threadsafe),
+        ):
+            registry = getattr(self, registry_attr, None)
+            if registry is not None:
+                with contextlib.suppress(Exception):
+                    registry.remove_observer(callback)
         # Stop any turn still running. Without this a mid-turn /exit would leave
         # the agent streaming while we tear the app down underneath it.
         await self._cancel_active_turn()
@@ -6684,11 +6802,12 @@ class NovaApp(App):
             ag, _ = self._active_agent()
             config = {"configurable": {"thread_id": self.session_state.thread_id}}
             state = await ag.aget_state(config)
+            self._refresh_router_model_from_state(state.values if state else {})
             msgs = effective_messages(state.values) if state else []
-            if msgs:
+            if state is not None:
                 # Off the loop: it can shell out to `ollama show`, which hangs
                 # while the local daemon is busy (a 42s UI freeze was measured).
-                model = tracker.model_name
+                model = self._routed_model_name or self.model_name or tracker.model_name
                 # Tool schemas are part of the request baseline but are not stored
                 # in conversation messages. Prefer what the active graph actually
                 # binds (plan/init agents can differ), then fall back to the
@@ -6699,11 +6818,40 @@ class NovaApp(App):
                 breakdown = await asyncio.to_thread(
                     lambda: ContextManager(model).breakdown(msgs, tools=tools)
                 )
+                # The injected system prompt is not stored in graph messages.
+                # Startup's measured baseline covers that prompt and memory.
+                if not breakdown.system_prompt_tokens:
+                    baseline = getattr(tracker, "baseline_context", 0)
+                    breakdown.system_prompt_tokens = baseline
+                    breakdown.total_tokens += baseline
+                tracker.model_name = model
+                tracker.context_window_size = breakdown.context_window_size
                 tracker.set_breakdown(breakdown)
         except Exception:  # noqa: BLE001
             pass
 
         await self._maybe_warn_ollama_offload(tracker.model_name)
+
+    def _refresh_router_model_from_state(self, state_values: dict[str, Any]) -> None:
+        """Show the destination model selected by the latest router decision."""
+        try:
+            from novacode_cli.config.nova_config import NovaConfig
+
+            config = NovaConfig()
+            self._router_mode_enabled = config.get_router_enabled()
+            if not self._router_mode_enabled:
+                self._routed_model_name = None
+            else:
+                route_id = state_values.get("model_route")
+                route = next(
+                    (item for item in config.get_router_routes() if item.get("id") == route_id),
+                    None,
+                )
+                self._routed_model_name = str(route.get("model")) if route else None
+        except Exception:  # noqa: BLE001 — display refresh is best-effort
+            pass
+        if self.is_running:
+            self._refresh_info_bar()
 
     async def _maybe_warn_ollama_offload(self, model_name: str | None) -> None:
         """Warn once if the loaded Ollama model is offloaded to CPU (slow).
@@ -6976,9 +7124,7 @@ class NovaApp(App):
                     "user",
                     Text(msg.text),
                 )
-                # Remote turns auto-approve tools (no local prompt to answer).
-                prev_auto = getattr(self.session_state, "auto_approve", False)
-                self.session_state.auto_approve = True
+                # A remote sender inherits the user's approval preference.
                 config = {"configurable": {"thread_id": self.session_state.thread_id}}
                 typing_task: "asyncio.Task | None" = None
                 try:
@@ -7089,7 +7235,6 @@ class NovaApp(App):
                             await typing_task
                         except (asyncio.CancelledError, Exception):  # noqa: BLE001
                             pass
-                    self.session_state.auto_approve = prev_auto
             except asyncio.CancelledError:
                 self._log(Text("Remote turn cancelled.", style="yellow"))
             except Exception as ex:  # noqa: BLE001
@@ -7563,7 +7708,7 @@ class NovaApp(App):
 
         Each call spawns an independent worker in group ``"bgshell"`` (no
         ``exclusive=True``) so multiple Ctrl+B jobs run in true parallel.
-        Output streams line-by-line into a ``RichLog`` inside a ``Collapsible``
+        Output streams line-by-line into a ``OutputLog`` inside a ``Collapsible``
         card.  When the process exits the card title flips to ●/✖ and the
         process is deregistered from ProcessManager.
 
@@ -7583,13 +7728,13 @@ class NovaApp(App):
 
         # Build the widget up-front so output starts streaming immediately.
         if foreground:
-            log_widget = RichLog(
+            log_widget = OutputLog(
                 classes="bash-inline-log", highlight=False, markup=False, wrap=True, max_lines=_LOG_MAX_LINES
             )
             head = Static(classes="bash-inline-head")
             card: Any = Vertical(head, log_widget, classes="bash-inline")
         else:
-            log_widget = RichLog(classes="bgshell-log", highlight=True, markup=True, max_lines=_LOG_MAX_LINES)
+            log_widget = OutputLog(classes="bgshell-log", highlight=True, markup=True, max_lines=_LOG_MAX_LINES)
             card = Collapsible(Vertical(log_widget), title="", collapsed=False)
             card.add_class("bgshell-card")
 
@@ -7607,7 +7752,7 @@ class NovaApp(App):
                 row.append(f"   {state}", style=f"bold {pal.error}")
             _paint(head, row)
 
-        emitted = 0  # counted here: RichLog defers writes until it has a size
+        emitted = 0
         from collections import deque
 
         from novacode_cli.session.transcript_journal import MAX_LINES
@@ -7621,15 +7766,9 @@ class NovaApp(App):
             if not foreground:
                 log_widget.write(line)
             else:
-                # The elbow marks where the output starts; the rest hangs under
-                # it. A two-column grid keeps a wrapped line inside the indent.
-                from rich.table import Table
-
-                row = Table.grid()
-                row.add_column(width=5, no_wrap=True)
-                row.add_column(ratio=1)
-                row.add_row(Text("  └" if not emitted else "", style="dim"), Text(line, style=style))
-                log_widget.write(row, expand=True)
+                row = Text("  └  " if not emitted else "     ", style="dim")
+                row.append(line, style=style)
+                log_widget.write(row)
             emitted += 1
             log_widget.scroll_end(animate=False)
 
@@ -7670,7 +7809,7 @@ class NovaApp(App):
         )
         ProcessManager.get_instance().register_process(info)
 
-        # Stream output line-by-line into the RichLog.
+        # Stream output line-by-line into the OutputLog.
         assert process.stdout is not None  # noqa: S101  — PIPE guarantees this
         try:
             while True:
@@ -7679,15 +7818,24 @@ class NovaApp(App):
                     break
                 emit(line_bytes.decode("utf-8", errors="replace").rstrip())
         except asyncio.CancelledError:
-            process.terminate()
+            with contextlib.suppress(ProcessLookupError):
+                process.terminate()
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(process.wait(), timeout=2.0)
+            if process.returncode is None:
+                with contextlib.suppress(Exception):
+                    process.kill()
+                    await process.wait()
             set_state("✖", "cancelled", bad=True)
             self._journal(
                 {"k": "bash", "cmd": cmd, "lines": list(captured), "exit": None, "fg": foreground, "job": job_id}
             )
             info.status = ProcessStatus.STOPPED
+            ProcessManager.get_instance().unregister_process(info.pid)
             return
 
         await process.wait()
+        ProcessManager.get_instance().unregister_process(info.pid)
         exit_code = process.returncode or 0
         if not emitted:
             emit("(no output)", style="dim") if foreground else log_widget.write("[dim](no output)[/dim]")
@@ -7768,7 +7916,7 @@ class NovaApp(App):
         bg_session = _BgSession(self.session_state)
         ag, backend = self._active_agent()
 
-        log_widget = RichLog(classes="bgagent-log", highlight=True, markup=True, max_lines=_LOG_MAX_LINES)
+        log_widget = OutputLog(classes="bgagent-log", highlight=True, markup=True, max_lines=_LOG_MAX_LINES)
         card = Collapsible(
             Vertical(log_widget),
             title=f"⟳ bg[{job_id}] · {p_short}",
@@ -7790,7 +7938,7 @@ class NovaApp(App):
             log_widget.scroll_end(animate=False)
 
         # In-flight tool calls, buffered so a call and its result render as one
-        # line (RichLog cannot rewrite a line once written).
+        # line (OutputLog cannot rewrite a line once written).
         pending: dict[str, str] = {}
 
         # The final answer, captured so the main agent can be told what the
@@ -7873,7 +8021,7 @@ class NovaApp(App):
         note = f"Background agent bg[{job_id}] finished. Task: {prompt}" + (
             f"\n\nIts final answer:\n{summary}" if summary else "\n\n(no final answer)"
         )
-        self._pending_job_notes.append(note)
+        self._queue_pending_job_note(note)
         self._log(
             Text(
                 f"● Background agent bg[{job_id}] finished — the agent will be told "
@@ -7881,6 +8029,13 @@ class NovaApp(App):
                 style="green",
             )
         )
+
+    def _queue_pending_job_note(self, note: str) -> None:
+        """Keep unattended task notes useful without letting them grow forever."""
+        self._pending_job_notes.append(note)
+        overflow = len(self._pending_job_notes) - _PENDING_JOB_NOTE_MAX
+        if overflow > 0:
+            del self._pending_job_notes[:overflow]
 
     async def _run_slash(self, text: str) -> None:
         """Handle the TUI-native slash command subset — table dispatch.
@@ -8023,6 +8178,7 @@ class NovaApp(App):
         if len(text.split()) > 1:
             await self._run_session_import(text)
             return
+        await self._update_context_breakdown()
         self.push_screen(ContextScreen(self.token_tracker, self.model_name))
 
     def _run_verbose(self) -> None:
@@ -8610,6 +8766,9 @@ class NovaApp(App):
             return
 
         active_settings = result["profiles"][result["profile_id"]]
+        self._router_mode_enabled = bool(active_settings.get("enabled"))
+        self._routed_model_name = None
+        self._refresh_info_bar()
         if not active_settings.get("enabled"):
             self._log(Text("Model routing disabled.", style="green"))
         else:
@@ -9857,7 +10016,9 @@ class NovaApp(App):
             ))
 
     async def _run_update_check(self, _text: str) -> None:
-        await self._check_nova_update(force=True)
+        from novacode_cli.tui.screens import UpdateScreen
+
+        self.push_screen(UpdateScreen())
 
     async def _run_compact(self, text: str) -> None:
         """Compact the conversation natively (spinner + result component)."""
@@ -10011,6 +10172,8 @@ class NovaApp(App):
 
         # Drop per-conversation UI/tracking state.
         self._reset_streaming()
+        self._routed_model_name = None
+        self._refresh_info_bar()
         self._reset_subagents()
         self._paint_subagents()
         self._clear_live_steers()
@@ -10099,28 +10262,45 @@ class NovaApp(App):
         except Exception:  # noqa: BLE001
             pass
 
-    def _apply_responsive_layout(self, event: events.Resize) -> None:
+    def on_screen_resume(self, event: Any) -> None:
+        """Apply current terminal breakpoints when opening or returning from a modal."""
+        self.call_after_refresh(self._apply_responsive_layout)
+
+    def _apply_responsive_layout(self, event: events.Resize | None = None) -> None:
         """Toggle breakpoint classes from the terminal size.
 
-        - ``narrow`` (width < _NARROW_WIDTH): the screen sheds its widest info
-          columns (CSS) and the status line drops its right-side counts.
-        - ``tiny`` (below the _MIN_* floor): the layout can't fit; surface a
+        - ``narrow`` and ``compact`` progressively shed footer columns.
+        - ``short`` reduces optional dock heights and frees footer rows.
+        - ``tiny`` (below the _MIN_* floor): hide nonessential chrome.
           one-shot notice rather than render a broken, clipped screen.
 
         Only repaints when a breakpoint actually flips, so a drag-resize that
         stays in one band costs nothing extra.
         """
-        width = event.size.width or 0
-        height = event.size.height or 0
-        narrow = width < _NARROW_WIDTH
-        tiny = width < _MIN_WIDTH or height < _MIN_HEIGHT
-        if narrow == self._narrow and tiny == self._tiny:
-            return
+        size = getattr(event, "size", None) or self.size
+        width = size.width or 0
+        height = size.height or 0
+        narrow, compact, short, tiny = _responsive_breakpoints(width, height)
+        changed = not (
+            narrow == self._narrow
+            and compact == self._compact
+            and short == self._short
+            and tiny == self._tiny
+        )
         self._narrow = narrow
+        self._compact = compact
+        self._short = short
         self._tiny = tiny
-        with suppress(Exception):
-            self.screen.set_class(narrow, "narrow")
-            self.screen.set_class(tiny, "tiny")
+        for target in (getattr(self, "_root_screen", None), self.screen):
+            if target is None:
+                continue
+            with suppress(Exception):
+                target.set_class(narrow, "narrow")
+                target.set_class(compact, "compact")
+                target.set_class(short, "short")
+                target.set_class(tiny, "tiny")
+        if not changed:
+            return
         # Status line's right-side counts are baked into a Text (not a widget),
         # so CSS can't hide them — rebuild the tail to add/drop them.
         self._status_tail = None
@@ -11259,7 +11439,7 @@ class NovaApp(App):
         if existing_server and existing_server.is_running:
             self._log(
                 Text(
-                    f"Trello board already running at http://localhost:{existing_server.port}",
+                    f"Trello board already running at {existing_server.url}",
                     style="yellow",
                 )
             )
@@ -11267,11 +11447,11 @@ class NovaApp(App):
 
         # Start the server
         server = TrelloServer()
-        port = await server.start()
+        await server.start()
         self.session_state.trello_server = server
         self._log(
             Text(
-                f"📋 Trello board started at http://localhost:{port}",
+                f"📋 Trello board started at {server.url}",
                 style="bold green",
             )
         )
@@ -11310,7 +11490,7 @@ class NovaApp(App):
         if existing_server and existing_server.is_running:
             self._log(
                 Text(
-                    f"Create UI already running at http://localhost:{existing_server.port}",
+                    f"Create UI already running at {existing_server.url}",
                     style="yellow",
                 )
             )
@@ -11318,11 +11498,11 @@ class NovaApp(App):
 
         # Start the server
         server = CreateServer()
-        port = await server.start()
+        await server.start()
         self.session_state.create_server = server
         self._log(
             Text(
-                f"Create UI started at http://localhost:{port}",
+                f"Create UI started at {server.url}",
                 style="bold green",
             )
         )
@@ -11812,7 +11992,7 @@ class NovaApp(App):
         if not bd:
             return Text("No token usage captured yet.", style="dim")
         return Text(
-            f"Context: {bd.usage_percentage:.1f}% used ({getattr(bd, 'tokens_used', 0):,} tokens)",
+            f"Context: {bd.usage_percentage:.1f}% used ({bd.total_tokens:,} tokens)",
             style="dim",
         )
 
@@ -11901,7 +12081,7 @@ class NovaApp(App):
                     "run_tests",
                     "start_dev_server",
                 }:
-                    body = RichLog(classes="terminal-log", highlight=True, markup=True, max_lines=_LOG_MAX_LINES)
+                    body = OutputLog(classes="terminal-log", highlight=True, markup=True, max_lines=_LOG_MAX_LINES)
                     # Starts expanded (collapsed=False) to show live output!
                     comp = Collapsible(body, title=f"{base}  · running…", collapsed=False)
                 else:
@@ -11932,6 +12112,9 @@ class NovaApp(App):
                     # (see _set_tool_error_detail). Must run AFTER the mark,
                     # which is what registers the entry's index.
                     self._set_tool_error_detail(e.call_id, e.full_output)
+                if e.call_id is not None:
+                    self._tool_group_lines.pop(e.call_id, None)
+                self._trim_tool_group_history()
             self._scroll_end()
         elif isinstance(e, ev.FileOp):
             # File ops are the result of their tool call. Write/edit (a dedicated
@@ -11958,6 +12141,9 @@ class NovaApp(App):
                 self._mark_tool_group_result(
                     e.call_id, is_error=errored, detail=self._fileop_summary(rec)
                 )
+                if e.call_id is not None:
+                    self._tool_group_lines.pop(e.call_id, None)
+                self._trim_tool_group_history()
             self._scroll_end()
         elif isinstance(e, ev.TodoUpdate):
             # Held in per-pane state so a session switch can repaint the
@@ -11966,7 +12152,17 @@ class NovaApp(App):
             self._todos_agent = e.agent_name
             self._paint_todos(self._todos, e.agent_name)
         elif isinstance(e, ev.ErrorOutput):
-            self._log(Text(e.text, style="red"))
+            lines = e.text.splitlines()
+            summary = next((line.strip() for line in reversed(lines) if line.strip()), "Command failed")
+            title = f"Error output · {self._oneline(summary)} · {len(lines)} lines"
+            output = OutputLog(classes="terminal-log", max_lines=_LOG_MAX_LINES, markup=False)
+            output.write(Text(e.text, style=self._palette.tool_fail))
+            card = Collapsible(output, title=_esc(title), collapsed=True)
+            card.add_class("tool", "error-output")
+            card.styles.border_left = ("thick", self._palette.tool_fail)
+            self._close_tool_group()
+            await self._mount(card)
+            self._scroll_end(force=False)
         elif isinstance(e, ev.CompactionNotice):
             self._log(Text("⟳ Context compacted", style="dim"))
             # Context just shrank. The API-sourced current_context is the turn's

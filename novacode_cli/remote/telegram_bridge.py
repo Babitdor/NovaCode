@@ -292,6 +292,13 @@ class TelegramBridge:
                     # When in a forum topic, also accept messages from the topic thread.
                     if chat_id != self._config.chat_id and chat_id not in self._config.allowed_ids:
                         continue
+                    sender = message.get("from") or {}
+                    if sender.get("is_bot"):
+                        continue
+                    if message.get("chat", {}).get("type") in {"group", "supergroup", "channel"} and str(sender.get("id")) not in {
+                        str(i) for i in self._config.allowed_user_ids
+                    }:
+                        continue
 
                     # Which topic it came from (forum groups only: in plain
                     # groups message_thread_id also marks reply chains).

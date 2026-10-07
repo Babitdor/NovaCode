@@ -767,6 +767,9 @@ def _harden_subagent_specs(
             new_spec["skills"] = list(skill_sources)
 
         mw_to_add = []
+        from novacode_cli.security.delegated_approval import DelegatedApprovalMiddleware
+        if not any(isinstance(m, DelegatedApprovalMiddleware) for m in existing):
+            mw_to_add.append(DelegatedApprovalMiddleware())
         if not has_retry:
             mw_to_add.append(
                 ModelRetryMiddleware(
@@ -2214,8 +2217,21 @@ This file stores your preferences and context that persist across sessions.
 
     # Caller-injected middleware (e.g. Cowork's WorkspacePolicy broker) goes last
     # so it wraps tool calls closest to execution — a denied call never runs.
+    from novacode_cli.security.delegated_approval import HardDenyMiddleware
+    agent_middleware.append(HardDenyMiddleware())
     if extra_middleware:
         agent_middleware.extend(extra_middleware)
+        from novacode_cli.cowork.broker_middleware import CoworkBrokerMiddleware
+        brokers = [m for m in extra_middleware if isinstance(m, CoworkBrokerMiddleware)]
+        if brokers:
+            from novacode_cli.cowork.broker_middleware import confine_backend
+            composite_backend = confine_backend(composite_backend)
+            # Compiled/remote children cannot inherit this process's workspace
+            # permissions. Disable them for restricted Cowork sessions.
+            subagents = [dict(s) for s in subagents if isinstance(s, dict) and "runnable" not in s and "url" not in s and "graph_id" not in s]
+            agent_middleware = [m for m in agent_middleware if type(m).__name__ not in {"AsyncServerOnDemandMiddleware", "AsyncSubAgentMiddleware"}]
+            for spec in subagents:
+                spec["middleware"] = [m for m in (spec.get("middleware") or []) if type(m).__name__ not in {"AsyncServerOnDemandMiddleware", "AsyncSubAgentMiddleware"}] + brokers
 
     agent = create_deep_agent(
         name=assistant_id,

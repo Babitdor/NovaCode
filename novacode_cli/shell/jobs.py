@@ -300,7 +300,12 @@ class JobRegistry:
 
     # -- observers ---------------------------------------------------------
     def add_observer(self, cb: Observer) -> None:
-        self._observers.append(cb)
+        if cb not in self._observers:
+            self._observers.append(cb)
+
+    def remove_observer(self, cb: Observer) -> None:
+        """Detach an observer when its UI/session owner shuts down."""
+        self._observers = [observer for observer in self._observers if observer != cb]
 
     def set_launcher(self, fn: Callable[[str, list | None], BackgroundJob | None]) -> None:
         self._launcher = fn
