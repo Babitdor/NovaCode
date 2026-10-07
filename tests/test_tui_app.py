@@ -5181,25 +5181,33 @@ async def _drive_ctx_survives_a_resume():
 
     tracker = TokenTracker()
     tracker.set_model("claude-opus-5")
+    session_state = _SS()
+    session_state._tools = [
+        {
+            "name": "search_workspace",
+            "description": "Search files and folders in the current workspace.",
+            "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
+        }
+    ]
     app = NovaApp(
         agent=_SeededAgent(),
         assistant_id="nova-agent",
-        session_state=_SS(),
+        session_state=session_state,
         backend=None,
         token_tracker=tracker,
         image_tracker=None,
         model_name="claude-opus-5",
         session_manager=None,
     )
-    async with app.run_test():
-        tracker.reset()  # what /resume does before seeding the new thread
-        assert tracker.get_breakdown().total_tokens == 0, "the reset the user sees"
+    tracker.reset()  # what /resume does before seeding the new thread
+    assert tracker.get_breakdown().total_tokens == 0, "the reset the user sees"
 
-        await app._update_context_breakdown()
+    await app._update_context_breakdown()
 
-        bd = tracker.get_breakdown()
-        assert bd.total_tokens > 15_000, bd.total_tokens
-        assert bd.usage_percentage > 0
+    bd = tracker.get_breakdown()
+    assert bd.total_tokens > 15_000, bd.total_tokens
+    assert bd.usage_percentage > 0
+    assert bd.tool_definitions_tokens > 0, "TUI context breakdown omitted session tool schemas"
 
 
 def test_tui_ctx_survives_a_resume():

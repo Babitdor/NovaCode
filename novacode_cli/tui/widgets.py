@@ -891,8 +891,6 @@ class ChatMessage(Vertical):
         # transcript without dominating it.
         self._collapsible = collapsible
         self._collapsed = False
-        self.tooltip = "Click to copy this message"
-
         # Parse and store custom border color if specified
         self._custom_color = None
         if header.style:
@@ -1147,16 +1145,18 @@ class PromptInput(TextArea):
         self.move_cursor((row, col))
 
     async def _on_key(self, event: events.Key) -> None:
-        # enter sends; shift+enter (and ctrl+j, which some terminals send
-        # instead) inserts a real newline. TextArea does the opposite by
-        # default, and a chat prompt wants enter to mean "send".
-        if event.key == "enter":
+        # Enter sends by default; the app preference can switch to multiline
+        # Enter with Ctrl+Enter to send. Shift+Enter always inserts a newline.
+        submit_on_enter = getattr(self.app, "_submit_on_enter", True)
+        if event.key == "ctrl+enter" or (event.key == "enter" and submit_on_enter):
             event.prevent_default()
             event.stop()
             self._end_paste_merge()
             self.post_message(self.Submitted(self, self.text))
             return
-        if event.key in ("shift+enter", "ctrl+j"):
+        if event.key in ("shift+enter", "ctrl+j") or (
+            event.key == "enter" and not submit_on_enter
+        ):
             event.prevent_default()
             event.stop()
             self._end_paste_merge()

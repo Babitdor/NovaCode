@@ -44,6 +44,11 @@ below it is daylight. Nothing else about the layout changes.
 
 ## 2. Brand
 
+> **The brand spec is `BRAND.md` at the repo root.** That file owns the name
+> forms, the promise, the limit rule, the voice, the accent decision and the mark,
+> in a surface-agnostic form. This section records how *this page* expresses them,
+> and stays the authority for the measurements below.
+
 **Name.** Nova, referred to in the interface as `NOVA.CODE`, with the shell
 identity `nova@code:~$`.
 
@@ -144,6 +149,8 @@ something you can look at: a screenshot, a command, a log, or a chip.
 ## 5. Visual principles
 
 **5.1 One accent, nothing else is coloured.**
+Orange is Nova's brand accent (`BRAND.md` §7); the tokyo-night blue the product
+surfaces ship is a product-surface theme, not a second brand colour.
 Verified by walking every element on the page and bucketing computed text
 colours by saturation. Result: **five distinct text colours on the entire page**,
 of which exactly two are chromatic, and the second is only ever the foreground

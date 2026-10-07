@@ -105,6 +105,7 @@ from novacode_cli.tui.screens import (
     BackgroundTasksScreen,
     ClaudePluginsScreen,
     ConfirmModal,
+    ContextScreen,
     HookCreateModal,
     HooksScreen,
     InfoListScreen,
@@ -515,14 +516,14 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     ),
     "clear": SlashCommand("_run_clear", "clear the transcript", wants_text=False),
     "tokens": SlashCommand("_run_token_view", "show token / context usage", wants_text=False),
-    "context": SlashCommand(
-        "_run_session_import", "usage or imported full / compact / relevant [query]"
-    ),
+    "context": SlashCommand("_run_context", "show context usage or manage imported context"),
     "cost": SlashCommand("_run_token_view", "show session token spend", wants_text=False),
     "verbose": SlashCommand("_run_verbose", "toggle internal-context display", wants_text=False),
     "trace": SlashCommand("_run_trace", "tracing status"),
     "log": SlashCommand("_run_log", "recent runs"),
-    "theme": SlashCommand("_run_theme", "switch color theme", wants_text=False),
+    "theme": SlashCommand(
+        "_run_theme", "switch color theme", wants_text=False, aliases=("themes",)
+    ),
     "settings": SlashCommand("_run_settings", "open app settings", wants_text=False),
     "quit": SlashCommand("action_quit", "exit the TUI", wants_text=False),
     "exit": SlashCommand("action_quit", "exit the TUI", wants_text=False),
@@ -542,6 +543,31 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
 _TUI_COMMAND_ALIASES: dict[str, str] = {
     alias: name for name, spec in TUI_COMMANDS.items() for alias in spec.aliases
 }
+
+# Commands that inspect or open UI controls can run alongside an agent turn.
+# Commands that change the active agent, workspace, or turn input stay deferred.
+_LIVE_UI_COMMANDS = frozenset(
+    {
+        "help",
+        "auth",
+        "theme",
+        "settings",
+        "remote",
+        "artifacts",
+        "tasks",
+        "mcp",
+        "skills",
+        "agents",
+        "servers",
+        "hooks",
+        "tokens",
+        "cost",
+        "context",
+        "trace",
+        "log",
+        "notifications",
+    }
+)
 
 # Autocomplete entries — derived; plugin commands append at registration time.
 _TUI_SLASH_COMMANDS = [f"/{name}" for name in TUI_COMMANDS]
@@ -1488,6 +1514,10 @@ class NovaApp(App):
         self.agent = agent
         self.assistant_id = assistant_id
         self._question_future: asyncio.Future | None = None
+        self._submit_on_enter = True
+        self._autocomplete_enabled = True
+        self._low_resource_mode = False
+        self._animate_matrix_rain = False
         self.session_state = session_state
         self.backend = backend
         self.token_tracker = token_tracker
@@ -1716,26 +1746,17 @@ class NovaApp(App):
         # there is only one session.
         # Hidden until a second session exists, so a single-session run looks
         # exactly as it did before.
-        # Tooltips: Textual shows a widget's tooltip on hover after
-        # TOOLTIP_DELAY, walking up the ancestor chain — so setting one on a
-        # container covers all of its children. They document the clickable
-        # footer components and the info-bar columns, which are otherwise
-        # unlabelled beyond a one-word heading.
-        yield Tabs(id="session-tabs").with_tooltip(
-            "Session tabs — alt+←/→ to switch, ctrl+n for a new session"
-        )
+        yield Tabs(id="session-tabs")
         # Dynamic subagents: every dispatch of the turn so far, grouped into the
         # phases they were launched in. Hidden until something is in flight.
         yield SubagentsDock(
             Static("", id="subagents-title"),
             Static("", id="subagents-body"),
             id="subagents-dock",
-        ).with_tooltip("Active subagents — click (or alt+s) to collapse/expand")
+        )
         with Horizontal(id="workspace-layout"):
             with ContentSwitcher(initial="transcript", id="panes"):
-                yield TranscriptScroll(id="transcript").with_tooltip(
-                    "Transcript — drag to select, ctrl+c to copy"
-                )
+                yield TranscriptScroll(id="transcript")
             yield HarnessDock(id="ui-harness-dock")
         yield OptionList(id="cmdpalette")
         with Vertical(id="prompt-dock"):
@@ -1744,9 +1765,7 @@ class NovaApp(App):
             # same rows, so the checklist rendered on top of the input and
             # only appeared after a resize forced a reflow.
             with VerticalScroll(id="todo-scroll"):
-                yield Static("", id="todo-dock").with_tooltip(
-                    "Todo checklist — scroll to view all items; click (or alt+t) to collapse/expand"
-                )
+                yield Static("", id="todo-dock")
             # "Jump to latest" sits at the top-right of the footer, directly above
             # the status/skills bar. The outer row is a transparent, right-aligning
             # strip; the inner Horizontal shrinks to the text (width: auto) and the
@@ -1756,9 +1775,7 @@ class NovaApp(App):
                 Horizontal(id="jump-latest-row"),
                 Horizontal(id="jump-latest-box"),
             ):
-                yield Static("", id="jump-latest").with_tooltip(
-                    "Jump to the latest message — click (or ctrl+end)"
-                )
+                yield Static("", id="jump-latest")
             with Horizontal(id="status-row"):
                 # A `1fr` left cell + an `auto` right cell is what actually
                 # right-aligns the counts. Appending them to the status Text
@@ -1779,53 +1796,34 @@ class NovaApp(App):
                     paste_tracker=self.paste_tracker,
                     on_large_paste=self._on_large_paste,
                     on_clipboard_image=self._on_clipboard_image,
-                ).with_tooltip(
-                    "Enter to send · shift+enter for a new line · "
-                    "ctrl+v pastes an image from the clipboard · "
-                    "/ for commands · @ for files/agents · ! for bash"
                 )
             # Input-mode badge (normal / bash / plan / goal). Empty and 1 row
             # tall in normal mode, so it costs nothing until a mode is active.
-            yield Static("", id="mode-badge").with_tooltip(
-                "Active input mode (normal / bash / plan)"
-            )
+            yield Static("", id="mode-badge")
             # Persistent background-tasks indicator (hidden until a task runs).
             # Click it (or Ctrl+B with nothing running) to open the tasks panel.
-            yield Static("", id="tasks-bar").with_tooltip(
-                "Background tasks — click (or ctrl+b) to open the tasks panel"
-            )
+            yield Static("", id="tasks-bar")
             with Horizontal(id="info-bar"):
-                with Vertical(id="col-workspace", classes="info-col").with_tooltip(
-                    "Workspace root — the directory Nova reads and writes"
-                ):
+                with Vertical(id="col-workspace", classes="info-col"):
                     # The single accent tick marks where the field row starts;
                     # the rest of the labels stay dim so the values carry the eye.
                     yield Static("◆ WORKSPACE", classes="info-label first")
                     yield Static("", id="info-workspace", classes="info-value")
-                with Vertical(classes="info-col").with_tooltip(
-                    "Current git branch of the workspace"
-                ):
+                with Vertical(classes="info-col"):
                     yield Static("BRANCH", classes="info-label")
                     yield Static("", id="info-branch", classes="info-value")
-                with Vertical(id="col-sandbox", classes="info-col").with_tooltip(
-                    "Sandbox backend running the agent's shell commands"
-                ):
+                with Vertical(id="col-sandbox", classes="info-col"):
                     yield Static("SANDBOX", classes="info-label")
                     yield Static("", id="info-sandbox", classes="info-value")
-                with Vertical(classes="info-col").with_tooltip("Active model — /model to switch"):
+                with Vertical(classes="info-col"):
                     yield Static("MODEL", classes="info-label")
                     yield Static("", id="info-model", classes="info-value")
-                with Vertical(classes="info-col").with_tooltip(
-                    "Context window fill, then tokens spent this session — "
-                    "/context for the full breakdown"
-                ):
+                with Vertical(classes="info-col"):
                     yield Static("SESSION", classes="info-label")
                     yield Static("", id="info-quota", classes="info-value")
                 # Persistent artifacts component — fixed in the footer, click (or
                 # /artifacts) to open the list. Updates live via a registry observer.
-                with Vertical(id="col-artifacts", classes="info-col").with_tooltip(
-                    "Artifacts — click (or /artifacts) to open the list"
-                ):
+                with Vertical(id="col-artifacts", classes="info-col"):
                     yield Static("◆ ARTIFACTS", classes="info-label")
                     yield Static("", id="info-artifacts", classes="info-value")
 
@@ -1946,6 +1944,7 @@ class NovaApp(App):
     async def on_mount(self) -> None:
         import threading
 
+        self._load_ui_preferences()
         self._thread_id = threading.get_ident()
         # Log what the loop was running whenever the UI freezes for >1s
         # (~/.nova/logs/freeze.log). The UI and the agent share this loop, so
@@ -4652,7 +4651,10 @@ class NovaApp(App):
         if not self.is_mounted:
             self._status_timer = None
             return
-        delay = 0.1 if self._turn_active and self._os_focused else 0.5
+        if self._turn_active and self._os_focused:
+            delay = 0.2 if self._low_resource_mode else 0.1
+        else:
+            delay = 0.5
         self._status_timer = self.set_timer(delay, self._status_tick)
 
     def _status_tick(self) -> None:
@@ -5262,6 +5264,10 @@ class NovaApp(App):
         cursor. Every other keystroke — i.e. ordinary typing — used to start a
         worker, sleep 50 ms, hop to a thread and clear an empty list anyway.
         """
+        if not self._autocomplete_enabled:
+            self.workers.cancel_group(self, "palette")
+            self._hide_palette()
+            return
         if line.startswith("/") or self._active_at_fragment(line, col) is not None:
             self._update_palette(line, col)
         else:
@@ -5623,6 +5629,37 @@ class NovaApp(App):
             # RUN as a command when the turn ends, rather than steering the agent
             # with its literal text.
             stripped = text.lstrip()
+            command = stripped.split(maxsplit=1)[0].lower() if stripped else ""
+            if command == "/steer":
+                # Steering is the exception: it updates the shared instruction
+                # list the active agent reads before its next model call. Running
+                # it now lets guidance typed during a tool call affect the model
+                # immediately after that tool returns.
+                self.run_worker(
+                    self._run_steer(text), group="live_steer_command", exclusive=False
+                )
+                return
+            command_name = command[1:] if command.startswith("/") else ""
+            command_name = _TUI_COMMAND_ALIASES.get(command_name, command_name)
+            if command_name == "context" and len(stripped.split()) > 2:
+                # Changing an imported-context mode updates the active graph
+                # state, so defer that operation until the current turn settles.
+                command_name = ""
+            if command_name in _LIVE_UI_COMMANDS:
+                # Independent UI and status commands stay usable while the
+                # agent works; use a separate non-exclusive worker so modal
+                # screens don't block or cancel the active turn.
+                if command_name == "remote":
+                    coroutine = self._run_remote_screen()
+                elif command_name == "theme":
+                    coroutine = self._run_theme()
+                elif command_name == "help":
+                    self._run_help()
+                    return
+                else:
+                    coroutine = self._run_slash(text)
+                self.run_worker(coroutine, group="live_ui_command", exclusive=False)
+                return
             if stripped.startswith("/") or stripped.startswith("!"):
                 self._deferred_commands.append(text)
                 self._log(Text(f"↳ Queued command (runs after this turn): {text}", style="dim"))
@@ -6652,7 +6689,16 @@ class NovaApp(App):
                 # Off the loop: it can shell out to `ollama show`, which hangs
                 # while the local daemon is busy (a 42s UI freeze was measured).
                 model = tracker.model_name
-                breakdown = await asyncio.to_thread(lambda: ContextManager(model).breakdown(msgs))
+                # Tool schemas are part of the request baseline but are not stored
+                # in conversation messages. Prefer what the active graph actually
+                # binds (plan/init agents can differ), then fall back to the
+                # session's original tool list when graph introspection is absent.
+                from novacode_cli.ui.execution import _bound_tools
+
+                tools = _bound_tools(ag) or getattr(self.session_state, "_tools", None)
+                breakdown = await asyncio.to_thread(
+                    lambda: ContextManager(model).breakdown(msgs, tools=tools)
+                )
                 tracker.set_breakdown(breakdown)
         except Exception:  # noqa: BLE001
             pass
@@ -7940,18 +7986,44 @@ class NovaApp(App):
         """Open app preferences without holding the turn worker open."""
         self.push_screen(SettingsScreen())
 
+    def _load_ui_preferences(self) -> None:
+        """Load persistent input and performance preferences at startup."""
+        import os
+
+        from novacode_cli.config.nova_config import NovaConfig
+
+        config = NovaConfig()
+        self._submit_on_enter = config.get("submit_on_enter", True) is True
+        self._autocomplete_enabled = config.get("autocomplete_enabled", True) is True
+        self._low_resource_mode = config.get("low_resource_mode", False) is True
+        saved_rain = config.get("matrix_rain_enabled")
+        self._animate_matrix_rain = (
+            saved_rain
+            if isinstance(saved_rain, bool)
+            else os.environ.get("NOVA_ANIMATIONS", "").strip().lower()
+            in {"1", "true", "yes"}
+        )
+
     def _matrix_rain_enabled(self) -> bool:
-        """Read saved animation preference with environment fallback."""
-        return SettingsScreen._rain_enabled()
+        """Return the loaded Matrix Rain preference."""
+        return self._animate_matrix_rain
 
     def _set_matrix_rain_enabled(self, enabled: bool) -> None:
         """Apply a Matrix Rain preference immediately to the visible banner."""
+        self._animate_matrix_rain = enabled
         rain = self._home_banner
         if isinstance(rain, MatrixRain):
             rain.set_animation_enabled(enabled)
 
     def _run_token_view(self) -> None:
         self._log(self._token_text())
+
+    async def _run_context(self, text: str = "/context") -> None:
+        """Open the live context dashboard or retain imported-context controls."""
+        if len(text.split()) > 1:
+            await self._run_session_import(text)
+            return
+        self.push_screen(ContextScreen(self.token_tracker, self.model_name))
 
     def _run_verbose(self) -> None:
         new = self.session_state.toggle_verbose()
@@ -8515,22 +8587,36 @@ class NovaApp(App):
             return
 
         try:
-            config.set_router_routes(result["routes"])
-            config.set_router_enabled(bool(result["enabled"]))
-            config.set_router_default_route(result.get("default_route"))
-            config.set_router_decision_endpoint(result["endpoint"])
-            config.set_router_decision_model(result["model"])
+            new_profiles = result.get("new_profiles", {})
+            for profile_id, profile in result["profiles"].items():
+                if profile_id in new_profiles:
+                    created_id = config.create_router_profile(new_profiles[profile_id])
+                    if created_id != profile_id:
+                        raise ValueError(f"Profile name maps to unexpected id {created_id!r}.")
+                else:
+                    config.set_active_router_profile(profile_id)
+                config.set_router_routes(profile.get("routes", []))
+                config.set_router_enabled(bool(profile.get("enabled", False)))
+                config.set_router_default_route(profile.get("default_route"))
+                config.set_router_decision_endpoint(
+                    str(profile.get("decision_endpoint") or config.ROUTER_DEFAULT_ENDPOINT)
+                )
+                config.set_router_decision_model(
+                    str(profile.get("decision_model") or config.ROUTER_DEFAULT_MODEL)
+                )
+            config.set_active_router_profile(result["profile_id"])
         except ValueError as ex:
             self._log(Text(f"Router settings not saved: {ex}", style="red"))
             return
 
-        if not result["enabled"]:
+        active_settings = result["profiles"][result["profile_id"]]
+        if not active_settings.get("enabled"):
             self._log(Text("Model routing disabled.", style="green"))
         else:
             self._log(
                 Text(
-                    f"Model routing enabled · {len(result['routes'])} route(s) · "
-                    f"decided by {result['model']}",
+                    f"Model routing enabled · {len(active_settings.get('routes', []))} route(s) · "
+                    f"decided by {active_settings.get('decision_model', config.ROUTER_DEFAULT_MODEL)}",
                     style="green",
                 )
             )

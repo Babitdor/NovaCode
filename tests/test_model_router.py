@@ -117,6 +117,40 @@ def test_routes_round_trip_through_disk():
     assert reloaded.get_router_default_route() == "fast"
 
 
+def test_router_profiles_keep_independent_routes_and_active_selection():
+    cfg = _configured()
+    cfg.set_active_router_profile(cfg.create_router_profile("General"))
+    cfg.set_router_routes(
+        [{"id": "chat", "provider": "openai", "model": "gpt", "criteria": "General chat."}]
+    )
+    cfg.set_router_enabled(True)
+
+    reloaded = NovaConfig()
+    assert reloaded.get_active_router_profile() == "general"
+    assert [p["name"] for p in reloaded.get_router_profiles()] == ["Default", "General"]
+    assert [r["id"] for r in reloaded.get_router_routes()] == ["chat"]
+    reloaded.set_active_router_profile("default")
+    assert [r["id"] for r in reloaded.get_router_routes()] == ["fast", "deep"]
+    assert reloaded.get_router_enabled() is False
+
+
+def test_legacy_router_settings_are_migrated_without_losing_routes():
+    cfg = _configured()
+    assert cfg.get_router_profiles() == [{"id": "default", "name": "Default"}]
+    assert cfg.get_router_routes()[0]["id"] == "fast"
+    cfg.set_router_enabled(True)
+    reloaded = NovaConfig()
+    assert reloaded.get_active_router_profile() == "default"
+    assert [r["id"] for r in reloaded.get_router_routes()] == ["fast", "deep"]
+    assert reloaded.get_router_enabled() is True
+
+
+def test_cannot_delete_last_router_profile():
+    cfg = NovaConfig()
+    with pytest.raises(ValueError, match="At least one router profile"):
+        cfg.delete_router_profile("default")
+
+
 def test_get_routes_returns_a_copy():
     """The TUI edits a working list; an abandoned edit must not reach the config."""
     cfg = _configured()
@@ -439,3 +473,35 @@ def test_router_screen_refuses_a_route_with_no_provider():
     refused, accepted = asyncio.run(run())
     assert refused, "a route with no provider must be refused"
     assert accepted, "a complete route must be accepted"
+
+
+def test_router_screen_add_route_appends_even_when_existing_route_is_selected():
+    """Add must support several route IDs; editing uses its own explicit action."""
+    import asyncio
+
+    from textual.app import App
+    from textual.widgets import Input, Select
+
+    from novacode_cli.tui.screens import RouterScreen
+
+    class Harness(App):
+        def on_mount(self) -> None:
+            cfg = NovaConfig()
+            cfg.set_router_routes(
+                [{"id": "quick", "provider": "ollama", "model": "q", "criteria": "Simple."}]
+            )
+            self.push_screen(RouterScreen(cfg))
+
+    async def run() -> list[str]:
+        app = Harness()
+        async with app.run_test(size=(120, 60)) as pilot:
+            await pilot.pause()
+            screen = app.screen
+            screen.query_one("#router-id", Input).value = "coding"
+            screen.query_one("#router-model", Input).value = "coder"
+            screen.query_one("#router-criteria", Input).value = "Code changes."
+            screen.query_one("#router-provider", Select).value = "openai"
+            screen._add_route()
+            return [route["id"] for route in screen._routes]
+
+    assert asyncio.run(run()) == ["quick", "coding"]

@@ -585,9 +585,106 @@ class NovaConfig:
     ROUTER_DEFAULT_MIN_CONFIDENCE = 0.5
 
     def _router_block(self) -> dict[str, Any]:
-        """The raw ``router`` block, or an empty dict when absent/malformed."""
+        """The active profile settings, with support for pre-profile configs."""
         block = self._config.get("router")
-        return block if isinstance(block, dict) else {}
+        if not isinstance(block, dict):
+            return {}
+        profiles = block.get("profiles")
+        if isinstance(profiles, dict):
+            active = str(block.get("active_profile", "default"))
+            profile = profiles.get(active)
+            return profile if isinstance(profile, dict) else {}
+        return block
+
+    def _migrate_router_profiles(self) -> dict[str, Any]:
+        """Convert the legacy single-router block into the Default profile."""
+        root = self._config.get("router")
+        if not isinstance(root, dict):
+            root = {}
+        if not isinstance(root.get("profiles"), dict):
+            legacy = {
+                key: copy.deepcopy(value)
+                for key, value in root.items()
+                if key not in {"profiles", "active_profile"}
+            }
+            root = {
+                "active_profile": "default",
+                "profiles": {"default": {"name": "Default", **legacy}},
+            }
+            self._config["router"] = root
+        elif not root["profiles"]:
+            root["profiles"]["default"] = {"name": "Default"}
+            root["active_profile"] = "default"
+        if root.get("active_profile") not in root["profiles"]:
+            root["active_profile"] = next(iter(root["profiles"]))
+        return root
+
+    def get_router_profiles(self) -> list[dict[str, str]]:
+        """List named router profiles for the /router profile switcher."""
+        root = self._migrate_router_profiles()
+        return [
+            {"id": str(profile_id), "name": str(profile.get("name", profile_id))}
+            for profile_id, profile in root["profiles"].items()
+            if isinstance(profile, dict)
+        ]
+
+    def get_active_router_profile(self) -> str:
+        """Return the id of the currently selected router profile."""
+        return str(self._migrate_router_profiles()["active_profile"])
+
+    def get_router_profile_settings(self, profile_id: str) -> dict[str, Any]:
+        """Return a detached settings copy for one profile."""
+        root = self._migrate_router_profiles()
+        profile = root["profiles"].get(profile_id)
+        if not isinstance(profile, dict):
+            raise ValueError(f"Unknown router profile {profile_id!r}.")
+        return copy.deepcopy(profile)
+
+    def _store_active_router_block(self, block: dict[str, Any]) -> None:
+        """Store settings without losing the profile's display name."""
+        root = self._migrate_router_profiles()
+        profile_id = str(root["active_profile"])
+        existing = root["profiles"].get(profile_id, {})
+        profile = copy.deepcopy(block)
+        profile.setdefault("name", existing.get("name", profile_id))
+        root["profiles"][profile_id] = profile
+
+    def set_active_router_profile(self, profile_id: str) -> None:
+        """Select an existing router profile."""
+        root = self._migrate_router_profiles()
+        if profile_id not in root["profiles"]:
+            raise ValueError(f"Unknown router profile {profile_id!r}.")
+        root["active_profile"] = profile_id
+        self._save()
+
+    def create_router_profile(self, name: str) -> str:
+        """Create and activate a blank named routing profile; return its id."""
+        import re
+
+        name = name.strip()
+        profile_id = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+        if not profile_id:
+            raise ValueError("A router profile needs a name.")
+        root = self._migrate_router_profiles()
+        if profile_id in root["profiles"]:
+            raise ValueError(f"Router profile {name!r} already exists.")
+        root["profiles"][profile_id] = {"name": name, "enabled": False, "routes": []}
+        root["active_profile"] = profile_id
+        self._save()
+        return profile_id
+
+    def delete_router_profile(self, profile_id: str) -> None:
+        """Delete a profile, retaining at least one selectable profile."""
+        root = self._migrate_router_profiles()
+        profiles = root["profiles"]
+        if profile_id not in profiles:
+            raise ValueError(f"Unknown router profile {profile_id!r}.")
+        if len(profiles) == 1:
+            raise ValueError("At least one router profile must remain.")
+        del profiles[profile_id]
+        if root["active_profile"] == profile_id:
+            root["active_profile"] = next(iter(profiles))
+        self._save()
 
     def get_router_enabled(self) -> bool:
         """Whether turns are routed by a decision model.
@@ -602,7 +699,7 @@ class NovaConfig:
         """Persist the routing flag."""
         block = self._router_block()
         block["enabled"] = bool(enabled)
-        self._config["router"] = block
+        self._store_active_router_block(block)
         self._save()
 
     def get_router_routes(self) -> list[dict[str, Any]]:
@@ -670,7 +767,7 @@ class NovaConfig:
 
         block = self._router_block()
         block["routes"] = cleaned
-        self._config["router"] = block
+        self._store_active_router_block(block)
         self._save()
 
     def get_router_default_route(self) -> str | None:
@@ -687,7 +784,7 @@ class NovaConfig:
             block.pop("default_route", None)
         else:
             block["default_route"] = str(route_id).strip()
-        self._config["router"] = block
+        self._store_active_router_block(block)
         self._save()
 
     def get_router_decision_endpoint(self) -> str:
@@ -701,7 +798,7 @@ class NovaConfig:
         """Persist the routing decision endpoint."""
         block = self._router_block()
         block["decision_endpoint"] = str(endpoint).strip()
-        self._config["router"] = block
+        self._store_active_router_block(block)
         self._save()
 
     def get_router_decision_model(self) -> str:
@@ -715,7 +812,7 @@ class NovaConfig:
         """Persist the routing decision model name."""
         block = self._router_block()
         block["decision_model"] = str(model).strip()
-        self._config["router"] = block
+        self._store_active_router_block(block)
         self._save()
 
     def get_router_min_confidence(self) -> float:
@@ -731,7 +828,7 @@ class NovaConfig:
         """Persist the minimum routing confidence."""
         block = self._router_block()
         block["min_confidence"] = float(threshold)
-        self._config["router"] = block
+        self._store_active_router_block(block)
         self._save()
     # ── Voice config (local STT / VAD / TTS) ────────────────────────────────
 

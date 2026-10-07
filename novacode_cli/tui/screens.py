@@ -8,6 +8,7 @@ import from app.py — screens reach the running app via ``self.app``.
 from __future__ import annotations
 
 import asyncio
+import copy
 import contextlib
 import re
 import time
@@ -2182,50 +2183,255 @@ class SettingsScreen(ModalScreen[None]):
     """Quick app preferences that apply immediately and persist."""
 
     BINDINGS = [("escape", "close", "Close")]
+    DEFAULT_CSS = """
+    SettingsScreen #modal-box { width: 76%; max-width: 76; }
+    SettingsScreen .settings-section {
+        height: auto; margin-top: 1; margin-bottom: 1;
+        color: $primary; text-style: bold;
+    }
+    SettingsScreen .settings-row {
+        height: auto; align-vertical: middle; margin-bottom: 1;
+    }
+    SettingsScreen .settings-description { color: $text-muted; margin-left: 2; }
+    """
+
+    _PREFERENCES = {
+        "matrix_rain_enabled": False,
+        "submit_on_enter": True,
+        "autocomplete_enabled": True,
+        "low_resource_mode": False,
+    }
+
+    def __init__(self) -> None:
+        super().__init__()
+        from novacode_cli.config.nova_config import NovaConfig
+
+        self._config = NovaConfig()
+
+    def _preference(self, key: str) -> bool:
+        default = self._PREFERENCES[key]
+        if key == "matrix_rain_enabled":
+            import os
+
+            default = os.environ.get("NOVA_ANIMATIONS", "").strip().lower() in {
+                "1",
+                "true",
+                "yes",
+            }
+        value = self._config.get(key, default)
+        return value if isinstance(value, bool) else default
 
     def compose(self) -> ComposeResult:
         with Vertical(id="modal-box"):
             yield Static(Text("Settings", style="bold"), id="modal-title")
-            with Horizontal():
-                yield Switch(value=self._rain_enabled(), id="matrix-rain-toggle")
-                yield Static("Matrix Rain animation")
-            yield Static("Decorative animation on the home banner.", classes="dim")
+            yield Static("APPEARANCE", classes="settings-section")
+            with Horizontal(classes="settings-row"):
+                yield Switch(value=self._preference("matrix_rain_enabled"), id="matrix-rain-toggle")
+                yield Static("Matrix Rain animation", classes="settings-label")
+            yield Static("Animate the home banner.", classes="settings-description")
+            with Horizontal(classes="settings-row"):
+                yield Button("Change theme…", id="settings-theme")
+                yield Static("Choose Nova's color theme.", classes="settings-description")
+
+            yield Static("INPUT", classes="settings-section")
+            with Horizontal(classes="settings-row"):
+                yield Switch(value=self._preference("submit_on_enter"), id="submit-enter-toggle")
+                yield Static("Enter sends the prompt", classes="settings-label")
+            yield Static("Turn off to make Enter insert a line; Ctrl+Enter sends.", classes="settings-description")
+            with Horizontal(classes="settings-row"):
+                yield Switch(
+                    value=self._preference("autocomplete_enabled"), id="autocomplete-toggle"
+                )
+                yield Static("Show slash and @ suggestions", classes="settings-label")
+
+            yield Static("PERFORMANCE", classes="settings-section")
+            with Horizontal(classes="settings-row"):
+                yield Switch(value=self._preference("low_resource_mode"), id="low-resource-toggle")
+                yield Static("Lower active refresh rate", classes="settings-label")
+            yield Static("Use 5 Hz status updates during a turn instead of 10 Hz.", classes="settings-description")
             with Horizontal(id="modal-buttons"):
                 yield Button("Close", id="close")
 
-    @staticmethod
-    def _rain_enabled() -> bool:
-        """Read the saved preference, falling back to the legacy environment flag."""
-        import os
-
+    def _save_preference(self, key: str, value: bool) -> None:
         try:
-            from novacode_cli.config.nova_config import NovaConfig
-
-            saved = NovaConfig().get("matrix_rain_enabled")
-            if isinstance(saved, bool):
-                return saved
-        except Exception:  # noqa: BLE001
-            pass
-        return os.environ.get("NOVA_ANIMATIONS", "").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-        }
+            self._config.set(key, value)
+        except Exception as exc:  # noqa: BLE001
+            self.app._log(Text(f"Could not save settings: {exc}", style="red"))
 
     def on_mount(self) -> None:
         animate_modal_screen(self)
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
-        if event.switch.id != "matrix-rain-toggle":
+        key_by_id = {
+            "matrix-rain-toggle": "matrix_rain_enabled",
+            "submit-enter-toggle": "submit_on_enter",
+            "autocomplete-toggle": "autocomplete_enabled",
+            "low-resource-toggle": "low_resource_mode",
+        }
+        key = key_by_id.get(event.switch.id)
+        if key is None:
             return
-        enabled = event.value
-        try:
-            from novacode_cli.config.nova_config import NovaConfig
+        self._save_preference(key, event.value)
+        if key == "matrix_rain_enabled":
+            self.app._set_matrix_rain_enabled(event.value)
+        elif key == "submit_on_enter":
+            self.app._submit_on_enter = event.value
+        elif key == "autocomplete_enabled":
+            self.app._autocomplete_enabled = event.value
+            if not event.value:
+                self.app._hide_palette()
+        elif key == "low_resource_mode":
+            self.app._low_resource_mode = event.value
+            self.app._schedule_status_tick()
 
-            NovaConfig().set("matrix_rain_enabled", enabled)
-        except Exception as exc:  # noqa: BLE001
-            self.app._log(Text(f"Could not save settings: {exc}", style="red"))
-        self.app._set_matrix_rain_enabled(enabled)
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "close":
+            self.dismiss(None)
+        elif event.button.id == "settings-theme":
+            self.app.push_screen(ThemeScreen())
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
+class ContextScreen(ModalScreen[None]):
+    """Show current context-window use, its sources, and session metrics."""
+
+    DEFAULT_CSS = """
+    ContextScreen #modal-box { width: 90%; max-width: 104; }
+    ContextScreen #context-hero {
+        height: auto; padding: 1 2; margin-bottom: 1;
+        border: round $accent; background: $boost;
+    }
+    ContextScreen .context-section-title {
+        height: auto; margin-bottom: 1; color: $text; text-style: bold;
+    }
+    ContextScreen #context-breakdown, ContextScreen #context-metrics,
+    ContextScreen #context-explainer { height: auto; margin-bottom: 1; }
+    ContextScreen #context-explainer {
+        padding: 1 2; border-left: thick $primary; color: $text-muted;
+    }
+    """
+
+    BINDINGS = [("escape", "close", "Close")]
+
+    def __init__(self, tracker: Any, model_name: str | None = None) -> None:
+        super().__init__()
+        self._tracker = tracker
+        self._model_name = model_name
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="modal-box"):
+            yield Static(Text("Context Window", style="bold #7aa2f7"), id="modal-title")
+            yield Static("", id="context-hero")
+            yield Static("Where the context goes", classes="context-section-title")
+            yield Static("", id="context-breakdown")
+            yield Static("", id="context-metrics")
+            yield Static(
+                "System prompt (including injected memory) and tool schemas are sent on model calls; "
+                "conversation and tool results carry forward. Token allocation "
+                "by category is estimated; provider input usage is exact when available.",
+                id="context-explainer",
+            )
+            with Horizontal(id="modal-buttons"):
+                yield Button("Close", id="close", variant="primary")
+
+    def on_mount(self) -> None:
+        animate_modal_screen(self)
+        self.refresh_data()
+        self.set_interval(1.0, self.refresh_data)
+
+    def refresh_data(self) -> None:
+        """Render a fresh tracker snapshot without querying the active agent."""
+        try:
+            breakdown = self._tracker.get_breakdown()
+        except Exception:  # noqa: BLE001
+            breakdown = None
+        if breakdown is None:
+            self.query_one("#context-hero", Static).update("No token usage captured yet.")
+            self.query_one("#context-breakdown", Static).update("")
+            self.query_one("#context-metrics", Static).update("")
+            return
+
+        tracker = self._tracker
+        window = max(0, int(getattr(breakdown, "context_window_size", 0)))
+        used = max(0, int(getattr(breakdown, "total_tokens", 0)))
+        pct = (used / window * 100) if window else 0.0
+        remaining = max(0, window - used)
+        filled = min(40, round(min(100.0, pct) / 100 * 40))
+        bar = Text("█" * filled, style="bold #7aa2f7")
+        bar.append("░" * (40 - filled), style="#3b4261")
+        hero = Text()
+        model = self._model_name or getattr(tracker, "model_name", None) or "Model unknown"
+        hero.append(f"{model}\n", style="bold")
+        hero.append_text(bar)
+        hero.append(f"  {pct:.1f}%\n", style="bold #7aa2f7")
+        hero.append(f"{used:,}", style="bold")
+        hero.append(f" / {window:,} tokens  ·  {remaining:,} remaining\n", style="dim")
+        exact = bool(getattr(tracker, "has_api_data", False))
+        usage_source = (
+            "Provider-reported current request"
+            if exact
+            else "Estimated; no provider usage received yet"
+        )
+        hero.append(
+            usage_source,
+            style="dim green" if exact else "dim yellow",
+        )
+        self.query_one("#context-hero", Static).update(hero)
+
+        categories = (
+            ("System + memory", "system_prompt_tokens", "#7aa2f7"),
+            ("Tool definitions", "tool_definitions_tokens", "#2ac3de"),
+            ("User messages", "user_message_tokens", "#9ece6a"),
+            ("Assistant messages", "assistant_message_tokens", "#73daca"),
+            ("Tool results", "tool_result_tokens", "#f7768e"),
+        )
+        details = Text()
+        for label, attribute, color in categories:
+            count = max(0, int(getattr(breakdown, attribute, 0)))
+            share = count / used * 100 if used else 0.0
+            row = Text(f"{label:<20} {count:>9,}  {share:>5.1f}%  ", style="dim")
+            row.append("▰" * min(16, round(share / 100 * 16)), style=color)
+            details.append_text(row)
+            details.append("\n")
+        self.query_one("#context-breakdown", Static).update(details)
+
+        try:
+            from novacode_cli.context._analysis import compact_threshold_pct
+
+            compact_pct = compact_threshold_pct(window) if window else 0.0
+        except Exception:  # noqa: BLE001
+            compact_pct = 0.0
+        status = (
+            f"Compaction threshold ~{compact_pct:.0f}%"
+            if compact_pct
+            else "Compaction threshold unavailable"
+        )
+        if compact_pct and pct >= compact_pct:
+            status += " · threshold reached"
+        output = int(getattr(tracker, "last_output", 0))
+        session_total = int(getattr(tracker, "session_total_tokens", 0))
+        cache_read = int(getattr(tracker, "last_cache_read", 0))
+        cache_write = int(getattr(tracker, "last_cache_creation", 0))
+        metrics = Text()
+        metrics.append("Session total  ", style="dim")
+        metrics.append(f"{session_total:,} tokens", style="bold")
+        metrics.append("    Last output  ", style="dim")
+        metrics.append(f"{output:,} tokens\n", style="bold")
+        metrics.append(
+            f"{getattr(breakdown, 'user_message_count', 0)} user · "
+            f"{getattr(breakdown, 'assistant_message_count', 0)} assistant · "
+            f"{getattr(breakdown, 'tool_call_count', 0)} tool calls\n",
+            style="dim",
+        )
+        metrics.append(status, style="yellow" if compact_pct and pct >= compact_pct else "dim")
+        if cache_read or cache_write:
+            metrics.append(
+                f"\nLast call prompt cache  ·  {cache_read:,} read  ·  {cache_write:,} written",
+                style="dim",
+            )
+        self.query_one("#context-metrics", Static).update(metrics)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "close":
@@ -4983,6 +5189,13 @@ class RouterScreen(ModalScreen[dict | None]):
         """Load the current routing config into a working copy."""
         super().__init__()
         self._config = config
+        self._profiles = config.get_router_profiles()
+        self._profile_id = config.get_active_router_profile()
+        self._new_profiles: dict[str, str] = {}
+        self._profile_settings: dict[str, dict[str, Any]] = {
+            profile["id"]: config.get_router_profile_settings(profile["id"])
+            for profile in self._profiles
+        }
         self._routes: list[dict[str, Any]] = config.get_router_routes()
         self._enabled = config.get_router_enabled()
         self._default_route = config.get_router_default_route()
@@ -4999,6 +5212,16 @@ class RouterScreen(ModalScreen[dict | None]):
                     style="dim",
                 )
             )
+            yield Static("Router profile · separate route sets for different workflows")
+            yield Select(
+                [(profile["name"], profile["id"]) for profile in self._profiles],
+                value=self._profile_id,
+                allow_blank=False,
+                id="router-profile",
+            )
+            with Horizontal():
+                yield Input(placeholder="New profile name (e.g. Coding)", id="router-profile-name")
+                yield Button("Add profile", id="router-profile-add")
             yield Static("", id="router-status")
             yield OptionList(id="router-routes")
             yield Static("Route id", id="router-id-label")
@@ -5016,6 +5239,7 @@ class RouterScreen(ModalScreen[dict | None]):
             yield Input(placeholder="https://…/v1/systemone", id="router-endpoint")
             with Horizontal(id="modal-buttons"):
                 yield Button("Add route", id="router-add")
+                yield Button("Update selected", id="router-update")
                 yield Button("Remove", id="router-remove")
                 yield Button("Toggle on/off", id="router-toggle")
                 yield Button("Save", id="router-save", variant="success")
@@ -5038,6 +5262,7 @@ class RouterScreen(ModalScreen[dict | None]):
         ):
             preset = "tev1"
         self.query_one("#router-preset", Select).value = preset
+        self._update_profiles_select()
         self._refresh()
         animate_modal_screen(self)
 
@@ -5089,6 +5314,8 @@ class RouterScreen(ModalScreen[dict | None]):
             self.dismiss(None)
         elif button == "router-add":
             self._add_route()
+        elif button == "router-update":
+            self._update_route()
         elif button == "router-remove":
             self._remove_route()
         elif button == "router-toggle":
@@ -5096,6 +5323,92 @@ class RouterScreen(ModalScreen[dict | None]):
             self._refresh()
         elif button == "router-save":
             self._save()
+        elif button == "router-profile-add":
+            self._add_profile()
+
+    def _update_profiles_select(self) -> None:
+        """Refresh profile choices, including profiles staged in this dialog."""
+        select = self.query_one("#router-profile", Select)
+        choices = [(p["name"], p["id"]) for p in self._profiles]
+        choices.extend((name, profile_id) for profile_id, name in self._new_profiles.items())
+        select.set_options(choices)
+        if self._profile_id in {value for _, value in choices}:
+            select.value = self._profile_id
+
+    def _add_profile(self) -> None:
+        """Stage a new empty profile without persisting until Save."""
+        import re
+
+        name_input = self.query_one("#router-profile-name", Input)
+        name = name_input.value.strip()
+        profile_id = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+        existing = {p["id"] for p in self._profiles} | set(self._new_profiles)
+        if not name or not profile_id:
+            self._hint("Enter a name for the new profile.", error=True)
+            return
+        if profile_id in existing:
+            self._hint(f"Profile {name!r} already exists.", error=True)
+            return
+        self._new_profiles[profile_id] = name
+        self._profile_settings[profile_id] = {
+            "name": name,
+            "enabled": False,
+            "routes": [],
+            "decision_endpoint": self._config.ROUTER_DEFAULT_ENDPOINT,
+            "decision_model": self._config.ROUTER_DEFAULT_MODEL,
+        }
+        self._profile_id = profile_id
+        name_input.value = ""
+        self._update_profiles_select()
+        self._load_profile(profile_id)
+        self._hint(f"Profile {name!r} staged. Save to create it.")
+
+    def _stage_current_profile(self) -> None:
+        """Keep the edited profile in the dialog's in-memory working set."""
+        self._profile_settings[self._profile_id] = {
+            "name": next(
+                (p["name"] for p in self._profiles if p["id"] == self._profile_id),
+                self._new_profiles.get(self._profile_id, self._profile_id),
+            ),
+            "enabled": self._enabled,
+            "routes": self._routes,
+            "default_route": self._default_route,
+            "decision_endpoint": self.query_one("#router-endpoint", Input).value.strip(),
+            "decision_model": self.query_one("#router-decision-model", Input).value.strip(),
+        }
+
+    def _load_profile(self, profile_id: str) -> None:
+        """Load a selected profile into the route editor."""
+        self._profile_id = profile_id
+        settings = self._profile_settings.get(profile_id)
+        if settings is None:
+            settings = self._config.get_router_profile_settings(profile_id)
+            self._profile_settings[profile_id] = settings
+        self._routes = copy.deepcopy(settings.get("routes", []))
+        self._enabled = bool(settings.get("enabled", False))
+        self._default_route = settings.get("default_route")
+        self._endpoint = str(settings.get("decision_endpoint") or self._config.ROUTER_DEFAULT_ENDPOINT)
+        self._model = str(settings.get("decision_model") or self._config.ROUTER_DEFAULT_MODEL)
+        self.query_one("#router-endpoint", Input).value = self._endpoint
+        self.query_one("#router-decision-model", Input).value = self._model
+        self._refresh()
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        """Handle profile selection and decision-model presets."""
+        event.stop()
+        if event.select.id == "router-profile" and event.value not in (Select.BLANK, Select.NULL):
+            self._stage_current_profile()
+            self._load_profile(str(event.value))
+            self._hint(f"Editing {event.value} profile.")
+            return
+        if event.select.id != "router-preset":
+            return
+        if event.value == "jev":
+            self.query_one("#router-endpoint", Input).value = self._config.TOOL_VERDICT_JEV_ENDPOINT
+            self.query_one("#router-decision-model", Input).value = self._config.TOOL_VERDICT_JEV_MODEL
+        elif event.value == "tev1":
+            self.query_one("#router-endpoint", Input).value = self._config.TOOL_VERDICT_DEFAULT_ENDPOINT
+            self.query_one("#router-decision-model", Input).value = self._config.TOOL_VERDICT_DEFAULT_MODEL
 
     def _read_fields(self) -> dict[str, str] | None:
         """The route currently described by the fields, or ``None`` if incomplete."""
@@ -5114,21 +5427,36 @@ class RouterScreen(ModalScreen[dict | None]):
         }
 
     def _add_route(self) -> None:
-        """Append the described route, or replace the one being edited."""
+        """Append a new route without accidentally replacing a selection."""
         route = self._read_fields()
         if route is None:
             return
-        if self._editing is not None and self._editing < len(self._routes):
-            self._routes[self._editing] = route
-        else:
-            if any(r["id"] == route["id"] for r in self._routes):
-                self._hint(f"Route {route['id']!r} already exists.", error=True)
-                return
-            self._routes.append(route)
+        if any(r["id"] == route["id"] for r in self._routes):
+            self._hint(f"Route {route['id']!r} already exists. Use Update selected to edit it.", error=True)
+            return
+        self._routes.append(route)
         self._editing = None
         self._clear_fields()
         self._refresh()
         self._hint(f"Route {route['id']!r} staged. Save to apply.")
+
+    def _update_route(self) -> None:
+        """Replace only the highlighted route with the values in the editor."""
+        index = self._selected_index()
+        if index is None:
+            self._hint("Select a route to update.", error=True)
+            return
+        route = self._read_fields()
+        if route is None:
+            return
+        if any(i != index and existing["id"] == route["id"] for i, existing in enumerate(self._routes)):
+            self._hint(f"Route {route['id']!r} already exists.", error=True)
+            return
+        self._routes[index] = route
+        self._editing = None
+        self._clear_fields()
+        self._refresh()
+        self._hint(f"Route {route['id']!r} updated. Save to apply.")
 
     def _remove_route(self) -> None:
         """Drop the highlighted route from the working copy."""
@@ -5155,24 +5483,6 @@ class RouterScreen(ModalScreen[dict | None]):
             Text(message, style="red" if error else "dim")
         )
 
-    def on_select_changed(self, event: Select.Changed) -> None:
-        """Presets are conveniences; the model and endpoint stay editable."""
-        event.stop()
-        if event.select.id != "router-preset":
-            return
-        if event.value == "jev":
-            self.query_one("#router-endpoint", Input).value = self._config.TOOL_VERDICT_JEV_ENDPOINT
-            self.query_one("#router-decision-model", Input).value = (
-                self._config.TOOL_VERDICT_JEV_MODEL
-            )
-        elif event.value == "tev1":
-            self.query_one("#router-endpoint", Input).value = (
-                self._config.TOOL_VERDICT_DEFAULT_ENDPOINT
-            )
-            self.query_one("#router-decision-model", Input).value = (
-                self._config.TOOL_VERDICT_DEFAULT_MODEL
-            )
-
     def _save(self) -> None:
         """Validate the working copy and dismiss with it."""
         endpoint = self.query_one("#router-endpoint", Input).value.strip()
@@ -5183,13 +5493,12 @@ class RouterScreen(ModalScreen[dict | None]):
         if self._enabled and not self._routes:
             self._hint("Enable routing only after adding at least one route.", error=True)
             return
+        self._stage_current_profile()
         self.dismiss(
             {
-                "enabled": self._enabled,
-                "routes": self._routes,
-                "default_route": self._default_route,
-                "endpoint": endpoint,
-                "model": model,
+                "profile_id": self._profile_id,
+                "profiles": copy.deepcopy(self._profile_settings),
+                "new_profiles": dict(self._new_profiles),
             }
         )
 
