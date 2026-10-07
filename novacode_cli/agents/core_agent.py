@@ -36,6 +36,10 @@ from pathlib import Path
 # Windows paths to be relative to the workspace root before validation.
 import deepagents.backends.utils as _dab_utils
 
+from novacode_cli.utils.startup import apply_deepagents_version_scan_patch
+
+apply_deepagents_version_scan_patch()
+
 _original_validate = _dab_utils.validate_path
 
 
