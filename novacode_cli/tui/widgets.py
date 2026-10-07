@@ -734,6 +734,13 @@ class SelectableStatic(Static):
             strip = _selectable_line(self, strip, 0, y)
         return strip
 
+    def on_unmount(self) -> None:
+        # Parent layout/query caches may briefly retain removed widgets. Release
+        # their expensive markdown/text visuals immediately rather than waiting
+        # for that parent to be laid out again.
+        self.update("", layout=False)
+        self._styles_cache.clear()
+
     def get_selection(self, selection: Selection) -> tuple[str, str] | None:
         """Extract the selected text, falling back to the rendered strips.
 
@@ -798,7 +805,9 @@ class OutputLog(VerticalScroll):
         self._output_lines: Any = deque()
         self._output_chars = 0
         self._paint_timer: Any = None
-        self._output_body = SelectableStatic("", classes="output-text", markup=False)
+        from novacode_cli.tui.output_body import OutputBody
+
+        self._output_body = OutputBody(wrap=wrap, highlighter=self._highlighter)
 
     def compose(self) -> ComposeResult:
         yield self._output_body
@@ -809,21 +818,26 @@ class OutputLog(VerticalScroll):
         return [Strip([Segment(line.plain)]) for line in self._output_lines]
 
     def write(self, content: Any) -> OutputLog:
+        # A background producer can outlive its pruned transcript card. Textual
+        # keeps is_mounted true after removal; never re-arm timers or retain new
+        # output on a closed message pump.
+        if self._closing or self._pruning:
+            return self
         if isinstance(content, Text):
-            text = content.copy()
+            text = content[-(self.max_chars - 1):]
         elif isinstance(content, str):
             try:
                 text = Text.from_markup(content) if self.markup else Text.from_ansi(content)
             except Exception:  # noqa: BLE001 — malformed output stays visible
                 text = Text(content)
-            if self._highlighter is not None:
-                self._highlighter.highlight(text)
         else:
             from rich.console import Console
             console = Console(width=max(20, self.size.width or 80), record=True)
             with console.capture() as capture:
                 console.print(content)
             text = Text.from_ansi(capture.get())
+        text = text[-(self.max_chars - 1):]
+        text.expand_tabs()
         text = text[-(self.max_chars - 1):]
         for line in text.split("\n"):
             self._output_lines.append(line)
@@ -839,8 +853,10 @@ class OutputLog(VerticalScroll):
 
     def _flush_output(self) -> None:
         self._paint_timer = None
-        follow = self.auto_scroll and (self.is_vertical_scroll_end or not self._output_body.content)
-        self._output_body.update(Text("\n").join(self._output_lines))
+        if self._closing or self._pruning:
+            return
+        follow = self.auto_scroll and (self.is_vertical_scroll_end or not self._output_body._lines)
+        self._output_body.replace_lines(self._output_lines)
         if follow:
             self.call_after_refresh(self.scroll_end, animate=False)
 
@@ -850,13 +866,15 @@ class OutputLog(VerticalScroll):
         if self._paint_timer is not None:
             self._paint_timer.stop()
             self._paint_timer = None
-        self._output_body.update("")
+        self._output_body.replace_lines(())
         return self
 
     def on_unmount(self) -> None:
         if self._paint_timer is not None:
             self._paint_timer.stop()
             self._paint_timer = None
+        self._output_lines.clear()
+        self._output_chars = 0
 
 
 class TranscriptScroll(VerticalScroll):
@@ -1009,6 +1027,10 @@ class ChatMessage(Vertical):
                     pass
             self._pending_body = None
 
+    def on_unmount(self) -> None:
+        self.raw_text = ""
+        self._pending_body = None
+
     def set_collapsed(self, *, collapsed: bool) -> None:
         """Fold/unfold a collapsible message's body (no-op for normal messages).
 
@@ -1066,6 +1088,8 @@ class ChatMessage(Vertical):
             self.styles.border_left = ("thick", self._custom_color)
 
     def update_body(self, renderable: Any) -> None:
+        if self._closing or self._pruning:
+            return
         self.raw_text = self._renderable_text(renderable)
         try:
             body = self.query_one(".body")

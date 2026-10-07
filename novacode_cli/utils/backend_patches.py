@@ -281,6 +281,7 @@ def apply_ollama_content_block_patch() -> None:
         _ollama_mod.ChatOllama, "_aconvert_messages_to_ollama_messages", None
     )
     if _original_aconvert is not None:
+
         async def _patched_aconvert(self: Any, messages: Any) -> list[dict[str, Any]]:
             result = await _original_aconvert(self, messages)
             for msg_dict in result:
@@ -357,8 +358,8 @@ def apply_openai_reasoning_content_patch() -> None:
         return
 
     @functools.wraps(original)
-    def _convert_with_reasoning(message: Any) -> dict:
-        payload = original(message)
+    def _convert_with_reasoning(message: Any, *args: Any, **kwargs: Any) -> dict:
+        payload = original(message, *args, **kwargs)
         extra = getattr(message, "additional_kwargs", None)
         if isinstance(extra, dict) and isinstance(payload, dict):
             for field in _REASONING_FIELDS:

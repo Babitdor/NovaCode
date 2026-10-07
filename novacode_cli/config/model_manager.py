@@ -335,10 +335,18 @@ class ModelManager:
         if self.settings.has_openai:
             model = os.environ.get("OPENAI_MODEL", "gpt-5-mini")
             return ("OpenAI", model)
+        try:
+            from novacode_cli.config.openai_chatgpt_auth import has_credentials
+
+            if has_credentials():
+                return ("OpenAI", os.environ.get("OPENAI_MODEL", "gpt-5-mini"))
+        except Exception:  # noqa: BLE001 — status display is best-effort
+            pass
         if self.settings.has_anthropic:
             model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
             return ("Anthropic", model)
-        if self.settings.has_google:
+        from novacode_cli.config.provider_auth import get_provider_auth_status
+        if get_provider_auth_status("google").is_usable:
             model = os.environ.get("GOOGLE_MODEL", "gemini-3-pro-preview")
             return ("Google", model)
         if self.settings.has_openrouter:
@@ -417,8 +425,16 @@ class ModelManager:
         # exports what it finds, so a key saved through `/auth` works here too —
         # an env-only check rejected it until the process was restarted.
         if preset["requires_api_key"] and not self.resolve_api_key(provider):
-            api_key_var = preset["api_key_var"]
-            raise ValueError(f"{preset['name']} requires {api_key_var} environment variable")
+            if provider != "openai":
+                api_key_var = preset["api_key_var"]
+                raise ValueError(f"{preset['name']} requires {api_key_var} environment variable")
+            from novacode_cli.config.model_create import _openai_auth_available
+
+            if not _openai_auth_available():
+                api_key_var = preset["api_key_var"]
+                raise ValueError(
+                    f"OpenAI requires {api_key_var} or a ChatGPT sign-in configured in /auth"
+                )
 
         # Construction lives in ONE place (build_chat_model). This path used to
         # keep its own drifted copies — mid-session model switches silently

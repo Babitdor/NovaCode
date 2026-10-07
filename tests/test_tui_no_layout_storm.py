@@ -178,7 +178,12 @@ def _print(renderable, width: int) -> str:
 
     from rich.console import Console
 
-    console = Console(file=io.StringIO(), width=width, force_terminal=True, color_system="truecolor")
+    # Rich ignores an explicit width under TERM=dumb (as in some CI shells).
+    # This test measures width-dependent caching, independent of the host TTY.
+    console = Console(
+        file=io.StringIO(), width=width, force_terminal=True, color_system="truecolor",
+        legacy_windows=False, _environ={"TERM": "xterm-256color"},
+    )
     console.print(renderable)
     return console.file.getvalue()
 

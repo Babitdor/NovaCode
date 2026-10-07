@@ -87,6 +87,17 @@ def test_human_and_tool_messages_are_unaffected():
     assert "reasoning_content" not in tool
 
 
+def test_responses_api_conversion_options_are_preserved():
+    """The adapter must forward LangChain's Responses-specific converter flag."""
+    apply_openai_reasoning_content_patch()
+    from langchain_openai.chat_models.base import _convert_message_to_dict
+
+    message = HumanMessage("hello")
+    result = _convert_message_to_dict(message, api="responses")
+    assert result["role"] == "user"
+    assert result["content"] == "hello"
+
+
 def test_the_patch_is_idempotent():
     """Applied on every model build; must not stack wrappers."""
     for _ in range(5):

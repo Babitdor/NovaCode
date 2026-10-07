@@ -1,5 +1,6 @@
 """Claude Code local JSONL and text/Markdown export ingestion."""
 
+import json
 import re
 from pathlib import Path
 
@@ -78,7 +79,7 @@ class ClaudeCodeAdapter(FileAdapter):
                     session.messages.append(
                         HarnessMessage(
                             "assistant",
-                            str(block.get("input", "")),
+                            json.dumps(block.get("input", {}), ensure_ascii=False, indent=2),
                             timestamp,
                             name,
                             {"kind": "tool_call", "call_id": block.get("id")},
@@ -92,7 +93,7 @@ class ClaudeCodeAdapter(FileAdapter):
                             text_content(block.get("content")),
                             timestamp,
                             names.get(call_id, "unknown"),
-                            {"call_id": call_id},
+                            {"call_id": call_id, "is_error": bool(block.get("is_error"))},
                         )
                     )
         if not session.messages:

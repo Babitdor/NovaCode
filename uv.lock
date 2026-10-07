@@ -3547,7 +3547,7 @@ wheels = [
 
 [[package]]
 name = "novacode-cli"
-version = "1.0.6"
+version = "1.0.10"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -3559,6 +3559,8 @@ dependencies = [
     { name = "dill" },
     { name = "discord-py" },
     { name = "docker" },
+    { name = "google-auth" },
+    { name = "google-auth-oauthlib" },
     { name = "graphifyy" },
     { name = "httpx" },
     { name = "jinja2" },
@@ -3581,6 +3583,7 @@ dependencies = [
     { name = "modal" },
     { name = "pillow" },
     { name = "pydantic" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "pymupdf" },
     { name = "python-dotenv" },
     { name = "python-telegram-bot" },
@@ -3648,6 +3651,8 @@ requires-dist = [
     { name = "docker", specifier = ">=7.0.0" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.115.0" },
     { name = "faster-whisper", marker = "extra == 'voice'", specifier = ">=1.0.0" },
+    { name = "google-auth", specifier = ">=2.40" },
+    { name = "google-auth-oauthlib", specifier = ">=1.2.2" },
     { name = "graphifyy", specifier = ">=0.4.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "jinja2", specifier = ">=3.1.0" },
@@ -3676,6 +3681,7 @@ requires-dist = [
     { name = "playwright", marker = "extra == 'browser'", specifier = ">=1.40.0" },
     { name = "pocket-tts", marker = "extra == 'voice-pocket'", specifier = ">=0.1.0" },
     { name = "pydantic", specifier = ">=2.0" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10" },
     { name = "pymupdf", specifier = ">=1.24" },
     { name = "python-dotenv" },
     { name = "python-telegram-bot", specifier = ">=21.0.0" },

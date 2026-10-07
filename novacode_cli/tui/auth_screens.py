@@ -17,7 +17,9 @@ Security notes:
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import os
 from typing import TYPE_CHECKING, ClassVar
 from urllib.parse import urlsplit
 
@@ -132,7 +134,7 @@ class AuthManagerScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         """Compose the manager list and its buttons."""
         with Vertical(id="modal-box"):
-            yield Static(Text("Manage API keys", style="bold"), id="modal-title")
+            yield Static(Text("Manage credentials", style="bold"), id="modal-title")
             yield Static(
                 Text(
                     "Stored in your OS credential store, so they survive a restart "
@@ -238,6 +240,8 @@ class AuthManagerScreen(ModalScreen[None]):
                 note = _SERVICE_NOTES.get(name)
                 if note:
                     parts.append(note)
+            if status.detail in {"ChatGPT plan sign-in", "Google OAuth sign-in"}:
+                parts.append(status.detail)
             return "  ·  ".join(parts)
         return ""
 
@@ -300,6 +304,117 @@ class AuthManagerScreen(ModalScreen[None]):
         env_var = credential_env_var(name)
         if env_var is None:
             return
+        if name in {"google", "anthropic"}:
+            from novacode_cli.tui.provider_signin import (
+                GoogleSignInScreen,
+                ProviderSignInChoice,
+                open_anthropic_console,
+            )
+            choice = await self.app.push_screen_wait(ProviderSignInChoice(name))
+            if name == "google":
+                from novacode_cli.config import google_oauth_auth as google
+                if choice == "signin":
+                    if await self.app.push_screen_wait(GoogleSignInScreen()):
+                        self.saved.append(name)
+                        self._focus = name
+                        self.reload()
+                        self.app.notify("Gemini Google sign-in connected.")
+                    return
+                if choice == "use":
+                    google.set_auth_mode("oauth")
+                    self.saved.append(name)
+                    self.reload()
+                    return
+                if choice == "remove":
+                    confirmed = await self.app.push_screen_wait(ConfirmModal(
+                        "Disconnect Google sign-in?",
+                        Text("Removes Nova's stored Google tokens. Your API key is retained."),
+                    ))
+                    if confirmed and await asyncio.to_thread(google.delete_credentials):
+                        google.set_auth_mode("auto")
+                        self.deleted.append(name)
+                        self.reload()
+                    return
+                if choice == "api_key" and (
+                    CredentialStore().get_key(env_var) or os.environ.get(env_var)
+                    or os.environ.get("GEMINI_API_KEY")
+                ):
+                    google.set_auth_mode("api_key")
+                    self.saved.append(name)
+                    self.reload()
+                    return
+            elif choice == "console":
+                await open_anthropic_console()
+            if choice not in {"api_key", "replace_key", "console"}:
+                return
+        if name == "openai":
+            choice = await self.app.push_screen_wait(OpenAIAuthChoiceScreen())
+            if choice == "chatgpt":
+                try:
+                    from novacode_cli.config.openai_chatgpt_auth import sign_in
+
+                    await asyncio.to_thread(sign_in)
+                    from novacode_cli.config.openai_chatgpt_auth import set_auth_mode
+
+                    set_auth_mode("chatgpt")
+                except Exception as exc:  # noqa: BLE001 — keep token details out of UI
+                    self.app.notify(str(exc), severity="error", markup=False)
+                    return
+                self.saved.append(name)
+                self._focus = name
+                self.reload()
+                self.app.notify("OpenAI ChatGPT sign-in connected.", severity="information")
+                return
+            if choice == "use_chatgpt":
+                from novacode_cli.config.openai_chatgpt_auth import set_auth_mode
+
+                set_auth_mode("chatgpt")
+                self.saved.append(name)
+                self._focus = name
+                self.reload()
+                self.app.notify("OpenAI ChatGPT sign-in selected.", severity="information")
+                return
+            if choice == "remove_chatgpt":
+                from novacode_cli.config.openai_chatgpt_auth import (
+                    delete_credentials,
+                    load_credentials,
+                )
+
+                record = load_credentials()
+                if record:
+                    email = record.get("email") or "this ChatGPT account"
+                    confirmed = await self.app.push_screen_wait(
+                        ConfirmModal(
+                            "Remove the ChatGPT sign-in?",
+                            Text(
+                                f"This removes Nova's stored access for {email} "
+                                "from the OS credential store."
+                            ),
+                        )
+                    )
+                    if confirmed and delete_credentials():
+                        from novacode_cli.config.openai_chatgpt_auth import (
+                            selected_auth_mode,
+                            set_auth_mode,
+                        )
+
+                        if selected_auth_mode() == "chatgpt":
+                            set_auth_mode("auto")
+                        self.deleted.append(name)
+                        self.reload()
+                return
+            if choice == "api_key":
+                from novacode_cli.config.openai_chatgpt_auth import set_auth_mode
+
+                if CredentialStore().get_key(env_var) or os.environ.get(env_var):
+                    set_auth_mode("api_key")
+                    self.saved.append(name)
+                    self._focus = name
+                    self.reload()
+                    self.app.notify("OpenAI API-key auth selected.", severity="information")
+                    return
+            elif choice != "replace_key":
+                return
         prompt = AuthPromptScreen(name, existing=self._metas.get(env_var))
         result = await self.app.push_screen_wait(prompt)
         if prompt.warnings:
@@ -309,6 +424,13 @@ class AuthManagerScreen(ModalScreen[None]):
                 # step that may contain characters Textual's markup reads as tags.
                 self.app.notify(warning, severity="warning", markup=False)
         if result:
+            if name == "google":
+                from novacode_cli.config.google_oauth_auth import set_auth_mode
+                set_auth_mode("api_key")
+            if name == "openai":
+                from novacode_cli.config.openai_chatgpt_auth import set_auth_mode
+
+                set_auth_mode("api_key")
             self.saved.append(name)
             self._focus = name
             self.reload()
@@ -322,6 +444,36 @@ class AuthManagerScreen(ModalScreen[None]):
         env_var = credential_env_var(name)
         if env_var is None:
             return
+        if name == "openai" and not has_stored_credential(env_var):
+            from novacode_cli.config.openai_chatgpt_auth import (
+                delete_credentials,
+                load_credentials,
+            )
+
+            record = load_credentials()
+            if record:
+                email = record.get("email") or "this ChatGPT account"
+                confirmed = await self.app.push_screen_wait(
+                    ConfirmModal(
+                        "Remove the ChatGPT sign-in?",
+                        Text(
+                            f"This removes Nova's stored access for {email} "
+                            "from the OS credential store."
+                        ),
+                    )
+                )
+                if confirmed and delete_credentials():
+                    from novacode_cli.config.openai_chatgpt_auth import (
+                        selected_auth_mode,
+                        set_auth_mode,
+                    )
+
+                    if selected_auth_mode() == "chatgpt":
+                        set_auth_mode("auto")
+                    self.deleted.append(name)
+                    self._focus = name
+                    self.reload()
+                return
         if not self._stored(name) or not has_stored_credential(env_var):
             # Deleting an environment-supplied key is not something `/auth` can
             # do, and pretending otherwise would leave the user thinking it is
@@ -359,6 +511,54 @@ class AuthManagerScreen(ModalScreen[None]):
     def action_delete(self) -> None:
         """Delete the highlighted credential, after confirmation."""
         self.remove_selected()
+
+
+class OpenAIAuthChoiceScreen(ModalScreen[str | None]):
+    """Choose an API key or Sign in with ChatGPT for OpenAI."""
+
+    def compose(self) -> ComposeResult:
+        from novacode_cli.config.openai_chatgpt_auth import (
+            load_credentials,
+            selected_auth_mode,
+        )
+
+        record = load_credentials()
+        mode = selected_auth_mode()
+        mode_label = {"chatgpt": "ChatGPT", "api_key": "API key"}.get(mode, "automatic")
+        details = [f"Active auth: {mode_label}"]
+        if record:
+            details.insert(0, f"Connected: {record.get('email') or 'ChatGPT account'}")
+        detail = "\n" + "\n".join(details)
+        with Vertical(id="modal-box"):
+            yield Static(Text("Connect OpenAI", style="bold"), id="modal-title")
+            yield Static(
+                Text(
+                    "Select which OpenAI credential Nova should use. API keys use "
+                    "OpenAI API billing; ChatGPT sign-in authorizes eligible Responses API usage."
+                    "\nChatGPT sign-in has preview limits: some hosted tools are unavailable."
+                    + detail,
+                    style="dim",
+                ),
+                id="auth-desc",
+            )
+            with Horizontal(id="modal-buttons"):
+                yield Button("Use API key", id="api-key", variant="primary")
+                yield Button("Add / replace API key", id="replace-key")
+                yield Button("Continue with ChatGPT", id="chatgpt")
+                if record:
+                    yield Button("Use saved ChatGPT account", id="use-chatgpt")
+                    yield Button("Remove ChatGPT sign-in", id="remove-chatgpt", variant="error")
+                yield Button("Cancel", id="cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        choices = {
+            "api-key": "api_key",
+            "replace-key": "replace_key",
+            "chatgpt": "chatgpt",
+            "use-chatgpt": "use_chatgpt",
+            "remove-chatgpt": "remove_chatgpt",
+        }
+        self.dismiss(choices.get(event.button.id))
 
 
 class AuthPromptScreen(ModalScreen[str | None]):

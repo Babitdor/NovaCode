@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "novacode-cli"
-version = "1.0.6"
+version = "1.0.10"
 description = "Agentic Coding Tool that runs in your terminal"
 authors = [{ name = "Babitdor", email = "babitdorbryan14@gmail.com" }]
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -32,6 +32,8 @@ dependencies = [
     "langchain-anthropic>=1.4.0",
     "langchain-ollama>=1.0.1",
     "langchain-google-genai>=4.2.1",
+    "google-auth>=2.40",
+    "google-auth-oauthlib>=1.2.2",
     "langchain-nvidia-ai-endpoints>=1.4.1",
     "langchain-mcp-adapters>=0.2.2",
     "langgraph>=1.1.3",
@@ -67,6 +69,8 @@ dependencies = [
     # dependency (pymupdf solely through browser-use), which is not a promise.
     "aiohttp>=3.9",
     "httpx>=0.27",
+    # Verify OIDC ID-token signatures against OpenAI's JWKS for Sign in with ChatGPT.
+    "PyJWT[crypto]>=2.10",
     "pydantic>=2.0",
     "pymupdf>=1.24",   # PDF text extraction (read_file on a .pdf)
     "bm25s>=0.2",      # skill retrieval; came in through semble until semble dropped it

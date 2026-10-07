@@ -269,6 +269,41 @@ def get_provider_auth_status(
             detail="credentials unknown",
         )
 
+    google_mode = "auto"
+    if name == "google":
+        from novacode_cli.config.google_oauth_auth import has_credentials, selected_auth_mode
+        google_mode = selected_auth_mode()
+        if google_mode == "oauth":
+            connected = has_credentials()
+            return ProviderAuthStatus(
+                name=name,
+                state=ProviderAuthState.CONFIGURED if connected else ProviderAuthState.MISSING,
+                source=ProviderAuthSource.STORED if connected else ProviderAuthSource.NONE,
+                env_var=env_var,
+                detail=("Google OAuth sign-in" if connected
+                        else "Google sign-in is selected but not connected"),
+            )
+    openai_mode = "auto"
+    if name == "openai":
+        from novacode_cli.config.openai_chatgpt_auth import selected_auth_mode
+
+        openai_mode = selected_auth_mode()
+        if openai_mode == "chatgpt":
+            from novacode_cli.config.openai_chatgpt_auth import has_credentials
+
+            configured = has_credentials()
+            return ProviderAuthStatus(
+                name=name,
+                state=(ProviderAuthState.CONFIGURED if configured else ProviderAuthState.MISSING),
+                source=(ProviderAuthSource.STORED if configured else ProviderAuthSource.NONE),
+                env_var=env_var,
+                detail=(
+                    "ChatGPT plan sign-in"
+                    if configured
+                    else "ChatGPT sign-in is selected but not connected"
+                ),
+            )
+
     store = store if store is not None else CredentialStore()
     if store.has_key(env_var):
         return ProviderAuthStatus(
@@ -279,7 +314,7 @@ def get_provider_auth_status(
             detail="stored",
         )
 
-    if _env_value(env_var):
+    if _env_value(env_var) or (name == "google" and _env_value("GEMINI_API_KEY")):
         return ProviderAuthStatus(
             name=name,
             state=ProviderAuthState.CONFIGURED,
@@ -287,6 +322,29 @@ def get_provider_auth_status(
             env_var=env_var,
             detail=f"set in environment: {env_var}",
         )
+
+    if name == "google" and google_mode == "auto":
+        from novacode_cli.config.google_oauth_auth import has_credentials
+        if has_credentials():
+            return ProviderAuthStatus(name=name, state=ProviderAuthState.CONFIGURED,
+                source=ProviderAuthSource.STORED, env_var=env_var, detail="Google OAuth sign-in")
+
+    # ChatGPT plan access is a separate OpenAI credential type. It must not be
+    # exported as OPENAI_API_KEY: its LangChain client uses Responses API mode.
+    if name == "openai" and openai_mode == "auto":
+        try:
+            from novacode_cli.config.openai_chatgpt_auth import has_credentials
+
+            if has_credentials():
+                return ProviderAuthStatus(
+                    name=name,
+                    state=ProviderAuthState.CONFIGURED,
+                    source=ProviderAuthSource.STORED,
+                    env_var=env_var,
+                    detail="ChatGPT plan sign-in",
+                )
+        except Exception:  # noqa: BLE001 — auth status must remain renderable
+            pass
 
     return ProviderAuthStatus(
         name=name,

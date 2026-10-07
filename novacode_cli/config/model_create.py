@@ -15,6 +15,29 @@ PROVIDER_KEY_ENV: dict[str, str] = {
 }
 
 
+def _has_openai_chatgpt_auth() -> bool:
+    """Whether OpenAI is available through a stored ChatGPT-plan sign-in."""
+    try:
+        from novacode_cli.config.openai_chatgpt_auth import has_credentials
+
+        return has_credentials()
+    except Exception:  # noqa: BLE001 — provider discovery must not abort startup
+        return False
+
+
+def _openai_auth_available() -> bool:
+    """Honor the selected OpenAI auth mode when gating model construction."""
+    from novacode_cli.config.openai_chatgpt_auth import has_credentials, selected_auth_mode
+
+    mode = selected_auth_mode()
+    has_key = bool(settings.openai_api_key or os.environ.get("OPENAI_API_KEY"))
+    if mode == "api_key":
+        return has_key
+    if mode == "chatgpt":
+        return has_credentials()
+    return has_key or has_credentials()
+
+
 def _opencode_chat_class() -> type:
     """A ChatOpenAI that drops message fields OpenCode Go's upstreams reject.
 
@@ -44,6 +67,34 @@ def _opencode_chat_class() -> type:
             return payload
 
     return _OpenCodeChat
+
+
+def _chatgpt_plan_chat_class() -> type:
+    """Adapt Nova system prompts to the ChatGPT-plan Responses contract."""
+    from langchain_core.messages import ChatMessage, SystemMessage
+    from langchain_openai import ChatOpenAI
+
+    class _ChatGPTPlanChat(ChatOpenAI):  # type: ignore[misc]
+        def _get_request_payload(self, input_, *, stop=None, **kwargs):  # noqa: ANN001, ANN202
+            messages = self._convert_input(input_).to_messages()
+            # The SIWC preview rejects input items with role="system". OpenAI
+            # documents developer messages as the supported equivalent.
+            normalized = [
+                ChatMessage(
+                    role="developer",
+                    content=message.content,
+                    additional_kwargs=message.additional_kwargs,
+                    response_metadata=message.response_metadata,
+                    name=message.name,
+                    id=message.id,
+                )
+                if isinstance(message, SystemMessage)
+                else message
+                for message in messages
+            ]
+            return super()._get_request_payload(normalized, stop=stop, **kwargs)
+
+    return _ChatGPTPlanChat
 
 
 #: Stable for the life of the process — see :func:`opencode_session_id`.
@@ -176,6 +227,16 @@ def build_chat_model(provider: str, model_name: str) -> BaseChatModel:
             # caller's has-key gate but never reached the client, so ChatOpenAI
             # raised "api_key must be set" instead of working.
             openai_key = settings.openai_api_key or os.environ.get("OPENAI_API_KEY")
+            from novacode_cli.config.openai_chatgpt_auth import (
+                has_credentials,
+                selected_auth_mode,
+            )
+
+            auth_mode = selected_auth_mode()
+            if auth_mode == "chatgpt":
+                if not has_credentials():
+                    raise ValueError("ChatGPT sign-in is selected for OpenAI. Connect it in /auth.")
+                openai_key = None
             if openai_key:
                 openai_kwargs["api_key"] = openai_key
             # Custom OpenAI-compatible endpoint (Azure, LM Studio, vLLM, a
@@ -188,16 +249,43 @@ def build_chat_model(provider: str, model_name: str) -> BaseChatModel:
             except Exception:  # noqa: BLE001 — config is best-effort here
                 base_url = None
             base_url = base_url or os.environ.get("OPENAI_BASE_URL")
+            if auth_mode == "chatgpt":
+                # ChatGPT-plan tokens are valid only for OpenAI's public
+                # Responses endpoint, regardless of a saved custom API URL.
+                base_url = None
+            if auth_mode == "api_key" and not openai_key and not base_url:
+                raise ValueError("OpenAI API-key auth is selected, but no API key is configured.")
             if base_url:
                 openai_kwargs["base_url"] = base_url
                 # A local endpoint usually ignores the key but the client still
                 # demands one; send a placeholder so it doesn't refuse to start.
                 openai_kwargs.setdefault("api_key", "not-needed")
+            elif not openai_key and auth_mode in {"auto", "chatgpt"}:
+                # ChatGPT plan credentials are separate from API keys and are
+                # accepted only on the public Responses API route.
+                from novacode_cli.config.openai_chatgpt_auth import (
+                    has_credentials,
+                    http_clients,
+                )
+
+                if has_credentials():
+                    sync_client, async_client = http_clients()
+
+                    openai_kwargs.update(
+                        api_key="chatgpt-plan-token-managed-per-request",
+                        use_responses_api=True,
+                        streaming=True,
+                        store=False,
+                        http_client=sync_client,
+                        http_async_client=async_client,
+                    )
 
         if provider == "opencode":
             return _opencode_chat_class()(
                 model=model_name, max_retries=5, **openai_kwargs
             )
+        if openai_kwargs.get("use_responses_api"):
+            return _chatgpt_plan_chat_class()(model=model_name, max_retries=5, **openai_kwargs)
         return ChatOpenAI(model=model_name, max_retries=5, **openai_kwargs)
 
     if provider == "nvidia":
@@ -282,7 +370,27 @@ def build_chat_model(provider: str, model_name: str) -> BaseChatModel:
     if provider == "google":
         from langchain_google_genai import ChatGoogleGenerativeAI
 
+        from novacode_cli.config.google_oauth_auth import (
+            GoogleOAuthAuth,
+            has_credentials,
+            use_oauth,
+        )
+
         google_kwargs: dict = {}
+        google_key = (os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+                      or settings.google_api_key)
+        oauth_selected = use_oauth(has_key=bool(google_key))
+        if oauth_selected:
+            if not has_credentials():
+                raise ValueError("Google sign-in is selected but missing. Reconnect through /auth.")
+            # The SDK currently requires an API-key constructor argument for
+            # Developer API. HTTPX replaces this non-secret placeholder with
+            # real OAuth bearer auth on every sync/async/streaming request.
+            google_kwargs.update(
+                google_api_key="nova-oauth-managed",
+                vertexai=False,
+                base_url="https://generativelanguage.googleapis.com/",
+            )
         if effort and effort != "off":
             if "gemini-2.5" in model_name or "gemini-2.0" in model_name:
                 budget_map = {"low": 2048, "medium": 8192, "high": 32768}
@@ -291,13 +399,30 @@ def build_chat_model(provider: str, model_name: str) -> BaseChatModel:
                 google_kwargs["thinking_level"] = effort
             google_kwargs["include_thoughts"] = True
 
-        return ChatGoogleGenerativeAI(
+        model = ChatGoogleGenerativeAI(
             model=model_name,
             temperature=0,
             max_tokens=None,
             max_retries=5,
             **google_kwargs,
         )
+        if oauth_selected:
+            import httpx
+            from google import genai
+            from google.genai.types import HttpOptions
+            # Explicit HTTPX clients prevent the SDK's optional aiohttp path
+            # bypassing OAuth. Both streaming and non-streaming use these.
+            model.client.close()
+            model.client = genai.Client(
+                vertexai=False, api_key="nova-oauth-managed",
+                http_options=HttpOptions(
+                    base_url="https://generativelanguage.googleapis.com/",
+                    api_version=model.api_version,
+                    httpx_client=httpx.Client(auth=GoogleOAuthAuth(), timeout=300),
+                    httpx_async_client=httpx.AsyncClient(auth=GoogleOAuthAuth(), timeout=300),
+                ),
+            )
+        return model
 
     raise ValueError(f"Unknown provider: {provider}")
 
@@ -310,7 +435,7 @@ def create_model_from_config(provider: str, model_name: str) -> BaseChatModel | 
     falls back to another provider.  This is used for vision captioning (gemma).
 
     Args:
-        provider: One of ``"ollama"``, ``"openai"``, ``"anthropic"``, ``"google"``, ``"openrouter"``, ``"opencode"``.
+        provider: An Ollama, OpenAI, Anthropic, Google, OpenRouter or OpenCode provider.
         model_name: The model name/identifier.
 
     Returns:
@@ -322,6 +447,11 @@ def create_model_from_config(provider: str, model_name: str) -> BaseChatModel | 
         # os.environ on a fresh session, so an env-only check wrongly returned
         # None on restart (settings.<provider>_api_key resolves keychain-or-env).
         has_key = os.environ.get(key_var) or getattr(settings, f"{provider}_api_key", None)
+        if provider == "openai":
+            has_key = _openai_auth_available()
+        elif provider == "google":
+            from novacode_cli.config.provider_auth import get_provider_auth_status
+            has_key = get_provider_auth_status("google").is_usable
         if not has_key:
             return None
     try:
@@ -365,7 +495,12 @@ def create_model_for_session(
 
     key_var = PROVIDER_KEY_ENV.get(provider)
     if key_var and not (os.environ.get(key_var) or getattr(settings, f"{provider}_api_key", None)):
-        reason = f"{key_var} is not set"
+        has_chatgpt_login = _openai_auth_available() if provider == "openai" else False
+        reason = (
+            "OpenAI ChatGPT sign-in is missing"
+            if provider == "openai" and not has_chatgpt_login
+            else f"{key_var} is not set"
+        )
     else:
         reason = f"provider '{provider}' is unavailable"
     return None, (
@@ -387,6 +522,7 @@ def create_model() -> BaseChatModel:
     """
     # Load saved configuration - this takes precedence over .env
     from novacode_cli.config.nova_config import NovaConfig
+    from novacode_cli.config.provider_auth import get_provider_auth_status
 
     nova_config = NovaConfig()
     saved_model_config = nova_config.get_model_config()
@@ -398,14 +534,28 @@ def create_model() -> BaseChatModel:
         provider = saved_model_config["provider"]
         model_name = saved_model_config["model"]
         key_var = PROVIDER_KEY_ENV.get(provider)
-        if key_var and not os.environ.get(key_var):
+        available = (
+            _openai_auth_available()
+            if provider == "openai"
+            else bool(key_var and os.environ.get(key_var))
+        )
+        if provider == "google":
+            from novacode_cli.config.provider_auth import get_provider_auth_status
+            available = get_provider_auth_status("google").is_usable
+        if key_var and not available:
             console.print(f"[yellow]Warning: {key_var} not set, falling back to Ollama[/yellow]")
         else:
             return build_chat_model(provider, model_name)
 
     # No usable saved config — pick the first provider with a key configured.
     _ENV_PRIORITY = [
-        (settings.has_openai, "openai", "OPENAI_MODEL", "gpt-5-mini", "OpenAI"),
+        (
+            settings.has_openai or _openai_auth_available(),
+            "openai",
+            "OPENAI_MODEL",
+            "gpt-5-mini",
+            "OpenAI",
+        ),
         (
             settings.has_anthropic,
             "anthropic",
@@ -413,7 +563,8 @@ def create_model() -> BaseChatModel:
             "claude-sonnet-4-5-20250929",
             "Anthropic",
         ),
-        (settings.has_google, "google", "GOOGLE_MODEL", "gemini-3-pro-preview", "Google Gemini"),
+        (get_provider_auth_status("google").is_usable,
+         "google", "GOOGLE_MODEL", "gemini-3-pro-preview", "Google Gemini"),
         (
             settings.has_openrouter,
             "openrouter",

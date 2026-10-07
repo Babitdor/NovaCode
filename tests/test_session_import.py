@@ -23,6 +23,7 @@ from novacode_cli.tui.session_import import (
     load_import,
     parse_import,
 )
+from tests.test_tui_sessions import isolated_session_config  # noqa: F401
 
 
 def write_jsonl(path: Path, rows: list[dict]) -> Path:

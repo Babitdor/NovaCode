@@ -12,19 +12,18 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from langchain_core.messages import HumanMessage
 from rich.text import Text
 from textual import work
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, OptionList, Static
 
-from novacode_cli.tui.widgets import OutputLog
 from novacode_cli.session.adapters import ImportedSession, SessionInfo, adapters
 from novacode_cli.session.imported_context import (
     MESSAGE_ID,
     ImportedContext,
     git_state,
     import_budget,
-    transcript,
 )
+from novacode_cli.tui.session_transcript import SessionTranscript, show_imported_history
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
@@ -41,7 +40,8 @@ class TranscriptScreen(ModalScreen[None]):
         width: 90%; height: 85%; padding: 1 2;
         background: $surface; border: round $accent;
     }
-    TranscriptScreen OutputLog { height: 1fr; }
+    TranscriptScreen #import-history { height: 1fr; }
+    TranscriptScreen #import-preview > Horizontal { height: 3; }
     """
 
     def __init__(self, session: ImportedSession) -> None:
@@ -53,19 +53,14 @@ class TranscriptScreen(ModalScreen[None]):
         """Build the session controls."""
         with Vertical(id="import-preview"):
             yield Static(Text(f"{self.session.provider} · {self.session.session_id}", style="bold"))
-            yield OutputLog(id="import-history", wrap=True, markup=False)
+            with VerticalScroll(id="import-history"):
+                yield SessionTranscript(self.session)
             yield Button("Close", id="close")
 
-    def on_mount(self) -> None:
-        # Bound rendering separately; the normalized source remains complete.
-        """Load the historical session content."""
-        self.query_one(OutputLog).write(Text(transcript(self.session)[:200000]))
-        if len(transcript(self.session)) > 200000:
-            self.query_one(OutputLog).write(Text("Preview limited to 200,000 characters."))
-
-    def on_button_pressed(self, _event: Button.Pressed) -> None:
+    def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle viewing, importing, or closing."""
-        self.dismiss(None)
+        if event.button.id == "close":
+            self.dismiss(None)
 
     def action_close(self) -> None:
         """Close without importing."""
@@ -242,7 +237,9 @@ def context_budget(app: Any) -> int:
     return 12000
 
 
-async def install_context(app: Any, context: ImportedContext) -> None:
+async def install_context(
+    app: Any, context: ImportedContext, *, render_history: bool = True
+) -> None:
     """Replace only the imported reference message; keep Nova history intact."""
     config = {"configurable": {"thread_id": app.session_state.thread_id}}
     budget = context_budget(app)
@@ -256,6 +253,8 @@ async def install_context(app: Any, context: ImportedContext) -> None:
             context.save, app.session_manager.sessions_dir, app.session_state.session_id
         )
     await app._save_session()
+    if render_history:
+        await show_imported_history(app, context.session)
     app._log(Text(context.describe(budget), style="cyan"))
     await app._update_context_breakdown()
     app._refresh_status()
@@ -313,7 +312,7 @@ async def dispatch_import_command(app: Any, text: str) -> None:  # noqa: PLR0912
             context = replace(
                 loaded_context, mode=parts[2].lower(), query=parts[3] if len(parts) > 3 else ""
             )
-            await install_context(app, context)
+            await install_context(app, context, render_history=False)
         elif command == "/compare":
             if len(parts) != 3 or any(":" not in part for part in parts[1:]):
                 message = "Use /compare claude:<id> codex:<id>."

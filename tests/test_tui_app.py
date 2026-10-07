@@ -31,6 +31,16 @@ def _disable_live_update_checks(monkeypatch: pytest.MonkeyPatch, tmp_path) -> No
     monkeypatch.delenv("NO_COLOR", raising=False)
     import novacode_cli.config.config as config_module
     monkeypatch.setattr(config_module, "HOME_DIR", tmp_path / ".nova")
+    from novacode_cli.config.nova_config import NovaConfig
+
+    def isolated_config(config):
+        config.config_dir = tmp_path / ".nova"
+        config.config_path = config.config_dir / "Nova.config.json"
+        config._config = {}
+        config._loaded = {}
+        config._load()
+
+    monkeypatch.setattr(NovaConfig, "__init__", isolated_config)
     if _HAS_TEXTUAL:
         from novacode_cli.tui.app import NovaApp
 

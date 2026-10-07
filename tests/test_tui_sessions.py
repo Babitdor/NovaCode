@@ -31,6 +31,29 @@ except ImportError:  # pragma: no cover
 pytestmark = pytest.mark.skipif(not _HAS_TEXTUAL, reason="textual not installed")
 
 
+@pytest.fixture(autouse=True)
+def isolated_session_config(monkeypatch, tmp_path):
+    """Keep pane tests independent of live preferences and background warmups."""
+    import novacode_cli.config.config as config_module
+    from novacode_cli.config.nova_config import NovaConfig
+    from novacode_cli.tui.app import NovaApp
+
+    monkeypatch.setattr(config_module, "HOME_DIR", tmp_path / ".nova")
+    monkeypatch.setenv("NOVA_DISABLE_UPDATE_CHECK", "1")
+
+    def initialize(config):
+        config.config_dir = tmp_path / ".nova"
+        config.config_path = config.config_dir / "Nova.config.json"
+        config._config = {}
+        config._loaded = {}
+
+    async def no_voice_warmup():
+        pass
+
+    monkeypatch.setattr(NovaConfig, "__init__", initialize)
+    monkeypatch.setattr(NovaApp, "_eager_voice_warmup", lambda self: no_voice_warmup())
+
+
 class _SS:
     """Minimal session state (mirrors tests/test_tui_app.py)."""
 
@@ -523,7 +546,19 @@ async def _drive_spawn_activates_the_new_session():
         assert stub.prompts == [(child.sid, "hey")]
 
 
-def test_spawning_switches_to_the_new_session():
+def test_spawning_switches_to_the_new_session(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from novacode_cli.sessions import worktree
+
+    # This is a pane-switching test, not a git integration test. Never depend
+    # on existing branches or create a real worktree in the user's repository.
+    monkeypatch.setattr(
+        worktree, "create_worktree",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            path=tmp_path, branch="test-session", warnings=[],
+        ),
+    )
     asyncio.run(_drive_spawn_activates_the_new_session())
 
 

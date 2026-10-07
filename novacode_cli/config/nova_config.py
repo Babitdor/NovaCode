@@ -155,6 +155,20 @@ class NovaConfig:
                 return url.strip()
         return None
 
+    def get_openai_auth_mode(self) -> str:
+        """Selected OpenAI credential: auto, api_key, or ChatGPT plan sign-in."""
+        self._load()
+        mode = self._config.get("openai_auth_mode", "auto")
+        return mode if mode in {"auto", "api_key", "chatgpt"} else "auto"
+
+    def set_openai_auth_mode(self, mode: str) -> None:
+        """Persist which OpenAI credential Nova should use."""
+        if mode not in {"auto", "api_key", "chatgpt"}:
+            raise ValueError("OpenAI auth mode must be 'auto', 'api_key', or 'chatgpt'.")
+        self._load()
+        self._config["openai_auth_mode"] = mode
+        self._save()
+
     def clear_model_config(self) -> None:
         """Clear saved model configuration."""
         if "model" in self._config:
@@ -841,6 +855,7 @@ class NovaConfig:
         block["min_confidence"] = float(threshold)
         self._store_active_router_block(block)
         self._save()
+
     # ── Voice config (local STT / VAD / TTS) ────────────────────────────────
 
     VOICE_DEFAULTS: dict[str, Any] = {  # noqa: RUF012

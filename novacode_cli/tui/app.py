@@ -143,6 +143,8 @@ from novacode_cli.tui.screens import (
 # well over a screenful of scrollback (a full-height terminal shows ~40 rows).
 _MAX_TRANSCRIPT_WIDGETS = 200
 _TRANSCRIPT_LOW_WATER = 150
+_MAX_TRANSCRIPT_CHARS = 2_000_000
+_TRANSCRIPT_CHARS_LOW_WATER = 1_500_000
 
 # How many subagent log lines to draw. The subagent card is a live progress view,
 # not a scrollback: only the tail is visible, and rendering every entry on every
@@ -2881,8 +2883,27 @@ class NovaApp(App):
             tr = self._transcript()
         except NoMatches:
             return
-        children = tr.children
-        if len(children) <= _MAX_TRANSCRIPT_WIDGETS:
+        children = list(tr.children)
+        # A widget-count cap alone permits hundreds of large output/markdown
+        # bodies. Bound display history by content size as well; agent context
+        # and persisted session history are independent of these widgets.
+        weights = []
+        for child in children:
+            weight = 0
+            for node in child.walk_children(with_self=True):
+                if isinstance(node, OutputLog):
+                    weight += node._output_chars
+                elif isinstance(node, Static):
+                    content = node.content
+                    if isinstance(content, (str, Text)):
+                        weight += len(content)
+                    elif isinstance(content, Markdown):
+                        weight += len(content.markup)
+            weights.append(weight)
+        total_chars = sum(weights)
+        over_count = len(children) > _MAX_TRANSCRIPT_WIDGETS
+        over_chars = total_chars > _MAX_TRANSCRIPT_CHARS
+        if not over_count and not over_chars:
             return
         protected: set[int] = {
             id(w)
@@ -2899,12 +2920,16 @@ class NovaApp(App):
             protected.add(id(self._last_tool[0]))
         to_remove = []
         # Oldest first; stop once we're back at the low-water mark.
-        target = len(children) - _TRANSCRIPT_LOW_WATER
-        for w in children:
-            if len(to_remove) >= target:
+        target_count = _TRANSCRIPT_LOW_WATER if over_count else len(children)
+        target_chars = _TRANSCRIPT_CHARS_LOW_WATER if over_chars else total_chars
+        remaining = len(children)
+        for w, weight in zip(children, weights):
+            if remaining <= target_count and total_chars <= target_chars:
                 break
             if id(w) not in protected:
                 to_remove.append(w)
+                remaining -= 1
+                total_chars -= weight
         if not to_remove:
             return
         # ONE batched removal, not N individual ones. Widget.remove() returns an
@@ -3448,6 +3473,8 @@ class NovaApp(App):
             self._replaying = False
 
     async def _replay_history_inner(self) -> None:
+        from novacode_cli.session.imported_context import MESSAGE_ID, ImportedContext
+        from novacode_cli.tui.session_transcript import show_imported_history
         from novacode_cli.compaction import is_compaction_summary
         from novacode_cli.core.streaming import is_internal_context_text
         from novacode_cli.session import transcript_journal
@@ -3462,10 +3489,20 @@ class NovaApp(App):
         session_id = getattr(self.session_state, "session_id", None)
         if sessions_dir and session_id:
             journal = await asyncio.to_thread(transcript_journal.load, sessions_dir, str(session_id))
+            try:
+                imported = await asyncio.to_thread(
+                    ImportedContext.load, sessions_dir, str(session_id)
+                )
+            except (OSError, ValueError, KeyError, TypeError):
+                imported = None
+            if imported is not None:
+                await show_imported_history(self, imported.session)
         if not msgs and not journal:
             return
 
         def shown_text(m: Any) -> str:
+            if getattr(m, "id", None) == MESSAGE_ID:
+                return ""
             text = self._message_text(m).strip()
             if text and (is_compaction_summary(text) or is_internal_context_text(text)):
                 return ""
@@ -3490,6 +3527,8 @@ class NovaApp(App):
         shown = 0
         for m in msgs:
             role = getattr(m, "type", "") or ""
+            if getattr(m, "id", None) == MESSAGE_ID:
+                continue
             text = self._message_text(m).strip()
             # /compact rewrites history into a single synthetic HumanMessage
             # holding the summary (compaction.py). Replaying it verbatim shows
@@ -3632,6 +3671,18 @@ class NovaApp(App):
             parts.append(joined)
         return parts[0] if parts else ""
 
+    @staticmethod
+    def _rope_tail(parts: list[str], max_chars: int) -> str:
+        """Read the live preview without copying the growing full transcript."""
+        tail = []
+        remaining = max_chars
+        for part in reversed(parts):
+            if remaining <= 0:
+                break
+            tail.append(part[-remaining:])
+            remaining -= len(tail[-1])
+        return "".join(reversed(tail))
+
     # Streamed text is appended one fragment per model delta, so this is the
     # hottest write in the TUI. A plain `self._buf += fragment` is quadratic:
     # CPython's in-place-resize optimisation only applies to a *local* with a
@@ -3684,10 +3735,14 @@ class NovaApp(App):
             # and takes the app (and the terminal state) down with it. The full
             # text is committed as markdown on AssistantMessage; the viewport is
             # pinned to the end anyway.
-            self._stream_msg.update_body(Text(self._live_buf[-_LIVE_PREVIEW_CHARS:]))
+            self._stream_msg.update_body(
+                Text(self._rope_tail(self._live_buf_parts, _LIVE_PREVIEW_CHARS))
+            )
             painted = True
         if self._reason_msg is not None:
-            self._reason_msg.update_body(Text(self._reasoning_buf[-2000:], style="dim italic"))
+            self._reason_msg.update_body(
+                Text(self._rope_tail(self._reasoning_buf_parts, 2000), style="dim italic")
+            )
             painted = True
         if painted:
             # Automatic scroll: a user who scrolled up to read must not be
@@ -12076,10 +12131,15 @@ class NovaApp(App):
             # Accumulate the reply's prose instead of speaking immediately.
             # Speech is deferred until the turn finishes (ev.Done) or pauses (ev.InterruptRequest)
             # to prevent it from getting cut off by intermediate events or subsequent steps.
-            if getattr(self, "_accumulated_reply", None):
-                self._accumulated_reply += "\n\n" + e.text
+            if self._voice_pipeline is not None and self._voice_speak_responses:
+                # Speech needs a short summary, not another unbounded copy of
+                # every intermediate answer during a long autonomous turn.
+                self._accumulated_reply = (
+                    self._accumulated_reply + "\n\n" + e.text[-16_000:]
+                )[-16_000:]
             else:
-                self._accumulated_reply = e.text
+                self._accumulated_reply = ""
+            self._schedule_prune()
         elif isinstance(e, ev.ToolCall):
             self._set_status(f"running {e.name}…")
             base = f"{e.icon} {_esc(e.display_str)}"
@@ -12131,6 +12191,7 @@ class NovaApp(App):
                     self._tool_group_lines.pop(e.call_id, None)
                 self._trim_tool_group_history()
             self._scroll_end()
+            self._schedule_prune()
         elif isinstance(e, ev.FileOp):
             # File ops are the result of their tool call. Write/edit (a dedicated
             # panel was opened at ToolCall) render the full colored diff body so
@@ -12160,6 +12221,7 @@ class NovaApp(App):
                     self._tool_group_lines.pop(e.call_id, None)
                 self._trim_tool_group_history()
             self._scroll_end()
+            self._schedule_prune()
         elif isinstance(e, ev.TodoUpdate):
             # Held in per-pane state so a session switch can repaint the
             # app-global dock with the pane the user is actually looking at.

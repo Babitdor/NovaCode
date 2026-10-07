@@ -285,6 +285,7 @@ async def test_entering_a_key_stores_it_and_exports_it(secrets):
     from textual.app import App
     from textual.widgets import Input
 
+    from novacode_cli.config.nova_config import NovaConfig
     from novacode_cli.tui.auth_screens import AuthManagerScreen
 
     class _Host(App):
@@ -299,6 +300,9 @@ async def test_entering_a_key_stores_it_and_exports_it(secrets):
 
         await pilot.press("enter")  # opens the prompt for the highlighted row
         assert await _settle(pilot, lambda: app.screen is not manager)
+        # OpenAI now offers both API-key and ChatGPT account setup.
+        await pilot.click("#api-key")
+        assert await _settle(pilot, lambda: type(app.screen).__name__ == "AuthPromptScreen")
 
         prompt = app.screen
         prompt.query_one("#auth-key", Input).value = "sk-typed"
@@ -307,6 +311,47 @@ async def test_entering_a_key_stores_it_and_exports_it(secrets):
 
         assert secrets.store["openai_api_key"] == "sk-typed"
         assert os.environ[OPENAI] == "sk-typed"
+        assert NovaConfig().get_openai_auth_mode() == "api_key"
+        assert manager.saved == ["openai"]
+
+
+async def test_a_saved_chatgpt_login_can_be_selected_without_reauth(secrets):
+    import json
+
+    from textual.app import App
+
+    from novacode_cli.config.nova_config import NovaConfig
+    from novacode_cli.config.openai_chatgpt_auth import _CREDENTIAL_NAME
+    from novacode_cli.tui.auth_screens import AuthManagerScreen
+
+    secrets.store[_CREDENTIAL_NAME] = json.dumps(
+        {
+            "client_id": "oaiapp_test",
+            "subject": "subject",
+            "email": "user@example.com",
+            "id_token": "id-token",
+            "access_token": "access-token",
+            "refresh_token": "refresh-token",
+            "scopes": ["chatgpt.tokens.use.direct"],
+            "expires_at": 4_000_000_000,
+        }
+    )
+
+    class _Host(App):
+        def compose(self):
+            return []
+
+    app = _Host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        manager = AuthManagerScreen(focus="openai")
+        app.push_screen(manager)
+        assert await _settle(pilot, lambda: bool(_rows(manager)))
+        await pilot.press("enter")
+        assert await _settle(pilot, lambda: app.screen is not manager)
+        await pilot.click("#use-chatgpt")
+        assert await _settle(pilot, lambda: app.screen is manager)
+
+        assert NovaConfig().get_openai_auth_mode() == "chatgpt"
         assert manager.saved == ["openai"]
 
 
