@@ -826,6 +826,9 @@ class OutputLog(VerticalScroll):
         if isinstance(content, Text):
             text = content[-(self.max_chars - 1):]
         elif isinstance(content, str):
+            # Bound decoding too: a multi-megabyte result must not be parsed in
+            # full on the UI loop just to discard its beginning afterwards.
+            content = content[-(self.max_chars - 1):]
             try:
                 text = Text.from_markup(content) if self.markup else Text.from_ansi(content)
             except Exception:  # noqa: BLE001 — malformed output stays visible

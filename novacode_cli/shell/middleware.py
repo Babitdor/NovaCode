@@ -1133,6 +1133,8 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
         _ctl = _jobs.set_current(command)
 
         out_parts: list[str] = []
+        captured_chars = 0
+        output_truncated = False
         tail = ""  # rolling last-4KB window, for prompt detection only
         last_prompt = ""
         start = time.time()
@@ -1164,7 +1166,9 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
                     _reg.attach_pid(_job.id, proc.pid)
                     # Seed the job log with output captured before detaching.
                     _job.logs.extend(out_parts)
-                    out_parts = []  # stop unbounded growth; logs are bounded
+                    if output_truncated:
+                        _reg.append_log(_job.id, "\n[earlier output truncated]\n" + tail)
+                    out_parts = []  # hand capture over to the bounded job log
                     if detach_future is not None and not detach_future.done():
                         detach_future.set_result(
                             ToolMessage(
@@ -1185,7 +1189,7 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
                     # (printed a "listening/serving/ready" banner) should NOT be
                     # killed — promote it to a background task so it keeps serving.
                     _looks_like_server = proc.returncode is None and any(
-                        is_server_ready(ln) for ln in "".join(out_parts).splitlines()[-15:]
+                        is_server_ready(ln) for ln in tail.splitlines()[-15:]
                     )
                     if _looks_like_server:
                         detached = True
@@ -1193,6 +1197,8 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
                         _job = _reg.add(command, self._tool_name, prog)
                         _reg.attach_pid(_job.id, proc.pid)
                         _job.logs.extend(out_parts)
+                        if output_truncated:
+                            _reg.append_log(_job.id, "\n[earlier output truncated]\n" + tail)
                         out_parts = []
                         if detach_future is not None and not detach_future.done():
                             detach_future.set_result(
@@ -1215,7 +1221,7 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
                     note = f"\n\n[Command exceeded {self._timeout:.0f}s and was terminated.]"
                     break
                 try:
-                    chunk = await asyncio.wait_for(proc.stdout.read(1024), timeout=0.5)  # type: ignore[union-attr]
+                    chunk = await asyncio.wait_for(proc.stdout.read(16384), timeout=0.5)  # type: ignore[union-attr]
                 except TimeoutError:
                     # No output right now. Within the prompt window, check whether the
                     # process is blocked waiting on an interactive prompt.
@@ -1253,7 +1259,15 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
                     # unbounded out_parts) and stop streaming to the tool widget.
                     _jobs.get_registry().append_log(_job.id, text)
                 else:
-                    out_parts.append(text)
+                    # The result was already truncated after completion. Bound
+                    # its capture while running too, so noisy builds cannot
+                    # retain hundreds of megabytes across concurrent sessions.
+                    remaining = max(0, self._max_output_bytes - captured_chars)
+                    if remaining:
+                        part = text[:remaining]
+                        out_parts.append(part)
+                        captured_chars += len(part)
+                    output_truncated |= len(text) > remaining
                     tail = (tail + text)[-4096:]
                     if tool_call_id:
                         from novacode_cli.events import emit_tool_output
@@ -1275,7 +1289,7 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
                 pass
 
         output = "".join(out_parts).strip() or "<no output>"
-        if len(output) > self._max_output_bytes:
+        if output_truncated:
             output = (
                 output[: self._max_output_bytes]
                 + f"\n\n... Output truncated at {self._max_output_bytes} bytes."

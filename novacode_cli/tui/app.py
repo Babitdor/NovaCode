@@ -2203,7 +2203,6 @@ class NovaApp(App):
             comp, body, base = self._tool_components[call_id]
             if isinstance(body, OutputLog):
                 body.write(Text(text))
-                body.scroll_end(animate=False)
         elif call_id in self._subagent_tool_to_task:
             subagent_cid = self._subagent_tool_to_task[call_id]
             if subagent_cid in self._subagent_widgets:
@@ -2213,7 +2212,6 @@ class NovaApp(App):
                     if not log_widget.has_class("active"):
                         log_widget.add_class("active")
                     log_widget.write(Text(text))
-                    log_widget.scroll_end(animate=False)
                     comp._log_lines = getattr(comp, "_log_lines", 0) + text.count("\n")
                     log_widget.styles.height = min(max(comp._log_lines + 2, 5), 8)
                 except Exception:
@@ -2223,7 +2221,6 @@ class NovaApp(App):
                 log_widget = self._tool_group_body.query_one("#tool-group-log", OutputLog)
                 if log_widget.has_class("active"):
                     log_widget.write(Text(text))
-                    log_widget.scroll_end(animate=False)
                     self._tool_group_log_lines += text.count("\n")
                     log_widget.styles.height = min(max(self._tool_group_log_lines + 2, 5), 8)
             except Exception:
@@ -7840,7 +7837,21 @@ class NovaApp(App):
                 row.append(line, style=style)
                 log_widget.write(row)
             emitted += 1
-            log_widget.scroll_end(animate=False)
+
+        def emit_batch(lines: list[str]) -> None:
+            nonlocal emitted
+            captured.extend(line[:2000] for line in lines)
+            if foreground:
+                row = Text()
+                for index, line in enumerate(lines):
+                    if index:
+                        row.append("\n")
+                    row.append("  └  " if not emitted and not index else "     ", style="dim")
+                    row.append(line)
+                log_widget.write(row)
+            else:
+                log_widget.write("\n".join(lines))
+            emitted += len(lines)
 
         set_state("◐", "running")
         self._close_tool_group()
@@ -7879,14 +7890,14 @@ class NovaApp(App):
         )
         ProcessManager.get_instance().register_process(info)
 
-        # Stream output line-by-line into the OutputLog.
+        # Batch ready output and yield between reads so input stays responsive.
         assert process.stdout is not None  # noqa: S101  — PIPE guarantees this
         try:
-            while True:
-                line_bytes = await process.stdout.readline()
-                if not line_bytes:
-                    break
-                emit(line_bytes.decode("utf-8", errors="replace").rstrip())
+            from novacode_cli.tui.shell_output import shell_output_batches
+
+            async for lines in shell_output_batches(process.stdout):
+                emit_batch(lines)
+            await process.wait()
         except asyncio.CancelledError:
             with contextlib.suppress(ProcessLookupError):
                 process.terminate()
@@ -7904,7 +7915,6 @@ class NovaApp(App):
             ProcessManager.get_instance().unregister_process(info.pid)
             return
 
-        await process.wait()
         ProcessManager.get_instance().unregister_process(info.pid)
         exit_code = process.returncode or 0
         if not emitted:
@@ -8005,7 +8015,6 @@ class NovaApp(App):
 
         def _write(markup: str) -> None:
             log_widget.write(markup)
-            log_widget.scroll_end(animate=False)
 
         # In-flight tool calls, buffered so a call and its result render as one
         # line (OutputLog cannot rewrite a line once written).

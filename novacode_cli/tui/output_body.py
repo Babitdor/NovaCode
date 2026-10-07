@@ -37,6 +37,8 @@ class OutputBody(Widget):
         self._lines: tuple[Text, ...] = ()
         self._rows: list[tuple[Text, int, int]] = []
         self._row_width = -1
+        self._wrap_width = -1
+        self._wrap_cache: dict[int, list[tuple[Text, int, int]]] = {}
 
     @property
     def content(self) -> Text:
@@ -46,6 +48,10 @@ class OutputBody(Widget):
     def replace_lines(self, lines: Iterable[Text]) -> None:
         """Replace references to logical lines without joining or rendering them."""
         self._lines = tuple(lines)
+        retained = {id(line) for line in self._lines}
+        self._wrap_cache = {
+            key: rows for key, rows in self._wrap_cache.items() if key in retained
+        }
         self._rows.clear()
         self._row_width = -1
         self.refresh(layout=True)
@@ -54,13 +60,23 @@ class OutputBody(Widget):
         width = max(1, width)
         if self._row_width == width:
             return
+        if self._wrap_width != width:
+            self._wrap_cache.clear()
+            self._wrap_width = width
         rows = []
         for line in self._lines:
+            cached = self._wrap_cache.get(id(line))
+            if cached is not None:
+                rows.extend(cached)
+                continue
             boundaries = divide_line(line.plain, width, fold=True) if self._wrap else []
             start = 0
+            prepared = []
             for end in (*boundaries, len(line)):
-                rows.append((line, start, end))
+                prepared.append((line, start, end))
                 start = end
+            self._wrap_cache[id(line)] = prepared
+            rows.extend(prepared)
         self._rows = rows
         self._row_width = width
 
@@ -116,4 +132,5 @@ class OutputBody(Widget):
         """Release output even if a parent cache still references this widget."""
         self._lines = ()
         self._rows.clear()
+        self._wrap_cache.clear()
         self._styles_cache.clear()
