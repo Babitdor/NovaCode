@@ -235,7 +235,11 @@ async def _drive_routing():
     async with app.run_test() as pilot:
         tr = app.query_one("#transcript")
         await submit(pilot, "/help")
-        assert len(tr.children) > 0
+        from novacode_cli.tui.reference_screens import HelpScreen
+
+        assert isinstance(app.screen, HelpScreen)
+        await pilot.press("escape")
+        await pilot.pause()
         await submit(pilot, "hello there")  # -> agent
         await submit(pilot, "!echo hi")  # -> bash
         await submit(pilot, "/tokens")

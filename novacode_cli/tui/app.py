@@ -445,13 +445,13 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "ui": SlashCommand("_run_ui", "inspect / patch / preview / commit / rollback / reset UI panels"),
     "help": SlashCommand("_run_help", "show this help", wants_text=False, aliases=("?",)),
     "init": SlashCommand("_run_init", "generate NOVA.md from the codebase"),
-    "model": SlashCommand("_run_model", "switch provider / model", wants_text=False),
+    "model": SlashCommand("_run_model", "configure chat, subagent, and decision models", wants_text=False),
     "router": SlashCommand(
-        "_run_router", "route each turn to a model by decision", wants_text=False
+        "_run_router", "switch routing setups and edit model routes", wants_text=False
     ),
     "auth": SlashCommand(
         "_run_auth",
-        "manage provider / service API keys",
+        "manage API keys and provider sign-in",
         wants_text=False,
         aliases=("connect",),
     ),
@@ -476,17 +476,17 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
         "_run_cowork", "launch the Nova Cowork desktop app (/cowork [task])", aliases=("desktop",)
     ),
     "mcp": SlashCommand("_run_mcp", "view / remove MCP servers", wants_text=False),
-    "skills": SlashCommand("_run_skills", "list skills", wants_text=False),
+    "skills": SlashCommand("_run_skills", "browse, pin, and manage the skill library", wants_text=False),
     "agents": SlashCommand("_run_agents", "list subagents", wants_text=False),
     "plan": SlashCommand("_run_plan", "plan mode (status / off)"),
     "goal": SlashCommand("_run_goal", "set a persistent goal (status / clear)"),
     "btw": SlashCommand("_run_btw", "ask a side question without touching the main conversation"),
     "remote": SlashCommand(
-        "_run_remote_screen", "manage Discord/Telegram bridges", wants_text=False
+        "_run_remote_screen", "manage Discord/Telegram bridges and response streaming", wants_text=False
     ),
     "compact": SlashCommand("_run_compact", "summarize conversation to free context"),
     "update": SlashCommand(
-        "_run_update_check", "check for Nova updates and show the update command"
+        "_run_update_check", "check/install updates and view release notes"
     ),
     "save": SlashCommand("_run_save", "save the session now", wants_text=False),
     "copy": SlashCommand("_run_copy", "copy last response (or whole chat) — or click a message"),
@@ -571,6 +571,7 @@ _TUI_COMMAND_ALIASES: dict[str, str] = {
 _LIVE_UI_COMMANDS = frozenset(
     {
         "help",
+        "evolution",
         "auth",
         "theme",
         "settings",
@@ -8493,7 +8494,12 @@ class NovaApp(App):
     # (inline blocks became methods so every command fits the table contract)
 
     def _run_help(self) -> None:
-        self._log(self._help_text())
+        from novacode_cli.tui.reference_screens import HelpScreen
+
+        self.push_screen(HelpScreen(
+            TUI_COMMANDS, self._plugin_commands, self._ui_harness.applied.commands,
+            skill_loader=self._get_skill_names,
+        ))
 
     async def _run_remote_screen(self) -> None:
         await self.push_screen_wait(
@@ -11269,27 +11275,10 @@ class NovaApp(App):
             await self._stream_prompt(result)
 
     async def _run_evolution(self) -> None:
-        """Run /evolution: show the self-evolution log as a native block."""
-        from novacode_cli.commands.evolution_handler import handle_evolution_command
+        """Open the native evolution dashboard without tying up the turn."""
+        from novacode_cli.tui.reference_screens import EvolutionScreen
 
-        lines: list[str] = []
-
-        def _emit(message: str = "") -> None:
-            if message:
-                lines.append(message)
-
-        await handle_evolution_command(emit=_emit)
-
-        if lines:
-            block = Text()
-            for i, line in enumerate(lines):
-                try:
-                    block.append_text(Text.from_markup(line))
-                except Exception:  # noqa: BLE001 - bad markup: show literally
-                    block.append(line)
-                if i < len(lines) - 1:
-                    block.append("\n")
-            self._log(block)
+        self.push_screen(EvolutionScreen())
 
     async def _run_reindex(self) -> None:
         """Rebuild the semantic code-search index, with a native status."""
@@ -12425,19 +12414,18 @@ class NovaApp(App):
     def _help_text(self) -> Text:
         """Render /help — derived from the TUI_COMMANDS table, so a command
         registered there can never be missing here."""
-        width = max(len(name) for name in TUI_COMMANDS) + 2  # + leading slash pad
+        from novacode_cli.tui.reference_screens import help_entries
+
         t = Text()
-        t.append("Nova TUI commands\n", style="bold")
-        for name, spec in TUI_COMMANDS.items():
-            t.append(f"  /{name:<{width}}", style="cyan")
-            t.append(f"{spec.help}\n", style="dim")
-        t.append(f"  {'!<command>':<{width + 1}}", style="magenta")
-        t.append("run a shell command on the host\n", style="dim")
-        t.append(f"  {'/skill:<name>':<{width + 1}}", style="green")
-        t.append("invoke a skill (autocompletes)\n", style="dim")
-        t.append(f"  {'@<agent> <task>':<{width + 1}}", style="green")
-        t.append("delegate to a named subagent (autocompletes)\n", style="dim")
-        t.append("\nEsc cancels the current turn · Ctrl+Q quits", style="dim")
+        entries = help_entries(TUI_COMMANDS, getattr(self, "_plugin_commands", ()))
+        for category in dict.fromkeys(entry.category for entry in entries):
+            t.append(f"\n{category}\n", style="bold")
+            for entry in entries:
+                if entry.category == category:
+                    t.append(f"  {entry.command}", style="bold")
+                    if entry.aliases:
+                        t.append(" (" + ", ".join(entry.aliases) + ")")
+                    t.append(f" — {entry.description}\n")
         return t
 
     def _token_text(self) -> Text:

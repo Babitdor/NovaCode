@@ -8,6 +8,7 @@ durable store namespaces the ``EvolutionEngine`` writes:
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -25,11 +26,11 @@ def _console_emit(message: str = "") -> None:
     console.print(message)
 
 
-async def _load_evolution() -> tuple[dict[str, int], list[dict[str, Any]]]:
+async def _load_evolution(*, strict: bool = False) -> tuple[dict[str, int], list[dict[str, Any]]]:
     """Return ``(counters, entries)`` from the durable store (newest first)."""
     from novacode_cli.memory.store import get_durable_store
 
-    store = get_durable_store()
+    store = await asyncio.to_thread(get_durable_store)
 
     counters = {"unlocked": 0, "leveled": 0}
     try:
@@ -40,6 +41,8 @@ async def _load_evolution() -> tuple[dict[str, int], list[dict[str, Any]]]:
                 "leveled": int(entry.value.get("leveled", 0)),
             }
     except Exception:  # noqa: BLE001
+        if strict:
+            raise
         pass
 
     entries: list[dict[str, Any]] = []
@@ -50,6 +53,8 @@ async def _load_evolution() -> tuple[dict[str, int], list[dict[str, Any]]]:
             if isinstance(value, dict):
                 entries.append(dict(value))
     except Exception:  # noqa: BLE001
+        if strict:
+            raise
         pass
     entries.sort(key=lambda e: e.get("ts", 0.0), reverse=True)
     return counters, entries
