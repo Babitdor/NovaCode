@@ -1,0 +1,2560 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NovaCode Documentation</title>
+<meta name="description" content="Complete reference for NovaCode, an open-source terminal-based AI coding agent built on LangGraph that verifies its own work.">
+<meta property="og:title" content="NovaCode Documentation">
+<meta property="og:description" content="Complete reference for NovaCode, a coding agent that plans, edits, runs tests, and verifies its own work.">
+<meta property="og:type" content="website">
+<meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e0e10" media="(prefers-color-scheme: dark)">
+<link rel="icon" type="image/png" href="../assets/favicon.png">
+<link rel="preload" as="font" type="font/woff2" href="../assets/fonts/geist-var.woff2" crossorigin>
+<link rel="preload" as="font" type="font/woff2" href="../assets/fonts/geist-mono-var.woff2" crossorigin>
+<script>document.documentElement.classList.add("js")</script>
+
+<style>
+@font-face{font-family:"Geist";src:url("../assets/fonts/geist-var.woff2") format("woff2");font-weight:100 900;font-style:normal;font-display:swap}
+@font-face{font-family:"Geist Mono";src:url("../assets/fonts/geist-mono-var.woff2") format("woff2");font-weight:100 900;font-style:normal;font-display:swap}
+
+:root{
+  --bg:#fafafa;--surface:#f0f0f2;--raised:#ffffff;
+  --text:#17171a;--muted:#5b5b65;--line:#dedee3;
+  --page-text:#17171a;--page-muted:#5b5b65;--page-line:#dedee3;
+  --page-accent:#c2410c;--page-on-accent:#ffffff;
+  --accent:#c2410c;--on-accent:#ffffff;--accent-wash:#fbe9e0;
+  --shadow:0 1px 2px rgb(23 23 26 / .06),0 18px 40px -18px rgb(23 23 26 / .22);
+  --sans:"Geist",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"Geist Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --r-press:999px;--r-view:14px;--wrap:1240px;
+  --gutter:clamp(20px,4vw,40px);--ease:cubic-bezier(.16,1,.3,1);
+  --glow:0 0 0 0 transparent;--grid:transparent;
+  --z-nav:20;--z-status:25;--z-skip:30;--z-scan:40;--z-sidebar:15;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0e0e10;--surface:#17171b;--raised:#1d1d22;
+    --text:#ececef;--muted:#a1a1ac;--line:#2a2a31;
+    --page-text:#ececef;--page-muted:#a1a1ac;--page-line:#2a2a31;
+    --page-accent:#f4723f;--page-on-accent:#16110e;
+    --accent:#f4723f;--on-accent:#16110e;--accent-wash:#2a1810;
+    --shadow:0 1px 2px rgb(0 0 0 / .4),0 22px 48px -20px rgb(0 0 0 / .7);
+    --glow:0 0 44px -10px color-mix(in srgb,var(--accent) 55%,transparent);
+    --grid:rgb(255 255 255 / .028);
+  }
+}
+
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;scroll-padding-top:88px}
+body{
+  margin:0;background:var(--bg);color:var(--text);
+  font:400 1.0625rem/1.6 var(--sans);
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+  overflow-x:clip;
+}
+body::before{
+  content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:64px 64px;
+  mask-image:radial-gradient(ellipse 90% 70% at 50% 0%,#000 30%,transparent 100%);
+}
+body::after{
+  content:"";position:fixed;inset:0;z-index:var(--z-scan);pointer-events:none;
+  background:repeating-linear-gradient(0deg,rgb(0 0 0 / .05) 0 1px,transparent 1px 3px);
+  opacity:0;
+}
+@media (prefers-color-scheme: dark){body::after{opacity:1}}
+
+img,svg{display:block;max-width:100%}
+img{height:auto}
+a{color:inherit}
+h1,h2,h3,h4,p,ul,ol,dl,dd,figure,table{margin:0}
+ul,ol{padding:0;list-style:none}
+code,pre,kbd{font-family:var(--mono)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:6px}
+
+.wrap{width:100%;max-width:var(--wrap);margin-inline:auto;padding-inline:var(--gutter)}
+.skip{position:absolute;left:16px;top:-60px;z-index:var(--z-skip);background:var(--text);color:var(--bg);padding:10px 16px;border-radius:var(--r-press);text-decoration:none;font-weight:500}
+.skip:focus{top:12px}
+
+h1{font-size:clamp(2rem,3vw+.6rem,2.8rem);font-weight:620;letter-spacing:-.035em;line-height:1.06}
+h2{font-size:clamp(1.6rem,2.4vw+.5rem,2.4rem);font-weight:600;letter-spacing:-.03em;line-height:1.08}
+h3{font-size:1.2rem;font-weight:600;letter-spacing:-.015em;line-height:1.3}
+h4{font-size:1rem;font-weight:600;letter-spacing:-.01em}
+h1 b,h2 b{font-weight:inherit;color:var(--accent)}
+.lede{color:var(--muted);font-size:1.125rem;max-width:56ch}
+.body{color:var(--muted);max-width:68ch}
+.eyebrow{font:500 .78rem/1 var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+.head{display:grid;gap:16px;margin-bottom:clamp(32px,4vw,48px)}
+
+.cmdline{display:flex;align-items:center;gap:.6ch;white-space:nowrap;overflow:hidden;font:500 .86rem/1.4 var(--mono);color:var(--muted)}
+.cmdline .ps{color:var(--accent);font-weight:600}
+.cmdline .typed{display:inline-block;overflow:hidden;white-space:nowrap;color:var(--text)}
+.cmdline .cm{color:var(--muted)}
+.caret{display:inline-block;width:.62em;height:1.15em;background:var(--accent);box-shadow:var(--glow);translate:0 .05em}
+.bar{display:flex;align-items:center;gap:7px;height:38px;padding:0 14px;border-bottom:1px solid var(--line);font:500 .78rem/1 var(--mono);color:var(--muted)}
+.bar i{width:9px;height:9px;border-radius:50%;background:var(--line)}
+.bar i:first-child{background:var(--accent);box-shadow:var(--glow)}
+.bar span{margin-left:8px}
+.win{border:1px solid var(--line);transition:border-color .3s,box-shadow .3s}
+.win:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--line));box-shadow:var(--glow)}
+section{padding-block:clamp(48px,6vw,80px)}
+
+.btn{display:inline-flex;align-items:center;gap:10px;white-space:nowrap;min-height:46px;padding:0 22px;border-radius:var(--r-press);font:550 .9rem/1 var(--mono);text-decoration:none;cursor:pointer;border:1px solid transparent;transition:transform .2s var(--ease),background-color .2s,border-color .2s,color .2s}
+.btn svg{width:17px;height:17px;flex:none}
+.btn:active{transform:translateY(1px) scale(.985)}
+.btn-primary{background:var(--accent);color:var(--on-accent);box-shadow:var(--glow)}
+.btn-primary::before{content:"\276F";font-weight:700}
+.btn-primary:hover{background:color-mix(in oklab,var(--accent) 88%,var(--text))}
+.btn-quiet{border-color:var(--line);color:var(--text);background:transparent}
+.btn-quiet:hover{border-color:var(--text)}
+
+.docs-layout{display:grid;grid-template-columns:280px minmax(0,1fr);min-height:100dvh}
+.sidebar{
+  position:sticky;top:0;height:100dvh;overflow-y:auto;
+  border-right:1px solid var(--line);background:var(--bg);
+  padding:20px 0 40px;z-index:var(--z-sidebar);
+}
+.sidebar-brand{display:flex;align-items:center;gap:10px;padding:0 20px 16px;text-decoration:none;font:600 .95rem/1 var(--mono)}
+.sidebar-brand b{color:var(--accent)}
+.sidebar-brand span{color:var(--muted);font-weight:500}
+.sidebar-brand img{width:26px;height:26px;border-radius:7px}
+.sidebar-nav{padding:0 12px}
+.sidebar-group{margin-bottom:4px}
+.sidebar-group-title{
+  display:flex;align-items:center;gap:8px;width:100%;padding:10px 12px;
+  border:0;background:transparent;cursor:pointer;
+  font:600 .78rem/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
+  transition:color .2s;border-radius:var(--r-press);
+}
+.sidebar-group-title:hover{color:var(--text)}
+.sidebar-group-title::after{content:"";width:8px;height:8px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:rotate(45deg);transition:transform .25s var(--ease);margin-left:auto}
+.sidebar-group.open .sidebar-group-title::after{transform:rotate(225deg)}
+.sidebar-links{display:none;gap:2px;padding:2px 0 8px}
+.sidebar-group.open .sidebar-links{display:flex;flex-direction:column}
+.sidebar-links a{
+  display:block;padding:8px 12px 8px 24px;text-decoration:none;
+  font:500 .86rem/1.3 var(--mono);color:var(--muted);border-radius:var(--r-press);
+  transition:color .2s,background-color .2s;
+}
+.sidebar-links a:hover{color:var(--text);background:color-mix(in srgb,var(--text) 5%,transparent)}
+.sidebar-links a.active{color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent);font-weight:600}
+.sidebar-links a.active::before{content:"";display:inline-block;width:4px;height:4px;border-radius:50%;background:var(--accent);margin-right:8px;vertical-align:middle}
+
+.docs-main{min-width:0;padding:0 clamp(24px,4vw,56px) 120px}
+.docs-content{max-width:820px;padding-top:clamp(32px,4vw,56px)}
+.docs-content section{padding-block:clamp(32px,4vw,48px)}
+.docs-content section + section{border-top:1px solid var(--line)}
+
+.docs-topnav{
+  position:sticky;top:0;z-index:var(--z-nav);height:64px;
+  display:flex;align-items:center;gap:20px;
+  background:color-mix(in srgb,var(--bg) 82%,transparent);
+  backdrop-filter:blur(16px) saturate(160%);-webkit-backdrop-filter:blur(16px) saturate(160%);
+  border-bottom:1px solid var(--line);
+  padding-inline:clamp(24px,4vw,56px);
+}
+.docs-topnav .spacer{margin-left:auto}
+.docs-topnav a{text-decoration:none;font:500 .86rem/1 var(--mono);color:var(--muted);transition:color .2s}
+.docs-topnav a:hover{color:var(--text)}
+
+code{font-size:.88em;padding:.12em .42em;border-radius:6px;background:color-mix(in srgb,var(--text) 8%,transparent)}
+.codeblock{position:relative;border-radius:var(--r-view);overflow:hidden;background:color-mix(in srgb,var(--surface) 86%,transparent);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);margin:16px 0}
+.codeblock pre{padding:20px 24px;margin:0;overflow-x:auto;font-size:.88rem;line-height:1.75;color:var(--text)}
+.codeblock .c{color:var(--muted)}
+.codeblock .k{color:var(--accent);font-weight:500}
+.copy{display:inline-flex;align-items:center;gap:7px;cursor:pointer;min-height:32px;padding:0 13px;border-radius:var(--r-press);border:1px solid var(--line);background:var(--raised);color:var(--muted);font:500 .8rem/1 var(--sans);transition:color .2s,border-color .2s,transform .2s var(--ease)}
+.copy svg{width:14px;height:14px}
+.copy:hover{color:var(--text);border-color:var(--text)}
+.copy:active{transform:scale(.96)}
+.copy .i-check{display:none}
+.copy.done{color:var(--accent);border-color:var(--accent)}
+.copy.done .i-copy{display:none}
+.copy.done .i-check{display:block}
+.codeblock > .copy{position:absolute;top:12px;right:12px}
+
+.table-wrap{overflow-x:auto;margin:16px 0;border:1px solid var(--line);border-radius:var(--r-view)}
+table{width:100%;border-collapse:collapse;font-size:.92rem}
+th{text-align:left;padding:12px 16px;font:600 .78rem/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--surface) 60%,transparent)}
+td{padding:10px 16px;border-bottom:1px solid var(--line);color:var(--text);vertical-align:top}
+tr:last-child td{border-bottom:0}
+td code{font-size:.85em}
+td:first-child{font-family:var(--mono);font-size:.88rem;color:var(--accent);font-weight:500;white-space:nowrap}
+td.desc{color:var(--muted)}
+
+.callout{display:flex;gap:14px;padding:16px 18px;border-radius:var(--r-view);border:1px solid var(--line);background:color-mix(in srgb,var(--surface) 60%,transparent);margin:16px 0}
+.callout .icon{flex:none;width:20px;height:20px;color:var(--accent);margin-top:2px}
+.callout p{font-size:.95rem;color:var(--muted);max-width:64ch}
+.callout p b{color:var(--text)}
+.callout p code{font-size:.85em}
+
+.proof{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+.proof li{display:inline-flex;align-items:center;gap:7px;padding:6px 13px 6px 11px;border-radius:var(--r-press);border:1px solid var(--line);background:color-mix(in srgb,var(--raised) 70%,transparent);font:500 .8rem/1.3 var(--mono);color:var(--muted)}
+.proof li::before{content:"\2713";color:var(--accent);font-weight:700;font-size:.9em}
+.proof code{background:none;padding:0;font-size:inherit;color:var(--text)}
+
+.install-box{border-radius:var(--r-view);overflow:hidden;background:color-mix(in srgb,var(--surface) 86%,transparent);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);margin:16px 0}
+.tabs{display:flex;gap:4px;padding:10px;border-bottom:1px solid var(--line)}
+.tab{min-height:38px;padding:0 18px;border-radius:var(--r-press);cursor:pointer;border:0;background:transparent;color:var(--muted);font:500 .84rem/1 var(--mono);transition:background-color .2s,color .2s}
+.tab:hover{color:var(--text)}
+.tab[aria-selected="true"]{background:var(--raised);color:var(--text);box-shadow:0 0 0 1px var(--line)}
+.pane{display:none;padding:8px 10px 10px}
+.pane.on{display:block}
+.cmd{display:flex;align-items:center;gap:14px;padding:13px 14px;border-radius:10px}
+.cmd + .cmd{border-top:1px solid var(--line);border-radius:0}
+.cmd::before{content:"$";font:600 .92rem/1 var(--mono);color:var(--accent)}
+.cmd code{flex:1;min-width:0;overflow-x:auto;white-space:nowrap;background:none;padding:0;font-size:.92rem}
+
+.feature-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;margin:20px 0}
+.feature-card{border:1px solid var(--line);border-radius:var(--r-view);padding:20px;background:color-mix(in srgb,var(--surface) 50%,transparent);transition:border-color .3s,box-shadow .3s}
+.feature-card:hover{border-color:color-mix(in srgb,var(--accent) 40%,var(--line));box-shadow:var(--glow)}
+.feature-card h4{margin-bottom:8px;font-size:1rem}
+.feature-card h4 code{color:var(--accent);font-size:.9em}
+.feature-card p{font-size:.92rem;color:var(--muted);line-height:1.55}
+
+.steps{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px;margin:20px 0;position:relative}
+.steps::before{content:"";position:absolute;left:0;right:0;top:20px;height:2px;background:var(--line);border-radius:2px}
+.steps li{padding-top:44px;display:grid;gap:6px;align-content:start;position:relative}
+.steps li::before{content:"";position:absolute;top:14px;left:0;width:14px;height:14px;border-radius:50%;background:var(--bg);border:2px solid var(--line)}
+.steps li.key::before{border-color:var(--accent);background:var(--accent);box-shadow:var(--glow)}
+.steps h4{font-size:.95rem}
+.steps p{font-size:.88rem;color:var(--muted)}
+
+.statusline{position:fixed;inset:auto 0 0 0;z-index:var(--z-status);display:flex;align-items:center;gap:16px;height:34px;padding:0 14px 0 0;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-top:1px solid var(--line);font:500 .76rem/1 var(--mono);color:var(--muted)}
+.statusline .mode{align-self:stretch;display:flex;align-items:center;padding:0 12px;background:var(--accent);color:var(--on-accent);font-weight:700;letter-spacing:.08em}
+.statusline .where{color:var(--text)}
+.statusline .gauge{margin-left:auto;width:min(26vw,220px);height:6px;border-radius:6px;background:var(--line);overflow:hidden}
+.statusline .gauge i{display:block;height:100%;background:var(--accent);transform-origin:left;transform:scaleX(0)}
+@supports (animation-timeline: scroll()){.statusline .gauge i{animation:fill linear both;animation-timeline:scroll(root block)}}
+@supports not (animation-timeline: scroll()){.statusline .gauge{display:none}}
+@keyframes fill{to{transform:scaleX(1)}}
+
+.page-section{display:none}
+.page-section.active{display:block}
+
+@media (max-width:900px){
+  .docs-layout{grid-template-columns:1fr}
+  .sidebar{
+    position:fixed;inset:0 auto 0 0;width:280px;z-index:50;
+    transform:translateX(-100%);transition:transform .3s var(--ease);
+    box-shadow:var(--shadow);
+  }
+  .sidebar.open{transform:none}
+  .sidebar-overlay{position:fixed;inset:0;z-index:40;background:rgb(0 0 0 / .4);opacity:0;pointer-events:none;transition:opacity .3s}
+  .sidebar-overlay.on{opacity:1;pointer-events:auto}
+  .menu-btn{display:inline-flex}
+  .feature-grid{grid-template-columns:1fr}
+  .steps{grid-template-columns:1fr;gap:0}
+  .steps::before{width:2px;height:auto;bottom:0;right:auto;top:0}
+  .steps li{padding:0 0 24px 28px}
+  .steps li::before{top:4px;left:6px}
+}
+@media (min-width:901px){.menu-btn{display:none}.sidebar-overlay{display:none}}
+
+@media (prefers-reduced-motion: no-preference){
+  .js .rv{opacity:0;transform:translateY(18px);transition:opacity .7s var(--ease),transform .7s var(--ease);transition-delay:calc(var(--i,0)*70ms)}
+  .js .rv.in{opacity:1;transform:none}
+  .js .caret{animation:blink 1.1s steps(1) infinite}
+  .js .cmdline .typed{width:0}
+  .js .cmdline.in .typed{animation:type calc(var(--n)*55ms) steps(var(--n)) .25s forwards}
+}
+@keyframes blink{50%{opacity:0}}
+@keyframes type{to{width:calc(var(--n)*1ch)}}
+@keyframes rise{to{opacity:1;transform:none}}
+@media (prefers-reduced-motion: reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation:none !important;transition:none !important}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<div class="docs-layout">
+  <aside class="sidebar" id="sidebar" aria-label="Documentation navigation">
+    <a class="sidebar-brand" href="#" data-page="overview">
+      <img src="../assets/emblem-256.png" width="26" height="26" alt="">
+      <span><b>nova</b>@code:~$</span>
+    </a>
+    <nav class="sidebar-nav" id="sidebar-nav">
+      <div class="sidebar-group open">
+        <button class="sidebar-group-title" aria-expanded="true">Orientation</button>
+        <div class="sidebar-links">
+          <a href="#" data-page="overview" class="active">What NovaCode is</a>
+          <a href="#" data-page="installation">Installation &amp; setup</a>
+        </div>
+      </div>
+      <div class="sidebar-group">
+        <button class="sidebar-group-title" aria-expanded="false">Operating NovaCode</button>
+        <div class="sidebar-links">
+          <a href="#" data-page="cli">CLI reference</a>
+          <a href="#" data-page="config">Configuration</a>
+          <a href="#" data-page="tui">The TUI</a>
+          <a href="#" data-page="slash">Slash commands</a>
+          <a href="#" data-page="headless">Headless mode</a>
+        </div>
+      </div>
+      <div class="sidebar-group">
+        <button class="sidebar-group-title" aria-expanded="false">Capabilities</button>
+        <div class="sidebar-links">
+          <a href="#" data-page="tools">Tools</a>
+          <a href="#" data-page="subagents">Subagents</a>
+          <a href="#" data-page="memory">Memory system</a>
+          <a href="#" data-page="skills">Skills system</a>
+          <a href="#" data-page="mcp">MCP integration</a>
+          <a href="#" data-page="plugins">Plugin system</a>
+          <a href="#" data-page="hermes">Autonomous learning</a>
+          <a href="#" data-page="verification">Verification loop</a>
+          <a href="#" data-page="remote">Remote bridges</a>
+          <a href="#" data-page="voice">Voice I/O</a>
+        </div>
+      </div>
+      <div class="sidebar-group">
+        <button class="sidebar-group-title" aria-expanded="false">Under the hood</button>
+        <div class="sidebar-links">
+          <a href="#" data-page="middleware">Middleware stack</a>
+          <a href="#" data-page="sessions">Session management</a>
+          <a href="#" data-page="context">Context management</a>
+          <a href="#" data-page="security">Security &amp; safety</a>
+          <a href="#" data-page="sandbox">Sandbox execution</a>
+          <a href="#" data-page="infrastructure">Infrastructure</a>
+        </div>
+      </div>
+      <div class="sidebar-group">
+        <button class="sidebar-group-title" aria-expanded="false">Reference</button>
+        <div class="sidebar-links">
+          <a href="#" data-page="directory">Directory structure</a>
+          <a href="#" data-page="extras">Optional dependencies</a>
+          <a href="#" data-page="troubleshooting">Troubleshooting</a>
+        </div>
+      </div>
+    </nav>
+  </aside>
+  <div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+  <div class="docs-main">
+    <nav class="docs-topnav" aria-label="Top">
+      <button class="btn btn-quiet menu-btn" id="menu-btn" style="min-height:38px;padding:0 14px" aria-label="Toggle navigation">
+        <svg width="18" height="18" viewBox="0 0 256 256" fill="currentColor"><path d="M224,128a8,8,0,0,1-8,8H40a8,8,0,0,1,0-16H216A8,8,0,0,1,224,128ZM40,72H216a8,8,0,0,0,0-16H40a8,8,0,0,0,0,16ZM216,184H40a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16Z"/></svg>
+      </button>
+      <span style="font:600 .9rem/1 var(--mono)"><b style="color:var(--accent)">nova</b>@code:~$ docs</span>
+      <span class="spacer"></span>
+      <a href="https://github.com/Babitdor/NovaCode">GitHub</a>
+      <a href="../index.html">Landing</a>
+      <a class="btn btn-primary" href="#installation" data-page="installation" style="min-height:38px;padding:0 16px;font-size:.88rem">Install</a>
+    </nav>
+
+    <main id="main" class="docs-content">
+
+      <!-- 1. WHAT NOVACODE IS -->
+      <div class="page-section active" id="page-overview">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:10">man nova</span></p>
+            <h1>A coding agent that <b>verifies</b> its own work.</h1>
+            <p class="lede">NovaCode is an open-source, terminal-based AI coding assistant built on
+              LangGraph and the <code>deepagents</code> framework. It runs entirely in your terminal
+              with a Textual TUI, a headless non-interactive mode for scripting and CI, and remote
+              bridges for Discord and Telegram.</p>
+          </div>
+          <div class="callout rv">
+            <svg class="icon" viewBox="0 0 256 256" fill="currentColor"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm-8-80V80a8,8,0,0,1,16,0v48a8,8,0,0,1-16,0Zm20,36a12,12,0,1,1-12-12A12,12,0,0,1,140,172Z"/></svg>
+            <p><b>Version 1.0.23 &middot; MIT licensed &middot; Python 3.11+.</b> Runs locally, brings your
+              own model. NovaCode does not retrain your model. What changes are prompts, skills, and
+              thresholds on disk, readable and deletable.</p>
+          </div>
+          <ul class="proof rv">
+            <li>~30 core tools &middot; ~85 total</li>
+            <li>12 async background agents</li>
+            <li>8 model providers</li>
+            <li>20 MCP presets</li>
+            <li>7 sandbox providers</li>
+            <li>50+ built-in skills</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2 class="rv">Core flow</h2>
+          <div class="codeblock win rv">
+            <pre>User Input &#8594; CLI Entry (main.py) &#8594; Agent Loop (core/agent_loop.py) &#8594; UI Renderer</pre>
+          </div>
+          <ol class="steps rv">
+            <li><h4>CLI Entry</h4><p><code>main.py</code> to <code>cli_main()</code>: parses args, initializes <code>SessionState</code>, runs optional onboarding, then enters the TUI or the headless runner.</p></li>
+            <li><h4>Agent Loop</h4><p><code>core/agent_loop.py</code> to <code>iterate_agent_events()</code>: the single canonical async generator driving the LangGraph agent stream.</p></li>
+            <li><h4>UI Events</h4><p><code>ui_events.py</code>: dataclass instances decoupled from rendering. The TUI, headless runner, and remote bridges all consume the same event types.</p></li>
+            <li class="key"><h4>Middleware</h4><p>Wraps every model call: retry, vision, learning, security, bootstrap, steering, file tracking, loop guard, rubric, context editing, shell, memory, task discipline.</p></li>
+          </ol>
+        </section>
+
+        <section>
+          <h2 class="rv">Key design principles</h2>
+          <div class="feature-grid">
+            <div class="feature-card rv">
+              <h4>One canonical agent loop</h4>
+              <p><code>iterate_agent_events()</code> drives a LangGraph agent stream and yields
+                <code>ui_events</code> dataclasses. Bug fixes and features belong here so every
+                renderer benefits.</p>
+            </div>
+            <div class="feature-card rv" style="--i:1">
+              <h4>SessionState is a composite</h4>
+              <p>Six state slices (<code>UISettings</code>, <code>AgentRuntimeState</code>,
+                <code>RemoteBridgeState</code>, <code>BackgroundTaskState</code>,
+                <code>NotificationState</code>, <code>WikiState</code>) with properties that delegate to
+                slices. Zero callers change when a slice is added.</p>
+            </div>
+            <div class="feature-card rv" style="--i:2">
+              <h4>Deepagents is monkey-patched</h4>
+              <p>Three patches at import time: <code>validate_path</code> (Windows path
+                normalization), <code>perform_string_replacement</code> (UTF-8 BOM tolerance), and
+                <code>create_sub_agent</code> (graph compile caching).</p>
+            </div>
+            <div class="feature-card rv" style="--i:3">
+              <h4>Heavy imports are blocked</h4>
+              <p>A meta-path finder makes <code>import transformers</code>/<code>torch</code> raise
+                <code>ImportError</code> (305 MB / ~13 s to 145 MB / ~2.4 s). Set
+                <code>NOVA_ALLOW_TRANSFORMERS=1</code> to opt out.</p>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">What ships in the box</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Component</th><th>Count</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>Core tools</td><td class="desc">~30</td><td class="desc">Bound to the model on every call; the rest are deferred behind <code>search_tools</code></td></tr>
+                <tr><td>Total tools</td><td class="desc">~85</td><td class="desc">Full roster (~117k chars of schemas), loaded on demand</td></tr>
+                <tr><td>In-process subagents</td><td class="desc">5</td><td class="desc">general-purpose, code-explorer, refactoring-specialist, bug-fix, browser-automation</td></tr>
+                <tr><td>Research personas</td><td class="desc">7</td><td class="desc">Dispatched by <code>/research</code>, loaded on demand</td></tr>
+                <tr><td>Async agents</td><td class="desc">12</td><td class="desc">Background LangGraph graphs: docs, review, tests, audits, research</td></tr>
+                <tr><td>Model providers</td><td class="desc">8</td><td class="desc">OpenAI, Anthropic, Google, NVIDIA, OpenRouter, OpenCode, OpenCode Zen, Ollama</td></tr>
+                <tr><td>MCP presets</td><td class="desc">20</td><td class="desc">Playwright, Serena, Context7, Apify, CUA Driver, and more</td></tr>
+                <tr><td>Sandbox providers</td><td class="desc">7</td><td class="desc">os, docker, modal, runloop, daytona, langsmith, none</td></tr>
+                <tr><td>Built-in skills</td><td class="desc">50+</td><td class="desc">Progressive disclosure, loaded on demand</td></tr>
+                <tr><td>Slash commands</td><td class="desc">80+</td><td class="desc">In-TUI commands for every feature</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <!-- 2. INSTALLATION -->
+      <div class="page-section" id="page-installation">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:14">cat INSTALL.md</span></p>
+            <h1>Two commands and you are <b>running</b>.</h1>
+            <p class="lede">Python 3.11 or newer. Nothing is installed globally.</p>
+          </div>
+          <div class="install-box win rv">
+            <div class="tabs" role="tablist" aria-label="Install method">
+              <button class="tab" role="tab" aria-selected="true" id="t-unix" aria-controls="p-unix">macOS and Linux</button>
+              <button class="tab" role="tab" aria-selected="false" id="t-win" aria-controls="p-win" tabindex="-1">Windows</button>
+              <button class="tab" role="tab" aria-selected="false" id="t-tool" aria-controls="p-tool" tabindex="-1">uv tool</button>
+            </div>
+            <div class="pane on" id="p-unix" role="tabpanel" aria-labelledby="t-unix">
+              <div class="cmd"><code>git clone https://github.com/Babitdor/NovaCode.git</code><button class="copy" type="button" data-copy="git clone https://github.com/Babitdor/NovaCode.git"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
+              <div class="cmd"><code>cd NovaCode &amp;&amp; uv sync</code><button class="copy" type="button" data-copy="cd NovaCode && uv sync"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
+              <div class="cmd"><code>uv run nova</code><button class="copy" type="button" data-copy="uv run nova"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
+            </div>
+            <div class="pane" id="p-win" role="tabpanel" aria-labelledby="t-win">
+              <div class="cmd"><code>git clone https://github.com/Babitdor/NovaCode.git</code><button class="copy" type="button" data-copy="git clone https://github.com/Babitdor/NovaCode.git"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
+              <div class="cmd"><code>cd NovaCode; uv sync</code><button class="copy" type="button" data-copy="cd NovaCode; uv sync"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
+              <div class="cmd"><code>uv run nova</code><button class="copy" type="button" data-copy="uv run nova"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
+            </div>
+            <div class="pane" id="p-tool" role="tabpanel" aria-labelledby="t-tool">
+              <div class="cmd"><code>uv tool install "novacode-cli @ git+https://github.com/Babitdor/NovaCode.git"</code><button class="copy" type="button" data-copy='uv tool install "novacode-cli @ git+https://github.com/Babitdor/NovaCode.git"'><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
+              <div class="cmd"><code>nova</code><button class="copy" type="button" data-copy="nova"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Prerequisites</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Requirement</th><th>Minimum</th><th>Notes</th></tr></thead>
+              <tbody>
+                <tr><td>Python</td><td class="desc">3.11+</td><td class="desc">Required. <code>python --version</code> to check.</td></tr>
+                <tr><td>uv</td><td class="desc">latest</td><td class="desc">Package manager. Install from <code>astral.sh/uv</code> if missing.</td></tr>
+                <tr><td>Git</td><td class="desc">any</td><td class="desc">For cloning the repository and for <code>nova skills add</code>.</td></tr>
+                <tr><td>API key</td><td class="desc">1</td><td class="desc">At least one model provider key, or a local Ollama host.</td></tr>
+                <tr><td>Node.js</td><td class="desc">optional</td><td class="desc">Only for installing skills from GitHub via the Skills CLI.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Verify installation</h2>
+          <div class="codeblock win rv">
+            <div class="bar" aria-hidden="true"><i></i><i></i><i></i><span>verify.sh</span></div>
+            <pre><span class="k">nova</span> --version
+<span class="k">nova</span> doctor          <span class="c"># validate config + connections</span>
+<span class="k">nova</span>               <span class="c"># start the TUI</span></pre>
+          </div>
+          <p class="body rv"><code>nova doctor</code> runs six checks: configuration file, secrets,
+            LLM provider connection, Tavily connection, file permissions, and the voice stack. It
+            returns exit code 0 when everything passes.</p>
+        </section>
+
+        <section>
+          <h2 class="rv">Update Nova</h2>
+          <div class="codeblock win rv">
+            <pre><span class="k">nova</span> update --check  <span class="c"># check without installing</span>
+<span class="k">nova</span> update          <span class="c"># update the running installation</span></pre>
+          </div>
+          <p class="body rv">The TUI checks in the background at startup and hourly. Installation
+            detection covers source checkout, uv-tool, git, and package installs. On Windows,
+            uv-managed updates run in a separate detached process because <code>nova.exe</code> locks
+            the package directory. Set <code>NOVA_DISABLE_UPDATE_CHECK=1</code> to disable background
+            checks.</p>
+        </section>
+
+        <section>
+          <h2 class="rv">Onboarding</h2>
+          <p class="body rv">First-run setup checks what you enter before saving it: an API key is
+            tested against the provider, and an Ollama host must answer with a model installed. Keys
+            go to the OS keychain. A typo shows up on the setup screen, not on your first prompt.</p>
+        </section>
+      </div>
+
+      <!-- 3. CLI REFERENCE -->
+      <div class="page-section" id="page-cli">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:10">nova --help</span></p>
+            <h1>CLI <b>reference</b>.</h1>
+            <p class="lede">Every subcommand, flag, and environment variable, with defaults.</p>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Entry point chain</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Layer</th><th>Responsibility</th></tr></thead>
+              <tbody>
+                <tr><td>pyproject.toml</td><td class="desc">Registers <code>nova = "novacode_cli.entrypoint:cli_main"</code></td></tr>
+                <tr><td>entrypoint.py</td><td class="desc">Thin forwarder (<code>--version</code>, <code>update</code>, skills install), then calls <code>main.py:cli_main()</code></td></tr>
+                <tr><td>main.py:main()</td><td class="desc">Path approval, keychain hydration, Vixie server, SQLite store/checkpointer, model creation, agent build, TUI launch</td></tr>
+                <tr><td>os._exit()</td><td class="desc">Exits with <code>session_state.headless_exit_code</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Subcommands</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Command</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>nova init</td><td class="desc">Initialize project or global configuration</td></tr>
+                <tr><td>nova list</td><td class="desc">List all available agents</td></tr>
+                <tr><td>nova help</td><td class="desc">Show help information</td></tr>
+                <tr><td>nova reset</td><td class="desc">Reset an agent's memory/store (<code>--agent &lt;name&gt;</code>)</td></tr>
+                <tr><td>nova skills</td><td class="desc">Manage agent skills (list, create, add, remove, find, update, info)</td></tr>
+                <tr><td>nova mcp</td><td class="desc">Manage MCP servers (add, remove, list, install)</td></tr>
+                <tr><td>nova config</td><td class="desc">View or edit configuration (show, set, get)</td></tr>
+                <tr><td>nova secrets</td><td class="desc">Manage API keys securely (set, list, delete)</td></tr>
+                <tr><td>nova doctor</td><td class="desc">Validate configuration and connections</td></tr>
+                <tr><td>nova paths</td><td class="desc">Manage approved file system paths (list, revoke, clear)</td></tr>
+                <tr><td>nova migrate</td><td class="desc">Migrate to the new directory structure</td></tr>
+                <tr><td>nova update</td><td class="desc">Update Nova or check for new code (<code>--check</code>)</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Flags</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Flag</th><th>Default</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>--agent</td><td class="desc">"nova-agent"</td><td class="desc">Agent identifier for separate memory stores</td></tr>
+                <tr><td>--auto-approve</td><td class="desc">off</td><td class="desc">Auto-approve tool usage (disables HITL)</td></tr>
+                <tr><td>--sandbox</td><td class="desc">os / none</td><td class="desc">Sandbox provider: none, os, modal, daytona, runloop, docker, langsmith</td></tr>
+                <tr><td>--no-sandbox</td><td class="desc">off</td><td class="desc">Run shell commands unconfined on the host</td></tr>
+                <tr><td>--sandbox-id</td><td class="desc">None</td><td class="desc">Reuse an existing sandbox</td></tr>
+                <tr><td>--sandbox-setup</td><td class="desc">None</td><td class="desc">Path to a setup script for the sandbox</td></tr>
+                <tr><td>--sandbox-vcpus</td><td class="desc">None</td><td class="desc">Virtual CPUs (LangSmith only)</td></tr>
+                <tr><td>--sandbox-mem-bytes</td><td class="desc">None</td><td class="desc">Memory in bytes (LangSmith only)</td></tr>
+                <tr><td>--sandbox-fs-capacity-bytes</td><td class="desc">None</td><td class="desc">Filesystem capacity (LangSmith only)</td></tr>
+                <tr><td>--sandbox-snapshot</td><td class="desc">None</td><td class="desc">Snapshot name (LangSmith only)</td></tr>
+                <tr><td>--sandbox-snapshot-id</td><td class="desc">None</td><td class="desc">Snapshot ID (LangSmith only)</td></tr>
+                <tr><td>--ports</td><td class="desc">None</td><td class="desc">Port forwarding for the Docker sandbox</td></tr>
+                <tr><td>--no-splash</td><td class="desc">off</td><td class="desc">Disable the startup splash screen</td></tr>
+                <tr><td>--continue / -c</td><td class="desc">off</td><td class="desc">Continue last session (optionally a session ID)</td></tr>
+                <tr><td>--resume / -r</td><td class="desc">off</td><td class="desc">Interactively select and resume a session</td></tr>
+                <tr><td>--print / -p</td><td class="desc">off</td><td class="desc">Run a single prompt non-interactively and exit</td></tr>
+                <tr><td>--output-format</td><td class="desc">text</td><td class="desc">Headless output: text, json, or stream-json</td></tr>
+                <tr><td>--max-turns</td><td class="desc">None</td><td class="desc">Headless only: cap agent turns</td></tr>
+                <tr><td>--deny-tools</td><td class="desc">off</td><td class="desc">Headless only: auto-reject tool approvals (fail-closed)</td></tr>
+                <tr><td>--safe-ui</td><td class="desc">off</td><td class="desc">Start with the default UI, skipping saved customizations</td></tr>
+                <tr><td>--import</td><td class="desc">&mdash;</td><td class="desc">Import a conversation (codex, claude, nova, or adapter)</td></tr>
+                <tr><td>--latest</td><td class="desc">off</td><td class="desc">Import the selected provider's latest session</td></tr>
+                <tr><td>--import-session</td><td class="desc">&mdash;</td><td class="desc">Source session ID or transcript file path</td></tr>
+                <tr><td>--import-mode</td><td class="desc">compact</td><td class="desc">Import mode: compact, full, relevant</td></tr>
+                <tr><td>--no-agent-server</td><td class="desc">off</td><td class="desc">Do not launch a local LangGraph server for async subagents</td></tr>
+                <tr><td>--agent-server-port</td><td class="desc">None</td><td class="desc">Port for the local agent server</td></tr>
+                <tr><td>--version</td><td class="desc">&mdash;</td><td class="desc">Show version number and exit</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Environment variables</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Variable</th><th>Purpose</th></tr></thead>
+              <tbody>
+                <tr><td>OPENAI_API_KEY</td><td class="desc">OpenAI API key</td></tr>
+                <tr><td>ANTHROPIC_API_KEY</td><td class="desc">Anthropic API key</td></tr>
+                <tr><td>GOOGLE_API_KEY</td><td class="desc">Google Gemini API key</td></tr>
+                <tr><td>NVIDIA_API_KEY</td><td class="desc">NVIDIA API key</td></tr>
+                <tr><td>OPENROUTER_API_KEY</td><td class="desc">OpenRouter API key</td></tr>
+                <tr><td>OPENCODE_API_KEY</td><td class="desc">OpenCode Go gateway key</td></tr>
+                <tr><td>OPENCODE_ZEN_API_KEY</td><td class="desc">OpenCode Zen key</td></tr>
+                <tr><td>TAVILY_API_KEY</td><td class="desc">Tavily web search key</td></tr>
+                <tr><td>NOVA_ALLOW_TRANSFORMERS</td><td class="desc">Set to 1 to allow transformers/torch import</td></tr>
+                <tr><td>NOVA_DISABLE_UPDATE_CHECK</td><td class="desc">Set to 1 to disable background update checks</td></tr>
+                <tr><td>NOVA_ASYNC_AGENT_ROOT</td><td class="desc">Directory for an external async agent server</td></tr>
+                <tr><td>ASYNC_AGENT_PROVIDER</td><td class="desc">Provider for async agents</td></tr>
+                <tr><td>ASYNC_AGENT_MODEL</td><td class="desc">Model for async agents</td></tr>
+                <tr><td>PLAN_SCOUT_MODEL</td><td class="desc">Per-agent override for plan-scout</td></tr>
+                <tr><td>TYPESAFE_API_KEY</td><td class="desc">TypeSafe API key for System One compaction</td></tr>
+                <tr><td>SYSTEM_ONE_API_KEY</td><td class="desc">Custom System One endpoint API key</td></tr>
+                <tr><td>LANGSMITH_TRACING</td><td class="desc">Enable LangSmith tracing</td></tr>
+                <tr><td>LANGSMITH_API_KEY</td><td class="desc">LangSmith API key</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Credential storage</h2>
+          <p class="body rv">Keys go to the OS keychain (via the <code>keyring</code> library) with a
+            permission-restricted JSON fallback. The endpoint and project are paired with the key as
+            non-secret metadata in <code>Nova.config.json</code>. Enumeration and deletion are
+            supported, and secrets are never logged or interpolated into exception messages.</p>
+          <div class="codeblock win rv">
+            <pre><span class="k">nova</span> secrets set openai_api_key
+<span class="k">nova</span> secrets set anthropic_api_key
+<span class="k">nova</span> secrets list
+<span class="k">nova</span> secrets delete openai_api_key</pre>
+          </div>
+          <p class="body rv"><code>get_provider_auth_status()</code> resolves credential readiness
+            into a <code>ProviderAuthStatus</code> with states: <code>CONFIGURED</code>,
+            <code>MISSING</code>, <code>NOT_REQUIRED</code>, <code>MANAGED</code>,
+            <code>UNKNOWN</code>.</p>
+        </section>
+      </div>
+
+      <!-- 4. CONFIGURATION -->
+      <div class="page-section" id="page-config">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:14">nova config show</span></p>
+            <h1>Config <b>file</b>.</h1>
+            <p class="lede">Configuration lives in <code>~/.nova/Nova.config.json</code>, with project config under <code>.nova/</code>.</p>
+          </div>
+          <div class="codeblock win rv">
+            <pre><span class="k">nova</span> config show           <span class="c"># view all settings</span>
+<span class="k">nova</span> config get &lt;key&gt;      <span class="c"># get one setting</span>
+<span class="k">nova</span> config set &lt;key&gt; &lt;val&gt; <span class="c"># set a setting</span></pre>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Configuration modules</h2>
+          <p class="body rv"><code>config/</code> holds 14 modules:</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Module</th><th>Responsibility</th></tr></thead>
+              <tbody>
+                <tr><td>config.py</td><td class="desc">Settings hub, color scheme, model factory, console init</td></tr>
+                <tr><td>nova_config.py</td><td class="desc">Persistent JSON config at <code>~/.nova/Nova.config.json</code></td></tr>
+                <tr><td>model_create.py</td><td class="desc">Model instantiation for all providers</td></tr>
+                <tr><td>model_manager.py</td><td class="desc">Model provider management</td></tr>
+                <tr><td>model_catalog.py</td><td class="desc">Model lineup per provider</td></tr>
+                <tr><td>model_capabilities.py</td><td class="desc">Static capability registry (which models accept images)</td></tr>
+                <tr><td>provider_auth.py</td><td class="desc">Provider credential readiness</td></tr>
+                <tr><td>credentials.py</td><td class="desc">Credential storage (keychain + JSON fallback)</td></tr>
+                <tr><td>role_models.py</td><td class="desc">Per-role model selection (main, subagent, async, dynamic)</td></tr>
+                <tr><td>google_oauth_auth.py</td><td class="desc">Google OAuth authentication</td></tr>
+                <tr><td>openai_chatgpt_auth.py</td><td class="desc">OpenAI ChatGPT plan sign-in</td></tr>
+                <tr><td>opencode_gateway.py</td><td class="desc">OpenCode Go gateway integration</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Key directories</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Path</th><th>Contents</th></tr></thead>
+              <tbody>
+                <tr><td>~/.nova/</td><td class="desc">Global config, agents, skills, hooks, daemons, plans, plugins, trash</td></tr>
+                <tr><td>~/.nova/store.db</td><td class="desc">Durable LangGraph key/value store</td></tr>
+                <tr><td>~/.nova/Nova.config.json</td><td class="desc">Persistent configuration</td></tr>
+                <tr><td>~/.nova/logs/</td><td class="desc">Application log, freeze log</td></tr>
+                <tr><td>~/.nova/ui/</td><td class="desc">Saved UI layouts, per workspace</td></tr>
+                <tr><td>.nova/</td><td class="desc">Project context, config, hooks, skills, wiki, plans, council</td></tr>
+                <tr><td>.nova/NOVA.md</td><td class="desc">Project-specific context and conventions</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Model providers</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Provider</th><th>Key variable</th><th>Notes</th></tr></thead>
+              <tbody>
+                <tr><td>OpenAI</td><td class="desc">OPENAI_API_KEY</td><td class="desc">Default; also supports ChatGPT plan sign-in</td></tr>
+                <tr><td>Anthropic</td><td class="desc">ANTHROPIC_API_KEY</td><td class="desc">Claude models</td></tr>
+                <tr><td>Google</td><td class="desc">GOOGLE_API_KEY</td><td class="desc">Gemini models; also supports OAuth</td></tr>
+                <tr><td>NVIDIA</td><td class="desc">NVIDIA_API_KEY</td><td class="desc">NVIDIA AI endpoints</td></tr>
+                <tr><td>OpenRouter</td><td class="desc">OPENROUTER_API_KEY</td><td class="desc">OpenAI-compatible, routed through ChatOpenAI</td></tr>
+                <tr><td>OpenCode</td><td class="desc">OPENCODE_API_KEY</td><td class="desc">OpenCode Go gateway</td></tr>
+                <tr><td>OpenCode Zen</td><td class="desc">OPENCODE_ZEN_API_KEY</td><td class="desc">OpenCode Zen gateway</td></tr>
+                <tr><td>Ollama</td><td class="desc">&mdash;</td><td class="desc">Local models; live list from <code>ollama list</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="body rv">The model catalog draws from two sources: provider profile data
+            (LangChain packages ship auto-generated <code>_profiles.py</code> listing every model with
+            capability flags) for OpenAI, Anthropic, Google, and NVIDIA; and a live list for Ollama and
+            OpenCode Go. The curated <code>MODEL_PRESETS</code> list is unioned into every result and
+            ordered first.</p>
+        </section>
+
+        <section>
+          <h2 class="rv">Per-role model selection</h2>
+          <p class="body rv"><code>/model</code> covers four roles:</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Role</th><th>Covers</th><th>Takes effect</th></tr></thead>
+              <tbody>
+                <tr><td>Main agent</td><td class="desc">The agent you talk to</td><td class="desc">Immediately (hot-swapped)</td></tr>
+                <tr><td>Subagents</td><td class="desc">In-process delegation via <code>task</code></td><td class="desc">On the next dispatch</td></tr>
+                <tr><td>Async agents</td><td class="desc">Graphs on the LangGraph server</td><td class="desc">On the next dispatch</td></tr>
+                <tr><td>Dynamic agents</td><td class="desc">Agents discovered in agent directories</td><td class="desc">On the next dispatch</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="body rv">Any role left unset inherits the main agent's model. Reasoning effort
+            changes without a restart via <code>/effort low|medium|high|off</code>.</p>
+        </section>
+      </div>
+
+      <!-- 5. THE TUI -->
+      <div class="page-section" id="page-tui">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:8">nova</span></p>
+            <h1>The <b>TUI</b>.</h1>
+            <p class="lede">The only interactive UI. Chat messages, modals, animations, and keyboard shortcuts.</p>
+          </div>
+          <p class="body rv">The Textual TUI provides a scrollable transcript, multi-line input that
+            grows with content (<code>shift+enter</code> for a newline), modal dialogs with entrance
+            animations, keyboard shortcuts, condensed tool groups, syntax-highlighted diffs,
+            click-to-copy, parallel session panes, a docked todo checklist, a status bar with shimmer
+            animation, and pulsing borders on active elements.</p>
+        </section>
+
+        <section>
+          <h2 class="rv">Screens</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Screen</th><th>Purpose</th></tr></thead>
+              <tbody>
+                <tr><td>Chat</td><td class="desc">Main conversation view</td></tr>
+                <tr><td>Model picker</td><td class="desc">Switch models for main agent, subagents, async agents, dynamic agents</td></tr>
+                <tr><td>Auth</td><td class="desc">Manage API keys and provider credentials</td></tr>
+                <tr><td>Wiki</td><td class="desc">Browse the project wiki vault</td></tr>
+                <tr><td>Settings/Configuration</td><td class="desc">Adjust settings</td></tr>
+                <tr><td>Artifacts viewer</td><td class="desc">Browse and open artifacts</td></tr>
+                <tr><td>Tasks panel</td><td class="desc">Background task monitoring</td></tr>
+                <tr><td>Subagents panel</td><td class="desc">Running subagent tasks with model and elapsed time</td></tr>
+                <tr><td>Notifications</td><td class="desc">Review and manage notifications</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Key bindings</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Key</th><th>Action</th></tr></thead>
+              <tbody>
+                <tr><td>shift+enter</td><td class="desc">Insert a newline in the input</td></tr>
+                <tr><td>ctrl+n</td><td class="desc">New parallel session</td></tr>
+                <tr><td>alt+&lt;n&gt;</td><td class="desc">Switch to session n</td></tr>
+                <tr><td>ctrl+g</td><td class="desc">Push-to-talk (voice)</td></tr>
+                <tr><td>ctrl+l</td><td class="desc">Hands-free listening (voice)</td></tr>
+                <tr><td>ctrl+shift+backspace</td><td class="desc">Reset UI to default</td></tr>
+                <tr><td>alt+s</td><td class="desc">Collapse/expand the subagents panel</td></tr>
+                <tr><td>F6&ndash;F12</td><td class="desc">Custom panel shortcuts</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Performance features</h2>
+          <ul class="proof rv">
+            <li>status ticks repaint in place</li>
+            <li>rendered Markdown cached per width</li>
+            <li>static data stays out of checkpoints</li>
+            <li>subagent graphs compile on first use</li>
+            <li>skill listing cached across restarts</li>
+            <li>garbage collection tuned to run while idle</li>
+            <li>a watchdog logs any UI freeze over 1s</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2 class="rv">UI panels</h2>
+          <p class="body rv">Optional notes, workspace files, and activity panels are customizable via
+            <code>/ui patch</code> with a JSON object, then <code>/ui preview</code> and
+            <code>/ui commit</code>. Panel order follows the <code>panels</code> list. Layouts are saved
+            per workspace under <code>~/.nova/ui/</code>. <code>/ui rollback</code> restores the saved
+            layout.</p>
+        </section>
+      </div>
+
+      <!-- 6. SLASH COMMANDS -->
+      <div class="page-section" id="page-slash">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:8">/help</span></p>
+            <h1>Slash <b>commands</b>.</h1>
+            <p class="lede">All slash commands are registered via <code>CommandRegistry</code> and invoked through a single dispatch. Plugin commands are registered last, so built-ins always win on collision.</p>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Command</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>/help</td><td class="desc">Show interactive help</td></tr>
+                <tr><td>/exit / /quit / /q</td><td class="desc">Exit the CLI</td></tr>
+                <tr><td>/clear</td><td class="desc">Clear conversation history and reset session</td></tr>
+                <tr><td>/tokens</td><td class="desc">Display token usage for the session</td></tr>
+                <tr><td>/context</td><td class="desc">Display current context window status</td></tr>
+                <tr><td>/cost</td><td class="desc">Show session token spend</td></tr>
+                <tr><td>/verbose</td><td class="desc">Toggle verbose mode</td></tr>
+                <tr><td>/steer</td><td class="desc">Set persistent steering instructions</td></tr>
+                <tr><td>/goal</td><td class="desc">Set a persistent goal (<code>rubric</code>, <code>status</code>, <code>clear</code>)</td></tr>
+                <tr><td>/btw</td><td class="desc">Ask a side question on an ephemeral thread</td></tr>
+                <tr><td>/save</td><td class="desc">Save current session</td></tr>
+                <tr><td>/compact</td><td class="desc">Compact conversation history with optional focus</td></tr>
+                <tr><td>/sessions</td><td class="desc">List, select, or delete saved sessions</td></tr>
+                <tr><td>/ui</td><td class="desc">Inspect UI panels (<code>patch</code>, <code>preview</code>, <code>commit</code>, <code>rollback</code>, <code>reset</code>)</td></tr>
+                <tr><td>/session</td><td class="desc">Parallel sessions: <code>new</code> / <code>list</code> / <code>close</code></td></tr>
+                <tr><td>/resume</td><td class="desc">Resume a saved session (<code>/resume &lt;id&gt;</code>)</td></tr>
+                <tr><td>/restore</td><td class="desc">Restore a previous file version from snapshots</td></tr>
+                <tr><td>/files</td><td class="desc">Show file operation summary</td></tr>
+                <tr><td>/images</td><td class="desc">Manage tracked image references</td></tr>
+                <tr><td>/artifacts</td><td class="desc">Open the artifacts list</td></tr>
+                <tr><td>/tasks</td><td class="desc">Open the background tasks panel</td></tr>
+                <tr><td>/log</td><td class="desc">Show workspace log files</td></tr>
+                <tr><td>/servers</td><td class="desc">Show active server processes</td></tr>
+                <tr><td>/tests</td><td class="desc">Run test suites</td></tr>
+                <tr><td>/kill</td><td class="desc">Kill a process by PID</td></tr>
+                <tr><td>/notifications</td><td class="desc">Review and manage notifications</td></tr>
+                <tr><td>/remote</td><td class="desc">Manage remote sandbox connections</td></tr>
+                <tr><td>/reindex</td><td class="desc">Rebuild the semantic code search index</td></tr>
+                <tr><td>/copy</td><td class="desc">Copy the last response (or the whole chat)</td></tr>
+                <tr><td>/theme</td><td class="desc">Switch color theme</td></tr>
+                <tr><td>/init</td><td class="desc">Generate/update project documentation and graph</td></tr>
+                <tr><td>/mcp</td><td class="desc">Interactive MCP server management menu</td></tr>
+                <tr><td>/model</td><td class="desc">Switch the model for main agent, subagents, async agents, or dynamic agents</td></tr>
+                <tr><td>/hooks</td><td class="desc">Manage lifecycle hooks (list, add, remove, enable, disable)</td></tr>
+                <tr><td>/skills</td><td class="desc">Interactive skills manager</td></tr>
+                <tr><td>/agents</td><td class="desc">Custom agent management (view, create, delete)</td></tr>
+                <tr><td>/plugins / /plugin</td><td class="desc">Plugin management (list, enable, disable)</td></tr>
+                <tr><td>/middleware</td><td class="desc">List active middleware (<code>/reload-plugins</code> to reload)</td></tr>
+                <tr><td>/reload-plugins</td><td class="desc">Reload plugin registrations</td></tr>
+                <tr><td>/plan</td><td class="desc">Invoke the plan-mode agent for investigation and approval</td></tr>
+                <tr><td>/agent-server</td><td class="desc">Control the local LangGraph server (<code>status</code>, <code>start</code>, <code>stop</code>, <code>restart</code>, <code>logs</code>)</td></tr>
+                <tr><td>/trace</td><td class="desc">LangSmith tracing management</td></tr>
+                <tr><td>/ralph</td><td class="desc">Autonomous looping mode (background task execution)</td></tr>
+                <tr><td>/council</td><td class="desc">Plan a task with the council (propose, critique, vote, judge)</td></tr>
+                <tr><td>/chat</td><td class="desc">Launch the local browser-based chat UI</td></tr>
+                <tr><td>/cowork / /desktop</td><td class="desc">Launch the Nova Cowork desktop app</td></tr>
+                <tr><td>/trello</td><td class="desc">Browser-based task board server</td></tr>
+                <tr><td>/research</td><td class="desc">Multi-agent research swarm</td></tr>
+                <tr><td>/dream</td><td class="desc">Run memory consolidation</td></tr>
+                <tr><td>/browser-use</td><td class="desc">AI-powered browser automation</td></tr>
+                <tr><td>/create</td><td class="desc">Launch the Skills &amp; Agents web UI</td></tr>
+                <tr><td>/skill:&lt;name&gt;</td><td class="desc">Directly invoke a skill by name</td></tr>
+                <tr><td>/cron</td><td class="desc">Manage scheduled (heartbeat) tasks</td></tr>
+                <tr><td>/webhook</td><td class="desc">Manage the webhook ingress server</td></tr>
+                <tr><td>/prompt</td><td class="desc">Manage evolving system-prompt templates</td></tr>
+                <tr><td>/refine</td><td class="desc">Refinement audit trail (<code>history</code>, <code>rollback &lt;id&gt;</code>)</td></tr>
+                <tr><td>/voice</td><td class="desc">Local voice I/O management</td></tr>
+                <tr><td>/effort</td><td class="desc">Set reasoning effort level (<code>low</code>, <code>medium</code>, <code>high</code>, <code>off</code>)</td></tr>
+                <tr><td>/vision</td><td class="desc">Configure image handling</td></tr>
+                <tr><td>/evolution</td><td class="desc">View the self-evolution log</td></tr>
+                <tr><td>/learning</td><td class="desc">Toggle the autonomous learning loop (<code>on</code>, <code>off</code>, <code>status</code>)</td></tr>
+                <tr><td>/ingest</td><td class="desc">Ingest captured sources into wiki pages</td></tr>
+                <tr><td>/ask</td><td class="desc">Ask a question informed by wiki context</td></tr>
+                <tr><td>/file</td><td class="desc">File recent conversation knowledge as a wiki page</td></tr>
+                <tr><td>/wiki</td><td class="desc">List all synthesized pages in the project wiki vault</td></tr>
+                <tr><td>/update</td><td class="desc">Check for updates immediately</td></tr>
+                <tr><td>/import</td><td class="desc">Import external conversations (<code>codex</code>, <code>claude</code>, <code>nova</code>)</td></tr>
+                <tr><td>/compare</td><td class="desc">Compare histories (<code>/compare claude:&lt;id&gt; codex:&lt;id&gt;</code>)</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Command categories</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Category</th><th>Commands</th></tr></thead>
+              <tbody>
+                <tr><td>Session</td><td class="desc"><code>/save</code>, <code>/sessions</code>, <code>/session</code>, <code>/resume</code>, <code>/clear</code>, <code>/compact</code></td></tr>
+                <tr><td>Model &amp; reasoning</td><td class="desc"><code>/model</code>, <code>/effort</code>, <code>/learning</code>, <code>/verbose</code>, <code>/vision</code></td></tr>
+                <tr><td>Planning &amp; research</td><td class="desc"><code>/plan</code>, <code>/council</code>, <code>/research</code>, <code>/goal</code>, <code>/steer</code></td></tr>
+                <tr><td>Extensibility</td><td class="desc"><code>/skills</code>, <code>/agents</code>, <code>/plugins</code>, <code>/mcp</code>, <code>/hooks</code>, <code>/middleware</code></td></tr>
+                <tr><td>Integrations</td><td class="desc"><code>/webhook</code>, <code>/cron</code>, <code>/chat</code>, <code>/cowork</code>, <code>/trello</code>, <code>/browser-use</code></td></tr>
+                <tr><td>Knowledge</td><td class="desc"><code>/wiki</code>, <code>/ingest</code>, <code>/ask</code>, <code>/file</code>, <code>/dream</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Council system</h2>
+          <p class="body rv"><code>/council &lt;task&gt;</code> has several agents propose plans
+            independently, critique each other anonymously, and vote. A judge picks the top 3 and
+            nothing is implemented until you approve one. Past council runs are kept in
+            <code>.nova/council/</code>.</p>
+        </section>
+
+        <section>
+          <h2 class="rv">Research swarm</h2>
+          <p class="body rv"><code>/research</code> fans a question out to 7 research personas: web
+            researcher, fact checker, literature reviewer, market analyst, financial analyst,
+            technical researcher, synthesizer.</p>
+        </section>
+      </div>
+
+      <!-- 7. HEADLESS MODE -->
+      <div class="page-section" id="page-headless">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:14">nova -p "..."</span></p>
+            <h1>Headless <b>mode</b>.</h1>
+            <p class="lede">Run a single prompt non-interactively and exit. Built for scripting and CI.</p>
+          </div>
+          <div class="codeblock win rv">
+            <div class="bar" aria-hidden="true"><i></i><i></i><i></i><span>headless.sh</span></div>
+            <pre><span class="c"># Basic: run a prompt, print the response</span>
+<span class="k">uv run nova</span> -p "summarize the changes in this repo"
+
+<span class="c"># JSON output, capped at 10 turns, approvals denied</span>
+<span class="k">uv run nova</span> -p "run the test suite and report failures" \
+  --output-format json \
+  --max-turns 10 \
+  --deny-tools
+
+<span class="c"># Stream JSON events</span>
+<span class="k">uv run nova</span> -p "explain the architecture" --output-format stream-json
+
+<span class="c"># Pipe the prompt on stdin</span>
+echo "explain src/main.py" | <span class="k">uv run nova</span> -p</pre>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Output formats</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Format</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>text</td><td class="desc">Final answer only (default)</td></tr>
+                <tr><td>json</td><td class="desc">A single result object</td></tr>
+                <tr><td>stream-json</td><td class="desc">Newline-delimited JSON events</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Exit codes</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
+              <tbody>
+                <tr><td>0</td><td class="desc">Success</td></tr>
+                <tr><td>1</td><td class="desc">Error during execution</td></tr>
+                <tr><td>2</td><td class="desc">Max-turns hit</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Runner behavior</h2>
+          <p class="body rv"><code>headless/runner.py</code> drives a single prompt through the
+            UI-agnostic event stream (<code>iterate_agent_events</code>) to completion with no human
+            present.</p>
+          <ul class="proof rv">
+            <li>prompt from <code>headless_prompt</code>, format from <code>headless_output_format</code></li>
+            <li>tool interrupts use <code>evaluate_tool_actions</code> unless <code>--deny-tools</code></li>
+            <li>a <code>None</code> verdict (ask the user) is converted to an approve</li>
+            <li>question/plan interrupts resolve to the default response</li>
+            <li>counts turns, accumulates text, tracks usage, enforces max-turns</li>
+            <li>autosaves the run as a resumable session; never fails on a save error</li>
+          </ul>
+          <p class="body rv">Headless runs are the exception to the approval rule:
+            <code>--deny-tools</code> rejects everything, so a pipeline fails closed instead of hanging
+            on a prompt nobody is there to answer.</p>
+        </section>
+      </div>
+
+      <!-- 8. TOOLS -->
+      <div class="page-section" id="page-tools">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:12">search_tools *</span></p>
+            <h1>Tools.</h1>
+            <p class="lede">50+ built-in tools across 22 modules. Rarely used tools are deferred behind <code>search_tools</code>, so they cost no context until needed.</p>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">File operations</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Tool</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>ls</td><td class="desc">List files and directories</td></tr>
+                <tr><td>read_file</td><td class="desc">Read the contents of a file</td></tr>
+                <tr><td>write_file</td><td class="desc">Create or overwrite a file</td></tr>
+                <tr><td>edit_file</td><td class="desc">Make targeted edits to existing files</td></tr>
+                <tr><td>glob</td><td class="desc">Find files matching a pattern</td></tr>
+                <tr><td>grep</td><td class="desc">Search for text patterns across files</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Shell &amp; execution</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Tool</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>shell</td><td class="desc">Execute shell commands (local mode)</td></tr>
+                <tr><td>execute</td><td class="desc">Execute commands in a remote sandbox</td></tr>
+                <tr><td>python_kernel</td><td class="desc">Run Python in a persistent kernel that keeps state between calls</td></tr>
+                <tr><td>daemon</td><td class="desc">Start, stop, and tail long-lived background processes</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Web &amp; search</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Tool</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>web_search</td><td class="desc">Search the web using the Tavily API</td></tr>
+                <tr><td>duckduckgo_search</td><td class="desc">Web search using DuckDuckGo (no API key)</td></tr>
+                <tr><td>docs_search</td><td class="desc">Search official documentation sites</td></tr>
+                <tr><td>fetch_url</td><td class="desc">Fetch and convert web pages to markdown</td></tr>
+                <tr><td>github_trending</td><td class="desc">Scrape GitHub trending repositories</td></tr>
+                <tr><td>hacker_news</td><td class="desc">Scrape the Hacker News front page</td></tr>
+                <tr><td>linkedin_jobs</td><td class="desc">Search LinkedIn job listings (Playwright-based)</td></tr>
+                <tr><td>reddit_posts</td><td class="desc">Scrape Reddit posts</td></tr>
+                <tr><td>package_info</td><td class="desc">Get package version and dependency info (PyPI / npm)</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Code intelligence</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Tool</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>code_search</td><td class="desc">Semantic code search by description or symbol name</td></tr>
+                <tr><td>find_related_code</td><td class="desc">Find code semantically similar to a known location</td></tr>
+                <tr><td>query_project_graph</td><td class="desc">Query the project graph for architectural information</td></tr>
+                <tr><td>search_tools</td><td class="desc">Search and load deferred tools by capability</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Memory &amp; knowledge</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Tool</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>read_memory / write_memory</td><td class="desc">Read and write persistent markdown agent memories</td></tr>
+                <tr><td>remember / recall</td><td class="desc">Store and fetch durable cross-session facts by key</td></tr>
+                <tr><td>list_memories / forget</td><td class="desc">List and delete stored durable memory facts</td></tr>
+                <tr><td>memory_search</td><td class="desc">Search topic memory by meaning</td></tr>
+                <tr><td>wiki_read / wiki_search / wiki_write / wiki_update_index</td><td class="desc">Wiki management</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Agent &amp; delegation</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Tool</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>task</td><td class="desc">Delegate work to subagents for parallel execution</td></tr>
+                <tr><td>write_todos</td><td class="desc">Create and manage task lists for complex work</td></tr>
+                <tr><td>think</td><td class="desc">Structured reasoning and reflection before acting</td></tr>
+                <tr><td>ask_user_question</td><td class="desc">Ask the user a multiple-choice question</td></tr>
+                <tr><td>oracle</td><td class="desc">Ask several models the same question and have a judge synthesize</td></tr>
+                <tr><td>speak</td><td class="desc">Speak a short summary aloud via TTS</td></tr>
+                <tr><td>skill_manage</td><td class="desc">Create, refine, or remove reusable skills</td></tr>
+                <tr><td>sleep_desktop</td><td class="desc">Put the desktop to sleep (overnight sessions)</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Async agents</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Tool</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>start_async_task</td><td class="desc">Start a background task on a remote LangGraph server</td></tr>
+                <tr><td>check_async_task</td><td class="desc">Check status and result of a background task</td></tr>
+                <tr><td>update_async_task</td><td class="desc">Send updated instructions to a running task</td></tr>
+                <tr><td>cancel_async_task</td><td class="desc">Cancel a running background task</td></tr>
+                <tr><td>list_async_tasks</td><td class="desc">List all tracked background tasks</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Background tasks</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Tool</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>list_background_tasks</td><td class="desc">List agent-launched background shell jobs</td></tr>
+                <tr><td>get_task_status</td><td class="desc">Get a background task's status, runtime, and exit code</td></tr>
+                <tr><td>get_task_logs</td><td class="desc">Read the recent output of a background task</td></tr>
+                <tr><td>terminate_task</td><td class="desc">Stop a running background task</td></tr>
+                <tr><td>restart_task</td><td class="desc">Restart a background task</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Artifacts &amp; plans</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Tool</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>create_artifact</td><td class="desc">Create a durable artifact (markdown, code, etc.)</td></tr>
+                <tr><td>update_artifact</td><td class="desc">Update an existing artifact</td></tr>
+                <tr><td>list_artifacts</td><td class="desc">List all artifacts in the session</td></tr>
+                <tr><td>enter_plan_mode</td><td class="desc">Switch to read-only investigation mode</td></tr>
+                <tr><td>exit_plan_mode</td><td class="desc">Present a plan for user approval</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">File recovery</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Tool</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>list_trash</td><td class="desc">List file snapshots available for recovery</td></tr>
+                <tr><td>restore_file</td><td class="desc">Restore a deleted or overwritten file from snapshots</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">UI &amp; desktop</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Tool</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>ui_inspect / ui_patch / ui_preview / ui_commit / ui_rollback</td><td class="desc">UI panel management</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Tool search</h2>
+          <p class="body rv">Only core tools are bound to the model on every call.
+            <code>search_tools</code> finds the rest on demand. Search covers every currently
+            available tool, including core and already loaded tools, plus specialist subagents. Use a
+            capability description, an exact name, a partial name, or a wildcard.</p>
+          <div class="codeblock win rv">
+            <pre>search_tools("playwright browser automation")
+search_tools("*")            <span class="c"># browse the catalog</span></pre>
+          </div>
+          <p class="body rv">MCP tools (serena, playwright, cua-driver, etc.) are discovered by
+            <code>MCPMiddleware</code> and attached to the main agent. They are granted to subagents
+            selectively via <code>MCP_TOOLS_BY_SUBAGENT</code>.</p>
+        </section>
+      </div>
+
+      <!-- 9. SUBAGENTS -->
+      <div class="page-section" id="page-subagents">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:14">/agents</span></p>
+            <h1>Sub<b>agents</b>.</h1>
+            <p class="lede">In-process specialists, a research swarm, and 12 async background agents.</p>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">In-process specialists</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Subagent</th><th>Description</th><th>Auto-loaded skills</th></tr></thead>
+              <tbody>
+                <tr><td>general-purpose</td><td class="desc">Any delegated task; the default</td><td class="desc">&mdash;</td></tr>
+                <tr><td>code-explorer</td><td class="desc">Navigate, understand, and query large codebases</td><td class="desc">codebase-explorer, graphify</td></tr>
+                <tr><td>refactoring-specialist-agent</td><td class="desc">Code smells, technical debt, design patterns</td><td class="desc">improve-codebase-architecture</td></tr>
+                <tr><td>bug-fix-agent</td><td class="desc">Systematic bug diagnosis and fix</td><td class="desc">systematic-debugging</td></tr>
+                <tr><td>browser-automation-agent</td><td class="desc">Web testing, forms, screenshots, data extraction</td><td class="desc">agent-browser, browser-use, web-research</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="body rv">Their graphs are compiled on first use, so unused ones cost nothing at
+            start-up.</p>
+        </section>
+
+        <section>
+          <h2 class="rv">Research swarm</h2>
+          <p class="body rv">Dispatched by <code>/research</code>; kept out of the everyday roster and
+            loaded on demand.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Subagent</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>web-researcher</td><td class="desc">Broad web search and source gathering</td></tr>
+                <tr><td>fact-checker</td><td class="desc">Verifies claims against independent sources</td></tr>
+                <tr><td>literature-reviewer</td><td class="desc">Academic papers and prior work</td></tr>
+                <tr><td>market-analyst</td><td class="desc">Markets, competitors, and trends</td></tr>
+                <tr><td>financial-analyst</td><td class="desc">Stocks and financial data</td></tr>
+                <tr><td>technical-researcher</td><td class="desc">Libraries, APIs, and technical trade-offs</td></tr>
+                <tr><td>research-synthesizer</td><td class="desc">Merges the findings into one report</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Async background agents</h2>
+          <p class="body rv">12 graphs on a remote LangGraph server that Nova launches itself, on
+            demand. No Docker needed. Async agents read, search, and report; the ones that write
+            (documentation, tests, refactoring) do so unattended, so give them a self-contained task.
+            Work that needs your approval along the way belongs with an in-process specialist, because
+            approvals do not reach the server.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Subagent</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>documentation-update-agent</td><td class="desc">Auto-synchronize project docs and changelogs with git commits</td></tr>
+                <tr><td>code-review-agent</td><td class="desc">Review uncommitted/recent changes asynchronously</td></tr>
+                <tr><td>test-generation-agent</td><td class="desc">Generate/maintain test suites in the background</td></tr>
+                <tr><td>dependency-audit-agent</td><td class="desc">Audit dependencies for updates and security vulnerabilities</td></tr>
+                <tr><td>refactoring-agent</td><td class="desc">Analyze and improve code quality in the background</td></tr>
+                <tr><td>plan-scout-agent</td><td class="desc">Read-only directory scans dispatched during plan mode</td></tr>
+                <tr><td>security-audit-agent</td><td class="desc">Full security audit (OWASP Top 10, secrets, auth flaws); read-only</td></tr>
+                <tr><td>test-runner-agent</td><td class="desc">Run the test suite and report failures with likely causes</td></tr>
+                <tr><td>research-agent</td><td class="desc">Web research with sourced findings</td></tr>
+                <tr><td>general-purpose-async</td><td class="desc">Scoped coding, investigation, testing, research, or analysis</td></tr>
+                <tr><td>bug-investigation-agent</td><td class="desc">Trace a reported bug to a likely root cause</td></tr>
+                <tr><td>performance-audit-agent</td><td class="desc">Investigate performance and resource bottlenecks</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="body rv">By default, Nova launches its own <code>langgraph dev</code> server on an
+            ephemeral port (gated on the opt-in <code>agents-server</code> extra). Nothing is started
+            at boot: the server comes up on the first <code>start_async_task</code> (a few seconds)
+            and stops when Nova exits. A session that never delegates never pays for it. A server that
+            will not come up leaves the session as it was (in-process subagents), never blocks it.
+            Users can create async agents by setting <code>async: true</code> in an
+            <code>agent.md</code> frontmatter.</p>
+        </section>
+
+        <section>
+          <h2 class="rv">Agent-to-agent mailbox</h2>
+          <p class="body rv">The orchestrator can message its subagents by name and read replies via
+            the <code>send_agent_message</code> and <code>read_agent_messages</code> tools.</p>
+        </section>
+      </div>
+
+      <!-- 10. MEMORY -->
+      <div class="page-section" id="page-memory">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:14">memory_search</span></p>
+            <h1>Memory <b>system</b>.</h1>
+            <p class="lede">A three-tier model: Episodic, Semantic, and Procedural.</p>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">The three tiers</h2>
+          <div class="feature-grid">
+            <div class="feature-card rv">
+              <h4>Episodic</h4>
+              <p><code>hermes/tracker.py</code>: the durable, time-ordered record of what the agent
+                actually did. Tool history, counters, per-tool stats, and per-skill effectiveness.
+                Stored in the durable store at <code>~/.nova/store.db</code>.</p>
+            </div>
+            <div class="feature-card rv" style="--i:1">
+              <h4>Semantic</h4>
+              <p><code>agent.md</code> (user model), <code>memories/INDEX.md</code> (topic pointers),
+                <code>memories/&lt;topic&gt;.md</code> (topic facts), and <code>HABITS.md</code>. Files
+                are written newest-first and compacted past 12,000 chars.</p>
+            </div>
+            <div class="feature-card rv" style="--i:2">
+              <h4>Procedural</h4>
+              <p>Skills are the procedural memory: reusable workflows the agent can invoke. Created
+                and refined by Hermes, stored in <code>~/.nova/skills/</code>.</p>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Durable store</h2>
+          <p class="body rv">A single sync <code>SqliteStore</code> at <code>~/.nova/store.db</code>
+            (with a stdlib-sqlite3 fallback), wrapped by a <code>DualModeStore</code> for both sync and
+            async access. All Hermes namespaces live under the <code>("nova", ...)</code> prefix.</p>
+        </section>
+
+        <section>
+          <h2 class="rv">AgentMemoryMiddleware</h2>
+          <ul class="proof rv">
+            <li>loads memory into the system prompt at <code>before_agent</code></li>
+            <li>always injects <code>agent.md</code>, <code>memories/INDEX.md</code>, <code>HABITS.md</code>, learning overview</li>
+            <li>per-turn retrieval: lexical overlap scoring, top-3 topic bodies</li>
+            <li>hot-reloads memory files when they change on disk</li>
+            <li>prompt-cache split: the retrieval block sits after the cache breakpoint</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2 class="rv">Memory tools</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Tool</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>read_memory / write_memory</td><td class="desc">Read and write persistent markdown agent memories</td></tr>
+                <tr><td>remember / recall</td><td class="desc">Store and fetch durable cross-session facts by key</td></tr>
+                <tr><td>list_memories / forget</td><td class="desc">List and delete stored durable memory facts</td></tr>
+                <tr><td>memory_search</td><td class="desc">Search topic memory by meaning</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <!-- 11. SKILLS -->
+      <div class="page-section" id="page-skills">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:12">/skills</span></p>
+            <h1>Skills <b>system</b>.</h1>
+            <p class="lede">50+ built-in skills with progressive disclosure. Install from any public GitHub repo.</p>
+          </div>
+          <p class="body rv">A skill is a playbook (<code>SKILL.md</code>) with YAML frontmatter
+            (<code>name</code>, <code>description</code> required; <code>version</code>,
+            <code>tags</code> optional) and a Markdown body with canonical sections: When to Use,
+            Quick Reference, Procedure, Pitfalls, Verification. Optional supporting files, scripts, and
+            even an executable <code>skill.py</code> entry point can ship alongside.</p>
+        </section>
+
+        <section>
+          <h2 class="rv">Skill loading</h2>
+          <p class="body rv">Skills are loaded from multiple sources in precedence order (later
+            overrides earlier):</p>
+          <ol class="steps rv">
+            <li><h4>User skills</h4><p><code>~/.nova/skills/</code></p></li>
+            <li><h4>Shared global</h4><p><code>~/.agents/skills/</code></p></li>
+            <li><h4>Claude skills</h4><p><code>~/.claude/skills/</code></p></li>
+            <li><h4>Plugin skills</h4><p><code>~/.nova/plugins/&lt;name&gt;/skills/</code></p></li>
+            <li class="key"><h4>Project skills</h4><p><code>.agents/skills/</code>, <code>.nova/skills/</code>, <code>.claude/skills/</code></p></li>
+          </ol>
+          <p class="body rv">Caching uses a directory signature (name, mtime, size) per skill, so only
+            changed directories are re-parsed. A disk cache at
+            <code>~/.nova/cache/skill_index.json</code> enables cross-process reuse.</p>
+        </section>
+
+        <section>
+          <h2 class="rv">Skill retrieval</h2>
+          <p class="body rv">Hybrid search fuses BM25 (exact terms) with static Model2Vec embeddings
+            (paraphrases) by reciprocal rank. The embedding model is
+            <code>minishlab/potion-code-16M</code>.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Function</th><th>Behavior</th></tr></thead>
+              <tbody>
+                <tr><td>search(query, k=5)</td><td class="desc">Top-k skills</td></tr>
+                <tr><td>suggest(query, k=3)</td><td class="desc">Skills that stand out (z-score ≥ 4.5, cosine ≥ 0.4)</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="body rv"><strong>RefreshingSkillsMiddleware</strong> is tiered:</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Tier</th><th>Behavior</th></tr></thead>
+              <tbody>
+                <tr><td>Listing</td><td class="desc">Only most-used skills within a char budget (1% of window)</td></tr>
+                <tr><td>Suggestions</td><td class="desc">Each new user message matched against the whole library; top picks added as Internal context</td></tr>
+                <tr><td>skills_search</td><td class="desc">A tool for needs that surface mid-task</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="body rv">Also provides mid-session refresh when watched skill directories change.</p>
+        </section>
+
+        <section>
+          <h2 class="rv">Skill versioning</h2>
+          <p class="body rv">Every mutation snapshots the prior <code>SKILL.md</code> first:
+            <code>.history/&lt;version&gt;.md</code> inside the skill dir,
+            <code>.history/manifest.json</code> as the version log, <code>skills-archive/</code> for
+            soft-deleted skills, and <code>origin.json</code> for provenance. <code>restore()</code>
+            rolls back to any version.</p>
+        </section>
+
+        <section>
+          <h2 class="rv">Skill management commands</h2>
+          <div class="codeblock win rv">
+            <pre><span class="k">nova</span> skills list              <span class="c"># list all skills</span>
+<span class="k">nova</span> skills create my-skill   <span class="c"># create a new skill</span>
+<span class="k">nova</span> skills create my-skill --project  <span class="c"># project-specific skill</span>
+<span class="k">nova</span> skills info web-research <span class="c"># view skill details</span>
+<span class="k">nova</span> skills add owner/repo    <span class="c"># install from GitHub</span>
+<span class="k">nova</span> skills remove &lt;name&gt;     <span class="c"># remove a skill</span>
+<span class="k">nova</span> skills find &lt;query&gt;      <span class="c"># search for skills</span>
+<span class="k">nova</span> skills update &lt;name&gt;     <span class="c"># update from source</span></pre>
+          </div>
+          <p class="body rv"><code>nova skills add</code> runs the official Skills CLI
+            (<code>npx --yes skills@latest add</code>) with your arguments unchanged. It requires
+            Node.js, npm/npx, and Git for repository sources.</p>
+        </section>
+      </div>
+
+      <!-- 12. MCP -->
+      <div class="page-section" id="page-mcp">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:8">/mcp</span></p>
+            <h1>MCP <b>integration</b>.</h1>
+            <p class="lede">Extend the agent with Model Context Protocol servers. Tools are eagerly discovered with server-prefixed names to avoid collisions.</p>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Available presets</h2>
+          <ul class="proof rv">
+            <li>playwright</li>
+            <li>serena</li>
+            <li>context7</li>
+            <li>apify</li>
+            <li>cua-driver</li>
+            <li>brave-search</li>
+            <li>memory</li>
+            <li>postgres</li>
+            <li>google-drive</li>
+            <li>fetch</li>
+            <li>time</li>
+            <li>sqlite</li>
+            <li>stripe</li>
+            <li>everything</li>
+            <li>sequential-thinking</li>
+            <li>chrome-devtools</li>
+            <li>firecrawl</li>
+            <li>tavily</li>
+            <li>exa</li>
+            <li>perplexity</li>
+          </ul>
+          <p class="body rv">Perplexity requires an API key. Select it in <code>/mcp</code> to configure it.</p>
+        </section>
+
+        <section>
+          <h2 class="rv">Management</h2>
+          <div class="codeblock win rv">
+            <pre><span class="k">nova</span> mcp add brave-search --preset brave-search
+<span class="k">nova</span> mcp add my-server --transport http --url https://example.com/mcp
+<span class="k">nova</span> mcp add my-server --transport stdio --command "python -m my_mcp_server"
+<span class="k">nova</span> mcp list
+<span class="k">nova</span> mcp remove my-server</pre>
+          </div>
+          <p class="body rv"><code>MCPMiddleware</code> is inserted dynamically when MCP servers are
+            configured. It calls <code>list_servers()</code> on every model turn, so it is skipped
+            entirely when there are no servers. Tools are eagerly discovered before building the
+            agent graph.</p>
+        </section>
+      </div>
+
+      <!-- 13. PLUGINS -->
+      <div class="page-section" id="page-plugins">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:10">/plugins</span></p>
+            <h1>Plugin <b>system</b>.</h1>
+            <p class="lede">Python entry-point based plugins that register slash commands and add middleware at defined slots.</p>
+          </div>
+          <p class="body rv">Plugins are discovered via the <code>nova.plugins</code> entry point group
+            and tracked in <code>~/.nova/plugins/manifest.json</code> with an <code>enabled</code> list
+            (read/written atomically).</p>
+        </section>
+
+        <section>
+          <h2 class="rv">Plugin capabilities</h2>
+          <div class="feature-grid">
+            <div class="feature-card rv">
+              <h4>Slash commands</h4>
+              <p>Custom interactive commands registered into the TUI command palette.</p>
+            </div>
+            <div class="feature-card rv" style="--i:1">
+              <h4>Middleware</h4>
+              <p>Add behavior at named slots in the middleware stack.</p>
+            </div>
+            <div class="feature-card rv" style="--i:2">
+              <h4>Skills</h4>
+              <p>Domain-specific workflows bundled with the plugin.</p>
+            </div>
+            <div class="feature-card rv" style="--i:3">
+              <h4>Lifecycle hooks</h4>
+              <p><code>before_agent_setup</code> and <code>after_agent_setup</code>.</p>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Middleware slots</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Slot</th><th>Target</th></tr></thead>
+              <tbody>
+                <tr><td>early</td><td class="desc">Prepend at position 0</td></tr>
+                <tr><td>before_security</td><td class="desc">Before SecurityMiddleware</td></tr>
+                <tr><td>before_bootstrap</td><td class="desc">Before BootstrapMiddleware</td></tr>
+                <tr><td>before_steering</td><td class="desc">Before SteeringMiddleware</td></tr>
+                <tr><td>before_shell</td><td class="desc">Before ShellMiddleware</td></tr>
+                <tr><td>before_memory</td><td class="desc">Before AgentMemoryMiddleware</td></tr>
+                <tr><td>tail</td><td class="desc">Append at the end</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Plugin management</h2>
+          <div class="codeblock win rv">
+            <pre>/plugins                    <span class="c"># list plugins</span>
+/plugins enable my-plugin   <span class="c"># enable a plugin</span>
+/plugins disable my-plugin  <span class="c"># disable a plugin</span>
+/reload-plugins             <span class="c"># reload plugin registrations</span></pre>
+          </div>
+        </section>
+      </div>
+
+      <!-- 14. HERMES -->
+      <div class="page-section" id="page-hermes">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:12">/learning</span></p>
+            <h1>Autonomous <b>learning</b>.</h1>
+            <p class="lede">Hermes is Nova's learning and memory subsystem. It runs out-of-band and never blocks the agent's task turn.</p>
+          </div>
+          <p class="body rv">The system is orchestrated by <code>NovaLearningMiddleware</code>
+            (<code>hermes/middleware.py</code>), a thin orchestrator that delegates to four focused
+            modules:</p>
+          <div class="feature-grid">
+            <div class="feature-card rv">
+              <h4><code>ToolUsageTracker</code></h4>
+              <p>Episodic tier: counter, tool history, skill stats.</p>
+            </div>
+            <div class="feature-card rv" style="--i:1">
+              <h4><code>ReviewRunner</code></h4>
+              <p>Periodic review lifecycle: trigger, OOB invoke, content persistence.</p>
+            </div>
+            <div class="feature-card rv" style="--i:2">
+              <h4><code>SkillManager</code></h4>
+              <p>Skill lifecycle: create, cleanup, refine.</p>
+            </div>
+            <div class="feature-card rv" style="--i:3">
+              <h4><code>EvolutionEngine</code></h4>
+              <p>Task-completion skill evolution.</p>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">The review loop</h2>
+          <p class="body rv"><strong>Trigger logic</strong> (<code>hermes/review.py</code>,
+            <code>ReviewRunner.should_review()</code>). A review fires when any of these hold (and a
+            review wasn't just done):</p>
+          <ul class="proof rv">
+            <li><strong>Failure burst:</strong> ≥ <code>FAILURE_BURST</code> (default 3) failed tool calls in the current window</li>
+            <li><strong>Substantive threshold:</strong> count ≥ <code>REVIEW_THRESHOLD</code> (default 10) AND the window contains real work</li>
+            <li><strong>Hard cap:</strong> count ≥ 2× threshold (so all-trivial windows can't defer forever)</li>
+            <li><strong>Clean win:</strong> real substantive work, zero failures, past the floor</li>
+          </ul>
+          <p class="body rv"><strong>OOB model invocation:</strong> the review runs as a separate,
+            out-of-band model call — it is NEVER injected into the agent's task turn.</p>
+          <p class="body rv"><strong>Content persistence:</strong> after the OOB review, the parsed
+            content is applied:</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Review output</th><th>Applied to</th></tr></thead>
+              <tbody>
+                <tr><td><code>&lt;user_model&gt;</code> blocks</td><td class="desc"><code>agent.md</code></td></tr>
+                <tr><td><code>&lt;lesson topic="..."&gt;</code> blocks</td><td class="desc"><code>memories/&lt;topic&gt;.md</code> + INDEX pointer</td></tr>
+                <tr><td><code>&lt;habit&gt;</code> blocks</td><td class="desc"><code>HABITS.md</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="body rv"><strong>Post-review actions:</strong> every review runs
+            <code>cleanup_legacy_skills_once()</code> and <code>maybe_create_from_review()</code>;
+            every 5th review runs <code>maybe_refine_skills()</code> (one high-failure skill per
+            cycle); every 10th review runs <code>maybe_curate()</code>,
+            <code>ThresholdTuner.run_tuning_pass()</code>, and
+            <code>PromptEvolutionEngine.maybe_auto_evolve()</code>.</p>
+        </section>
+
+        <section>
+          <h2 class="rv">What Hermes learns</h2>
+          <ol class="steps rv">
+            <li><h4>User model</h4><p>User preferences, communication style, merged into <code>agent.md</code>.</p></li>
+            <li><h4>Topic lessons</h4><p>Cross-session facts/lessons organized by topic.</p></li>
+            <li><h4>Good habits</h4><p>Reusable practices that worked well, stored in <code>HABITS.md</code>.</p></li>
+            <li><h4>Skills</h4><p>Episode-grounded skills created from review <code>&lt;skill&gt;</code> blocks.</p></li>
+            <li><h4>Prompt templates</h4><p>A/B-tested rewrites of system prompt templates.</p></li>
+            <li class="key"><h4>Verification memory</h4><p>Per-repo failure patterns that make the inline verifier smarter.</p></li>
+          </ol>
+        </section>
+
+        <section>
+          <h2 class="rv">Self-evolution engine</h2>
+          <p class="body rv">Fires at <strong>task completion</strong>:</p>
+          <ol class="steps rv">
+            <li><h4>Slice</h4><p>The task's episodic window.</p></li>
+            <li><h4>Score</h4><p>Complexity via a deterministic heuristic (no LLM).</p></li>
+            <li><h4>Invoke</h4><p>If complex enough (≥ 8), runs an OOB model call returning <code>&lt;skill&gt;</code> (new) or <code>&lt;level_up skill="name"&gt;</code> (improvement).</p></li>
+            <li class="key"><h4>Debate</h4><p>New skills go through one adversarial critic round before freezing.</p></li>
+          </ol>
+        </section>
+
+        <section>
+          <h2 class="rv">Loop engineering enhancements</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Enhancement</th><th>Module</th><th>What it does</th></tr></thead>
+              <tbody>
+                <tr><td>Inline Verification Loop</td><td class="desc">core/verification_loop.py, hermes/verifier.py</td><td class="desc">After each task, an OOB LLM call grades the output against a rubric. On a failing verdict, the agent is re-driven with feedback (up to 3 retries). Fail-open by design.</td></tr>
+                <tr><td>Prompt-Template Hill Climbing</td><td class="desc">hermes/prompt_evolution.py</td><td class="desc">Proposes targeted <code>.jinja</code> rewrites, A/B tests them using verifier pass/fail as the quality signal, and promotes or discards. Packaged templates are never modified — overrides live in <code>~/.nova/prompt_history/</code>.</td></tr>
+                <tr><td>Cron / Heartbeat Scheduler</td><td class="desc">remote/scheduler.py, commands/cron_handler.py</td><td class="desc">Proactive scheduled tasks via standard 5-field cron expressions.</td></tr>
+                <tr><td>Threshold Auto-Tuner</td><td class="desc">hermes/tuner.py</td><td class="desc">Nudges review-trigger thresholds toward the observed working style. Damped convergence (0.2 weight) with hard floor/ceiling bounds.</td></tr>
+                <tr><td>Webhook Ingress Server</td><td class="desc">remote/webhook_server.py, remote/webhook_adapters.py</td><td class="desc">External systems trigger a Nova run with per-source HMAC-SHA256 secrets.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Key design principles</h2>
+          <ul class="proof rv">
+            <li><strong>Never block the turn:</strong> all learning runs OOB or in background tasks.</li>
+            <li><strong>Fail-open:</strong> any learning failure logs and continues; never breaks the agent.</li>
+            <li><strong>Durable persistence:</strong> all learning state survives restarts via the LangGraph <code>BaseStore</code>.</li>
+            <li><strong>Bounded:</strong> every loop has hard caps (max retries, max lessons per review, etc.).</li>
+          </ul>
+        </section>
+      </div>
+
+      <!-- 15. VERIFICATION -->
+      <div class="page-section" id="page-verification">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:12">/goal rubric</span></p>
+            <h1>Verification <b>loop</b>.</h1>
+            <p class="lede">Code written isn't the same as a task finished. Nova checks the result against what you asked for.</p>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">The loop</h2>
+          <ol class="steps rv">
+            <li><h4>Task</h4><p>The user's request.</p></li>
+            <li><h4>Understand</h4><p>Read the codebase, find the relevant code.</p></li>
+            <li><h4>Plan</h4><p>Decide what to change.</p></li>
+            <li><h4>Edit</h4><p>Write the code.</p></li>
+            <li><h4>Test</h4><p>Run the tests.</p></li>
+            <li class="key"><h4>Verify</h4><p>Grade the result. Fail? Back to plan.</p></li>
+          </ol>
+          <p class="body rv">When verification passes, the run is done, and the verdict and the diff
+            that earned it are stored. When it fails, the failure comes back as feedback and the loop
+            runs again, up to three attempts, then reports honestly instead of guessing.</p>
+        </section>
+
+        <section>
+          <h2 class="rv">Grader criteria</h2>
+          <p class="body rv">Five criteria scored by a separate model call:</p>
+          <ul class="proof rv">
+            <li>responded to the request</li>
+            <li>wrote files</li>
+            <li>no errors</li>
+            <li>tests pass</li>
+            <li>did not modify tests to pass</li>
+          </ul>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Criterion</th><th>What it means</th></tr></thead>
+              <tbody>
+                <tr><td>Responded to request</td><td class="desc">Did the run address what the user actually asked for?</td></tr>
+                <tr><td>Wrote files</td><td class="desc">Did the run actually modify the codebase, or just talk about it?</td></tr>
+                <tr><td>No errors</td><td class="desc">Did the run complete without errors, exceptions, or failures?</td></tr>
+                <tr><td>Tests pass</td><td class="desc">Do the existing tests still pass after the changes?</td></tr>
+                <tr><td>Did not modify tests</td><td class="desc">Did the run change the tests to make them pass instead of fixing the code?</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Turning it on</h2>
+          <div class="codeblock win rv">
+            <pre><span class="c"># Grade each finished run (costs one extra model call per turn)</span>
+/learning on
+
+<span class="c"># Hold a specific piece of work to your own criteria</span>
+/goal rubric &lt;what counts as done&gt;</pre>
+          </div>
+          <p class="body rv">Off by default. The inline verifier lives in
+            <code>core/verification_loop.py</code> and <code>hermes/verifier.py</code>. It is
+            fail-open by design: a verification failure never breaks the run.</p>
+        </section>
+      </div>
+
+      <!-- 16. REMOTE -->
+      <div class="page-section" id="page-remote">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:10">/remote</span></p>
+            <h1>Remote <b>bridges</b>.</h1>
+            <p class="lede">The bridge runs as background asyncio tasks inside the same event loop as the CLI. A remote message executes like any local prompt.</p>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Platform</th><th>Type</th><th>Notes</th></tr></thead>
+              <tbody>
+                <tr><td>Discord</td><td class="desc">Interactive chat</td><td class="desc">Messages over 2000 chars are split into chunks</td></tr>
+                <tr><td>Telegram</td><td class="desc">Interactive chat</td><td class="desc">Messages over 4096 chars are split; supports voice notes</td></tr>
+                <tr><td>Cron</td><td class="desc">One-way event source</td><td class="desc">Scheduled tasks via 5-field cron expressions</td></tr>
+                <tr><td>Webhook</td><td class="desc">One-way event source</td><td class="desc">HMAC-SHA256 signed ingress from external systems</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Security</h2>
+          <ul class="proof rv">
+            <li>only allowlisted channel/chat IDs receive responses</li>
+            <li><code>/remote allow &lt;ID&gt;</code> manages the allowlist</li>
+            <li>unauthorised messages are silently ignored (no acknowledgement leaked)</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2 class="rv">Lifecycle</h2>
+          <div class="codeblock win rv">
+            <pre>/remote start discord --token TOKEN --channel ID
+/remote start telegram --token TOKEN --chat ID
+/remote stop               <span class="c"># gracefully shut down all bridges</span>
+/remote status             <span class="c"># show what is running</span></pre>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Voice notes (Telegram)</h2>
+          <p class="body rv">Telegram accepts voice notes: they are transcribed with the configured
+            <code>/voice</code> STT provider and sent to the agent as an ordinary prompt. The
+            transcript is echoed back so you can see what was heard. In a Telegram forum, each
+            session gets its own topic, and a question Nova asks you is deleted from the chat once
+            you answer it.</p>
+        </section>
+
+        <section>
+          <h2 class="rv">Cron / heartbeat scheduler</h2>
+          <p class="body rv">Proactive scheduled tasks via standard 5-field cron expressions. Fired
+            jobs go on the same queue as remote bridges, so they run like any prompt. Manage with
+            <code>/cron</code>.</p>
+          <div class="codeblock win rv">
+            <pre><span class="k">nova</span> cron add "0 9 * * *" "review open PRs"
+<span class="k">nova</span> cron list
+<span class="k">nova</span> cron remove &lt;id&gt;</pre>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Webhook ingress server</h2>
+          <p class="body rv">Let external systems (GitHub, Linear, or any signed sender) trigger a
+            Nova run. Per-source HMAC-SHA256 secrets, timing-safe verification, binds to
+            <code>127.0.0.1</code> by default. Manage with <code>/webhook</code>.</p>
+          <div class="codeblock win rv">
+            <pre><span class="k">nova</span> webhook add &lt;name&gt; --secret &lt;secret&gt;
+<span class="k">nova</span> webhook list
+<span class="k">nova</span> webhook remove &lt;name&gt;</pre>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Streaming</h2>
+          <p class="body rv">Response chunks are captured from the agent's output and sent back to the
+            originating platform. For Discord, messages longer than 2,000 characters are split. For
+            Telegram the limit is 4,096. Edit-in-place streaming creates a single "live" reply message
+            and edits it in place on subsequent calls.</p>
+        </section>
+      </div>
+
+      <!-- 17. VOICE -->
+      <div class="page-section" id="page-voice">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:10">/voice</span></p>
+            <h1>Voice <b>I/O</b>.</h1>
+            <p class="lede">Speak prompts and hear Nova's prose replies, fully offline.</p>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Component</th><th>Default provider</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>STT</td><td class="desc">Faster-Whisper</td><td class="desc">Local, open-source (CUDA/CPU)</td></tr>
+                <tr><td>VAD</td><td class="desc">Silero VAD</td><td class="desc">Utterance endpointing</td></tr>
+                <tr><td>TTS</td><td class="desc">Piper</td><td class="desc">Local, lightweight</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Providers</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Kind</th><th>Provider</th><th>Notes</th></tr></thead>
+              <tbody>
+                <tr><td>STT</td><td class="desc">Faster-Whisper</td><td class="desc">Local, CUDA/CPU</td></tr>
+                <tr><td>STT</td><td class="desc">Deepgram</td><td class="desc">Cloud, high-accuracy</td></tr>
+                <tr><td>STT</td><td class="desc">ElevenLabs</td><td class="desc">Cloud STT</td></tr>
+                <tr><td>STT</td><td class="desc">Parakeet</td><td class="desc">NVIDIA Parakeet via sherpa-onnx</td></tr>
+                <tr><td>TTS</td><td class="desc">Piper</td><td class="desc">Lightweight local TTS</td></tr>
+                <tr><td>TTS</td><td class="desc">ElevenLabs</td><td class="desc">Cloud TTS</td></tr>
+                <tr><td>TTS</td><td class="desc">Deepgram</td><td class="desc">Cloud TTS</td></tr>
+                <tr><td>TTS</td><td class="desc">Orpheus</td><td class="desc">LLM-based TTS (~2GB, slower)</td></tr>
+                <tr><td>TTS</td><td class="desc">Pocket TTS</td><td class="desc">Kyutai's lightweight local TTS</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Voice modes</h2>
+          <p class="body rv">Two modes: push-to-talk (<code>ctrl+g</code>, press to start recording,
+            release to stop) and hands-free (<code>ctrl+l</code>, always-listening with VAD). Code
+            blocks are stripped before speaking. The <code>speak</code> tool speaks a short summary
+            aloud.</p>
+        </section>
+
+        <section>
+          <h2 class="rv">Voice management</h2>
+          <div class="codeblock win rv">
+            <pre>/voice test              <span class="c"># verify it works</span>
+/voice on/off            <span class="c"># toggle voice I/O</span>
+/voice mode ptt|listen   <span class="c"># switch mode</span>
+/voice settings tts orpheus   <span class="c"># switch TTS provider</span>
+/voice settings stt parakeet  <span class="c"># switch STT provider</span></pre>
+          </div>
+        </section>
+      </div>
+
+      <!-- 18. MIDDLEWARE -->
+      <div class="page-section" id="page-middleware">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:12">/middleware</span></p>
+            <h1>Middleware <b>stack</b>.</h1>
+            <p class="lede">Every model call passes through this chain. The base stack is order-sensitive, outermost to innermost.</p>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>#</th><th>Middleware</th><th>Purpose</th></tr></thead>
+              <tbody>
+                <tr><td>0</td><td class="desc">AsyncServerOnDemandMiddleware</td><td class="desc">Starts the LangGraph agent server on first <code>start_async_task</code></td></tr>
+                <tr><td>1</td><td class="desc">ModelRetryMiddleware</td><td class="desc">Retries transient failures (429, 5xx, timeout) with exponential backoff</td></tr>
+                <tr><td>2</td><td class="desc">VisionCaptionMiddleware</td><td class="desc">Converts images to text for text-only models; pass-through for multimodal</td></tr>
+                <tr><td>3</td><td class="desc">NovaLearningMiddleware</td><td class="desc">Hermes learning loop (periodic review, skill creation)</td></tr>
+                <tr><td>4</td><td class="desc">SecurityMiddleware</td><td class="desc">Screens URL args for deceptive Unicode/punycode spoofing</td></tr>
+                <tr><td>5</td><td class="desc">BootstrapMiddleware</td><td class="desc">Workspace bootstrap</td></tr>
+                <tr><td>6</td><td class="desc">SteeringMiddleware</td><td class="desc">Live steering instructions from <code>/steer</code></td></tr>
+                <tr><td>7</td><td class="desc">FileTrackerMiddleware</td><td class="desc">File-op tracking, result truncation</td></tr>
+                <tr><td>8</td><td class="desc">LoopGuardMiddleware</td><td class="desc">Breaks identical-repeat tool loops (threshold 3)</td></tr>
+                <tr><td>9</td><td class="desc">RubricMiddleware</td><td class="desc">Self-evaluation against <code>/goal rubric</code> criteria; dormant without rubric</td></tr>
+                <tr><td>10</td><td class="desc">ContextEditingMiddleware</td><td class="desc">Clears old tool results when the token limit is reached</td></tr>
+                <tr><td>11</td><td class="desc">ShellMiddleware</td><td class="desc">Shell execution with sandbox support</td></tr>
+                <tr><td>12</td><td class="desc">AgentMemoryMiddleware</td><td class="desc">Injects NOVA.md/CLAUDE.md project memory into the system prompt</td></tr>
+                <tr><td>13</td><td class="desc">TaskDisciplineMiddleware</td><td class="desc">Todo list discipline (appended last, in the final system message)</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Additional middleware</h2>
+          <p class="body rv">Appended after the base stack:</p>
+          <ul class="proof rv">
+            <li><code>RefreshingSkillsMiddleware</code> — tiered listing + per-turn suggestions</li>
+            <li><code>SkillCurationMiddleware</code> — clamps loaded skills to the user-enabled set</li>
+            <li><code>CodeInterpreterMiddleware</code> — QuickJS eval bridge for dynamic subagent dispatch</li>
+            <li><code>RepairToolCallsEachStep</code> — repairs malformed tool-call history before every model call</li>
+            <li><code>ToolSearchMiddleware</code> — deferred loading of ~85 tools and ~90 subagents</li>
+            <li><code>ModelRouterMiddleware</code> — optional, off by default</li>
+            <li><code>HardDenyMiddleware</code> — enforces explicit denies even without HITL interrupt</li>
+            <li><code>extra_middleware</code> — caller-injected (e.g., Cowork's WorkspacePolicy broker)</li>
+          </ul>
+        </section>
+      </div>
+
+      <!-- 19. SESSIONS -->
+      <div class="page-section" id="page-sessions">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:14">/sessions</span></p>
+            <h1>Session <b>management</b>.</h1>
+            <p class="lede">A composite state object, durable storage, and parallel sessions across git worktrees.</p>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">SessionState composite</h2>
+          <p class="body rv"><code>states/Session.py</code> (741 lines) holds six focused state slices
+            plus cross-cutting identity fields, using <code>__getattr__</code>/<code>__setattr__</code>
+            for dynamic field routing.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Slice</th><th>Key fields</th></tr></thead>
+              <tbody>
+                <tr><td>UISettings</td><td class="desc"><code>auto_approve</code>, <code>no_splash</code>, <code>plan_mode_enabled</code>, <code>verbose</code>, <code>active_goal</code></td></tr>
+                <tr><td>AgentRuntimeState</td><td class="desc"><code>_agent</code>, <code>_backend</code>, <code>_checkpointer</code>, <code>_store</code>, <code>_tools</code>, <code>_model</code>, <code>_sandbox_type</code>, <code>token_tracker</code></td></tr>
+                <tr><td>RemoteBridgeState</td><td class="desc"><code>_remote_message_queue</code>, <code>_remote_bridge_manager</code>, <code>_image_tracker</code>, <code>_seen_message_ids</code></td></tr>
+                <tr><td>BackgroundTaskState</td><td class="desc"><code>background_ralph_tasks</code>, <code>trello_server</code>, <code>create_server</code></td></tr>
+                <tr><td>NotificationState</td><td class="desc"><code>notifications</code> (deque, maxlen 100)</td></tr>
+                <tr><td>WikiState</td><td class="desc"><code>wiki_root</code>, <code>wiki_enabled</code>, <code>page_count</code>, <code>last_ingest</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Session storage layout</h2>
+          <p class="body rv">Sessions live in <code>~/.nova/sessions/&lt;session_id&gt;/</code>:</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>File</th><th>Contents</th></tr></thead>
+              <tbody>
+                <tr><td>meta.json</td><td class="desc"><code>SessionMeta</code> metadata</td></tr>
+                <tr><td>snapshot.json</td><td class="desc">Authoritative recovery snapshot (v1 format)</td></tr>
+                <tr><td>recent.jsonl</td><td class="desc">Recent messages, for context injection</td></tr>
+                <tr><td>archive.jsonl</td><td class="desc">Full message history (not injected)</td></tr>
+                <tr><td>todos.json</td><td class="desc">Task list state</td></tr>
+                <tr><td>tool_state.json</td><td class="desc">Last tool outputs</td></tr>
+                <tr><td>memory.md</td><td class="desc">Declarative memory content</td></tr>
+                <tr><td>workspace_state.json</td><td class="desc">Git + filesystem state</td></tr>
+                <tr><td>ui_journal.jsonl</td><td class="desc">UI journal (shell commands, background jobs)</td></tr>
+                <tr><td>imported-context.json</td><td class="desc">Imported session context</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Four-tier persistence</h2>
+          <ol class="steps rv">
+            <li><h4>Checkpointer</h4><p>LangGraph, SQLite-backed. Persists message history per <code>thread_id</code>. Primary conversation state.</p></li>
+            <li><h4>Snapshot</h4><p>SessionManager's <code>snapshot.json</code>. The authoritative recovery generation, written atomically.</p></li>
+            <li><h4>Store</h4><p>Durable key/value at <code>~/.nova/store.db</code>. SqliteStore, then stdlib fallback, then in-memory.</p></li>
+            <li class="key"><h4>Semantic files</h4><p><code>memory.md</code>, <code>workspace_state.json</code>, <code>ui_journal.jsonl</code>, skills, worktrees, update cache.</p></li>
+          </ol>
+        </section>
+
+        <section>
+          <h2 class="rv">Session lifecycle</h2>
+          <ul class="proof rv">
+            <li>saves the incoming prompt before execution</li>
+            <li>checkpoints active sessions every five seconds</li>
+            <li>saves again when a turn ends</li>
+            <li>resume with <code>nova --continue</code> or <code>/sessions</code></li>
+            <li>abrupt termination can lose progress since the last save</li>
+          </ul>
+          <p class="body rv">Save is serialized via a <code>@serialized_save</code> decorator to
+            prevent concurrent autosave and final-save interleaving. Restoration validates project
+            root, repo hash, and NOVA.md checksum, but never blocks on a mismatch.</p>
+        </section>
+
+        <section>
+          <h2 class="rv">Parallel sessions</h2>
+          <p class="body rv">Parallel sessions run as separate OS processes, each bound to its own git
+            worktree. The child streams <code>ui_events</code> dataclasses to the parent as JSONL; the
+            parent decodes them back and feeds the existing TUI renderer. Up to four run
+            concurrently.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Direction</th><th>Messages</th></tr></thead>
+              <tbody>
+                <tr><td>Parent to child</td><td class="desc"><code>prompt</code>, <code>interrupt_reply</code>, <code>cancel</code>, <code>shutdown</code></td></tr>
+                <tr><td>Child to parent</td><td class="desc"><code>ready</code>, <code>ev</code>, <code>interrupt</code>, <code>turn_done</code>, <code>error</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="body rv">Session leases are durable, TTL-based, and cross-process
+            (<code>DEFAULT_TTL = 300s</code>, <code>DEFAULT_RENEW_INTERVAL = 60s</code>). On a lease
+            conflict, a turn runs unleased rather than blocking. Worktrees live under
+            <code>~/.nova/worktrees/&lt;repo-name&gt;/&lt;slug&gt;</code>, outside the repo.</p>
+        </section>
+      </div>
+
+      <!-- 20. CONTEXT -->
+      <div class="page-section" id="page-context">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:10">/context</span></p>
+            <h1>Context <b>management</b>.</h1>
+            <p class="lede">A three-stage pipeline sized to the model's actual context window.</p>
+          </div>
+          <ol class="steps rv">
+            <li><h4>Clear</h4><p>Older tool results are offloaded to <code>/cleared/</code> so the agent can read them back.</p></li>
+            <li><h4>Compact</h4><p>The conversation is summarized hierarchically via LLM.</p></li>
+            <li class="key"><h4>Reserve</h4><p>A hard backstop always keeps an 8k-token reserve.</p></li>
+          </ol>
+        </section>
+
+        <section>
+          <h2 class="rv">ContextManager</h2>
+          <p class="body rv"><code>context/manager.py</code> is a model-aware facade for all
+            context-window operations:</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Method</th><th>Purpose</th></tr></thead>
+              <tbody>
+                <tr><td>window_size()</td><td class="desc">Context window size in tokens</td></tr>
+                <tr><td>breakdown()</td><td class="desc">Token breakdown against the window</td></tr>
+                <tr><td>model_config()</td><td class="desc">Model configuration</td></tr>
+                <tr><td>budget()</td><td class="desc">Process-global context budget</td></tr>
+                <tr><td>digest()</td><td class="desc">Recent conversation digest</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Compaction</h2>
+          <p class="body rv">Compaction rewrites the whole conversation into one synthetic
+            HumanMessage carrying the summary. The pre-compaction transcript is archived to
+            <code>~/.nova/sessions/&lt;thread&gt;/</code>.</p>
+          <p class="body rv"><strong>System One compaction</strong> (experimental) asks Jev or a
+            compatible local/custom decision model whether each old tool result is still needed, and
+            clears only results scored stale. Off by default. Configure through <code>/model</code>
+            &rarr; <strong>Decisions</strong> to select Jev, Tev1, or Custom System One.</p>
+        </section>
+
+        <section>
+          <h2 class="rv">Context meter</h2>
+          <p class="body rv">The TUI's CTX meter uses the latest main-model input usage when available
+            and an estimated summary/tail breakdown after compaction or resume. SESSION accumulates
+            main-model input and output across tool-loop calls against a configured token budget (1M by
+            default).</p>
+        </section>
+      </div>
+
+      <!-- 21. SECURITY -->
+      <div class="page-section" id="page-security">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:14">open safe.book</span></p>
+            <h1>Security &amp; <b>safety</b>.</h1>
+            <p class="lede">Autonomous doesn't mean uncontrolled. Every tool has a tier, and the tiers are yours to set.</p>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Security middleware</h2>
+          <p class="body rv"><code>security/middleware.py</code> screens URL-bearing tool arguments
+            for deception: hidden/invisible Unicode (BiDi overrides, zero-width chars, BOM), punycode
+            domain spoofing (<code>xn--</code> decoding), and mixed-script or confusable domain
+            labels. Policy is warn and sanitize: invisible characters are stripped from the URL in
+            place and the call proceeds; spoofing signals are surfaced as a notice but not blocked.</p>
+        </section>
+
+        <section>
+          <h2 class="rv">Human-in-the-loop</h2>
+          <p class="body rv"><code>hitl/interrupts.py</code> is a configurable interrupt system
+            requiring user approval before destructive or external operations. 11 tool categories
+            have schema-driven interrupt specs:</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Category</th><th>Tools</th></tr></thead>
+              <tbody>
+                <tr><td>Destructive</td><td class="desc"><code>shell</code>, <code>execute</code>, <code>write_file</code>, <code>edit_file</code></td></tr>
+                <tr><td>External</td><td class="desc"><code>web_search</code>, <code>fetch_url</code>, <code>http_request</code>, <code>browser_automate</code></td></tr>
+                <tr><td>Code execution</td><td class="desc"><code>run_tests</code>, <code>start_dev_server</code></td></tr>
+                <tr><td>Memory</td><td class="desc"><code>write_memory</code>, <code>create_memory_structure</code></td></tr>
+                <tr><td>User interaction</td><td class="desc"><code>ask_question</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">File recovery</h2>
+          <p class="body rv">Automatic snapshots are taken before destructive operations. Files
+            targeted by <code>rm</code> are captured before deletion, files overwritten by
+            <code>write_file</code> have their previous content saved, and files modified by
+            <code>edit_file</code> have the pre-edit content saved. Snapshots live in
+            <code>~/.nova/trash/&lt;session-id&gt;/</code>. Files over 10 MB are skipped. Restore via
+            <code>/restore</code> or the <code>list_trash</code> and <code>restore_file</code> tools.</p>
+        </section>
+
+        <section>
+          <h2 class="rv">Other safety layers</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Layer</th><th>Purpose</th></tr></thead>
+              <tbody>
+                <tr><td>path_approval.py</td><td class="desc">Path-based operation approval for filesystem access outside the project root</td></tr>
+                <tr><td>git_safety.py</td><td class="desc">Dangerous command detection and injection prevention</td></tr>
+                <tr><td>errors/taxonomy.py</td><td class="desc">14 error categories for recovery strategies</td></tr>
+                <tr><td>unicode_security.py</td><td class="desc">URL safety checking (BiDi, zero-width, BOM, punycode, confusables)</td></tr>
+                <tr><td>delegated_approval.py</td><td class="desc"><code>HardDenyMiddleware</code> enforces explicit denies even without HITL</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <!-- 22. SANDBOX -->
+      <div class="page-section" id="page-sandbox">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:14">--sandbox</span></p>
+            <h1>Sandbox <b>execution</b>.</h1>
+            <p class="lede">Seven providers, from OS-level confinement to hardware-virtualized microVMs.</p>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Provider</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>os</td><td class="desc">OS sandbox (default on Linux/macOS — host files, shell confined to workspace)</td></tr>
+                <tr><td>docker</td><td class="desc">Docker container (opt-in on Windows, with workspace binding)</td></tr>
+                <tr><td>modal</td><td class="desc">Modal cloud sandbox</td></tr>
+                <tr><td>runloop</td><td class="desc">Runloop cloud sandbox</td></tr>
+                <tr><td>daytona</td><td class="desc">Daytona cloud sandbox</td></tr>
+                <tr><td>langsmith</td><td class="desc">LangSmith Sandboxes (hardware-virtualized microVMs)</td></tr>
+                <tr><td>none</td><td class="desc">No sandbox (unconfined local execution)</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Sandbox flags</h2>
+          <div class="codeblock win rv">
+            <pre><span class="k">nova</span> --sandbox os                    <span class="c"># OS sandbox (default on Linux/macOS)</span>
+<span class="k">nova</span> --sandbox docker                <span class="c"># Docker container</span>
+<span class="k">nova</span> --sandbox langsmith             <span class="c"># LangSmith microVMs</span>
+<span class="k">nova</span> --no-sandbox                    <span class="c"># force unconfined local execution</span>
+<span class="k">nova</span> --sandbox-id &lt;id&gt;               <span class="c"># reuse an existing sandbox</span>
+<span class="k">nova</span> --sandbox docker --ports 8080:8080
+<span class="k">nova</span> --sandbox langsmith --sandbox-vcpus 2 --sandbox-mem-bytes 8589934592</pre>
+          </div>
+          <p class="body rv">The default sandbox image is <code>python:3.11-slim</code>. The sandbox
+            factory (<code>integrations/sandbox_factory.py</code>) creates the appropriate backend
+            based on the provider type, supporting workspace binding, setup scripts, and resource
+            configuration.</p>
+        </section>
+      </div>
+
+      <!-- 23. INFRASTRUCTURE -->
+      <div class="page-section" id="page-infrastructure">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:12">/cowork</span></p>
+            <h1>Infrastructure.</h1>
+            <p class="lede">Surfaces beyond the terminal: notifications, a web chat, and a desktop companion app.</p>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Vixie desktop companion</h2>
+          <p class="body rv"><code>vixie/</code> is a background server for desktop notifications and
+            system tray integration: task completion and status alerts, quick access to Nova status, a
+            WebSocket server for real-time event streaming, and state mapping (idle, thinking, working,
+            success, error, user_input, planning).</p>
+        </section>
+
+        <section>
+          <h2 class="rv">Agent server launcher</h2>
+          <p class="body rv">The local <code>langgraph dev</code> server that hosts async agent graphs.
+            It reserves a port but does not start at boot; the first <code>start_async_task</code>
+            triggers <code>ensure_started()</code>. Health is confirmed by polling
+            <code>GET /ok</code> and then the first graph. Stop is graceful (SIGTERM to the process
+            group, Ctrl+Break on Windows) then force (SIGKILL / <code>taskkill /T /F</code>). A server
+            that won't come up leaves the session exactly as it was.</p>
+        </section>
+
+        <section>
+          <h2 class="rv">Server, Cowork, and tracking</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Component</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>server/</td><td class="desc">Local HTTP server with an event adapter, session manager, and WebSocket chat</td></tr>
+                <tr><td>cowork/</td><td class="desc"><code>/cowork</code> launches a desktop companion app: FastAPI on a random localhost port, default-deny workspace access with folder grants</td></tr>
+                <tr><td>process_manager.py</td><td class="desc">Subprocess lifecycle, health checks, and cleanup for dev servers</td></tr>
+                <tr><td>daemons/</td><td class="desc">A detached-daemon registry (JSON file-backed pid store) that survives restarts</td></tr>
+                <tr><td>artifacts/</td><td class="desc">In-memory, session-scoped registry; content rendered in a sandboxed browser context, never executed on the host</td></tr>
+                <tr><td>tracking/</td><td class="desc">File tracker, loop guard, usage tree with cost estimation, tracing, workspace anchoring</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Hooks system</h2>
+          <p class="body rv">Lifecycle hooks can be Python scripts, shell commands, or any executable.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Hook</th><th>When it fires</th></tr></thead>
+              <tbody>
+                <tr><td>pre_tool_call</td><td class="desc">Before a tool is executed (validate inputs, log, modify params)</td></tr>
+                <tr><td>post_tool_call</td><td class="desc">After a tool completes (process results, log, notify)</td></tr>
+                <tr><td>on_message</td><td class="desc">When a message is received (filter content, add context)</td></tr>
+                <tr><td>on_error</td><td class="desc">When an error occurs (custom error handling, recovery)</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <!-- 24. DIRECTORY -->
+      <div class="page-section" id="page-directory">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:10">tree ~/.nova</span></p>
+            <h1>Directory <b>structure</b>.</h1>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Global configuration (~/.nova/)</h2>
+          <div class="codeblock win rv">
+            <pre>~/.nova/
+  agents/default/
+    agent.md          <span class="c"># user model + preferences</span>
+    memories/         <span class="c"># semantic memory tier</span>
+      INDEX.md
+      &lt;topic&gt;.md
+  skills/
+    web-research/
+      SKILL.md
+  hooks/
+    pre_tool_call.py
+    post_tool_call.sh
+  daemons/
+    registry.json     <span class="c"># detached daemon registry</span>
+  plans/
+    &lt;project-slug&gt;/   <span class="c"># global plan archive</span>
+  plugins/
+    manifest.json     <span class="c"># plugin enable/disable manifest</span>
+  trash/
+    &lt;session-id&gt;/     <span class="c"># file recovery snapshots</span>
+      manifest.json
+  store.db            <span class="c"># durable LangGraph key/value store</span>
+  Nova.config.json    <span class="c"># persistent configuration</span>
+  logs/
+    nova.log
+  ui/
+    &lt;workspace&gt;/       <span class="c"># saved UI layouts</span></pre>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Project configuration</h2>
+          <div class="codeblock win rv">
+            <pre>my-project/
+  .nova/
+    NOVA.md               <span class="c"># project context and conventions</span>
+    config.json           <span class="c"># project configuration</span>
+    hooks.json            <span class="c"># project-specific hooks</span>
+    skills/               <span class="c"># project-specific skills</span>
+    wiki/                 <span class="c"># project wiki vault</span>
+      index.md
+      log.md
+      README.md
+      Clippings/          <span class="c"># Obsidian Web Clipper inbox</span>
+      wiki/               <span class="c"># synthesized pages</span>
+    plans/                <span class="c"># approved plans</span>
+    council/              <span class="c"># past council runs</span>
+    project-graph.json    <span class="c"># project graph</span>
+  .claude/                <span class="c"># also supported (Claude Code compatible)</span>
+  .nova.config.json       <span class="c"># project-level config (scoped)</span></pre>
+          </div>
+        </section>
+      </div>
+
+      <!-- 25. EXTRAS -->
+      <div class="page-section" id="page-extras">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:16">uv pip install</span></p>
+            <h1>Optional <b>dependencies</b>.</h1>
+            <p class="lede">The base install is kept lean. Heavier features are extras.</p>
+          </div>
+          <div class="codeblock win rv">
+            <pre><span class="c"># Real-browser automation: /browser-use and the LinkedIn scraper (~330 MB)</span>
+uv pip install novacode-cli[browser]
+
+<span class="c"># The local server the async agents run on</span>
+uv pip install novacode-cli[agents-server]
+
+<span class="c"># Voice I/O (STT + TTS + VAD) - ~2 GB extra</span>
+uv pip install novacode-cli[voice]
+
+<span class="c"># Orpheus TTS - very natural LLM-based local TTS</span>
+uv pip install novacode-cli[voice-orpheus]
+
+<span class="c"># Parakeet STT - NVIDIA local speech-to-text via sherpa-onnx</span>
+uv pip install novacode-cli[voice-parakeet]
+
+<span class="c"># Pocket TTS - lightweight local TTS</span>
+uv pip install novacode-cli[voice-pocket]</pre>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Extras</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Extra</th><th>Packages</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td>browser</td><td class="desc">browser-use, playwright</td><td class="desc">Real-browser automation (~330 MB)</td></tr>
+                <tr><td>agents-server</td><td class="desc">langgraph-cli[inmem]</td><td class="desc">Local LangGraph server for async agents</td></tr>
+                <tr><td>voice</td><td class="desc">faster-whisper, silero-vad, piper-tts, sounddevice</td><td class="desc">Voice I/O (~2 GB)</td></tr>
+                <tr><td>voice-orpheus</td><td class="desc">orpheus-cpp, llama-cpp-python</td><td class="desc">Orpheus LLM-based TTS</td></tr>
+                <tr><td>voice-parakeet</td><td class="desc">sherpa-onnx</td><td class="desc">NVIDIA Parakeet STT</td></tr>
+                <tr><td>voice-pocket</td><td class="desc">pocket-tts</td><td class="desc">Kyutai Pocket TTS</td></tr>
+                <tr><td>server</td><td class="desc">fastapi, uvicorn</td><td class="desc">Local HTTP server</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <!-- 26. TROUBLESHOOTING -->
+      <div class="page-section" id="page-troubleshooting">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:12">nova doctor</span></p>
+            <h1>Trouble<b>shooting</b>.</h1>
+            <p class="lede">Common issues and how to resolve them.</p>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Common issues</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Issue</th><th>Solution</th></tr></thead>
+              <tbody>
+                <tr><td>Python version mismatch</td><td class="desc"><code>python --version</code>. Use <code>uv venv --python 3.11</code></td></tr>
+                <tr><td>Virtual env not activating (Windows)</td><td class="desc"><code>Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser</code></td></tr>
+                <tr><td>Package installation fails</td><td class="desc"><code>uv cache clean; uv sync --reinstall</code></td></tr>
+                <tr><td>Missing dependencies</td><td class="desc"><code>uv sync --all-extras</code></td></tr>
+                <tr><td>Import errors</td><td class="desc"><code>uv pip install -e . --force-reinstall</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">nova doctor</h2>
+          <p class="body rv">Runs six checks and returns exit code 0 when all pass (1 on failures):</p>
+          <ol class="steps rv">
+            <li><h4>Configuration</h4><p><code>~/.nova/config.json</code> exists and is valid JSON with a provider set.</p></li>
+            <li><h4>Secrets</h4><p>Lists configured secrets via the SecretManager.</p></li>
+            <li><h4>LLM connection</h4><p>Ollama tests <code>/api/tags</code> and checks allocated context; cloud providers create a model instance.</p></li>
+            <li><h4>Tavily</h4><p>Tests the search API if a key is configured.</p></li>
+            <li><h4>Permissions</h4><p>Checks that <code>secrets.json</code> is not readable by others.</p></li>
+            <li class="key"><h4>Voice stack</h4><p>Checks audio imports, PortAudio, and the default input device.</p></li>
+          </ol>
+        </section>
+
+        <section>
+          <h2 class="rv">Diagnostics</h2>
+          <div class="codeblock win rv">
+            <pre><span class="k">nova</span> doctor           <span class="c"># validate config + connections</span>
+<span class="k">nova</span> --version       <span class="c"># check version</span>
+<span class="k">nova</span> paths list      <span class="c"># check approved paths</span></pre>
+          </div>
+          <p class="body rv">Any UI freeze over one second is logged to
+            <code>~/.nova/logs/freeze.log</code>. The application log lives at
+            <code>~/.nova/logs/nova.log</code>.</p>
+        </section>
+
+        <section>
+          <h2 class="rv">Getting help</h2>
+          <ul class="proof rv">
+            <li>run <code>nova doctor</code></li>
+            <li>check <code>~/.nova/logs/freeze.log</code></li>
+            <li>open an issue on GitHub</li>
+            <li>include <code>nova --version</code> output</li>
+          </ul>
+        </section>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<div class="statusline" aria-hidden="true">
+  <span class="mode">NOVA</span>
+  <span class="where" id="where">~/docs</span>
+  <span class="gauge"><i></i></span>
+</div>
+
+<script>
+(() => {
+  const sections = document.querySelectorAll('.page-section');
+  const links = document.querySelectorAll('[data-page]');
+  const where = document.getElementById('where');
+  const pageNames = {
+    overview: '~/docs', installation: '~/docs/INSTALL.md', cli: '~/docs/cli', config: '~/docs/config',
+    tui: '~/docs/tui', slash: '~/docs/slash', headless: '~/docs/headless', tools: '~/docs/tools',
+    subagents: '~/docs/agents', memory: '~/docs/memory', skills: '~/docs/skills', mcp: '~/docs/mcp',
+    plugins: '~/docs/plugins', hermes: '~/docs/hermes', verification: '~/docs/verify',
+    remote: '~/docs/remote', voice: '~/docs/voice', middleware: '~/docs/middleware',
+    sessions: '~/docs/sessions', context: '~/docs/context', security: '~/docs/security',
+    sandbox: '~/docs/sandbox', infrastructure: '~/docs/infra', directory: '~/docs/tree',
+    extras: '~/docs/extras', troubleshooting: '~/docs/doctor'
+  };
+
+  function showPage(name) {
+    sections.forEach(s => s.classList.toggle('active', s.id === 'page-' + name));
+    links.forEach(l => l.classList.toggle('active', l.dataset.page === name));
+    if (pageNames[name]) where.textContent = pageNames[name];
+    document.querySelectorAll('.sidebar-group').forEach(g => {
+      const hasActive = g.querySelector('a.active');
+      g.classList.toggle('open', !!hasActive);
+      const title = g.querySelector('.sidebar-group-title');
+      if (title) title.setAttribute('aria-expanded', hasActive);
+    });
+    document.getElementById('sidebar').classList.remove('open');
+    document.getElementById('sidebar-overlay').classList.remove('on');
+    window.scrollTo(0, 0);
+  }
+
+  links.forEach(l => l.addEventListener('click', e => {
+    e.preventDefault();
+    showPage(l.dataset.page);
+  }));
+
+  document.querySelectorAll('.sidebar-group-title').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const group = btn.closest('.sidebar-group');
+      const open = group.classList.toggle('open');
+      btn.setAttribute('aria-expanded', open);
+    });
+  });
+
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebar-overlay');
+  const menuBtn = document.getElementById('menu-btn');
+  menuBtn.addEventListener('click', () => {
+    sidebar.classList.toggle('open');
+    overlay.classList.toggle('on');
+  });
+  overlay.addEventListener('click', () => {
+    sidebar.classList.remove('open');
+    overlay.classList.remove('on');
+  });
+
+  const reveal = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (e.isIntersecting) { e.target.classList.add('in'); reveal.unobserve(e.target); }
+    }
+  }, { rootMargin: '0px 0px -8% 0px', threshold: 0.12 });
+  document.querySelectorAll('.rv').forEach((el) => reveal.observe(el));
+
+  document.querySelectorAll('[data-copy]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const label = btn.querySelector('span');
+      try {
+        await navigator.clipboard.writeText(btn.dataset.copy);
+        btn.classList.add('done'); label.textContent = 'Copied';
+      } catch {
+        label.textContent = 'Press Ctrl+C';
+      }
+      setTimeout(() => { btn.classList.remove('done'); label.textContent = 'Copy'; }, 1800);
+    });
+  });
+
+  const tabs = [...document.querySelectorAll('.tab')];
+  const select = (tab) => {
+    tabs.forEach((t) => {
+      const on = t === tab;
+      t.setAttribute('aria-selected', on);
+      t.tabIndex = on ? 0 : -1;
+      document.getElementById(t.getAttribute('aria-controls')).classList.toggle('on', on);
+    });
+  };
+  tabs.forEach((tab, i) => {
+    tab.addEventListener('click', () => select(tab));
+    tab.addEventListener('keydown', (e) => {
+      const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+      if (!step) return;
+      const next = tabs[(i + step + tabs.length) % tabs.length];
+      select(next); next.focus();
+    });
+  });
+  if (/Win/.test(navigator.userAgent)) select(document.getElementById('t-win'));
+})();
+</script>
+</body>
+</html></longcat_think>
