@@ -3471,6 +3471,9 @@ class SkillsScreen(ModalScreen[None]):
     SkillsScreen #skills-content { height: 1fr; min-height: 3; }
     SkillsScreen #skills-list { height: 1fr; min-height: 3; max-height: 100%; }
     SkillsScreen #skill-detail-preview { max-height: 8; }
+    SkillsScreen #modal-buttons { height: auto; layout: grid; grid-size: 4; grid-columns: 1fr; grid-rows: 3; }
+    SkillsScreen #modal-buttons Button { width: 100%; min-width: 0; }
+    SkillsScreen.narrow #modal-buttons { grid-size: 2; }
     SkillsScreen.short #skill-detail-preview { max-height: 3; }
     """
 
@@ -3510,6 +3513,8 @@ class SkillsScreen(ModalScreen[None]):
                 yield Static("", id="skill-detail-preview", classes="preview-box")
                 yield Static("", id="skills-hint")
             with Horizontal(id="modal-buttons"):
+                yield Button("Pin to prompt", id="pin")
+                yield Button("Reload", id="reload")
                 yield Button("Toggle", id="toggle", variant="primary")
                 yield Button("Prune", id="prune")
                 yield Button("Restore", id="restore")
@@ -3520,8 +3525,9 @@ class SkillsScreen(ModalScreen[None]):
         animate_modal_screen(self)
         self._reload()
 
-    def _reload(self) -> None:
-        self.app._skill_names_cache = None
+    def _reload(self, *, refresh_names: bool = True) -> None:
+        if refresh_names:
+            self.app._skill_names_cache = None
         names = self.app._get_skill_names()
 
         ol = self.query_one("#skills-list", OptionList)
@@ -3564,7 +3570,7 @@ class SkillsScreen(ModalScreen[None]):
         hint.update(
             Text(
                 f"{enabled_count}/{len(names)} enabled in {self._scope} · "
-                "Space toggles on/off · takes effect next turn",
+                "Space toggles · Pin adds $skill to your prompt · reload takes effect next turn",
                 style="dim",
             )
         )
@@ -3831,7 +3837,9 @@ class SkillsScreen(ModalScreen[None]):
             except Exception:
                 pass
 
-            for d, sc in search_dirs:
+            # Global → Claude → plugins → project; later sources win.
+            search_dirs.sort(key=lambda item: item[1] == "project")
+            for d, sc in reversed(search_dirs):
                 if d and (d / skill_name / "SKILL.md").exists():
                     skill_path = d / skill_name / "SKILL.md"
                     scope = sc
@@ -3846,9 +3854,12 @@ class SkillsScreen(ModalScreen[None]):
                         parts = content.split("---", 2)
                         if len(parts) >= 3:
                             instructions = parts[2].strip()
-                            for line in parts[1].splitlines():
-                                if line.strip().startswith("description:"):
-                                    desc = line.split(":", 1)[1].strip()
+                            import yaml
+                            metadata = yaml.safe_load(parts[1]) or {}
+                            desc = str(metadata.get("description", ""))
+                            optional = (metadata.get("metadata") or {}).get("include_tools", "")
+                            if isinstance(optional, str) and optional:
+                                instructions = f"Optional tools: {optional}\n\n" + instructions
                     else:
                         instructions = content.strip()
                 except Exception as e:
@@ -3881,6 +3892,17 @@ class SkillsScreen(ModalScreen[None]):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "close":
             self.dismiss(None)
+        elif event.button.id == "pin":
+            names = self.app._get_skill_names()
+            index = self.query_one("#skills-list", OptionList).highlighted
+            if index is not None and 0 <= index < len(names):
+                from novacode_cli.skills.skills_prefs import effective_disabled
+                if names[index] not in effective_disabled():
+                    self.dismiss(names[index])
+                else:
+                    self.query_one("#skills-hint", Static).update("Enable this skill before pinning it.")
+        elif event.button.id == "reload":
+            self.run_worker(self._reload_from_disk(), group="skills-reload", exclusive=True)
         elif event.button.id == "toggle":
             self.action_toggle()
         elif event.button.id == "prune":
@@ -3893,6 +3915,22 @@ class SkillsScreen(ModalScreen[None]):
         elif event.button.id == "create":
             if not self._generating:
                 self.app.run_worker(self._create_skill(), group="create_skill", exclusive=True)
+
+    async def _reload_from_disk(self) -> None:
+        import asyncio
+
+        from novacode_cli.skills import load
+        from novacode_cli.skills.runtime import request_reload
+
+        request_reload()
+        load._DIR_CACHE.clear()
+        self.app._skill_names_cache = await asyncio.to_thread(self.app._collect_skill_names)
+        if not self.is_mounted:
+            return
+        self.app._skill_count_cache = None
+        self.app._status_tail = None
+        self._reload(refresh_names=False)
+        self.app._refresh_status()
 
     async def _create_skill(self) -> None:
         result = await self.app.push_screen_wait(SkillCreateModal())
@@ -5241,9 +5279,11 @@ class BackgroundTasksScreen(ModalScreen[dict | None]):
     BackgroundTasksScreen #tasks-list { height: 1fr; min-height: 3; max-height: 100%; }
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, extra_tasks=None, clear_extra=None) -> None:
         super().__init__()
         self._tasks: list[Any] = []
+        self._extra_tasks = extra_tasks or (lambda: [])
+        self._clear_extra = clear_extra or (lambda: None)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="modal-box"):
@@ -5258,8 +5298,25 @@ class BackgroundTasksScreen(ModalScreen[dict | None]):
             )
 
     def on_mount(self) -> None:
+        self._fit_height()
         self._refresh()
         self.set_interval(1.0, self._refresh)  # live runtimes
+
+    def on_resize(self) -> None:
+        self._fit_height()
+
+    def _fit_height(self) -> None:
+        compact = self.size.height < 22
+        self.set_class(compact, "tasks-short")
+        try:
+            hint = self.query_one("#tasks-hint", Static)
+        except NoMatches:
+            return
+        hint.update(Text(
+            "↑/↓ · t stop · l logs · Esc" if compact else
+            "↑/↓ select · [t]erminate · [r]estart · [l]ogs · [c]opy cmd · [x] clear done · Esc close",
+            style="dim",
+        ))
 
     def _registry(self):
         from novacode_cli.shell.jobs import get_registry
@@ -5271,22 +5328,38 @@ class BackgroundTasksScreen(ModalScreen[dict | None]):
 
         ol = self.query_one("#tasks-list", OptionList)
         keep = ol.highlighted
-        self._tasks = self._registry().list_jobs()
-        ol.clear_options()
+        selected = self._selected() if ol.option_count else None
+        selected_id = selected.task_id if selected is not None else None
+        previous_ids = [task.task_id for task in self._tasks]
+        self._tasks = sorted(
+            [*self._registry().list_jobs(), *self._extra_tasks()],
+            key=lambda task: task.status != "running",
+        )
+        same_rows = previous_ids == [task.task_id for task in self._tasks] and bool(self._tasks)
+        if not same_rows:
+            ol.clear_options()
+        running = sum(task.status == "running" for task in self._tasks)
+        self.query_one("#modal-title", Static).update(Text(f"Background Tasks · {running} running", style="bold"))
         if not self._tasks:
             ol.add_option(Option("No background tasks."))
         else:
             style = {"running": "cyan", "done": "green", "failed": "red", "terminated": "yellow"}
-            for t in self._tasks:
+            for index, t in enumerate(self._tasks):
                 line = Text()
                 line.append(f"{t.status_glyph()} ", style=style.get(t.status, "white"))
                 line.append(f"{t.task_id}  ", style="bold")
                 line.append(f"{t.command[:44]}", style="white")
                 state = t.status + (f" · exit {t.exit_code}" if t.exit_code is not None else "")
                 line.append(f"\n   {state} · {fmt_runtime(t.runtime())}", style="dim")
-                ol.add_option(Option(line))
+                if same_rows:
+                    ol.replace_option_prompt_at_index(index, line)
+                else:
+                    ol.add_option(Option(line))
         if self._tasks and keep is not None:
-            ol.highlighted = min(keep, len(self._tasks) - 1)
+            ol.highlighted = next(
+                (index for index, task in enumerate(self._tasks) if task.task_id == selected_id),
+                min(keep, len(self._tasks) - 1),
+            )
 
     def _selected(self):
         ol = self.query_one("#tasks-list", OptionList)
@@ -5298,17 +5371,26 @@ class BackgroundTasksScreen(ModalScreen[dict | None]):
     def action_terminate(self) -> None:
         t = self._selected()
         if t is not None:
-            self._registry().terminate(t.id)
+            if hasattr(t, "id"):
+                self._registry().terminate(t.id)
+            elif t.worker is not None:
+                t.worker.cancel()
+            else:
+                self.notify("Cancel remote subagents using cancel_async_task.")
             self._refresh()
 
     def action_restart(self) -> None:
         t = self._selected()
         if t is not None:
-            self._registry().restart(t.id)
+            if hasattr(t, "id"):
+                self._registry().restart(t.id)
+            else:
+                self.notify("Submit the agent prompt again with Ctrl+B to restart it.")
             self._refresh()
 
     def action_clear(self) -> None:
         self._registry().clear_completed()
+        self._clear_extra()
         self._refresh()
 
     def action_logs(self) -> None:

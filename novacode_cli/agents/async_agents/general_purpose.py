@@ -18,6 +18,7 @@ def build_graph() -> Any:
     from novacode_cli.prompts import render_template
     from novacode_cli.security.delegated_approval import DelegatedApprovalMiddleware
     from novacode_cli.shell.middleware import ShellMiddleware
+    from novacode_cli.skills.libraries import background_library
     from novacode_cli.tools import docs_search, fetch_url, package_info, web_search
 
     root = workspace_root()
@@ -32,6 +33,7 @@ def build_graph() -> Any:
             NovaModelRetryMiddleware(),
             DelegatedApprovalMiddleware(),
             ShellMiddleware(workspace_root=str(root)),
+            background_library("general-purpose-async"),
         ],
         context_schema=NovaAsyncContext,
     )

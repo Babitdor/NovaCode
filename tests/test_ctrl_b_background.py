@@ -65,17 +65,24 @@ async def test_bang_command_background_handoff_keeps_process_and_finishes(tmp_pa
         assert jobs.get_registry().active_count() == 0
 
 
-async def test_execute_handoff_survives_turn_cancellation_and_retires_control(monkeypatch):
+async def test_execute_handoff_survives_turn_cancellation_and_retires_control(monkeypatch, tmp_path):
     from novacode_cli.shell.middleware import ShellMiddleware
 
     app = _app()
-    middleware = ShellMiddleware(workspace_root=".", timeout=10)
+    middleware = ShellMiddleware(workspace_root=".", timeout=30)
+    release = tmp_path / "release-command"
+    command = (
+        "import time; from pathlib import Path; print('started', flush=True)\n"
+        f"release = Path({str(release)!r})\n"
+        "while not release.exists(): time.sleep(0.01)\n"
+        "print('finished', flush=True)"
+    )
     async with app.run_test() as pilot:
         monkeypatch.setattr(app, "_continue_after_task", lambda _job: None)
         app._turn_active = True
         worker = app.run_worker(
             middleware._adispatch_local(
-                "import time; print('started', flush=True); time.sleep(1); print('finished')",
+                command,
                 tool_call_id="execute-test",
                 prog=[sys.executable, "-u", "-c"],
             ),
@@ -96,6 +103,7 @@ async def test_execute_handoff_survives_turn_cancellation_and_retires_control(mo
         assert jobs.get_current() is None
         assert jobs.request_kill() is False, "Esc must not kill a background command"
         app._turn_active = False
+        release.touch()
         for _ in range(200):
             if active[0].status != "running":
                 break

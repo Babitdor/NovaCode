@@ -515,7 +515,7 @@ class MCPMiddleware(AgentMiddleware):
         ]
 
         # Build metadata cache with correct server attribution
-        for tool in server_tools:
+        for tool, raw_tool in zip(server_tools, raw_tools, strict=True):
             input_schema = {}
             if hasattr(tool, "args_schema") and tool.args_schema:
                 try:
@@ -532,6 +532,7 @@ class MCPMiddleware(AgentMiddleware):
                     "name": tool.name,
                     "description": tool.description or "",
                     "server": server_name,
+                    "skill_alias": raw_tool.name,
                     "input_schema": input_schema,
                 }
             )

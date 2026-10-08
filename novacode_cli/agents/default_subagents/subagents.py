@@ -138,37 +138,11 @@ def retrieve_core_subagents(
         for name, config in subagent_configs
     ]
 
-    # Selectively assign 1-2 targeted skills per subagent.
-    # SkillsMiddleware is instantiated per-subagent only when `skills` is set,
-    # so skipping agents that don't need skills saves middleware overhead and
-    # avoids polluting their system prompt with irrelevant skill content.
-    # The general-purpose subagent auto-inherits the main agent's skills from
-    # create_deep_agent's top-level `skills` parameter — no need to list it here.
-    subagent_skills: dict[str, list[str]] = {
-        "code-explorer": [
-            "/skills/codebase-explorer/",
-            "/skills/graphify/",
-        ],
-        "refactoring-specialist-agent": [
-            "/skills/improve-codebase-architecture/",
-        ],
-        "bug-fix-agent": [
-            "/skills/systematic-debugging/",
-        ],
-        # It drives a real browser through the MCP tools it is granted (playwright
-        # and cua-driver: MCP_TOOLS_BY_SUBAGENT in core_agent.py), and, through
-        # the `execute` tool every subagent has, the agent-browser CLI and the
-        # Playwright scripts these two skills teach. The skills are the fallback
-        # when the MCP servers are absent or the browser is locked.
-        "browser-automation-agent": [
-            "/skills/agent-browser/",
-            "/skills/browser-use/",
-            "/skills/web-research/",
-        ],
-    }
+    from novacode_cli.skills.libraries import SPECIALIST_LIBRARIES
+
+    # Names resolve across every precedence root; individual skill directories
+    # are not library roots and must not be passed as the upstream `skills`.
     for sa in subagents:
-        skills = subagent_skills.get(sa["name"])
-        if skills:
-            sa["skills"] = skills
+        sa["skill_names"] = list(SPECIALIST_LIBRARIES.get(sa["name"], ()))
 
     return subagents

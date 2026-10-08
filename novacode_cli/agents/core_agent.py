@@ -433,6 +433,9 @@ def build_named_subagents(
         if agent_model:
             subagent["model"] = agent_model
 
+        metadata, _ = _split(system_prompt)
+        if "skill_names" in metadata:
+            subagent["skill_names"] = metadata["skill_names"]
         subagents.append(subagent)
 
     # Cache the result
@@ -666,6 +669,7 @@ def _harden_subagent_specs(
     specs: list,
     skill_sources: list[str] | None = None,
     main_model_supports_images: bool = False,
+    skill_backend: object | None = None,
 ) -> list:
     """Return resilient, unattended copies of the subagent specs.
 
@@ -691,14 +695,10 @@ def _harden_subagent_specs(
       otherwise kill it (this is what broke /init's semantic-extraction
       subagents — the chunk fragment never got written). A fresh instance per
       build; skipped if the spec already carries a retry middleware.
-    - **Give skills + curation** — Nova's subagent specs declare no ``skills``,
-      so deepagents builds them with NO ``SkillsMiddleware`` (subagents had zero
-      skills). We set ``spec["skills"] = skill_sources`` (the same virtual
-      ``/skills/`` routes the main agent uses, resolved through the shared
-      backend) so deepagents loads the full set, then append a fresh
-      ``SkillCurationMiddleware`` — which runs after that loader — so each
-      subagent sees ONLY the user-enabled (curated) skills, just like the main
-      agent. Skipped if the spec already declares skills / carries curation.
+    - **Give isolated skill libraries** — with a skill backend, attach a fresh
+      loader using the specialist's selected names and the user's enabled set.
+      General-purpose agents retain the full library. Explicit source roots
+      remain supported, and the automatic second loader is disabled.
     """
     from novacode_cli.agents.model_retry import NovaModelRetryMiddleware as ModelRetryMiddleware
     from novacode_cli.agents.agent_mailbox import read_agent_messages, send_agent_message
@@ -771,12 +771,29 @@ def _harden_subagent_specs(
         has_loopguard = any(type(m).__name__ == "LoopGuardMiddleware" for m in existing)
         has_async = any(type(m).__name__ == "AsyncSubAgentMiddleware" for m in existing)
 
-        # Give the subagent the (full) skill sources so deepagents attaches a
-        # SkillsMiddleware on the shared backend — unless the spec already
-        # declares its own skills. SkillCurationMiddleware (appended below, after
-        # the loader) then clamps them to the user-enabled set.
+        # Share the source mounts, but give each graph its own selected library
+        # and activation state. Respect explicitly configured source roots.
         if skill_sources and "skills" not in new_spec:
             new_spec["skills"] = list(skill_sources)
+        if skill_backend is not None and new_spec.get("skills"):
+            from novacode_cli.skills.libraries import library_names
+
+            sources = new_spec["skills"]
+            # Explicit source roots remain supported. Built-in specialists use
+            # all precedence roots with a small name allowlist instead.
+            selected = (
+                library_names(new_spec["name"], new_spec)
+                if "skill_names" in new_spec or sources == skill_sources
+                else None
+            )
+            if not any(isinstance(m, RefreshingSkillsMiddleware) for m in existing):
+                existing.insert(
+                    0,
+                    SubagentSkillsMiddleware(
+                        backend=skill_backend, sources=sources, library_names=selected
+                    ),
+                )
+            new_spec["skills"] = []  # disable the second, automatic loader
 
         mw_to_add = []
         from novacode_cli.security.delegated_approval import DelegatedApprovalMiddleware
@@ -925,8 +942,6 @@ def _build_skill_sources() -> tuple[list[str], Path, Path, list[Path], list[tupl
         skill_sources.append("/shared-skills/")
     if claude_skills_dir.exists():
         skill_sources.append("/claude-skills/")
-    for i, _p in enumerate(project_skills_dirs):
-        skill_sources.append(f"/project-skills-{i}/")
 
     # Skills from installed Claude-compatible plugins (~/.nova/plugins/*/skills).
     from novacode_cli.plugins.claude_plugins import plugin_skill_dirs
@@ -934,6 +949,8 @@ def _build_skill_sources() -> tuple[list[str], Path, Path, list[Path], list[tupl
     plugin_skills = plugin_skill_dirs()
     for pname, _d in plugin_skills:
         skill_sources.append(f"/plugin-skills-{pname}/")
+    for i, _p in enumerate(project_skills_dirs):
+        skill_sources.append(f"/project-skills-{i}/")
 
     return skill_sources, skills_dir, claude_skills_dir, project_skills_dirs, plugin_skills
 
@@ -1704,6 +1721,7 @@ def _build_subagent_roster(
     skill_sources: list[str],
     mcp_tools: list[BaseTool] | None = None,
     main_model_supports_images: bool = False,
+    skill_backend: object | None = None,
 ) -> list:
     """Assemble the final subagent roster for ``create_deep_agent``.
 
@@ -1797,7 +1815,7 @@ def _build_subagent_roster(
     # subagent mid-run — see _harden_subagent_specs. Returns fresh copies (never
     # mutates the cached specs, which would accumulate middleware across builds).
     Nova_SubAgent = _harden_subagent_specs(
-        unique_subagent_specs(Nova_SubAgent), skill_sources, main_model_supports_images
+        unique_subagent_specs(Nova_SubAgent), skill_sources, main_model_supports_images, skill_backend
     )
 
     return unique_subagent_specs(Nova_SubAgent + async_subagents)  # type: ignore[arg-type]
@@ -2127,6 +2145,7 @@ This file stores your preferences and context that persist across sessions.
         plugin_specs=_plugin_specs,
         skill_sources=skill_sources,
         main_model_supports_images=_main_model_supports_images,
+        skill_backend=composite_backend,
     )
 
     # Get the system prompt (sandbox-aware and with skills)
@@ -2161,14 +2180,19 @@ This file stores your preferences and context that persist across sessions.
     if claude_skills_dir.exists():
         skill_watch_dirs.append(claude_skills_dir)
     skill_watch_dirs.extend(project_skills_dirs)
-    agent_middleware.append(
-        RefreshingSkillsMiddleware(
-            backend=composite_backend,
-            sources=skill_sources,
-            watch_dirs=skill_watch_dirs,
-            listing_chars=listing_budget(_context_window),
-        )
+    skill_watch_dirs.extend(path for _, path in _plugin_skills)
+    from novacode_cli.skills.tool_resolver import inventory_resolver
+
+    skills_middleware = RefreshingSkillsMiddleware(
+        backend=composite_backend,
+        sources=skill_sources,
+        watch_dirs=skill_watch_dirs,
+        listing_chars=listing_budget(_context_window),
+        tools=inventory_resolver(
+            mcp_tools, mcp_middleware._tools_cache if _has_mcp else []
+        ),
     )
+    agent_middleware.append(skills_middleware)
     # Skill curation — clamp the loaded skills to the user-enabled set. MUST be
     # appended AFTER RefreshingSkillsMiddleware so its before_agent node runs
     # after the loader populates skills_metadata (toggled off skills then vanish
@@ -2222,6 +2246,7 @@ This file stores your preferences and context that persist across sessions.
     }
     agent_middleware.append(
         ToolSearchMiddleware(
+            skill_tools=skills_middleware._active_tools,
             deferred_subagents=_deferred_agents,
             async_subagents={
                 s["name"] for s in subagents if isinstance(s, dict) and "graph_id" in s

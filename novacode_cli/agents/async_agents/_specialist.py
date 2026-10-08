@@ -53,9 +53,9 @@ def build_specialist_graph(
         note: Anything the background form does differently from the prompt.
     """
     import novacode_cli.tools as nova_tools
-    from novacode_cli.security.delegated_approval import DelegatedApprovalMiddleware
-
     from novacode_cli.agents.async_agents._mcp_tools import mcp_tools_for
+    from novacode_cli.security.delegated_approval import DelegatedApprovalMiddleware
+    from novacode_cli.skills.libraries import background_library
 
     declared = definition.get("tools", [])
     # File tools (ls / read_file / glob / grep / write_file) come from the
@@ -72,6 +72,6 @@ def build_specialist_graph(
         tools=[*named, *mcp, *(extra_tools or [])],
         system_prompt=definition["prompt"] + BACKGROUND_NOTE + note,
         backend=FilesystemBackend(root_dir=str(workspace_root()), virtual_mode=True),
-        middleware=[AsyncModelOverrideMiddleware(), DelegatedApprovalMiddleware()],
+        middleware=[AsyncModelOverrideMiddleware(), DelegatedApprovalMiddleware(), background_library(name, definition)],
         context_schema=NovaAsyncContext,
     )

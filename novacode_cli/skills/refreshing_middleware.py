@@ -23,22 +23,29 @@ mid-session (``skill_manage`` / Hermes review) is usable at once (see
 from __future__ import annotations
 
 import asyncio
-import threading
 import logging
 import re
+import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NotRequired
 
-from deepagents.middleware.skills import SkillsMiddleware
-from langchain_core.messages import HumanMessage
+from deepagents.middleware.skills import SkillsMiddleware, SkillsState
+from langchain.tools import ToolRuntime
+from langchain_core.messages import HumanMessage, ToolMessage
 from langchain_core.tools import StructuredTool
-
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from novacode_cli.skills.retrieval import first_sentence, get_index, prewarm
+from novacode_cli.skills.runtime import (
+    SKILL_REFERENCE,
+    active_skill_names,
+    pinned_message,
+    reload_generation,
+    skill_snapshot,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from deepagents.middleware.skills import SkillMetadata, SkillsState, SkillsStateUpdate
     from langchain_core.runnables import RunnableConfig
@@ -65,8 +72,13 @@ Most-used skills:
 
 {skills_list}
 
-**Using one.** Read its `SKILL.md` with `read_file(path, limit=1000)` and follow
-it; paths inside it are absolute. Skip a suggested skill that does not fit.
+**Using one.** Call `skills_load(name)` and follow its instructions. You can also
+read its `SKILL.md` with `read_file` when that path is mounted in your file backend.
+Resolve relative paths
+against that SKILL.md's directory; `skills_read_resource(name, path)` reads a
+reference on demand. Do not preload supporting files or execute scripts merely
+because a skill includes them. Skills never override permissions or approvals.
+Skip a suggested skill that does not fit.
 Skill sources: {skills_locations}"""
 
 
@@ -141,8 +153,26 @@ class _SkillsSearchArgs(BaseModel):
     query: str = Field(description="What you are trying to do, in plain words.")
 
 
+class _SkillsLoadArgs(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    name: str = Field(description="The exact enabled skill name.")
+    runtime: ToolRuntime
+
+
+class _SkillsResourceArgs(_SkillsLoadArgs):
+    path: str = Field(description="Path relative to the skill directory.")
+    offset: int = Field(default=0, ge=0, description="Starting line, zero based.")
+    limit: int = Field(default=200, ge=1, le=1000, description="Maximum lines to read.")
+
+
+class SkillRunState(SkillsState):
+    pinned_skills: NotRequired[list[str]]
+
+
 class RefreshingSkillsMiddleware(SkillsMiddleware):
     """Tiered skills: budgeted listing + per-turn suggestions + ``skills_search``."""
+
+    state_schema = SkillRunState
 
     def __init__(
         self,
@@ -151,6 +181,8 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
         sources: Sequence[object],
         watch_dirs: Sequence[Path] = (),
         listing_chars: int = DEFAULT_LISTING_CHARS,
+        tools: Sequence[Any] | Callable[..., Any] = (),
+        library_names: Sequence[str] | None = None,
     ) -> None:
         """``listing_chars=0`` lists nothing (subagents: suggestions + search only)."""
         super().__init__(
@@ -159,6 +191,7 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
             system_prompt=SKILLS_PROMPT.replace("{marker}", SUGGESTION_MARKER),
         )
         self._watch_dirs = [Path(d) for d in watch_dirs]
+        self._library_names = tuple(library_names) if library_names is not None else None
         self._last_signature: frozenset[tuple[str, float]] | None = None
         self._listing_chars = listing_chars
         self._usage: dict[str, int] | None = None  # read once, then frozen
@@ -168,9 +201,26 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
         # written on every agent step and re-read at the start of every turn.
         # That one key was most of a 12.7 GB checkpoint database.
         self._all_skills: list[SkillMetadata] | None = None
+        self._load_errors: list[str] = []
         self._load_lock = threading.Lock()
+        self._reload_generation = reload_generation()
+        self._tool_resolver = tools if callable(tools) else None
+        self._private_tools = {} if self._tool_resolver else {tool.name: tool for tool in tools}
         prewarm()  # load the embedder while the user types, not on turn one
         self.tools = [
+            StructuredTool.from_function(
+                self._skill_load,
+                name="skills_load",
+                response_format="content_and_artifact",
+                args_schema=_SkillsLoadArgs,
+                description="Load an enabled skill's instructions and activate its optional tools.",
+            ),
+            StructuredTool.from_function(
+                self._read_resource,
+                name="skills_read_resource",
+                args_schema=_SkillsResourceArgs,
+                description="Read a skill reference on demand. Path is relative to its SKILL.md directory.",
+            ),
             StructuredTool.from_function(
                 self._skill_search,
                 name="skills_search",
@@ -182,8 +232,180 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
                 # call (~6.6 ms), and deepagents creates one of these middlewares
                 # for each of ~90 subagents at agent-build time.
                 args_schema=_SkillsSearchArgs,
-            )
+            ),
         ]
+        # Keep search first for integrations that use the original single-tool API.
+        self.tools.sort(key=lambda tool: tool.name != "skills_search")
+
+    def _skill_backend(self, state: dict, runtime: Any, config: dict) -> Any:
+        """Resolve older factory backends and the current instance-only API."""
+        getter = getattr(super(), "_get_backend", None)
+        if getter is not None:
+            return getter(state, runtime, config)
+        return self._backend
+
+    def _download_skill(
+        self, skill: dict, runtime: Any, state: dict | None = None, config: dict | None = None
+    ) -> str:
+        backend = self._skill_backend(
+            state if state is not None else getattr(runtime, "state", {}),
+            runtime,
+            config if config is not None else getattr(runtime, "config", {}),
+        )
+        result = backend.download_files([skill["path"]])[0]
+        if result.error or result.content is None:
+            raise OSError(f"Could not read skill: {result.error}")
+        if len(result.content) > 10 * 1024 * 1024:
+            raise ValueError("SKILL.md exceeds 10 MB")
+        return result.content.decode("utf-8")
+
+    def _skill_load(self, name: str, runtime: ToolRuntime) -> tuple[str, dict]:
+        """Load one enabled skill without reading any supporting files."""
+        skill = next((s for s in self._skills if s["name"] == name), None)
+        if skill is None:
+            return f"Error: skill {name!r} is unknown or disabled.", {}
+        try:
+            content = self._download_skill(skill, runtime)
+        except (OSError, ValueError, UnicodeError) as exc:
+            return f"Error: {exc}", {}
+        body, snapshot = skill_snapshot(skill, content)
+        return f"Skill: {name}\nPath: {skill['path']}\n\n{body}", {"skill": snapshot}
+
+    def _read_resource(
+        self, name: str, path: str, runtime: ToolRuntime, offset: int = 0, limit: int = 200
+    ) -> str:
+        """Read a bounded page from a resource within an enabled skill."""
+        import posixpath
+        from pathlib import PurePosixPath
+
+        skill = next((s for s in self._skills if s["name"] == name), None)
+        relative = PurePosixPath(path.replace("\\", "/"))
+        if skill is None:
+            return "Error: unknown or disabled skill."
+        if relative.is_absolute() or ".." in relative.parts or ":" in path or not path:
+            return "Error: resource path must stay inside the skill directory."
+        resource = posixpath.join(
+            posixpath.dirname(skill["path"].replace("\\", "/")), str(relative)
+        )
+        backend = self._skill_backend(runtime.state, runtime, runtime.config)
+        result = backend.read(resource, offset=max(0, offset), limit=max(1, min(limit, 1000)))
+        if isinstance(result, str):
+            return result[:64_000]
+        if result.error or result.file_data is None:
+            return f"Error: {result.error or 'resource unavailable'}"
+        if result.file_data.get("encoding") == "base64":
+            return "Error: binary resources must be opened with the file/media tools."
+        return str(result.file_data["content"])[:64_000]
+
+    def _active_tools(self, messages: list[Any]) -> set[str]:
+        active = active_skill_names(messages, self._skills)
+        names: set[str] = set()
+        for skill in self._skills:
+            if skill["name"] in active:
+                metadata = skill.get("metadata") or {}
+                include = metadata.get("include_tools", "") if isinstance(metadata, dict) else ""
+                if isinstance(include, str):
+                    names.update(include.split())
+        return names
+
+    def _resolve_tools(self, messages: list[Any], runtime: Any) -> dict[str, Any]:
+        """Resolve only active aliases; never cache tools across run contexts."""
+        import inspect
+
+        resolved = {}
+        for name in sorted(self._active_tools(messages)):
+            if self._tool_resolver is None:
+                found = [self._private_tools[name]] if name in self._private_tools else []
+            else:
+                found = self._tool_resolver(name, runtime)
+                if inspect.isawaitable(found):
+                    if inspect.iscoroutine(found):
+                        found.close()
+                    message = "Async skill tool resolvers require ainvoke or astream."
+                    raise RuntimeError(message)
+            resolved.update((tool.name, tool) for tool in found or [])
+        return resolved
+
+    async def _aresolve_tools(self, messages: list[Any], runtime: Any) -> dict[str, Any]:
+        import inspect
+
+        if self._tool_resolver is None:
+            return self._resolve_tools(messages, runtime)
+        resolved = {}
+        for name in sorted(self._active_tools(messages)):
+            found = self._tool_resolver(name, runtime)
+            if inspect.isawaitable(found):
+                found = await found
+            resolved.update((tool.name, tool) for tool in found or [])
+        return resolved
+
+    def _bind_skill_tools(self, request: Any, resolved: dict) -> Any:
+        # An ordinary graph tool wins a name collision and remains callable
+        # independently. Skill-owned tools are bound and dispatched dynamically.
+        known = {getattr(tool, "name", None) for tool in request.tools}
+        tools = [
+            tool.model_copy(
+                update={"metadata": {**(tool.metadata or {}), "_nova_skill_active": True}}
+            )
+            if getattr(tool, "name", None) in resolved and hasattr(tool, "model_copy")
+            else tool
+            for tool in request.tools
+        ]
+        tools.extend(
+            tool.model_copy(
+                update={"metadata": {**(tool.metadata or {}), "_nova_skill_active": True}}
+            )
+            for name, tool in resolved.items()
+            if name not in known
+        )
+        return super().modify_request(
+            request.override(
+                tools=tools, state={**request.state, "skills_load_errors": self._load_errors}
+            )
+        )
+
+    def modify_request(self, request: Any) -> Any:
+        """Expose active skill tools in a synchronous model request."""
+        return self._bind_skill_tools(
+            request, self._resolve_tools(request.messages, request.runtime)
+        )
+
+    async def awrap_model_call(self, request: Any, handler: Any) -> Any:
+        """Resolve async tool aliases before binding the next model request."""
+        resolved = await self._aresolve_tools(request.messages, request.runtime)
+        return await handler(self._bind_skill_tools(request, resolved))
+
+    def wrap_tool_call(self, request: Any, handler: Any) -> Any:
+        """Recheck activation and runtime context before dispatching private tools."""
+        name = request.tool_call["name"]
+        if request.tool is not None:
+            return handler(request)
+        resolved = self._resolve_tools(request.state.get("messages", []), request.runtime)
+        if name in resolved:
+            return handler(request.override(tool=resolved[name]))
+        if name in self._private_tools:
+            return ToolMessage(
+                content="Error: load the enabled skill before using this tool.",
+                tool_call_id=request.tool_call["id"],
+                status="error",
+            )
+        return handler(request)
+
+    async def awrap_tool_call(self, request: Any, handler: Any) -> Any:
+        """Async activation/context check, with no shared resolved-tool cache."""
+        name = request.tool_call["name"]
+        if request.tool is not None:
+            return await handler(request)
+        resolved = await self._aresolve_tools(request.state.get("messages", []), request.runtime)
+        if name in resolved:
+            return await handler(request.override(tool=resolved[name]))
+        if name in self._private_tools:
+            return ToolMessage(
+                content="Error: load the enabled skill before using this tool.",
+                tool_call_id=request.tool_call["id"],
+                status="error",
+            )
+        return await handler(request)
 
     # ── skills_search ──────────────────────────────────────────────────────
 
@@ -264,7 +486,9 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
         except Exception:  # noqa: BLE001 — ranking is a nicety, never break a turn
             logger.debug("skill usage unavailable", exc_info=True)
 
-    def _load_skills(self, runtime: Runtime, config: RunnableConfig) -> None:
+    def _load_skills(
+        self, runtime: Runtime, config: RunnableConfig, *, force: bool = False
+    ) -> None:
         """(Re)load the skill list into the instance when files changed.
 
         Blocking (directory walk + a parse per SKILL.md, ~2 s for 1,000 skills),
@@ -273,16 +497,44 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
         from novacode_cli.skills.skills_prefs import effective_disabled
 
         with self._load_lock:
-            changed = self._skills_changed()
+            changed = (
+                self._skills_changed() or self._reload_generation != reload_generation() or force
+            )
+            self._reload_generation = reload_generation()
             if self._all_skills is None or changed:
                 key = self._disk_key()
-                cached = _disk_get(key) if key else None
+                cached = _disk_get(key) if key and not changed else None
                 if cached is not None:
                     self._all_skills = cached
                 else:
                     # An empty state makes the base class list unconditionally.
-                    update = SkillsMiddleware.before_agent(self, {}, runtime, config)  # type: ignore[arg-type]
+                    if self._library_names is None:
+                        update = SkillsMiddleware.before_agent(self, {}, runtime, config)  # type: ignore[arg-type]
+                    else:
+                        from deepagents.middleware.skills import _list_skills_with_errors
+
+                        from novacode_cli.skills.libraries import LibraryDiscoveryBackend
+
+                        backend = LibraryDiscoveryBackend(
+                            self._skill_backend({}, runtime, config), self._library_names
+                        )
+                        selected = {}
+                        errors = []
+                        for source in self.sources if self._library_names else []:
+                            entries, error = _list_skills_with_errors(backend, source)
+                            selected.update(
+                                (skill["name"], skill)
+                                for skill in entries
+                                if skill["name"] in self._library_names
+                            )
+                            if error:
+                                errors.append(error)
+                        update = {
+                            "skills_metadata": list(selected.values()),
+                            "skills_load_errors": errors,
+                        }
                     self._all_skills = list((update or {}).get("skills_metadata") or [])
+                    self._load_errors = list((update or {}).get("skills_load_errors") or [])
                     if key:
                         _disk_put(key, self._all_skills)
             disabled = effective_disabled()
@@ -292,7 +544,8 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
             # after every skill change: ~440 ms of BM25 + embeddings for 1,000
             # skills, the largest single stall of a session's first turn.
             try:
-                get_index(self._skills)
+                if self._skills:
+                    get_index(self._skills)
             except Exception:  # noqa: BLE001 — suggestions are optional
                 logger.debug("skill index warm-up failed", exc_info=True)
 
@@ -302,14 +555,16 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
             return None
         import hashlib
 
-        blob = repr((sorted(map(str, self.sources)), sorted(self._last_signature)))
+        blob = repr(
+            (list(map(str, self.sources)), self._library_names, sorted(self._last_signature))
+        )
         return hashlib.sha1(blob.encode("utf-8"), usedforsecurity=False).hexdigest()
 
     def _finish(self, state: SkillsState) -> SkillsStateUpdate | None:
         update: dict[str, Any] = {}
         # A thread saved before this change still carries the full list; blank
         # it so its later checkpoints stop paying for it too.
-        if state.get("skills_metadata"):
+        if "skills_metadata" in state and state.get("skills_metadata") != []:
             update["skills_metadata"] = []
         try:
             note = self._suggestions(state, self._skills) if self._skills else None
@@ -320,6 +575,53 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
             update["messages"] = [note]
         return update or None  # type: ignore[return-value]
 
+    def _pin_named_skills(
+        self, state: SkillsState, runtime: Any, config: dict, update: dict | None
+    ) -> dict | None:
+        messages = state.get("messages") or []
+        last = messages[-1] if messages else None
+        explicit = state.get("pinned_skills") or []
+        if not explicit and (
+            not isinstance(last, HumanMessage)
+            or _text(last).startswith("Internal context")
+            or last.additional_kwargs.get("lc_source") == "pinned_skill"
+        ):
+            return update
+        names = list(
+            dict.fromkeys(
+                [
+                    *explicit,
+                    *(
+                        SKILL_REFERENCE.findall(_text(last))
+                        if isinstance(last, HumanMessage)
+                        else []
+                    ),
+                ]
+            )
+        )
+        if explicit:
+            update = dict(update or {})
+            update["pinned_skills"] = []
+        if not names:
+            return update
+        by_name = {s["name"]: s for s in self._skills}
+        pins = []
+        for name in names:
+            skill = by_name.get(name)
+            if skill is None:
+                logger.debug("Skipping unknown or disabled pinned skill %s", name)
+                continue
+            try:
+                pins.append(
+                    pinned_message(skill, self._download_skill(skill, runtime, state, config))
+                )
+            except (OSError, ValueError, UnicodeError):
+                logger.debug("Could not pin skill %s", name, exc_info=True)
+        if pins:
+            update = dict(update or {})
+            update["messages"] = [*(update.get("messages") or []), *pins]
+        return update
+
     # ── refresh when skill files change ────────────────────────────────────
 
     def _compute_signature(self) -> frozenset[tuple[str, float]]:
@@ -329,21 +631,31 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
         on/off (which only rewrites ``skills_prefs.json``) forces a re-list on
         the next turn — the curated set updates without a restart.
         """
-        from novacode_cli.skills.skills_prefs import prefs_signature
-
         import os
+
+        from novacode_cli.skills.skills_prefs import prefs_signature
 
         # os.scandir + os.stat, not Path.glob + Path.stat: this runs before
         # every turn over ~1,000 skills, and pathlib's per-entry object churn
         # made it the slowest part of the check (160 ms vs ~40 ms).
         sig: set[tuple[str, float]] = set()
         for directory in self._watch_dirs:
+            if self._library_names is not None:
+                for name in self._library_names:
+                    skill_md = str(directory / name / "SKILL.md")
+                    try:
+                        stat = os.stat(skill_md)
+                        sig.add((skill_md, (stat.st_mtime_ns, stat.st_size)))
+                    except OSError:
+                        continue
+                continue
             try:
                 with os.scandir(directory) as entries:
                     for entry in entries:
                         skill_md = os.path.join(entry.path, "SKILL.md")
                         try:
-                            sig.add((skill_md, os.stat(skill_md).st_mtime))
+                            stat = os.stat(skill_md)
+                            sig.add((skill_md, (stat.st_mtime_ns, stat.st_size)))
                         except OSError:
                             continue
             except OSError:
@@ -366,8 +678,10 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
         self, state: SkillsState, runtime: Runtime, config: RunnableConfig
     ) -> SkillsStateUpdate | None:
         """Re-list if skills changed, load, then suggest for the new message."""
-        self._load_skills(runtime, config)
-        return self._finish(state)
+        self._load_skills(
+            runtime, config, force="skills_metadata" in state and state["skills_metadata"] is None
+        )
+        return self._pin_named_skills(state, runtime, config, self._finish(state))
 
     async def abefore_agent(
         self, state: SkillsState, runtime: Runtime, config: RunnableConfig
@@ -376,8 +690,15 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
         await self._read_usage(runtime)
         # Off the event loop: the change check stats every SKILL.md and a reload
         # parses them all, and this loop is the one the UI paints on.
-        await asyncio.to_thread(self._load_skills, runtime, config)
-        return self._finish(state)
+        await asyncio.to_thread(
+            self._load_skills,
+            runtime,
+            config,
+            force="skills_metadata" in state and state["skills_metadata"] is None,
+        )
+        return await asyncio.to_thread(
+            self._pin_named_skills, state, runtime, config, self._finish(state)
+        )
 
 
 class SubagentSkillsMiddleware(RefreshingSkillsMiddleware):
@@ -387,6 +708,20 @@ class SubagentSkillsMiddleware(RefreshingSkillsMiddleware):
     query the suggestions need.
     """
 
-    def __init__(self, *, backend: object, sources: Sequence[object], **_: Any) -> None:
+    def __init__(self, *, backend: object, sources: Sequence[object], **options: Any) -> None:
         """Signature-compatible with deepagents' ``SkillsMiddleware(backend=, sources=)``."""
-        super().__init__(backend=backend, sources=sources, listing_chars=0)
+        super().__init__(
+            backend=backend,
+            sources=sources,
+            listing_chars=0,
+            watch_dirs=options.get("watch_dirs", ()),
+            tools=options.get("tools", ()),
+            library_names=options.get("library_names"),
+        )
+        if not self._watch_dirs and not callable(backend):
+            for source in self.sources:
+                route = getattr(backend, "_get_backend_and_key", None)
+                target, key = route(source) if route else (backend, source)
+                root = getattr(target, "cwd", None)
+                if root is not None:
+                    self._watch_dirs.append(Path(root) / key.lstrip("/"))

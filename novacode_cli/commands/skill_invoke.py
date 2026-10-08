@@ -35,6 +35,7 @@ class SkillInvocation:
     args: str | None = None
     supporting_files: list[str] = field(default_factory=list)
     executable: str | None = None  # human-readable description if the skill is runnable
+    pinned_prompt: str | None = None  # middleware loads a structured snapshot on this turn
 
 # File extensions to skip when scanning for supporting files
 _SKIP_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".pdf", ".zip",
@@ -131,6 +132,10 @@ def _resolve_skill_invocation(
 
     if matched_skill is None:
         return None
+    from novacode_cli.skills.skills_prefs import effective_disabled
+
+    if matched_skill["name"] in effective_disabled():
+        return None
 
     # Found a matching skill — read its SKILL.md
     skill_name = matched_skill.get("name", cmd)
@@ -182,13 +187,10 @@ def _resolve_skill_invocation(
         prompt_parts.append("\n\n### Supporting files\n\n")
         prompt_parts.append(
             "This skill ships with supporting reference files listed below. "
-            "Read them — they contain definitions, glossaries, and patterns "
-            "the skill's instructions rely on.\n"
+            "Load only the references needed for this task, relative to the skill directory.\n"
         )
-        for rel_path, content in supporting_files.items():
-            prompt_parts.append(
-                f"--- FILE: {rel_path} ---\n\n{content}\n\n--- END FILE: {rel_path} ---\n"
-            )
+        for rel_path in supporting_files:
+            prompt_parts.append(f"- {rel_path}\n")
 
     prompt_parts.append(f"--- END SKILL: {skill_name} ---")
     prompt_parts.append(extra_context)
@@ -206,6 +208,7 @@ def _resolve_skill_invocation(
         args=cmd_args,
         supporting_files=sorted(supporting_files.keys()),
         executable=executable_desc,
+        pinned_prompt=f"${skill_name}" + (f" {cmd_args}" if cmd_args else ""),
     )
 
 
@@ -296,53 +299,41 @@ def _find_skill_dir(
 def _get_supporting_files(skill_dir: Path) -> dict[str, str]:
     """Scan a skill directory for supporting files alongside SKILL.md.
 
-    Returns dict of {relative_path: file_content} for all non-binary
-    files at the skill root and in recognised subdirectories.
+    Return a bounded filename inventory. File contents load only on demand.
     """
     supporting: dict[str, str] = {}
 
     if not skill_dir.is_dir():
         return supporting
 
-    for item in skill_dir.rglob("*"):
-        if not item.is_file():
-            continue
+    import os
 
-        # Relative to skill dir
-        rel = item.relative_to(skill_dir)
-        parts = rel.parts
-
-        # Skip SKILL.md itself and hidden files
-        if rel.name == "SKILL.md" or rel.name.startswith("."):
-            continue
-
-        # Exclusion-based filtering:
-        # - Hidden dirs (.github, .vscode): skip
-        # - Known build/CI directories: skip
-        # - Root-level metadata files (README.md, LICENSE.md): skip
-        # - Everything else: include
-        top_dir = parts[0]
-        if top_dir.startswith("."):
-            continue
-        if top_dir in _SKIP_DIRS:
-            continue
-        if len(parts) == 1 and rel.name in _ROOT_SKIP_FILES:
-            continue
-
-        # Skip binary extensions
-        suffix = item.suffix.lower()
-        if suffix in _SKIP_EXTENSIONS:
-            continue
-
-        # Skip files over size limit
-        if item.stat().st_size > _MAX_SUPPORTING_FILE_SIZE:
-            continue
-
+    visited = 0
+    pending = [skill_dir]
+    while pending and visited < 2000 and len(supporting) < 100:
+        directory = pending.pop()
         try:
-            content = item.read_text(encoding="utf-8")
-            supporting[str(rel)] = content
-        except (OSError, UnicodeDecodeError):
-            pass
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    visited += 1
+                    if visited > 2000 or len(supporting) >= 100:
+                        break
+                    if entry.name.startswith(".") or entry.is_symlink():
+                        continue
+                    item = Path(entry.path)
+                    if entry.is_dir(follow_symlinks=False):
+                        if entry.name not in _SKIP_DIRS:
+                            pending.append(item)
+                        continue
+                    if not entry.is_file(follow_symlinks=False) or entry.name == "SKILL.md":
+                        continue
+                    rel = item.relative_to(skill_dir)
+                    if len(rel.parts) == 1 and entry.name in _ROOT_SKIP_FILES:
+                        continue
+                    if item.suffix.lower() not in _SKIP_EXTENSIONS:
+                        supporting[rel.as_posix()] = ""
+        except OSError:
+            continue
 
     return supporting
 

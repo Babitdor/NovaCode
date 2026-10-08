@@ -59,35 +59,36 @@ __all__ = ["SkillMetadata", "find_skill_dir", "list_skills"]
 def find_skill_dir(name: str) -> tuple[Path, str] | None:
     """Locate an installed skill's directory by name.
 
-    Searches the writable sources in the same precedence order as
-    :func:`list_skills` (user → project → global Claude) and returns
+    Searches installed sources with the same last-source-wins precedence as
+    :func:`list_skills` (user → shared → Claude → plugins → project) and returns
     ``(skill_dir, source)`` where ``source`` is ``"user"`` / ``"project"`` /
-    ``"claude"``, or ``None`` when no such skill exists.
+    ``"claude"`` / ``"plugin"``, or ``None`` when no such skill exists.
 
     Unlike :func:`list_skills` this reads only the filesystem — no deepagents
     import — so callers that just need a path (prune, delete, edit) stay cheap.
     The returned path is the *directory*; the skill file is ``dir / "SKILL.md"``.
     """
+    import re
+
     from novacode_cli.config.config import Settings
 
+    if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name) or len(name) > 64:
+        return None
     settings = Settings.from_environment()
+    from novacode_cli.plugins.claude_plugins import plugin_skill_dirs
 
-    # User (global) skills first — the writable foundation.
-    user_dir = settings.get_global_skills_dir()
-    if (user_dir / name / "SKILL.md").is_file():
-        return user_dir / name, "user"
-
-    for project_dir in settings.get_project_skills_dirs():
-        if (project_dir / name / "SKILL.md").is_file():
-            return project_dir / name, "project"
-
-    claude_dir = Settings.get_global_claude_skills_dir()
-    if (claude_dir / name / "SKILL.md").is_file():
-        return claude_dir / name, "claude"
-
-    shared_dir = Settings.get_shared_skills_dir()
-    if (shared_dir / name / "SKILL.md").is_file():
-        return shared_dir / name, "user"
+    sources = [
+        (settings.get_global_skills_dir(), "user"),
+        (Settings.get_shared_skills_dir(), "user"),
+        (Settings.get_global_claude_skills_dir(), "claude"),
+        *((path, "plugin") for _, path in plugin_skill_dirs()),
+        *((path, "project") for path in settings.get_project_skills_dirs()),
+    ]
+    # Later sources win, consistently with discovery and the agent backend.
+    for directory, source in reversed(sources):
+        candidate = directory / name
+        if (candidate / "SKILL.md").is_file():
+            return candidate, source
 
     return None
 
@@ -241,6 +242,7 @@ def list_skills(
         user_skills = _list_dir(user_skills_dir)
         for skill in user_skills:
             skill["source"] = "user"  # type: ignore[typeddict-unknown-key]
+            skill["path"] = str(user_skills_dir / str(skill["path"]).lstrip("/\\"))
             all_skills[skill["name"]] = skill
 
     # Shared skills keep absolute paths so invocation also finds supporting files.
@@ -256,6 +258,7 @@ def list_skills(
         claude_skills = _list_dir(claude_skills_dir)
         for skill in claude_skills:
             skill["source"] = "claude"  # type: ignore[typeddict-unknown-key]
+            skill["path"] = str(claude_skills_dir / str(skill["path"]).lstrip("/\\"))
             all_skills[skill["name"]] = skill
 
     # Load installed-plugin skills (~/.nova/plugins/<name>/skills). Set an explicit

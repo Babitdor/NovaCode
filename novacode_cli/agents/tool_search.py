@@ -65,6 +65,8 @@ CORE_TOOLS = frozenset(
         "fetch_url",
         "code_search",
         "skills_search",
+        "skills_load",
+        "skills_read_resource",
         "search_tools",
         "memory_search",
         # The system prompt delegates background work proactively. Keep the
@@ -152,11 +154,13 @@ class ToolSearchMiddleware(AgentMiddleware):
         *,
         deferred_subagents: dict[str, str] | None = None,
         async_subagents: set[str] | None = None,
+        skill_tools: Any = None,
     ) -> None:
         """``deferred_subagents``: name -> description, hidden from ``task`` until found."""
         super().__init__()
         self._deferred_subagents = deferred_subagents or {}
         self._async_subagents = async_subagents or set()
+        self._skill_tools = skill_tools
         self._frequent: set[str] | None = None  # read once, then frozen
         self._note: str | None = None  # frozen: a changing prompt re-bills the cache
         self._inventory: tuple = ()
@@ -326,7 +330,21 @@ class ToolSearchMiddleware(AgentMiddleware):
             self._note = None
             self._inventory = inventory
         loaded = loaded_names(request.messages)
-        keep = CORE_TOOLS | (self._frequent or set()) | loaded
+        if self._skill_tools is not None:
+            loaded.update(self._skill_tools(request.messages))
+        # Skill snapshots activate their optional schemas without a second search.
+        # Ordinary registered tools remain independently searchable.
+        for message in request.messages:
+            extra = getattr(message, "additional_kwargs", {})
+            snapshot = extra.get("skill", {}) if extra.get("lc_source") == "pinned_skill" else {}
+            if isinstance(message, ToolMessage) and message.name == "skills_load" and message.status != "error" and isinstance(message.artifact, dict):
+                snapshot = message.artifact.get("skill", {})
+            if isinstance(snapshot, dict):
+                include = snapshot.get("include_tools", [])
+                if isinstance(include, list):
+                    loaded.update(name for name in include if isinstance(name, str))
+        keep = set(CORE_TOOLS) | (self._frequent or set()) | loaded
+        keep.update(_name(tool) for tool in request.tools if (getattr(tool, "metadata", None) or {}).get("_nova_skill_active"))
         bound, deferred = [], []
         for tool in request.tools:
             (bound if _name(tool) in keep else deferred).append(tool)

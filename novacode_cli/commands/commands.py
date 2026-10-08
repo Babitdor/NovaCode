@@ -107,7 +107,7 @@ async def handle_command(
                         f"{', '.join(skill.supporting_files)}[/dim]"
                     )
                 console.print()
-                return skill.prompt
+                return skill.pinned_prompt or skill.prompt
         except Exception as e:
             console.print(f"[red]Error running /skill:{_skill_name}: {e}[/red]")
             return True

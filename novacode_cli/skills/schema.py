@@ -30,20 +30,14 @@ CANONICAL_SECTIONS: tuple[str, ...] = (
 # Frontmatter keys the schema guarantees (others the author wrote are preserved).
 _REQUIRED_KEYS = ("name", "description", "version", "tags")
 
-_FM_KEY_RE = re.compile(r"^\s*([A-Za-z0-9_-]+)\s*:\s*(.*)$")
-
-# A delimited frontmatter splits into ["", frontmatter, body] on "---".
-_FRONTMATTER_PARTS = 3
-
+_FM_KEY_RE = re.compile(r"^([A-Za-z0-9_-]+)\s*:\s*(.*)$")
 
 def _split_frontmatter(content: str) -> tuple[str | None, str]:
     """Return ``(frontmatter_text, body)``; ``(None, content)`` when absent."""
-    if not content.startswith("---"):
+    match = re.match(r"\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|$)", content, re.DOTALL)
+    if match is None:
         return None, content
-    parts = content.split("---", 2)
-    if len(parts) < _FRONTMATTER_PARTS:
-        return None, content
-    return parts[1], parts[2].lstrip("\n")
+    return match.group(1), content[match.end():].lstrip("\n")
 
 
 def _parse_frontmatter_keys(frontmatter: str) -> dict[str, str]:
@@ -111,17 +105,27 @@ def normalize_skill_frontmatter(content: str, name: str, description: str = "") 
     version_v = existing.get("version") or DEFAULT_VERSION
     tags_v = existing.get("tags") or "[]"
 
-    lines = [
-        "---",
-        f"name: {name_v}",
-        f"description: {yaml_str(desc_v)}",
-        f"version: {version_v}",
-        f"tags: {tags_v}",
-    ]
-    # Preserve any extra author-written keys (order-stable).
-    lines.extend(
-        f"{key}: {value}" for key, value in existing.items() if key not in _REQUIRED_KEYS
+    # Keep author-written YAML blocks verbatim, including nested metadata,
+    # multiline descriptions and lists. Flattening these changes their meaning.
+    blocks: dict[str, list[str]] = {}
+    current = None
+    for line in (frontmatter or "").splitlines():
+        match = _FM_KEY_RE.match(line)
+        if match:
+            current = match.group(1).lower()
+            blocks[current] = [line]
+        elif current is not None:
+            blocks[current].append(line)
+    description_lines = (
+        blocks["description"]
+        if existing.get("description") in {"|", ">", "|-", ">-", "|+", ">+"}
+        else [f"description: {yaml_str(desc_v)}"]
     )
+    tag_lines = blocks["tags"] if "tags" in blocks else [f"tags: {tags_v}"]
+    lines = ["---", f"name: {name_v}", *description_lines, f"version: {version_v}", *tag_lines]
+    for key, block in blocks.items():
+        if key not in _REQUIRED_KEYS:
+            lines.extend(block)
     lines.append("---")
     front = "\n".join(lines)
 

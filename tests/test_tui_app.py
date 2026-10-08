@@ -3945,6 +3945,38 @@ def test_tui_resume_replay():
     asyncio.run(_drive_resume_replay())
 
 
+def test_tui_resume_pinned_skill_as_label():
+    """A pinned instruction snapshot is context, not another user turn."""
+    if not _HAS_TEXTUAL:
+        return
+
+    async def drive():
+        from langchain_core.messages import AIMessage, HumanMessage
+        from novacode_cli.skills.runtime import pinned_message
+        from novacode_cli.tui.app import ChatMessage, NovaApp
+        from novacode_cli.ui.ui_elements import TokenTracker
+
+        snapshot = pinned_message(
+            {"name": "review", "path": "/skills/review/SKILL.md", "description": "Review code"},
+            "PRIVATE SKILL INSTRUCTIONS",
+        )
+        app = NovaApp(
+            agent=_FakeAgent(), assistant_id="nova-agent", session_state=_SS(),
+            backend=None, token_tracker=TokenTracker(), image_tracker=None,
+            model_name="m", session_manager=None,
+            restored_messages=[HumanMessage("$review this code"), snapshot, AIMessage("Done")],
+        )
+        async with app.run_test() as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            cards = list(app.query(ChatMessage))
+            assert len(app.query("ChatMessage.user")) == 1
+            assert any("Pinned: review" in card.raw_text for card in cards)
+            assert all("PRIVATE SKILL INSTRUCTIONS" not in card.raw_text for card in cards)
+
+    asyncio.run(drive())
+
+
 async def _drive_clear_resets_chat():
     """/clear starts a fresh chat: new thread_id, cleared seen-ids + transcript."""
     from textual.widgets import Input, Static

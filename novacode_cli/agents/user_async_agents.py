@@ -241,7 +241,7 @@ def build_user_graph(name: str, agent_md: Path | str) -> Any:  # noqa: ANN401 â€
     from novacode_cli.agents.async_agents._specialist import build_specialist_graph
 
     path = Path(agent_md)
-    _front, body = read_agent_safe(path)
+    front, body = read_agent_safe(path)
     prompt = body.strip()
     if not prompt:
         message = f"async agent {name!r} has no system prompt in {path}"
@@ -256,7 +256,11 @@ def build_user_graph(name: str, agent_md: Path | str) -> Any:  # noqa: ANN401 â€
     chosen = _chosen_tools(path)
     return build_specialist_graph(
         name,
-        {"prompt": prompt, "tools": chosen if chosen is not None else []},
+        {
+            "prompt": prompt,
+            "tools": chosen if chosen is not None else [],
+            **({"skill_names": front["skill_names"]} if "skill_names" in front else {}),
+        },
     )
 
 

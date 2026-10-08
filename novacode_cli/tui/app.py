@@ -1357,6 +1357,20 @@ class NovaApp(App):
         padding: 1 4; layer: overlay;
     }
     #modal-title { margin-bottom: 1; padding: 0 0; }
+    /* The live task list owns the space left by its header and hints. */
+    BackgroundTasksScreen #modal-box {
+        width: 94%; height: 90%; max-height: 96%; padding: 1 2;
+    }
+    BackgroundTasksScreen.short #modal-box, BackgroundTasksScreen.tasks-short #modal-box {
+        height: 96%; padding: 0 1;
+    }
+    BackgroundTasksScreen #modal-title { height: auto; margin-bottom: 0; }
+    BackgroundTasksScreen #tasks-list, BackgroundTasksScreen.short #tasks-list {
+        height: 1fr; min-height: 3; max-height: 100%; padding: 0 1;
+        overflow-y: auto; scrollbar-gutter: stable;
+    }
+    BackgroundTasksScreen #tasks-hint { height: auto; max-height: 3; }
+    BackgroundTasksScreen.tasks-short #tasks-hint { max-height: 1; }
     #modal-body { padding: 0 0; }
     /* Long lists scroll inside the box instead of overflowing the screen. */
     #sessions, #pick-list, #infolist, #mcp-configured, #mcp-presets, #plugins, #cplugins-list, #agents-list, #skills-list, #servers-list, #hooks-list, #wiki-pages-list, #wiki-inbox-list, #tasks-list {
@@ -1703,6 +1717,7 @@ class NovaApp(App):
         self._ollama_offload_checked = False
         self._btw_agent: Any = None  # lazy-init btw side-channel agent (web-search only)
         self._bg_job_count: int = 0  # monotonic counter for background shell jobs
+        self._bg_agent_tasks: dict[str, Any] = {}
         # Notes for detached (Ctrl+B) shell jobs that finished; prepended to the
         # agent's next turn so it learns of completions without an interrupt.
         self._pending_job_notes: list[str] = []
@@ -3537,6 +3552,8 @@ class NovaApp(App):
         def shown_text(m: Any) -> str:
             if getattr(m, "id", None) == MESSAGE_ID:
                 return ""
+            if getattr(m, "additional_kwargs", {}).get("lc_source") == "pinned_skill":
+                return ""
             text = self._message_text(m).strip()
             if text and (is_compaction_summary(text) or is_internal_context_text(text)):
                 return ""
@@ -3562,6 +3579,10 @@ class NovaApp(App):
         for m in msgs:
             role = getattr(m, "type", "") or ""
             if getattr(m, "id", None) == MESSAGE_ID:
+                continue
+            if getattr(m, "additional_kwargs", {}).get("lc_source") == "pinned_skill":
+                snapshot = m.additional_kwargs.get("skill", {})
+                await self._add_message(Text("Skill", style="bold cyan"), "system", Text(f"Pinned: {snapshot.get('name', 'skill')}", style="dim cyan"))
                 continue
             text = self._message_text(m).strip()
             # /compact rewrites history into a single synthetic HumanMessage
@@ -6270,7 +6291,41 @@ class NovaApp(App):
                 return
             self._bg_shell_worker(cmd, job_id)
         else:
-            self._bg_agent_worker(raw, job_id)
+            from novacode_cli.tui.background_tasks import AgentTask
+
+            task = AgentTask(f"agent-{job_id}", raw)
+            self._bg_agent_tasks[task.task_id] = task
+            task.worker = self._bg_agent_worker(raw, job_id)
+            self._refresh_tasks_bar()
+
+    def _background_agent_tasks(self) -> list[Any]:
+        """Local Ctrl+B turns and remote async tasks, kept separate from shell jobs."""
+        from novacode_cli.tui.background_tasks import AgentTask
+
+        tasks = list(self._bg_agent_tasks.values())
+        for task in tasks:
+            if task.worker is not None and task.status == "running":
+                if task.worker.is_cancelled:
+                    task.finish("terminated")
+                elif task.worker.is_finished:
+                    task.finish("failed" if task.worker.error else "done")
+        completed = [task for task in tasks if task.status != "running"]
+        for task in completed[:-50]:
+            self._bg_agent_tasks.pop(task.task_id, None)
+        tasks = list(self._bg_agent_tasks.values())
+        watcher = getattr(self, "_async_watcher", None)
+        for item in watcher.running_tasks() if watcher is not None else []:
+            tasks.append(AgentTask(
+                task_id=f"async:{item['task_id']}",
+                command=str(item["agent_name"]),
+                started_at=time.monotonic() - item["runtime"],
+            ))
+        return tasks
+
+    def _clear_background_agents(self) -> None:
+        for task in self._background_agent_tasks():
+            if task.status != "running":
+                self._bg_agent_tasks.pop(task.task_id, None)
 
     # ── Background tasks (persistent indicator + panel) ──────────────────
     def _refresh_tasks_bar(self) -> None:
@@ -6286,8 +6341,10 @@ class NovaApp(App):
             active = get_registry().active()
         except Exception:  # noqa: BLE001
             pass
-        watcher = getattr(self, "_async_watcher", None)
-        agents = watcher.running_tasks() if watcher is not None else []
+        agents = [
+            {"agent_name": task.command, "runtime": task.runtime()}
+            for task in self._background_agent_tasks() if task.status == "running"
+        ]
         try:
             bar = self._w("#tasks-bar", Static)
         except NoMatches:
@@ -6444,7 +6501,10 @@ class NovaApp(App):
             return
         self._tasks_panel_open = True
         try:
-            result = await self.push_screen_wait(BackgroundTasksScreen())
+            result = await self.push_screen_wait(BackgroundTasksScreen(
+                extra_tasks=self._background_agent_tasks,
+                clear_extra=self._clear_background_agents,
+            ))
         finally:
             self._tasks_panel_open = False
         if not isinstance(result, dict):
@@ -6459,7 +6519,8 @@ class NovaApp(App):
         elif result.get("action") == "logs":
             from novacode_cli.shell.jobs import get_registry
 
-            job = get_registry().resolve(result.get("task_id", ""))
+            task_id = result.get("task_id", "")
+            job = get_registry().resolve(task_id) or self._bg_agent_tasks.get(task_id)
             if job is not None:
                 tail = "\n".join(job.output.splitlines()[-40:]) or "(no output yet)"
                 self._log(
@@ -7158,6 +7219,12 @@ class NovaApp(App):
             self._compacted_last_turn = False
 
     async def _do_stream(self, text: str, assistant_id: str | None = None) -> None:
+        from novacode_cli.input_utils import parse_file_mentions
+
+        if "@" in text:
+            _, files = await asyncio.to_thread(parse_file_mentions, text)
+            if files:
+                self._log(Text("Referenced files: " + ", ".join(path.name for path in files), style="dim"))
         ag, backend = self._active_agent()
         aid = assistant_id or self.assistant_id
         async for e in run_agent_stream(
@@ -7764,7 +7831,7 @@ class NovaApp(App):
             except Exception as ex:  # noqa: BLE001
                 return f"❌ /{cmd} failed: {ex}", None
             if skill is not None:
-                return None, skill.prompt
+                return None, skill.pinned_prompt or skill.prompt
 
         return (
             f"Unknown command: /{cmd}. Send /help for what works over remote.",
@@ -8103,6 +8170,16 @@ class NovaApp(App):
         )
 
         thread_id = f"bg-{uuid.uuid4().hex[:12]}"
+        task = self._bg_agent_tasks.get(f"agent-{job_id}")
+        if task is None:
+            from novacode_cli.tui.background_tasks import AgentTask
+
+            task = AgentTask(f"agent-{job_id}", prompt)
+            self._bg_agent_tasks[task.task_id] = task
+            from textual.worker import get_current_worker
+
+            task.worker = get_current_worker()
+        self._refresh_tasks_bar()
         p_short = prompt if len(prompt) <= 50 else prompt[:47] + "…"
 
         # Minimal proxy session state — only the fields iterate_agent_events reads.
@@ -8156,6 +8233,8 @@ class NovaApp(App):
 
         def _write(markup: str) -> None:
             log_widget.write(markup)
+            if task is not None:
+                task.logs.append(markup[:2000])
 
         # In-flight tool calls, buffered so a call and its result render as one
         # line (OutputLog cannot rewrite a line once written).
@@ -8187,7 +8266,12 @@ class NovaApp(App):
                             e.future.set_result(default_interrupt_response(e.kind))
                     except Exception:  # noqa: BLE001
                         pass
-                elif isinstance(e, (Done, Error)):
+                elif isinstance(e, Error):
+                    if task is not None:
+                        task.finish("failed")
+                    _write(f"Error: {e.message}")
+                    break
+                elif isinstance(e, Done):
                     break
                 else:
                     # Everything else is a progress event: render it into the card
@@ -8196,9 +8280,15 @@ class NovaApp(App):
                         final_text.append(e.text)
                     _render_bg_event(e, _write, _set_phase, self._fileop_summary, pending)
         except asyncio.CancelledError:
+            if task is not None:
+                task.finish("terminated")
+            self._refresh_tasks_bar()
             card.title = f"✖ bg[{job_id}] · {p_short}  ·  cancelled"
             return
         except Exception as ex:  # noqa: BLE001
+            if task is not None:
+                task.finish("failed")
+            self._refresh_tasks_bar()
             _write(f"[bold red]Error: {ex}[/bold red]")
             card.title = f"✖ bg[{job_id}] · {p_short}  ·  error"
             card.add_class("bgagent-failed")
@@ -8212,16 +8302,21 @@ class NovaApp(App):
             _write(prefix)
         pending.clear()
 
-        card.title = f"● bg[{job_id}] · {p_short}  ·  done"
-        card.add_class("bgagent-done")
+        if task is not None:
+            task.finish("done")
+        self._refresh_tasks_bar()
+        status = task.status if task is not None else "done"
+        card.title = f"● bg[{job_id}] · {p_short}  ·  {status}"
+        card.add_class("bgagent-failed" if status == "failed" else "bgagent-done")
         card.collapsed = True
         self._journal(
-            {"k": "bgagent", "prompt": prompt, "status": "done", "summary": "\n".join(final_text)[-4000:], "job": job_id}
+            {"k": "bgagent", "prompt": prompt, "status": status, "summary": "\n".join(final_text)[-4000:], "job": job_id}
         )
 
         # Report the outcome back to the main agent so it can summarise and act on
         # what the background run found, rather than the user having to relay it.
-        self._report_bg_agent_done(job_id, prompt, "\n".join(final_text))
+        if status == "done":
+            self._report_bg_agent_done(job_id, prompt, "\n".join(final_text))
 
     def _report_bg_agent_done(self, job_id: int, prompt: str, final_text: str) -> None:
         """Queue a note telling the main agent what a background run concluded.
@@ -8735,7 +8830,11 @@ class NovaApp(App):
             return False
 
         t = Text()
-        t.append(f"⚡ Invoking skill: {skill.name}", style="bold #7aa2f7")
+        if skill.pinned_prompt:
+            label = self._user_label()
+            label.append(f" · pinned skill: {skill.name}", style="bold #7aa2f7")
+            await self._add_message(label, "user", Text(text))
+        t.append(f"⚡ {'Pinning' if skill.pinned_prompt else 'Invoking'} skill: {skill.name}", style="bold #7aa2f7")
         if skill.description:
             t.append(f"\n  {skill.description}", style="dim")
         t.append(f"\n  Source: {skill.source}", style="dim")
@@ -8747,7 +8846,7 @@ class NovaApp(App):
                 style="dim",
             )
         self._log(t)
-        await self._stream_prompt(skill.prompt)
+        await self._stream_prompt(skill.pinned_prompt or skill.prompt)
         return True
 
     async def _passthrough_command(self, text: str) -> None:
@@ -12087,7 +12186,11 @@ class NovaApp(App):
 
     async def _run_skills(self) -> None:
         """Show installed skills (interactive)."""
-        await self.push_screen_wait(SkillsScreen())
+        selected = await self.push_screen_wait(SkillsScreen())
+        if selected:
+            composer = self.query_one("#prompt", PromptInput)
+            composer.text = f"${selected} " + composer.text
+            composer.focus()
 
     def _collect_skill_names(self) -> list[str]:
         from pathlib import Path

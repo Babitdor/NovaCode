@@ -51,6 +51,8 @@ def test_declarative_specs_get_retry_vision_security_first_and_no_interrupts():
         assert s["interrupt_on"] == {}
         # ModelRetryMiddleware, VisionCaptionMiddleware, and SecurityMiddleware are present.
         mw = s["middleware"]
+        assert type(mw[0]).__name__ == "DelegatedApprovalMiddleware"
+        mw = mw[1:]
         assert isinstance(mw[0], ModelRetryMiddleware)
         assert isinstance(mw[1], VisionCaptionMiddleware)
         assert isinstance(mw[2], SecurityMiddleware)
@@ -63,6 +65,8 @@ def test_existing_subagent_middleware_is_preserved_after_hardening():
     specs = [{"name": "x", "system_prompt": "p", "middleware": [sentinel]}]
     out = _harden_subagent_specs(specs)
     mw = out[0]["middleware"]
+    assert type(mw[0]).__name__ == "DelegatedApprovalMiddleware"
+    mw = mw[1:]
     assert isinstance(mw[0], ModelRetryMiddleware)
     assert isinstance(mw[1], VisionCaptionMiddleware)
     assert isinstance(mw[2], SecurityMiddleware)
