@@ -205,7 +205,7 @@ async def test_active_status_is_prompt_and_slows_when_unfocused(monkeypatch: pyt
         nova._set_status("thinking")
         count = 0
         await asyncio.sleep(0.24)
-        assert 1 <= count <= 3
+        assert 1 <= count <= int(0.24 * nova._animation_fps) + 2
         nova.on_app_blur()
         count = 0
         await asyncio.sleep(1.1)
@@ -213,7 +213,7 @@ async def test_active_status_is_prompt_and_slows_when_unfocused(monkeypatch: pyt
         nova.on_app_focus()
         count = 0
         await asyncio.sleep(0.24)
-        assert 1 <= count <= 3
+        assert 1 <= count <= int(0.24 * nova._animation_fps) + 2
         nova._turn_active = False
         nova._set_status("ready")
 

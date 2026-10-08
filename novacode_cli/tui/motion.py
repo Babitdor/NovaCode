@@ -1,6 +1,6 @@
 """Live motion for Nova's status line and tool-group title.
 
-Two effects, both cheap enough to repaint on the 20 Hz status tick:
+Two effects, driven by wall time and the selected animation refresh rate:
 
 ``spinner(tick)``
     A single braille dot orbiting a 2x4 cell grid. One glyph, so the status text
@@ -32,6 +32,7 @@ from rich.text import Text
 from novacode_cli.tui.palette import FooterPalette
 
 __all__ = [
+    "CLOCK_FPS",
     "SPINNER_FRAMES",
     "SPINNER_TICKS_PER_FRAME",
     "SHIMMER_SPEED",
@@ -56,13 +57,14 @@ SPINNER_FRAMES: tuple[str, ...] = (
     "\u280f",  # ⠏
 )
 
-#: Status ticks per spinner step. At the 20 Hz tick rate, 2 gives one full
-#: revolution per second — fast enough to read as activity, slow enough not to
-#: strobe.
-SPINNER_TICKS_PER_FRAME = 2
+#: Reference clock ticks per second, independent of the actual repaint rate.
+CLOCK_FPS = 60
 
-#: Characters the shimmer head advances per status tick (~1.6 cols at 20 Hz).
-SHIMMER_SPEED = 1.6
+#: One spinner glyph every 50 ms on the reference clock.
+SPINNER_TICKS_PER_FRAME = 3
+
+#: Keep the shimmer's 32-character/second speed across frame-rate choices.
+SHIMMER_SPEED = 32 / CLOCK_FPS
 
 #: Half-width of the shimmer band, in characters. Wider = softer and calmer;
 #: narrower = a tighter scanner look.

@@ -2252,10 +2252,30 @@ class SettingsScreen(ModalScreen[None]):
                     yield Static("Show slash and @ suggestions", classes="settings-label")
 
                 yield Static("PERFORMANCE", classes="settings-section")
+                from novacode_cli.tui.animation_rate import animation_fps
+
+                yield Static("Live animation frame rate", classes="settings-label")
+                yield Select(
+                    [
+                        ("15 FPS · reduced CPU use", 15),
+                        ("30 FPS · balanced", 30),
+                        ("60 FPS · smooth", 60),
+                    ],
+                    value=animation_fps(self._config.get("animation_fps")),
+                    allow_blank=False,
+                    id="animation-fps",
+                )
+                yield Static(
+                    "Applies immediately to spinners, shimmer and enabled Matrix Rain.",
+                    classes="settings-description",
+                )
                 with Horizontal(classes="settings-row"):
                     yield Switch(value=self._preference("low_resource_mode"), id="low-resource-toggle")
                     yield Static("Lower active refresh rate", classes="settings-label")
-                yield Static("Use 5 Hz status updates during a turn instead of 10 Hz.", classes="settings-description")
+                yield Static(
+                    "Override animation rate: 5 FPS status updates and at most 15 FPS rain.",
+                    classes="settings-description",
+                )
 
                 yield Static("AUTOMATION", classes="settings-section")
                 with Horizontal(classes="settings-row"):
@@ -2272,7 +2292,7 @@ class SettingsScreen(ModalScreen[None]):
             with Horizontal(id="modal-buttons"):
                 yield Button("Close", id="close")
 
-    def _save_preference(self, key: str, value: bool) -> None:
+    def _save_preference(self, key: str, value: bool | int) -> None:
         try:
             self._config.set(key, value)
         except Exception as exc:  # noqa: BLE001
@@ -2303,7 +2323,17 @@ class SettingsScreen(ModalScreen[None]):
                 self.app._hide_palette()
         elif key == "low_resource_mode":
             self.app._low_resource_mode = event.value
-            self.app._schedule_status_tick()
+            self.app._set_animation_fps(self.app._animation_fps)
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id != "animation-fps" or event.value is Select.BLANK:
+            return
+        from novacode_cli.tui.animation_rate import animation_fps
+
+        fps = animation_fps(event.value)
+        if self._config.get("animation_fps") != fps:
+            self._save_preference("animation_fps", fps)
+        self.app._set_animation_fps(fps)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "close":

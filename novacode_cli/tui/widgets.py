@@ -98,10 +98,13 @@ class MatrixRain(Static):
     KATAKANA = "ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜｦﾝｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅ"
 
     def __init__(
-        self, art: str = "", width: int | None = None, *, animate: bool | None = None
+        self, art: str = "", width: int | None = None, *, animate: bool | None = None, fps: int = 30
     ) -> None:
         super().__init__("", id="matrix-rain")
         self._animation_enabled = animate
+        from novacode_cli.tui.animation_rate import animation_fps
+
+        self._animation_fps = animation_fps(fps)
         self._columns: list[dict] = []
         self._chars = list(MatrixRain.KATAKANA)
         self._width: int | None = None
@@ -279,9 +282,8 @@ class MatrixRain(Static):
         self._strips = self._build_strips()  # paint something on the first frame
         self._needs_layout = True  # first frame must establish the widget size
         self.app.theme_changed_signal.subscribe(self, self.redraw_frame)
-        # ~15 fps: column speeds are scaled so the fall rate looks the same as
-        # the old 25 fps, but each second costs 40% fewer frame builds and —
-        # more importantly — 40% fewer Textual repaints on the main thread.
+        # Frame rate is configurable; scale movement to keep the fall rate
+        # stable rather than making a higher refresh rate accelerate the rain.
         # An idle terminal should not continuously repaint a decorative banner.
         # Keep its first themed frame, with the original rain available opt-in.
         if self._animation_enabled is None:
@@ -312,9 +314,22 @@ class MatrixRain(Static):
         """Create the rain timer, honouring the current OS-focus state."""
         if self._timer is not None:
             return
-        self._timer = self.set_interval(0.066, self._tick)
+        self._timer = self.set_interval(1 / self._animation_fps, self._tick)
         if not getattr(self.app, "_os_focused", True):
             self._timer.pause()
+
+    def set_frame_rate(self, fps: int) -> None:
+        """Change the active rain cadence without starting disabled animation."""
+        from novacode_cli.tui.animation_rate import animation_fps
+
+        fps = animation_fps(fps)
+        if fps == self._animation_fps:
+            return
+        self._animation_fps = fps
+        if self._timer is not None:
+            self._timer.stop()
+            self._timer = None
+            self._start_timer()
 
     def pause(self) -> None:
         """Pause the rain timer (called when the app loses OS focus or rain is
@@ -524,7 +539,7 @@ class MatrixRain(Static):
         # draws, so skipping it on every row carved a full-height dead stripe and
         # the rain looked like it stopped at the portrait.
         for col, d in enumerate(self._columns):
-            d["pos"] += d["speed"]
+            d["pos"] += d["speed"] * 15 / self._animation_fps
             if d["pos"] > rows + d["trail"]:  # reset when fully off-screen
                 d["pos"] = random.uniform(-rows, -3)
                 d["speed"] = random.uniform(0.08, 0.23)  # adjusted for 15fps

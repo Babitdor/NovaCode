@@ -1572,6 +1572,9 @@ class NovaApp(App):
         self._submit_on_enter = True
         self._autocomplete_enabled = True
         self._low_resource_mode = False
+        from novacode_cli.tui.animation_rate import DEFAULT_ANIMATION_FPS
+
+        self._animation_fps = DEFAULT_ANIMATION_FPS
         self._animate_matrix_rain = False
         self.session_state = session_state
         self.backend = backend
@@ -2378,6 +2381,7 @@ class NovaApp(App):
             pane.load_into(self)
 
         self._active_pane = pane
+        self._refresh_terminal_title()
         try:
             self.query_one("#panes", ContentSwitcher).current = pane.scroll.id
         except NoMatches:  # pragma: no cover - switcher always present
@@ -2484,6 +2488,7 @@ class NovaApp(App):
 
     def _refresh_tabs(self) -> None:
         """Redraw the session tab bar; hidden while there is only one session."""
+        self._refresh_terminal_title()
         panes = getattr(self, "_panes", [])
         try:
             tabs = self.query_one("#session-tabs", Tabs)
@@ -2522,6 +2527,38 @@ class NovaApp(App):
                 tabs.add_tab(Tab(label, id=sid))
             else:
                 tab.label = label
+
+    def _refresh_terminal_title(self) -> None:
+        """Show the active session's name in the terminal window or tab."""
+        pane = getattr(self, "_active_pane", None)
+        name = getattr(pane, "title", None) or (
+            getattr(self.session_state, "session_id", "") or "main"
+        )[:8]
+        # Session names are user input. OSC titles must contain no escape or
+        # control characters that could terminate the title and inject output.
+        name = " ".join(
+            "".join(char for char in str(name) if char.isprintable() or char.isspace()).split()
+        )[:120]
+        title = f"NovaCode · {name or 'main'}"
+        self.title = title
+        driver = self._driver
+        if driver is None or driver.is_headless or title == getattr(self, "_terminal_title", None):
+            return
+        try:
+            # Write through Textual's driver so this never enters the transcript
+            # or bypasses its serialized terminal output (including Windows).
+            driver.write(f"\x1b]0;{title}\x07")
+            driver.flush()
+            self._terminal_title = title
+        except Exception:  # noqa: BLE001 — title support must not break a session
+            logger.debug("Could not update terminal title", exc_info=True)
+
+    def _refresh_session_identity(self) -> None:
+        """Keep the root tab and terminal title in step after resume or clear."""
+        pane = getattr(self, "_active_pane", None)
+        if pane is not None and pane.kind == "root":
+            pane.title = (getattr(self.session_state, "session_id", "") or "main")[:8]
+        self._refresh_tabs()
 
     def on_tabs_tab_activated(self, event) -> None:
         """Clicking / keyboard-selecting a tab switches sessions.
@@ -4801,14 +4838,14 @@ class NovaApp(App):
         self._schedule_status_tick()
 
     def _schedule_status_tick(self) -> None:
-        """Use a single timer: 10 Hz while focused/busy, 2 Hz otherwise."""
+        """Use the chosen animation rate while focused/busy, 2 Hz otherwise."""
         if self._status_timer is not None:
             self._status_timer.stop()
         if not self.is_mounted:
             self._status_timer = None
             return
         if self._turn_active and self._os_focused:
-            delay = 0.2 if self._low_resource_mode else 0.1
+            delay = 0.2 if self._low_resource_mode else 1 / self._animation_fps
         else:
             delay = 0.5
         self._status_timer = self.set_timer(delay, self._status_tick)
@@ -4929,7 +4966,7 @@ class NovaApp(App):
         line = Text()
 
         # Activity segment — animated spinner + elapsed while live, else a ● dot.
-        # Rebuilt every frame (cheap); it is the only part that changes at 20fps.
+        # Rebuilt every animation frame; the heavier state below is cached.
         if self._turn_active:
             elapsed = time.monotonic() - self._turn_start
             # A single-glyph spinner (so the label never jitters) plus a light
@@ -4957,7 +4994,7 @@ class NovaApp(App):
 
         # layout=False: this bar is `width: 1fr; height: 1`, so no content can
         # change its size. Static.update() defaults to layout=True, and a layout
-        # pass re-arranges the WHOLE screen — this call runs 20x a second while a
+        # pass re-arranges the WHOLE screen — this call runs up to 60x/sec while a
         # turn is live, so the default cost two full reflows per frame (the
         # freeze log: 1,000 of 1,822 frozen seconds were this reflow).
         try:
@@ -5239,7 +5276,9 @@ class NovaApp(App):
         refresh = False
         tail_dirty = False
         if self._turn_active and self._os_focused:
-            self._spinner_frame += 1
+            # Wall time keeps motion speed stable when the frame-rate setting
+            # changes, and skips missed frames rather than trying to catch up.
+            self._spinner_frame = int(time.monotonic() * motion.CLOCK_FPS)
             refresh = True
             # A tool group with a live tool also animates, so re-title it every
             # tick. This is one attribute assignment on one widget (cheap); it
@@ -5258,7 +5297,14 @@ class NovaApp(App):
                     )
                 except Exception:  # noqa: BLE001 — a title must never break a turn
                     pass
-        # Surface notifications raised by background tasks within ~200ms.
+        # Animation FPS must not multiply background-state polling work.
+        now = time.monotonic()
+        if now - getattr(self, "_last_background_poll", 0.0) < 0.25:
+            if refresh:
+                self._refresh_status()
+            return
+        self._last_background_poll = now
+        # Surface notifications raised by background tasks within ~250ms.
         cur = self._unread_count()
         if cur != self._last_notif_count:
             self._last_notif_count = cur
@@ -8230,6 +8276,9 @@ class NovaApp(App):
         self._submit_on_enter = config.get("submit_on_enter", True) is True
         self._autocomplete_enabled = config.get("autocomplete_enabled", True) is True
         self._low_resource_mode = config.get("low_resource_mode", False) is True
+        from novacode_cli.tui.animation_rate import animation_fps
+
+        self._animation_fps = animation_fps(config.get("animation_fps"))
         saved_rain = config.get("matrix_rain_enabled")
         self._animate_matrix_rain = (
             saved_rain
@@ -8241,6 +8290,16 @@ class NovaApp(App):
     def _matrix_rain_enabled(self) -> bool:
         """Return the loaded Matrix Rain preference."""
         return self._animate_matrix_rain
+
+    def _set_animation_fps(self, fps: object) -> None:
+        """Apply a saved animation rate immediately without duplicating timers."""
+        from novacode_cli.tui.animation_rate import animation_fps
+
+        self._animation_fps = animation_fps(fps)
+        self._schedule_status_tick()
+        rain_fps = min(15, self._animation_fps) if self._low_resource_mode else self._animation_fps
+        for rain in self.query(MatrixRain):
+            rain.set_frame_rate(rain_fps)
 
     def _set_matrix_rain_enabled(self, enabled: bool) -> None:
         """Apply a Matrix Rain preference immediately to the visible banner."""
@@ -9156,6 +9215,7 @@ class NovaApp(App):
         resumed_todos = session_data.todos
         self.session_state.reset_conversation()  # fresh thread_id, cleared state
         self.session_state.session_id = resumed_id
+        self._refresh_session_identity()
         self.session_state.is_continued = True
         if resumed_todos:
             self.session_state.todos = resumed_todos
@@ -10237,6 +10297,8 @@ class NovaApp(App):
         # (empty checkpointer state), cleared todos / steering / plan mode.
         self.session_state.reset_conversation()
 
+        self._refresh_session_identity()
+
         # Re-own the live sandbox to the new session so resume reconnects to it
         # and the orphan sweep never reclaims a container the new chat still uses
         # (the container's Docker label is immutable; the registry is the source
@@ -10314,7 +10376,10 @@ class NovaApp(App):
                 width = None
             art = get_responsive_ascii(width=width)
 
-            rain = MatrixRain(art=art, width=width, animate=self._matrix_rain_enabled())
+            rain = MatrixRain(
+                art=art, width=width, animate=self._matrix_rain_enabled(),
+                fps=min(15, self._animation_fps) if self._low_resource_mode else self._animation_fps,
+            )
             self._home_banner = rain
             self._transcript().mount(rain)
             self._prune_transcript()
