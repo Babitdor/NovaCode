@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import ast
+
 # The helper streams installer output and its result to the inherited terminal.
 # ruff: noqa: T201, S603
 import ctypes
 import json
+import shutil
 import subprocess
 import sys
 from contextlib import suppress
@@ -14,6 +17,68 @@ from pathlib import Path
 
 ERROR_INVALID_PARAMETER = 87
 WAIT_FAILED = 0xFFFFFFFF
+
+
+def installed_version(python: str | None = None) -> str:
+    """Read the updated environment, rather than an already-imported version."""
+    if python:
+        try:
+            return subprocess.check_output(
+                [python, "-I", "-c",
+                 "from importlib.metadata import version; print(version('novacode-cli'))"],
+                text=True, encoding="utf-8", stderr=subprocess.DEVNULL, timeout=5,
+            ).strip()
+        except (OSError, subprocess.SubprocessError):
+            pass
+    try:
+        tree = ast.parse(Path(__file__).with_name("_version.py").read_text(encoding="utf-8"))
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == "__version__"
+                for target in node.targets
+            ):
+                value = ast.literal_eval(node.value)
+                if isinstance(value, str):
+                    return value
+    except (OSError, ValueError, SyntaxError):
+        pass
+    return "unavailable"
+
+
+def show_update_success(version: str, logo: str = "NOVA") -> None:
+    """Replace interactive progress with a compact, centered completion screen."""
+    interactive = sys.stdout.isatty()
+    if interactive and sys.platform == "win32":
+        try:
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.GetStdHandle.restype = wintypes.HANDLE
+            handle = kernel.GetStdHandle(-11)
+            mode = wintypes.DWORD()
+            kernel.GetConsoleMode.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+            kernel.SetConsoleMode.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            interactive = bool(
+                kernel.GetConsoleMode(handle, ctypes.byref(mode))
+                and kernel.SetConsoleMode(handle, mode.value | 0x0004)
+            )
+        except (OSError, AttributeError):
+            interactive = False
+    if interactive:
+        print("\x1b[2J\x1b[H", end="")
+    width = min(shutil.get_terminal_size((80, 24)).columns, 100)
+    rows = logo.splitlines()
+    if any(len(row) > width for row in rows):
+        rows = ["NOVA"]
+    print()
+    for row in [*rows, "", f"v{version}", "", "Update successful.", "", "Restart Nova", ""]:
+        safe = row.encode(sys.stdout.encoding or "utf-8", errors="replace").decode(
+            sys.stdout.encoding or "utf-8"
+        )
+        text = safe.center(width).rstrip() if interactive else safe.rstrip()
+        if interactive and row in rows:
+            text = f"\x1b[38;2;122;162;247m{text}\x1b[0m"
+        elif interactive and row == "Update successful.":
+            text = f"\x1b[32;1m{text}\x1b[0m"
+        print(text, flush=True)
 
 
 def wait_for_exit(pid: int, *, launcher_only: bool = False) -> None:
@@ -86,12 +151,12 @@ def main(payload: dict) -> int:
         changed = run_installer(payload["command"])
         with suppress(OSError):
             Path(payload["cache"]).unlink(missing_ok=True)
-        print(
-            "Nova updated. Restart Nova to use the new code."
-            if changed
-            else "NovaCode is up to date.",
-            flush=True,
-        )
+        if changed:
+            show_update_success(
+                installed_version(payload.get("version_python")), payload.get("logo", "NOVA")
+            )
+        else:
+            print("NovaCode is up to date.", flush=True)
         return 0  # noqa: TRY300
     except (OSError, subprocess.SubprocessError) as error:
         print(f"Update failed: {error}", flush=True)

@@ -293,7 +293,7 @@ def test_external_updater_waits_before_installing_and_records_result(
     )
     assert result == int(fails)
     assert cache.exists() == fails
-    assert ("Update failed" if fails else "Nova updated") in capsys.readouterr().out
+    assert ("Update failed" if fails else "Update successful.") in capsys.readouterr().out
 
 
 def test_external_updater_never_installs_if_launcher_has_not_exited(

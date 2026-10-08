@@ -64,7 +64,7 @@ def test_updater_waits_for_locked_launcher_then_replaces_it(
         process.communicate(b"\n", timeout=5)
         output, error = updater.communicate(timeout=10)
         assert updater.returncode == 0, error
-        assert b"Nova updated" in output
+        assert b"Update successful." in output
         assert launcher.read_bytes() == b"new"
     finally:
         if process.poll() is None:
@@ -78,7 +78,7 @@ def test_updater_waits_for_locked_launcher_then_replaces_it(
 @pytest.mark.parametrize(
     ("installer_output", "exit_code", "result"),
     [
-        ("Updated novacode-cli", 0, "Nova updated"),
+        ("Updated novacode-cli", 0, "Update successful."),
         ("Nothing to upgrade", 0, "NovaCode is up to date."),
         ("Installation failed", 1, "Update failed:"),
     ],

@@ -236,11 +236,15 @@ def _run(arguments: list[str], *, cwd: Path | None = None) -> None:
 
 def _start_windows_update(arguments: list[str]) -> None:
     """Release the launcher while keeping updater output in the same terminal."""
+    from novacode_cli.brand import wordmark
+
     payload = {
         "command": arguments,
         "caller_pid": os.getpid(),
         "parent_pid": os.getppid(),
         "cache": str(_cache_path()),
+        "version_python": sys.executable,
+        "logo": wordmark(),
     }
     interpreter = getattr(sys, "_base_executable", sys.executable)
     helper = Path(__file__).with_name("_windows_update.py")
@@ -344,7 +348,10 @@ def update_main(arguments: list[str]) -> int:
                 print("NovaCode is up to date.")
                 return 0
             if not install_update():
-                print("Nova updated. Restart Nova to use the new code.")
+                from novacode_cli._windows_update import installed_version, show_update_success
+                from novacode_cli.brand import wordmark
+
+                show_update_success(installed_version(sys.executable), wordmark())
         return 0  # noqa: TRY300
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"Update failed: {error}", file=sys.stderr)
