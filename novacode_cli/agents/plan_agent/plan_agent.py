@@ -12,7 +12,6 @@ from typing import Any
 
 from deepagents.backends import CompositeBackend
 from deepagents.backends.protocol import BackendProtocol, SandboxBackendProtocol
-from langchain.agents.middleware import ModelRetryMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
@@ -20,6 +19,7 @@ from langchain_core.tools import BaseTool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.pregel import Pregel
 
+from novacode_cli.agents.model_retry import NovaModelRetryMiddleware as ModelRetryMiddleware
 from novacode_cli.agents.plan_agent.plan_mode_middleware import PlanModeMiddleware
 
 # Use Nova's optimized backend (non-hanging grep + ripgrep discovery + regex).

@@ -1532,7 +1532,7 @@ class NovaApp(App):
         # familiar ctrl+c-to-quit when nothing is selected. ctrl+q always quits.
         ("ctrl+c", "copy_or_quit", "Copy / Quit"),
         ("ctrl+t", "toggle_terminal", "Terminal"),
-        ("ctrl+b", "run_background", "Background"),
+        Binding("ctrl+b", "run_background", "Background", priority=True),
         ("ctrl+g", "voice_talk", "Talk"),
         ("ctrl+l", "voice_toggle", "Listen"),
         ("escape", "cancel_turn", "Cancel"),
@@ -4233,6 +4233,9 @@ class NovaApp(App):
         await body.mount(
             OutputLog(id="tool-group-log", classes="terminal-log", highlight=True, markup=True, max_lines=_LOG_MAX_LINES)
         )
+        hint = Static(Text("Ctrl+B · run in background", style="dim"), id="tool-group-background-hint")
+        hint.display = False
+        await body.mount(hint)
         self._prune_transcript()
         self._scroll_end()
 
@@ -4245,6 +4248,9 @@ class NovaApp(App):
             self._tool_group_refresh_scheduled = False
             self._refresh_tool_group(running=self._tool_group_running)
         self._tool_group_running = None
+        if self._tool_group_body is not None:
+            with contextlib.suppress(NoMatches):
+                self._tool_group_body.query_one("#tool-group-background-hint", Static).display = False
         self._tool_group = None
         self._tool_group_body = None
         self._tool_group_entries = []
@@ -4419,6 +4425,7 @@ class NovaApp(App):
             "detail": "",
             "error": False,
             "category": _tool_category(name),
+            "backgroundable": name in {"shell", "bash", "execute", "execute_bash", "run_command"},
         }
         idx = len(self._tool_group_entries)
         self._tool_group_entries.append(entry)
@@ -4452,6 +4459,18 @@ class NovaApp(App):
                 pass
 
         self._schedule_tool_group_refresh(running=name)
+        self._refresh_shell_hint()
+
+    def _refresh_shell_hint(self) -> None:
+        """Offer the shortcut only while an execution tool remains in flight."""
+        if self._tool_group_body is None:
+            return
+        with contextlib.suppress(NoMatches):
+            hint = self._tool_group_body.query_one("#tool-group-background-hint", Static)
+            hint.display = any(
+                entry.get("backgroundable") and entry.get("mark") == "running"
+                for entry in self._tool_group_entries
+            )
 
     def _trim_tool_group_history(self) -> None:
         """Bound completed tool rows while preserving any still-running calls."""
@@ -4498,6 +4517,7 @@ class NovaApp(App):
         entry["error"] = is_error
         entry["detail"] = self._oneline(detail)
         entry["_line"] = None  # fields changed → drop the cached render
+        self._refresh_shell_hint()
         # Surface failures: pop the group open so the error isn't hidden — and
         # paint NOW rather than on the coalescing timer, or the group would
         # expand to show content that is still up to 100 ms stale.
@@ -4543,6 +4563,8 @@ class NovaApp(App):
             )
             return
         comp, body, base = entry
+        for hint in comp.query(".background-shell-hint"):
+            hint.display = False
         pal = self._palette
         mark = "•"
         comp.title = f"{base}  {mark} {_esc(preview)}"
@@ -6208,29 +6230,33 @@ class NovaApp(App):
         - Any other text → background agent turn (full agent, fresh thread_id,
           auto-approved tools so it never blocks waiting for user input).
         """
+        if getattr(self, "_tasks_panel_open", False) or any(
+            isinstance(screen, BackgroundTasksScreen) for screen in self.screen_stack
+        ):
+            return
         try:
             prompt_widget = self._w("#prompt", PromptInput)
         except NoMatches:
             return
+        from novacode_cli.shell.jobs import get_current, request_detach
+
+        # A running command takes precedence over any draft in the editor.
+        # Preserve that draft; Ctrl+B is a handoff, not a prompt submission.
+        if request_detach():
+            if self._turn_active:
+                self._detach_cancelling = True
+                self._set_status("backgrounding command…")
+                self.workers.cancel_group(self, "turn")
+            return
+        current = get_current()
+        if current is not None and current.detach.is_set():
+            return  # Repeated keypress during handoff must not submit the draft.
         raw = prompt_widget.value.strip()
         if not raw:
             # Context-sensitive Ctrl+B with an empty prompt:
             #  • a command is running  → detach IT to the background (the
             #    registry "started" event logs the task id + updates the ⚙ bar).
             #  • nothing running       → open the Background Tasks panel.
-            from novacode_cli.shell.jobs import request_detach
-
-            if request_detach():
-                # End the agent's turn so it goes IDLE and the user can chat
-                # again immediately (spec: "Main TUI immediately becomes
-                # available"). The command keeps running on the background loop —
-                # which is a plain daemon thread, NOT a Textual worker, so
-                # cancelling the turn group leaves it untouched. The turn's
-                # CancelledError handler resets _turn_active via its finally.
-                self._detach_cancelling = True
-                self._set_status("backgrounding command…")
-                self.workers.cancel_group(self, "turn")
-                return
             self._open_tasks_panel()
             return
         prompt_widget.value = ""
@@ -6412,7 +6438,15 @@ class NovaApp(App):
     @work
     async def _open_tasks_panel(self) -> None:
         """Open the Background Tasks panel; handle copy/logs results."""
-        result = await self.push_screen_wait(BackgroundTasksScreen())
+        if getattr(self, "_tasks_panel_open", False) or any(
+            isinstance(screen, BackgroundTasksScreen) for screen in self.screen_stack
+        ):
+            return
+        self._tasks_panel_open = True
+        try:
+            result = await self.push_screen_wait(BackgroundTasksScreen())
+        finally:
+            self._tasks_panel_open = False
         if not isinstance(result, dict):
             return
         if result.get("action") == "copy":
@@ -7838,6 +7872,9 @@ class NovaApp(App):
         short = cmd if len(cmd) <= 50 else cmd[:47] + "…"
         label = f"bg[{job_id}]: {short}"
         pal = self._palette
+        background_job = None
+        hint = Static(Text("Ctrl+B · run in background", style="dim"), classes="background-shell-hint")
+        hint.display = foreground
 
         # Build the widget up-front so output starts streaming immediately.
         if foreground:
@@ -7845,7 +7882,7 @@ class NovaApp(App):
                 classes="bash-inline-log", highlight=False, markup=False, wrap=True, max_lines=_LOG_MAX_LINES
             )
             head = Static(classes="bash-inline-head")
-            card: Any = Vertical(head, log_widget, classes="bash-inline")
+            card: Any = Vertical(head, log_widget, hint, classes="bash-inline")
         else:
             log_widget = OutputLog(classes="bgshell-log", highlight=True, markup=True, max_lines=_LOG_MAX_LINES)
             card = Collapsible(Vertical(log_widget), title="", collapsed=False)
@@ -7861,6 +7898,8 @@ class NovaApp(App):
             row.append(cmd)
             if state == "running":
                 row.append(f"   running · /kill bg-{job_id}", style="dim")
+            elif state.startswith("background"):
+                row.append(f"   {state}", style=f"bold {pal.accent}")
             elif bad:
                 row.append(f"   {state}", style=f"bold {pal.error}")
             _paint(head, row)
@@ -7887,6 +7926,8 @@ class NovaApp(App):
         def emit_batch(lines: list[str]) -> None:
             nonlocal emitted
             captured.extend(line[:2000] for line in lines)
+            if background_job is not None:
+                shell_jobs.get_registry().append_log(background_job.id, "\n".join(lines) + "\n")
             if foreground:
                 row = Text()
                 for index, line in enumerate(lines):
@@ -7907,6 +7948,12 @@ class NovaApp(App):
 
         # Spawn the subprocess with merged stdout+stderr so the log shows both.
         try:
+            import subprocess
+
+            group_options = (
+                {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+                if os.name == "nt" else {"start_new_session": True}
+            )
             process = await asyncio.create_subprocess_shell(
                 cmd,
                 stdout=asyncio.subprocess.PIPE,
@@ -7917,8 +7964,10 @@ class NovaApp(App):
                 stdin=asyncio.subprocess.DEVNULL,
                 cwd=str(cwd),
                 env=os.environ.copy(),
+                **group_options,
             )
         except Exception as ex:  # noqa: BLE001
+            hint.display = False
             emit(f"Failed to start: {ex}", style="bold red") if foreground else log_widget.write(
                 f"[bold red]Failed to start: {ex}[/bold red]"
             )
@@ -7936,6 +7985,36 @@ class NovaApp(App):
         )
         ProcessManager.get_instance().register_process(info)
 
+        from novacode_cli.shell import jobs as shell_jobs
+        from novacode_cli.shell.middleware import ShellMiddleware
+
+        control = shell_jobs.set_current(cmd) if foreground else None
+
+        def background_command() -> None:
+            nonlocal background_job
+            background_job = shell_jobs.get_registry().add(cmd, "shell", None)
+            shell_jobs.get_registry().attach_pid(background_job.id, process.pid)
+            background_job.logs.extend(line + "\n" for line in captured)
+            if control is not None:
+                shell_jobs.clear_current(control)
+            hint.display = False
+            set_state("●", f"background · {background_job.task_id}")
+
+        async def monitor_controls() -> None:
+            while process.returncode is None:
+                if control is not None and control.detach.is_set() and background_job is None:
+                    background_command()
+                if (control is not None and control.kill.is_set()) or (
+                    background_job is not None and background_job.kill.is_set()
+                ):
+                    await ShellMiddleware._terminate_tree(process, grace=0)
+                    return
+                await asyncio.sleep(0.1)
+
+        if not foreground:
+            background_command()
+        monitor = asyncio.create_task(monitor_controls())
+
         # Batch ready output and yield between reads so input stays responsive.
         assert process.stdout is not None  # noqa: S101  — PIPE guarantees this
         try:
@@ -7945,6 +8024,7 @@ class NovaApp(App):
                 emit_batch(lines)
             await process.wait()
         except asyncio.CancelledError:
+            await asyncio.shield(ShellMiddleware._terminate_tree(process, grace=0))
             with contextlib.suppress(ProcessLookupError):
                 process.terminate()
             with contextlib.suppress(Exception):
@@ -7959,10 +8039,25 @@ class NovaApp(App):
             )
             info.status = ProcessStatus.STOPPED
             ProcessManager.get_instance().unregister_process(info.pid)
+            if background_job is not None:
+                shell_jobs.get_registry().mark_terminated(background_job.id, process.returncode)
             return
+        finally:
+            hint.display = False
+            monitor.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await monitor
+            if control is not None:
+                shell_jobs.clear_current(control)
 
         ProcessManager.get_instance().unregister_process(info.pid)
         exit_code = process.returncode or 0
+        if background_job is not None:
+            registry = shell_jobs.get_registry()
+            if background_job.kill.is_set():
+                registry.mark_terminated(background_job.id, exit_code)
+            else:
+                registry.complete(background_job.id, exit_code)
         if not emitted:
             emit("(no output)", style="dim") if foreground else log_widget.write("[dim](no output)[/dim]")
 
@@ -10132,7 +10227,7 @@ class NovaApp(App):
     async def _check_nova_update(self, *, force: bool = False) -> None:
         import os
 
-        from novacode_cli.updates import check_for_update
+        from novacode_cli.updates import check_for_update, release_details
 
         if not force and os.environ.get("NOVA_DISABLE_UPDATE_CHECK", "").lower() in {
             "1", "true", "yes",
@@ -10140,13 +10235,20 @@ class NovaApp(App):
             return
         status = await asyncio.to_thread(check_for_update, force=force)
         if status.available:
-            message = (
-                f"Nova update available ({status.latest[:12]}). Exit Nova and run: nova update"
-            )
             if force or getattr(self, "_notified_nova_update", None) != status.latest:
-                self._log(Text(message, style="yellow"))
-                self.notify(message, title="Nova update", timeout=12)
+                from novacode_cli.tui.update_notice import UpdateNotice
+
+                status = await asyncio.to_thread(release_details, status)
+                # Another check may have finished while release notes were loading.
+                if not force and getattr(self, "_notified_nova_update", None) == status.latest:
+                    return
                 self._notified_nova_update = status.latest
+                release = status.release_title or f"NovaCode update ({status.latest[:12]})"
+                message = f"{release} is available. View its changelog below or use /update."
+                await self._transcript().mount(UpdateNotice(status))
+                self._prune_transcript()
+                self._scroll_end()
+                self.notify(message, title="Nova update", timeout=12)
         elif force:
             self._log(Text(
                 f"Could not check for updates: {status.error}"
@@ -12232,7 +12334,8 @@ class NovaApp(App):
                 }:
                     body = OutputLog(classes="terminal-log", highlight=True, markup=True, max_lines=_LOG_MAX_LINES)
                     # Starts expanded (collapsed=False) to show live output!
-                    comp = Collapsible(body, title=f"{base}  · running…", collapsed=False)
+                    hint = Static(Text("Ctrl+B · run in background", style="dim"), classes="background-shell-hint")
+                    comp = Collapsible(body, hint, title=f"{base}  · running…", collapsed=False)
                 else:
                     body = Static("", classes="toolbody")
                     # Starts collapsed for file diffs

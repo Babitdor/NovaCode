@@ -700,7 +700,7 @@ def _harden_subagent_specs(
       subagent sees ONLY the user-enabled (curated) skills, just like the main
       agent. Skipped if the spec already declares skills / carries curation.
     """
-    from langchain.agents.middleware import ModelRetryMiddleware
+    from novacode_cli.agents.model_retry import NovaModelRetryMiddleware as ModelRetryMiddleware
     from novacode_cli.agents.agent_mailbox import read_agent_messages, send_agent_message
     from novacode_cli.bootstrap import VisionCaptionMiddleware
     from novacode_cli.errors import is_retryable_model_error
@@ -761,7 +761,10 @@ def _harden_subagent_specs(
             f"and read_agent_messages(as_agent='{_sa_name}')."
         )
 
-        has_retry = any(type(m).__name__ == "ModelRetryMiddleware" for m in existing)
+        has_retry = any(
+            type(m).__name__ in {"ModelRetryMiddleware", "NovaModelRetryMiddleware"}
+            for m in existing
+        )
         has_vision = any(type(m).__name__ == "VisionCaptionMiddleware" for m in existing)
         has_security = any(type(m).__name__ == "SecurityMiddleware" for m in existing)
         has_curation = any(type(m).__name__ == "SkillCurationMiddleware" for m in existing)
@@ -1408,7 +1411,7 @@ def _build_middleware_stack(
             negative) falls back to the legacy fixed trigger.
     """
     # Lazy imports for middleware (speeds up startup)
-    from langchain.agents.middleware import ModelRetryMiddleware
+    from novacode_cli.agents.model_retry import NovaModelRetryMiddleware as ModelRetryMiddleware
 
     from novacode_cli.agents.task_discipline import TaskDisciplineMiddleware
     from novacode_cli.errors import is_retryable_model_error
@@ -1763,6 +1766,15 @@ def _build_subagent_roster(
 
     # Load async subagents (run on remote LangGraph servers in background)
     async_subagents = retrieve_async_subagents()
+    if any(spec.get("name") == "general-purpose-async" for spec in async_subagents):
+        for spec in Nova_SubAgent:
+            if spec.get("name") == "general-purpose":
+                spec["description"] = (
+                    "Synchronous general-purpose fallback. Prefer start_async_task with "
+                    "subagent_type='general-purpose-async' for delegated work so the user "
+                    "can keep talking while it runs. Use this fallback if async dispatch "
+                    "is unavailable or fails, or the task requires in-process session tools."
+                )
 
     # Subagents run UNATTENDED — the main agent is the sole HITL boundary.
     #

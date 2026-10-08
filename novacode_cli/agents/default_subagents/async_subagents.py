@@ -405,6 +405,21 @@ def build_bug_investigation_agent() -> AsyncSubAgent:
     )
 
 
+def build_general_purpose_async_agent() -> AsyncSubAgent:
+    """The default background delegate when no narrower specialist fits."""
+    return _build_agent_spec(
+        name="general-purpose-async",
+        graph_id="general-purpose-async",
+        description=(
+            "General-purpose background agent for scoped coding, investigation, testing, "
+            "research and analysis. Prefer start_async_task with this agent over synchronous "
+            "general-purpose delegation; returns a task ID immediately so the main "
+            "conversation stays available. Uses the workspace and unattended approval policy."
+        ),
+        port=2024,
+    )
+
+
 def build_performance_audit_agent() -> AsyncSubAgent:
     """Build the background performance and resource audit specialist."""
     return _build_agent_spec(
@@ -489,6 +504,7 @@ def retrieve_async_subagents() -> list[AsyncSubAgent]:
         )
         return []
     return [
+        build_general_purpose_async_agent(),
         build_documentation_update_agent(),
         build_code_review_agent(),
         build_test_generation_agent(),

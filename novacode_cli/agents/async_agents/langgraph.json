@@ -1,5 +1,6 @@
 {
   "graphs": {
+    "general-purpose-async": "./general_purpose.py:graph",
     "documentation-update-agent": "./documentation_update.py:graph",
     "code-review-agent": "./code_review.py:graph",
     "test-generation-agent": "./test_generation.py:graph",

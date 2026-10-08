@@ -405,7 +405,7 @@ def test_an_agent_named_after_a_shipped_graph_is_not_offered(tmp_path, monkeypat
 
 
 def test_the_shipped_count_is_unchanged_when_the_user_has_no_async_agents(tmp_path, monkeypatch):
-    """The 9 built-ins must still be exactly 9 for a user with nothing new."""
+    """The twelve built-ins remain available when the user adds no async agents."""
     import socket
 
     from novacode_cli.agents.default_subagents import async_subagents as mod
@@ -421,7 +421,7 @@ def test_the_shipped_count_is_unchanged_when_the_user_has_no_async_agents(tmp_pa
         monkeypatch.setenv("ASYNC_AGENT_BASE_URL", f"http://127.0.0.1:{srv.getsockname()[1]}")
         monkeypatch.setenv(mod.ASYNC_AGENT_ROOT_VAR, str(settings.get_workspace_root()))
         monkeypatch.setattr(mod, "_availability", None, raising=False)
-        assert len(mod.retrieve_async_subagents()) == 9
+        assert len(mod.retrieve_async_subagents()) == 12
 
 
 def test_a_user_async_agent_is_added_to_the_full_spec_list(tmp_path, monkeypatch):
@@ -443,7 +443,7 @@ def test_a_user_async_agent_is_added_to_the_full_spec_list(tmp_path, monkeypatch
         monkeypatch.setattr(mod, "_availability", None, raising=False)
         specs = mod.retrieve_async_subagents()
 
-    assert len(specs) == 10, "nine built-ins plus the user's agent"
+    assert len(specs) == 13, "twelve built-ins plus the user's agent"
     assert specs[-1]["name"] == "jeva"
     assert specs[-1]["graph_id"] == "jeva"
 

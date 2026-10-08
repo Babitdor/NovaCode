@@ -2366,6 +2366,7 @@ class UpdateScreen(ModalScreen[None]):
                 yield Static("", id="update-command")
             with Horizontal(id="modal-buttons"):
                 yield Button("Check again", id="update-retry", disabled=True)
+                yield Button("View more", id="update-changelog", disabled=True)
                 yield Button("Close", id="close", variant="primary")
 
     def on_mount(self) -> None:
@@ -2374,24 +2375,30 @@ class UpdateScreen(ModalScreen[None]):
 
     @work(exclusive=True, group="update-check")
     async def check_update(self) -> None:
-        from novacode_cli.updates import check_for_update
+        from novacode_cli.updates import check_for_update, release_details
 
         retry = self.query_one("#update-retry", Button)
         retry.disabled = True
+        self.query_one("#update-changelog", Button).disabled = True
         self.query_one("#update-status", Static).update("Checking for updates…")
         self.query_one("#update-detail", Static).update("Contacting the update source")
         self.query_one("#update-command", Static).update("")
         try:
             status = await asyncio.to_thread(check_for_update, force=True)
+            status = await asyncio.to_thread(release_details, status)
+            self._update_status = status
             if status.error:
                 title, color = "Could not check for updates", "yellow"
                 detail = Text(status.error)
                 command = "Check your connection, then try again."
             elif status.available:
-                title, color = "Update available", "green"
+                title, color = f"Update available · {status.release_title or status.latest[:12]}", "green"
                 detail = Text(f"Installed  {status.current[:12] or 'Unknown'}\nLatest     {status.latest[:12]}")
+                if status.release_version:
+                    detail.append(f"\nRelease    {status.release_version}")
                 command = "Exit Nova, then run in your terminal:\n\nnova update"
                 self.app._notified_nova_update = status.latest
+                self.query_one("#update-changelog", Button).disabled = False
             else:
                 title, color = "NovaCode is up to date.", "green"
                 detail = Text(f"Installed  {status.current[:12] or 'Current release'}")
@@ -2408,6 +2415,10 @@ class UpdateScreen(ModalScreen[None]):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "update-retry":
             self.check_update()
+        elif event.button.id == "update-changelog":
+            from novacode_cli.tui.update_notice import ChangelogScreen
+
+            self.app.push_screen(ChangelogScreen(self._update_status))
         elif event.button.id == "close":
             self.dismiss(None)
 

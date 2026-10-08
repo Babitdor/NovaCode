@@ -85,7 +85,7 @@ def request_detach() -> bool:
     True if at least one was running and not already being killed.
     """
     with _lock:
-        live = [c for c in _live if not c.kill.is_set()]
+        live = [c for c in _live if not c.kill.is_set() and not c.detach.is_set()]
     for ctl in live:
         ctl.detach.set()
     return bool(live)

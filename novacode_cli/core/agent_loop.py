@@ -476,6 +476,15 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                 _namespace, current_stream_mode, data = chunk
 
                 if current_stream_mode == "custom":
+                    if isinstance(data, dict) and data.get("type") == "nova_model_retry":
+                        phase = data.get("phase")
+                        if phase == "retry":
+                            yield ev.StatusUpdate(
+                                f"Retrying model request · {data.get('attempt')}/{data.get('maximum')}…"
+                            )
+                        elif phase == "recovered":
+                            yield ev.StatusUpdate("thinking…")
+                        continue
                     # A fan-out's tasks, one event each as they start and finish.
                     # The mapper rejects every other custom payload, so middleware
                     # writing to this stream costs nothing here.

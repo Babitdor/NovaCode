@@ -59,6 +59,11 @@ _NOTICES = {
         "Check your network, or that the local model server (e.g. Ollama) is running.\n"
         "Details: {text}"
     ),
+    "server": (
+        "⚠️  Model provider temporarily unavailable\n"
+        "The provider failed to serve the request after retries. Try again or switch models.\n"
+        "Details: {text}"
+    ),
 }
 
 # Categories that won't recover within a retry window, so don't waste backoff.
@@ -147,6 +152,12 @@ def _classify(exc: BaseException | None) -> str | None:
     ):
         return "connection"
 
+    if (status is not None and 500 <= status < 600) or any(
+        marker in low
+        for marker in ("server_error", "endpoint is unavailable", "upstream request failed")
+    ):
+        return "server"
+
     return None
 
 
@@ -207,9 +218,9 @@ def is_context_overflow(exc: BaseException | None) -> bool:
 def is_retryable_model_error(exc: BaseException) -> bool:
     """``retry_on`` predicate for ``ModelRetryMiddleware``.
 
-    Returns ``False`` only for *permanent* provider failures (a usage/quota cap
-    or an auth error) so they surface immediately; everything else — transient
+    Returns ``False`` for permanent provider failures and context overflows
+    (which need compaction rather than backoff); everything else — transient
     rate limits, timeouts, network blips, and unrecognised errors — stays
     retryable, preserving the prior retry-on-all-exceptions behaviour.
     """
-    return _classify(exc) not in _PERMANENT
+    return not is_context_overflow(exc) and _classify(exc) not in _PERMANENT

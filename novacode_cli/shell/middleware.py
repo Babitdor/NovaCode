@@ -993,7 +993,8 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
             return await asyncio.create_subprocess_exec(*prog, command, **kwargs)
         return await asyncio.create_subprocess_shell(command, **kwargs)
 
-    async def _terminate_tree(self, proc: asyncio.subprocess.Process, *, grace: float = 3.0) -> None:
+    @staticmethod
+    async def _terminate_tree(proc: asyncio.subprocess.Process, *, grace: float = 3.0) -> None:
         """Stop a process and its children: terminate, wait ``grace``, force-kill.
 
         Uses the process group created in ``_spawn`` so child processes die too
@@ -1164,6 +1165,7 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
                     _job = _reg.add(command, self._tool_name, prog)
                     _job.resume_on_done = True  # agent was mid-task → auto-resume
                     _reg.attach_pid(_job.id, proc.pid)
+                    _jobs.clear_current(_ctl)
                     # Seed the job log with output captured before detaching.
                     _job.logs.extend(out_parts)
                     if output_truncated:
@@ -1196,6 +1198,7 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
                         _reg = _jobs.get_registry()
                         _job = _reg.add(command, self._tool_name, prog)
                         _reg.attach_pid(_job.id, proc.pid)
+                        _jobs.clear_current(_ctl)
                         _job.logs.extend(out_parts)
                         if output_truncated:
                             _reg.append_log(_job.id, "\n[earlier output truncated]\n" + tail)

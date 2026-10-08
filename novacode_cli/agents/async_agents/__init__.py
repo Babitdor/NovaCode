@@ -1,4 +1,4 @@
-"""The async (background) agents: eleven graphs served by a LangGraph server.
+"""The async (background) agents served by Nova's LangGraph server.
 
 Nova launches that server itself, on the first ``start_async_task``
 (``agents/server_launcher.py``), from the ``langgraph.json`` in this folder. The

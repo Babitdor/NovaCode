@@ -20,13 +20,23 @@ def _app():
     )
 
 
-def test_a_bang_command_does_not_block_the_prompt_and_gets_no_stdin():
+def test_a_bang_command_does_not_block_the_prompt_and_gets_no_stdin(tmp_path):
     """A slow command must leave the UI usable, and must not be able to read keys."""
     from novacode_cli.tui.widgets import OutputLog
     from textual.widgets import Static
 
-    # Reads stdin (EOF at once, since there is none), then outlives the await.
-    slow = f'"{sys.executable}" -c "import sys,time; print(repr(sys.stdin.read())); time.sleep(1.5); print(\'late\')"'
+    # Hold the command until the UI checks finish, independent of render speed.
+    release = tmp_path / "release"
+    script = tmp_path / "wait_for_ui.py"
+    script.write_text(
+        "import sys,time\nfrom pathlib import Path\n"
+        "print(repr(sys.stdin.read()), flush=True)\n"
+        f"release = Path({str(release)!r})\n"
+        "deadline = time.monotonic() + 30\n"
+        "while not release.exists() and time.monotonic() < deadline: time.sleep(0.01)\n"
+        "print('late', flush=True)\n"
+    )
+    slow = f'"{sys.executable}" "{script}"'
 
     async def drive() -> tuple[bool, str, bool]:
         app = _app()
@@ -38,6 +48,7 @@ def test_a_bang_command_does_not_block_the_prompt_and_gets_no_stdin():
             card = app.query_one("#transcript").query(".bash-inline").last()
             head = card.query_one(".bash-inline-head", Static)
             still_running = "running" in str(head.render())
+            release.touch()
             await app.workers.wait_for_complete()
             for _ in range(5):
                 await pilot.pause()

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import importlib.metadata
 import importlib.util
 import json
@@ -16,7 +17,7 @@ import subprocess
 import sys
 import time
 from contextlib import suppress
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import NoReturn
 from urllib.parse import unquote, urlparse
@@ -51,6 +52,64 @@ class UpdateStatus:
     latest: str
     url: str = ""
     error: str = ""
+    release_version: str = ""
+    release_title: str = ""
+    release_notes: str = ""
+    changelog_url: str = ""
+
+
+def release_details(status: UpdateStatus) -> UpdateStatus:
+    """Enrich a notice from official changelogs; metadata failure keeps it usable.
+
+    The revision remains authoritative for update detection and deduplication.
+    Call off the UI loop and only when a new notice or manual check needs it.
+    """
+    if not status.available:
+        return status
+    fallback = f"https://github.com/{REPOSITORY}/tree/main/changelog"
+    result = replace(status, changelog_url=fallback)
+    version_pattern = r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?"
+    try:
+        if re.fullmatch(r"[0-9a-fA-F]{40}", status.latest):
+            from packaging.version import Version
+
+            directory = _get_json(
+                f"https://api.github.com/repos/{REPOSITORY}/contents/changelog?ref={status.latest}"
+            )
+            if not isinstance(directory, list):
+                return result
+            names = [
+                entry["name"] for entry in directory if isinstance(entry, dict)
+                and re.fullmatch(rf"CHANGELOG-v({version_pattern})\.md", str(entry.get("name", "")))
+            ]
+            if not names:
+                return result
+            filename = max(names, key=lambda name: Version(name[11:-3]))
+            version = filename[11:-3]
+            ref = status.latest
+        elif re.fullmatch(version_pattern, status.latest):
+            version, ref = status.latest, "main"
+            filename = f"CHANGELOG-v{version}.md"
+        else:
+            return result
+        result = replace(
+            result, release_version=version, release_title=f"NovaCode {version}",
+            changelog_url=f"https://github.com/{REPOSITORY}/blob/{ref}/changelog/{filename}",
+        )
+        document = _get_json(
+            f"https://api.github.com/repos/{REPOSITORY}/contents/changelog/{filename}?ref={ref}"
+        )
+        encoded = document.get("content", "")
+        if document.get("encoding") != "base64" or not isinstance(encoded, str) or len(encoded) > 90000:
+            return result
+        notes = base64.b64decode("".join(encoded.split()), validate=True).decode("utf-8")
+        if len(notes) > 65536:
+            return result
+        heading = next((line.lstrip("# ") for line in notes.splitlines() if line.startswith("# ")), "")
+        title = "".join(char for char in heading if char.isprintable())[:160] or result.release_title
+        return replace(result, release_title=title, release_notes=notes)
+    except Exception:  # noqa: BLE001 — a release notice must survive offline metadata
+        return result
 
 
 def _git(root: Path, *arguments: str) -> str:

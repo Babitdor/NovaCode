@@ -10,9 +10,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from deepagents.graph import create_deep_agent
-from langchain.agents.middleware import ModelRetryMiddleware
 from langgraph.checkpoint.memory import InMemorySaver
 
+from novacode_cli.agents.model_retry import NovaModelRetryMiddleware as ModelRetryMiddleware
 from novacode_cli.errors import is_retryable_model_error
 
 if TYPE_CHECKING:
@@ -56,7 +56,7 @@ def create_btw_agent(model: BaseChatModel) -> tuple[Pregel, Any]:
         subagents=[],
         middleware=[
             ModelRetryMiddleware(
-                max_retries=2,
+                max_retries=3,
                 retry_on=is_retryable_model_error,
                 on_failure="error",
                 backoff_factor=1.5,
