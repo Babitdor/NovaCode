@@ -419,6 +419,11 @@ class RemoteBridgeManager:
                 "status": status,
                 "bot_user": bot_user,
             }
+            if config.platform == RemotePlatform.TELEGRAM and bridge is not None:
+                entry_info["session_topics"] = [
+                    {"session_id": session_id, "topic_id": topic_id}
+                    for session_id, topic_id in getattr(bridge, "_session_topics", {}).values()
+                ]
             info.append(entry_info)
         return info
 
@@ -581,6 +586,8 @@ class RemoteBridgeManager:
                     return False, f"Failed to connect to Telegram API: {e}"
 
             bridge = TelegramBridge(config=config, message_queue=self._queue)
+            bridge._on_status = self._on_status
+            bridge.enable_shared_polling()
             task = asyncio.create_task(bridge.run(), name=f"telegram-bridge-{bridge_id}")
             self._bridges[bridge_id] = {
                 "task": task,
@@ -787,6 +794,8 @@ class RemoteBridgeManager:
                             from novacode_cli.remote.telegram_bridge import TelegramBridge
 
                             bridge = TelegramBridge(config=config, message_queue=self._queue)
+                            bridge._on_status = self._on_status
+                            bridge.enable_shared_polling()
                             new_task = asyncio.create_task(
                                 bridge.run(), name=f"telegram-bridge-{bridge_id}"
                             )

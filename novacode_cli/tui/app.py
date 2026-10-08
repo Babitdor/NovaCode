@@ -482,7 +482,7 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "goal": SlashCommand("_run_goal", "set a persistent goal (status / clear)"),
     "btw": SlashCommand("_run_btw", "ask a side question without touching the main conversation"),
     "remote": SlashCommand(
-        "_run_remote_screen", "manage Discord/Telegram bridges and response streaming", wants_text=False
+        "_run_remote", "manage Discord/Telegram bridges and response streaming"
     ),
     "compact": SlashCommand("_run_compact", "summarize conversation to free context"),
     "update": SlashCommand(
@@ -3312,26 +3312,39 @@ class NovaApp(App):
         except Exception:  # noqa: BLE001
             return []
 
+    def _remote_owner_state(self):
+        """The root owns the connection even while a child tab is visible."""
+        root = getattr(self, "_root_pane", None)
+        if root is not None and root is not getattr(self, "_active_pane", root):
+            return root.state.get("session_state", self.session_state)
+        return self.session_state
+
+    async def _sync_remote_topics(self) -> None:
+        for pane in getattr(self, "_panes", []):
+            if pane.kind == "root" or pane.status not in ("crashed", "exited"):
+                await self._open_remote_topics(pane)
+
     async def _open_remote_topics(self, pane) -> None:
-        """Give a new session its own topic in every Telegram forum group."""
+        """Bind every live session to its own stable Telegram topic."""
         from novacode_cli.remote.routing import RemoteRouter
 
         router = getattr(self, "_remote_router", None)
         if router is None:
             router = self._remote_router = RemoteRouter()
+        state = self._remote_owner_state() if pane.kind == "root" else pane.state.get("session_state")
+        session_id = str(getattr(state, "session_id", "") or pane.sid)
         for bridge in self._remote_telegram_bridges():
             try:
-                tid = await bridge.open_topic(f"🔀 {pane.title}")
+                tid = await bridge.ensure_session_topic(pane.sid, session_id, pane.title)
                 if tid is None:
+                    self.notify("Enable Telegram Topics (or private bot topic mode), and grant Manage Topics permission in groups.", severity="warning")
                     continue
+                previous = router.topic_of(bridge._config.chat_id, pane.sid)
                 router.topics[(bridge._config.chat_id, pane.sid)] = tid
-                await bridge.post(
-                    f"◆ Session **{pane.title}** started. Messages in this topic go to it.",
-                    thread_id=tid,
-                    sid=pane.sid,
-                )
-            except Exception:  # noqa: BLE001 — a missing topic must not block the session
-                continue
+                if previous != tid:
+                    await bridge.post(f"Session **{session_id}** connected. Messages in this topic go to **{pane.title}**.", thread_id=tid, sid=pane.sid)
+            except Exception as error:
+                self.notify(f"Telegram session topic could not connect: {error}", severity="warning")
 
     async def _close_remote_topics(self, pane) -> None:
         router = getattr(self, "_remote_router", None)
@@ -5936,7 +5949,7 @@ class NovaApp(App):
                 # agent works; use a separate non-exclusive worker so modal
                 # screens don't block or cancel the active turn.
                 if command_name == "remote":
-                    coroutine = self._run_remote_screen()
+                    coroutine = self._run_remote(text)
                 elif command_name == "theme":
                     coroutine = self._run_theme()
                 elif command_name == "help":
@@ -7281,7 +7294,7 @@ class NovaApp(App):
 
         from novacode_cli.remote.processor import _extract_response
 
-        queue = self.session_state._remote_message_queue
+        queue = self._remote_owner_state()._remote_message_queue
         while True:
             try:
                 msg = await queue.get()
@@ -8501,21 +8514,35 @@ class NovaApp(App):
             skill_loader=self._get_skill_names,
         ))
 
+    async def _run_remote(self, text: str) -> None:
+        from novacode_cli.commands.commands import _handle_remote_command
+
+        parts = text.split(maxsplit=1)
+        if len(parts) == 1:
+            await self._run_remote_screen()
+            return
+        with _rich_console.capture() as cap:
+            await _handle_remote_command(parts[1], self._remote_owner_state(), _rich_console)
+        if output := cap.get().strip():
+            self._log(Text.from_ansi(output))
+        self._ensure_remote_consumer()
+
     async def _run_remote_screen(self) -> None:
         await self.push_screen_wait(
             RemoteScreen(
-                self.session_state,
+                self._remote_owner_state(),
                 sandbox_id=self._sandbox_id,
                 sandbox_type=self._sandbox_type,
             )
         )
         self._ensure_remote_consumer()
+        await self._sync_remote_topics()
 
     def _ensure_remote_consumer(self) -> None:
         """Starting /remote after launch must start exactly one message consumer."""
-        if getattr(self.session_state, "_remote_message_queue", None) is None:
+        if getattr(self._remote_owner_state(), "_remote_message_queue", None) is None:
             return
-        manager = getattr(self.session_state, "_remote_bridge_manager", None)
+        manager = getattr(self._remote_owner_state(), "_remote_bridge_manager", None)
         if manager is not None:
             async def status_callback(message: str) -> None:
                 self._log(Text(f"🔗 Remote: {message}", style="dim"))
@@ -8524,6 +8551,9 @@ class NovaApp(App):
         worker = self._remote_consumer_worker
         if worker is None or worker.is_finished:
             self._remote_consumer_worker = self._remote_consumer()
+        topic_worker = getattr(self, "_remote_topics_worker", None)
+        if topic_worker is None or topic_worker.is_finished:
+            self._remote_topics_worker = self.run_worker(self._sync_remote_topics(), group="remote_topics", exclusive=False)
 
     async def _start_local_remote_stream(self, prompt: str) -> None:
         self._local_remote_streams.extend(await self._create_local_remote_streams(prompt))
@@ -8532,9 +8562,10 @@ class NovaApp(App):
         from novacode_cli.remote.status import RemoteStatusLine
         from novacode_cli.remote.streaming import RemoteAnswerStream
 
-        manager = getattr(self.session_state, "_remote_bridge_manager", None)
+        manager = getattr(self._remote_owner_state(), "_remote_bridge_manager", None)
         if manager is None:
             return []
+        await self._sync_remote_topics()
         streams = []
         targets = await manager.stream_targets(sid="root")
         for target in targets:

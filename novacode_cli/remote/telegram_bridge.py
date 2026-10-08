@@ -17,6 +17,7 @@ Message Flow
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import time
 from typing import Any
@@ -64,6 +65,89 @@ class TelegramBridge:
         self.bot_user: str | None = None  # set after successful getMe
         self._retry_at = 0.0
         self._last_api_error: str | None = None
+        self._session_topics: dict[str, tuple[str, int]] = {}
+        self._topic_lock = asyncio.Lock()
+        self._shared_polling = None
+        self._on_status = None
+        self._last_sender_warning = 0.0
+
+    def enable_shared_polling(self) -> None:
+        from novacode_cli.remote.telegram_hub import SharedTelegramPolling
+
+        async def fetch(offset):
+            self._offset = offset
+            return await self._get_updates()
+
+        self._shared_polling = SharedTelegramPolling(self._config.token, fetch)
+        self._shared_polling.bindings = [(int(self._config.chat_id), 0)]
+
+    async def ensure_session_topic(self, sid: str, session_id: str, name: str) -> int | None:
+        """Bind a process-local route to a durable, bot-scoped session topic."""
+        from novacode_cli.memory.store import get_durable_store
+
+        async with self._topic_lock:
+            cached = self._session_topics.get(sid)
+            if cached and cached[0] == session_id:
+                return cached[1]
+            if self._shared_polling:
+                await self._shared_polling.reserve_session(self._config.chat_id, session_id)
+            store = await asyncio.to_thread(get_durable_store)
+            bot = hashlib.sha256(self._config.token.encode()).hexdigest()
+            namespace = ("nova", "telegram_topics", bot, str(self._config.chat_id))
+            saved = await store.aget(namespace, session_id)
+            tid = saved.value.get("topic") if saved else None
+            if isinstance(tid, int) and not isinstance(tid, bool) and tid > 0:
+                # Reopening validates the saved ID and makes a closed session
+                # usable again. Already-open topics report TOPIC_NOT_MODIFIED.
+                result = await self._api_call(
+                    "reopenForumTopic",
+                    {"chat_id": self._config.chat_id, "message_thread_id": tid},
+                    req_timeout=aiohttp.ClientTimeout(total=10),
+                    return_errors=True,
+                )
+                description = str((result or {}).get("description", "")).upper()
+                bad_request = (result or {}).get("error_code") == 400
+                missing = bad_request and any(
+                    marker in description
+                    for marker in (
+                        "TOPIC_ID_INVALID",
+                        "MESSAGE_THREAD_NOT_FOUND",
+                        "MESSAGE THREAD NOT FOUND",
+                        "TOPIC_NOT_FOUND",
+                        "TOPIC NOT FOUND",
+                    )
+                )
+                already_open = bad_request and any(
+                    marker in description
+                    for marker in (
+                        "TOPIC_NOT_MODIFIED",
+                        "TOPIC_NOT_CLOSED",
+                    )
+                )
+                if missing:
+                    tid = None
+                elif not result or (not result.get("ok") and not already_open):
+                    raise RuntimeError(
+                        "Could not verify this session's Telegram topic. "
+                        + (description or "Try reconnecting.")
+                    )
+                elif saved.value.get("closed"):
+                    await store.aput(namespace, session_id, {"topic": tid})
+            if not isinstance(tid, int) or isinstance(tid, bool) or tid <= 0:
+                tid = await self.open_topic(f"NOVA · {session_id} · {name}")
+                if tid is None:
+                    return None
+                await store.aput(namespace, session_id, {"topic": tid})
+            proposed = {**self._session_topics, sid: (session_id, tid)}
+            if self._shared_polling:
+                await self._shared_polling.subscribe(
+                    [
+                        (int(self._config.chat_id), 0),
+                        *[(int(self._config.chat_id), value[1]) for value in proposed.values()],
+                    ]
+                )
+            self._session_topics = proposed
+            return tid
 
     @property
     def is_connected(self) -> bool:
@@ -82,6 +166,7 @@ class TelegramBridge:
         payload: dict[str, Any],
         *,
         req_timeout: aiohttp.ClientTimeout | None = None,
+        return_errors: bool = False,
     ) -> dict[str, Any] | None:
         """Make a Telegram Bot API call.
 
@@ -92,6 +177,8 @@ class TelegramBridge:
                 session's default (300 s). Long-poll callers should pass
                 ``_LONG_POLL_CLIENT_TIMEOUT`` so a network hang is detected
                 within ~35 seconds instead of ~5 minutes.
+            return_errors: Return Telegram's error response for topic validation,
+                so missing topics can be distinguished from other failures.
 
         Returns:
             Parsed JSON response, or None on error.
@@ -116,6 +203,8 @@ class TelegramBridge:
                         and "message is not modified" in description.lower()
                     ):
                         return {"ok": True, "result": {"message_id": payload.get("message_id")}}
+                    if return_errors:
+                        return data
                     logger.error(f"Telegram API error: {data.get('description')}")
                     return None
                 return data
@@ -171,7 +260,16 @@ class TelegramBridge:
         """Whether the chat is a forum supergroup (topics enabled). Cached."""
         if self.is_forum is None:
             info = await self._api_call("getChat", {"chat_id": self._config.chat_id})
-            self.is_forum = bool((info or {}).get("result", {}).get("is_forum"))
+            if info is None:
+                return False  # transient API errors must not disable topics permanently
+            chat = info.get("result", {})
+            if chat.get("type") == "private":
+                me = await self._api_call("getMe", {})
+                if me is None:
+                    return False
+                self.is_forum = bool(me.get("result", {}).get("has_topics_enabled"))
+            else:
+                self.is_forum = bool(chat.get("is_forum"))
         return self.is_forum
 
     async def open_topic(self, name: str) -> int | None:
@@ -186,9 +284,32 @@ class TelegramBridge:
 
     async def close_topic(self, thread_id: int) -> None:
         """Close (not delete) a session's topic: its history stays readable."""
-        await self._api_call(
+        result = await self._api_call(
             "closeForumTopic", {"chat_id": self._config.chat_id, "message_thread_id": thread_id}
         )
+        if result:
+            from novacode_cli.memory.store import get_durable_store
+
+            store = await asyncio.to_thread(get_durable_store)
+            bot = hashlib.sha256(self._config.token.encode()).hexdigest()
+            namespace = ("nova", "telegram_topics", bot, str(self._config.chat_id))
+            for sid, (session_id, tid) in list(self._session_topics.items()):
+                if tid != thread_id:
+                    continue
+                await store.aput(namespace, session_id, {"topic": tid, "closed": True})
+                del self._session_topics[sid]
+                if self._shared_polling:
+                    await self._shared_polling.release_session(
+                        self._config.chat_id,
+                        session_id,
+                        [
+                            (int(self._config.chat_id), 0),
+                            *[
+                                (int(self._config.chat_id), value[1])
+                                for value in self._session_topics.values()
+                            ],
+                        ],
+                    )
 
     async def post(self, text: str, *, thread_id: int | None = None, sid: str = "root") -> None:
         """Send markdown ``text`` unprompted (e.g. "session started") to a topic."""
@@ -282,12 +403,14 @@ class TelegramBridge:
     async def stream_target(self, *, sid: str = "root") -> RemoteMessage | None:
         if not self.is_connected:
             return None
-        route = {"sid": sid, "thread": None}
+        topic = self._session_topics.get(sid)
+        thread = topic[1] if topic else None
+        route = {"sid": sid, "thread": thread}
         chat_id = int(self._config.chat_id)
 
         async def reply(text):
             if self.is_connected:
-                await self._send_message(chat_id, text, sid=sid)
+                await self._send_message(chat_id, text, sid=sid, thread_id=thread)
 
         from novacode_cli.remote.streaming import connected_editor
 
@@ -326,7 +449,11 @@ class TelegramBridge:
 
         try:
             while self._running:
-                updates = await self._get_updates()
+                updates = (
+                    await self._shared_polling.next_updates()
+                    if self._shared_polling
+                    else await self._get_updates()
+                )
 
                 if not updates:
                     # No messages (normal) or a network error (also returns []).
@@ -369,13 +496,23 @@ class TelegramBridge:
                     } and str(sender.get("id")) not in {
                         str(i) for i in self._config.allowed_user_ids
                     }:
+                        if self._on_status and time.monotonic() - self._last_sender_warning > 10:
+                            self._last_sender_warning = time.monotonic()
+                            await self._on_status(
+                                f"Telegram group message blocked: user {sender.get('id')} is not authorized. "
+                                f"In Nova, run /remote allow-user telegram {sender.get('id')} to allow this user."
+                            )
                         continue
 
-                    # Which topic it came from (forum groups only: in plain
-                    # groups message_thread_id also marks reply chains).
+                    # Registered topics remain identifiable when Telegram omits
+                    # is_topic_message; ordinary reply chains aren't topics.
                     thread_id = (
                         message.get("message_thread_id")
                         if message.get("is_topic_message")
+                        or any(
+                            tid == message.get("message_thread_id")
+                            for _, tid in self._session_topics.values()
+                        )
                         else None
                     )
                     reply_to = message.get("reply_to_message") or {}
@@ -449,6 +586,8 @@ class TelegramBridge:
         finally:
             self._running = False
             self.bot_user = None
+            if self._shared_polling:
+                await self._shared_polling.close()
             if self._session and not self._session.closed:
                 await self._session.close()
             logger.info("Telegram bridge stopped")

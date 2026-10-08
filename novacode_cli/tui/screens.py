@@ -4754,6 +4754,12 @@ class RemoteScreen(ModalScreen[None]):
     components (the underlying logic is reused, but its output stays in-modal)."""
 
     BINDINGS = [("escape", "close", "Close")]
+    DEFAULT_CSS = """
+    RemoteScreen #remote-access-buttons { height: auto; }
+    RemoteScreen #remote-access-buttons Button { margin-right: 1; }
+    RemoteScreen #remote-access-hint { margin-top: 1; color: $text-muted; }
+    RemoteScreen #remote-authorized-users { height: auto; color: $text-muted; }
+    """
 
     def __init__(
         self,
@@ -4767,7 +4773,7 @@ class RemoteScreen(ModalScreen[None]):
         self._sandbox_type = sandbox_type
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="modal-box"):
+        with VerticalScroll(id="modal-box"):
             yield Static(
                 Text("🔗 Remote Bridges Status & Config", style="bold cyan"), id="modal-title"
             )
@@ -4780,6 +4786,13 @@ class RemoteScreen(ModalScreen[None]):
                 id="remote-token",
             )
             yield Input(placeholder="Channel/Chat ID (blank = saved/auto)", id="remote-chat")
+            yield Static("Telegram: each Nova window gets a session topic. Enable Topics for the bot's private chat, or use a Topics-enabled group with Manage Topics permission.", id="remote-topics-hint")
+            yield Static("Telegram sender access · enter your personal user ID from Nova's blocked-message notice", id="remote-access-hint")
+            yield Input(placeholder="Telegram user ID (e.g. 123456789)", id="remote-user-id")
+            yield Static("", id="remote-authorized-users")
+            with Horizontal(id="remote-access-buttons"):
+                yield Button("Authorize", id="remote-authorize", variant="success")
+                yield Button("Revoke", id="remote-revoke", variant="error")
             with Horizontal(id="modal-buttons"):
                 yield Button("Start Discord", id="start-discord", variant="success")
                 yield Button("Start Telegram", id="start-telegram", variant="success")
@@ -4822,12 +4835,18 @@ class RemoteScreen(ModalScreen[None]):
                 )
                 t.append(status, style=status_style)
                 t.append("\n")
+                for topic in b.get("session_topics", []):
+                    t.append(f"    {topic['session_id']} → Topic {topic['topic_id']}\n")
         else:
             t.append("📭 No bridges active.\n", style="dim italic")
         try:
             saved = load_remote_config()
         except Exception:  # noqa: BLE001
             saved = {}
+        users = saved.get("telegram", {}).get("allowed_user_ids", [])
+        self.query_one("#remote-authorized-users", Static).update(
+            Text("Authorized Telegram users: " + (", ".join(map(str, users)) if users else "none"))
+        )
         if saved:
             t.append("\n💾 Saved Configurations:\n", style="bold magenta")
             if "discord" in saved:
@@ -4913,6 +4932,13 @@ class RemoteScreen(ModalScreen[None]):
             self._run_remote("test")
         elif bid == "stop":
             self._run_remote("stop")
+        elif bid in {"remote-authorize", "remote-revoke"}:
+            user_id = self.query_one("#remote-user-id", Input).value.strip()
+            if not user_id.isascii() or not user_id.isdigit() or int(user_id) <= 0:
+                self.query_one("#remote-result", Static).update(Text("Enter a valid numeric Telegram user ID.", style="red"))
+                return
+            action = "allow-user" if bid == "remote-authorize" else "deny-user"
+            self._run_remote(f"{action} telegram {user_id}")
 
     def action_close(self) -> None:
         self.dismiss(None)

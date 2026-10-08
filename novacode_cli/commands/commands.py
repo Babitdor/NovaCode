@@ -675,6 +675,36 @@ async def _handle_remote_command(cmd_args: str | None, session_state, console) -
     manager: RemoteBridgeManager = session_state._remote_bridge_manager
     args = (cmd_args or "").strip()
 
+    # Sender authorization is managed from the local Nova UI only.
+    if args.lower().startswith(("allow-user", "deny-user")):
+        match = re.fullmatch(
+            r"(allow-user|deny-user)\s+(telegram|discord)\s+([1-9][0-9]*)",
+            args,
+            re.IGNORECASE,
+        )
+        if not match:
+            console.print("Usage: /remote allow-user telegram <USER_ID> (or deny-user)")
+            return True
+        from novacode_cli.remote.config import async_save_remote_config
+
+        action, platform, user_id = match.groups()
+        platform = platform.lower()
+        saved = await async_load_remote_config()
+        values = saved.get(platform, {}).get("allowed_user_ids", [])
+        users = {str(value) for value in values} if isinstance(values, list) else set()
+        if action.lower() == "allow-user":
+            users.add(user_id)
+        else:
+            users.discard(user_id)
+        await async_save_remote_config({platform: {"allowed_user_ids": sorted(users)}})
+        for entry in manager._bridges.values():
+            config = entry.get("config")
+            if config and config.platform.value == platform:
+                config.allowed_user_ids = set(users)
+        result = "allowed" if action.lower() == "allow-user" else "removed"
+        console.print(f"Sender permissions updated for {platform}: {user_id} {result}.")
+        return True
+
     # ── /remote (no args) or /remote status ────────────────────────
     if not args or args.lower() in ("status", "list", "ls"):
         bridges = manager.active_bridges
@@ -720,6 +750,7 @@ async def _handle_remote_command(cmd_args: str | None, session_state, console) -
         console.print("  [dim]/remote start discord    (uses saved token & channel)[/dim]")
         console.print("  [dim]/remote start discord --token TOKEN --channel ID[/dim]")
         console.print("  [dim]/remote start telegram --token TOKEN --chat ID[/dim]")
+        console.print("  [dim]/remote allow-user telegram USER_ID  |  /remote deny-user telegram USER_ID[/dim]")
         console.print("  [dim]/remote test  |  /remote stop  |  /remote forget[/dim]")
 
         if not ("discord" in saved and saved.get("discord", {}).get("token")):
@@ -1039,6 +1070,7 @@ async def _handle_remote_command(cmd_args: str | None, session_state, console) -
     console.print("[dim]Usage:[/dim]")
     console.print("  [dim]/remote start discord [--token TOKEN] [--channel ID][/dim]")
     console.print("  [dim]/remote start telegram [--token TOKEN] [--chat ID][/dim]")
+    console.print("  [dim]/remote allow-user telegram USER_ID  |  /remote deny-user telegram USER_ID[/dim]")
     console.print("  [dim]/remote status  |  /remote test  |  /remote stop[/dim]")
     console.print("  [dim]/remote forget [discord|telegram][/dim]")
     console.print()
