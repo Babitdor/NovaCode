@@ -40,6 +40,7 @@ from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
+from novacode_cli._version import __version__
 from novacode_cli.brand import (
     TAGLINE,
     WORDMARK_WIDTH,
@@ -818,7 +819,7 @@ class Settings:
     langsmith_workspace_id: str | None = None
     langsmith_tracing_enabled: bool = False
 
-    version: str = "1.0.6"
+    version: str = __version__
 
     def __repr__(self) -> str:
         """The settings, with every credential masked.

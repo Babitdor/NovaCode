@@ -7,6 +7,12 @@ from novacode_cli.skills.upstream import add_arguments, run_skills_cli
 
 def cli_main() -> None:
     """Forward skill installs before importing model setup or onboarding."""
+    if sys.argv[1:] == ["--version"]:
+        from novacode_cli._version import __version__
+        from novacode_cli.config.config import console, format_version_banner
+
+        console.print(format_version_banner(__version__), markup=False, highlight=False)
+        return
     if sys.argv[1:2] == ["update"]:
         from novacode_cli.updates import update_main
 

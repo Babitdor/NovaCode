@@ -28,6 +28,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.store.memory import InMemoryStore
 
 from novacode_cli import ui_events
+from novacode_cli._version import __version__
 from novacode_cli.core.agent_loop import default_interrupt_response, iterate_agent_events
 from novacode_cli.server.event_adapter import serialize_event
 from novacode_cli.server.session_manager import SessionManager
@@ -269,7 +270,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(
     title="Nova Agent API",
-    version="1.0.6",
+    version=__version__,
     lifespan=lifespan,
 )
 

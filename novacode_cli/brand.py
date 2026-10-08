@@ -268,7 +268,12 @@ def art_for(width: int | None = None, version: str | None = None) -> str:
     if usable >= LOCKUP_WIDTH:
         return "\n" + "\n".join(_lockup_rows(version)) + "\n"
     if usable >= PORTRAIT_WIDTH:
-        return "\n" + "\n".join(compact_art()) + "\n"
+        rows = list(compact_art())
+        if version:
+            caption = version_line(version)
+            if cell_len(caption) <= PORTRAIT_WIDTH:
+                rows.append(_pad(caption.center(PORTRAIT_WIDTH), PORTRAIT_WIDTH))
+        return "\n" + "\n".join(rows) + "\n"
     return f"\n{compact_mark()}\n"
 
 
