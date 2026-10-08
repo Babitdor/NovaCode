@@ -13,6 +13,7 @@ import asyncio
 import sys
 
 import pytest
+from tests.test_tui_app import _disable_live_update_checks  # noqa: F401
 from rich.text import Text
 
 sys.path.insert(0, "tests")

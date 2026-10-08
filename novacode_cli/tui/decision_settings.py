@@ -58,6 +58,8 @@ class DecisionSettings(VerticalScroll):
             [
                 ("OpenAI · Decisions API", "openai"),
                 ("Jev · TypeSafe API", "jev"),
+                ("Jev · OpenCode Zen", "opencode_zen"),
+                ("Jev Free · OpenCode Zen", "opencode_zen_free"),
                 ("Tev1 · local Ollama", "tev1"),
                 ("Custom System One", "custom"),
             ],
@@ -105,6 +107,8 @@ class DecisionSettings(VerticalScroll):
             preset = "openai"
         elif endpoint == NovaConfig.TOOL_VERDICT_JEV_ENDPOINT:
             preset = "jev"
+        elif endpoint == NovaConfig.TOOL_VERDICT_OPENCODE_ENDPOINT:
+            preset = "opencode_zen_free" if model == NovaConfig.TOOL_VERDICT_OPENCODE_FREE_MODEL else "opencode_zen"
         elif endpoint == NovaConfig.TOOL_VERDICT_DEFAULT_ENDPOINT and model.startswith("tev1"):
             preset = "tev1"
         self._preset = preset
@@ -136,6 +140,13 @@ class DecisionSettings(VerticalScroll):
         elif event.value == "jev":
             self.query_one("#decision-endpoint", Input).value = NovaConfig.TOOL_VERDICT_JEV_ENDPOINT
             self.query_one("#decision-model", Input).value = NovaConfig.TOOL_VERDICT_JEV_MODEL
+        elif event.value in {"opencode_zen", "opencode_zen_free"}:
+            self.query_one("#decision-endpoint", Input).value = NovaConfig.TOOL_VERDICT_OPENCODE_ENDPOINT
+            self.query_one("#decision-model", Input).value = (
+                NovaConfig.TOOL_VERDICT_OPENCODE_FREE_MODEL if event.value == "opencode_zen_free"
+                else NovaConfig.TOOL_VERDICT_OPENCODE_MODEL
+            )
+            self._hint("Uses your OpenCode Zen API key. Add it with Manage API key or /auth.")
         elif event.value == "tev1":
             self.query_one(
                 "#decision-endpoint", Input
@@ -162,6 +173,8 @@ class DecisionSettings(VerticalScroll):
         provider = "jev" if endpoint == NovaConfig.TOOL_VERDICT_JEV_ENDPOINT else "systemone"
         if endpoint == NovaConfig.TOOL_VERDICT_OPENAI_ENDPOINT:
             provider = "openai"
+        elif endpoint == NovaConfig.TOOL_VERDICT_OPENCODE_ENDPOINT:
+            provider = "opencode_zen"
         await self.app.push_screen_wait(AuthManagerScreen(focus=provider))
 
     @work(exclusive=True, group="decision-save")
@@ -175,6 +188,12 @@ class DecisionSettings(VerticalScroll):
         enabled = self.query_one("#decision-enabled", Switch).value
         endpoint = self.query_one("#decision-endpoint", Input).value.strip()
         model = self.query_one("#decision-model", Input).value.strip()
+        if (
+            enabled and endpoint == NovaConfig.TOOL_VERDICT_OPENCODE_ENDPOINT
+            and not await asyncio.to_thread(credential_value, "OPENCODE_ZEN_API_KEY")
+        ):
+            self._hint("Add an OpenCode Zen API key through /auth before enabling Zen Jev.", error=True)
+            return
         if (
             enabled
             and endpoint == NovaConfig.TOOL_VERDICT_OPENAI_ENDPOINT

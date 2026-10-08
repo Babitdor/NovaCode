@@ -4881,7 +4881,7 @@ async def _drive_bg_agent_card_sizes_to_content() -> None:
 
             orig = astream.run_agent_stream
             astream.run_agent_stream = fake_stream
-            task = asyncio.create_task(app._bg_agent_worker.__wrapped__(app, "do a thing", 1))
+            task = app._bg_agent_worker("do a thing", 1)
             try:
                 # Poll until the card has mounted AND laid out with the expected
                 # number of lines. A fixed number of pauses races the layout under
@@ -4907,7 +4907,7 @@ async def _drive_bg_agent_card_sizes_to_content() -> None:
                 return card.size.height, log_widget.size.height
             finally:
                 gate.set()
-                await task
+                await task.wait()
                 astream.run_agent_stream = orig
 
     short_card, short_log = await _measure(2)
@@ -4975,7 +4975,7 @@ async def _drive_bg_agent_reports_back() -> None:
         orig = astream.run_agent_stream
         astream.run_agent_stream = fake_stream
         try:
-            await app._bg_agent_worker.__wrapped__(app, "Test for vulnerabilities", 1)
+            await app._bg_agent_worker("Test for vulnerabilities", 1).wait()
         finally:
             astream.run_agent_stream = orig
         await pilot.pause()

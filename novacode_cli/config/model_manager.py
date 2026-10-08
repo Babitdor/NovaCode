@@ -24,10 +24,11 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 # OpenCode Go is OpenCode's subscription model gateway, OpenAI-API-compatible.
 # Routed through ChatOpenAI with this base URL (same pattern as OpenRouter).
 OPENCODE_BASE_URL = "https://opencode.ai/zen/go/v1"
+OPENCODE_ZEN_BASE_URL = "https://opencode.ai/zen/v1"
 
 # Type for supported providers
 ProviderType = Literal[
-    "openai", "anthropic", "ollama", "google", "openrouter", "opencode", "nvidia"
+    "openai", "anthropic", "ollama", "google", "openrouter", "opencode", "opencode_zen", "nvidia"
 ]
 
 #: Providers that accept a custom OpenAI-compatible endpoint. OpenRouter and
@@ -157,6 +158,16 @@ MODEL_PRESETS: dict[str, dict[str, Any]] = {
             "ox-alpha-free",
         ],
     },
+    "opencode_zen": {
+        "name": "OpenCode Zen",
+        "description": "OpenCode's pay-as-you-go gateway",
+        "default_model": "big-pickle",
+        "env_var": "OPENCODE_ZEN_MODEL",
+        "api_key_var": "OPENCODE_ZEN_API_KEY",
+        "requires_api_key": True,
+        "base_url": OPENCODE_ZEN_BASE_URL,
+        "models": ["big-pickle", "deepseek-v4.1-flash", "glm-5.3", "kimi-k3", "claude-sonnet-4-6", "gpt-5.4"],
+    },
     "nvidia": {
         "name": "NVIDIA NIM",
         "description": "NVIDIA-hosted models (DeepSeek, Nemotron, Llama) via build.nvidia.com",
@@ -222,17 +233,15 @@ def get_ollama_models() -> list[str]:
     return MODEL_PRESETS["ollama"]["models"]
 
 
-def get_opencode_models() -> list[str]:
-    """Get the live list of OpenCode Go models from the gateway.
+def get_opencode_models(provider: str = "opencode") -> list[str]:
+    """Get the live list of conversational models from Go or Zen.
 
     Mirrors :func:`get_ollama_models`: ask the provider what it actually serves
     rather than trusting the hand-maintained preset list, which drifts (six of
     the preset's eighteen ids are already ``deprecated`` and 400 on first use).
 
-    The gateway's ``/models`` endpoint is keyed off the API key: an authorised
-    key returns the subscription's models, an absent/bad key returns a wider
-    public list. Either way the ids are real, so a bad key still yields a usable
-    picker rather than an empty one.
+    The model list can be public; retrieving it does not validate a key or
+    confirm the account's entitlement to a particular model.
 
     Returns:
         Model ids sorted for a stable display, or the preset list if the request
@@ -240,7 +249,11 @@ def get_opencode_models() -> list[str]:
     """
     # Resolve keyring-or-env: a key saved to the system keychain is not in
     # os.environ on a fresh session, so reading the env alone would 401.
-    api_key = Settings.from_environment().opencode_api_key or os.environ.get("OPENCODE_API_KEY")
+    from novacode_cli.config.opencode_gateway import headers as gateway_headers, protocol
+    from novacode_cli.config.model_create import opencode_session_id
+
+    preset = MODEL_PRESETS[provider]
+    api_key = getattr(Settings.from_environment(), f"{provider}_api_key", None) or os.environ.get(preset["api_key_var"])
 
     models: list[str] = []
     try:
@@ -249,23 +262,24 @@ def get_opencode_models() -> list[str]:
         headers = {"Accept": "application/json"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
-        # The gateway 403s a default UA (same as models.dev) — send a browser one.
-        headers["User-Agent"] = "Mozilla/5.0 (Nova-Code)"
+        # OpenCode asks third-party coding agents to identify themselves.
+        headers.update(gateway_headers(opencode_session_id()))
 
-        response = httpx.get(f"{OPENCODE_BASE_URL}/models", headers=headers, timeout=10)
+        response = httpx.get(f"{preset['base_url']}/models", headers=headers, timeout=10)
         response.raise_for_status()
         payload = response.json()
 
         models = [
             entry["id"]
             for entry in payload.get("data", [])
-            if isinstance(entry, dict) and entry.get("id")
+            if isinstance(entry, dict) and isinstance(entry.get("id"), str) and entry["id"].strip()
+            and protocol(provider, entry["id"]) != "unsupported"
         ]
     except Exception:  # noqa: BLE001 — network/parse failure falls back, as Ollama does
         models = []
 
     # Fallback to preset models if the request returned nothing usable
-    return sorted(models) if models else MODEL_PRESETS["opencode"]["models"]
+    return sorted(set(models)) if models else preset["models"]
 
 
 class ModelManager:
@@ -355,6 +369,8 @@ class ModelManager:
         if self.settings.has_opencode:
             model = os.environ.get("OPENCODE_MODEL", "glm-5.3")
             return ("OpenCode Go", model)
+        if self.settings.has_opencode_zen:
+            return ("OpenCode Zen", os.environ.get("OPENCODE_ZEN_MODEL", "big-pickle"))
         if self.settings.has_nvidia:
             model = os.environ.get("NVIDIA_MODEL", "deepseek-ai/deepseek-v4-pro-0813")
             return ("NVIDIA NIM", model)

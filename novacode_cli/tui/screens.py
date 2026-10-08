@@ -4791,6 +4791,7 @@ class RemoteScreen(ModalScreen[None]):
     def on_mount(self) -> None:
         animate_modal_screen(self)
         self._refresh()
+        self.set_interval(2.0, self._refresh)
 
     def _refresh(self) -> None:
         from novacode_cli.remote.config import load_remote_config
@@ -4849,6 +4850,7 @@ class RemoteScreen(ModalScreen[None]):
                 t.append(" · Chat: ")
                 t.append(str(tg.get("chat_id", "—")), style="yellow")
                 t.append("\n")
+        t.append("\nLive streaming: local TUI tasks and remote replies.\nAnswers and tool activity appear separately.", style="dim")
         self.query_one("#remote-status", Static).update(t)
 
     def _build_args(self, platform: str) -> str:
@@ -4894,6 +4896,9 @@ class RemoteScreen(ModalScreen[None]):
         self.query_one("#remote-result", Static).update(
             Text(last, style="red" if errored else "green")
         )
+        ensure_consumer = getattr(self.app, "_ensure_remote_consumer", None)
+        if ensure_consumer is not None:
+            ensure_consumer()
         self._refresh()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -5437,6 +5442,8 @@ class RouterScreen(ModalScreen[dict | None]):
     _PRESETS: tuple[tuple[str, str], ...] = (
         ("OpenAI · Decisions API", "openai"),
         ("Jev · TypeSafe API", "jev"),
+        ("Jev · OpenCode Zen", "opencode_zen"),
+        ("Jev Free · OpenCode Zen", "opencode_zen_free"),
         ("Tev1 · local Ollama", "tev1"),
         ("Custom System One", "custom"),
     )
@@ -5516,6 +5523,8 @@ class RouterScreen(ModalScreen[dict | None]):
             preset = "openai"
         elif self._endpoint == self._config.TOOL_VERDICT_JEV_ENDPOINT:
             preset = "jev"
+        elif self._endpoint == self._config.TOOL_VERDICT_OPENCODE_ENDPOINT:
+            preset = "opencode_zen_free" if self._model == self._config.TOOL_VERDICT_OPENCODE_FREE_MODEL else "opencode_zen"
         elif self._endpoint == self._config.ROUTER_DEFAULT_ENDPOINT and self._model.startswith(
             "tev1"
         ):
@@ -5667,6 +5676,13 @@ class RouterScreen(ModalScreen[dict | None]):
         elif event.value == "jev":
             self.query_one("#router-endpoint", Input).value = self._config.TOOL_VERDICT_JEV_ENDPOINT
             self.query_one("#router-decision-model", Input).value = self._config.TOOL_VERDICT_JEV_MODEL
+        elif event.value in {"opencode_zen", "opencode_zen_free"}:
+            self.query_one("#router-endpoint", Input).value = self._config.TOOL_VERDICT_OPENCODE_ENDPOINT
+            self.query_one("#router-decision-model", Input).value = (
+                self._config.TOOL_VERDICT_OPENCODE_FREE_MODEL if event.value == "opencode_zen_free"
+                else self._config.TOOL_VERDICT_OPENCODE_MODEL
+            )
+            self._hint("Uses your OpenCode Zen API key, configured through /auth.")
         elif event.value == "tev1":
             self.query_one("#router-endpoint", Input).value = self._config.TOOL_VERDICT_DEFAULT_ENDPOINT
             self.query_one("#router-decision-model", Input).value = self._config.TOOL_VERDICT_DEFAULT_MODEL

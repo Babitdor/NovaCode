@@ -50,7 +50,7 @@ provider ids are its own (``google``, not ``google_genai``), Nova never calls
 Nova cannot construct a client for.
 """
 
-PROVIDERS_WITH_LIVE_LISTS: frozenset[str] = frozenset({"ollama", "opencode"})
+PROVIDERS_WITH_LIVE_LISTS: frozenset[str] = frozenset({"ollama", "opencode", "opencode_zen"})
 """Providers asked directly for their model list instead of read from profiles."""
 
 _CACHE_TTL_SECONDS = 300.0
@@ -142,6 +142,8 @@ def _live_models(provider: str) -> list[str]:
 
     if provider == "ollama":
         return list(get_ollama_models())
+    if provider == "opencode_zen":
+        return list(get_opencode_models(provider))
     return list(get_opencode_models())
 
 

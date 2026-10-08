@@ -51,7 +51,7 @@ class _UncachedMarkdown:
 
 
 class CachedMarkdown(Markdown):
-    """A ``rich`` Markdown that renders once per width.
+    """A ``rich`` Markdown that renders once per width and theme.
 
     Textual renders a Static's content to *measure* its height and then again to
     *paint* it, and repaints it whenever a neighbour mounts or the layout moves.
@@ -66,9 +66,17 @@ class CachedMarkdown(Markdown):
 
     _cache_key: Any = None
     _cache_segments: list | None = None
+    _style_names = tuple("markdown." + name for name in (
+        "h1", "h2", "h3", "h4", "h5", "h6", "h7", "code", "code_block",
+        "block_quote", "item.bullet", "item.number", "list", "link", "link_url",
+        "table.border", "table.header", "kbd",
+    ))
 
     def __rich_console__(self, console: Any, options: Any) -> Any:
-        key = (options.max_width, options.no_wrap, options.overflow, options.justify)
+        # Rich segments contain resolved colours. Reuse them only while those
+        # styles still match, including when a restored reply changes theme.
+        styles = tuple(console.get_style(name, default="") for name in self._style_names)
+        key = (options.max_width, options.no_wrap, options.overflow, options.justify, styles)
         if self._cache_segments is None or self._cache_key != key:
             self._cache_segments = list(console.render(_UncachedMarkdown(self), options))
             self._cache_key = key

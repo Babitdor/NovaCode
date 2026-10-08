@@ -483,6 +483,9 @@ class NovaConfig:
 
     TOOL_VERDICT_JEV_ENDPOINT = "https://api.typesafe.ai/v1/systemone"
     TOOL_VERDICT_JEV_MODEL = "jev-latest"
+    TOOL_VERDICT_OPENCODE_ENDPOINT = "https://opencode.ai/zen/v1/systemone"
+    TOOL_VERDICT_OPENCODE_MODEL = "jev-1.13"
+    TOOL_VERDICT_OPENCODE_FREE_MODEL = "jev-1.13-free"
     TOOL_VERDICT_OPENAI_ENDPOINT = "https://api.openai.com/v1/decisions"
     TOOL_VERDICT_OPENAI_MODEL = "gpt-6-luna"
 

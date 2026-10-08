@@ -45,7 +45,7 @@ def _key_request(provider: str, key: str) -> tuple[str, dict[str, str], tuple[in
     None means the provider has no endpoint that tells a good key from a bad one
     without spending tokens (NVIDIA's model list is public).
     """
-    from novacode_cli.config.model_manager import OPENCODE_BASE_URL, OPENROUTER_BASE_URL
+    from novacode_cli.config.model_manager import OPENROUTER_BASE_URL
 
     if provider == "openai":
         return "https://api.openai.com/v1/models", _bearer(key), _REJECTED
@@ -58,8 +58,7 @@ def _key_request(provider: str, key: str) -> tuple[str, dict[str, str], tuple[in
         return url, {"x-goog-api-key": key}, (400, 401, 403)
     if provider == "openrouter":
         return f"{OPENROUTER_BASE_URL}/key", _bearer(key), _REJECTED
-    if provider == "opencode":
-        return f"{OPENCODE_BASE_URL}/models", _bearer(key), _REJECTED
+    # OpenCode's model lists are public: a 200 cannot validate either key.
     return None
 
 

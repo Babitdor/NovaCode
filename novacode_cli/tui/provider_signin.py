@@ -33,8 +33,21 @@ class ProviderSignInChoice(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="signin-options"):
-            yield Static("Connect Gemini" if self.provider == "google" else "Connect Anthropic")
-            if self.provider == "google":
+            if self.provider in {"opencode", "opencode_zen"}:
+                name = "OpenCode Zen" if self.provider == "opencode_zen" else "OpenCode Go"
+                yield Static(f"Connect {name}")
+                yield Static(
+                    "Sign in to OpenCode Console in your browser, then copy an API key.\n"
+                    + ("Add Zen credits or choose an available free model." if self.provider == "opencode_zen"
+                       else "Subscribe to Go or Go Plus to use its models.")
+                    + "\nReturn to Nova and paste the key in the masked field. "
+                    "Opening the Console alone does not connect Nova."
+                )
+                yield Button("Sign in to OpenCode Console", id="opencode-console", variant="primary")
+                yield Button("Enter API key", id="provider-replace")
+                yield Link("OpenCode setup guide", url=f"https://opencode.ai/docs/{'zen' if self.provider == 'opencode_zen' else 'go'}/")
+            elif self.provider == "google":
+                yield Static("Connect Gemini")
                 yield Static(
                     "Sign in with Google using your Desktop OAuth client.\n"
                     "Uses Gemini API project quotas and billing."
@@ -46,6 +59,7 @@ class ProviderSignInChoice(ModalScreen[str | None]):
                 yield Button("Use API key", id="provider-key")
                 yield Button("Add / replace API key", id="provider-replace")
             else:
+                yield Static("Connect Anthropic")
                 yield Static(
                     "Sign in to the Anthropic Console to create an API key.\n"
                     "Claude subscription sign-in is restricted to Anthropic apps."
@@ -66,6 +80,7 @@ class ProviderSignInChoice(ModalScreen[str | None]):
             "provider-key": "api_key",
             "provider-replace": "replace_key",
             "anthropic-console": "console",
+            "opencode-console": "console",
         }
         self.dismiss(choices.get(event.button.id))
 
@@ -165,3 +180,8 @@ class GoogleSignInScreen(ModalScreen[bool]):
 async def open_anthropic_console() -> None:
     """Open the documented key-creation page without handling login cookies."""
     await asyncio.to_thread(webbrowser.open, "https://platform.claude.com/settings/keys")
+
+
+async def open_opencode_console() -> None:
+    """Open the documented Console login; credential entry remains explicit."""
+    await asyncio.to_thread(webbrowser.open, "https://opencode.ai/auth")

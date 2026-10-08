@@ -94,7 +94,7 @@ def test_returns_ids_from_the_gateway(monkeypatch: pytest.MonkeyPatch) -> None:
     assert models == ["glm-5.3", "kimi-k3"]
     assert captured["url"] == f"{model_manager.OPENCODE_BASE_URL}/models"
     # The gateway 403s a default UA (same gotcha as context/_models_dev.py).
-    assert "Mozilla" in captured["headers"]["User-Agent"]
+    assert captured["headers"]["User-Agent"].startswith("NovaCode/")
 
 
 def test_ids_are_sorted_for_a_stable_display(monkeypatch: pytest.MonkeyPatch) -> None:

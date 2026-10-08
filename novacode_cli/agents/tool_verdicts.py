@@ -670,10 +670,16 @@ class SystemOneClient:
             name: question.model_dump() if hasattr(question, "model_dump") else question
             for name, question in questions.items()
         }
+        headers = {"authorization": f"Bearer {self.api_key}"}
+        from novacode_cli.config.nova_config import NovaConfig
+        if self.endpoint == NovaConfig.TOOL_VERDICT_OPENCODE_ENDPOINT:
+            from novacode_cli.config.model_create import opencode_session_id
+            from novacode_cli.config.opencode_gateway import headers as gateway_headers
+            headers.update(gateway_headers(opencode_session_id()))
         response = client.post(
             self.endpoint,
             json={"model": self.model, "state": state, "questions": normalized},
-            headers={"authorization": f"Bearer {self.api_key}"},
+            headers=headers,
         )
         if response.status_code >= 400:
             message = f"System One request failed ({response.status_code})."
@@ -701,6 +707,8 @@ def create_system_one_client(config: NovaConfig) -> DecisionClient:
         )
     if endpoint == NovaConfig.TOOL_VERDICT_JEV_ENDPOINT:
         api_key = credential_value("TYPESAFE_API_KEY")
+    elif endpoint == NovaConfig.TOOL_VERDICT_OPENCODE_ENDPOINT:
+        api_key = credential_value("OPENCODE_ZEN_API_KEY")
     else:
         api_key = credential_value("SYSTEM_ONE_API_KEY") or "nova"
     return SystemOneClient(

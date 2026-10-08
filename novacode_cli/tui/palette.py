@@ -19,7 +19,7 @@ whatever the terminal paints for magenta and stayed that way across ``/theme``.
 :func:`markdown_styles` maps those elements onto the palette instead, and
 :func:`apply_markdown_theme` installs them.
 
-Resolution is cached per ``(theme name, mode)`` — the footer repaints at 20 fps
+Resolution is cached per theme colours and mode — the footer repaints at 20 fps
 while a turn streams, and the lookup walks the theme tables.
 """
 
@@ -30,27 +30,35 @@ from typing import TYPE_CHECKING
 
 from rich.color import Color, blend_rgb
 from rich.theme import Theme
+from textual.color import Color as CSSColor
 
 if TYPE_CHECKING:
     from rich.console import Console
     from textual.theme import Theme as TextualTheme
 
 
-def _hex(color: str) -> str:
+def _hex(color: str, fallback: str = "#808080", background: str | None = None) -> str:
     """Normalize a theme colour attribute to ``#rrggbb``.
 
     Theme attributes are plain strings, but may be named colours, ``auto``, or
-    carry alpha; anything unparseable falls back to a mid grey so a bad theme
+    carry alpha; anything unparseable uses the supplied fallback so a bad theme
     cannot crash a repaint.
     """
-    if not color:
-        return "#808080"
+    if not color or color in {"ansi_default", "auto"}:
+        return fallback
     try:
-        tc = Color.parse(color).get_truecolor()
+        # Textual uses CSS and ansi_* names, which Rich's parser doesn't accept.
+        parts = color.rsplit(maxsplit=1)
+        value, opacity = parts if len(parts) == 2 and parts[1].endswith("%") else (color, "")
+        parsed = CSSColor.parse(value)
+        alpha = parsed.a
+        if opacity:
+            alpha *= float(opacity[:-1]) / 100
+        tc = parsed.rich_color.get_truecolor()
+        result = f"#{tc.red:02x}{tc.green:02x}{tc.blue:02x}"
+        return _mix(result, background or fallback, 1 - alpha) if alpha < 1 else result
     except Exception:  # noqa: BLE001 — never let a colour break the status line
-        return "#808080"
-    else:
-        return f"#{tc.red:02x}{tc.green:02x}{tc.blue:02x}"
+        return fallback
 
 
 def _mix(fg: str, bg: str, amount: float) -> str:
@@ -106,10 +114,11 @@ def palette_for(theme: Theme) -> FooterPalette:
         blended most of the way to its background, so it stays legible on both
         dark and light themes.
     """
-    bg = _hex(getattr(theme, "background", "") or "#000000")
-    fg = _hex(getattr(theme, "foreground", "") or "#ffffff")
+    dark = getattr(theme, "dark", True)
+    bg = _hex(getattr(theme, "background", "") or "", "#000000" if dark else "#ffffff")
+    fg = _hex(getattr(theme, "foreground", "") or "", "#ffffff" if dark else "#000000", bg)
     boost = getattr(theme, "boost", None)
-    surface = _hex(boost) if boost else _mix(fg, bg, 0.93)
+    surface = _hex(boost, _mix(fg, bg, 0.93), bg) if boost else _mix(fg, bg, 0.93)
 
     return FooterPalette(
         accent=_hex(getattr(theme, "accent", "") or "#bb9af7"),
@@ -194,13 +203,27 @@ def is_main_agent_label(name: str) -> bool:
     return name.strip().lower() in MAIN_AGENT_LABELS
 
 
-# Cache keyed by (theme name, dark) so a /theme switch invalidates naturally.
-_CACHE: dict[tuple[str, bool], FooterPalette] = {}
+# Include colour values so replacing a theme under the same name refreshes it.
+_CACHE: dict[tuple, FooterPalette] = {}
 
 
 def cached_palette(theme: TextualTheme) -> FooterPalette:
-    """Resolve *theme* to a palette, memoized by theme name + mode."""
-    key = (str(getattr(theme, "name", "?")), bool(getattr(theme, "dark", True)))
+    """Resolve *theme* to a palette, memoized by theme values."""
+    key = tuple(
+        getattr(theme, field, None)
+        for field in (
+            "name",
+            "dark",
+            "background",
+            "foreground",
+            "boost",
+            "accent",
+            "primary",
+            "success",
+            "warning",
+            "error",
+        )
+    )
     hit = _CACHE.get(key)
     if hit is None:
         hit = palette_for(theme)
@@ -218,7 +241,7 @@ def cached_palette(theme: TextualTheme) -> FooterPalette:
 #: replace its own entry rather than stack another one.
 _ARMED: list[Console] = []
 
-_MD_CACHE: dict[str, Theme] = {}
+_MD_CACHE: dict[FooterPalette, Theme] = {}
 
 
 def markdown_styles(palette: FooterPalette) -> dict[str, str]:
@@ -235,6 +258,21 @@ def markdown_styles(palette: FooterPalette) -> dict[str, str]:
         Style strings keyed by Rich's element names, ready for a
         ``rich.theme.Theme``.
     """
+
+    def luminance(color: str) -> float:
+        channels = Color.parse(color).get_truecolor()
+        linear = [v / 3294.6 if v <= 10 else ((v / 255 + 0.055) / 1.055) ** 2.4 for v in channels]
+        return sum(v * weight for v, weight in zip(linear, (0.2126, 0.7152, 0.0722)))
+
+    surface_luma = luminance(palette.surface)
+
+    def contrast(color: str) -> float:
+        luma = luminance(color)
+        return (max(luma, surface_luma) + 0.05) / (min(luma, surface_luma) + 0.05)
+
+    code = palette.primary
+    if contrast(code) < 4.5:
+        code = max((palette.text, "#ffffff", "#000000"), key=contrast)
     return {
         # Headings. h1 had no colour of its own, so it gets the same one as its
         # siblings rather than inheriting the body colour and reading as plain text.
@@ -246,8 +284,8 @@ def markdown_styles(palette: FooterPalette) -> dict[str, str]:
         "markdown.h6": palette.muted,
         "markdown.h7": f"dim {palette.muted}",
         # Code chips used to be a hardcoded black box on a themed reply.
-        "markdown.code": f"bold {palette.primary} on {palette.surface}",
-        "markdown.code_block": f"{palette.primary} on {palette.surface}",
+        "markdown.code": f"bold {code} on {palette.surface}",
+        "markdown.code_block": f"{code} on {palette.surface}",
         "markdown.block_quote": palette.muted,
         "markdown.item.bullet": f"bold {palette.accent}",
         "markdown.item.number": palette.accent,
@@ -262,10 +300,10 @@ def markdown_styles(palette: FooterPalette) -> dict[str, str]:
 
 def markdown_theme(theme: TextualTheme) -> Theme:
     """A Rich ``Theme`` carrying the markdown colours for *theme*, memoized."""
-    key = str(getattr(theme, "name", "?"))
+    key = cached_palette(theme)
     hit = _MD_CACHE.get(key)
     if hit is None:
-        hit = Theme(markdown_styles(cached_palette(theme)))
+        hit = Theme(markdown_styles(key))
         _MD_CACHE[key] = hit
     return hit
 

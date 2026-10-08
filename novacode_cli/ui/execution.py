@@ -503,6 +503,9 @@ async def execute_task(  # type: ignore
     try:
 
         async for event in _event_source:
+            remote_notify = getattr(session_state, "_remote_stream_notify", None)
+            if remote_notify is not None:
+                remote_notify(event)
 
             if isinstance(event, ev.StatusUpdate):
 

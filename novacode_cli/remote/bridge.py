@@ -51,6 +51,7 @@ class RemotePlatform(str, Enum):
     onto the same queue but have no chat to reply to (their ``reply_fn`` is a
     no-op). The processor handles all four identically.
     """
+
     DISCORD = "discord"
     TELEGRAM = "telegram"
     CRON = "cron"
@@ -77,6 +78,7 @@ class RemoteMessage:
             last edit (the bridge may then apply richer formatting). ``None`` if
             the platform/bridge doesn't support edit-in-place streaming.
     """
+
     platform: RemotePlatform
     chat_id: str | int
     user_name: str
@@ -98,6 +100,8 @@ class RemoteMessage:
     #: bridge reads it when sending, to remember which session each outgoing
     #: message belongs to (so replying to it reaches that session).
     route: dict = field(default_factory=dict)
+    #: Independent editable answer; edit_fn remains the tool/progress message.
+    answer_edit_fn: Callable[..., Awaitable[None]] | None = None
 
 
 @dataclass
@@ -111,6 +115,7 @@ class BridgeConfig:
         allowed_ids: Set of additional IDs that are allowed to interact.
         ping: Whether to ping/mention the user when the task is done (Discord).
     """
+
     platform: RemotePlatform
     token: str
     chat_id: str | int
@@ -122,9 +127,12 @@ class BridgeConfig:
         """Read shared-chat sender permissions from the existing remote config."""
         if not self.allowed_user_ids:
             from novacode_cli.remote.config import load_remote_config
+
             values = load_remote_config().get(self.platform.value, {}).get("allowed_user_ids", [])
             if isinstance(values, list):
-                self.allowed_user_ids = {str(value) for value in values if isinstance(value, (str, int))}
+                self.allowed_user_ids = {
+                    str(value) for value in values if isinstance(value, (str, int))
+                }
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +192,7 @@ def chunk_message(text: str, platform: RemotePlatform) -> list[str]:
         else:
             # Hard-break at limit boundaries
             for i in range(0, len(chunk), limit):
-                result.append(chunk[i:i + limit])
+                result.append(chunk[i : i + limit])
 
     return result or [text[:limit]]
 
@@ -232,16 +240,32 @@ def format_tool_digest(tool_names: list[str], *, max_shown: int = 8) -> str:
 
 # Tool name -> coarse activity category, for the compact end-of-turn footer.
 _TOOL_CATEGORY: dict[str, str] = {
-    "read_file": "read", "read": "read", "view": "read", "cat": "read",
-    "write_file": "edit", "edit_file": "edit", "write": "edit", "edit": "edit",
+    "read_file": "read",
+    "read": "read",
+    "view": "read",
+    "cat": "read",
+    "write_file": "edit",
+    "edit_file": "edit",
+    "write": "edit",
+    "edit": "edit",
     "str_replace": "edit",
-    "execute": "run", "run_tests": "run", "shell": "run", "bash": "run",
+    "execute": "run",
+    "run_tests": "run",
+    "shell": "run",
+    "bash": "run",
     "run_command": "run",
-    "grep": "search", "glob": "search", "ls": "search", "code_search": "search",
+    "grep": "search",
+    "glob": "search",
+    "ls": "search",
+    "code_search": "search",
     "find_related_code": "search",
-    "web_search": "web", "duckduckgo_search": "web", "fetch_url": "web",
-    "docs_search": "web", "package_info": "web",
-    "task": "subagent", "think": "think",
+    "web_search": "web",
+    "duckduckgo_search": "web",
+    "fetch_url": "web",
+    "docs_search": "web",
+    "package_info": "web",
+    "task": "subagent",
+    "think": "think",
 }
 
 
@@ -306,7 +330,7 @@ def _split_by_sentences(text: str, limit: int) -> list[str]:
             result.append(chunk)
         else:
             for i in range(0, len(chunk), limit):
-                result.append(chunk[i:i + limit])
+                result.append(chunk[i : i + limit])
 
     return result or [text[:limit]]
 
@@ -329,7 +353,7 @@ class RemoteBridgeManager:
     """
 
     _WATCHDOG_INTERVAL = 30  # seconds between liveness checks
-    _MAX_RESTARTS = 5        # give up after this many consecutive failures per bridge
+    _MAX_RESTARTS = 5  # give up after this many consecutive failures per bridge
 
     def __init__(self, message_queue: asyncio.Queue[RemoteMessage]) -> None:
         self._queue = message_queue
@@ -346,6 +370,10 @@ class RemoteBridgeManager:
         (e.g., via the Rich console).
         """
         self._on_status = callback
+        for entry in self._bridges.values():
+            bridge = entry.get("bridge")
+            if hasattr(bridge, "_on_status"):
+                bridge._on_status = callback
 
     async def _emit_status(self, msg: str) -> None:
         """Emit a status message via callback."""
@@ -408,7 +436,23 @@ class RemoteBridgeManager:
     def _make_bridge_id(self, platform: RemotePlatform, chat_id: str | int) -> str:
         return f"{platform.value}:{chat_id}"
 
-    async def start_discord(self, token: str, channel_id: str | int, ping: bool = True) -> tuple[bool, str]:
+    async def stream_targets(self, *, sid: str = "root") -> list[RemoteMessage]:
+        """Fresh, independent output channels for local turns in configured chats."""
+        targets = []
+        for bridge in self.bridges():
+            if not bridge.is_connected:
+                continue
+            try:
+                target = await asyncio.wait_for(bridge.stream_target(sid=sid), timeout=5)
+                if target is not None:
+                    targets.append(target)
+            except Exception:
+                logger.warning("Could not initialize remote streaming target", exc_info=True)
+        return targets
+
+    async def start_discord(
+        self, token: str, channel_id: str | int, ping: bool = True
+    ) -> tuple[bool, str]:
         """Start a Discord bridge.
 
         Args:
@@ -448,7 +492,9 @@ class RemoteBridgeManager:
 
             from novacode_cli.remote.discord_bridge import DiscordBridge
 
-            bridge = DiscordBridge(config=config, message_queue=self._queue, on_status=self._on_status)
+            bridge = DiscordBridge(
+                config=config, message_queue=self._queue, on_status=self._on_status
+            )
             task = asyncio.create_task(bridge.run(), name=f"discord-bridge-{bridge_id}")
             self._bridges[bridge_id] = {
                 "task": task,
@@ -688,8 +734,7 @@ class RemoteBridgeManager:
                     await bridge.stop()
             self._bridges.clear()
         self._running = any(
-            entry.get("task") and not entry["task"].done()
-            for entry in self._bridges.values()
+            entry.get("task") and not entry["task"].done() for entry in self._bridges.values()
         )
         if not self._running and self._watchdog_task and not self._watchdog_task.done():
             self._watchdog_task.cancel()
@@ -718,7 +763,8 @@ class RemoteBridgeManager:
                     if count >= self._MAX_RESTARTS:
                         logger.warning(
                             "Bridge %s exceeded restart limit (%d) — giving up",
-                            bridge_id, self._MAX_RESTARTS,
+                            bridge_id,
+                            self._MAX_RESTARTS,
                         )
                         continue
 
@@ -727,7 +773,8 @@ class RemoteBridgeManager:
 
                     try:
                         if config.platform == RemotePlatform.DISCORD:
-                            from novacode_cli.remote.discord_bridge import DiscordBridge 
+                            from novacode_cli.remote.discord_bridge import DiscordBridge
+
                             bridge = DiscordBridge(
                                 config=config,
                                 message_queue=self._queue,
@@ -738,6 +785,7 @@ class RemoteBridgeManager:
                             )
                         else:
                             from novacode_cli.remote.telegram_bridge import TelegramBridge
+
                             bridge = TelegramBridge(config=config, message_queue=self._queue)
                             new_task = asyncio.create_task(
                                 bridge.run(), name=f"telegram-bridge-{bridge_id}"

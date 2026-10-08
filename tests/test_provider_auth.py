@@ -147,6 +147,7 @@ def test_credential_names_exclude_keyless_providers():
         "google",
         "openrouter",
         "opencode",
+        "opencode_zen",
         "nvidia",
         "tavily",
         "deepgram",

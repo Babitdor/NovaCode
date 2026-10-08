@@ -10,6 +10,7 @@ red — and no ``/theme`` moved them.
 from __future__ import annotations
 
 import asyncio
+from tests.test_tui_app import _disable_live_update_checks  # noqa: F401
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -93,7 +94,7 @@ def _painted_colour(app: NovaApp, needle: str) -> str:
 
 
 async def _drive_reply_headings() -> dict:
-    from rich.markdown import Markdown as RichMarkdown
+    from novacode_cli.tui.widgets import CachedMarkdown as RichMarkdown
     from rich.text import Text
 
     from novacode_cli.tui.app import NovaApp
@@ -117,7 +118,7 @@ async def _drive_reply_headings() -> dict:
         message = await app._add_message(
             Text("Nova", style="green"),
             "nova",
-            RichMarkdown("## An H2 heading\n\nBody prose.\n"),
+            RichMarkdown("## An H2 heading\n\nBody prose with `src/auth.py`.\n"),
         )
         # The card fades in; a faded colour is a dimmed one, so let it settle.
         for _ in range(240):
@@ -126,6 +127,7 @@ async def _drive_reply_headings() -> dict:
                 break
 
         out["before"] = _painted_colour(app, "An H2 heading")
+        out["code_before"] = _painted_colour(app, "src/auth.py")
         out["tokyo_expected"] = palette_for(NOVA_TOKYO_NIGHT).primary
 
         # Switch the theme; the reply already on screen must follow it.
@@ -133,6 +135,7 @@ async def _drive_reply_headings() -> dict:
         for _ in range(120):
             await pilot.pause()
         out["after"] = _painted_colour(app, "An H2 heading")
+        out["code_after"] = _painted_colour(app, "src/auth.py")
         out["matrix_expected"] = palette_for(NOVA_MATRIX).primary
     return out
 
@@ -142,6 +145,8 @@ def test_an_existing_reply_recolours_when_the_theme_changes():
     if not _HAS_TEXTUAL:
         return
     out = asyncio.run(_drive_reply_headings())
+    assert out["code_before"] == out["tokyo_expected"]
+    assert out["code_after"] == out["matrix_expected"]
 
     assert out["before"] != "not painted", "the heading never reached the screen"
     assert out["before"] == out["tokyo_expected"], (

@@ -11,6 +11,7 @@ PROVIDER_KEY_ENV: dict[str, str] = {
     "google": "GOOGLE_API_KEY",
     "openrouter": "OPENROUTER_API_KEY",
     "opencode": "OPENCODE_API_KEY",
+    "opencode_zen": "OPENCODE_ZEN_API_KEY",
     "nvidia": "NVIDIA_API_KEY",
 }
 
@@ -179,7 +180,7 @@ def build_chat_model(provider: str, model_name: str) -> BaseChatModel:
             **ollama_kwargs,
         )
 
-    if provider in ("openai", "openrouter", "opencode"):
+    if provider in ("openai", "openrouter", "opencode", "opencode_zen"):
         from langchain_openai import ChatOpenAI
 
         from novacode_cli.utils.backend_patches import (
@@ -206,21 +207,33 @@ def build_chat_model(provider: str, model_name: str) -> BaseChatModel:
             openai_kwargs["api_key"] = settings.openrouter_api_key or os.environ.get(
                 "OPENROUTER_API_KEY"
             )
-        elif provider == "opencode":
+        elif provider in {"opencode", "opencode_zen"}:
             # OpenCode Go is OpenAI-compatible: same client, custom base URL + key.
-            from novacode_cli.config.model_manager import OPENCODE_BASE_URL
+            from novacode_cli.config.model_manager import MODEL_PRESETS
+            from novacode_cli.config.opencode_gateway import headers, protocol
 
-            openai_kwargs["base_url"] = OPENCODE_BASE_URL
+            openai_kwargs["base_url"] = MODEL_PRESETS[provider]["base_url"]
             # Keyring-aware (see openrouter note): os.environ alone was empty on a
             # restart even with the key saved, so OpenCode silently 401'd.
-            openai_kwargs["api_key"] = settings.opencode_api_key or os.environ.get(
-                "OPENCODE_API_KEY"
+            openai_kwargs["api_key"] = getattr(settings, f"{provider}_api_key", None) or os.environ.get(
+                PROVIDER_KEY_ENV[provider]
             )
             # The gateway REJECTS requests without this header — every call
             # fails with 400 MissingSessionID — so it is not optional.
-            openai_kwargs["default_headers"] = {
-                "x-opencode-session": opencode_session_id()
-            }
+            openai_kwargs["default_headers"] = headers(opencode_session_id())
+            api = protocol(provider, model_name)
+            if api == "unsupported":
+                raise ValueError("This OpenCode model uses an API not supported by the chat provider.")
+            if api == "messages":
+                from langchain_anthropic import ChatAnthropic
+                return ChatAnthropic(
+                    model=model_name, api_key=openai_kwargs["api_key"],
+                    base_url=openai_kwargs["base_url"],
+                    default_headers=openai_kwargs["default_headers"],
+                    max_tokens=20_000, max_retries=5,
+                )
+            if api == "responses":
+                openai_kwargs.update(use_responses_api=True, store=False)
         else:
             # Plain OpenAI: same keyring-or-env resolution as the gateways above.
             # Without this, a key held only in the system keychain passed the
@@ -280,7 +293,7 @@ def build_chat_model(provider: str, model_name: str) -> BaseChatModel:
                         http_async_client=async_client,
                     )
 
-        if provider == "opencode":
+        if provider in {"opencode", "opencode_zen"}:
             return _opencode_chat_class()(
                 model=model_name, max_retries=5, **openai_kwargs
             )
@@ -579,6 +592,7 @@ def create_model() -> BaseChatModel:
             "glm-5.3",
             "OpenCode Go",
         ),
+        (settings.has_opencode_zen, "opencode_zen", "OPENCODE_ZEN_MODEL", "big-pickle", "OpenCode Zen"),
         (
             settings.has_nvidia,
             "nvidia",

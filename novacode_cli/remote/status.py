@@ -91,6 +91,7 @@ class RemoteStatusLine:
         self._task: asyncio.Task | None = None
         self._closed = False
         self._started = time.monotonic()
+        self._outcome = "done"
 
     # ── inputs ─────────────────────────────────────────────────────────────
 
@@ -126,9 +127,9 @@ class RemoteStatusLine:
         if not text:
             return
         if kind == "reasoning":
-            self._reasoning += text
+            self._reasoning = (self._reasoning + text)[-(_REASONING_FINAL + 1):]
         else:
-            self._prose += text
+            self._prose = (self._prose + text)[-(_PROSE_LIVE + 1):]
         self._dirty = True
 
     def reset_text(self) -> None:
@@ -157,8 +158,10 @@ class RemoteStatusLine:
     def _header(self, done: bool) -> str:
         n = len(self._calls)
         parts = ["✅ **Done**" if done else "⚙️ **Working**"]
+        if done and self._outcome != "done":
+            parts[0] = "❌ **Failed**" if self._outcome == "failed" else "⏹ **Stopped**"
         if self._label:
-            parts.insert(0, f"`{self._label}`")
+            parts.insert(0, _code(self._label))
         if n:
             parts.append(f"{n} tool{'s' if n != 1 else ''}")
         parts.append(self._elapsed())
@@ -218,7 +221,7 @@ class RemoteStatusLine:
         last: str | None = None
         try:
             first = self._content()
-            await self._edit(first, False)  # immediate first paint
+            await asyncio.wait_for(self._edit(first, False), timeout=15)
             last = first
         except Exception:  # noqa: BLE001
             logger.debug("status first paint failed", exc_info=True)
@@ -233,18 +236,23 @@ class RemoteStatusLine:
                 if content != last:
                     last = content
                     try:
-                        await self._edit(content, False)
+                        await asyncio.wait_for(self._edit(content, False), timeout=15)
                     except Exception:  # noqa: BLE001 — a dropped edit is non-fatal
+                        self._dirty = True
+                        last = None
                         logger.debug("status edit failed", exc_info=True)
         except asyncio.CancelledError:
             return
 
-    async def finalize(self) -> None:
+    async def finalize(self, *, outcome: str = "done") -> None:
         """Stop the pump and settle to the summary.
 
         Answer prose is dropped: the answer is sent as its own message right
         after this, and keeping it here too showed it twice.
         """
+        if self._closed:
+            return
+        self._outcome = outcome
         self._closed = True
         if self._task is not None:
             self._task.cancel()
@@ -255,9 +263,9 @@ class RemoteStatusLine:
             self._task = None
         for call in self._calls:  # a result we never heard about still finished
             if call.state == "running":
-                call.state = "ok"
+                call.state = "error" if outcome != "done" else "ok"
         try:
-            await self._edit(self._done_summary(), True)
+            await asyncio.wait_for(self._edit(self._done_summary(), True), timeout=15)
         except Exception:  # noqa: BLE001
             logger.debug("status finalize failed", exc_info=True)
 

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 import aiohttp
@@ -61,6 +62,8 @@ class TelegramBridge:
         self.is_forum: bool | None = None  # topics enabled? (detected on first use)
         self._owner: dict[int, str] = {}  # sent message_id -> session id that sent it
         self.bot_user: str | None = None  # set after successful getMe
+        self._retry_at = 0.0
+        self._last_api_error: str | None = None
 
     @property
     def is_connected(self) -> bool:
@@ -94,11 +97,25 @@ class TelegramBridge:
             Parsed JSON response, or None on error.
         """
         session = self._ensure_session()
+        delay = self._retry_at - time.monotonic()
+        if delay > 0:
+            await asyncio.sleep(delay)
         url = f"{_TELEGRAM_API}/bot{self._config.token}/{method}"
         try:
             async with session.post(url, json=payload, timeout=req_timeout) as resp:
                 data = await resp.json()
+                self._last_api_error = None
                 if not data.get("ok"):
+                    description = str(data.get("description", ""))
+                    self._last_api_error = description
+                    if data.get("error_code") == 429:
+                        retry_after = (data.get("parameters") or {}).get("retry_after", 1)
+                        self._retry_at = time.monotonic() + max(1, float(retry_after))
+                    if (
+                        method == "editMessageText"
+                        and "message is not modified" in description.lower()
+                    ):
+                        return {"ok": True, "result": {"message_id": payload.get("message_id")}}
                     logger.error(f"Telegram API error: {data.get('description')}")
                     return None
                 return data
@@ -199,7 +216,9 @@ class TelegramBridge:
         Without the fallback a message Telegram rejects is simply lost.
         """
         sent = await self._api_call(method, {**params, "text": body, "parse_mode": "HTML"})
-        if sent is None:
+        if sent is None and not self._last_api_error and self._retry_at <= time.monotonic():
+            sent = await self._api_call(method, {**params, "text": to_plain(body)})
+        elif sent is None and self._last_api_error and "parse" in self._last_api_error.lower():
             sent = await self._api_call(method, {**params, "text": to_plain(body)})
         return sent
 
@@ -216,7 +235,7 @@ class TelegramBridge:
         Returns the ids of the messages sent, so a caller can delete them.
         """
         ids: list[int] = []
-        for chunk in render_markdown(text):
+        for chunk in await asyncio.to_thread(render_markdown, text):
             sent = await self._send_html(
                 "sendMessage", self._thread_params({"chat_id": chat_id}, thread_id), chunk
             )
@@ -234,6 +253,54 @@ class TelegramBridge:
             except Exception as e:  # noqa: BLE001 — a leftover message is not worth a crash
                 logger.debug(f"Telegram deleteMessage failed for {mid}: {e}")
             self._owner.pop(mid, None)
+
+    def _editor(self, chat_id: int, route: dict):
+        from novacode_cli.remote.streaming import PagedEditor
+
+        async def send(body):
+            sent = await self._send_html(
+                "sendMessage", self._thread_params({"chat_id": chat_id}, route.get("thread")), body
+            )
+            self._remember(sent, route.get("sid"))
+            mid = (sent or {}).get("result", {}).get("message_id")
+            if mid is None:
+                raise RuntimeError("Telegram could not send the streamed message")
+            return mid
+
+        async def edit(mid, body):
+            sent = await self._send_html(
+                "editMessageText", {"chat_id": chat_id, "message_id": mid}, body
+            )
+            if sent is None:
+                raise RuntimeError("Telegram could not edit the streamed message")
+
+        async def delete(mid):
+            await self._delete_messages(chat_id, [mid])
+
+        return PagedEditor(render_markdown, send, edit, delete)
+
+    async def stream_target(self, *, sid: str = "root") -> RemoteMessage | None:
+        if not self.is_connected:
+            return None
+        route = {"sid": sid, "thread": None}
+        chat_id = int(self._config.chat_id)
+
+        async def reply(text):
+            if self.is_connected:
+                await self._send_message(chat_id, text, sid=sid)
+
+        from novacode_cli.remote.streaming import connected_editor
+
+        return RemoteMessage(
+            platform=RemotePlatform.TELEGRAM,
+            chat_id=chat_id,
+            user_name="Nova",
+            text="",
+            reply_fn=reply,
+            edit_fn=connected_editor(self, self._editor(chat_id, route)),
+            answer_edit_fn=connected_editor(self, self._editor(chat_id, route)),
+            route=route,
+        )
 
     async def run(self) -> None:
         """Start the Telegram long-polling loop.
@@ -295,7 +362,11 @@ class TelegramBridge:
                     sender = message.get("from") or {}
                     if sender.get("is_bot"):
                         continue
-                    if message.get("chat", {}).get("type") in {"group", "supergroup", "channel"} and str(sender.get("id")) not in {
+                    if message.get("chat", {}).get("type") in {
+                        "group",
+                        "supergroup",
+                        "channel",
+                    } and str(sender.get("id")) not in {
                         str(i) for i in self._config.allowed_user_ids
                     }:
                         continue
@@ -347,49 +418,8 @@ class TelegramBridge:
                     async def typing_fn(_chat_id: int = chat_id, _route: dict = route) -> None:
                         await self._trigger_typing(_chat_id, _route["thread"])
 
-                    # Edit-in-place live status. ``body`` is markdown (the status
-                    # line's activity log); it is rendered to HTML on every edit,
-                    # which is safe mid-stream: markdown-it closes what the text
-                    # leaves open. Past one message it rolls over to a new one.
-                    _live: dict = {"id": None, "last": None}
-
-                    async def edit_fn(
-                        body: str,
-                        final: bool = False,  # noqa: ARG001
-                        _chat_id: int = chat_id,
-                        _route: dict = route,
-                        _live: dict = _live,
-                    ) -> None:
-                        try:
-                            pages = render_markdown(body)
-                            if len(pages) > 1 and _live["id"] is not None:
-                                # Overflowed: freeze this message, continue in a new one.
-                                await self._send_html(
-                                    "editMessageText",
-                                    {"chat_id": _chat_id, "message_id": _live["id"]},
-                                    pages[0],
-                                )
-                                _live["id"] = None
-                            page = pages[-1]
-                            if page == _live["last"]:
-                                return
-                            if _live["id"] is None:
-                                sent = await self._send_html(
-                                    "sendMessage",
-                                    self._thread_params({"chat_id": _chat_id}, _route["thread"]),
-                                    page,
-                                )
-                                self._remember(sent, _route["sid"])
-                                _live["id"] = (sent or {}).get("result", {}).get("message_id")
-                            else:
-                                await self._send_html(
-                                    "editMessageText",
-                                    {"chat_id": _chat_id, "message_id": _live["id"]},
-                                    page,
-                                )
-                            _live["last"] = page
-                        except Exception as e:  # noqa: BLE001
-                            logger.error(f"Telegram stream edit error: {e}")
+                    edit_fn = self._editor(chat_id, route)
+                    answer_edit_fn = self._editor(chat_id, route)
 
                     tg_username = from_user.get("username")
                     user_mention = f"@{tg_username}" if tg_username else None
@@ -402,6 +432,7 @@ class TelegramBridge:
                         reply_fn=reply_fn,
                         typing_fn=typing_fn,
                         edit_fn=edit_fn,
+                        answer_edit_fn=answer_edit_fn,
                         ask_fn=ask_fn,
                         user_mention=user_mention,
                         thread_id=thread_id,

@@ -33,7 +33,6 @@ from novacode_cli.remote.bridge import (
     BridgeConfig,
     RemoteMessage,
     RemotePlatform,
-    chunk_message,
 )
 from novacode_cli.remote.processor import _debug_log
 
@@ -85,6 +84,54 @@ class DiscordBridge:
             except Exception:
                 pass
 
+    def _editor(self, channel):
+        import discord
+
+        from novacode_cli.remote.discord_format import render
+        from novacode_cli.remote.streaming import PagedEditor
+
+        mentions = discord.AllowedMentions.none()
+
+        async def send(body):
+            return await channel.send(body, allowed_mentions=mentions)
+
+        async def edit(message, body):
+            await message.edit(content=body, allowed_mentions=mentions)
+
+        async def delete(message):
+            await message.delete()
+
+        return PagedEditor(render, send, edit, delete)
+
+    async def stream_target(self, *, sid: str = "root") -> RemoteMessage | None:
+        if not self.is_connected or self._client is None:
+            return None
+        channel = self._client.get_channel(int(self._config.chat_id))
+        if channel is None:
+            channel = await self._client.fetch_channel(int(self._config.chat_id))
+        from novacode_cli.remote.discord_format import render
+
+        async def reply(text):
+            import discord
+
+            if not self.is_connected:
+                return
+            for page in render(text):
+                await channel.send(page, allowed_mentions=discord.AllowedMentions.none())
+
+        from novacode_cli.remote.streaming import connected_editor
+
+        return RemoteMessage(
+            platform=RemotePlatform.DISCORD,
+            chat_id=self._config.chat_id,
+            user_name="Nova",
+            text="",
+            reply_fn=reply,
+            edit_fn=connected_editor(self, self._editor(channel)),
+            answer_edit_fn=connected_editor(self, self._editor(channel)),
+            route={"sid": sid},
+        )
+
     async def run(self) -> None:
         """Start the Discord bot and run until cancelled."""
         try:
@@ -108,14 +155,8 @@ class DiscordBridge:
             self._connected = True
             self._last_error = None
             guilds = len(client.guilds)
-            logger.info(
-                f"Discord bridge connected as {client.user} "
-                f"(guilds: {guilds})"
-            )
-            await self._status(
-                f"Discord bridge connected as {client.user} "
-                f"({guilds} server(s))"
-            )
+            logger.info(f"Discord bridge connected as {client.user} (guilds: {guilds})")
+            await self._status(f"Discord bridge connected as {client.user} ({guilds} server(s))")
             self._ready_event.set()
 
         @client.event
@@ -142,9 +183,7 @@ class DiscordBridge:
 
             # Only process messages in the allowlisted channel
             channel_id_str = str(message.channel.id)
-            allowed = {str(self._config.chat_id)} | {
-                str(i) for i in self._config.allowed_ids
-            }
+            allowed = {str(self._config.chat_id)} | {str(i) for i in self._config.allowed_ids}
 
             if channel_id_str not in allowed:
                 # Log filtered messages at debug level for troubleshooting
@@ -180,17 +219,18 @@ class DiscordBridge:
                 f"#{getattr(message.channel, 'name', '?')}: "
                 f"{content[:80]}{'...' if len(content) > 80 else ''}"
             )
-            await self._status(
-                f"📨 Discord message from {message.author}: "
-                f"{content[:100]}"
-            )
+            await self._status(f"📨 Discord message from {message.author}: {content[:100]}")
 
             async def reply_fn(response_text: str) -> None:
                 """Send the agent's response back to the Discord channel."""
-                chunks = chunk_message(response_text, RemotePlatform.DISCORD)
+                from novacode_cli.remote.discord_format import render
+
+                chunks = render(response_text)
                 for chunk in chunks:
                     try:
-                        await message.channel.send(chunk)
+                        await message.channel.send(
+                            chunk, allowed_mentions=discord.AllowedMentions.none()
+                        )
                     except discord.HTTPException as e:
                         logger.error(f"Discord send error: {e}")
                     except Exception as e:
@@ -203,47 +243,8 @@ class DiscordBridge:
                 except Exception as e:  # noqa: BLE001 — reactions are optional
                     logger.debug(f"Discord reaction failed: {e}")
 
-            # Edit-in-place streaming state. `text` passed to edit_fn is the FULL
-            # accumulated answer; we keep a single live message and roll over to a
-            # new one whenever we exceed Discord's 2000-char cap.
-            _live: dict = {"msg": None, "base": 0}
-            _EDIT_LIMIT = 1990
-
-            async def edit_fn(text: str, final: bool = False) -> None:
-                """Create-or-edit the live answer message, rolling on overflow.
-
-                During execution (``final=False``), the text is a short live-status
-                like ``"🤔 Working… using read_file×4, grep×2"`` — brief enough to
-                avoid rate limits on rapid edits.
-
-                On completion (``final=True``), the text is the condensed response
-                with an optional ``"-# {digest}``" footer that Discord renders as a
-                small footnote (tool usage summary).
-                """
-                try:
-                    # Trim "Thinking..." / "Working..." prefixes on final answer
-                    display = text
-                    if final:
-                        display = text.replace("\U0001f914 ", "", 1)
-
-                    # Flush full blocks past the limit into frozen messages.
-                    while len(display) - _live["base"] > _EDIT_LIMIT:
-                        block = display[_live["base"] : _live["base"] + _EDIT_LIMIT]
-                        if _live["msg"] is None:
-                            _live["msg"] = await message.channel.send(block)
-                        else:
-                            await _live["msg"].edit(content=block)
-                        _live["base"] += _EDIT_LIMIT
-                        _live["msg"] = None  # next remainder starts a fresh message
-                    remainder = display[_live["base"] :] or "\u2026"
-                    if _live["msg"] is None:
-                        _live["msg"] = await message.channel.send(remainder)
-                    else:
-                        await _live["msg"].edit(content=remainder)
-                except discord.HTTPException as e:
-                    logger.error(f"Discord stream edit error: {e}")
-                except Exception as e:  # noqa: BLE001
-                    logger.error(f"Unexpected Discord edit error: {e}")
+            edit_fn = self._editor(message.channel)
+            answer_edit_fn = self._editor(message.channel)
 
             ping_enabled = getattr(self._config, "ping", True)
             user_mention = message.author.mention if ping_enabled else None
@@ -258,6 +259,7 @@ class DiscordBridge:
                     typing_fn=message.channel.typing,
                     react_fn=react_fn,
                     edit_fn=edit_fn,
+                    answer_edit_fn=answer_edit_fn,
                     user_mention=user_mention,
                 )
             except Exception as _e:
@@ -271,6 +273,7 @@ class DiscordBridge:
                     reply_fn=reply_fn,
                     react_fn=react_fn,
                     edit_fn=edit_fn,
+                    answer_edit_fn=answer_edit_fn,
                     user_mention=user_mention,
                 )
 
@@ -314,7 +317,9 @@ class DiscordBridge:
                 await client.close()
             logger.info("Discord bridge stopped")
 
-    async def create_channel(self, channel_name: str, guild_id: int | None = None) -> tuple[bool, str, str]:
+    async def create_channel(
+        self, channel_name: str, guild_id: int | None = None
+    ) -> tuple[bool, str, str]:
         """Create a text channel in a Discord guild.
 
         Must be called after the bridge is connected (wait_for_ready has succeeded).
@@ -353,7 +358,7 @@ class DiscordBridge:
                 "",
                 "Bot lacks 'Manage Channels' permission. "
                 "Invite the bot with: &permissions=274877975552&scope=bot "
-                "or enable the permission in server settings."
+                "or enable the permission in server settings.",
             )
 
         # Sanitize channel name for Discord (lowercase, no spaces, etc.)
@@ -375,8 +380,7 @@ class DiscordBridge:
         # Create the channel
         try:
             channel = await guild.create_text_channel(
-                safe_name,
-                reason="Auto-created by Nova-Code remote bridge"
+                safe_name, reason="Auto-created by Nova-Code remote bridge"
             )
             await self._status(f"Created channel #{safe_name} in {guild.name}")
             logger.info(f"Created Discord channel #{safe_name} ({channel.id}) in {guild.name}")

@@ -25,7 +25,10 @@ _DEBUG_LOG = os.path.expanduser("~/.nova/remote_debug.log")
 async def _debug_log(line: str) -> None:
     """Write a line to the debug log without blocking the event loop."""
     line = str(line) + "\n"
-    await asyncio.to_thread(_write_debug, line)
+    try:
+        await asyncio.to_thread(_write_debug, line)
+    except OSError:
+        logger.debug("Remote debug log is unavailable", exc_info=True)
 
 
 def _write_debug(line: str) -> None:
@@ -245,6 +248,13 @@ async def remote_message_processor(
                     # answer (sent as a fresh message at the end).
                     edit_fn = getattr(remote_msg, "edit_fn", None)
                     status = None
+                    answer = None
+                    if getattr(remote_msg, "answer_edit_fn", None) is not None:
+                        from novacode_cli.remote.streaming import RemoteAnswerStream
+
+                        answer = RemoteAnswerStream(remote_msg.answer_edit_fn)
+                        answer.start()
+                    session_state._remote_stream_notify = answer.feed if answer else None
                     if edit_fn is not None:
                         from novacode_cli.remote.status import RemoteStatusLine
 
@@ -298,19 +308,25 @@ async def remote_message_processor(
                         # Settle the status line, then send the answer as its own
                         # message (the status carries the tool/subagent summary).
                         if status is not None:
-                            await status.finalize()
-                        condensed = (
-                            _condense_response(response_text) if response_text else ""
-                        )
-                        final_text = condensed or "✅ Task completed (no text response)."
+                            await status.finalize(outcome="failed" if answer and answer.error else "stopped" if answer and answer.cancelled else "done")
+                        # _extract_response already selects the final AI message.
+                        # Keep code indentation and Markdown exactly as generated.
+                        final_text = response_text.strip() if response_text else "✅ Task completed (no text response)."
                         if getattr(remote_msg, "user_mention", None):
                             final_text = f"{remote_msg.user_mention}\n{final_text}"
                         try:
-                            await remote_msg.reply_fn(final_text)
+                            if answer is None or not await answer.finalize(final_text):
+                                await remote_msg.reply_fn(final_text)
                         except Exception:
                             pass
 
                     finally:
+                        if answer is not None and not answer.closed:
+                            answer.cancelled = True
+                            await answer.finalize()
+                        session_state._remote_stream_notify = None
+                        if status is not None:
+                            await status.finalize(outcome="stopped")
                         session_state.auto_approve = _prev_auto_approve
                         session_state._remote_tool_notify = None
                         session_state._remote_todo_notify = None

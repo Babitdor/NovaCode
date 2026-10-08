@@ -820,6 +820,7 @@ class Settings:
     langsmith_tracing_enabled: bool = False
 
     version: str = __version__
+    opencode_zen_api_key: str | None = None
 
     def __repr__(self) -> str:
         """The settings, with every credential masked.
@@ -897,6 +898,9 @@ class Settings:
             tavily_key = os.environ.get("TAVILY_API_KEY")
 
         langsmith_key = os.environ.get("LANGSMITH_API_KEY")
+        opencode_zen_key = (
+            secret_manager.get_secret("opencode_zen_api_key") if secret_manager else None
+        ) or os.environ.get("OPENCODE_ZEN_API_KEY")
 
         # Detect Ollama host configuration
         ollama_host = os.environ.get("OLLAMA_HOST")
@@ -915,6 +919,7 @@ class Settings:
             google_api_key=google_key,
             openrouter_api_key=openrouter_key,
             opencode_api_key=opencode_key,
+            opencode_zen_api_key=opencode_zen_key,
             nvidia_api_key=nvidia_key,
             tavily_api_key=tavily_key,
             langsmith_api_key=langsmith_key,
@@ -954,6 +959,10 @@ class Settings:
     def has_nvidia(self) -> bool:
         """Check if an NVIDIA NIM API key is configured."""
         return self.nvidia_api_key is not None
+
+    @property
+    def has_opencode_zen(self) -> bool:
+        return bool(self.opencode_zen_api_key)
 
     @property
     def has_tavily(self) -> bool:

@@ -304,11 +304,12 @@ class AuthManagerScreen(ModalScreen[None]):
         env_var = credential_env_var(name)
         if env_var is None:
             return
-        if name in {"google", "anthropic"}:
+        if name in {"google", "anthropic", "opencode", "opencode_zen"}:
             from novacode_cli.tui.provider_signin import (
                 GoogleSignInScreen,
                 ProviderSignInChoice,
                 open_anthropic_console,
+                open_opencode_console,
             )
             choice = await self.app.push_screen_wait(ProviderSignInChoice(name))
             if name == "google":
@@ -344,7 +345,10 @@ class AuthManagerScreen(ModalScreen[None]):
                     self.reload()
                     return
             elif choice == "console":
-                await open_anthropic_console()
+                if name in {"opencode", "opencode_zen"}:
+                    await open_opencode_console()
+                else:
+                    await open_anthropic_console()
             if choice not in {"api_key", "replace_key", "console"}:
                 return
         if name == "openai":

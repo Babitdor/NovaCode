@@ -1705,6 +1705,9 @@ class NovaApp(App):
         self._remote_activity: list[str] = []
         # The per-turn live status line (edits one compact message in place).
         self._remote_status: Any = None
+        self._remote_answer: Any = None
+        self._local_remote_streams: list[Any] = []
+        self._remote_consumer_worker: Any = None
         # The MatrixRain animation widget, tracked so it can be removed on clear.
         self._home_banner: Static | None = None
         # name → async (args) -> str  for slash commands contributed by plugins.
@@ -1928,7 +1931,9 @@ class NovaApp(App):
 
     def _apply_saved_theme(self) -> None:
         """Register Nova's palettes and apply the persisted theme (or default)."""
-        for theme in (NOVA_TOKYO_NIGHT, NOVA_MATRIX):
+        from novacode_cli.tui.themes import NOVA_EXTRA_THEMES
+
+        for theme in (NOVA_TOKYO_NIGHT, NOVA_MATRIX, *NOVA_EXTRA_THEMES):
             try:
                 self.register_theme(theme)
             except Exception:  # noqa: BLE001
@@ -2154,7 +2159,7 @@ class NovaApp(App):
                 pass
         # Consume remote (Discord/Telegram) messages and render them in the TUI.
         if getattr(self.session_state, "_remote_message_queue", None) is not None:
-            self._remote_consumer()
+            self._ensure_remote_consumer()
         # Register tool output callback for live terminal/command execution streaming
         try:
             from novacode_cli.events import register_tool_output_callback
@@ -3137,11 +3142,18 @@ class NovaApp(App):
             if pane is None or pane.kind == "root":
                 if self._remote_status is not None:
                     feed(self._remote_status, event)
+                if self._remote_answer is not None:
+                    self._remote_answer.feed(event)
+                for _target, status, answer in self._local_remote_streams:
+                    feed(status, event)
+                    answer.feed(event)
                 return
             if pane.remote_turns:
                 turn = pane.remote_turns[0]
                 if turn.status is not None:
                     feed(turn.status, event)
+                if getattr(turn, "answer_stream", None) is not None:
+                    turn.answer_stream.feed(event)
                 if isinstance(event, ev.AssistantMessage) and (event.text or "").strip():
                     turn.answer = event.text  # the last one is the answer
         except Exception:  # noqa: BLE001 — the chat mirror must never break rendering
@@ -3242,9 +3254,14 @@ class NovaApp(App):
             msg=msg,
             status=None,
             answer="",
+            answer_stream=None,
         )
         if getattr(msg, "edit_fn", None) is not None:
             turn.status = RemoteStatusLine(msg.edit_fn, label=self._remote_label(pane))
+        if getattr(msg, "answer_edit_fn", None) is not None:
+            from novacode_cli.remote.streaming import RemoteAnswerStream
+
+            turn.answer_stream = RemoteAnswerStream(msg.answer_edit_fn)
         pane.remote_turns.append(turn)
         if await self._supervisor().send_prompt(pane.sid, msg.text) is None:
             pane.remote_turns.remove(turn)
@@ -3253,6 +3270,8 @@ class NovaApp(App):
             return
         if turn.status is not None:
             turn.status.start()
+        if turn.answer_stream is not None:
+            turn.answer_stream.start()
         if len(pane.remote_turns) > 1:
             with contextlib.suppress(Exception):
                 await msg.reply_fn(
@@ -3269,12 +3288,14 @@ class NovaApp(App):
         turn = pane.remote_turns.popleft()
         if turn.status is not None:
             with contextlib.suppress(Exception):
-                await turn.status.finalize()
+                await turn.status.finalize(outcome="failed" if error else "done")
         reply = error or turn.answer or "✅ Task completed."
         if self._remote_label(pane) and not error:
             reply = f"**[{pane.title}]** {reply}"
         with contextlib.suppress(Exception):
-            await turn.msg.reply_fn(reply)
+            stream = getattr(turn, "answer_stream", None)
+            if stream is None or not await stream.finalize(reply):
+                await turn.msg.reply_fn(reply)
         self._remote_react("✖" if error else "✅", turn.msg)
 
     def _remote_telegram_bridges(self) -> list:
@@ -6934,6 +6955,8 @@ class NovaApp(App):
         status_phrases.reset()
         self._set_status(status_phrases.status_line("thinking", sticky_phrase=True))
         try:
+            if self._remote_msg is None:
+                await self._start_local_remote_stream(text)
             if lock is not None:
                 async with lock:
                     await self._save_session(pending_prompt=text, task_status="interrupted")
@@ -6943,12 +6966,16 @@ class NovaApp(App):
                 await self._do_stream(text, assistant_id)
         except asyncio.CancelledError:
             self._reset_streaming()
+            for _target, _status, answer in self._local_remote_streams:
+                answer.cancelled = True
             # A Ctrl+B detach surfaces as an ev.Cancelled event (handled with its
             # own "moved to background" note); only a real cancel reaches here.
             if not getattr(self, "_detach_cancelling", False):
                 self._log(Text("Cancelled.", style="yellow"))
         except Exception as ex:  # noqa: BLE001
             msg = str(ex).lower()
+            for _target, _status, answer in self._local_remote_streams:
+                answer.error = str(ex)
             if any(
                 kw in msg
                 for kw in ("429", "rate limit", "usage limit", "quota", "too many requests")
@@ -6972,6 +6999,7 @@ class NovaApp(App):
             else:
                 self._log(Text(f"Error: {ex}", style="red"))
         finally:
+            await self._finish_local_remote_stream()
             self._turn_active = False
             if turn_pane is not None and turn_pane is not getattr(self, "_active_pane", None):
                 turn_pane.state["_turn_active"] = False
@@ -7345,6 +7373,7 @@ class NovaApp(App):
                     self._remote_msg = msg
                     self._remote_activity = []  # tool/subagent names for the status
                     self._remote_status = None
+                    self._remote_answer = None
                     self._remote_react("🤔")  # acknowledge: thinking
                     # Keep the "typing…" indicator alive for the whole turn so it
                     # reads like a person typing, then sends a message (the platform
@@ -7391,6 +7420,11 @@ class NovaApp(App):
                                 msg.edit_fn, label=self._remote_label(None)
                             )
                             self._remote_status.start()
+                        if getattr(msg, "answer_edit_fn", None) is not None:
+                            from novacode_cli.remote.streaming import RemoteAnswerStream
+
+                            self._remote_answer = RemoteAnswerStream(msg.answer_edit_fn)
+                            self._remote_answer.start()
                         # While the turn runs, drain further remote messages as
                         # live steers so the user can "add to the previous prompt".
                         steer_drain = asyncio.create_task(self._remote_steer_drain(queue))
@@ -7430,19 +7464,31 @@ class NovaApp(App):
                         # answer as its own message (no footer — the status carries
                         # the tool/subagent summary).
                         if self._remote_status is not None:
-                            await self._remote_status.finalize()
+                            answer = self._remote_answer
+                            await self._remote_status.finalize(outcome="failed" if answer and answer.error else "stopped" if answer and answer.cancelled else "done")
                         post = await self.agent.aget_state(config)
                         reply = _extract_response(post, pre_count) or "✅ Task completed."
                         if self._remote_label(None):
                             reply = f"**[main]** {reply}"
                         try:
-                            await msg.reply_fn(reply)
+                            streamed = (
+                                await self._remote_answer.finalize(reply)
+                                if self._remote_answer is not None else False
+                            )
+                            if not streamed:
+                                await msg.reply_fn(reply)
                         except Exception:  # noqa: BLE001
                             pass
                         self._remote_react("✅")
                 finally:
+                    if self._remote_status is not None:
+                        await self._remote_status.finalize(outcome="stopped")
+                    if self._remote_answer is not None and not self._remote_answer.closed:
+                        self._remote_answer.cancelled = True
+                        await self._remote_answer.finalize()
                     self._remote_msg = None
                     self._remote_status = None
+                    self._remote_answer = None
                     if typing_task is not None:
                         typing_task.cancel()
                         try:
@@ -8162,6 +8208,7 @@ class NovaApp(App):
         import uuid
 
         from novacode_cli.agent_stream import run_agent_stream
+        from novacode_cli.remote.status import feed as feed_remote_status
         from novacode_cli.ui_events import (
             AssistantMessage,
             Done,
@@ -8244,7 +8291,9 @@ class NovaApp(App):
         # background run concluded (not just that it finished).
         final_text: list[str] = []
 
+        remote_streams = []
         try:
+            remote_streams = await self._create_local_remote_streams(prompt, label=f"bg[{job_id}]")
             async for e in run_agent_stream(
                 prompt,
                 ag,
@@ -8253,6 +8302,9 @@ class NovaApp(App):
                 backend=backend,
                 seen_message_ids=set(),
             ):
+                for _target, remote_status, remote_answer in remote_streams:
+                    feed_remote_status(remote_status, e)
+                    remote_answer.feed(e)
                 if isinstance(e, InterruptRequest):
                     # Only ask_user_question reaches here (tools and plans are
                     # auto-approved via auto_approve=True on the session).
@@ -8280,12 +8332,16 @@ class NovaApp(App):
                         final_text.append(e.text)
                     _render_bg_event(e, _write, _set_phase, self._fileop_summary, pending)
         except asyncio.CancelledError:
+            for _target, _status, answer in remote_streams:
+                answer.cancelled = True
             if task is not None:
                 task.finish("terminated")
             self._refresh_tasks_bar()
             card.title = f"✖ bg[{job_id}] · {p_short}  ·  cancelled"
             return
         except Exception as ex:  # noqa: BLE001
+            for _target, _status, answer in remote_streams:
+                answer.error = str(ex)
             if task is not None:
                 task.finish("failed")
             self._refresh_tasks_bar()
@@ -8295,6 +8351,8 @@ class NovaApp(App):
             card.collapsed = True
             self._journal({"k": "bgagent", "prompt": prompt, "status": "error", "summary": str(ex), "job": job_id})
             return
+        finally:
+            await self._finish_remote_streams(remote_streams)
 
         # A tool call whose result never arrived (turn ended mid-call) still needs
         # to appear, or the trace would silently drop it.
@@ -8445,6 +8503,57 @@ class NovaApp(App):
                 sandbox_type=self._sandbox_type,
             )
         )
+        self._ensure_remote_consumer()
+
+    def _ensure_remote_consumer(self) -> None:
+        """Starting /remote after launch must start exactly one message consumer."""
+        if getattr(self.session_state, "_remote_message_queue", None) is None:
+            return
+        manager = getattr(self.session_state, "_remote_bridge_manager", None)
+        if manager is not None:
+            async def status_callback(message: str) -> None:
+                self._log(Text(f"🔗 Remote: {message}", style="dim"))
+
+            manager.set_status_callback(status_callback)
+        worker = self._remote_consumer_worker
+        if worker is None or worker.is_finished:
+            self._remote_consumer_worker = self._remote_consumer()
+
+    async def _start_local_remote_stream(self, prompt: str) -> None:
+        self._local_remote_streams.extend(await self._create_local_remote_streams(prompt))
+
+    async def _create_local_remote_streams(self, prompt: str, *, label: str = "main") -> list:
+        from novacode_cli.remote.status import RemoteStatusLine
+        from novacode_cli.remote.streaming import RemoteAnswerStream
+
+        manager = getattr(self.session_state, "_remote_bridge_manager", None)
+        if manager is None:
+            return []
+        streams = []
+        targets = await manager.stream_targets(sid="root")
+        for target in targets:
+            status = RemoteStatusLine(target.edit_fn, label=f"NOVA · {label} · " + " ".join(prompt.split())[:80])
+            answer = RemoteAnswerStream(target.answer_edit_fn)
+            streams.append((target, status, answer))
+            status.start()
+            answer.start()
+        return streams
+
+    async def _finish_local_remote_stream(self) -> None:
+        streams, self._local_remote_streams = self._local_remote_streams, []
+        await self._finish_remote_streams(streams)
+
+    async def _finish_remote_streams(self, streams: list) -> None:
+        async def finish(target, status, answer):
+            await status.finalize(outcome="failed" if answer.error else "stopped" if answer.cancelled else "done")
+            if not await answer.finalize():
+                try:
+                    await asyncio.wait_for(target.reply_fn(answer.text or "Task finished; live delivery failed."), timeout=10)
+                except Exception:
+                    self.notify("Remote response delivery failed. Check /remote status.", severity="warning")
+
+        if streams:
+            await asyncio.gather(*(finish(*stream) for stream in streams), return_exceptions=True)
 
     async def _run_theme(self) -> None:
         # Fire-and-forget: the theme screen's result is unused, and awaiting it
@@ -13063,3 +13172,7 @@ async def run_tui(
             pane=getattr(app, "_root_pane", None),
             task_status="crashed" if getattr(app, "_exception", None) else "active",
         )
+    if not getattr(app, "_exception", None):
+        from novacode_cli.ui.exit_summary import print_exit_summary
+        with contextlib.suppress(OSError):
+            await print_exit_summary(app)

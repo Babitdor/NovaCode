@@ -66,10 +66,11 @@ class WorkspaceApprovalApp(App[str | None]):
         super().__init__()
         self.workspace = path.resolve()
         from novacode_cli.config.nova_config import NovaConfig
+        from novacode_cli.tui.themes import NOVA_EXTRA_THEMES
         from novacode_cli.tui.widgets import DEFAULT_THEME, NOVA_MATRIX, NOVA_TOKYO_NIGHT
 
-        self.register_theme(NOVA_TOKYO_NIGHT)
-        self.register_theme(NOVA_MATRIX)
+        for theme in (NOVA_TOKYO_NIGHT, NOVA_MATRIX, *NOVA_EXTRA_THEMES):
+            self.register_theme(theme)
         saved = NovaConfig().get("theme")
         self.theme = (
             saved if isinstance(saved, str) and saved in self.available_themes else DEFAULT_THEME

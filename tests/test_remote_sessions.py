@@ -165,7 +165,7 @@ def test_child_session_turn_round_trip() -> None:
             )
             assert await app._remote_route(msg) is True
             assert prompts == [("s-1", "run the tests")] and msg.route["sid"] == "s-1"
-            assert child_state.auto_approve is True, "remote turns auto-approve"
+            assert child_state.auto_approve is False, "remote turns preserve the user's approval preference"
 
             await app._deliver(pane, ev.ToolCall(name="shell", display_str='shell("pytest")',
                                                  icon="", call_id="c1"))
