@@ -72,6 +72,60 @@ async def _never() -> None:
     await asyncio.sleep(3600)
 
 
+@pytest.mark.asyncio
+async def test_job_controls_use_worker_registry_and_ignore_output_events(monkeypatch):
+    from novacode_cli.shell import jobs
+    reg = jobs.JobRegistry()
+    monkeypatch.setattr(jobs, "get_registry", lambda: reg)
+    worker, sent = _make(monkeypatch, [])
+    running = asyncio.create_task(worker.run())
+    assert await _wait_for(lambda: bool(_frames(sent, "ready")))
+    job = reg.add("worker command", "shell")
+    frames = len(_frames(sent, "jobs"))
+    reg.append_log(job.id, "output")
+    assert len(_frames(sent, "jobs")) == frames
+    await worker.inbox.put({"t": "job_control", "action": "terminate", "job_id": job.task_id})
+    assert await _wait_for(job.kill.is_set)
+    assert _frames(sent, "jobs")[-1]["jobs"][0]["logs"] == []
+    await worker.inbox.put({"t": "job_control", "action": "logs", "job_id": job.task_id, "request_id": "log-1"})
+    assert await _wait_for(lambda: bool(_frames(sent, "job_logs")))
+    assert _frames(sent, "job_logs")[-1] == {"t": "job_logs", "request_id": "log-1", "output": "output"}
+    await worker.inbox.put({"t": "shutdown"})
+    await running
+    assert not reg._observers
+
+
+@pytest.mark.asyncio
+async def test_shutdown_stops_worker_background_process(monkeypatch):
+    import sys
+    from novacode_cli.shell import jobs
+    from novacode_cli.shell.middleware import ShellMiddleware
+
+    registry = jobs.JobRegistry()
+    monkeypatch.setattr(jobs, "get_registry", lambda: registry)
+    worker, sent = _make(monkeypatch, [])
+    running = asyncio.create_task(worker.run())
+    assert await _wait_for(lambda: bool(_frames(sent, "ready")))
+    command = "import time;time.sleep(60)"
+    job = registry.add(command, "shell", [sys.executable, "-c"])
+    middleware = ShellMiddleware(workspace_root=".")
+    background = asyncio.create_task(middleware._bg_run(command, job.prog, job.id))
+    try:
+        assert await _wait_for(lambda: job.pid is not None)
+        await worker.inbox.put({"t": "shutdown"})
+        await asyncio.wait_for(running, 10)
+        await asyncio.wait_for(background, 5)
+        assert job.status == "terminated"
+        assert not registry._observers
+    finally:
+        job.kill.set()
+        if not background.done():
+            await asyncio.wait_for(background, 10)
+        if not running.done():
+            await worker.inbox.put({"t": "shutdown"})
+            await asyncio.wait_for(running, 10)
+
+
 def _frames(sent, kind):
     return [m for m in sent if m.get("t") == kind]
 
@@ -110,6 +164,97 @@ async def _run_prompts(worker, sent, prompts, *, timeout=15.0):
 
 
 # ── lifecycle ────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_queued_approval_mode_cannot_escalate_active_turn(monkeypatch):
+    seen = []
+    active = asyncio.Event()
+    release = asyncio.Event()
+
+    async def stream(text, agent, aid, state, **kwargs):
+        seen.append((text, state.auto_approve))
+        if text == "manual":
+            active.set()
+            await release.wait()
+            assert state.auto_approve is False
+        yield ev.Done()
+
+    worker, sent = _make(monkeypatch, stream)
+    running = asyncio.create_task(worker.run())
+    try:
+        await worker.inbox.put({"t": "prompt", "id": "p1", "text": "manual", "auto_approve": False})
+        await asyncio.wait_for(active.wait(), 5)
+        await worker.inbox.put({"t": "prompt", "id": "p2", "text": "auto", "auto_approve": True})
+        await asyncio.sleep(0.05)
+        assert worker.session_state.auto_approve is False
+        release.set()
+        assert await _wait_for(lambda: len(_frames(sent, "turn_done")) == 2)
+        assert seen == [("manual", False), ("auto", True)]
+    finally:
+        release.set()
+        worker.inbox.put_nowait({"t": "shutdown"})
+        await asyncio.wait_for(running, 5)
+
+
+@pytest.mark.asyncio
+async def test_image_prompt_survives_protocol_and_stays_in_its_session(monkeypatch):
+    from novacode_cli.core.input_preparation import prepare_input_content
+    from novacode_cli.image_utils import ImageData
+    from novacode_cli.sessions.supervisor import SessionSupervisor
+
+    monkeypatch.setattr("novacode_cli.core.input_preparation._main_model_can_see_images", lambda: True)
+    captured = []
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def stream(text, *args, image_tracker=None, **kwargs):
+        captured.append(await prepare_input_content(text, image_tracker, skip_file_mentions=True))
+        if text == "busy":
+            started.set()
+            await release.wait()
+        yield ev.Done()
+
+    worker, sent = _make(monkeypatch, stream)
+    supervisor = SessionSupervisor.__new__(SessionSupervisor)
+    supervisor._children = {"child": type("Child", (), {})()}
+    import itertools
+    supervisor._prompt_ids = itertools.count(1)
+
+    async def send(child, payload):
+        worker.inbox.put_nowait(protocol.loads(protocol.dumps(payload)))
+        return True
+
+    supervisor._send = send
+    running = asyncio.create_task(worker.run())
+    worker.inbox.put_nowait({"t": "prompt", "id": "busy", "text": "busy"})
+    await asyncio.wait_for(started.wait(), 5)
+    image = ImageData("a" * 300_000, "png", "[image]")
+    await supervisor.send_prompt("child", "inspect", images=[image])
+    await supervisor.send_prompt("child", "follow up")
+    await asyncio.sleep(0.05)
+    assert worker.image_tracker is None, "queued image must not change the current turn"
+    release.set()
+    assert await _wait_for(lambda: len(_frames(sent, "turn_done")) == 3)
+    worker.inbox.put_nowait({"t": "shutdown"})
+    await asyncio.wait_for(running, 5)
+    assert captured[0] == "busy"
+    assert captured[1][0]["text"] == "inspect"
+    assert captured[1][1]["image_url"]["url"] == image.to_data_url()
+    assert captured[2][1] == captured[1][1], "follow-up retains the image"
+
+
+@pytest.mark.asyncio
+async def test_invalid_image_frame_does_not_stop_session(monkeypatch):
+    worker, sent = _make(monkeypatch, [ev.Done()])
+    running = asyncio.create_task(worker.run())
+    worker.inbox.put_nowait({"t": "prompt", "id": "bad", "text": "hi", "images": [None]})
+    worker.inbox.put_nowait({"t": "prompt", "id": "good", "text": "hello"})
+    assert await _wait_for(lambda: len(_frames(sent, "turn_done")) == 2)
+    worker.inbox.put_nowait({"t": "shutdown"})
+    await asyncio.wait_for(running, 5)
+    assert _frames(sent, "turn_done")[0]["ok"] is False
+    assert _frames(sent, "turn_done")[1]["ok"] is True
 
 
 @pytest.mark.timeout(30)

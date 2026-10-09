@@ -179,6 +179,7 @@ async def remote_message_processor(
         return "pass"
 
     async def run_turn(remote_msg: Any) -> None:
+        nonlocal image_tracker
         try:
             logger.info(
                 "Remote message from %s on %s",
@@ -207,11 +208,17 @@ async def remote_message_processor(
             # Side commands (/goal, /btw) — handled before the normal agent turn.
             # "/goal <desc>" rewrites remote_msg.text to its kick-off and falls
             # through to run as a turn; everything else is fully handled here.
-            _side = await _handle_side_command(remote_msg, allow_kickoff=True)
+            _side = (
+                await _handle_side_command(remote_msg, allow_kickoff=True)
+                if not getattr(remote_msg, "images", None) else "run"
+            )
             if _side == "done":
                 return
 
             async with lock:
+                from novacode_cli.remote.images import attach_images
+
+                image_tracker = attach_images(image_tracker, getattr(remote_msg, "images", []))
                 try:
                     _typing_cm = None
                     typing_task: asyncio.Task | None = None
@@ -364,7 +371,7 @@ async def remote_message_processor(
             await _debug_log(f"DEQUEUED from queue {id(queue)}: {remote_msg.text[:80]}")
 
             # Check if there is an active turn (lock is locked)
-            if lock.locked():
+            if lock.locked() and not getattr(remote_msg, "images", None):
                 try:
                     # Treat as steer!
                     from novacode_cli.bootstrap.steering import SteeringInstruction

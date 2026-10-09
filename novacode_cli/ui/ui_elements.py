@@ -1568,6 +1568,10 @@ def show_help() -> None:
         style=COLORS["dim"],
     )
     console.print("  /sessions       List and manage saved sessions", style=COLORS["dim"])
+    console.print(
+        "  /tabs              Choose a project or close a running session tab",
+        style=COLORS["dim"],
+    )
     console.print("  /save           Manually save current session", style=COLORS["dim"])
     console.print("  /quit, /exit    Exit the session", style=COLORS["dim"])
     console.print(

@@ -62,11 +62,16 @@ async def test_remote_screen_authorize_and_revoke_user(monkeypatch, tmp_path, si
         await pilot.pause()
         assert await pilot.click("#remote-authorize")
         await pilot.pause()
+        # UI idle does not mean the command's async configuration write finished.
+        await app.workers.wait_for_complete([worker for worker in app.workers if worker.node is screen])
+        await pilot.pause()
         assert config.allowed_user_ids == {"6614002417"}
         assert "6614002417" in str(screen.query_one("#remote-authorized-users").render())
         screen.query_one("#remote-revoke").scroll_visible(animate=False)
         await pilot.pause()
         assert await pilot.click("#remote-revoke")
+        await pilot.pause()
+        await app.workers.wait_for_complete([worker for worker in app.workers if worker.node is screen])
         await pilot.pause()
         assert not config.allowed_user_ids
         assert remote_config.load_remote_config()["telegram"]["allowed_user_ids"] == []

@@ -645,11 +645,19 @@ class SessionState:
         — see :meth:`register_pending_approval` and :meth:`resolve_approval`.
         """
         nid = self._ntf.add(level, title, message, source, action_id=action_id, action_type=action_type)
+        n = next((item for item in list(self._ntf.notifications) if item.id == nid), None)
+        callback = getattr(self, "_notification_callback", None)
+        if n is not None and callback is not None:
+            try:
+                callback(n)
+            except Exception:  # noqa: BLE001 — notification listeners are best effort
+                pass
         # Fire hook with session_id (cross-domain coordination in SessionState)
         try:
             from novacode_cli.hooks import HookEvent, dispatch_hook_fire_and_forget
 
-            n = self._ntf.notifications[0]
+            if n is None:
+                return nid
             dispatch_hook_fire_and_forget(
                 HookEvent.NOTIFICATION,
                 {
@@ -728,9 +736,8 @@ class SessionState:
     def pending_approval_count(self) -> int:
         """Number of unresolved approval notifications.
 
-        Returns 0 immediately when auto-approve is enabled (remote sessions
-        auto-approve everything — no human is being asked, so a flashing badge
-        is just noise).
+        Returns 0 immediately when auto-approve is explicitly enabled.
+        Remote connection does not change this preference.
         """
         if self.auto_approve:
             return 0

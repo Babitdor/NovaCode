@@ -24,6 +24,7 @@ import itertools
 import logging
 import os
 import sys
+import time
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -93,6 +94,7 @@ class SessionSupervisor:
         """*on_message* is awaited with ``(session_id, message)`` for every frame."""
         self._on_message = on_message
         self._children: dict[str, ChildSession] = {}
+        self._starting: set[str] = set()
         self._prompt_ids = itertools.count(1)
 
         global _atexit_registered
@@ -109,7 +111,7 @@ class SessionSupervisor:
         return list(self._children.values())
 
     def at_capacity(self) -> bool:
-        return len([c for c in self._children.values() if c.alive]) >= MAX_SESSIONS
+        return sum(c.alive for c in self._children.values()) + len(self._starting) >= MAX_SESSIONS
 
     # ── spawn ────────────────────────────────────────────────────────────
 
@@ -168,18 +170,28 @@ class SessionSupervisor:
         from the working directory at import time, so the child's whole world is
         scoped there without any extra plumbing.
         """
+        if session_id in self._children or session_id in self._starting:
+            raise ValueError(f"Session {session_id} already exists")
+        if self.at_capacity():
+            raise RuntimeError("Session limit reached — close one before starting another.")
         child = ChildSession(
             session_id=session_id, name=name, worktree=Path(worktree), branch=branch
         )
-        proc = await asyncio.create_subprocess_exec(
-            *(argv or self._argv(session_id, assistant_id)),
-            cwd=str(worktree),
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            limit=_STREAM_LIMIT,
-            env=self._child_env(),
-        )
+        # Reserve before the first await. Simultaneous launches must not start
+        # more full agent/MCP processes than the resource limit permits.
+        self._starting.add(session_id)
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *(argv or self._argv(session_id, assistant_id)),
+                cwd=str(worktree),
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                limit=_STREAM_LIMIT,
+                env=self._child_env(),
+            )
+        finally:
+            self._starting.discard(session_id)
         child.proc = proc
         self._children[session_id] = child
         _live.add(child)
@@ -195,6 +207,8 @@ class SessionSupervisor:
     async def _read_stdout(self, child: ChildSession) -> None:
         """Decode the child's JSONL and hand each frame to the app."""
         stream = child.proc.stdout
+        frames = 0
+        yielded_at = time.monotonic()
         try:
             while True:
                 try:
@@ -210,6 +224,14 @@ class SessionSupervisor:
                     continue
                 self._track(child, msg)
                 await self._on_message(child.session_id, msg)
+                frames += 1
+                if frames >= 32 or time.monotonic() - yielded_at >= 0.004:
+                    # readline() can finish synchronously while the pipe is
+                    # full. Several chatty children must leave time for input,
+                    # repaint timers, and the other sessions' readers.
+                    await asyncio.sleep(0)
+                    frames = 0
+                    yielded_at = time.monotonic()
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 — a reader must not take down the app
@@ -220,12 +242,17 @@ class SessionSupervisor:
     async def _read_stderr(self, child: ChildSession) -> None:
         """Keep the tail of stderr so a crash can be explained."""
         stream = child.proc.stderr
+        lines = 0
         with contextlib.suppress(asyncio.CancelledError, Exception):
             while True:
                 raw = await stream.readline()
                 if not raw:
                     break
                 child.stderr_tail.append(raw.decode("utf-8", "replace").rstrip())
+                lines += 1
+                if lines >= 32:
+                    await asyncio.sleep(0)
+                    lines = 0
 
     def _track(self, child: ChildSession, msg: dict) -> None:
         """Derive status from the frames already flowing; no extra protocol."""
@@ -304,13 +331,21 @@ class SessionSupervisor:
             return False
         return True
 
-    async def send_prompt(self, session_id: str, text: str) -> str | None:
+    async def send_prompt(self, session_id: str, text: str, *, images=None, auto_approve: bool | None = None) -> str | None:
         """Queue a prompt on the child; returns its id, or None if unreachable."""
         child = self._children.get(session_id)
         if child is None:
             return None
         pid = f"p{next(self._prompt_ids)}"
-        if not await self._send(child, {"t": "prompt", "id": pid, "text": text}):
+        payload = {"t": "prompt", "id": pid, "text": text}
+        if auto_approve is not None:
+            payload["auto_approve"] = auto_approve
+        if images:
+            payload["images"] = [
+                {"base64_data": image.base64_data, "format": image.format, "placeholder": "[image]"}
+                for image in images
+            ]
+        if not await self._send(child, payload):
             return None
         child.status = "running"
         return pid

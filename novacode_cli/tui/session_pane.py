@@ -24,18 +24,17 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:  # pragma: no cover - typing only
-    from textual.containers import VerticalScroll
+from typing import Any
 
 # Attributes that belong to a conversation rather than to the app. Missing ones
 # are tolerated (``getattr`` default) because several are created lazily.
 STATEFUL_ATTRS: tuple[str, ...] = (
+    "_follow_tail",
+    "_jump_latest_label",
     # streaming / transcript
     "_seen",
-    "_live_buf",
-    "_reasoning_buf",
+    "_live_buf_parts",
+    "_reasoning_buf_parts",
     "_stream_msg",
     "_reason_msg",
     "_current_assistant_id",
@@ -112,10 +111,12 @@ def fresh_state(
     inside the new pane's own scroll region.
     """
     return {
+        "_follow_tail": True,
+        "_jump_latest_label": "",
         # streaming / transcript
         "_seen": set(),
-        "_live_buf": "",
-        "_reasoning_buf": "",
+        "_live_buf_parts": [],
+        "_reasoning_buf_parts": [],
         "_stream_msg": None,
         "_reason_msg": None,
         "_current_assistant_id": None,

@@ -25,6 +25,51 @@ from novacode_cli.shell.middleware import ShellMiddleware
 PY = [sys.executable, "-c"]
 
 
+@pytest.mark.asyncio
+@pytest.mark.timeout(30)
+async def test_terminate_task_stops_background_process_and_descendant(monkeypatch, tmp_path):
+    """Exercise the agent tool and normal background drain, including Windows."""
+    psutil = pytest.importorskip("psutil")
+    from novacode_cli.tools.job_tools import terminate_task, list_background_tasks
+    reg = jobs.JobRegistry()
+    monkeypatch.setattr(jobs, "get_registry", lambda: reg)
+    pidfile = tmp_path / "descendant.pid"
+    code = (
+        "import subprocess,sys,time\n"
+        "c=subprocess.Popen([sys.executable,'-c','import time;time.sleep(120)'])\n"
+        f"open({str(pidfile)!r},'w').write(str(c.pid))\n"
+        "time.sleep(120)\n"
+    )
+    job = reg.add(code, "shell", PY)
+    run = asyncio.create_task(_mw()._bg_run(code, PY, job.id))
+    child_pid = None
+    try:
+        for _ in range(200):
+            if pidfile.exists() and pidfile.read_text():
+                child_pid = int(pidfile.read_text())
+                break
+            await asyncio.sleep(.025)
+        assert child_pid is not None
+        assert job.task_id in list_background_tasks.invoke({})
+        assert "Terminating" in terminate_task.invoke({"task_id": job.task_id})
+        await asyncio.wait_for(run, timeout=10)
+        assert job.status == "terminated"
+        for _ in range(100):
+            if not psutil.pid_exists(child_pid) or psutil.Process(child_pid).status() == psutil.STATUS_ZOMBIE:
+                break
+            await asyncio.sleep(.025)
+        assert not psutil.pid_exists(child_pid) or psutil.Process(child_pid).status() == psutil.STATUS_ZOMBIE
+    finally:
+        job.kill.set()
+        if not run.done():
+            await asyncio.wait_for(run, 10)
+        # Only the isolated processes created by this test may be cleaned up.
+        for pid in (child_pid, job.pid):
+            if pid is not None:
+                with __import__("contextlib").suppress(psutil.NoSuchProcess):
+                    psutil.Process(pid).kill()
+
+
 def _mw(timeout: float = 60.0) -> ShellMiddleware:
     return ShellMiddleware(workspace_root=os.getcwd(), timeout=timeout)
 

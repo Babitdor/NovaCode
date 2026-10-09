@@ -15,6 +15,71 @@ def bridge():
 
 
 @pytest.mark.asyncio
+async def test_keyboard_transitions_cannot_overtake_an_inflight_removal():
+    bot = bridge()
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    async def api(method, payload):
+        calls.append(payload["text"])
+        if payload["text"] == "Expired":
+            entered.set()
+            await release.wait()
+        return {"ok": True, "result": {"message_id": len(calls)}}
+
+    bot._api_call = api
+    removing = asyncio.create_task(bot.remove_keyboard("Expired", thread_id=88))
+    posting = None
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        posting = asyncio.create_task(bot.post_keyboard("New picker", [["Project"]], thread_id=88))
+        await asyncio.sleep(0)
+        assert calls == ["Expired"]
+    finally:
+        release.set()
+        await removing
+        if posting is not None:
+            await posting
+    assert calls == ["Expired", "New picker"]
+
+
+@pytest.mark.asyncio
+async def test_reply_keyboard_is_sent_to_requested_topic():
+    bot = bridge()
+    bot._api_call = AsyncMock(return_value={"ok": True, "result": {"message_id": 12}})
+
+    assert await bot.post_keyboard(
+        "Choose a project", [["1. NovaCode", "2. Harness"]], thread_id=88, sid="root"
+    )
+
+    payload = bot._api_call.await_args.args[1]
+    assert payload["chat_id"] == 7
+    assert payload["message_thread_id"] == 88
+    assert payload["reply_markup"]["keyboard"] == [
+        [{"text": "1. NovaCode"}, {"text": "2. Harness"}]
+    ]
+    assert bot._owner[12] == "root"
+
+
+@pytest.mark.asyncio
+async def test_picker_and_removal_target_requester_in_same_topic_without_truncating_labels():
+    bot = bridge()
+    bot._api_call = AsyncMock(return_value={"ok": True, "result": {"message_id": 12}})
+    label = "1. " + "Long project name " * 8
+    assert await bot.post_keyboard("Choose", [[label]], thread_id=88, reply_to_message_id=42)
+    payload = bot._api_call.await_args.args[1]
+    assert payload["reply_markup"]["keyboard"] == [[{"text": label}]]
+    assert payload["reply_markup"]["selective"] is True
+    assert payload["reply_parameters"] == {"message_id": 42}
+    assert await bot.remove_keyboard("Starting", thread_id=88, sid="child", reply_to_message_id=43)
+    payload = bot._api_call.await_args.args[1]
+    assert payload["reply_markup"] == {"remove_keyboard": True, "selective": True}
+    assert payload["message_thread_id"] == 88
+    assert payload["reply_parameters"] == {"message_id": 43}
+    assert bot._owner[12] == "child"
+
+
+@pytest.mark.asyncio
 async def test_topic_probe_can_read_telegram_error_response(monkeypatch):
     bot = bridge()
     error = {"ok": False, "error_code": 400, "description": "Bad Request: TOPIC_ID_INVALID"}

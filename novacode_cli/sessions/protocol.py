@@ -10,9 +10,10 @@ Message envelopes
 -----------------
 Parent -> child::
 
-    {"t": "prompt",          "id": "p7", "text": "..."}
+    {"t": "prompt",          "id": "p7", "text": "...", "auto_approve": false, "images": [{"base64_data": "...", "format": "png", "placeholder": "[image]"}]}
     {"t": "interrupt_reply", "id": "i3", "result": {...}}
     {"t": "cancel"}
+    {"t": "job_control", "action": "list|terminate|restart|clear|detach|logs", "job_id": 41, "request_id": "..."}
     {"t": "shutdown"}
 
 Child -> parent::
@@ -22,6 +23,8 @@ Child -> parent::
     {"t": "interrupt", "id": "i3", "kind": "tool", "payload": {...}}
     {"t": "turn_done", "id": "p7", "ok": true}
     {"t": "error", "message": "..."}
+    {"t": "jobs", "jobs": [{"id": 41, "command": "...", "status": "running", ...}]}
+    {"t": "job_logs", "request_id": "...", "output": "bounded log tail"}
 
 Three fields need special handling; everything else in ``ui_events`` is already
 JSON-safe:

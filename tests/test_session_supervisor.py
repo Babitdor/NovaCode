@@ -27,7 +27,7 @@ from pathlib import Path
 
 import pytest
 
-from novacode_cli.sessions.supervisor import ChildSession, SessionSupervisor
+from novacode_cli.sessions.supervisor import SessionSupervisor
 
 # ── fake children ────────────────────────────────────────────────────────────
 
@@ -95,6 +95,46 @@ class _Collector:
 
     def of(self, kind: str) -> list[dict]:
         return [m for _, m in self.msgs if m.get("t") == kind]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_launches_reserve_capacity_and_release_on_failure(monkeypatch, tmp_path):
+    from novacode_cli.sessions.supervisor import MAX_SESSIONS
+    entered = []
+    gate = asyncio.Event()
+
+    async def launch(*args, **kwargs):
+        entered.append(args)
+        await gate.wait()
+        raise OSError("launch failed")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", launch)
+    supervisor = SessionSupervisor(_Collector())
+    tasks = [asyncio.create_task(supervisor.spawn(session_id=str(i), name=str(i), worktree=tmp_path))
+             for i in range(MAX_SESSIONS + 2)]
+    await asyncio.sleep(0)
+    assert len(entered) == MAX_SESSIONS
+    assert supervisor.at_capacity()
+    gate.set()
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    assert sum(isinstance(r, RuntimeError) for r in results) == 2
+    assert not supervisor._starting
+    assert not supervisor.at_capacity()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_launch_releases_reservation(monkeypatch, tmp_path):
+    async def launch(*args, **kwargs):
+        await asyncio.Event().wait()
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", launch)
+    supervisor = SessionSupervisor(_Collector())
+    task = asyncio.create_task(supervisor.spawn(session_id="cancelled", name="cancelled", worktree=tmp_path))
+    await asyncio.sleep(0)
+    assert supervisor._starting == {"cancelled"}
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert not supervisor._starting
 
 
 async def _wait_for(pred, *, timeout=10.0) -> bool:

@@ -1817,6 +1817,63 @@ class PickScreen(ModalScreen[int]):
         self.dismiss(-1)
 
 
+class ProjectSessionPicker(ModalScreen[dict[str, str] | None]):
+    """Pick an approved project folder and enter an optional initial task."""
+
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def __init__(
+        self,
+        projects: list[tuple[str, str]],
+        *,
+        task: str = "",
+        preferred_folder: str | None = None,
+    ) -> None:
+        super().__init__()
+        self._projects = projects
+        self._initial_task = task
+        self._preferred_folder = preferred_folder
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="modal-box"):
+            yield Static(Text("New session tab", style="bold"), id="modal-title")
+            yield Static("Choose an approved project folder and optional first task.", id="modal-hint")
+            yield Select(
+                [(label, folder) for label, folder in self._projects],
+                prompt="Choose a project",
+                id="project-folder",
+            )
+            yield Input(value=self._initial_task, placeholder="Initial task (optional)", id="project-task")
+            with Horizontal(id="modal-buttons"):
+                yield Button("Continue", id="continue", variant="success")
+                yield Button("Cancel", id="cancel")
+
+    def on_mount(self) -> None:
+        select = self.query_one("#project-folder", Select)
+        folders = [folder for _, folder in self._projects]
+        if self._preferred_folder in folders:
+            select.value = self._preferred_folder
+        elif folders:
+            select.value = folders[0]
+        select.focus()
+        animate_modal_screen(self)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel":
+            self.dismiss(None)
+            return
+        if event.button.id != "continue":
+            return
+        folder = self.query_one("#project-folder", Select).value
+        if folder is Select.BLANK:
+            return
+        task = self.query_one("#project-task", Input).value.strip()
+        self.dismiss({"folder": str(folder), "task": task})
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class PluginsScreen(ModalScreen[None]):
     """Native ``/plugins`` manager: list installed plugins and toggle them.
 
@@ -5310,11 +5367,12 @@ class BackgroundTasksScreen(ModalScreen[dict | None]):
     BackgroundTasksScreen #tasks-list { height: 1fr; min-height: 3; max-height: 100%; }
     """
 
-    def __init__(self, *, extra_tasks=None, clear_extra=None) -> None:
+    def __init__(self, *, extra_tasks=None, clear_extra=None, registry=None) -> None:
         super().__init__()
         self._tasks: list[Any] = []
         self._extra_tasks = extra_tasks or (lambda: [])
         self._clear_extra = clear_extra or (lambda: None)
+        self._task_registry = registry
 
     def compose(self) -> ComposeResult:
         with Vertical(id="modal-box"):
@@ -5350,6 +5408,8 @@ class BackgroundTasksScreen(ModalScreen[dict | None]):
         ))
 
     def _registry(self):
+        if self._task_registry is not None:
+            return self._task_registry
         from novacode_cli.shell.jobs import get_registry
 
         return get_registry()
@@ -5357,6 +5417,9 @@ class BackgroundTasksScreen(ModalScreen[dict | None]):
     def _refresh(self) -> None:
         from novacode_cli.shell.jobs import fmt_runtime
 
+        registry = self._registry()
+        if hasattr(registry, "refresh"):
+            registry.refresh()
         ol = self.query_one("#tasks-list", OptionList)
         keep = ol.highlighted
         selected = self._selected() if ol.option_count else None

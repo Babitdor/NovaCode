@@ -28,7 +28,9 @@ def list_background_tasks() -> str:
     """List background tasks with their status, runtime, and command.
 
     Use to see what long-running commands are active (e.g. dev servers, watchers)
-    or recently finished.
+    or recently finished in THIS session. Task IDs belong to one session/tab;
+    another tab's same-numbered task is unrelated. To stop a listed command,
+    call terminate_task with its task_id, then check get_task_status.
     """
     tasks = _reg().list_jobs()
     if not tasks:
@@ -79,7 +81,11 @@ def get_task_logs(task_id: str, tail_lines: int = 50) -> str:
 
 @tool
 def terminate_task(task_id: str) -> str:
-    """Stop a running background task (graceful terminate, then force-kill its tree).
+    """Stop a background command and its child processes in this session.
+
+    Use list_background_tasks to find its task_id. This signals termination;
+    use get_task_status afterwards to confirm it reached "terminated".
+    Windows stops the process tree forcibly; POSIX first allows graceful exit.
 
     Args:
         task_id: e.g. "task_42".

@@ -198,6 +198,15 @@ async def test_cancel_after_stdout_closes_terminates_and_unregisters_process(mon
     process = Process()
     process.stdout.feed_eof()
 
+    async def terminate_tree(proc, **kwargs):
+        assert proc is process
+        proc.terminate()
+
+    from novacode_cli.shell.middleware import ShellMiddleware
+    # This test owns a fake process. Real tree cleanup is exercised separately;
+    # never run taskkill against a synthetic PID from a unit-test fixture.
+    monkeypatch.setattr(ShellMiddleware, "_terminate_tree", terminate_tree)
+
     async def spawn(*_args, **_kwargs):
         return process
 

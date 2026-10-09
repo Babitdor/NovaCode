@@ -139,7 +139,7 @@ def test_child_session_turn_round_trip() -> None:
             prompts: list[tuple[str, str]] = []
 
             class _Sup:
-                async def send_prompt(self, sid, text):
+                async def send_prompt(self, sid, text, **kwargs):
                     prompts.append((sid, text))
                     return "p1"
 

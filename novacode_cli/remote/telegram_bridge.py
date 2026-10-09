@@ -67,6 +67,7 @@ class TelegramBridge:
         self._last_api_error: str | None = None
         self._session_topics: dict[str, tuple[str, int]] = {}
         self._topic_lock = asyncio.Lock()
+        self._keyboard_lock = asyncio.Lock()
         self._shared_polling = None
         self._on_status = None
         self._last_sender_warning = 0.0
@@ -315,6 +316,66 @@ class TelegramBridge:
         """Send markdown ``text`` unprompted (e.g. "session started") to a topic."""
         await self._send_message(self._config.chat_id, text, thread_id=thread_id, sid=sid)
 
+    async def post_keyboard(
+        self,
+        text: str,
+        choices: list[list[str]],
+        *,
+        thread_id: int | None = None,
+        sid: str = "root",
+        reply_to_message_id: int | None = None,
+    ) -> bool:
+        """Send a plain-text prompt with a Telegram reply keyboard."""
+        keyboard = [[{"text": choice} for choice in row] for row in choices if row]
+        payload = self._thread_params(
+            {
+                "chat_id": self._config.chat_id,
+                "text": text,
+                "reply_markup": {
+                    "keyboard": keyboard,
+                    "resize_keyboard": True,
+                    "one_time_keyboard": True,
+                    "is_persistent": False,
+                },
+            },
+            thread_id,
+        )
+        self._target_keyboard_reply(payload, reply_to_message_id)
+        return await self._send_keyboard_payload(payload, sid)
+
+    async def _send_keyboard_payload(self, payload: dict, sid: str) -> bool:
+        # Preserve UI transition order when expiry and incoming commands overlap.
+        async with self._keyboard_lock:
+            sent = await self._api_call("sendMessage", payload)
+            self._remember(sent, sid)
+            return sent is not None
+
+    @staticmethod
+    def _target_keyboard_reply(payload: dict, message_id: int | None) -> None:
+        if message_id is not None:
+            payload["reply_parameters"] = {"message_id": message_id}
+            payload["reply_markup"]["selective"] = True
+
+    async def remove_keyboard(
+        self,
+        text: str,
+        *,
+        thread_id: int | None = None,
+        sid: str = "root",
+        reply_to_message_id: int | None = None,
+    ) -> bool:
+        """Retire a picker rather than merely hiding its buttons."""
+        payload = self._thread_params(
+            {
+                "chat_id": self._config.chat_id,
+                "text": text,
+                "reply_markup": {"remove_keyboard": True},
+            },
+            thread_id,
+        )
+        self._target_keyboard_reply(payload, reply_to_message_id)
+        return await self._send_keyboard_payload(payload, sid)
+
     def _remember(self, sent: dict | None, sid: str | None) -> None:
         """Note which session sent a message, so replying to it reaches that session."""
         mid = (sent or {}).get("result", {}).get("message_id")
@@ -473,13 +534,26 @@ class TelegramBridge:
                     chat_id = chat.get("id")
                     from_user = message.get("from", {})
                     user_name = from_user.get("username") or from_user.get("first_name", "unknown")
-                    text = (message.get("text") or "").strip()
+                    text = (message.get("text") or message.get("caption") or "").strip()
                     # A voice note carries no `text`; it is transcribed below,
                     # AFTER the allowlist check, so an unauthorized chat can
                     # never make us fetch and decode a file.
                     voice = message.get("voice") or {}
+                    photos = message.get("photo") or []
+                    document = message.get("document") or {}
+                    image_file = (
+                        document
+                        if str(document.get("mime_type", "")).startswith("image/")
+                        else None
+                    )
+                    photo = (
+                        max(photos, key=lambda p: p.get("width", 0) * p.get("height", 0))
+                        if photos
+                        else None
+                    )
+                    attachment = photo or image_file
 
-                    if chat_id is None or (not text and not voice):
+                    if chat_id is None or (not text and not voice and not attachment):
                         continue
 
                     # Only process messages from the allowlisted chat.
@@ -518,7 +592,15 @@ class TelegramBridge:
                     reply_to = message.get("reply_to_message") or {}
                     reply_owner = self._owner.get(reply_to.get("message_id"))
 
-                    if not text:
+                    images = []
+                    if attachment:
+                        image = await self._receive_image(chat_id, attachment, thread_id)
+                        if image is None:
+                            continue
+                        images.append(image)
+                        if not text:
+                            text = "Please describe this image."
+                    elif not text:
                         text = await self._transcribe_voice(chat_id, voice, thread_id)
                         if not text:
                             continue  # nothing usable; the sender was told why
@@ -575,6 +657,11 @@ class TelegramBridge:
                         thread_id=thread_id,
                         reply_to_owner=reply_owner,
                         route=route,
+                        sender_id=str(from_user.get("id"))
+                        if from_user.get("id") is not None
+                        else None,
+                        message_id=message.get("message_id"),
+                        images=images,
                     )
 
                     await self._queue.put(remote_msg)
@@ -592,12 +679,38 @@ class TelegramBridge:
                 await self._session.close()
             logger.info("Telegram bridge stopped")
 
-    async def _download_file(self, file_id: str) -> bytes | None:
+    async def _receive_image(self, chat_id: int, attachment: dict, thread_id: int | None):
+        """Fetch images only after chat and sender authorization."""
+        from novacode_cli.image_utils import MAX_IMAGE_SIZE_BYTES
+        from novacode_cli.remote.images import decode_image
+
+        try:
+            if attachment.get("file_size", 0) > MAX_IMAGE_SIZE_BYTES:
+                raise ValueError("Images must be no larger than 20 MB.")
+            file_id = attachment.get("file_id")
+            if not file_id:
+                raise ValueError("Telegram did not provide an image file ID. Please resend it.")
+            data = await self._download_file(file_id, max_bytes=MAX_IMAGE_SIZE_BYTES)
+            if data is None:
+                raise ValueError("Could not download the image. Please resend it.")
+            return await asyncio.to_thread(decode_image, data)
+        except ValueError as exc:
+            await self._send_message(chat_id, f"Image not sent to Nova: {exc}", thread_id=thread_id)
+        except Exception:  # noqa: BLE001 — one bad attachment must not stop polling
+            logger.warning("Could not receive Telegram image", exc_info=False)
+            await self._send_message(
+                chat_id, "Image not sent to Nova. Please resend it.", thread_id=thread_id
+            )
+        return None
+
+    async def _download_file(self, file_id: str, *, max_bytes: int | None = None) -> bytes | None:
         """Fetch a Telegram file's bytes by ``file_id`` (two-step: getFile, GET)."""
         info = await self._api_call("getFile", {"file_id": file_id})
         file_path = (info or {}).get("result", {}).get("file_path")
         if not file_path:
             return None
+        if max_bytes is not None and (info or {}).get("result", {}).get("file_size", 0) > max_bytes:
+            raise ValueError("Images must be no larger than 20 MB.")
         url = f"{_TELEGRAM_API}/file/bot{self._config.token}/{file_path}"
         try:
             session = self._ensure_session()
@@ -605,9 +718,18 @@ class TelegramBridge:
                 if resp.status != 200:  # noqa: PLR2004
                     logger.error("Telegram file download failed: HTTP %s", resp.status)
                     return None
-                return await resp.read()
+                if max_bytes is None:
+                    return await resp.read()
+                data = bytearray()
+                async for chunk in resp.content.iter_chunked(64 * 1024):
+                    data.extend(chunk)
+                    if len(data) > max_bytes:
+                        raise ValueError("Images must be no larger than 20 MB.")
+                return bytes(data)
+        except ValueError:
+            raise
         except Exception as e:  # noqa: BLE001 — a bad download must not kill the poll loop
-            logger.error(f"Telegram file download error: {e}")
+            logger.error("Telegram file download error: %s", type(e).__name__)
             return None
 
     async def _transcribe_voice(

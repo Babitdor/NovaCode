@@ -80,7 +80,7 @@ An open-source, terminal-based AI coding assistant built on LangGraph and the `d
 
 ### Infrastructure
 - **Session Management**: Save, restore, auto-save, and resume sessions. Compact conversation history via `/compact`. Run several sessions in parallel panes (`/session new`) and resume a saved session for the current path with `/resume <id>`
-- **Remote Bridges**: Discord and Telegram integration for remote agent interaction. Telegram accepts **voice notes** — they're transcribed with your configured `/voice` STT provider and sent to the agent as an ordinary prompt (the transcript is echoed back so you can see what was heard). In a Telegram forum each session gets its own topic, and a question Nova asks you is deleted from the chat once you answer it
+- **Remote Bridges**: Discord and Telegram integration for remote agent interaction. Telegram accepts **photos and image files**: send one in a session's topic with a caption telling Nova what to do. Without a caption, Nova describes the image. Images join that session's conversation context; images received during a task are queued for a new turn. Images are limited to 20 MB and 7680 pixels per dimension. Telegram also accepts **voice notes** — they're transcribed with your configured `/voice` STT provider and sent to the agent as an ordinary prompt (the transcript is echoed back so you can see what was heard). In a Telegram forum each session gets its own topic, and a question Nova asks you is deleted from the chat once you answer it
 - **Vixie Desktop Companion**: Background server for desktop notifications and system tray integration
 - **Hooks System**: Lifecycle hooks at key points (pre/post tool call, on message, on error) — shell commands or Python scripts
 - **Process Manager**: Subprocess lifecycle, health checks, and cleanup for dev servers and background tasks
@@ -336,13 +336,13 @@ mypy novacode_cli/
 | `/compact` | Compact conversation history with optional focus |
 | `/sessions` | List, select, or delete saved sessions |
 | `/ui` | Inspect the optional UI panels; use `patch`, `preview`, `commit`, `rollback`, or `reset` |
-| `/session` | Parallel sessions: `new` / `list` / `close` (`ctrl+n`, `alt+<n>`) |
+| `/tabs` | Session tabs: `launch` opens the approved project picker; `list` / `close` manage tabs (`ctrl+n`, `alt+<n>`) |
 | `/resume` | Resume a saved session for this path (`/resume <id>`) |
 | `/restore` | Restore a previous file version from snapshots |
 | `/files` | Show file operation summary for the session |
 | `/images` | Manage tracked image references |
 | `/artifacts` | Open the artifacts list |
-| `/tasks` | Open the background tasks panel |
+| `/tasks` | Open the selected tab's background tasks panel (t: terminate, r: restart, l: logs) |
 | `/log` | Show workspace log files |
 | `/servers` | Show active server processes |
 | `/tests` | Run test suites |
@@ -394,6 +394,15 @@ mypy novacode_cli/
 | `/ask` | Ask a question informed by wiki context — searches wiki and answers with relevant knowledge |
 | `/file` | File recent conversation knowledge as a wiki page under a topic path |
 | `/wiki` | List all synthesized pages in the project wiki vault |
+
+In Telegram, send `/tab` to pick an approved project, then confirm the launch in
+that topic. The new tab gets its own topic; chat there to work in that project.
+Use `/tab close` to choose a tab to close. Telegram photos and image documents
+are delivered to the session belonging to their topic.
+
+Each TUI tab shows its own Tasks footer. Open `/tasks` (or Ctrl+B with an empty
+prompt) to select and terminate a background command. You can also ask Nova to
+list or stop its background tasks; task IDs apply only within that session.
 
 Nova saves an incoming prompt before model execution, checkpoints active sessions
 every five seconds, and saves again when a turn ends. Atomic recovery snapshots

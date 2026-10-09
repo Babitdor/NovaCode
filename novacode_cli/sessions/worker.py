@@ -106,15 +106,22 @@ class SessionWorker:
         self._emit = _Emitter(getattr(session_state, "headless_out_fd", None))
         self._pending: dict[str, asyncio.Future] = {}
         self._interrupt_ids = itertools.count(1)
-        self._queued: deque[tuple[str, str]] = deque()
+        self._queued: deque[tuple[str, str, list, bool]] = deque()
         self._turn: asyncio.Task | None = None
         self._turn_id: str | None = None
         self._seen: set[str] = set()
+        self.image_tracker = None
         self._stop = False
         # Parent messages land here. Constructed eagerly (safe since 3.10, where
         # Queue no longer binds a loop at construction) so tests can seed it
         # without standing up a stdin pipe.
         self.inbox: asyncio.Queue = asyncio.Queue()
+        self.session_state._notification_callback = self._notification
+
+    def _notification(self, notification):
+        from dataclasses import asdict
+
+        self._emit({"t": "notification", "notification": asdict(notification)})
 
     # ── stdin ────────────────────────────────────────────────────────────
 
@@ -169,9 +176,14 @@ class SessionWorker:
                     result if result is not None else default_interrupt_response(event.kind)
                 )
 
-    async def _run_turn(self, prompt_id: str, text: str) -> None:
+    async def _run_turn(self, prompt_id: str, text: str, images=None, auto_approve=None) -> None:
         """Stream one prompt, emitting every event to the parent."""
         ok = True
+        if auto_approve is not None:
+            self.session_state.auto_approve = auto_approve
+        from novacode_cli.remote.images import attach_images
+
+        self.image_tracker = attach_images(self.image_tracker, images)
         source = iterate_agent_events(
             text,
             self.agent,
@@ -179,6 +191,7 @@ class SessionWorker:
             self.session_state,
             backend=self.backend,
             seen_message_ids=self._seen,
+            image_tracker=self.image_tracker,
         )
         try:
             async for event in source:
@@ -208,9 +221,9 @@ class SessionWorker:
                 await source.aclose()
             self._emit({"t": "turn_done", "id": prompt_id, "ok": ok})
 
-    def _start_turn(self, prompt_id: str, text: str) -> None:
+    def _start_turn(self, prompt_id: str, text: str, images=None, auto_approve=None) -> None:
         self._turn_id = prompt_id
-        self._turn = asyncio.create_task(self._run_turn(prompt_id, text))
+        self._turn = asyncio.create_task(self._run_turn(prompt_id, text, images, auto_approve))
 
     def _turn_running(self) -> bool:
         return self._turn is not None and not self._turn.done()
@@ -235,6 +248,14 @@ class SessionWorker:
     # ── main loop ────────────────────────────────────────────────────────
 
     async def run(self) -> int:
+        from novacode_cli.shell.jobs import get_registry
+        from novacode_cli.sessions.tasks import job_snapshot
+
+        registry = get_registry()
+        def jobs_changed(event, job):
+            if event != "output":
+                self._emit({"t": "jobs", "jobs": job_snapshot(registry)})
+        registry.add_observer(jobs_changed)
         """Serve the parent until shutdown or EOF. Returns an exit code."""
         self._emit(
             {
@@ -277,8 +298,8 @@ class SessionWorker:
                     self._turn = None
                     self._turn_id = None
                     if self._queued and not self._stop:
-                        pid, text = self._queued.popleft()
-                        self._start_turn(pid, text)
+                        pid, text, images, auto_approve = self._queued.popleft()
+                        self._start_turn(pid, text, images, auto_approve)
 
                 if get_msg not in done:
                     continue
@@ -292,12 +313,25 @@ class SessionWorker:
                 if kind == "prompt":
                     text = str(msg.get("text") or "")
                     pid = str(msg.get("id") or "p")
+                    from novacode_cli.image_utils import ImageData
+
+                    try:
+                        images = [ImageData(**image) for image in msg.get("images", [])]
+                        auto_approve = msg.get("auto_approve", self.session_state.auto_approve)
+                        if not isinstance(auto_approve, bool):
+                            raise ValueError("Invalid approval mode")
+                    except (TypeError, ValueError):
+                        self._emit({"t": "error", "message": "Invalid prompt settings or image attachments."})
+                        self._emit({"t": "turn_done", "id": pid, "ok": False})
+                        continue
+                    if images and not text.strip():
+                        text = "Please describe this image."
                     if not text.strip():
                         self._emit({"t": "turn_done", "id": pid, "ok": True})
                     elif self._turn_running():
-                        self._queued.append((pid, text))  # queued, never dropped
+                        self._queued.append((pid, text, images, auto_approve))  # queued, never dropped
                     else:
-                        self._start_turn(pid, text)
+                        self._start_turn(pid, text, images, auto_approve)
 
                 elif kind == "interrupt_reply":
                     fut = self._pending.get(str(msg.get("id")))
@@ -305,8 +339,30 @@ class SessionWorker:
                         fut.set_result(msg.get("result"))
 
                 elif kind == "cancel":
+                    from novacode_cli.shell.jobs import request_kill
+                    request_kill()
                     self._queued.clear()
                     await self._cancel_turn()
+
+                elif kind == "job_control":
+                    action = msg.get("action")
+                    job = registry.resolve(msg.get("job_id"))
+                    if action == "terminate" and job is not None:
+                        registry.terminate(job.id)
+                    elif action == "restart" and job is not None:
+                        registry.restart(job.id)
+                    elif action == "clear":
+                        registry.clear_completed()
+                    elif action == "detach":
+                        from novacode_cli.shell.jobs import request_detach
+                        request_detach()
+                    elif action == "logs":
+                        self._emit({"t": "job_logs", "request_id": msg.get("request_id"),
+                                    "output": job.output[-20000:] if job is not None else ""})
+                    # Footer/panel polling needs metadata only. Fetch one
+                    # bounded log tail on demand instead of shipping every
+                    # completed task's logs once per second.
+                    self._emit({"t": "jobs", "jobs": job_snapshot(registry)})
 
                 elif kind == "shutdown":
                     break
@@ -315,11 +371,25 @@ class SessionWorker:
             self._emit({"t": "error", "message": f"{type(exc).__name__}: {exc}"})
             logger.debug("worker loop failed", exc_info=True)
         finally:
+            registry.remove_observer(jobs_changed)
+            from novacode_cli.shell.jobs import request_kill, _kill_pid_tree
             self._stop = True
             get_msg.cancel()
+            request_kill()
+            await self._cancel_turn()
+            for job in registry.active():
+                registry.terminate(job.id)
+            # Background commands run on a separate loop, so cancelling the
+            # agent alone cannot stop them. Give their drains time to clean up
+            # before the worker exits and loses its process-tree root.
+            deadline = asyncio.get_running_loop().time() + 3
+            while registry.active() and asyncio.get_running_loop().time() < deadline:
+                await asyncio.sleep(.05)
+            for job in registry.active():
+                if job.pid is not None:
+                    await asyncio.to_thread(_kill_pid_tree, job.pid)
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await get_msg
-            await self._cancel_turn()
             # Anything still waiting on the parent gets the safe default.
             for fut in list(self._pending.values()):
                 if not fut.done():

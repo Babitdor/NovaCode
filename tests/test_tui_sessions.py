@@ -97,12 +97,12 @@ def _app():
 
 async def _add_pane(app, sid="child-1", title="child"):
     """Mount a second pane the way the spawn path will."""
-    from textual.containers import VerticalScroll
     from textual.widgets import ContentSwitcher
 
     from novacode_cli.tui.session_pane import SessionPane
+    from novacode_cli.tui.widgets import TranscriptScroll
 
-    scroll = VerticalScroll(id=f"pane-{sid}")
+    scroll = TranscriptScroll(id=f"pane-{sid}")
     await app.query_one("#panes", ContentSwitcher).mount(scroll)
     pane = SessionPane(sid=sid, title=title, scroll=scroll, kind="child")
     app._panes.append(pane)
@@ -225,7 +225,264 @@ def test_delivery_tracks_pane_status():
     asyncio.run(_drive_status_tracking())
 
 
+@pytest.mark.asyncio
+async def test_tab_activity_animates_without_new_events(monkeypatch):
+    from types import SimpleNamespace
+
+    from textual.widgets import Tabs
+
+    import novacode_cli.tui.app as app_module
+    import novacode_cli.ui_events as ev
+
+    app = _app()
+    async with app.run_test() as pilot:
+        child = await _add_pane(app)
+        await app._deliver(child, ev.TextDelta(text="working"))
+        await pilot.pause()
+        tabs = app.query_one("#session-tabs", Tabs)
+        active = tabs.active
+        with monkeypatch.context() as clock:
+            clock.setattr(app_module, "time", SimpleNamespace(monotonic=lambda: 100.0))
+            app._refresh_tabs()
+            first = tabs.get_tab(child.sid).label.plain
+            app_module.time.monotonic = lambda: 100.25
+            app._refresh_tabs()
+            assert tabs.get_tab(child.sid).label.plain != first
+        app._refresh_tabs()
+        frames = {tabs.get_tab(child.sid).label.plain}
+        for _ in range(4):
+            await pilot.pause(0.15)
+            frames.add(tabs.get_tab(child.sid).label.plain)
+        assert len(frames) > 1
+        assert tabs.active == active
+        app._turn_active = True
+        app._refresh_tabs()
+        assert "running" in tabs.get_tab(app._root_pane.sid).tooltip
+        app._turn_active = False
+        assert child.state["_turn_active"] is True
+        await app._switch_to(child)
+        assert app._turn_active is True
+        await app._deliver(child, ev.Done(had_response=True))
+        app._refresh_tabs()
+        assert app._turn_active is False
+        assert "●" in tabs.get_tab(child.sid).label.plain
+
+
+@pytest.mark.asyncio
+async def test_tabs_show_only_live_routed_remote_connections(monkeypatch):
+    from types import SimpleNamespace
+
+    from textual.widgets import Tabs
+
+    app = _app()
+    async with app.run_test() as pilot:
+        child = await _add_pane(app)
+        bridge = SimpleNamespace(is_connected=True, _config=SimpleNamespace(chat_id=7))
+        bound = {child.sid: 88}
+        monkeypatch.setattr(app, "_remote_telegram_bridges", lambda: [bridge])
+        app._remote_router = SimpleNamespace(topic_of=lambda chat, sid: bound.get(sid))
+        app._refresh_tabs()
+        await pilot.pause()
+        tabs = app.query_one("#session-tabs", Tabs)
+        tab = tabs.get_tab(child.sid)
+        assert "[TG]" in tab.label.plain
+        assert "Telegram connected" in tab.tooltip
+        bound.clear()
+        app._refresh_tabs()
+        assert "[TG]" not in tab.label.plain
+        bound[child.sid] = 88
+        bridge.is_connected = False
+        app._refresh_tabs()
+        assert "[TG]" not in tab.label.plain
+        bridge.is_connected = True
+        child.status = "exited"
+        app._refresh_tabs()
+        assert "[TG]" not in tab.label.plain
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("height", [40, 24])
+async def test_child_jump_button_and_per_tab_scroll_intent(height):
+    from textual.widgets import Button, Static
+
+    app = _app()
+    async with app.run_test(size=(100, height)) as pilot:
+        child = await _add_pane(app)
+        await app._switch_to(child)
+        await child.scroll.mount(Static("\n".join(f"line {i}" for i in range(150))))
+        await pilot.pause()
+        app.action_jump_latest()
+        await pilot.pause()
+        child.scroll.scroll_to(y=20, animate=False)
+        await pilot.pause()
+        assert not app._follow_tail
+        assert app.query_one("#jump-latest-row").has_class("active")
+        button = app.query_one("#jump-latest", Button)
+        assert "lines below" in button.label.plain
+        position = child.scroll.scroll_y
+        await app._switch_to(app._root_pane)
+        await pilot.pause()
+        assert app._follow_tail
+        assert not app.query_one("#jump-latest-row").has_class("active")
+        await app._switch_to(child)
+        await pilot.pause()
+        assert not app._follow_tail
+        assert child.scroll.scroll_y == position
+        assert app.query_one("#jump-latest-row").has_class("active")
+        await pilot.click("#jump-latest")
+        await pilot.pause()
+        assert app._follow_tail
+        assert child.scroll.is_vertical_scroll_end
+        assert not app.query_one("#jump-latest-row").has_class("active")
+
+
+@pytest.mark.asyncio
+async def test_remote_image_busy_queue_reaches_root_model_input(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from novacode_cli.core.input_preparation import prepare_input_content
+    from novacode_cli.image_utils import ImageData
+    from novacode_cli.remote.bridge import RemoteMessage, RemotePlatform
+
+    app = _app()
+    captured = []
+    accepted = asyncio.Event()
+    monkeypatch.setattr("novacode_cli.core.input_preparation._main_model_can_see_images", lambda: True)
+
+    async def stream(text):
+        captured.append(await prepare_input_content(text, app.image_tracker, skip_file_mentions=True))
+        accepted.set()
+
+    monkeypatch.setattr(app, "_stream_prompt", stream)
+    async with app.run_test() as pilot:
+        queue = asyncio.Queue()
+        app.session_state._remote_message_queue = queue
+        app.session_state._remote_message_lock = asyncio.Lock()
+        app._turn_active = True
+        reply = AsyncMock()
+        image = ImageData("aGVsbG8=", "png", "[image]")
+        msg = RemoteMessage(RemotePlatform.TELEGRAM, 7, "user", "/tabs close", reply, images=[image])
+        worker = app._remote_consumer()
+        await queue.put(msg)
+        await pilot.pause(0.15)
+        assert not captured and app.image_tracker is None
+        assert reply.await_count == 1 and "queued" in reply.await_args.args[0]
+        assert not app._live_steers
+        app._turn_active = False
+        await asyncio.wait_for(accepted.wait(), 5)
+        await asyncio.wait_for(queue.join(), 5)
+        worker.cancel()
+        assert captured[0][0]["text"] == "/tabs close", "caption must be a prompt, not a tab command"
+        assert captured[0][1] == image.to_message_content()
+        assert app.image_tracker.count == 1
+
+
+@pytest.mark.asyncio
+async def test_remote_photo_routes_to_child_topic_without_root_attachment():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from novacode_cli.image_utils import ImageData
+    from novacode_cli.remote.bridge import RemoteMessage, RemotePlatform
+    from novacode_cli.remote.routing import RemoteRouter
+
+    app = _app()
+    async with app.run_test():
+        child = await _add_pane(app)
+        child.child = object()
+        send = AsyncMock(return_value="p1")
+        app._session_supervisor = SimpleNamespace(send_prompt=send)
+        app._remote_router = RemoteRouter(topics={(7, child.sid): 88})
+        image = ImageData("aGVsbG8=", "png", "[image]")
+        msg = RemoteMessage(RemotePlatform.TELEGRAM, 7, "user", "inspect", AsyncMock(), thread_id=88, images=[image])
+        assert await app._remote_route(msg)
+        send.assert_awaited_once_with(child.sid, "inspect", images=[image], auto_approve=False)
+        assert app.image_tracker is None
+        assert msg.route["sid"] == child.sid
+
+
 # ── switching ────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_child_notification_click_selects_tab_without_approving(monkeypatch):
+    from dataclasses import asdict
+    from unittest.mock import Mock
+
+    from novacode_cli.states.Session import SessionState, Notification
+    from novacode_cli.tui.app import DesktopNotificationClicked
+    from novacode_cli.tui.session_pane import fresh_state
+
+    app = _app()
+    async with app.run_test() as pilot:
+        child = await _add_pane(app)
+        state = SessionState(auto_approve=False)
+        child.state = fresh_state(session_state=state)
+        app._desktop_notifier = Mock()
+        note = Notification("note-1", "approval", "Approve tool", "shell action", "tools")
+        await app._on_child_message(child.sid, {"t": "notification", "notification": asdict(note)})
+        app._desktop_notifier.show.assert_called_once()
+        assert app._desktop_notifier.show.call_args.args[:2] == (child.sid, "note-1")
+        assert app._active_pane is app._root_pane
+        child.pending_interrupt = {"t": "interrupt", "id": "i1", "kind": "tool", "payload": {}}
+        handler = Mock()
+        monkeypatch.setattr(app, "_handle_child_interrupt", handler)
+        await app.on_desktop_notification_clicked(DesktopNotificationClicked(child.sid, "note-1"))
+        await pilot.pause()
+        assert app._active_pane is child
+        handler.assert_called_once_with(child)
+        assert child.pending_interrupt is not None
+        assert state.auto_approve is False
+        await app.on_desktop_notification_clicked(DesktopNotificationClicked("closed-tab", "old"))
+        assert app._active_pane is child
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("choice", [None, "unknown"])
+async def test_manual_tool_approval_fails_closed_on_missing_choice(monkeypatch, choice):
+    from unittest.mock import AsyncMock
+
+    from novacode_cli import ui_events as ev
+
+    app = _app()
+    app.session_state.auto_approve = False
+    app.session_state.plan_mode_enabled = False
+    monkeypatch.setattr(app, "push_screen_wait", AsyncMock(return_value=choice))
+    future = asyncio.get_running_loop().create_future()
+    await app._handle_interrupt(ev.InterruptRequest(
+        kind="tool", payload={"action_requests": [{"name": "shell", "args": {"command": "danger"}}]},
+        future=future,
+    ))
+    assert future.result()["any_rejected"] is True
+    assert future.result()["decisions"][0]["type"] == "reject"
+    assert app.session_state.auto_approve is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("auto", [False, True])
+async def test_child_tab_inherits_mode_and_sends_it_on_remote_and_local_turns(monkeypatch, tmp_path, auto):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from novacode_cli.remote.bridge import RemoteMessage, RemotePlatform
+    from novacode_cli.sessions import worktree
+
+    monkeypatch.setattr(worktree, "create_worktree", lambda *args, **kwargs: SimpleNamespace(path=tmp_path, branch=None, warnings=[]))
+    app = _app()
+    app.session_state.auto_approve = auto
+    async with app.run_test() as pilot:
+        send = AsyncMock(return_value="p1")
+        app._session_supervisor = SimpleNamespace(
+            at_capacity=lambda: False, spawn=AsyncMock(return_value=object()), send_prompt=send,
+        )
+        child = await app.spawn_session("child")
+        assert child.state["session_state"].auto_approve is auto
+        await app._dispatch_to_child(child, "local")
+        send.assert_awaited_with(child.sid, "local", auto_approve=auto)
+        msg = RemoteMessage(RemotePlatform.TELEGRAM, 7, "user", "remote", AsyncMock())
+        await app._remote_child_turn(child, msg)
+        send.assert_awaited_with(child.sid, "remote", auto_approve=auto)
+        assert child.state["session_state"].auto_approve is auto
 
 
 async def _drive_switch_replays():
@@ -242,6 +499,7 @@ async def _drive_switch_replays():
         assert len(hidden.buffer) == 3
 
         await app._switch_to(hidden)
+        await app.workers.wait_for_complete(list(app._pane_replay_workers.values()))
         await pilot.pause()
 
         assert not hidden.buffer, "buffer should drain on switch"
@@ -699,7 +957,7 @@ class _StubSupervisor:
     def at_capacity(self):
         return self.capacity
 
-    async def send_prompt(self, sid, text):
+    async def send_prompt(self, sid, text, **kwargs):
         self.prompts.append((sid, text))
         return "p1"
 

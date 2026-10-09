@@ -8,8 +8,10 @@ background process tracking, and sandbox execution support.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -995,7 +997,7 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
 
     @staticmethod
     async def _terminate_tree(proc: asyncio.subprocess.Process, *, grace: float = 3.0) -> None:
-        """Stop a process and its children: terminate, wait ``grace``, force-kill.
+        """Stop a process tree (Windows force-kills; POSIX allows ``grace``).
 
         Uses the process group created in ``_spawn`` so child processes die too
         (``proc.kill()`` alone kills only the shell: `npm run dev` left node
@@ -1008,30 +1010,46 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
         import os
         import signal
 
-        if grace > 0:
+        # Windows terminate() kills only the shell. Once it exits taskkill /T
+        # cannot find the descendants, so stop the tree while its root exists.
+        if sys.platform == "win32":
+            killer = None
             try:
-                if sys.platform == "win32":
-                    proc.terminate()
-                else:
-                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            except (ProcessLookupError, OSError):
-                pass
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=grace)
-                return
-            except (TimeoutError, asyncio.TimeoutError):
-                pass
-        # Still alive → force-kill the whole tree.
-        try:
-            if sys.platform == "win32":
                 killer = await asyncio.create_subprocess_exec(
                     "taskkill", "/PID", str(proc.pid), "/T", "/F",
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
                 )
-                await asyncio.wait_for(killer.wait(), timeout=5)
-            else:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                code = await asyncio.wait_for(killer.wait(), timeout=5)
+                if code != 0 and proc.returncode is None:
+                    proc.kill()
+            except (OSError, TimeoutError):
+                if killer is not None and killer.returncode is None:
+                    killer.kill()
+                    await killer.wait()
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
+            return
+
+        try:
+            group = os.getpgid(proc.pid)
+        except ProcessLookupError:
+            return
+        if grace > 0:
+            try:
+                os.killpg(group, signal.SIGTERM)
+            except (ProcessLookupError, OSError):
+                pass
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=grace)
+            except (TimeoutError, asyncio.TimeoutError):
+                pass
+        # Still alive → force-kill the whole tree.
+        try:
+            # The shell can exit before a descendant that ignores SIGTERM.
+            # Retain the original group and finish cleaning it up in that case.
+            os.killpg(group, signal.SIGKILL)
         except Exception:  # noqa: BLE001 — last resort
             try:
                 proc.kill()
@@ -1060,6 +1078,9 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
         reg = _jobs.get_registry()
         job = reg.get(job_id)
         if job is None:
+            return
+        if job.kill.is_set():
+            reg.mark_terminated(job_id)
             return
         try:
             wrapped = wrap_command(command, self._os_policy)
@@ -1092,7 +1113,7 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
                     await self._terminate_tree(proc)
             reg.complete(job_id, proc.returncode)
         except Exception as e:  # noqa: BLE001 — never leave a job stuck "running"
-            reg.complete(job_id, None, output=f"\n[background run error: {e}]")
+            reg.complete(job_id, -1, output=f"\n[background run error: {e}]")
 
     async def _async_local_shell(  # noqa: PLR0912, PLR0915
         self,

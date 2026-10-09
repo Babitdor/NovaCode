@@ -33,7 +33,10 @@ import logging
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
+
+if TYPE_CHECKING:
+    from novacode_cli.image_utils import ImageData
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +105,12 @@ class RemoteMessage:
     route: dict = field(default_factory=dict)
     #: Independent editable answer; edit_fn remains the tool/progress message.
     answer_edit_fn: Callable[..., Awaitable[None]] | None = None
+    #: Stable platform account ID, used for scoped launch confirmations.
+    sender_id: str | int | None = None
+    #: Incoming message ID, for requester-specific Telegram picker replies.
+    message_id: int | None = None
+    #: Validated image data, kept separate from prompt text and credentials.
+    images: list[ImageData] = field(default_factory=list)
 
 
 @dataclass
