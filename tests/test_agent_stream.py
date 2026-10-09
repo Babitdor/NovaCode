@@ -813,26 +813,21 @@ def _summarizing_agent(text: str):
 
 
 def test_auto_compaction_is_announced_not_silent():
-    """The library backstop's summary is dropped, but must leave a trace.
-
-    Its "## SESSION INTENT" block streams as normal prose, so the user watches
-    text appear and then vanish. Dropping it silently gave no explanation —
-    unlike Nova's own /compact, which reports what it did.
-    """
+    """Hide the internal summary and start the TUI's compaction indicator."""
     evts = _collect(_summarizing_agent("## SESSION INTENT" + chr(10) * 2 + "Build the thing"))
 
     # The summary itself never becomes an assistant message.
     assert not any(isinstance(e, ev.AssistantMessage) for e in evts)
-    # The live preview is retracted...
-    assert any(isinstance(e, ev.TextDiscard) for e in evts)
-    # ...and the retraction is explained.
-    notices = [
+    # The Session Intent heading is held until recognized and never streamed.
+    assert not any(isinstance(e, ev.TextDelta) for e in evts)
+    # The UI is told to show its animated compaction status.
+    starts = [
         e
         for e in evts
-        if isinstance(e, ev.ContextMessage) and e.event_type == "nova_auto_compact"
+        if isinstance(e, ev.ContextMessage) and e.event_type == "nova_compaction_start"
     ]
-    assert len(notices) == 1, [type(e).__name__ for e in evts]
-    assert "compact" in notices[0].message.lower()
+    assert len(starts) == 1, [type(e).__name__ for e in evts]
+    assert "compacting" in starts[0].message.lower()
 
 
 def test_normal_prose_after_summarization_is_kept_and_unannounced():
@@ -881,8 +876,48 @@ def test_summary_suppressed_without_a_preceding_update_event():
 
     assert not any(isinstance(e, ev.AssistantMessage) for e in evts)
     assert any(
-        isinstance(e, ev.ContextMessage) and e.event_type == "nova_auto_compact"
+        isinstance(e, ev.ContextMessage) and e.event_type == "nova_compaction_start"
         for e in evts
+    )
+
+
+def test_session_intent_heading_is_not_streamed_when_split_across_chunks():
+    """The preview hold must span provider chunks, not just a whole phrase."""
+
+    class Agent:
+        async def aget_state(self, config):
+            return _State([])
+
+        async def astream(self, inp, **kw):
+            for part in ("## SESS", "ION INTENT", "\n\nKeep working"):
+                yield ((), "messages", (_Chunk("m1", [{"type": "text", "text": part}]), {}))
+
+        async def aupdate_state(self, **kw):
+            pass
+
+    events = _collect(Agent())
+    assert not any(isinstance(event, ev.TextDelta) for event in events)
+    assert not any(isinstance(event, ev.AssistantMessage) for event in events)
+
+
+def test_ordinary_heading_releases_all_buffered_preview_text():
+    class Agent:
+        async def aget_state(self, config):
+            return _State([])
+
+        async def astream(self, inp, **kw):
+            for part in ("## S", "etup", "\nInstall the package."):
+                yield ((), "messages", (_Chunk("m1", [{"type": "text", "text": part}]), {}))
+
+        async def aupdate_state(self, **kw):
+            pass
+
+    events = _collect(Agent())
+    preview = "".join(event.text for event in events if isinstance(event, ev.TextDelta))
+    assert preview == "## Setup\nInstall the package."
+    assert not any(
+        isinstance(event, ev.ContextMessage) and event.event_type == "nova_compaction_start"
+        for event in events
     )
 
 

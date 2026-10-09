@@ -301,6 +301,13 @@ def looks_like_summarization_output(text: str) -> bool:
     return False
 
 
+def _could_be_session_intent_heading(text: str) -> bool:
+    """Hold a short heading prefix so internal summaries never flash in the UI."""
+    first_line = text.splitlines()[0] if text else ""
+    candidate = first_line.lstrip().lstrip("#*_ \t").strip().lower()
+    return not candidate or "session intent".startswith(candidate)
+
+
 def is_internal_context_text(text: str) -> bool:
     """Check if text is internal context/scratchpad content.
 

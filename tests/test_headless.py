@@ -83,9 +83,7 @@ def test_stream_json_emits_init_events_and_result() -> None:
     out.init()
     out.handle_event(ev.AssistantMessage(text="hi", agent_name="Nova", agent_color="x"))
     out.handle_event(
-        ev.ToolCall(
-            name="execute", display_str="ls", icon=">", args={"cmd": "ls"}, call_id="t1"
-        )
+        ev.ToolCall(name="execute", display_str="ls", icon=">", args={"cmd": "ls"}, call_id="t1")
     )
     out.handle_event(
         ev.ToolResult(preview="ok", is_error=False, full_output="file.txt", call_id="t1")
@@ -124,7 +122,7 @@ async def test_tool_interrupt_auto_approves_when_auto_approve() -> None:
     fut: asyncio.Future = asyncio.get_running_loop().create_future()
     event = ev.InterruptRequest(kind="tool", payload=payload, future=fut)
 
-    _resolve_interrupt(event, session_state, deny_tools=False)
+    await _resolve_interrupt(event, session_state, deny_tools=False)
 
     result = await fut
     assert result["any_rejected"] is False
@@ -137,7 +135,7 @@ async def test_tool_interrupt_rejects_when_deny_tools() -> None:
     fut: asyncio.Future = asyncio.get_running_loop().create_future()
     event = ev.InterruptRequest(kind="tool", payload=payload, future=fut)
 
-    _resolve_interrupt(event, session_state, deny_tools=True)
+    await _resolve_interrupt(event, session_state, deny_tools=True)
 
     result = await fut
     assert result["any_rejected"] is True
@@ -148,7 +146,7 @@ async def test_question_interrupt_resolves_benign_default() -> None:
     fut: asyncio.Future = asyncio.get_running_loop().create_future()
     event = ev.InterruptRequest(kind="question", payload={}, future=fut)
 
-    _resolve_interrupt(event, session_state, deny_tools=False)
+    await _resolve_interrupt(event, session_state, deny_tools=False)
 
     assert await fut == {}
 
@@ -190,9 +188,7 @@ async def test_run_headless_success(
         ev.UsageUpdate(input_tokens=12, output_tokens=5),
         ev.Done(had_response=True),
     ]
-    monkeypatch.setattr(
-        "novacode_cli.headless.runner.iterate_agent_events", _fake_source(events)
-    )
+    monkeypatch.setattr("novacode_cli.headless.runner.iterate_agent_events", _fake_source(events))
 
     code = await run_headless(
         agent=object(),
@@ -211,9 +207,7 @@ async def test_run_headless_error_event(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     events = [ev.Error(message="boom", is_provider_notice=False)]
-    monkeypatch.setattr(
-        "novacode_cli.headless.runner.iterate_agent_events", _fake_source(events)
-    )
+    monkeypatch.setattr("novacode_cli.headless.runner.iterate_agent_events", _fake_source(events))
 
     code = await run_headless(
         agent=object(),
@@ -237,9 +231,7 @@ async def test_run_headless_max_turns(
         ev.AssistantMessage(text="step 3", agent_name="Nova", agent_color="x"),
         ev.Done(had_response=True),
     ]
-    monkeypatch.setattr(
-        "novacode_cli.headless.runner.iterate_agent_events", _fake_source(events)
-    )
+    monkeypatch.setattr("novacode_cli.headless.runner.iterate_agent_events", _fake_source(events))
 
     code = await run_headless(
         agent=object(),
@@ -265,7 +257,7 @@ def test_resolve_prompt_from_string() -> None:
 def test_resolve_prompt_from_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
     from novacode_cli import main as main_mod
 
-    fake_stdin = SimpleNamespace(isatty=lambda: False, read=lambda: "piped prompt\n")
+    fake_stdin = SimpleNamespace(isatty=lambda: False, read=lambda size: "piped prompt\n")
     monkeypatch.setattr(main_mod.sys, "stdin", fake_stdin)
     # Bare -p -> print_arg is True -> read stdin.
     bare_flag = True

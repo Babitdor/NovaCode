@@ -153,7 +153,9 @@ HTML_PAGE = r"""<!DOCTYPE html>
 
   header .subtitle { font-size: 13px; color: var(--text-secondary); font-weight: 400; }
 
-  .header-right { display: flex; align-items: center; gap: 16px; }
+  .header-right { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  #telegram-status { font-size: 12px; color: var(--text-secondary); max-width: 260px; }
+  #telegram-topic { font-size: 12px; color: var(--cyan); }
 
   .toggle {
     display: flex;
@@ -547,6 +549,13 @@ HTML_PAGE = r"""<!DOCTYPE html>
     </div>
   </div>
   <div class="header-right">
+    <label class="toggle" title="Connect a dedicated Telegram topic for adding tasks">
+      <input type="checkbox" id="telegram-toggle">
+      <span class="track"></span>
+      <span>Telegram</span>
+    </label>
+    <span id="telegram-status" role="status" aria-live="polite">Off</span>
+    <a id="telegram-topic" target="_blank" rel="noopener noreferrer" hidden>Open Trello topic</a>
     <label class="toggle" title="When on, the agent automatically pulls the next Loaded card while idle">
       <input type="checkbox" id="auto-toggle">
       <span class="track"></span>
@@ -600,7 +609,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
 </div>
 
 <script>
-const state = { tasks: [], auto_advance: false, running_id: null };
+const state = { tasks: [], auto_advance: false, running_id: null, remote: {} };
 let lastSnapshot = '';
 let isDragging = false;
 let modalTaskId = null;
@@ -625,6 +634,7 @@ async function fetchState() {
     state.tasks = data.tasks || [];
     state.auto_advance = !!data.auto_advance;
     state.running_id = data.running_id || null;
+    state.remote = data.remote || {};
     maybeRender();
   } catch (e) { /* server gone — keep last view */ }
 }
@@ -687,6 +697,14 @@ function render() {
   for (const t of state.tasks) { (cols[t.status] || cols.loaded).push(t); }
 
   document.getElementById('auto-toggle').checked = state.auto_advance;
+  const remote = state.remote;
+  document.getElementById('telegram-toggle').checked = !!remote.enabled;
+  document.getElementById('telegram-status').textContent = remote.error || ({
+    off: 'Off', connecting: 'Connecting…', connected: 'Topic ready', error: 'Connection failed'
+  }[remote.status] || 'Off');
+  const topic = document.getElementById('telegram-topic');
+  topic.hidden = !remote.topic_url;
+  if (remote.topic_url) topic.href = remote.topic_url;
 
   for (const s of ['loaded', 'processing', 'done']) {
     document.getElementById(s + '-count').textContent = cols[s].length;
@@ -726,13 +744,14 @@ function cardHtml(t, status, i) {
   const meta = [
     t.created_at ? 'Added ' + fmtTime(t.created_at) : '',
     t.completed_at ? 'Done ' + fmtTime(t.completed_at) : '',
-    t.result ? '✓ result' : ''
+    t.result ? '✓ result' : '',
+    t.source && t.source.platform === 'telegram' ? 'Telegram · ' + t.source.sender : ''
   ].filter(Boolean).join(' · ');
 
   return `<div class="task-card ${status}${running ? ' running' : ''}" draggable="true" data-id="${t.id}" style="animation-delay:${Math.min(i * 0.04, 0.3)}s">
     <div class="task-text">${escapeHtml(t.description)}</div>
     ${runLabel}
-    <div class="task-meta">${meta}</div>
+    <div class="task-meta">${escapeHtml(meta)}</div>
     <div class="card-actions">${actions}</div>
     <button class="delete-btn" data-action="delete" title="Delete task">&times;</button>
   </div>`;
@@ -836,6 +855,24 @@ function submitTask() {
 }
 
 document.getElementById('auto-toggle').addEventListener('change', (e) => setAutoAdvance(e.target.checked));
+document.getElementById('telegram-toggle').addEventListener('change', async (e) => {
+  const checkbox = e.target;
+  checkbox.disabled = true;
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'POST', headers: {'Content-Type': 'application/json', 'X-Nova-Request': '1'},
+      body: JSON.stringify({telegram_enabled: checkbox.checked})
+    });
+    if (!res.ok) {
+      const error = await res.json();
+      document.getElementById('telegram-status').textContent = error.error || 'Connection failed';
+      checkbox.checked = !checkbox.checked;
+    } else await fetchState();
+  } catch (error) {
+    document.getElementById('telegram-status').textContent = 'Board connection unavailable';
+    checkbox.checked = !checkbox.checked;
+  } finally { checkbox.disabled = false; }
+});
 document.getElementById('modal-close').addEventListener('click', closeModal);
 document.getElementById('modal').addEventListener('click', (e) => { if (e.target.id === 'modal') closeModal(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && modalTaskId) closeModal(); });
@@ -871,6 +908,7 @@ class TrelloRequestHandler(LocalRequestHandler):
 
     def _send_html(self, html: str, status: int = 200) -> None:
         from novacode_cli.security.local_http import secure_html
+
         html = secure_html(html)
         payload = html.encode("utf-8")
         self.send_response(status)
@@ -926,7 +964,16 @@ class TrelloRequestHandler(LocalRequestHandler):
             return
         if parts == ["api", "settings"]:
             body = self._read_body()
-            self._backend.set_auto_advance(bool(body.get("auto_advance", False)))
+            if "telegram_enabled" in body and not isinstance(body["telegram_enabled"], bool):
+                self._send_json({"error": "telegram_enabled must be a boolean"}, 400)
+                return
+            if "telegram_enabled" in body and self._backend._remote_controller is None:
+                self._send_json({"error": "Start this board from Nova to connect Telegram."}, 409)
+                return
+            if "auto_advance" in body:
+                self._backend.set_auto_advance(bool(body["auto_advance"]))
+            if "telegram_enabled" in body:
+                self._backend.request_remote(body["telegram_enabled"])
             self._send_json(self._backend.get_state())
             return
         self._send_json({"error": "Not found"}, 404)
@@ -969,12 +1016,55 @@ class TrelloServer:
         self.is_running: bool = False
         self.auto_advance: bool = False
         self.running_id: str | None = None
+        self._remote_controller = None
+        self._remote_requested = False
+        self._remote_state = {
+            "enabled": False,
+            "status": "off",
+            "topic_id": None,
+            "topic_url": None,
+            "error": None,
+        }
+        self._remote_tasks: dict[tuple, dict] = {}
+
+    def bind_remote(self, connect, board_id: str) -> None:
+        from novacode_cli.commands.trello_remote import TrelloRemote
+
+        self._remote_controller = TrelloRemote(self, connect, board_id)
+
+    @property
+    def remote_requested(self) -> bool:
+        with self._lock:
+            return self._remote_requested
+
+    def request_remote(self, enabled: bool) -> None:
+        if self._remote_controller is None:
+            raise ValueError("No Telegram connector configured for this board.")
+        with self._lock:
+            if (
+                enabled
+                and self._remote_requested
+                and self._remote_state["status"] in ("connecting", "connected")
+            ):
+                return
+            self._remote_requested = enabled
+            self._remote_state.update(
+                enabled=enabled, status="connecting" if enabled else "off", error=None
+            )
+        self._remote_controller.request(enabled)
+
+    def set_remote_state(self, status: str, **fields) -> None:
+        with self._lock:
+            if status == "error":
+                self._remote_requested = False
+            self._remote_state.update(status=status, enabled=self._remote_requested, **fields)
 
     # -- lifecycle ---------------------------------------------------------
     async def start(self) -> int:
         """Start the HTTP server in a background daemon thread; return the port."""
         self._server = HTTPServer(("127.0.0.1", 0), TrelloRequestHandler)
         import secrets
+
         self._server.auth_token = secrets.token_urlsafe(32)
         self._server.backend = self  # type: ignore[attr-defined]
         self.port = self._server.server_address[1]
@@ -989,11 +1079,15 @@ class TrelloServer:
 
     @property
     def url(self) -> str:
-        return f"http://localhost:{self.port}/?token={self._server.auth_token}" if self._server else ""
+        return (
+            f"http://localhost:{self.port}/?token={self._server.auth_token}" if self._server else ""
+        )
 
     def stop(self) -> None:
         """Stop the HTTP server."""
         self.is_running = False
+        if self._remote_controller is not None:
+            self.request_remote(False)
         if self._server is not None:
             self._server.shutdown()
             self._server.server_close()
@@ -1001,7 +1095,14 @@ class TrelloServer:
 
     # -- task mutations (all guarded) --------------------------------------
     def add_task(self, description: str) -> dict:
-        task = {
+        task = self._new_task(description)
+        with self._lock:
+            self._tasks.append(task)
+        return task.copy()
+
+    @staticmethod
+    def _new_task(description: str) -> dict:
+        return {
             "id": str(uuid.uuid4()),
             "description": description,
             "status": "loaded",
@@ -1010,9 +1111,18 @@ class TrelloServer:
             "completed_at": None,
             "result": None,
         }
+
+    def add_remote_task(self, description, *, chat_id, thread_id, message_id, sender):
+        key = (str(chat_id), thread_id, message_id) if message_id is not None else None
         with self._lock:
+            if key is not None and key in self._remote_tasks:
+                return self._remote_tasks[key].copy(), False
+            task = self._new_task(description)
+            task["source"] = {"platform": "telegram", "sender": str(sender)}
             self._tasks.append(task)
-        return task.copy()
+            if key is not None:
+                self._remote_tasks[key] = task
+            return task.copy(), True
 
     def move_task(self, task_id: str, status: str) -> dict | None:
         if status not in _VALID_STATUS:
@@ -1065,6 +1175,7 @@ class TrelloServer:
                 "tasks": [t.copy() for t in self._tasks],
                 "auto_advance": self.auto_advance,
                 "running_id": self.running_id,
+                "remote": self._remote_state.copy(),
             }
 
     def next_processing_task(self) -> dict | None:

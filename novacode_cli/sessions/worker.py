@@ -13,7 +13,8 @@ normal approval modal and sends the decision back. Every path resolves the
 interrupt future in a ``finally``, so a dead or slow parent can never wedge the
 agent graph: it fails closed to ``default_interrupt_response``.
 
-One turn runs at a time. Prompts that arrive mid-turn are queued, not dropped.
+One turn runs at a time. Up to sixteen prompts wait in FIFO order; further
+prompts are rejected explicitly until capacity becomes available.
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 EXIT_OK = 0
 EXIT_ERROR = 1
+MAX_QUEUED_PROMPTS = 16
 
 
 class _Emitter:
@@ -63,6 +65,12 @@ class _Emitter:
                 except (OSError, ValueError, AttributeError):
                     continue
         self._fd = fd
+        if fd is not None:
+            from novacode_cli.headless.output import HeadlessOutput
+
+            self._output = HeadlessOutput("stream-json", "", None, fd=fd)
+        else:
+            self._output = None
         self._lock = threading.Lock()
         self.closed = False
 
@@ -73,7 +81,7 @@ class _Emitter:
         try:
             with self._lock:
                 if self._fd is not None:
-                    os.write(self._fd, line.encode("utf-8", "replace"))
+                    self._output._write(line)
                 else:
                     stream = sys.__stdout__ or sys.stdout
                     stream.write(line)
@@ -218,7 +226,7 @@ class SessionWorker:
             )
         finally:
             with contextlib.suppress(Exception):
-                await source.aclose()
+                await asyncio.wait_for(source.aclose(), timeout=2)
             self._emit({"t": "turn_done", "id": prompt_id, "ok": ok})
 
     def _start_turn(self, prompt_id: str, text: str, images=None, auto_approve=None) -> None:
@@ -289,7 +297,7 @@ class SessionWorker:
                 # on the inbox alone would starve a queued prompt whenever the
                 # parent sends nothing further.
                 waiters: set[asyncio.Task] = {get_msg}
-                if self._turn is not None and not self._turn.done():
+                if self._turn is not None:
                     waiters.add(self._turn)
                 done, _ = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
 
@@ -305,11 +313,13 @@ class SessionWorker:
                     continue
 
                 msg = get_msg.result()
-                get_msg = asyncio.create_task(self.inbox.get())
                 if msg is None:  # parent closed stdin
                     break
 
                 kind = msg.get("t")
+                if kind == "shutdown":
+                    break
+                get_msg = asyncio.create_task(self.inbox.get())
                 if kind == "prompt":
                     text = str(msg.get("text") or "")
                     pid = str(msg.get("id") or "p")
@@ -328,8 +338,11 @@ class SessionWorker:
                         text = "Please describe this image."
                     if not text.strip():
                         self._emit({"t": "turn_done", "id": pid, "ok": True})
+                    elif self._turn_running() and len(self._queued) >= MAX_QUEUED_PROMPTS:
+                        self._emit({"t": "error", "message": "Prompt queue is full."})
+                        self._emit({"t": "turn_done", "id": pid, "ok": False})
                     elif self._turn_running():
-                        self._queued.append((pid, text, images, auto_approve))  # queued, never dropped
+                        self._queued.append((pid, text, images, auto_approve))
                     else:
                         self._start_turn(pid, text, images, auto_approve)
 
@@ -341,8 +354,8 @@ class SessionWorker:
                 elif kind == "cancel":
                     from novacode_cli.shell.jobs import request_kill
                     request_kill()
-                    self._queued.clear()
                     await self._cancel_turn()
+                    self._cancel_queued()
 
                 elif kind == "job_control":
                     action = msg.get("action")
@@ -377,6 +390,7 @@ class SessionWorker:
             get_msg.cancel()
             request_kill()
             await self._cancel_turn()
+            self._cancel_queued()
             for job in registry.active():
                 registry.terminate(job.id)
             # Background commands run on a separate loop, so cancelling the
@@ -400,6 +414,12 @@ class SessionWorker:
             await self._save()
 
         return exit_code
+
+    def _cancel_queued(self) -> None:
+        """Finish every accepted queued request when it will not be run."""
+        queued, self._queued = self._queued, deque()
+        for prompt_id, *_ in queued:
+            self._emit({"t": "turn_done", "id": prompt_id, "ok": False})
 
     async def _save(self) -> None:
         """Persist the conversation so the session is resumable like any other."""

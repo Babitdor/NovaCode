@@ -66,6 +66,7 @@ class TelegramBridge:
         self._retry_at = 0.0
         self._last_api_error: str | None = None
         self._session_topics: dict[str, tuple[str, int]] = {}
+        self._topic_handlers: dict[int, Any] = {}
         self._topic_lock = asyncio.Lock()
         self._keyboard_lock = asyncio.Lock()
         self._shared_polling = None
@@ -80,15 +81,42 @@ class TelegramBridge:
             return await self._get_updates()
 
         self._shared_polling = SharedTelegramPolling(self._config.token, fetch)
-        self._shared_polling.bindings = [(int(self._config.chat_id), 0)]
+        self._shared_polling.bindings = [
+            (int(self._config.chat_id), 0),
+            *[(int(self._config.chat_id), tid) for tid in self._topic_handlers],
+        ]
 
-    async def ensure_session_topic(self, sid: str, session_id: str, name: str) -> int | None:
+    def set_topic_handler(self, topic_id: int, handler) -> None:
+        """Reserve a non-conversation topic's messages for a dedicated feature."""
+        self._topic_handlers[topic_id] = handler
+
+    async def _dispatch_topic_message(self, msg) -> bool:
+        if str(msg.chat_id) != str(self._config.chat_id):
+            return False
+        handler = self._topic_handlers.get(msg.thread_id)
+        if handler is None:
+            return False
+        try:
+            await asyncio.wait_for(handler(msg), timeout=10)
+        except Exception as error:
+            logger.warning("Dedicated Telegram topic handler failed (%s)", type(error).__name__)
+            # Fail closed: an intake error must never turn a card into a prompt.
+            try:
+                await asyncio.wait_for(
+                    msg.reply_fn("Could not confirm this task. Check the board before resending."),
+                    timeout=5,
+                )
+            except Exception:
+                pass
+        return True
+
+    async def ensure_session_topic(self, sid: str, session_id: str, name: str, *, verify: bool = False) -> int | None:
         """Bind a process-local route to a durable, bot-scoped session topic."""
         from novacode_cli.memory.store import get_durable_store
 
         async with self._topic_lock:
             cached = self._session_topics.get(sid)
-            if cached and cached[0] == session_id:
+            if cached and cached[0] == session_id and not verify:
                 return cached[1]
             if self._shared_polling:
                 await self._shared_polling.reserve_session(self._config.chat_id, session_id)
@@ -145,6 +173,7 @@ class TelegramBridge:
                     [
                         (int(self._config.chat_id), 0),
                         *[(int(self._config.chat_id), value[1]) for value in proposed.values()],
+                        *[(int(self._config.chat_id), tid) for tid in self._topic_handlers],
                     ]
                 )
             self._session_topics = proposed
@@ -309,6 +338,7 @@ class TelegramBridge:
                                 (int(self._config.chat_id), value[1])
                                 for value in self._session_topics.values()
                             ],
+                            *[(int(self._config.chat_id), tid) for tid in self._topic_handlers],
                         ],
                     )
 
@@ -587,6 +617,7 @@ class TelegramBridge:
                             tid == message.get("message_thread_id")
                             for _, tid in self._session_topics.values()
                         )
+                        or message.get("message_thread_id") in self._topic_handlers
                         else None
                     )
                     reply_to = message.get("reply_to_message") or {}
@@ -664,7 +695,8 @@ class TelegramBridge:
                         images=images,
                     )
 
-                    await self._queue.put(remote_msg)
+                    if not await self._dispatch_topic_message(remote_msg):
+                        await self._queue.put(remote_msg)
 
         except asyncio.CancelledError:
             logger.info("Telegram bridge cancelled, shutting down")

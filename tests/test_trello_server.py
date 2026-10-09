@@ -130,7 +130,7 @@ def test_get_state_shape():
     server.set_auto_advance(True)
     server.set_running("rid")
     state = server.get_state()
-    assert set(state) == {"tasks", "auto_advance", "running_id"}
+    assert set(state) == {"tasks", "auto_advance", "running_id", "remote"}
     assert state["auto_advance"] is True
     assert state["running_id"] == "rid"
     assert len(state["tasks"]) == 1

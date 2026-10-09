@@ -104,6 +104,23 @@ class SessionState:
         self.headless_deny_tools: bool = False  # main.py, headless/runner.py
         self.headless_out_fd: int | None = None  # main.py, headless/runner.py
         self.headless_exit_code: int = 0  # main.py, headless/runner.py
+        self.headless_timeout: float | None = None
+        self.headless_deadline: float | None = None
+        self.headless_include_partial_messages: bool = False
+        self.headless_trust_workspace: bool = False
+        self.headless_result_emitted: bool = False
+        self.pipe_mode: bool = False
+        self.pipe_ready: bool = False
+        self.pipe_stopped: bool = False
+        self.pipe_instance_id: str | None = None
+        self.pipe_input_format: str = "jsonl"
+        self.pipe_startup_timeout: float = 120
+        self.pipe_request_timeout: float | None = None
+        self.pipe_approval_timeout: float = 300
+        self.cli_model_override: str | None = None
+        self.session_model_provider: str | None = None
+        self._pipe_emit: Any = None
+        self._pipe_startup_timer: Any = None
         self.workspace_root: str | None = None  # commands/log_commands.py, tui/app.py
         self.verify_enabled: bool = False  # ui/execution.py
         self.active_goal: str | None = None  # commands/side_commands.py, core/agent_loop.py, tui/app.py
@@ -439,6 +456,10 @@ class SessionState:
     # route these through object.__setattr__ so they stay concrete instead of
     # falling into _dynamic.
     _CONCRETE_FIELDS = frozenset({
+        "pipe_mode", "pipe_ready", "pipe_stopped", "pipe_instance_id",
+        "pipe_input_format", "pipe_startup_timeout", "pipe_request_timeout",
+        "pipe_approval_timeout", "cli_model_override", "session_model_provider",
+        "_pipe_emit", "_pipe_startup_timer",
         "thread_id", "session_id", "is_continued", "todos",
         "steering_instructions",
         "_ui_settings", "_agent_runtime", "_remote_bridge", "_bg_tasks", "_ntf",
@@ -447,6 +468,8 @@ class SessionState:
         "headless", "headless_prompt", "headless_output_format",
         "headless_max_turns", "headless_deny_tools", "headless_out_fd",
         "headless_exit_code",
+        "headless_timeout", "headless_deadline", "headless_include_partial_messages",
+        "headless_trust_workspace", "headless_result_emitted",
         "workspace_root", "verify_enabled", "active_goal", "active_rubric",
         "browser_use_tasks", "create_server",
         "_cron_scheduler", "_webhook_server",
@@ -647,14 +670,16 @@ class SessionState:
         nid = self._ntf.add(level, title, message, source, action_id=action_id, action_type=action_type)
         n = next((item for item in list(self._ntf.notifications) if item.id == nid), None)
         callback = getattr(self, "_notification_callback", None)
+        desktop_managed = False
         if n is not None and callback is not None:
             try:
-                callback(n)
+                desktop_managed = callback(n) is not False
             except Exception:  # noqa: BLE001 — notification listeners are best effort
                 pass
         # Fire hook with session_id (cross-domain coordination in SessionState)
         try:
             from novacode_cli.hooks import HookEvent, dispatch_hook_fire_and_forget
+            from novacode_cli.desktop_notifications import ICON_PATH
 
             if n is None:
                 return nid
@@ -670,6 +695,8 @@ class SessionState:
                     "session_id": self.session_id,
                     "action_id": n.action_id,
                     "action_type": n.action_type,
+                    "desktop_managed": desktop_managed,
+                    "icon_path": str(ICON_PATH.resolve()),
                 },
             )
         except Exception:  # noqa: BLE001 — notifications must never break callers

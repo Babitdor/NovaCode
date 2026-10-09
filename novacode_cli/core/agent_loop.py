@@ -40,6 +40,7 @@ from novacode_cli.core.input_preparation import (
 from novacode_cli.core.streaming import (
     TOOL_CATEGORIES,
     TOOL_ICONS,
+    _could_be_session_intent_heading,
     format_condensed_activity,
     is_internal_context_text,
     looks_like_summarization_output,
@@ -292,6 +293,9 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     pending_text = ""
     current_ai_message_id: str | None = None
     _post_summarization = False
+    compaction_status_started = False
+    summary_preview_suppressed = False
+    preview_started = False
     has_responded = False
     _streamed_pending = False  # whether TextDelta(s) were emitted for the buffer
 
@@ -338,6 +342,7 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
         """
         nonlocal pending_text, current_ai_message_id, _post_summarization
         nonlocal has_responded, _streamed_pending
+        nonlocal summary_preview_suppressed, preview_started, compaction_status_started
 
         def _discard(notice: str | None = None) -> list:
             nonlocal pending_text, current_ai_message_id, _streamed_pending
@@ -345,6 +350,8 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
             current_ai_message_id = None
             had = _streamed_pending
             _streamed_pending = False
+            summary_preview_suppressed = False
+            preview_started = False
             out: list = [ev.TextDiscard()] if had else []
             if notice:
                 out.append(
@@ -368,11 +375,21 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
         # discard or shown outright.
         if looks_like_summarization_output(pending_text):
             _post_summarization = False
-            # deepagents' SummarizationMiddleware streamed its summary as
-            # ordinary assistant prose. Dropping it silently left the user
-            # watching text appear and vanish with no explanation — unlike
-            # Nova's own /compact, which reports what it did.
-            return _discard("Context auto-compacted to fit the window")
+            # Fallback for providers that stream the summary before the graph's
+            # state update. The TUI holds the heading prefix, so it can replace
+            # the hidden internal block with the compaction animation.
+            out = _discard()
+            if not compaction_status_started:
+                compaction_status_started = True
+                out.append(
+                    ev.ContextMessage(
+                        message="Context is compacting",
+                        event_type="nova_compaction_start",
+                        icon="⟳",
+                        color="dim",
+                    )
+                )
+            return out
 
         if _post_summarization:
             _post_summarization = False
@@ -392,6 +409,8 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
             seen_message_ids.add(current_ai_message_id)
         current_ai_message_id = None
         pending_text = ""
+        summary_preview_suppressed = False
+        preview_started = False
         has_responded = True
         _streamed_pending = False
         return [msg]
@@ -589,6 +608,14 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                                     == "summarization"
                                 ):
                                     _post_summarization = True
+                                    if not compaction_status_started:
+                                        compaction_status_started = True
+                                        yield ev.ContextMessage(
+                                            message="Context is compacting",
+                                            event_type="nova_compaction_start",
+                                            icon="⟳",
+                                            color="dim",
+                                        )
                                     break
 
                 elif current_stream_mode == "messages":
@@ -725,8 +752,24 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                             if text and is_main_agent and not _is_completed_msg:
                                 current_ai_message_id = getattr(message, "id", None)
                                 pending_text += text
-                                _streamed_pending = True
-                                yield ev.TextDelta(text)
+                                if looks_like_summarization_output(pending_text):
+                                    summary_preview_suppressed = True
+                                    if not compaction_status_started:
+                                        compaction_status_started = True
+                                        yield ev.ContextMessage(
+                                            message="Context is compacting",
+                                            event_type="nova_compaction_start",
+                                            icon="⟳",
+                                            color="dim",
+                                        )
+                                if not summary_preview_suppressed and (
+                                    preview_started
+                                    or not _could_be_session_intent_heading(pending_text)
+                                ):
+                                    preview_text = text if preview_started else pending_text
+                                    preview_started = True
+                                    _streamed_pending = True
+                                    yield ev.TextDelta(preview_text)
                                 if text_guard.feed(text):
                                     raise _RepetitionLoop
                         elif btype in ("reasoning", "thinking"):

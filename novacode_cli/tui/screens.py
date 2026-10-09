@@ -2578,7 +2578,7 @@ class ContextScreen(ModalScreen[None]):
             ("Assistant messages", "assistant_message_tokens", "#73daca"),
             ("Tool results", "tool_result_tokens", "#f7768e"),
         )
-        details = Text()
+        details = Text("Estimated category shares\n", style="dim")
         for label, attribute, color in categories:
             count = max(0, int(getattr(breakdown, attribute, 0)))
             if attribute == "system_prompt_tokens":

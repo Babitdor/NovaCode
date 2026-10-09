@@ -135,6 +135,8 @@ async def handle_trello_command(
 
     server = TrelloServer()
     await server.start()
+    from novacode_cli.commands.trello_remote import connect_telegram
+    server.bind_remote(lambda: connect_telegram(session_state), str(session_state.session_id))
     session_state.trello_server = server
 
     try:

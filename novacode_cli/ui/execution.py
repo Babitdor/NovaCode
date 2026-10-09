@@ -83,6 +83,7 @@ async def _react_to_context_pressure(agent, session_state, token_tracker, breakd
             pct,
             compacted_last_turn=bool(getattr(session_state, "_compacted_last_turn", False)),
             auto_compact_enabled=bool(getattr(session_state, "_auto_compact", True)),
+            context_window=getattr(breakdown, "context_window_size", 0) or 0,
         )
         if decision.disable_auto_compact:
             session_state._auto_compact = False
@@ -124,9 +125,11 @@ async def _react_to_context_pressure(agent, session_state, token_tracker, breakd
                     f"({result.messages_before} → {result.messages_after} messages).[/]"
                 )
                 session_state._compacted_last_turn = True
+                post_breakdown = token_tracker.get_breakdown()
                 after = post_compaction_still_critical(
-                    getattr(token_tracker.get_breakdown(), "usage_percentage", 0.0),
+                    getattr(post_breakdown, "usage_percentage", 0.0),
                     auto_compact_enabled=bool(getattr(session_state, "_auto_compact", True)),
+                    context_window=getattr(post_breakdown, "context_window_size", 0) or 0,
                 )
                 if after.disable_auto_compact:
                     session_state._auto_compact = False
@@ -1332,14 +1335,19 @@ async def execute_task(  # type: ignore
 
                     _last_known_state = _bd_state
 
-                _bd_msgs = effective_messages(_bd_state.values)
+                _bd_msgs = effective_messages(_bd_state.values) if _bd_state else []
 
-                if _bd_msgs and token_tracker.model_name:
+                if token_tracker.model_name:
 
                     _bd_tools = getattr(session_state, "_tools", None) or _bound_tools(agent)
                     breakdown = ContextManager(token_tracker.model_name).breakdown(
                         _bd_msgs, tools=_bd_tools
                     )
+                    # Stored continuation system messages are additional to
+                    # the agent's injected instructions and memory baseline.
+                    baseline = getattr(token_tracker, "baseline_context", 0)
+                    breakdown.system_prompt_tokens += baseline
+                    breakdown.total_tokens += baseline
 
                     token_tracker.set_breakdown(breakdown)
 

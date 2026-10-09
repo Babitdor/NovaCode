@@ -18,6 +18,50 @@ def test_add_notification():
     assert isinstance(s.notifications[0], Notification)
 
 
+def test_hook_uses_current_icon_and_defers_to_tui_delivery(monkeypatch):
+    from unittest.mock import Mock
+    from novacode_cli.desktop_notifications import ICON_PATH
+
+    dispatch = Mock()
+    monkeypatch.setattr("novacode_cli.hooks.dispatch_hook_fire_and_forget", dispatch)
+    state = SessionState()
+    callback = Mock()
+    state._notification_callback = callback
+    state.add_notification("approval", "Approve", "Details", "test")
+    callback.assert_called_once()
+    payload = dispatch.call_args.args[1]
+    assert payload["desktop_managed"] is True
+    assert payload["icon_path"] == str(ICON_PATH.resolve())
+    callback.return_value = False
+    state.add_notification("info", "Fallback", "Details", "test")
+    assert dispatch.call_args.args[1]["desktop_managed"] is False
+    callback.side_effect = RuntimeError("delivery failed")
+    state.add_notification("info", "Fallback", "Details", "test")
+    assert dispatch.call_args.args[1]["desktop_managed"] is False
+
+
+def test_legacy_windows_hook_skips_tui_notification_without_display():
+    import json
+    import shutil
+    import subprocess
+    from pathlib import Path
+    import pytest
+
+    shell = shutil.which("pwsh") or shutil.which("powershell")
+    if shell is None:
+        pytest.skip("PowerShell unavailable")
+    script = Path(__file__).resolve().parents[1] / "examples/hooks/windows-notify.ps1"
+    result = subprocess.run(
+        [shell, "-NoProfile", "-NonInteractive", "-File", str(script)],
+        input=json.dumps({"desktop_managed": True}),
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 0
+    assert not result.stdout and not result.stderr
+
+
 def test_dismiss_notification():
     s = SessionState()
     nid = s.add_notification("warning", "Test", "Test", "test")

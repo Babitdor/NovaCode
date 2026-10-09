@@ -849,13 +849,10 @@ def _seed_summarization_profile(
     """Seed ``model.profile['max_input_tokens']`` so deepagents' built-in
     ``SummarizationMiddleware`` triggers on OUR context budget.
 
-    deepagents auto-computes the summarization trigger from the model profile:
-    with a profile exposing ``max_input_tokens`` it summarizes at 85% of the
-    window (keeping the last ~10%); WITHOUT one it falls back to a fixed
-    170k-token trigger — which never fires for local/Ollama models whose real
-    window is far smaller (the model just overflows). Seeding the profile from
-    the same window Nova uses for ``/context`` ties the summarization trigger to
-    the displayed ctx %.
+    deepagents chooses a fixed 170k-token trigger without this profile, which
+    never fires for local/Ollama models whose real window is far smaller. Nova
+    supplies its own summarization middleware trigger separately; this profile
+    remains the model's real window for token budgeting and retention.
 
     The window is ALWAYS overwritten, even when the model ships its own profile.
     A model-supplied number (e.g. ChatOpenAI's 128K for gpt-4o) can disagree with
@@ -864,9 +861,8 @@ def _seed_summarization_profile(
     fire "for no reason". Both must measure the same window; other profile keys
     (max_output_tokens, …) are preserved.
 
-    Nova's own auto-compaction runs first, at
-    :data:`~novacode_cli.context._analysis.AUTO_COMPACT_THRESHOLD` (0.82), below
-    the library's 0.85 — so this middleware only fires as a mid-turn backstop.
+    The profile stores the real model window. The automatic summarization
+    middleware is configured separately to use Nova's displayed threshold.
 
     No-op when the model isn't a chat-model instance. Never raises.
 
@@ -896,6 +892,17 @@ def _seed_summarization_profile(
         __import__("logging").getLogger(__name__).debug(
             "Could not seed model profile for summarization", exc_info=True
         )
+
+
+def _context_summarization_trigger(context_window: int) -> tuple[str, float]:
+    """Return the library trigger at Nova's displayed context threshold."""
+    from novacode_cli.context import compact_threshold_pct
+
+    if context_window <= 0:
+        from novacode_cli.context._analysis import AUTO_COMPACT_THRESHOLD
+
+        return ("fraction", AUTO_COMPACT_THRESHOLD)
+    return ("fraction", compact_threshold_pct(context_window) / 100)
 
 
 def _declare_image_support(model: object) -> None:
@@ -2126,10 +2133,9 @@ This file stores your preferences and context that persist across sessions.
         agent_middleware.insert(3, mcp_middleware)
         mcp_tools = list(mcp_middleware.tools)
 
-    # NOTE: automatic context-window summarization is provided by
-    # create_deep_agent's built-in SummarizationMiddleware (part of its tail
-    # stack) — do NOT add another here or agent creation fails with
-    # "duplicate middleware instances".
+    # create_deep_agent supplies a default summarizer. The same-named custom
+    # middleware below replaces it during graph assembly; adding a second
+    # differently named summarizer would create duplicate state handlers.
 
     # Final subagent roster: core + named + plugin + general-purpose + async,
     # hardened for unattended dispatch — see _build_subagent_roster.
@@ -2162,10 +2168,30 @@ This file stores your preferences and context that persist across sessions.
         interrupt_on = get_interrupt_configs()
 
     # Make deepagents' built-in SummarizationMiddleware actually fire on OUR
-    # context budget (see _seed_summarization_profile). Reuse the window already
-    # resolved above for the context-editing trigger — for a local Ollama model a
-    # second resolve would re-run the uncached `ollama ps` probe.
+    # context budget. Reuse the window already resolved above for the context-
+    # editing trigger — for local Ollama models a second resolve would re-run
+    # the uncached `ollama ps` probe. create_deep_agent replaces its default
+    # summarizer with this same-named custom middleware, so the real model
+    # profile stays truthful while its trigger matches /context exactly.
     _seed_summarization_profile(wrapped_model, _model_name, window=_context_window)
+    from deepagents.middleware.summarization import (
+        SummarizationMiddleware as DeepAgentsSummarizationMiddleware,
+    )
+
+    _summary_trigger = _context_summarization_trigger(_context_window)
+    agent_middleware.append(
+        DeepAgentsSummarizationMiddleware(
+            model=wrapped_model,
+            backend=composite_backend,
+            trigger=_summary_trigger,
+            keep=("fraction", 0.10),
+            trim_tokens_to_summarize=None,
+            truncate_args_settings={
+                "trigger": _summary_trigger,
+                "keep": ("fraction", 0.10),
+            },
+        )
+    )
 
     # Pass named_subagents directly to create_deep_agent
     # It will create the SubAgentMiddleware internally

@@ -480,6 +480,17 @@ def parse_args():
         help="Interactively select and resume a session",
     )
     # Headless (non-interactive) mode: run one prompt to completion and exit.
+    from novacode_cli.headless.input import positive_int, positive_seconds
+
+    parser.add_argument("--mode", choices=("tui", "pipe"), default="tui",
+                        help="Persistent JSONL interface for remote-app bridges: --mode pipe")
+    parser.add_argument("--headless", action="store_true", help="Alias for --mode pipe")
+    parser.add_argument("--input-format", choices=("jsonl", "text"), default="jsonl")
+    parser.add_argument("--startup-timeout", type=positive_seconds, default=120)
+    parser.add_argument("--request-timeout", type=positive_seconds, default=None)
+    parser.add_argument("--approval-timeout", type=positive_seconds, default=300)
+    parser.add_argument("--model", help="Process-local provider:model override")
+
     parser.add_argument(
         "--print",
         "-p",
@@ -501,16 +512,28 @@ def parse_args():
     )
     parser.add_argument(
         "--max-turns",
-        type=int,
+        type=positive_int,
         default=None,
-        help="Headless only: cap the number of agent turns (model steps). The run "
+        help="Headless only: cap observed main-agent turns. The run "
         "stops with a max-turns error if exceeded.",
     )
     parser.add_argument(
         "--deny-tools",
         action="store_true",
         help="Headless only: auto-reject tool approvals (fail-closed) instead of "
-        "auto-approving. The agent runs read-only and reports what it could not do.",
+        "approving. This rejects approvals; it does not disable every tool.",
+    )
+    parser.add_argument(
+        "--timeout", type=positive_seconds, default=None,
+        help="Headless only: deadline in seconds, including agent startup.",
+    )
+    parser.add_argument(
+        "--include-partial-messages", action="store_true",
+        help="Emit text_delta/text_discard events with --output-format stream-json.",
+    )
+    parser.add_argument(
+        "--trust-workspace", action="store_true",
+        help="Headless only: explicitly grant folder-only trust to the current directory.",
     )
     # Internal: how a parent Nova TUI launches a parallel session. The child
     # speaks JSONL on stdio (see novacode_cli.sessions.worker) and is bound to
@@ -540,6 +563,25 @@ def parse_args():
     parser.add_argument("-h", "--help", action="help", help="Show this help message and exit")
 
     args = parser.parse_args()
+    if args.headless:
+        args.mode = "pipe"
+    if args.mode == "pipe" and (args.print_prompt is not None or args.command or args.session_worker or args.resume or args.import_provider):
+        parser.error("Pipe mode cannot use --print, subcommands, --session-worker, --resume, or --import; resume with --continue <id>")
+    if args.model and (":" not in args.model or not all(args.model.split(":", 1))):
+        parser.error("--model requires provider:model")
+    if args.mode == "pipe" and (args.timeout or args.max_turns or args.include_partial_messages):
+        parser.error("Pipe mode uses --request-timeout; --timeout, --max-turns and --include-partial-messages are one-shot options")
+    if args.print_prompt is not None and (args.command is not None or args.session_worker):
+        parser.error("--print cannot be combined with a subcommand or --session-worker")
+    if args.print_prompt is not None and args.resume:
+        parser.error("--resume opens an interactive picker; use --continue <session-id> with --print")
+    if args.print_prompt is None and args.mode != "pipe" and (
+        args.timeout is not None or args.trust_workspace or args.include_partial_messages
+        or args.max_turns is not None or args.deny_tools
+    ):
+        parser.error("--timeout, --trust-workspace, and --include-partial-messages require --print")
+    if args.include_partial_messages and args.output_format != "stream-json":
+        parser.error("--include-partial-messages requires --output-format stream-json")
     if args.import_provider:
         if args.resume or args.continue_session:
             parser.error("--import cannot be combined with --resume or --continue")
@@ -1012,11 +1054,10 @@ async def _run_agent_session(
 
     # Inject initial messages if continuing a session
     if initial_messages:
-        config = {"configurable": {"thread_id": session_state.thread_id}}
-        await agent.aupdate_state(
-            config=config,  # type: ignore
-            values={"messages": initial_messages},
-            as_node="model",
+        from novacode_cli.session.context_restore import seed_restored_context
+
+        session_state.thread_id = await seed_restored_context(
+            agent, initial_messages, as_node="model",
         )
         boot_status(f"session: {len(initial_messages)} messages restored")
 
@@ -1037,8 +1078,11 @@ async def _run_agent_session(
     # Parallel-session child: stay up and serve the parent over stdio JSONL.
     # Checked BEFORE the headless branch because a worker also sets `headless`
     # (for its non-interactive guards) but has no one-shot prompt to run.
-    if getattr(session_state, "worker", False):
+    if getattr(session_state, "worker", False) or getattr(session_state, "pipe_mode", False):
         from novacode_cli.sessions.worker import run_session_worker
+        if getattr(session_state, "pipe_mode", False):
+            from novacode_cli.headless.pipe import run_pipe_session
+            run_session_worker = run_pipe_session
         from novacode_cli.ui.ui_elements import TokenTracker
 
         token_tracker = TokenTracker()
@@ -1081,6 +1125,7 @@ async def _run_agent_session(
                 model_name=model_name,
                 session_manager=session_manager,
             )
+            session_state.headless_exit_code = exit_code
         finally:
             await _shutdown_background_services(session_state)
         session_state.headless_exit_code = exit_code
@@ -1222,13 +1267,16 @@ async def main(
     # checkpointer, Vixie server, etc.). If the user denies access, nothing
     # expensive has been allocated — no cleanup needed.
     #
-    # Headless mode cannot prompt: auto-approve the cwd non-interactively (the
-    # user explicitly invoked `nova -p` here) so the run isn't blocked on input.
+    # Unattended runs cannot silently grant persistent directory trust.
     if getattr(session_state, "headless", False):
         manager = PathApprovalManager()
         cwd = Path.cwd()
-        if not manager.is_path_approved(cwd):
-            manager.approve_path(cwd, recursive=True)
+        from novacode_cli.headless.input import require_workspace_approval
+
+        require_workspace_approval(
+            manager, cwd,
+            explicit_trust=getattr(session_state, "headless_trust_workspace", False),
+        )
     elif not await check_path_approval():
         console.print()
         console.print(
@@ -1376,6 +1424,10 @@ async def main(
             # failed restore never writes a provider the live model is not on.
             if session_model is None:
                 session_provider = None
+
+    if getattr(session_state, "cli_model_override", None):
+        session_model, session_provider = await _resolve_cli_model(session_state.cli_model_override)
+    session_state.session_model_provider = session_provider or get_current_provider()
 
     if _SQLITE_CHECKPOINTER_AVAILABLE:
         # Run model creation (heavy SDK imports) and checkpointer setup (SQLite
@@ -1952,6 +2004,16 @@ def _run_onboarding() -> bool:
     return run_onboarding_tui()
 
 
+async def _resolve_cli_model(spec):
+    """Build an explicit process-local model; never silently fall back."""
+    from novacode_cli.config.model_create import create_model_from_config
+    provider, model_id = spec.split(":", 1)
+    model = await asyncio.to_thread(create_model_from_config, provider, model_id)
+    if model is None:
+        raise ValueError(f"Unable to build requested model {provider}:{model_id}")
+    return model, provider
+
+
 def _resolve_headless_prompt(print_arg) -> str:
     """Resolve the headless prompt from the --print value or stdin.
 
@@ -1959,23 +2021,13 @@ def _resolve_headless_prompt(print_arg) -> str:
     (bare ``-p``, read from stdin). Exits with a clear error if no prompt can
     be obtained (e.g. bare ``-p`` on an interactive terminal with no pipe).
     """
-    if isinstance(print_arg, str):
-        prompt = print_arg.strip()
-        if prompt:
-            return prompt
+    from novacode_cli.headless.input import read_prompt
 
-    # Bare -p (or empty value): read the prompt from stdin when piped.
-    if not sys.stdin.isatty():
-        prompt = sys.stdin.read().strip()
-        if prompt:
-            return prompt
-
-    print(
-        "Error: --print requires a prompt. Pass it as an argument "
-        '(nova -p "your prompt") or pipe it via stdin (echo "..." | nova -p).',
-        file=sys.stderr,
-    )
-    sys.exit(1)
+    try:
+        return read_prompt(print_arg, sys.stdin)
+    except (ValueError, OSError) as error:
+        print(f"Error: {error}", file=sys.stderr)
+        raise SystemExit(1) from error
 
 
 def _setup_headless_io() -> int | None:
@@ -2009,6 +2061,14 @@ def _setup_headless_io() -> int | None:
     if isinstance(previous, io.TextIOWrapper) and previous not in (sys.stdout, sys.__stdout__):
         with contextlib.suppress(Exception):
             previous.detach()  # let go of the shared buffer instead of closing it
+    if fd is not None:
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.setmode(fd, os.O_BINARY)
+        # Includes ordinary print(), native writes, and inherited subprocesses.
+        with contextlib.suppress(OSError, ValueError, io.UnsupportedOperation):
+            os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+        sys.stdout = sys.stderr
     return fd
 
 
@@ -2036,9 +2096,6 @@ def cli_main() -> None:
     if sys.platform == "darwin":
         os.environ["GRPC_ENABLE_FORK_SUPPORT"] = "0"
 
-    # Check dependencies first
-    check_cli_dependencies()
-
     try:
         args = parse_args()
         if getattr(args, "safe_ui", False):
@@ -2048,14 +2105,33 @@ def cli_main() -> None:
         # Rich console output to stderr so stdout carries only the result.
         headless_prompt: str | None = None
         headless_out_fd: int | None = None
+        pipe_mode = args.mode == "pipe"
+        if pipe_mode:
+            headless_out_fd = _setup_headless_io()
         if getattr(args, "print_prompt", None) is not None:
             headless_prompt = _resolve_headless_prompt(args.print_prompt)
             headless_out_fd = _setup_headless_io()
 
+        # Diagnostics must be redirected before dependency checks in pipe mode.
+        try:
+            check_cli_dependencies()
+        except SystemExit:
+            if pipe_mode:
+                from novacode_cli.headless.output import HeadlessOutput
+                output = HeadlessOutput("stream-json", "", None, fd=headless_out_fd)
+                output._writeln({"type": "error", "code": "missing_dependencies", "message": "Nova dependencies are missing; see stderr"})
+                output._writeln({"type": "stopped", "exit_code": 1})
+            raise
+
         # First-run detection (skip for init and doctor commands)
         if args.command not in ["init", "doctor", "help"]:
             if not settings.get_onboarding_status():
-                if headless_prompt is not None:
+                if headless_prompt is not None or pipe_mode:
+                    if pipe_mode:
+                        from novacode_cli.headless.output import HeadlessOutput
+                        output = HeadlessOutput("stream-json", "", None, fd=headless_out_fd)
+                        output._writeln({"type": "error", "code": "not_configured", "message": "Run nova init first"})
+                        output._writeln({"type": "stopped", "exit_code": 1})
                     print(
                         "Error: Nova is not configured. Run 'nova init' first.",
                         file=sys.stderr,
@@ -2124,11 +2200,22 @@ def cli_main() -> None:
             # Create session state from args
             session_state = SessionState(
                 auto_approve=args.auto_approve,
-                no_splash=args.no_splash or headless_prompt is not None,
+                no_splash=args.no_splash or headless_prompt is not None or pipe_mode,
             )
             # The TUI is the only interactive UI; `headless` selects the
             # non-interactive path (see the branch order in main()).
-            session_state.headless = headless_prompt is not None
+            session_state.headless = headless_prompt is not None or pipe_mode
+            session_state.cli_model_override = args.model
+            if pipe_mode:
+                session_state.pipe_mode = True
+                session_state.pipe_input_format = args.input_format
+                session_state.pipe_startup_timeout = args.startup_timeout
+                session_state.pipe_request_timeout = args.request_timeout
+                session_state.pipe_approval_timeout = args.approval_timeout
+                session_state.headless_out_fd = headless_out_fd
+                session_state.headless_trust_workspace = args.trust_workspace
+                session_state.headless_deny_tools = args.deny_tools
+                session_state.auto_approve = bool(args.auto_approve and not args.deny_tools)
             if args.import_provider:
                 session_state._import_request = (
                     args.import_provider,
@@ -2155,10 +2242,11 @@ def cli_main() -> None:
                 session_state.headless_max_turns = args.max_turns
                 session_state.headless_deny_tools = args.deny_tools
                 session_state.headless_out_fd = headless_out_fd
-                # No human to approve tools — auto-approve unless --deny-tools.
-                # Sandbox / dangerous-command guardrails still apply.
-                if not args.deny_tools:
-                    session_state.auto_approve = True
+                session_state.headless_timeout = args.timeout
+                session_state.headless_include_partial_messages = args.include_partial_messages
+                session_state.headless_trust_workspace = args.trust_workspace
+                # --print alone grants no tool permissions.
+                session_state.auto_approve = bool(args.auto_approve and not args.deny_tools)
 
             # Ensure the project wiki vault exists from session start, so the user
             # can point Obsidian at .nova/wiki/ without first running a wiki
@@ -2167,7 +2255,8 @@ def cli_main() -> None:
             try:
                 from novacode_cli.wiki.manager import WikiManager
 
-                WikiManager().ensure_structure()
+                if not session_state.headless:
+                    WikiManager().ensure_structure()
             except Exception:  # noqa: BLE001 — never block startup on the wiki
                 pass
 
@@ -2193,26 +2282,33 @@ def cli_main() -> None:
                 sys.exit(1)
 
             # API key validation happens in create_model()
-            asyncio.run(
-                main(
-                    args.agent,
-                    session_state,
-                    sandbox_type,
-                    args.sandbox_id,
-                    args.sandbox_setup,
-                    args.continue_session,
-                    resume=args.resume,
-                    ports=ports,
-                    explicit_sandbox=explicit_sandbox,
-                    sandbox_vcpus=args.sandbox_vcpus,
-                    sandbox_mem_bytes=args.sandbox_mem_bytes,
-                    sandbox_fs_capacity_bytes=args.sandbox_fs_capacity_bytes,
-                    sandbox_snapshot=args.sandbox_snapshot,
-                    sandbox_snapshot_id=args.sandbox_snapshot_id,
-                    agent_server=not args.no_agent_server,
-                    agent_server_port=args.agent_server_port,
-                )
+            main_task = main(
+                args.agent,
+                session_state,
+                sandbox_type,
+                args.sandbox_id,
+                args.sandbox_setup,
+                args.continue_session,
+                resume=args.resume,
+                ports=ports,
+                explicit_sandbox=explicit_sandbox,
+                sandbox_vcpus=args.sandbox_vcpus,
+                sandbox_mem_bytes=args.sandbox_mem_bytes,
+                sandbox_fs_capacity_bytes=args.sandbox_fs_capacity_bytes,
+                sandbox_snapshot=args.sandbox_snapshot,
+                sandbox_snapshot_id=args.sandbox_snapshot_id,
+                agent_server=not args.no_agent_server,
+                agent_server_port=args.agent_server_port,
             )
+            if pipe_mode:
+                from novacode_cli.headless.pipe import run_pipe_bootstrap
+                asyncio.run(run_pipe_bootstrap(main_task, session_state))
+            elif headless_prompt is not None:
+                from novacode_cli.headless.runner import run_bootstrap
+
+                asyncio.run(run_bootstrap(main_task, session_state))
+            else:
+                asyncio.run(main_task)
             # main() returned normally — every teardown step has run (session
             # saved, sandbox stopped, background tasks cancelled, connections
             # committed). Force a prompt process exit so a lingering non-daemon
@@ -2233,7 +2329,7 @@ def cli_main() -> None:
     except KeyboardInterrupt:
         # Clean exit on Ctrl+C - suppress ugly traceback
         console.print("\n\n[yellow]Interrupted[/yellow]")
-        sys.exit(0)
+        sys.exit(130)
 
 
 if __name__ == "__main__":

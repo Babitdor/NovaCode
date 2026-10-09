@@ -24,6 +24,10 @@ CONCRETE_FIELDS = [
     "headless_deny_tools",
     "headless_out_fd",
     "headless_exit_code",
+    "pipe_mode", "pipe_ready", "pipe_stopped", "pipe_instance_id",
+    "pipe_input_format", "pipe_startup_timeout", "pipe_request_timeout",
+    "pipe_approval_timeout", "cli_model_override", "session_model_provider",
+    "_pipe_emit", "_pipe_startup_timer",
     "workspace_root",  # commands/log_commands.py, tui/app.py
     "verify_enabled",  # ui/execution.py
     "active_goal",  # commands/side_commands.py, core/agent_loop.py

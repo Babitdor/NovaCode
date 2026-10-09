@@ -19,7 +19,9 @@ API messages.
 from __future__ import annotations
 
 import json
+import errno
 import os
+import stat
 import sys
 from typing import Any, TextIO
 
@@ -38,6 +40,7 @@ class HeadlessOutput:
         model_name: str | None,
         stream: TextIO | None = None,
         fd: int | None = None,
+        include_partial_messages: bool = False,
     ) -> None:
         """Build a formatter for ``fmt``.
 
@@ -53,6 +56,7 @@ class HeadlessOutput:
         self.session_id = session_id
         self.model_name = model_name
         self._fd = fd
+        self.include_partial_messages = include_partial_messages
         # Resolve the stream *now* (not at class-def time) so tests can swap it.
         self._stream = stream if stream is not None else sys.stdout
 
@@ -60,14 +64,33 @@ class HeadlessOutput:
     def _write(self, text: str) -> None:
         """Write raw text to the fd (preferred) or the stream."""
         if self._fd is not None:
-            os.write(self._fd, text.encode("utf-8", errors="replace"))
+            pending = memoryview(text.encode("utf-8", errors="replace"))
+            while pending:
+                try:
+                    written = os.write(self._fd, pending)
+                except InterruptedError:
+                    continue
+                except OSError as error:
+                    # The Windows CRT reports EINVAL, rather than EPIPE, when
+                    # a pipe's reader closes. Restrict translation to pipe fds.
+                    if os.name == "nt" and error.errno == errno.EINVAL:
+                        try:
+                            pipe = stat.S_ISFIFO(os.fstat(self._fd).st_mode)
+                        except OSError:
+                            pipe = False
+                        if pipe:
+                            raise BrokenPipeError(errno.EPIPE, "Output pipe closed") from error
+                    raise
+                if written <= 0:
+                    raise OSError("Headless output made no progress")
+                pending = pending[written:]
             return
         self._stream.write(text)
         self._stream.flush()
 
     def _writeln(self, obj: Any) -> None:
         """Write one NDJSON line."""
-        self._write(json.dumps(obj, ensure_ascii=False) + "\n")
+        self._write(json.dumps({"schema_version": 1, **obj}, ensure_ascii=False) + "\n")
 
     # -- lifecycle --------------------------------------------------------
     def init(self) -> None:
@@ -90,6 +113,12 @@ class HeadlessOutput:
         """
         if self.fmt != "stream-json":
             return
+        if self.include_partial_messages and isinstance(event, ev.TextDelta):
+            self._writeln({"type": "text_delta", "text": event.text})
+            return
+        if self.include_partial_messages and isinstance(event, ev.TextDiscard):
+            self._writeln({"type": "text_discard"})
+            return
         line = self._map_event(event)
         if line is not None:
             self._writeln(line)
@@ -103,6 +132,7 @@ class HeadlessOutput:
         num_turns: int,
         duration_ms: int,
         usage: dict[str, int],
+        exit_code: int = 0,
     ) -> None:
         """Emit the terminal result in the active format."""
         if self.fmt == "text":
@@ -124,6 +154,7 @@ class HeadlessOutput:
             "num_turns": num_turns,
             "duration_ms": duration_ms,
             "usage": usage,
+            "exit_code": exit_code,
         }
         self._writeln(payload)
 

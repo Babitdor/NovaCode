@@ -139,8 +139,13 @@ def build_continuation_prompt(
     ]
     budget_messages: list[BaseMessage] = []
     token_count = 0
+    from novacode_cli.context._analysis import _message_text, _reasoning_text, _tool_call_text
+
     for msg in reversed(non_system):
-        est = len(str(msg.content)) // 3
+        # Tool arguments (including file contents) and retained reasoning are
+        # sent back to the provider too; an empty assistant .content is not free.
+        text = _message_text(msg) + _tool_call_text(msg) + _reasoning_text(msg)
+        est = max(1, (len(text) + 2) // 3)
         if token_count + est > MAX_RECENT_TOKENS:
             break
         budget_messages.insert(0, msg)

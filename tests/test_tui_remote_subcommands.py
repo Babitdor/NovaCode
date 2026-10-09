@@ -57,6 +57,8 @@ async def test_remote_screen_authorize_and_revoke_user(monkeypatch, tmp_path, si
     async with app.run_test(size=size) as pilot:
         screen = RemoteScreen(app.session_state)
         await app.push_screen(screen)
+        # Let the newly mounted dialog lay out before computing a scroll target.
+        await pilot.pause()
         screen.query_one("#remote-user-id").value = "6614002417"
         screen.query_one("#remote-authorize").scroll_visible(animate=False)
         await pilot.pause()

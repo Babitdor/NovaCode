@@ -184,6 +184,7 @@ def _router_model_display(
         return "DYNAMIC (ROUTER MODE)", f"MODEL · {routed_model or current_model or '—'}"
     return "MODEL", current_model or "—"
 
+
 # Tools whose result is a code change worth seeing in full: these keep their own
 # Collapsible with a colored diff body so the user can review what the agent
 # changed. Every other tool (reads, search, exec, MCP, …) condenses into the
@@ -447,10 +448,14 @@ class SlashCommand:
 # _passthrough_command (print-or-toggle-only commands; never read stdin or use
 # a Live spinner — those would hang or garble inside Textual).
 TUI_COMMANDS: dict[str, SlashCommand] = {
-    "ui": SlashCommand("_run_ui", "inspect / patch / preview / commit / rollback / reset UI panels"),
+    "ui": SlashCommand(
+        "_run_ui", "inspect / patch / preview / commit / rollback / reset UI panels"
+    ),
     "help": SlashCommand("_run_help", "show this help", wants_text=False, aliases=("?",)),
     "init": SlashCommand("_run_init", "generate NOVA.md from the codebase"),
-    "model": SlashCommand("_run_model", "configure chat, subagent, and decision models", wants_text=False),
+    "model": SlashCommand(
+        "_run_model", "configure chat, subagent, and decision models", wants_text=False
+    ),
     "router": SlashCommand(
         "_run_router", "switch routing setups and edit model routes", wants_text=False
     ),
@@ -474,27 +479,25 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     ),
     "resume": SlashCommand("_run_resume", "resume a saved session for this path (/resume <id>)"),
     "artifacts": SlashCommand("_run_artifacts", "open the artifacts list", wants_text=False),
-        "subagents": SlashCommand(
-            "_run_subagents", "create/manage subagents (sync or async background)", wants_text=False
-        ),
+    "subagents": SlashCommand(
+        "_run_subagents", "create/manage subagents (sync or async background)", wants_text=False
+    ),
     "agent-server": SlashCommand("_run_agent_server", "local LangGraph server for subagents"),
     "tasks": SlashCommand("_run_tasks", "open the background tasks panel", wants_text=False),
     "cowork": SlashCommand(
         "_run_cowork", "launch the Nova Cowork desktop app (/cowork [task])", aliases=("desktop",)
     ),
     "mcp": SlashCommand("_run_mcp", "view / remove MCP servers", wants_text=False),
-    "skills": SlashCommand("_run_skills", "browse, pin, and manage the skill library", wants_text=False),
+    "skills": SlashCommand(
+        "_run_skills", "browse, pin, and manage the skill library", wants_text=False
+    ),
     "agents": SlashCommand("_run_agents", "list subagents", wants_text=False),
     "plan": SlashCommand("_run_plan", "plan mode (status / off)"),
     "goal": SlashCommand("_run_goal", "set a persistent goal (status / clear)"),
     "btw": SlashCommand("_run_btw", "ask a side question without touching the main conversation"),
-    "remote": SlashCommand(
-        "_run_remote", "manage Discord/Telegram bridges and response streaming"
-    ),
+    "remote": SlashCommand("_run_remote", "manage Discord/Telegram bridges and response streaming"),
     "compact": SlashCommand("_run_compact", "summarize conversation to free context"),
-    "update": SlashCommand(
-        "_run_update_check", "check/install updates and view release notes"
-    ),
+    "update": SlashCommand("_run_update_check", "check/install updates and view release notes"),
     "save": SlashCommand("_run_save", "save the session now", wants_text=False),
     "copy": SlashCommand("_run_copy", "copy last response (or whole chat) — or click a message"),
     "plugins": SlashCommand("_run_plugins", "install / manage plugins and marketplaces"),
@@ -611,6 +614,7 @@ def _read_tail(path: str, lines: int = 40) -> str:
         return ""
     return "\n".join(text.splitlines()[-lines:])
 
+
 from novacode_cli import ui_events as ev
 from novacode_cli.agent_stream import run_agent_stream
 from novacode_cli.config.config import console as _rich_console
@@ -628,7 +632,9 @@ def _status_for_event(event: Any, current: str) -> str:
     """
     if isinstance(event, (ev.Done, ev.Cancelled, ev.Error)):
         return "idle"
-    if isinstance(event, (ev.ToolCall, ev.AssistantMessage, ev.StatusUpdate, ev.TextDelta, ev.ReasoningDelta)):
+    if isinstance(
+        event, (ev.ToolCall, ev.AssistantMessage, ev.StatusUpdate, ev.TextDelta, ev.ReasoningDelta)
+    ):
         return "running"
     return current
 
@@ -809,7 +815,9 @@ def _render_bg_event(  # noqa: PLR0912, PLR0915 — one branch per event type is
             # No matching call (e.g. a result for a call we never saw): stand alone.
             prefix = "[dim]·[/dim]"
         if event.is_error:
-            write(f"[{pal.tool_fail}]✖[/{pal.tool_fail}] {prefix} [red]· {_esc(event.preview)}[/red]")
+            write(
+                f"[{pal.tool_fail}]✖[/{pal.tool_fail}] {prefix} [red]· {_esc(event.preview)}[/red]"
+            )
         elif event.preview:
             write(f"[{pal.tool_ok}]●[/{pal.tool_ok}] {prefix} [dim]· {_esc(event.preview)}[/dim]")
         else:
@@ -1558,7 +1566,10 @@ class NovaApp(App):
 
     BINDINGS = [
         Binding("ctrl+shift+backspace", "ui_reset", "Restore UI", priority=True),
-        *[Binding(f"f{i}", f"harness_key('f{i}')", show=False, priority=True) for i in range(6, 13)],
+        *[
+            Binding(f"f{i}", f"harness_key('f{i}')", show=False, priority=True)
+            for i in range(6, 13)
+        ],
         ("ctrl+q", "quit", "Quit"),
         # ctrl+c copies the current text selection if there is one, else quits.
         # Textual captures the mouse, so the terminal's native copy doesn't work
@@ -1744,6 +1755,9 @@ class NovaApp(App):
         self._pane_replay_workers: dict[str, Any] = {}
         self._replaying_history = False
         self._tab_mounts: dict[str, Any] = {}
+        self._tab_refresh_timer = None
+        self._tab_refresh_period = None
+        self._tab_render_signature = None
         self._tab_switch_generation = 0
         self._tab_switch_pending = 0
         # One-shot guard for the Ollama CPU-offload advisory (set once the model
@@ -1817,6 +1831,8 @@ class NovaApp(App):
         self._nova_status: str | None = None
         self._nova_status_style: str = "dim"
         self._nova_indicator_timer: Any = None
+        self._compaction_indicator_timer: Any = None
+        self._compaction_indicator_frame = 0
         self._os_focused = True
         self._status_timer: Any = None
         # Dynamic-subagents panel. Rows are upserted by task id (a dispatch is
@@ -1893,7 +1909,11 @@ class NovaApp(App):
                 Horizontal(id="jump-latest-row"),
                 Horizontal(id="jump-latest-box"),
             ):
-                yield Button("↓ Jump to latest", id="jump-latest", tooltip="Return to the newest message (Ctrl+End)")
+                yield Button(
+                    "↓ Jump to latest",
+                    id="jump-latest",
+                    tooltip="Return to the newest message (Ctrl+End)",
+                )
             with Horizontal(id="status-row"):
                 # A `1fr` left cell + an `auto` right cell is what actually
                 # right-aligns the counts. Appending them to the status Text
@@ -2121,6 +2141,7 @@ class NovaApp(App):
         self._init_root_pane()
         self._bind_notification_source(self._root_pane)
         import sys
+
         if sys.platform == "win32" and not self._driver.is_headless:
             from novacode_cli.desktop_notifications import DesktopNotifier
 
@@ -2131,7 +2152,6 @@ class NovaApp(App):
                 self._desktop_notifier.start()
             except Exception:
                 logger.warning("Could not start desktop notifications", exc_info=True)
-        self.set_interval(0.25, self._refresh_tabs)
         self._set_status("ready")
         self._update_mode_badge()
         self._refresh_hint_bar()
@@ -2395,9 +2415,7 @@ class NovaApp(App):
             return
         pane = SessionPane(
             sid="root",
-            title=(
-                (getattr(self.session_state, "session_id", "") or "main")[:8]
-            ),
+            title=((getattr(self.session_state, "session_id", "") or "main")[:8]),
             scroll=scroll,
             kind="root",
         )
@@ -2454,7 +2472,9 @@ class NovaApp(App):
                     pane.buffer[-1] = event
                 else:
                     limit = _LIVE_PREVIEW_CHARS if isinstance(event, ev.TextDelta) else 2000
-                    pane.buffer[-1] = type(event)(text=(previous.text[-limit:] + event.text[-limit:])[-limit:])
+                    pane.buffer[-1] = type(event)(
+                        text=(previous.text[-limit:] + event.text[-limit:])[-limit:]
+                    )
                 return
         pane.buffer.append(event)
 
@@ -2573,7 +2593,9 @@ class NovaApp(App):
     def _bind_notification_source(self, pane):
         state = self.session_state if pane.kind == "root" else pane.state.get("session_state")
         if state is not None:
-            state._notification_callback = lambda notification: self._desktop_notification(pane.sid, notification)
+            state._notification_callback = lambda notification: self._desktop_notification(
+                pane.sid, notification
+            )
 
     def _desktop_notification(self, sid, notification):
         notifier = self._desktop_notifier
@@ -2581,6 +2603,8 @@ class NovaApp(App):
             pane = self._pane_for(sid)
             title = f"NovaCode · {pane.title if pane else sid} · {notification.title}"
             notifier.show(sid, notification.id, title, notification.message)
+            return not notifier.closed.is_set()
+        return False
 
     async def on_desktop_notification_clicked(self, event: DesktopNotificationClicked):
         pane = self._pane_for(event.sid)
@@ -2589,7 +2613,11 @@ class NovaApp(App):
             return
         await self._switch_to(pane)
         state = self.session_state
-        notification = self._find_notification(state, event.notification_id) if hasattr(state, "notifications") else None
+        notification = (
+            self._find_notification(state, event.notification_id)
+            if hasattr(state, "notifications")
+            else None
+        )
         if notification is not None:
             self._log(Text(f"{notification.title}\n{notification.message}"))
         self.query_one("#prompt", PromptInput).focus()
@@ -2599,7 +2627,9 @@ class NovaApp(App):
         if notifier is not None:
             await asyncio.to_thread(notifier.close)
         for pane in getattr(self, "_panes", []):
-            state = self.session_state if pane is self._active_pane else pane.state.get("session_state")
+            state = (
+                self.session_state if pane is self._active_pane else pane.state.get("session_state")
+            )
             if state is not None:
                 state._notification_callback = None
 
@@ -2663,7 +2693,8 @@ class NovaApp(App):
 
         if sub == "close":
             children = [
-                pane for pane in self._panes
+                pane
+                for pane in self._panes
                 if pane.kind == "child" and pane.status not in ("crashed", "exited")
             ]
             if rest.strip():
@@ -2703,11 +2734,17 @@ class NovaApp(App):
         from pathlib import Path
         from rich.text import Text
 
-        from novacode_cli.sessions.launch import approved_projects, prepare_launch, validate_approved_folder
+        from novacode_cli.sessions.launch import (
+            approved_projects,
+            prepare_launch,
+            validate_approved_folder,
+        )
 
         projects = await asyncio.to_thread(approved_projects)
         if not projects:
-            self._log(Text("No existing Nova-approved project folders are available.", style="yellow"))
+            self._log(
+                Text("No existing Nova-approved project folders are available.", style="yellow")
+            )
             return
 
         preferred = folder
@@ -2726,15 +2763,21 @@ class NovaApp(App):
                 task_value = next((part for part in task_match.groups() if part is not None), "")
             if name_match:
                 name = next((part for part in name_match.groups() if part is not None), None)
-            preferred = re.split(r"\s+--(?:name|task)\b", arguments, maxsplit=1)[0].strip().strip("\"'")
+            preferred = (
+                re.split(r"\s+--(?:name|task)\b", arguments, maxsplit=1)[0].strip().strip("\"'")
+            )
 
         preferred_path = ""
         if preferred:
             with contextlib.suppress(OSError):
-                preferred_path = str(await asyncio.to_thread(Path(preferred).expanduser().resolve, strict=True))
+                preferred_path = str(
+                    await asyncio.to_thread(Path(preferred).expanduser().resolve, strict=True)
+                )
             if not preferred_path:
                 basename_matches = [
-                    path for path in projects if path.name.casefold() == preferred.strip('"').casefold()
+                    path
+                    for path in projects
+                    if path.name.casefold() == preferred.strip('"').casefold()
                 ]
                 if len(basename_matches) == 1:
                     preferred_path = str(basename_matches[0])
@@ -2749,7 +2792,9 @@ class NovaApp(App):
         if not choice:
             return
         try:
-            request = await asyncio.to_thread(prepare_launch, choice["folder"], name, choice["task"], str(Path.cwd()))
+            request = await asyncio.to_thread(
+                prepare_launch, choice["folder"], name, choice["task"], str(Path.cwd())
+            )
         except Exception as exc:
             self._log(Text(f"Could not prepare session launch: {exc}", style="bold #f7768e"))
             return
@@ -2816,7 +2861,8 @@ class NovaApp(App):
 
             manager = getattr(self._remote_owner_state(), "_remote_bridge_manager", None)
             if manager is not None and any(
-                getattr(bridge, "is_connected", False) for bridge in manager.bridges(RemotePlatform.DISCORD)
+                getattr(bridge, "is_connected", False)
+                for bridge in manager.bridges(RemotePlatform.DISCORD)
             ):
                 platforms.append("DC")
         return platforms
@@ -2825,20 +2871,8 @@ class NovaApp(App):
         """Redraw the session tab bar; hidden while there is only one session."""
         self._refresh_terminal_title()
         panes = getattr(self, "_panes", [])
-        try:
-            tabs = self.query_one("#session-tabs", Tabs)
-            # Timers can fire while Textual dismantles the widget's children.
-            tabs.query_one("#tabs-list")
-        except NoMatches:  # pragma: no cover - compose always yields it
-            return
-
-        # Visibility is cosmetic; the tab set is always kept in sync. The root
-        # tab is therefore present (hidden) from startup, so adding the first
-        # child never lands in an EMPTY bar — which would auto-activate the tab
-        # being added and queue a stale TabActivated that switched the user back.
-        tabs.display = len(panes) > 1
-
-        want = []
+        rows = []
+        animated = False
         for i, pane in enumerate(panes, 1):
             status = pane.status
             # Root operations such as compaction and remote prompts can be busy
@@ -2853,19 +2887,47 @@ class NovaApp(App):
                     status = "running"
             glyph = self._PANE_GLYPHS.get(status, "●")
             if status in ("running", "starting"):
+                animated = True
                 frames = "◐◓◑◒"
                 glyph = frames[int(time.monotonic() * 4) % len(frames)]
-            unread = f" +{pane.unread}" if pane.unread else ""
-            platforms = self._tab_remote_platforms(pane)
-            remote = f" [{' / '.join(platforms)}]" if platforms else ""
-            label = Text(f"{i}:{glyph} {pane.title}{unread}")
-            if remote:
-                label.append(remote, style="bold green")
+            platforms = tuple(self._tab_remote_platforms(pane))
             tooltip = f"{pane.title} · {status}"
             if platforms:
                 names = {"TG": "Telegram", "DC": "Discord"}
                 tooltip += " · " + ", ".join(names[name] for name in platforms) + " connected"
-            want.append((pane.sid, label, tooltip))
+            rows.append((pane.sid, i, glyph, pane.title, pane.unread, platforms, tooltip))
+
+        # No periodic work is needed while the tab bar is hidden. With multiple
+        # panes, idle state/remote indicators poll at 1 Hz; active spinners use
+        # 4 Hz. Lifecycle handlers also refresh immediately on state changes.
+        target_period = None if len(panes) <= 1 else (0.25 if animated else 1.0)
+        if target_period != self._tab_refresh_period:
+            if self._tab_refresh_timer is not None:
+                self._tab_refresh_timer.stop()
+                self._tab_refresh_timer = None
+            self._tab_refresh_period = target_period
+            if target_period is not None:
+                self._tab_refresh_timer = self.set_interval(target_period, self._refresh_tabs)
+
+        # Most timer ticks during an idle session change nothing. Avoid a DOM
+        # query, widget traversal, Text construction, and label comparisons then.
+        mount_state = tuple(sid for sid, mount in self._tab_mounts.items() if not mount.is_done)
+        signature = (tuple(rows), mount_state, len(panes) > 1)
+        if signature == self._tab_render_signature:
+            return
+        self._tab_render_signature = signature
+
+        try:
+            tabs = self.query_one("#session-tabs", Tabs)
+            # Timers can fire while Textual dismantles the widget's children.
+            tabs.query_one("#tabs-list")
+        except NoMatches:  # pragma: no cover - compose always yields it
+            self._tab_render_signature = None
+            return
+
+        # Keep the root tab mounted while hidden. That prevents the first child
+        # from becoming the implicit selection when the bar becomes visible.
+        tabs.display = len(panes) > 1
 
         # Update INCREMENTALLY; never clear() and rebuild. clear()+add_tab emits
         # a TabActivated for the first tab, delivered asynchronously — so it
@@ -2874,14 +2936,18 @@ class NovaApp(App):
         # returned to the root pane and everything you typed went to the root
         # agent. Adding a tab to a non-empty bar does not change the selection.
         existing = {t.id: t for t in tabs.query(Tab)}
-        wanted = {sid for sid, _, _ in want}
+        wanted = {sid for sid, *_ in rows}
 
         for sid in existing:
             if sid not in wanted:
                 with contextlib.suppress(Exception):
                     tabs.remove_tab(sid)
 
-        for sid, label, tooltip in want:
+        for sid, i, glyph, title, unread, platforms, tooltip in rows:
+            unread_text = f" +{unread}" if unread else ""
+            label = Text(f"{i}:{glyph} {title}{unread_text}")
+            if platforms:
+                label.append(f" [{' / '.join(platforms)}]", style="bold green")
             tab = existing.get(sid)
             if tab is None:
                 mounting = self._tab_mounts.get(sid)
@@ -2896,14 +2962,17 @@ class NovaApp(App):
                     tab.label = content
                 if tab.tooltip != tooltip:
                     tab.tooltip = tooltip
-        self._tab_mounts = {sid: mount for sid, mount in self._tab_mounts.items() if not mount.is_done}
+        self._tab_mounts = {
+            sid: mount for sid, mount in self._tab_mounts.items() if not mount.is_done
+        }
 
     def _refresh_terminal_title(self) -> None:
         """Show the active session's name in the terminal window or tab."""
         pane = getattr(self, "_active_pane", None)
-        name = getattr(pane, "title", None) or (
-            getattr(self.session_state, "session_id", "") or "main"
-        )[:8]
+        name = (
+            getattr(pane, "title", None)
+            or (getattr(self.session_state, "session_id", "") or "main")[:8]
+        )
         # Session names are user input. OSC titles must contain no escape or
         # control characters that could terminate the title and inject output.
         name = " ".join(
@@ -2941,7 +3010,9 @@ class NovaApp(App):
             return
         tab = getattr(event, "tab", None)
         tabs = getattr(event, "tabs", None)
-        if self._tab_switch_pending or (tabs is not None and tabs.active != getattr(tab, "id", None)):
+        if self._tab_switch_pending or (
+            tabs is not None and tabs.active != getattr(tab, "id", None)
+        ):
             return
         pane = self._pane_for(getattr(tab, "id", "") or "")
         if pane is not None and pane is not getattr(self, "_active_pane", None):
@@ -3020,7 +3091,11 @@ class NovaApp(App):
         await self.spawn_session(name.strip() or "session", task.strip())
 
     async def spawn_session(
-        self, name: str, task: str = "", *, directory: Path | None = None,
+        self,
+        name: str,
+        task: str = "",
+        *,
+        directory: Path | None = None,
         auto_approve: bool | None = None,
     ) -> Any | None:
         """Create a child session in a worktree or approved folder and show its tab."""
@@ -3032,7 +3107,8 @@ class NovaApp(App):
 
         approval_mode = (
             bool(getattr(self.session_state, "auto_approve", False))
-            if auto_approve is None else auto_approve
+            if auto_approve is None
+            else auto_approve
         )
         sup = self._supervisor()
         if sup.at_capacity():
@@ -3169,7 +3245,8 @@ class NovaApp(App):
             pane.pending_interrupt = msg
             # Remote connection alone never authorizes tool execution.
             remote_tool = (
-                pane.remote_turns and str(msg.get("kind") or "tool") == "tool"
+                pane.remote_turns
+                and str(msg.get("kind") or "tool") == "tool"
                 and getattr(pane.state.get("session_state"), "auto_approve", False)
             )
             if pane is self._active_pane or remote_tool:
@@ -3252,7 +3329,9 @@ class NovaApp(App):
             pane.state["_turn_start"] = time.monotonic()
         pane.state["_turn_active"] = busy
         if not busy:
-            pane.state["_activity"] = "awaiting approval" if pane.status == "needs-approval" else "ready"
+            pane.state["_activity"] = (
+                "awaiting approval" if pane.status == "needs-approval" else "ready"
+            )
         elif not previous:
             pane.state["_activity"] = "working"
         if pane is getattr(self, "_active_pane", None):
@@ -3628,7 +3707,9 @@ class NovaApp(App):
         async def route_prompt() -> bool:
             route = router.resolve(msg, sessions)
             if route is None:
-                await reply("This topic's session has ended. Send /sessions to see what is running.")
+                await reply(
+                    "This topic's session has ended. Send /sessions to see what is running."
+                )
                 return True
             msg.text = route.text
             route_ctx["sid"] = route.sid
@@ -3644,7 +3725,10 @@ class NovaApp(App):
         if getattr(msg, "images", None):
             return await route_prompt()
 
-        if getattr(msg, "platform", None) is not None and getattr(msg.platform, "value", "") == "telegram":
+        if (
+            getattr(msg, "platform", None) is not None
+            and getattr(msg.platform, "value", "") == "telegram"
+        ):
             if await self._handle_telegram_launch_message(msg, text):
                 return True
             if await self._handle_telegram_tab_close_selection(msg, text):
@@ -3717,27 +3801,37 @@ class NovaApp(App):
             or str(msg.chat_id) != pending["chat_id"]
             or msg.thread_id != pending["thread_id"]
         ):
-            await msg.reply_fn("This confirmation belongs to another requester or topic. Send `/tab` for your own request.")
+            await msg.reply_fn(
+                "This confirmation belongs to another requester or topic. Send `/tab` for your own request."
+            )
             return True
         if time.monotonic() >= pending["expires"]:
             self._remote_launch_approvals.pop(request_id, None)
             with contextlib.suppress(Exception):
-                await NovaApp._clear_telegram_keyboard(self, msg, f"Launch request {request_id} expired. Send `/tab` again.")
+                await NovaApp._clear_telegram_keyboard(
+                    self, msg, f"Launch request {request_id} expired. Send `/tab` again."
+                )
             return True
         self._remote_launch_approvals.pop(request_id, None)
         if match.group(1).lower() == "cancel":
-            await NovaApp._clear_telegram_keyboard(self, msg, f"Cancelled launch request {request_id}.")
+            await NovaApp._clear_telegram_keyboard(
+                self, msg, f"Cancelled launch request {request_id}."
+            )
             return True
         # Consume permission and retire the keyboard before awaiting startup.
         # A second click cannot launch twice or leave these buttons active.
-        await NovaApp._clear_telegram_keyboard(self, msg, "Launch approved. Starting the session tab…")
+        await NovaApp._clear_telegram_keyboard(
+            self, msg, "Launch approved. Starting the session tab…"
+        )
         try:
             request = pending["request"]
             from novacode_cli.sessions.launch import validate_approved_folder
 
             folder = await asyncio.to_thread(validate_approved_folder, request["folder"])
             pane = await self.spawn_session(
-                request["name"], request["task"], directory=folder,
+                request["name"],
+                request["task"],
+                directory=folder,
                 auto_approve=request.get("auto_approve", False),
             )
             if pane is None:
@@ -3781,10 +3875,14 @@ class NovaApp(App):
 
         projects = await asyncio.to_thread(approved_projects)
         if not projects:
-            await NovaApp._clear_telegram_keyboard(self, msg, "There are no existing Nova-approved project folders to choose from.")
+            await NovaApp._clear_telegram_keyboard(
+                self, msg, "There are no existing Nova-approved project folders to choose from."
+            )
             return
         if msg.sender_id is None:
-            await msg.reply_fn("Telegram did not provide a stable sender ID; launch approval is unavailable.")
+            await msg.reply_fn(
+                "Telegram did not provide a stable sender ID; launch approval is unavailable."
+            )
             return
 
         labels = {f"{index}. {path.name}": str(path) for index, path in enumerate(projects, 1)}
@@ -3822,7 +3920,10 @@ class NovaApp(App):
 
     def _has_telegram_picker(self, msg: Any) -> bool:
         key = NovaApp._telegram_picker_key(msg)
-        if any(key in getattr(self, attr, {}) for attr in ("_remote_project_pickers", "_remote_tab_closers")):
+        if any(
+            key in getattr(self, attr, {})
+            for attr in ("_remote_project_pickers", "_remote_tab_closers")
+        ):
             return True
         return any(
             (record["sender_id"], record["chat_id"], str(record["thread_id"] or "")) == key
@@ -3842,7 +3943,9 @@ class NovaApp(App):
                 return
             records.pop(key, None)
             with contextlib.suppress(Exception):
-                await NovaApp._clear_telegram_keyboard(self, msg, "Tab picker expired. Send `/tab` or `/tab close` again.")
+                await NovaApp._clear_telegram_keyboard(
+                    self, msg, "Tab picker expired. Send `/tab` or `/tab close` again."
+                )
 
         self.set_timer(max(0.01, record["expires"] - time.monotonic()), expire)
 
@@ -3853,7 +3956,10 @@ class NovaApp(App):
             if str(bridge._config.chat_id) == str(msg.chat_id):
                 rows = [choices[index : index + 2] for index in range(0, len(choices), 2)]
                 if await bridge.post_keyboard(
-                    text, rows, thread_id=msg.thread_id, sid=route.get("sid") or "root",
+                    text,
+                    rows,
+                    thread_id=msg.thread_id,
+                    sid=route.get("sid") or "root",
                     reply_to_message_id=getattr(msg, "message_id", None),
                 ):
                     return
@@ -3868,7 +3974,9 @@ class NovaApp(App):
                 continue
             try:
                 if await bridge.remove_keyboard(
-                    text, thread_id=msg.thread_id, sid=route.get("sid") or "root",
+                    text,
+                    thread_id=msg.thread_id,
+                    sid=route.get("sid") or "root",
                     reply_to_message_id=getattr(msg, "message_id", None),
                 ):
                     return
@@ -3886,7 +3994,9 @@ class NovaApp(App):
             return False
         if time.monotonic() >= pending["expires"]:
             self._remote_project_pickers.pop(key, None)
-            await NovaApp._clear_telegram_keyboard(self, msg, "Project picker expired. Send `/tab` again.")
+            await NovaApp._clear_telegram_keyboard(
+                self, msg, "Project picker expired. Send `/tab` again."
+            )
             return True
         self._remote_project_pickers.pop(key, None)
         await self._queue_telegram_launch_approval(
@@ -3901,14 +4011,19 @@ class NovaApp(App):
         """Show running child tabs as Telegram buttons for the requesting user."""
         NovaApp._reset_telegram_pickers(self, msg)
         if getattr(msg, "sender_id", None) is None:
-            await msg.reply_fn("Telegram did not provide a stable sender ID; tab closing is unavailable.")
+            await msg.reply_fn(
+                "Telegram did not provide a stable sender ID; tab closing is unavailable."
+            )
             return
         panes = [
-            pane for pane in getattr(self, "_panes", [])
+            pane
+            for pane in getattr(self, "_panes", [])
             if pane.kind == "child" and pane.status not in ("crashed", "exited")
         ]
         if not panes:
-            await NovaApp._clear_telegram_keyboard(self, msg, "There are no running session tabs to close.")
+            await NovaApp._clear_telegram_keyboard(
+                self, msg, "There are no running session tabs to close."
+            )
             return
         choices = {f"{index}. {pane.title}": pane.sid for index, pane in enumerate(panes, 1)}
         key = self._telegram_picker_key(msg)
@@ -3933,13 +4048,17 @@ class NovaApp(App):
             return False
         if time.monotonic() >= pending["expires"]:
             self._remote_tab_closers.pop(key, None)
-            await NovaApp._clear_telegram_keyboard(self, msg, "Session close picker expired. Send `/tab close` again.")
+            await NovaApp._clear_telegram_keyboard(
+                self, msg, "Session close picker expired. Send `/tab close` again."
+            )
             return True
         self._remote_tab_closers.pop(key, None)
         sid = pending["choices"][text]
         pane = self._pane_for(sid)
         if pane is None or pane.kind != "child" or pane.status in ("crashed", "exited"):
-            await NovaApp._clear_telegram_keyboard(self, msg, "That session tab has already stopped.")
+            await NovaApp._clear_telegram_keyboard(
+                self, msg, "That session tab has already stopped."
+            )
             return True
         title = pane.title
         await NovaApp._clear_telegram_keyboard(self, msg, f"Closing session tab {title}…")
@@ -3956,10 +4075,14 @@ class NovaApp(App):
         try:
             request = prepare_launch(folder, name, task, str(Path.cwd()))
         except Exception as exc:
-            await NovaApp._clear_telegram_keyboard(self, msg, f"Could not prepare that project session: {exc}")
+            await NovaApp._clear_telegram_keyboard(
+                self, msg, f"Could not prepare that project session: {exc}"
+            )
             return
         if not PathApprovalManager().is_path_approved(Path(request["folder"])):
-            await NovaApp._clear_telegram_keyboard(self, msg, "That folder is no longer Nova-approved. Choose a project again.")
+            await NovaApp._clear_telegram_keyboard(
+                self, msg, "That folder is no longer Nova-approved. Choose a project again."
+            )
             return
         source = None
         router = getattr(self, "_remote_router", None)
@@ -3975,7 +4098,11 @@ class NovaApp(App):
         request["auto_approve"] = bool(getattr(source_state, "auto_approve", False))
         request["telegram"] = self._launch_telegram_metadata(msg.chat_id, msg.thread_id)
         if request["telegram"] is None:
-            await NovaApp._clear_telegram_keyboard(self, msg, "I could not verify the Telegram bot configuration for this chat, so I cannot launch a remotely connected session.")
+            await NovaApp._clear_telegram_keyboard(
+                self,
+                msg,
+                "I could not verify the Telegram bot configuration for this chat, so I cannot launch a remotely connected session.",
+            )
             return
         request_id = uuid.uuid4().hex[:12]
         NovaApp._reset_telegram_pickers(self, msg)
@@ -4061,7 +4188,10 @@ class NovaApp(App):
 
             turn.answer_stream = RemoteAnswerStream(msg.answer_edit_fn)
         pane.remote_turns.append(turn)
-        if await self._send_child_prompt(pane, msg.text, images=getattr(msg, "images", None)) is None:
+        if (
+            await self._send_child_prompt(pane, msg.text, images=getattr(msg, "images", None))
+            is None
+        ):
             pane.remote_turns.remove(turn)
             with contextlib.suppress(Exception):
                 await msg.reply_fn(f"✖ Session “{pane.title}” is no longer running.")
@@ -4157,20 +4287,31 @@ class NovaApp(App):
         router = getattr(self, "_remote_router", None)
         if router is None:
             router = self._remote_router = RemoteRouter()
-        state = self._remote_owner_state() if pane.kind == "root" else pane.state.get("session_state")
+        state = (
+            self._remote_owner_state() if pane.kind == "root" else pane.state.get("session_state")
+        )
         session_id = str(getattr(state, "session_id", "") or pane.sid)
         for bridge in self._remote_telegram_bridges():
             try:
                 tid = await bridge.ensure_session_topic(pane.sid, session_id, pane.title)
                 if tid is None:
-                    self.notify("Enable Telegram Topics (or private bot topic mode), and grant Manage Topics permission in groups.", severity="warning")
+                    self.notify(
+                        "Enable Telegram Topics (or private bot topic mode), and grant Manage Topics permission in groups.",
+                        severity="warning",
+                    )
                     continue
                 previous = router.topic_of(bridge._config.chat_id, pane.sid)
                 router.topics[(bridge._config.chat_id, pane.sid)] = tid
                 if previous != tid:
-                    await bridge.post(f"Session **{session_id}** connected. Messages in this topic go to **{pane.title}**.", thread_id=tid, sid=pane.sid)
+                    await bridge.post(
+                        f"Session **{session_id}** connected. Messages in this topic go to **{pane.title}**.",
+                        thread_id=tid,
+                        sid=pane.sid,
+                    )
             except Exception as error:
-                self.notify(f"Telegram session topic could not connect: {error}", severity="warning")
+                self.notify(
+                    f"Telegram session topic could not connect: {error}", severity="warning"
+                )
 
     async def _close_remote_topics(self, pane) -> None:
         router = getattr(self, "_remote_router", None)
@@ -4187,6 +4328,7 @@ class NovaApp(App):
 
     async def _defer_remote_image_turn(self, msg: Any, queue: Any) -> None:
         """Keep attachments intact until the root is ready for another turn."""
+
         async def enqueue_when_ready() -> None:
             while True:
                 root = getattr(self, "_root_pane", None)
@@ -4207,7 +4349,9 @@ class NovaApp(App):
         if not msg.route.get("image_queued"):
             msg.route["image_queued"] = True
             with contextlib.suppress(Exception):
-                await msg.reply_fn("Image queued — Nova will inspect it after the current task finishes.")
+                await msg.reply_fn(
+                    "Image queued — Nova will inspect it after the current task finishes."
+                )
 
     async def _remote_steer_drain(self, queue: Any) -> None:
         """While a remote turn runs, treat further remote messages as live steers.
@@ -4425,7 +4569,9 @@ class NovaApp(App):
         sessions_dir = getattr(self.session_manager, "sessions_dir", None)
         session_id = getattr(self.session_state, "session_id", None)
         if sessions_dir and session_id:
-            journal = await asyncio.to_thread(transcript_journal.load, sessions_dir, str(session_id))
+            journal = await asyncio.to_thread(
+                transcript_journal.load, sessions_dir, str(session_id)
+            )
             try:
                 imported = await asyncio.to_thread(
                     ImportedContext.load, sessions_dir, str(session_id)
@@ -4470,7 +4616,11 @@ class NovaApp(App):
                 continue
             if getattr(m, "additional_kwargs", {}).get("lc_source") == "pinned_skill":
                 snapshot = m.additional_kwargs.get("skill", {})
-                await self._add_message(Text("Skill", style="bold cyan"), "system", Text(f"Pinned: {snapshot.get('name', 'skill')}", style="dim cyan"))
+                await self._add_message(
+                    Text("Skill", style="bold cyan"),
+                    "system",
+                    Text(f"Pinned: {snapshot.get('name', 'skill')}", style="dim cyan"),
+                )
                 continue
             text = self._message_text(m).strip()
             # /compact rewrites history into a single synthetic HumanMessage
@@ -4527,7 +4677,11 @@ class NovaApp(App):
             elif exit_code != 0:
                 row.append(f"   exit {exit_code}", style=f"bold {pal.error}")
             log_widget = OutputLog(
-                classes="bash-inline-log", highlight=False, markup=False, wrap=True, max_lines=_LOG_MAX_LINES
+                classes="bash-inline-log",
+                highlight=False,
+                markup=False,
+                wrap=True,
+                max_lines=_LOG_MAX_LINES,
             )
             await self._transcript().mount(
                 Vertical(Static(row, classes="bash-inline-head"), log_widget, classes="bash-inline")
@@ -4541,7 +4695,9 @@ class NovaApp(App):
             ok = entry.get("status") == "done"
             head = Text()
             head.append("● " if ok else "✖ ", style=pal.success if ok else pal.error)
-            head.append(f"background agent · {self._oneline(str(entry.get('prompt', '')))}", style="bold")
+            head.append(
+                f"background agent · {self._oneline(str(entry.get('prompt', '')))}", style="bold"
+            )
             self._log(head)
             summary = str(entry.get("summary") or "").strip()
             if summary:
@@ -5152,9 +5308,17 @@ class NovaApp(App):
         await self._transcript().mount(comp)
         await body.mount(Static("", id="tool-group-list"))
         await body.mount(
-            OutputLog(id="tool-group-log", classes="terminal-log", highlight=True, markup=True, max_lines=_LOG_MAX_LINES)
+            OutputLog(
+                id="tool-group-log",
+                classes="terminal-log",
+                highlight=True,
+                markup=True,
+                max_lines=_LOG_MAX_LINES,
+            )
         )
-        hint = Static(Text("Ctrl+B · run in background", style="dim"), id="tool-group-background-hint")
+        hint = Static(
+            Text("Ctrl+B · run in background", style="dim"), id="tool-group-background-hint"
+        )
         hint.display = False
         await body.mount(hint)
         self._prune_transcript()
@@ -5171,7 +5335,9 @@ class NovaApp(App):
         self._tool_group_running = None
         if self._tool_group_body is not None:
             with contextlib.suppress(NoMatches):
-                self._tool_group_body.query_one("#tool-group-background-hint", Static).display = False
+                self._tool_group_body.query_one(
+                    "#tool-group-background-hint", Static
+                ).display = False
         self._tool_group = None
         self._tool_group_body = None
         self._tool_group_entries = []
@@ -5355,15 +5521,19 @@ class NovaApp(App):
         self._tool_group_last_idx = idx
 
         # If running a shell command execution, activate and clear the live log widget
-        if name in {
-            "shell",
-            "bash",
-            "execute",
-            "execute_bash",
-            "run_command",
-            "run_tests",
-            "start_dev_server",
-        } and self._tool_group is not None:
+        if (
+            name
+            in {
+                "shell",
+                "bash",
+                "execute",
+                "execute_bash",
+                "run_command",
+                "run_tests",
+                "start_dev_server",
+            }
+            and self._tool_group is not None
+        ):
             # Guard against a concurrently-closed group: _ensure_tool_group sets
             # self._tool_group before its awaits complete, so _close_tool_group
             # (a turn boundary, a queued non-tool event) can null it while this
@@ -5534,7 +5704,13 @@ class NovaApp(App):
             await body.mount(Static(status_text, id="subagent-status"))
             await body.mount(Static("", id="subagent-list"))
             await body.mount(
-                OutputLog(id="subagent-log", classes="terminal-log", highlight=True, markup=True, max_lines=_LOG_MAX_LINES)
+                OutputLog(
+                    id="subagent-log",
+                    classes="terminal-log",
+                    highlight=True,
+                    markup=True,
+                    max_lines=_LOG_MAX_LINES,
+                )
             )
 
             # Initialize dynamic height tracking and entry lists
@@ -5853,6 +6029,31 @@ class NovaApp(App):
                 auto_clear, lambda: self._set_nova_indicator("")
             )
 
+    def _start_compaction_indicator(self) -> None:
+        """Animate context compaction in the footer without exposing its draft."""
+        frames = ("◐", "◓", "◑", "◒")
+        self._compaction_indicator_frame = 0
+
+        def animate() -> None:
+            frame = frames[self._compaction_indicator_frame % len(frames)]
+            self._compaction_indicator_frame += 1
+            self._set_nova_indicator(f"{frame} Context is compacting…", style="dim cyan")
+
+        animate()
+        timer = getattr(self, "_compaction_indicator_timer", None)
+        if timer is not None:
+            timer.stop()
+        self._compaction_indicator_timer = self.set_interval(0.16, animate)
+
+    def _stop_compaction_indicator(self) -> None:
+        """Stop the compaction animation and release the footer status slot."""
+        timer = getattr(self, "_compaction_indicator_timer", None)
+        if timer is not None:
+            timer.stop()
+            self._compaction_indicator_timer = None
+        if getattr(self, "_nova_status", None) and "Context is compacting" in self._nova_status:
+            self._set_nova_indicator("")
+
     def _ctx_gauge(self, percent: float, pal: FooterPalette | None = None, width: int = 12) -> Text:
         """A two-tone fill meter for *percent* across *width* cells.
 
@@ -5999,9 +6200,7 @@ class NovaApp(App):
             if cache_summary:
                 _divider()
                 hit_rate = getattr(self.token_tracker, "cache_hit_percentage", None)
-                cache_color = (
-                    pal.success if hit_rate else pal.dim
-                )
+                cache_color = pal.success if hit_rate else pal.dim
                 line.append(cache_summary, style=f"bold {cache_color}")
 
         # Nova learning status (review cycle).
@@ -6318,7 +6517,10 @@ class NovaApp(App):
             )
             badge.display = True
         elif bash:
-            _paint(badge, Text("  $ BASH — runs in chat · !! for the terminal", style=f"bold {pal.accent}"))
+            _paint(
+                badge,
+                Text("  $ BASH — runs in chat · !! for the terminal", style=f"bold {pal.accent}"),
+            )
             badge.display = True
         elif goal:
             short = goal if len(goal) <= 60 else goal[:57] + "…"
@@ -6799,9 +7001,7 @@ class NovaApp(App):
                 # list the active agent reads before its next model call. Running
                 # it now lets guidance typed during a tool call affect the model
                 # immediately after that tool returns.
-                self.run_worker(
-                    self._run_steer(text), group="live_steer_command", exclusive=False
-                )
+                self.run_worker(self._run_steer(text), group="live_steer_command", exclusive=False)
                 return
             command_name = command[1:] if command.startswith("/") else ""
             command_name = _TUI_COMMAND_ALIASES.get(command_name, command_name)
@@ -7223,11 +7423,13 @@ class NovaApp(App):
         tasks = list(self._bg_agent_tasks.values())
         watcher = getattr(self, "_async_watcher", None)
         for item in watcher.running_tasks() if watcher is not None else []:
-            tasks.append(AgentTask(
-                task_id=f"async:{item['task_id']}",
-                command=str(item["agent_name"]),
-                started_at=time.monotonic() - item["runtime"],
-            ))
+            tasks.append(
+                AgentTask(
+                    task_id=f"async:{item['task_id']}",
+                    command=str(item["agent_name"]),
+                    started_at=time.monotonic() - item["runtime"],
+                )
+            )
         return tasks
 
     def _clear_background_agents(self, pane=None) -> None:
@@ -7246,16 +7448,21 @@ class NovaApp(App):
         pane = pane or getattr(self, "_active_pane", None)
         if pane is not None and pane.kind == "child":
             from novacode_cli.sessions.tasks import TabJobRegistry
+
             if not hasattr(pane, "task_registry"):
                 pane.task_registry = TabJobRegistry(
-                    lambda action, job_id: self.run_worker(self._send_job_control(pane, action, job_id))
+                    lambda action, job_id: self.run_worker(
+                        self._send_job_control(pane, action, job_id)
+                    )
                 )
             return pane.task_registry
         from novacode_cli.shell.jobs import get_registry
+
         return get_registry()
 
     async def _child_job_logs(self, pane, task_id):
         import uuid
+
         if not hasattr(pane, "job_log_waiters"):
             pane.job_log_waiters = {}
         request_id = uuid.uuid4().hex
@@ -7264,9 +7471,15 @@ class NovaApp(App):
         try:
             supervisor = self._supervisor()
             child = supervisor.get(pane.sid)
-            if child is None or not await supervisor._send(child, {
-                "t": "job_control", "action": "logs", "job_id": task_id, "request_id": request_id,
-            }):
+            if child is None or not await supervisor._send(
+                child,
+                {
+                    "t": "job_control",
+                    "action": "logs",
+                    "job_id": task_id,
+                    "request_id": request_id,
+                },
+            ):
                 return None
             return await asyncio.wait_for(future, 5)
         except TimeoutError:
@@ -7296,7 +7509,8 @@ class NovaApp(App):
             pass
         agents = [
             {"agent_name": task.command, "runtime": task.runtime()}
-            for task in self._background_agent_tasks() if task.status == "running"
+            for task in self._background_agent_tasks()
+            if task.status == "running"
         ]
         try:
             bar = self._w("#tasks-bar", Static)
@@ -7370,8 +7584,8 @@ class NovaApp(App):
             if job is not None and event in ("started", "completed", "failed", "terminated"):
                 message = (
                     f"Running in background: {job.command[:70]} · {job.task_id}"
-                    if event == "started" else
-                    f"Task {event}: {job.command[:60]} · {job.task_id} · exit {job.exit_code}"
+                    if event == "started"
+                    else f"Task {event}: {job.command[:60]} · {job.task_id} · exit {job.exit_code}"
                 )
                 self._queue_pane_event(root, ev.ContextMessage(message=message))
                 root.unread += 1
@@ -7386,7 +7600,9 @@ class NovaApp(App):
                     state = root.state.get("session_state")
                     if state is not None:
                         with contextlib.suppress(Exception):
-                            state.add_notification("info", f"Task {event}: {job.task_id}", message, "shell")
+                            state.add_notification(
+                                "info", f"Task {event}: {job.task_id}", message, "shell"
+                            )
             return
         if event == "started" and job is not None:
             self._log(
@@ -7452,7 +7668,9 @@ class NovaApp(App):
         """Auto-resume the agent after a Ctrl+B-detached background task finishes,
         feeding it the result so it continues its work from where it left off."""
         if getattr(getattr(self, "_active_pane", None), "kind", "root") != "root":
-            self._queue_pending_job_note(f"Background {job.task_id} finished; fetch its result with get_task_logs('{job.task_id}').")
+            self._queue_pending_job_note(
+                f"Background {job.task_id} finished; fetch its result with get_task_logs('{job.task_id}')."
+            )
             return
         tail = "\n".join(job.output.splitlines()[-40:]) or "(no output)"
         # The Ctrl+B path patches the original tool call as "cancelled", which is
@@ -7488,11 +7706,13 @@ class NovaApp(App):
         if hasattr(registry, "refresh"):
             registry.refresh()
         try:
-            result = await self.push_screen_wait(BackgroundTasksScreen(
-                extra_tasks=lambda: self._background_agent_tasks(pane),
-                clear_extra=lambda: self._clear_background_agents(pane),
-                registry=registry,
-            ))
+            result = await self.push_screen_wait(
+                BackgroundTasksScreen(
+                    extra_tasks=lambda: self._background_agent_tasks(pane),
+                    clear_extra=lambda: self._clear_background_agents(pane),
+                    registry=registry,
+                )
+            )
         finally:
             self._tasks_panel_open = False
         if not isinstance(result, dict):
@@ -7507,18 +7727,29 @@ class NovaApp(App):
         elif result.get("action") == "logs":
             task_id = result.get("task_id", "")
             job = registry.resolve(task_id) or next(
-                (task for task in self._background_agent_tasks(pane) if task.task_id == task_id), None
+                (task for task in self._background_agent_tasks(pane) if task.task_id == task_id),
+                None,
             )
             if job is not None:
-                output = await self._child_job_logs(pane, task_id) if pane is not None and pane.kind == "child" else job.output
-                tail = "(logs unavailable)" if output is None else (
-                    "\n".join(output.splitlines()[-40:]) or "(no output yet)"
+                output = (
+                    await self._child_job_logs(pane, task_id)
+                    if pane is not None and pane.kind == "child"
+                    else job.output
                 )
-                self._log_task_output(pane,
+                tail = (
+                    "(logs unavailable)"
+                    if output is None
+                    else ("\n".join(output.splitlines()[-40:]) or "(no output yet)")
+                )
+                self._log_task_output(
+                    pane,
                     Text.assemble(
-                        (f"● {job.task_id} logs ({job.status}):\n", f"bold {self._palette.primary}"),
+                        (
+                            f"● {job.task_id} logs ({job.status}):\n",
+                            f"bold {self._palette.primary}",
+                        ),
                         (tail, self._palette.text),
-                    )
+                    ),
                 )
 
     # ── Artifacts (persistent component) ─────────────────────────────────
@@ -7546,7 +7777,9 @@ class NovaApp(App):
 
     def _on_artifact_event(self, event: str, art: Any) -> None:
         if event == "created":
-            self._log(Text(f"◈ Artifact created: {art.title}", style=f"bold {self._palette.accent}"))
+            self._log(
+                Text(f"◈ Artifact created: {art.title}", style=f"bold {self._palette.accent}")
+            )
         self._refresh_artifacts_component()
 
     @work
@@ -7727,22 +7960,31 @@ class NovaApp(App):
     def _schedule_session_autosave(self) -> None:
         root = getattr(self, "_root_pane", None)
         active = (
-            self._turn_active if root is getattr(self, "_active_pane", None)
+            self._turn_active
+            if root is getattr(self, "_active_pane", None)
             else bool(root and root.state.get("_turn_active"))
         )
         if self.session_manager is not None and active and not self._autosave_running:
             self._autosave_running = True
-            self.run_worker(self._periodic_session_save(), group="session-autosave", exit_on_error=False)
+            self.run_worker(
+                self._periodic_session_save(), group="session-autosave", exit_on_error=False
+            )
 
     async def _periodic_session_save(self) -> None:
         try:
-            await self._save_session(task_status="interrupted", pane=getattr(self, "_root_pane", None))
+            await self._save_session(
+                task_status="interrupted", pane=getattr(self, "_root_pane", None)
+            )
         finally:
             self._autosave_running = False
 
     async def _save_session(
-        self, *, cleared: bool = False, pending_prompt: str | None = None,
-        task_status: str = "active", pane: SessionPane | None = None,
+        self,
+        *,
+        cleared: bool = False,
+        pending_prompt: str | None = None,
+        task_status: str = "active",
+        pane: SessionPane | None = None,
     ) -> None:
         if self.session_manager is None:
             return
@@ -7750,12 +7992,19 @@ class NovaApp(App):
         # transition must not race a periodic save for the old thread.
         async with self._session_save_lock:
             await self._save_session_snapshot(
-                cleared=cleared, pending_prompt=pending_prompt, task_status=task_status, pane=pane,
+                cleared=cleared,
+                pending_prompt=pending_prompt,
+                task_status=task_status,
+                pane=pane,
             )
 
     async def _save_session_snapshot(
-        self, *, cleared: bool, pending_prompt: str | None,
-        task_status: str, pane: SessionPane | None,
+        self,
+        *,
+        cleared: bool,
+        pending_prompt: str | None,
+        task_status: str,
+        pane: SessionPane | None,
     ) -> None:
         """Save the conversation to disk via the session manager (best effort).
 
@@ -7771,7 +8020,8 @@ class NovaApp(App):
             return
         try:
             bundle = (
-                pane.state if pane is not None and pane is not getattr(self, "_active_pane", None)
+                pane.state
+                if pane is not None and pane is not getattr(self, "_active_pane", None)
                 else vars(self)
             )
             session_state = bundle["session_state"]
@@ -7796,6 +8046,7 @@ class NovaApp(App):
             messages = list(values.get("messages", []))
             if pending_prompt is not None:
                 from langchain_core.messages import HumanMessage
+
                 messages.append(HumanMessage(content=pending_prompt))
             if not messages:
                 return
@@ -8052,31 +8303,28 @@ class NovaApp(App):
             state = await ag.aget_state(config)
             self._refresh_router_model_from_state(state.values if state else {})
             msgs = effective_messages(state.values) if state else []
-            if state is not None:
-                # Off the loop: it can shell out to `ollama show`, which hangs
-                # while the local daemon is busy (a 42s UI freeze was measured).
-                model = self._routed_model_name or self.model_name or tracker.model_name
-                # Tool schemas are part of the request baseline but are not stored
-                # in conversation messages. Prefer what the active graph actually
-                # binds (plan/init agents can differ), then fall back to the
-                # session's original tool list when graph introspection is absent.
-                from novacode_cli.ui.execution import _bound_tools
+            # Off the loop: it can shell out to `ollama show`, which hangs
+            # while the local daemon is busy (a 42s UI freeze was measured).
+            model = self._routed_model_name or self.model_name or tracker.model_name
+            # Tool schemas are part of every request, even before the first
+            # user message and after compaction. Prefer what the active graph
+            # binds (plan/init agents can differ), then the session's tools.
+            from novacode_cli.ui.execution import _bound_tools
 
-                tools = _bound_tools(ag) or getattr(self.session_state, "_tools", None)
-                breakdown = await asyncio.to_thread(
-                    lambda: ContextManager(model).breakdown(msgs, tools=tools)
-                )
-                # The injected system prompt is not stored in graph messages.
-                # Startup's measured baseline covers that prompt and memory.
-                if not breakdown.system_prompt_tokens:
-                    baseline = getattr(tracker, "baseline_context", 0)
-                    breakdown.system_prompt_tokens = baseline
-                    breakdown.total_tokens += baseline
-                tracker.model_name = model
-                tracker.context_window_size = breakdown.context_window_size
-                tracker.set_breakdown(breakdown)
+            tools = _bound_tools(ag) or getattr(self.session_state, "_tools", None)
+            breakdown = await asyncio.to_thread(
+                lambda: ContextManager(model).breakdown(msgs, tools=tools)
+            )
+            # The injected system prompt is not stored in graph messages.
+            # Startup's measured baseline covers that prompt and memory.
+            baseline = getattr(tracker, "baseline_context", 0)
+            breakdown.system_prompt_tokens += baseline
+            breakdown.total_tokens += baseline
+            tracker.model_name = model
+            tracker.context_window_size = breakdown.context_window_size
+            tracker.set_breakdown(breakdown)
         except Exception:  # noqa: BLE001
-            pass
+            logger.debug("Could not rebuild /context metrics from session state", exc_info=True)
 
         await self._maybe_warn_ollama_offload(tracker.model_name)
 
@@ -8264,7 +8512,9 @@ class NovaApp(App):
         if "@" in text:
             _, files = await asyncio.to_thread(parse_file_mentions, text)
             if files:
-                self._log(Text("Referenced files: " + ", ".join(path.name for path in files), style="dim"))
+                self._log(
+                    Text("Referenced files: " + ", ".join(path.name for path in files), style="dim")
+                )
         ag, backend = self._active_agent()
         aid = assistant_id or self.assistant_id
         async for e in run_agent_stream(
@@ -8425,7 +8675,9 @@ class NovaApp(App):
                     else:
                         from novacode_cli.remote.images import attach_images
 
-                        self.image_tracker = attach_images(self.image_tracker, getattr(msg, "images", []))
+                        self.image_tracker = attach_images(
+                            self.image_tracker, getattr(msg, "images", [])
+                        )
                         pre = await self.agent.aget_state(config)
                         pre_count = len(pre.values.get("messages", [])) if pre else 0
                         # A compact status line edits in place to show live tool/
@@ -8483,7 +8735,13 @@ class NovaApp(App):
                         # the tool/subagent summary).
                         if self._remote_status is not None:
                             answer = self._remote_answer
-                            await self._remote_status.finalize(outcome="failed" if answer and answer.error else "stopped" if answer and answer.cancelled else "done")
+                            await self._remote_status.finalize(
+                                outcome="failed"
+                                if answer and answer.error
+                                else "stopped"
+                                if answer and answer.cancelled
+                                else "done"
+                            )
                         post = await self.agent.aget_state(config)
                         reply = _extract_response(post, pre_count) or "✅ Task completed."
                         if self._remote_label(None):
@@ -8491,7 +8749,8 @@ class NovaApp(App):
                         try:
                             streamed = (
                                 await self._remote_answer.finalize(reply)
-                                if self._remote_answer is not None else False
+                                if self._remote_answer is not None
+                                else False
                             )
                             if not streamed:
                                 await msg.reply_fn(reply)
@@ -9005,18 +9264,26 @@ class NovaApp(App):
         label = f"bg[{job_id}]: {short}"
         pal = self._palette
         background_job = None
-        hint = Static(Text("Ctrl+B · run in background", style="dim"), classes="background-shell-hint")
+        hint = Static(
+            Text("Ctrl+B · run in background", style="dim"), classes="background-shell-hint"
+        )
         hint.display = foreground
 
         # Build the widget up-front so output starts streaming immediately.
         if foreground:
             log_widget = OutputLog(
-                classes="bash-inline-log", highlight=False, markup=False, wrap=True, max_lines=_LOG_MAX_LINES
+                classes="bash-inline-log",
+                highlight=False,
+                markup=False,
+                wrap=True,
+                max_lines=_LOG_MAX_LINES,
             )
             head = Static(classes="bash-inline-head")
             card: Any = Vertical(head, log_widget, hint, classes="bash-inline")
         else:
-            log_widget = OutputLog(classes="bgshell-log", highlight=True, markup=True, max_lines=_LOG_MAX_LINES)
+            log_widget = OutputLog(
+                classes="bgshell-log", highlight=True, markup=True, max_lines=_LOG_MAX_LINES
+            )
             card = Collapsible(Vertical(log_widget), title="", collapsed=False)
             card.add_class("bgshell-card")
 
@@ -9084,7 +9351,8 @@ class NovaApp(App):
 
             group_options = (
                 {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
-                if os.name == "nt" else {"start_new_session": True}
+                if os.name == "nt"
+                else {"start_new_session": True}
             )
             process = await asyncio.create_subprocess_shell(
                 cmd,
@@ -9167,7 +9435,14 @@ class NovaApp(App):
                     await process.wait()
             set_state("✖", "cancelled", bad=True)
             self._journal(
-                {"k": "bash", "cmd": cmd, "lines": list(captured), "exit": None, "fg": foreground, "job": job_id}
+                {
+                    "k": "bash",
+                    "cmd": cmd,
+                    "lines": list(captured),
+                    "exit": None,
+                    "fg": foreground,
+                    "job": job_id,
+                }
             )
             info.status = ProcessStatus.STOPPED
             ProcessManager.get_instance().unregister_process(info.pid)
@@ -9191,7 +9466,9 @@ class NovaApp(App):
             else:
                 registry.complete(background_job.id, exit_code)
         if not emitted:
-            emit("(no output)", style="dim") if foreground else log_widget.write("[dim](no output)[/dim]")
+            emit("(no output)", style="dim") if foreground else log_widget.write(
+                "[dim](no output)[/dim]"
+            )
 
         # Update the title/row and ProcessManager status.
         if exit_code == 0:
@@ -9209,7 +9486,14 @@ class NovaApp(App):
         if not foreground:
             card.collapsed = True
         self._journal(
-            {"k": "bash", "cmd": cmd, "lines": list(captured), "exit": exit_code, "fg": foreground, "job": job_id}
+            {
+                "k": "bash",
+                "cmd": cmd,
+                "lines": list(captured),
+                "exit": exit_code,
+                "fg": foreground,
+                "job": job_id,
+            }
         )
 
     # -- background agent turn (ctrl+b, non-! input) --------------------------
@@ -9280,7 +9564,9 @@ class NovaApp(App):
         bg_session = _BgSession(self.session_state)
         ag, backend = self._active_agent()
 
-        log_widget = OutputLog(classes="bgagent-log", highlight=True, markup=True, max_lines=_LOG_MAX_LINES)
+        log_widget = OutputLog(
+            classes="bgagent-log", highlight=True, markup=True, max_lines=_LOG_MAX_LINES
+        )
         card = Collapsible(
             Vertical(log_widget),
             title=f"⟳ bg[{job_id}] · {p_short}",
@@ -9368,7 +9654,15 @@ class NovaApp(App):
             card.title = f"✖ bg[{job_id}] · {p_short}  ·  error"
             card.add_class("bgagent-failed")
             card.collapsed = True
-            self._journal({"k": "bgagent", "prompt": prompt, "status": "error", "summary": str(ex), "job": job_id})
+            self._journal(
+                {
+                    "k": "bgagent",
+                    "prompt": prompt,
+                    "status": "error",
+                    "summary": str(ex),
+                    "job": job_id,
+                }
+            )
             return
         finally:
             await self._finish_remote_streams(remote_streams)
@@ -9387,7 +9681,13 @@ class NovaApp(App):
         card.add_class("bgagent-failed" if status == "failed" else "bgagent-done")
         card.collapsed = True
         self._journal(
-            {"k": "bgagent", "prompt": prompt, "status": status, "summary": "\n".join(final_text)[-4000:], "job": job_id}
+            {
+                "k": "bgagent",
+                "prompt": prompt,
+                "status": status,
+                "summary": "\n".join(final_text)[-4000:],
+                "job": job_id,
+            }
         )
 
         # Report the outcome back to the main agent so it can summarise and act on
@@ -9416,7 +9716,12 @@ class NovaApp(App):
         self._queue_pending_job_note(note)
         root = getattr(self, "_root_pane", None)
         if root is not None and root is not getattr(self, "_active_pane", None):
-            self._queue_pane_event(root, ev.ContextMessage(message=f"Background agent bg[{job_id}] finished.", color="green"))
+            self._queue_pane_event(
+                root,
+                ev.ContextMessage(
+                    message=f"Background agent bg[{job_id}] finished.", color="green"
+                ),
+            )
             root.unread += 1
             return
         self._log(
@@ -9525,10 +9830,14 @@ class NovaApp(App):
     def _run_help(self) -> None:
         from novacode_cli.tui.reference_screens import HelpScreen
 
-        self.push_screen(HelpScreen(
-            TUI_COMMANDS, self._plugin_commands, self._ui_harness.applied.commands,
-            skill_loader=self._get_skill_names,
-        ))
+        self.push_screen(
+            HelpScreen(
+                TUI_COMMANDS,
+                self._plugin_commands,
+                self._ui_harness.applied.commands,
+                skill_loader=self._get_skill_names,
+            )
+        )
 
     async def _run_remote(self, text: str) -> None:
         from novacode_cli.commands.commands import _handle_remote_command
@@ -9560,6 +9869,7 @@ class NovaApp(App):
             return
         manager = getattr(self._remote_owner_state(), "_remote_bridge_manager", None)
         if manager is not None:
+
             async def status_callback(message: str) -> None:
                 self._log(Text(f"🔗 Remote: {message}", style="dim"))
 
@@ -9569,7 +9879,9 @@ class NovaApp(App):
             self._remote_consumer_worker = self._remote_consumer()
         topic_worker = getattr(self, "_remote_topics_worker", None)
         if topic_worker is None or topic_worker.is_finished:
-            self._remote_topics_worker = self.run_worker(self._sync_remote_topics(), group="remote_topics", exclusive=False)
+            self._remote_topics_worker = self.run_worker(
+                self._sync_remote_topics(), group="remote_topics", exclusive=False
+            )
 
     async def _start_local_remote_stream(self, prompt: str) -> None:
         self._local_remote_streams.extend(await self._create_local_remote_streams(prompt))
@@ -9585,7 +9897,9 @@ class NovaApp(App):
         streams = []
         targets = await manager.stream_targets(sid="root")
         for target in targets:
-            status = RemoteStatusLine(target.edit_fn, label=f"NOVA · {label} · " + " ".join(prompt.split())[:80])
+            status = RemoteStatusLine(
+                target.edit_fn, label=f"NOVA · {label} · " + " ".join(prompt.split())[:80]
+            )
             answer = RemoteAnswerStream(target.answer_edit_fn)
             streams.append((target, status, answer))
             status.start()
@@ -9598,12 +9912,19 @@ class NovaApp(App):
 
     async def _finish_remote_streams(self, streams: list) -> None:
         async def finish(target, status, answer):
-            await status.finalize(outcome="failed" if answer.error else "stopped" if answer.cancelled else "done")
+            await status.finalize(
+                outcome="failed" if answer.error else "stopped" if answer.cancelled else "done"
+            )
             if not await answer.finalize():
                 try:
-                    await asyncio.wait_for(target.reply_fn(answer.text or "Task finished; live delivery failed."), timeout=10)
+                    await asyncio.wait_for(
+                        target.reply_fn(answer.text or "Task finished; live delivery failed."),
+                        timeout=10,
+                    )
                 except Exception:
-                    self.notify("Remote response delivery failed. Check /remote status.", severity="warning")
+                    self.notify(
+                        "Remote response delivery failed. Check /remote status.", severity="warning"
+                    )
 
         if streams:
             await asyncio.gather(*(finish(*stream) for stream in streams), return_exceptions=True)
@@ -9635,8 +9956,7 @@ class NovaApp(App):
         self._animate_matrix_rain = (
             saved_rain
             if isinstance(saved_rain, bool)
-            else os.environ.get("NOVA_ANIMATIONS", "").strip().lower()
-            in {"1", "true", "yes"}
+            else os.environ.get("NOVA_ANIMATIONS", "").strip().lower() in {"1", "true", "yes"}
         )
 
     def _matrix_rain_enabled(self) -> bool:
@@ -9996,7 +10316,10 @@ class NovaApp(App):
             label = self._user_label()
             label.append(f" · pinned skill: {skill.name}", style="bold #7aa2f7")
             await self._add_message(label, "user", Text(text))
-        t.append(f"⚡ {'Pinning' if skill.pinned_prompt else 'Invoking'} skill: {skill.name}", style="bold #7aa2f7")
+        t.append(
+            f"⚡ {'Pinning' if skill.pinned_prompt else 'Invoking'} skill: {skill.name}",
+            style="bold #7aa2f7",
+        )
         if skill.description:
             t.append(f"\n  {skill.description}", style="dim")
         t.append(f"\n  Source: {skill.source}", style="dim")
@@ -10175,11 +10498,7 @@ class NovaApp(App):
         # os.environ). `resolve_api_key` exports a keychain/env key when one
         # exists; a custom endpoint (LM Studio, vLLM, a local proxy) usually
         # needs no key at all, so a URL alone is enough to proceed.
-        if (
-            preset["requires_api_key"]
-            and not mm.resolve_api_key(provider)
-            and not base_url
-        ):
+        if preset["requires_api_key"] and not mm.resolve_api_key(provider) and not base_url:
             self._log(
                 Text(
                     f"{preset['name']} has no API key — run /auth to add one.",
@@ -10428,9 +10747,7 @@ class NovaApp(App):
             return
 
         for name in screen.saved:
-            self._log(
-                Text(f"● Saved the API key for {provider_display_name(name)}", style="green")
-            )
+            self._log(Text(f"● Saved the API key for {provider_display_name(name)}", style="green"))
             if name == "tavily":
                 # tools/web_tools.py builds its Tavily client at import time, so
                 # a key added now only gates web_search after a restart.
@@ -10450,8 +10767,7 @@ class NovaApp(App):
         available = len(ModelManager().get_available_providers())
         self._log(
             Text(
-                f"{available} of {len(MODEL_PRESETS)} providers configured "
-                "(/model to switch).",
+                f"{available} of {len(MODEL_PRESETS)} providers configured (/model to switch).",
                 style="dim",
             )
         )
@@ -10633,8 +10949,7 @@ class NovaApp(App):
                             pass
                     self._log(
                         Text(
-                            f"● Restored session model "
-                            f"{resumed_provider}:{self.model_name}.",
+                            f"● Restored session model {resumed_provider}:{self.model_name}.",
                             style="green",
                         )
                     )
@@ -10661,7 +10976,10 @@ class NovaApp(App):
             window = getattr(self.token_tracker, "context_window_size", 128000)
             used = estimated_tokens("\n".join(str(message.content) for message in retained))
             initial_messages = await asyncio.to_thread(
-                restore_imported_reference, initial_messages, sessions_dir, resumed_id,
+                restore_imported_reference,
+                initial_messages,
+                sessions_dir,
+                resumed_id,
                 import_budget(window, used),
             )
         config = {"configurable": {"thread_id": self.session_state.thread_id}}
@@ -10754,7 +11072,11 @@ class NovaApp(App):
                 + (" (this session's server)" if status["running"] else "")
                 # Reachable is not the same as usable: the server reads its own
                 # root, so in another project it is deliberately left unused.
-                + (" — not used here: the server is rooted at another project" if reachable and not here else ""),
+                + (
+                    " — not used here: the server is rooted at another project"
+                    if reachable and not here
+                    else ""
+                ),
                 "extra        : "
                 + (
                     "installed"
@@ -11491,7 +11813,9 @@ class NovaApp(App):
         from novacode_cli.updates import check_for_update, release_details
 
         if not force and os.environ.get("NOVA_DISABLE_UPDATE_CHECK", "").lower() in {
-            "1", "true", "yes",
+            "1",
+            "true",
+            "yes",
         }:
             return
         status = await asyncio.to_thread(check_for_update, force=force)
@@ -11511,11 +11835,14 @@ class NovaApp(App):
                 self._scroll_end()
                 self.notify(message, title="Nova update", timeout=12)
         elif force:
-            self._log(Text(
-                f"Could not check for updates: {status.error}"
-                if status.error else "Nova is up to date.",
-                style="yellow" if status.error else "dim",
-            ))
+            self._log(
+                Text(
+                    f"Could not check for updates: {status.error}"
+                    if status.error
+                    else "Nova is up to date.",
+                    style="yellow" if status.error else "dim",
+                )
+            )
 
     async def _run_update_check(self, _text: str) -> None:
         from novacode_cli.tui.screens import UpdateScreen
@@ -11740,8 +12067,12 @@ class NovaApp(App):
             art = get_responsive_ascii(width=width)
 
             rain = MatrixRain(
-                art=art, width=width, animate=self._matrix_rain_enabled(),
-                fps=min(15, self._animation_fps) if self._low_resource_mode else self._animation_fps,
+                art=art,
+                width=width,
+                animate=self._matrix_rain_enabled(),
+                fps=min(15, self._animation_fps)
+                if self._low_resource_mode
+                else self._animation_fps,
             )
             self._home_banner = rain
             self._transcript().mount(rain)
@@ -12938,6 +13269,16 @@ class NovaApp(App):
         # Start the server
         server = TrelloServer()
         await server.start()
+        from novacode_cli.commands.trello_remote import connect_telegram
+
+        owner = self.session_state
+
+        async def connect_board_telegram():
+            bridge = await connect_telegram(owner)
+            self._ensure_remote_consumer()
+            return bridge
+
+        server.bind_remote(connect_board_telegram, str(getattr(owner, "session_id", "trello")))
         self.session_state.trello_server = server
         self._log(
             Text(
@@ -12955,7 +13296,16 @@ class NovaApp(App):
         # Launch the processing loop as a background task so the TUI stays responsive
         from novacode_cli.utils.tasks import spawn
 
-        spawn(self._trello_watch_loop(server))
+        spawn(
+            self._trello_watch_loop(
+                server,
+                owner_pane=self._active_pane,
+                agent=self.agent,
+                assistant_id=self.assistant_id,
+                session_state=owner,
+                token_tracker=self.token_tracker,
+            )
+        )
 
     async def _run_create(self, text: str) -> None:
         """Run /create; start the Skills & Agents web UI server."""
@@ -13003,21 +13353,52 @@ class NovaApp(App):
             )
         )
 
-    async def _trello_watch_loop(self, server: Any) -> None:
+    async def _trello_watch_loop(
+        self,
+        server: Any,
+        *,
+        owner_pane=None,
+        agent=None,
+        assistant_id=None,
+        session_state=None,
+        token_tracker=None,
+    ) -> None:
         """Background loop: process board tasks via the shared watch loop."""
         from novacode_cli.commands.trello_handler import trello_watch_loop
 
+        owner_pane = owner_pane or self._active_pane
+        agent = agent or self.agent
+        session_state = session_state or self.session_state
+        assistant_id = assistant_id or self.assistant_id
+        token_tracker = token_tracker or self.token_tracker
+
         def _log(message: str, style: str = "") -> None:
-            self._log(Text(message, style=style or None))
+            self._log_task_output(owner_pane, Text(message, style=style or None))
+
+        async def execute_card(prompt, *_args):
+            # Board work must not run against whichever tab happens to be
+            # selected when a queued task becomes ready. Preserve the user's
+            # viewport and wait for its owning tab to be available.
+            while server.is_running:
+                lock = getattr(session_state, "_remote_message_lock", None)
+                if (
+                    owner_pane is self._active_pane
+                    and not self._turn_active
+                    and not (lock and lock.locked())
+                ):
+                    await self._tui_execute_fn(prompt, assistant_id=assistant_id)
+                    return
+                await asyncio.sleep(0.1)
+            raise asyncio.CancelledError()
 
         try:
             await trello_watch_loop(
                 server,
-                self.agent,
-                self.assistant_id,
-                self.session_state,
-                self.token_tracker,
-                self._tui_execute_fn,
+                agent,
+                assistant_id,
+                session_state,
+                token_tracker,
+                execute_card,
                 _log,
             )
         except Exception:
@@ -13557,9 +13938,9 @@ class NovaApp(App):
             if self._voice_pipeline is not None and self._voice_speak_responses:
                 # Speech needs a short summary, not another unbounded copy of
                 # every intermediate answer during a long autonomous turn.
-                self._accumulated_reply = (
-                    self._accumulated_reply + "\n\n" + e.text[-16_000:]
-                )[-16_000:]
+                self._accumulated_reply = (self._accumulated_reply + "\n\n" + e.text[-16_000:])[
+                    -16_000:
+                ]
             else:
                 self._accumulated_reply = ""
             self._schedule_prune()
@@ -13579,9 +13960,17 @@ class NovaApp(App):
                     "run_tests",
                     "start_dev_server",
                 }:
-                    body = OutputLog(classes="terminal-log", highlight=True, markup=True, max_lines=_LOG_MAX_LINES)
+                    body = OutputLog(
+                        classes="terminal-log",
+                        highlight=True,
+                        markup=True,
+                        max_lines=_LOG_MAX_LINES,
+                    )
                     # Starts expanded (collapsed=False) to show live output!
-                    hint = Static(Text("Ctrl+B · run in background", style="dim"), classes="background-shell-hint")
+                    hint = Static(
+                        Text("Ctrl+B · run in background", style="dim"),
+                        classes="background-shell-hint",
+                    )
                     comp = Collapsible(body, hint, title=f"{base}  · running…", collapsed=False)
                 else:
                     body = Static("", classes="toolbody")
@@ -13654,7 +14043,9 @@ class NovaApp(App):
             self._paint_todos(self._todos, e.agent_name)
         elif isinstance(e, ev.ErrorOutput):
             lines = e.text.splitlines()
-            summary = next((line.strip() for line in reversed(lines) if line.strip()), "Command failed")
+            summary = next(
+                (line.strip() for line in reversed(lines) if line.strip()), "Command failed"
+            )
             title = f"Error output · {self._oneline(summary)} · {len(lines)} lines"
             output = OutputLog(classes="terminal-log", max_lines=_LOG_MAX_LINES, markup=False)
             output.write(Text(e.text, style=self._palette.tool_fail))
@@ -13665,6 +14056,7 @@ class NovaApp(App):
             await self._mount(card)
             self._scroll_end(force=False)
         elif isinstance(e, ev.CompactionNotice):
+            self._stop_compaction_indicator()
             self._log(Text("⟳ Context compacted", style="dim"))
             # Context just shrank. The API-sourced current_context is the turn's
             # PEAK (pre-compaction) and would otherwise mask the reduction, so
@@ -13679,6 +14071,9 @@ class NovaApp(App):
                     pass
                 self._refresh_status()
         elif isinstance(e, ev.ContextMessage):
+            if e.event_type == "nova_compaction_start":
+                self._start_compaction_indicator()
+                return
             # Review-cycle start/complete are transient status, not log entries:
             # surface them on the live indicator above the input instead of
             # letting them scroll away in the transcript.
@@ -13732,6 +14127,7 @@ class NovaApp(App):
                 self._accumulated_reply = ""
             await self._handle_interrupt(e)
         elif isinstance(e, ev.Cancelled):
+            self._stop_compaction_indicator()
             self._accumulated_reply = ""
             self._stop_foreground_subagents()
             if getattr(self, "_detach_cancelling", False):
@@ -13741,6 +14137,7 @@ class NovaApp(App):
             else:
                 self._log(Text("Interrupted.", style="yellow"))
         elif isinstance(e, ev.ContextOverflow):
+            self._stop_compaction_indicator()
             # The provider rejected the request for being too long. Unlike other
             # provider errors this has one specific remedy — shrink the
             # conversation — so compact and retry ONCE. A second overflow after
@@ -13775,6 +14172,7 @@ class NovaApp(App):
                 )
             self._overflow_retried = False
         elif isinstance(e, ev.Error):
+            self._stop_compaction_indicator()
             self._accumulated_reply = ""
             self._stop_foreground_subagents()
             # Provider failures (usage/rate limit, auth, connectivity) are
@@ -13792,6 +14190,7 @@ class NovaApp(App):
             else:
                 self._log(Text(f"Error: {e.message}", style="red"))
         elif isinstance(e, ev.Done):
+            self._stop_compaction_indicator()
             self._stop_foreground_subagents()
             if getattr(self, "_accumulated_reply", None):
                 self._speak_reply(self._accumulated_reply)
@@ -13821,7 +14220,9 @@ class NovaApp(App):
         if not task_id:
             return
         if hidden:
-            self._queue_pending_job_note(f"Async task {task_id} finished. Fetch it with check_async_task('{task_id}').")
+            self._queue_pending_job_note(
+                f"Async task {task_id} finished. Fetch it with check_async_task('{task_id}')."
+            )
             return
         # Only auto-report when the agent is idle — never interrupt an active
         # turn. If busy, the notification (🔔 badge) still surfaces the event.
@@ -13838,7 +14239,9 @@ class NovaApp(App):
         the agent to fetch the task result and summarize it — closing the gap
         where a finished remote agent otherwise waits for the user to ask."""
         if getattr(getattr(self, "_active_pane", None), "kind", "root") != "root":
-            self._queue_pending_job_note(f"Async task {task_id} finished. Fetch it with check_async_task('{task_id}').")
+            self._queue_pending_job_note(
+                f"Async task {task_id} finished. Fetch it with check_async_task('{task_id}')."
+            )
             return
         try:
             await self._add_message(
@@ -14218,5 +14621,6 @@ async def run_tui(
         )
     if not getattr(app, "_exception", None):
         from novacode_cli.ui.exit_summary import print_exit_summary
+
         with contextlib.suppress(OSError):
             await print_exit_summary(app)

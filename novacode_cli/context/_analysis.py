@@ -109,21 +109,12 @@ MODEL_CONTEXT_WINDOWS: dict[str, int] = {
 CONTEXT_WARNING_THRESHOLD = 0.75  # Yellow warning at 75%
 CONTEXT_CRITICAL_THRESHOLD = 0.90  # Red warning at 90%
 
-# deepagents' built-in SummarizationMiddleware fires at this fraction of
-# ``model.profile["max_input_tokens"]`` (same value in 0.6.x and 0.7.x). Nova
-# seeds that profile from :func:`get_context_window_size`, so both compactors
-# now measure against the SAME window — see
-# ``core_agent._seed_summarization_profile``.
+# deepagents' own default is this fraction, but Nova replaces it with the
+# effective threshold below so internal compaction and `/context` agree.
 LIB_SUMMARIZATION_FRACTION = 0.85
 
-# Where Nova's own auto-compaction fires. MUST stay below
-# LIB_SUMMARIZATION_FRACTION: whichever trigger is lower runs first, and we want
-# Nova's compaction (visible in the transcript, loop-guarded, and using Nova's
-# own summary format) to win. The library then only fires as a mid-turn backstop
-# for a single turn that balloons past it — the case Nova's between-turns check
-# cannot catch. Previously Nova sat at 0.90 while the library sat at 0.85, so the
-# library ALWAYS won and the user saw deepagents' "SESSION INTENT" block while
-# the indicator still read "warning, not critical".
+# Nova compacts between turns; the in-turn library middleware uses this same
+# effective threshold, including the small-window reserve.
 AUTO_COMPACT_THRESHOLD = 0.82
 
 #: Tokens that must stay free at the moment the compaction decision is taken.
@@ -246,10 +237,9 @@ class ContextBreakdown:
     def should_auto_compact(self) -> bool:
         """Whether Nova should compact now, BEFORE deepagents' backstop fires.
 
-        Deliberately lower than :data:`LIB_SUMMARIZATION_FRACTION` so the
-        harness compacts first and the library stays a mid-turn safety net, and
-        lower still on a small window, where a flat percentage leaves less free
-        space than a single tool result needs (:func:`compact_threshold_pct`).
+        Shared with in-turn summarization, and lower on a small window where a
+        flat percentage leaves less free space than a large tool result needs
+        (:func:`compact_threshold_pct`).
         """
         return self.usage_percentage >= compact_threshold_pct(self.context_window_size)
 

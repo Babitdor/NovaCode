@@ -98,3 +98,12 @@ def test_full_conversation_totals_add_up():
         + bd.tool_result_tokens
     )
     assert bd.assistant_message_tokens >= 1000  # text (~100) + tool args (~1000)
+
+
+def test_empty_conversation_still_counts_tool_definitions():
+    """Opening /context before a user turn must not report an empty baseline."""
+    bd = build_context_breakdown(
+        [], MODEL, tools=[{"name": "read_file", "description": "Read a file", "parameters": {}}]
+    )
+    assert bd.tool_definitions_tokens > 0
+    assert bd.total_tokens == bd.tool_definitions_tokens

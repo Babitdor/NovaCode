@@ -804,6 +804,8 @@ class RemoteBridgeManager:
 
                             bridge = TelegramBridge(config=config, message_queue=self._queue)
                             bridge._on_status = self._on_status
+                            previous = entry.get("bridge")
+                            bridge._topic_handlers = dict(getattr(previous, "_topic_handlers", {}))
                             bridge.enable_shared_polling()
                             new_task = asyncio.create_task(
                                 bridge.run(), name=f"telegram-bridge-{bridge_id}"

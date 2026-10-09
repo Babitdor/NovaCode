@@ -108,11 +108,40 @@ uv run nova
 uv run nova -p "summarize the changes in this repo"
 
 # Machine-readable output, capped at 10 turns, no tool approvals
-uv run nova -p "run the test suite and report failures" --output-format json --max-turns 10 --deny-tools
+uv run nova -p "summarize the changes in this repo" --output-format json --max-turns 10 --timeout 120 --deny-tools
+
+# Explicitly allow unattended tool approvals for an execution task
+uv run nova -p "run the test suite and report failures" --auto-approve --output-format json --timeout 300
+
+# Stream JSON lines, including provisional text updates
+uv run nova -p "explain src/main.py" --output-format stream-json --include-partial-messages --timeout 120
 
 # Or pipe the prompt on stdin
 echo "explain src/main.py" | uv run nova -p
 ```
+
+The **one-shot `-p` mode** accepts UTF-8 text (up to 1 MiB): close stdin and read the result on stdout. Diagnostics, native writes, and inherited subprocess output go to stderr. JSON records include `schema_version: 1`; the terminal result includes `exit_code`. Partial text events are provisional: a `text_discard` event invalidates the current preview, and committed `assistant` events remain authoritative.
+
+`--print` does not enable auto-approve or silently trust a directory. Existing policy and session allowances still apply; actions requiring a human are rejected and reported with exit code 3. Pass `--auto-approve` explicitly when unattended execution is intended. `--deny-tools` rejects approval requests, but does **not** disable all tools or guarantee a read-only run. For an unapproved workspace, approve it interactively first or explicitly pass `--trust-workspace` to grant folder-only trust.
+
+Exit codes: **0** success, **1** execution/startup/incomplete-stream error, **2** observed turn limit, **3** human input required, **124** timeout, **130** cancellation, **141** closed output pipe. Invalid CLI options use argparse's exit code 2. `--max-turns` counts observed main-agent rounds; it is not an exact API-call or spend limit. `--timeout` covers asynchronous startup and execution; cleanup gets a bounded grace period. A caller needing a strict wall-clock limit should also enforce a process timeout. This mode does not accept interactive replies or multiple JSON requests on stdin.
+
+**Persistent pipe mode — for the Nova Remote App:**
+
+```bash
+nova --mode pipe
+# Alias: nova --headless
+```
+
+Wait for the JSON `ready` event, then send JSON lines such as
+`{"type":"prompt","id":"mobile-1","content":"Investigate failing tests"}`.
+The process stays alive for multiple prompts and streams structured text, tool,
+approval, and completion events. `cancel` stops work; `shutdown` exits cleanly.
+Use an approved project as the child process's working directory, an absolute
+binary, and `shell: false`. See the [protocol and bridge guide](docs/PIPE-MODE.md)
+and [Node process adapter](examples/remote-app/nova-pipe.mjs).
+For the Nova Remote App setup, pairing, project registry, relay, and multi-session
+integration sequence, see the [Remote App integration guide](docs/NOVA-REMOTE-APP-INTEGRATION.md).
 
 **Optional — voice I/O adds STT, TTS, and VAD (~2 GB extra):**
 ```bash
@@ -316,6 +345,9 @@ mypy novacode_cli/
 | `--output-format` | `text` | Headless output format: `text`, `json`, or `stream-json` |
 | `--max-turns` | `None` | Headless only: cap the number of agent turns |
 | `--deny-tools` | off | Headless only: auto-reject tool approvals (fail-closed) instead of prompting |
+| `--timeout` | unlimited | Headless deadline in seconds, including asynchronous startup |
+| `--include-partial-messages` | off | Add provisional text events to `stream-json` output |
+| `--trust-workspace` | off | Headless only: explicitly grant current-folder trust |
 | `--version` | — | Show version number and exit |
 
 ### Interactive Slash Commands
@@ -409,6 +441,13 @@ every five seconds, and saves again when a turn ends. Atomic recovery snapshots
 preserve the last complete conversation after a crash. Resume with `nova --continue`
 or choose a session with `/sessions`. Abrupt termination can lose progress since
 the last completed save and tokens the model has not yet committed to its history.
+
+On restore, Nova rebuilds a continuation from saved history and session memory.
+The loaded history is limited to approximately 30,000 tokens, including tool-call
+arguments and retained reasoning; unpaired tool calls and results are excluded.
+`/context` estimates the newly loaded context, including the continuation briefing,
+current instructions, memory, and tool schemas. It does not reuse the previous
+request's token total: provider usage becomes available after the next model call.
 
 The local TUI supports optional notes, workspace files, and activity panels. Ask
 Nova to customize them, or use `/ui patch` with a JSON object, then `/ui preview`
@@ -507,6 +546,17 @@ NOVA includes a browser-based task board for managing and processing tasks visua
 | **Loaded** | Task added, waiting to be processed |
 | **Processing** | Agent is currently working on the task |
 | **Done** | Task completed by the agent |
+
+### Add tasks from Telegram
+
+1. Configure your Telegram bot and group with `/remote` once. The group must have Topics enabled, and the bot needs permission to manage topics.
+2. Open `/trello` and turn on **Telegram** in the board header.
+3. Click **Open topic** when the connection is ready. Nova creates a dedicated Trello topic, separate from the session topics.
+4. Send a text message or `/add <task>` in that topic. It becomes a card in **Loaded**. Use `/status` to see board counts.
+
+Only authorized Telegram users can add cards. Turning the toggle off pauses intake and keeps the topic and existing cards. Telegram task intake does not change your tool approval mode.
+
+Move a card to **Processing**, or enable **Auto-advance**, to run it. In the TUI, execution waits until the board's owning tab is selected and idle. Keep Nova and the board running: cards are held in memory and are not restored after a restart. This topic accepts text tasks; use a session topic for images.
 
 ## Web Chat UI
 
@@ -1232,6 +1282,10 @@ instead of closing it, so the flow is: pick the role, then pick the model.
 | Subagents | in-process delegation via the `task` tool | on the next dispatch |
 | Async agents | the nine graphs on the LangGraph server | on the next dispatch |
 | Dynamic agents | agents discovered in the agent directories, which is also what an `/eval` fan-out dispatches | on the next dispatch |
+
+**Dynamic** describes where an agent definition comes from; **Async** describes execution on the agent server. These can overlap: a custom `agent.md` with `async: true` remains available in-process and can also be served as a background agent. The Dynamic model applies to its in-process dispatch; Async applies to the server dispatch. This agent server is separate from Telegram remote access.
+
+Dynamic inherits **Subagents → Main** when unset, unless the agent's own `model:` overrides it. Async follows **Async role → explicit server environment → Main**. If an async per-run model cannot be built, the current server middleware logs a warning and falls back to its graph default; the role picker therefore shows the requested model, which can differ from the model actually used after a fallback.
 
 Any role you leave unset keeps its previous behaviour, which is what every role did before
 this existed, so an untouched setup behaves exactly as before: the subagents and the dynamic
