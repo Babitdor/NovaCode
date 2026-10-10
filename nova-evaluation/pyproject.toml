@@ -5,9 +5,10 @@ description = "Harbor integration with LangChain DeepAgents and LangSmith tracin
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "deepagents>=0.6.8",
+    # The agent under test (editable, see [tool.uv.sources]); it pins deepagents.
+    "novacode-cli",
     # Harbor runtime
-    "harbor>=0.1.12",
+    "harbor[modal]>=0.20.0",
     "langchain-anthropic>=1.0.0",
     "langchain-openai>=1.0.0",
     # LangSmith for observability

@@ -15,137 +15,63 @@ Runs the Nova Code CLI agent on [Terminal-Bench 2.0](https://github.com/laude-in
 ## Setup
 
 ```bash
-cd evaluation
-
-# Install dependencies
-uv sync
-
-# Copy and fill in environment variables
-cp .env.example .env   # or create .env manually
+cd nova-evaluation
+uv sync          # installs harbor plus the NovaCode checkout in .. (editable)
 ```
 
-Minimum `.env` for a local Docker run with an Anthropic model:
+Model keys are read from `.env` here or in the repo root (`OPENCODE_API_KEY`,
+`NVIDIA_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, ...).
 
-```env
-ANTHROPIC_API_KEY=sk-ant-...
-
-# Optional — enable LangSmith tracing
-LANGSMITH_API_KEY=lsv2_...
-LANGSMITH_TRACING_V2=true
-```
+Runs are isolated from your own Nova setup: the wrapper points the process home at
+`nova-evaluation/.eval-home/`, so your `~/.nova` MCP servers, personal skills, prompt
+overrides and memory store are not loaded, and each trial gets a fresh in-memory
+store. What is measured is NovaCode as shipped. Set `NOVA_EVAL_HOME` to use a
+different directory.
 
 ---
 
 ## Running the Evaluation
 
-### Nova Code agent (recommended)
-
 ```bash
-# 1 task — Docker, local testing
-make run-Novacode-docker
-
-# 10 tasks — Daytona cloud
-make run-Novacode-daytona
-
-# 4 tasks — Modal cloud
-make run-Novacode-modal
-
-# Specific task by name
-make run-Novacode-task TASK=fix-git
-
-# Compare Nova Code vs DeepAgents on the same task
-make run-compare
+uv run python scripts/run.py <benchmark> -m <provider/model> [harbor run flags]
 ```
 
-All jobs are written to `jobs/Novacode/<timestamp>/`.
-
-### Select a model
-
-Use the `--model` flag when calling Harbor directly:
-
-```bash
-# Anthropic Claude
-uv run harbor run \
-  --agent-import-path deepagents_harbor:NovaCodeWrapper \
-  --dataset terminal-bench@2.0 -n 1 \
-  --jobs-dir jobs/Novacode --env docker \
-  --model claude-sonnet-4-6
-
-# OpenAI GPT-4o
-uv run harbor run \
-  --agent-import-path deepagents_harbor:NovaCodeWrapper \
-  --dataset terminal-bench@2.0 -n 1 \
-  --jobs-dir jobs/Novacode --env docker \
-  --model gpt-4o
-
-# Local Ollama (GLM / any local model)
-uv run harbor run \
-  --agent-import-path deepagents_harbor:NovaCodeWrapper \
-  --dataset terminal-bench@2.0 -n 1 \
-  --jobs-dir jobs/Novacode --env docker \
-  --model ollama:glm4
-```
-
-> **Note:** Do not use `--ak model_name=...` — pass the model name via `--model` only.
-
-### Run a specific task
+| Benchmark | Harbor Hub dataset | Tasks |
+|---|---|---|
+| `nova` | local `nova-tasks/` sanity set | 6 |
+| `tb2` | `terminal-bench/terminal-bench-2` (Terminal-Bench 2.0) | 89 |
+| `tb2.1` | `terminal-bench/terminal-bench-2-1` | 89 |
+| `tb3` | `terminal-bench/terminal-bench@1` (Terminal-Bench 3.0) | 74 |
+| `tb-latest` | `terminal-bench/terminal-bench@latest` | changes |
 
 ```bash
-# Via Makefile variable
-make run-Novacode-task TASK=chess-best-move
+# Sanity check: 6 small local tasks
+uv run python scripts/run.py nova -m opencode/deepseek-v4.1-flash -n 2
 
-# Directly (any task name from terminal-bench-2/)
-uv run harbor run \
-  --agent-import-path deepagents_harbor:NovaCodeWrapper \
-  --dataset terminal-bench@2.0 \
-  --task-name chess-best-move -n 1 \
-  --jobs-dir jobs/Novacode-chess --env docker
+# One Terminal-Bench 2.0 task (task names carry the org prefix)
+uv run python scripts/run.py tb2 -m opencode/deepseek-v4.1-flash -i terminal-bench/fix-git
+
+# Full Terminal-Bench 2.0, 3 trials at a time, local Docker
+uv run python scripts/run.py tb2 -m opencode/deepseek-v4.1-flash -n 3
+
+# Terminal-Bench 3.0 on Modal (tasks need up to 32 GB RAM, 4 need a GPU, 1-5 h timeouts)
+uv run python scripts/run.py tb3 -m openai/gpt-5.5 -e modal -n 8
 ```
 
----
+The model is `provider/model`, where provider is a NovaCode provider id (`opencode`,
+`nvidia`, `openai`, `anthropic`, `google`, `openrouter`, `ollama`). Useful harbor
+flags: `-i` one task, `-l` first N tasks, `-n` concurrency, `-k` attempts per task,
+`-e docker|modal|daytona`, `--dry-run`. Results land in `jobs/<benchmark>/<timestamp>/`.
 
-## Custom Nova task dataset (`nova-tasks/`)
-
-`nova-tasks/` is a custom Harbor-format dataset written to stress Nova Code's
-strengths — multi-bug debugging, cross-file refactoring, git forensics, shell
-debugging, data correctness, and security hardening. Each task is a standard
-Harbor task directory (`instruction.md`, `task.toml`, `environment/`,
-`tests/`, `solution/`).
-
-| Task | Category | What the agent must do |
-|------|----------|------------------------|
-| `fix-broken-python-project` | debugging | Fix a syntax error, a bad import, and an off-by-one so all tests pass |
-| `refactor-duplicated-logic` | refactoring | Extract duplicated validation into a shared module; update both call sites |
-| `git-bisect-regression` | git | Use git history to find the commit that introduced a regression, then fix it |
-| `debug-flaky-shell-script` | shell | Fix quoting, race-condition, and exit-code bugs in a bash script |
-| `fix-data-processing-bug` | data | Find and fix a subtle off-by-one that drops the last CSV record |
-| `harden-insecure-web-app` | security | Fix an SQL injection so malicious input cannot break out or drop tables |
-
-### Run the custom dataset
+Check the harness itself without spending tokens (runs each task's reference solution):
 
 ```bash
-# All 6 tasks, Docker
-make run-nova-tasks-docker
-
-# A single task, e.g. git-bisect-regression
-make run-nova-task TASK=git-bisect-regression
-
-# Via the local JSON registry (registry.json)
-make run-nova-tasks-registry
+uv run harbor run -p nova-tasks -a oracle -e docker
 ```
 
-Directly:
-
-```bash
-uv run harbor run \
-  --agent-import-path deepagents_harbor:NovaCodeWrapper \
-  --path nova-tasks -n 6 --jobs-dir jobs/Novacode-tasks --env docker --model claude-sonnet-4-6
-```
-
-> **Note:** the agent-facing test suites are baked into each task's image at
-> `/app/tests/` (so the agent can run them); the verifier runs the same tests
-> from there. The `tests/` dir in each task only contains the verifier
-> `test.sh`.
+The six `nova-tasks/` are standard Harbor task directories (`instruction.md`,
+`task.toml`, `environment/`, `tests/`, `solution/`): multi-bug debugging, refactoring,
+git bisect, shell debugging, a data off-by-one, and an SQL injection fix.
 
 ### DeepAgents baseline agent
 
@@ -200,8 +126,7 @@ This prints a session ID and a direct link to the LangSmith comparison view.
 # Set the experiment name so traces are grouped
 export LANGSMITH_EXPERIMENT="Novacode-baseline-v1"
 
-make run-Novacode-daytona
-# or run harbor directly with --model etc.
+uv run python scripts/run.py tb2 -m <provider/model> -n 3
 ```
 
 ### 4. Push reward scores to traces
@@ -225,18 +150,19 @@ uv run python scripts/harbor_langsmith.py add-feedback \
 ## Project Structure
 
 ```
-evaluation/
+nova-evaluation/
 ├── deepagents_harbor/
 │   ├── backend.py             # HarborSandbox — wraps Docker/Daytona/Modal APIs
 │   ├── deepagents_wrapper.py  # DeepAgents baseline wrapper
-│   ├── Novacode_wrapper.py    # Nova Code CLI wrapper (primary)
+│   ├── novacode_wrapper.py    # Nova Code CLI wrapper (primary)
 │   └── tracing.py             # LangSmith helpers
 ├── scripts/
+│   ├── run.py                 # Launcher: benchmark name -> harbor run
 │   ├── analyze.py             # Summarize job results locally
 │   └── harbor_langsmith.py    # Dataset / experiment / feedback CLI
-├── terminal-bench-2/          # Benchmark tasks (90+ tasks)
+├── nova-tasks/                # Local 6-task sanity set
 ├── jobs/                      # Output from evaluation runs
-├── Makefile                   # All run commands
+├── Makefile                   # Shortcuts for scripts/run.py
 └── pyproject.toml             # Dependencies (uv)
 ```
 
@@ -267,20 +193,10 @@ evaluation/
 
 ---
 
-## All Makefile Targets
+## Makefile Targets
 
 ```
-make run-Novacode-docker          Run 1 task with Nova Code (Docker)
-make run-Novacode-daytona         Run 10 tasks with Nova Code (Daytona)
-make run-Novacode-modal           Run 4 tasks with Nova Code (Modal)
-make run-Novacode-task TASK=name  Run a specific task with Nova Code
-make run-compare                  Run Nova Code vs DeepAgents on same task
-
-make run-terminal-bench-docker    Run 1 task with DeepAgents (Docker)
-make run-terminal-bench-daytona   Run 40 tasks with DeepAgents (Daytona)
-make run-terminal-bench-modal     Run 4 tasks with DeepAgents (Modal)
-
-make test                         Run unit tests
-make lint                         Lint source files
-make format                       Format source files
+make nova | tb2 | tb2.1 | tb3     NovaCode on a benchmark (MODEL=provider/model ARGS="-n 2")
+make run-terminal-bench-docker    DeepAgents baseline, 1 task (Docker)
+make test | lint | format
 ```

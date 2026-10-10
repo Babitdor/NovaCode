@@ -4,6 +4,12 @@
 # Secrets — API keys for models, LangSmith, GitHub, etc.
 .env
 
+# Isolated home directory eval runs use instead of the developer's ~/.nova
+.eval-home*/
+
+# Task definitions fetched with `harbor dataset download` for inspection
+datasets/
+
 # Harbor job outputs (trajectories, logs, per-trial artifacts)
 jobs/
 

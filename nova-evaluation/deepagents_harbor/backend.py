@@ -28,9 +28,20 @@ _DEFAULT_EXEC_TIMEOUT_SEC = 300
 class HarborSandbox(SandboxBackendProtocol):
     """A sandbox implementation without assuming that python3 is available."""
 
+    # The agent is shown the container's real working directory and asked to work
+    # on real system paths (/etc, /var/www, /tmp ...), so NovaCode must not treat
+    # an absolute path as project-relative. Read by NovaCode's sandbox wrapper.
+    absolute_paths_are_real = True
+
     def __init__(self, environment: BaseEnvironment) -> None:
         """Initialize HarborSandbox with the given environment."""
         self.environment = environment
+        # The container's actual cwd, set once it has been asked for; relative
+        # paths in file tools resolve against it.
+        self._workdir: str | None = None
+        # The task, not this one container: NovaCode's learning keeps a project's
+        # lessons together, and a re-run of a task is the same project.
+        self.project_id: str = getattr(environment, "environment_name", None) or self.id
 
     async def aexecute(
         self,
