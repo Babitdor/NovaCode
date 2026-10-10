@@ -341,7 +341,7 @@ def parse_args() -> argparse.Namespace:  # noqa: PLR0912, PLR0915 — one existi
             upstream_args=upstream_args,
         )
     parser = argparse.ArgumentParser(
-        description="DeepAgents - AI Coding Assistant",
+        description=f"NovaCode v{__version__} - AI Coding Assistant",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         add_help=False,
     )
