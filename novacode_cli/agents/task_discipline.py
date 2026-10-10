@@ -13,6 +13,13 @@ Two mechanisms from how the leading coding agents run long tasks:
   model ends its turn while todos are still open, it is sent back once to finish
   them, or to drop a blocked one and say why. Once per user turn, so a real
   blocker still ends it.
+
+* **A truncation gate.** A turn that ends with no tool call and either no text
+  or text stopped at the output limit did not finish — the model ran out of room
+  mid-answer (often mid-reasoning). Ending there silently drops the task, so it
+  is sent back to continue, up to a few times in a row. Found on Terminal-Bench,
+  where thinking models spent a whole capped response reasoning and returned
+  nothing: the trial scored 0 with the work half done.
 """
 
 from __future__ import annotations
@@ -31,9 +38,18 @@ if TYPE_CHECKING:
 # Recite only when the last write_todos call is further back than this.
 RECITE_AFTER_MESSAGES = 20
 
-# Starts with "Internal context" so transcript replay hides it
-# (core/streaming.py::is_internal_context_text) — the user did not type it.
+# Both start with "Internal context" so transcript replay hides them
+# (core/streaming.py::is_internal_context_text) — the user did not type them.
 DONE_GATE_MARKER = "Internal context: open todos."
+CUT_OFF_MARKER = "Internal context: truncated turn."
+
+# CONSECUTIVE cut-offs — the count resets as soon as the model acts (calls a
+# tool). It was first counted per user turn, but an unattended run is a single
+# user turn hundreds of steps long: a Terminal-Bench trial hit the cap four times
+# across 129 turns, with real work in between, and the fourth ended it with time
+# still on the clock. Three in a row is a model that only emits prose; three in
+# an afternoon is not.
+MAX_CUT_OFF_NUDGES = 3
 
 _OPEN = ("pending", "in_progress")
 _BOX = {"completed": "[x]", "in_progress": "[>]", "pending": "[ ]"}
@@ -57,11 +73,54 @@ def _plan_is_out_of_view(messages: list[Any]) -> bool:
 
 
 def _since_last_user_turn(messages: list[Any]) -> list[Any]:
+    """Messages after what the USER last said.
+
+    Skips every ``Internal context`` HumanMessage, not just this module's own:
+    the skills middleware injects them too (``SUGGESTION_MARKER``), and counting
+    one as a user turn would silently reset the gates' per-turn budgets.
+    """
     for i in range(len(messages) - 1, -1, -1):
         msg = messages[i]
-        if isinstance(msg, HumanMessage) and not str(msg.content).startswith(DONE_GATE_MARKER):
+        if isinstance(msg, HumanMessage) and not str(msg.content).startswith("Internal context"):
             return messages[i + 1 :]
     return messages
+
+
+def _count_marker(messages: list[Any], marker: str) -> int:
+    return sum(
+        1
+        for m in messages
+        if isinstance(m, HumanMessage) and str(m.content).startswith(marker)
+    )
+
+
+def _consecutive_cut_offs(messages: list[Any]) -> int:
+    """Truncation nudges sent since the model last acted or the user last spoke."""
+    count = 0
+    for msg in reversed(messages):
+        if isinstance(msg, AIMessage) and msg.tool_calls:
+            break  # it did something: the streak is over
+        if isinstance(msg, HumanMessage):
+            text = str(msg.content)
+            if text.startswith(CUT_OFF_MARKER):
+                count += 1
+            elif not text.startswith("Internal context"):
+                break  # a real user turn
+    return count
+
+
+def _was_cut_off(msg: AIMessage) -> bool:
+    """True when the turn stopped mid-answer rather than at a natural end.
+
+    Either the response is empty, or the provider reported stopping because it
+    hit the output limit (``length``; Ollama spells it ``done_reason``).
+    """
+    if msg.tool_calls:
+        return False
+    if not msg.text.strip():
+        return True
+    meta = msg.response_metadata or {}
+    return (meta.get("done_reason") or meta.get("finish_reason")) == "length"
 
 
 class TaskDisciplineMiddleware(AgentMiddleware):
@@ -100,18 +159,33 @@ class TaskDisciplineMiddleware(AgentMiddleware):
 
     @hook_config(can_jump_to=["model"])
     def after_model(self, state: AgentState, runtime: Runtime[Any]) -> dict[str, Any] | None:  # noqa: ARG002
-        """Send the agent back once when it stops with todos still open."""
+        """Send the agent back when a turn was cut off, or stopped with todos open."""
         messages = state.get("messages") or []
         last = messages[-1] if messages else None
         if not isinstance(last, AIMessage) or last.tool_calls:
             return None  # still working
+
+        this_turn = _since_last_user_turn(messages)
+        if _was_cut_off(last) and _consecutive_cut_offs(messages) < MAX_CUT_OFF_NUDGES:
+            return {
+                "messages": [
+                    HumanMessage(
+                        content=(
+                            f"{CUT_OFF_MARKER} Your last response was empty or stopped at "
+                            "the output limit before you acted, so the task is unfinished. "
+                            "Continue from where you left off: keep reasoning brief, act by "
+                            "calling tools, and build large outputs with a script or in "
+                            "several smaller writes rather than in one message."
+                        )
+                    )
+                ],
+                "jump_to": "model",
+            }
+
         open_items = _open_todos(state.get("todos"))
         if not open_items:
             return None
-        if any(
-            isinstance(m, HumanMessage) and str(m.content).startswith(DONE_GATE_MARKER)
-            for m in _since_last_user_turn(messages)
-        ):
+        if _count_marker(this_turn, DONE_GATE_MARKER):
             return None  # already sent back once this turn; a real blocker may end it
         nudge = (
             f"{DONE_GATE_MARKER} You ended your turn with {len(open_items)} todo(s) "

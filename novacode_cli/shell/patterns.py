@@ -161,7 +161,9 @@ DANGEROUS_PATTERNS = [
     # Fork bomb
     r":\(\)\s*\{.*\|",
     # System control on host machine
-    r"\b(shutdown|reboot|halt|poweroff)\b",
+    # Only as the command itself — a bare \b match also blocked harmless
+    # flags such as `pdflatex -halt-on-error`.
+    r"(?:^|[;&|(\n])\s*(?:sudo\s+)?(?:systemctl\s+)?(?:shutdown|reboot|halt|poweroff)\b",
     # Piped remote-code execution
     r"(curl|wget)\s+.*\|\s*(bash|sh|python|python3|node|ruby|perl)",
     # Recursive world-writable permission on /
