@@ -313,14 +313,16 @@ def test_state_carries_roles():
 def test_route_model_goes_through_novas_constructor():
     """The regression that would silently break local models.
 
-    ``build_chat_model`` gives Ollama its ``num_ctx``. A router built on
-    langchain's ``init_chat_model`` would return a ChatOllama without it, and
-    this assertion is what catches that.
+    ``build_chat_model`` builds Ollama models Nova's way: the OpenAI client on
+    Ollama's ``/v1`` endpoint, with the reply cap sent as a raw ``max_tokens``.
+    A router built on langchain's ``init_chat_model`` would return a native
+    ChatOllama with neither, and these assertions are what catch that.
     """
     model = build_route_model({"provider": "ollama", "model": "qwen3-vl:235b-cloud"})
     assert model is not None
-    assert type(model).__name__ == "ChatOllama"
-    assert getattr(model, "num_ctx", None) is not None
+    assert type(model).__name__ == "ChatOpenAI"
+    assert model.openai_api_base.endswith("/v1")
+    assert (model.extra_body or {}).get("max_tokens")
 
 
 def test_route_models_are_cached():
@@ -360,7 +362,8 @@ def test_middleware_swaps_in_the_routed_model():
     )
     middleware.before_agent({"messages": [HumanMessage("Do it locally.")]}, None)
     model = middleware._model_for_current_route()
-    assert type(model).__name__ == "ChatOllama"
+    assert type(model).__name__ == "ChatOpenAI"
+    assert model.openai_api_base.endswith(":11434/v1")
 
 
 def test_middleware_leaves_the_model_alone_when_the_route_cannot_be_built(monkeypatch):
@@ -414,7 +417,8 @@ def test_wrap_model_call_overrides_only_when_a_model_was_chosen():
     result = middleware.wrap_model_call(Request(), lambda r: r)
     assert result == "overridden"
     assert len(seen) == 1
-    assert type(seen[0]["model"]).__name__ == "ChatOllama"
+    assert type(seen[0]["model"]).__name__ == "ChatOpenAI"
+    assert seen[0]["model"].openai_api_base.endswith(":11434/v1")
 
 
 @pytest.mark.asyncio

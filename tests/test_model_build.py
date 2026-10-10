@@ -63,15 +63,38 @@ def test_google_kwargs_pinned():
     assert m.max_retries == 5
 
 
-def test_ollama_kwargs_pinned():
+def test_ollama_kwargs_pinned(monkeypatch):
+    """Ollama goes through its OpenAI-compatible endpoint with the OpenAI client."""
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
     m = build_chat_model("ollama", "llama3")
-    assert type(m).__name__ == "ChatOllama"
+    assert type(m).__name__ == "ChatOpenAI"
+    assert m.openai_api_base == "http://localhost:11434/v1"
     # Streaming is enabled so the agent loop's astream emits tokens as they're
     # generated (perceived-latency win) instead of buffering the whole response.
     assert m.disable_streaming is False
-    # Model kept resident for 2 min after last use (was 600s) to free VRAM/RAM.
-    assert m.keep_alive == 120
-    assert m.num_ctx == 8192
+    # Usage is only streamed back on request, and not requested by default for
+    # a custom base URL: without this every turn would report zero tokens.
+    assert m.stream_usage is True
+    # The reply cap must travel as a raw `max_tokens`. The client's own field is
+    # renamed to `max_completion_tokens`, which Ollama accepts and ignores (a
+    # limit of 25 produced an 800-token reply against a live server).
+    assert m.extra_body == {"max_tokens": 16384}
+    assert m.max_tokens is None
+    payload = m._get_request_payload([("user", "hi")])
+    assert "max_completion_tokens" not in payload
+
+
+def test_ollama_address_comes_from_ollama_host(monkeypatch):
+    from novacode_cli.config.model_create import ollama_openai_base_url
+
+    for host, expected in (
+        ("127.0.0.1:11434", "http://127.0.0.1:11434/v1"),  # the CLI's scheme-less form
+        ("0.0.0.0:11434", "http://localhost:11434/v1"),  # a bind address, not a destination
+        ("http://box:11434/", "http://box:11434/v1"),
+        ("https://ollama.com/v1", "https://ollama.com/v1"),
+    ):
+        monkeypatch.setenv("OLLAMA_HOST", host)
+        assert ollama_openai_base_url() == expected
 
 
 def test_unknown_provider_raises():
@@ -103,7 +126,7 @@ def test_model_manager_path_matches_direct_path(provider, model):
     direct = create_model_from_config(provider, model)
     managed = ModelManager().create_model_for_provider(provider, model)
     assert type(direct) is type(managed)
-    for attr in ("max_retries", "max_tokens", "num_ctx", "keep_alive"):
+    for attr in ("max_retries", "max_tokens", "extra_body", "openai_api_base"):
         assert getattr(direct, attr, None) == getattr(managed, attr, None), attr
 
 
@@ -124,8 +147,9 @@ def _clear(monkeypatch, *names):
 def test_async_agent_defaults_to_ollama_and_its_historical_model(monkeypatch):
     _clear(monkeypatch, "ASYNC_AGENT_PROVIDER", *_FALLBACK_VARS)
     model = build_async_agent_model()
-    assert type(model).__name__ == "ChatOllama"
-    assert model.model == "gemma4:31b-cloud"
+    assert type(model).__name__ == "ChatOpenAI"  # Ollama's OpenAI-compatible endpoint
+    assert model.openai_api_base.endswith("/v1")
+    assert model.model_name == "gemma4:31b-cloud"
 
 
 def test_async_agent_model_beats_doc_agent_model(monkeypatch):

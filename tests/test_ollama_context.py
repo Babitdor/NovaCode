@@ -142,3 +142,47 @@ def test_is_ollama_cloud_model():
     assert _dynamic.is_ollama_cloud_model("deepseek-v4-pro:cloud")
     assert not _dynamic.is_ollama_cloud_model("qwen3")
     assert not _dynamic.is_ollama_cloud_model("claude-opus-4-8")
+
+
+# ── a local model's context is the SERVER's to decide ──────────────────────
+# Nova reaches Ollama through its OpenAI-compatible endpoint, which cannot carry
+# num_ctx. Measured against a live server: `tev1:0.8b` (Modelfile `num_ctx 2050`)
+# was allocated 2,050 tokens while Nova, still assuming the 200,000 it used to
+# request, sized its whole session for a window 100x too large.
+
+
+def _show_parameters(text: str, returncode: int = 0):
+    def _run(cmd, *a, **k):
+        if "--parameters" in cmd:
+            return SimpleNamespace(returncode=returncode, stdout=text, stderr="")
+        return SimpleNamespace(returncode=1, stdout="", stderr="")
+
+    return _run
+
+
+def test_an_unloaded_local_model_uses_its_modelfile_num_ctx(monkeypatch):
+    _dynamic.get_ollama_modelfile_num_ctx.cache_clear()
+    monkeypatch.setattr(_dynamic.subprocess, "run", _show_parameters("num_ctx    2050\ntemperature    0.7\n"))
+    monkeypatch.delenv("OLLAMA_CONTEXT_LENGTH", raising=False)
+    assert get_context_window_size("qwen3", use_dynamic=True) == 2050
+    _dynamic.get_ollama_modelfile_num_ctx.cache_clear()
+
+
+def test_without_a_modelfile_value_the_servers_context_length_is_used(monkeypatch):
+    _dynamic.get_ollama_modelfile_num_ctx.cache_clear()
+    monkeypatch.setattr(_dynamic.subprocess, "run", _show_parameters("temperature    0.7\n"))
+    monkeypatch.setenv("OLLAMA_CONTEXT_LENGTH", "32768")
+    assert get_context_window_size("qwen3", use_dynamic=True) == 32768
+    _dynamic.get_ollama_modelfile_num_ctx.cache_clear()
+
+
+def test_the_architecture_is_still_the_ceiling(monkeypatch):
+    _dynamic.get_ollama_modelfile_num_ctx.cache_clear()
+    monkeypatch.setattr(_dynamic.subprocess, "run", _show_parameters("num_ctx    999999\n"))
+    assert get_context_window_size("qwen3", use_dynamic=True) == 40960
+    _dynamic.get_ollama_modelfile_num_ctx.cache_clear()
+
+
+def test_a_cloud_model_is_untouched_by_local_settings(monkeypatch):
+    monkeypatch.setenv("OLLAMA_CONTEXT_LENGTH", "4096")
+    assert get_context_window_size("qwen3-coder:480b-cloud", use_dynamic=False) == 262_144

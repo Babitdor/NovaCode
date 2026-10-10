@@ -141,6 +141,22 @@ def build_chat_model(provider: str, model_name: str) -> BaseChatModel:
     return model
 
 
+def ollama_openai_base_url() -> str:
+    """Ollama's OpenAI-compatible endpoint, from ``OLLAMA_HOST`` (default local).
+
+    ``OLLAMA_HOST`` is the variable the ``ollama`` CLI itself reads, and it is
+    often written without a scheme (``127.0.0.1:11434``) or as the bind address
+    ``0.0.0.0``, which is not somewhere a client can connect to.
+    """
+    host = (os.environ.get("OLLAMA_HOST") or "").strip().rstrip("/") or "http://localhost:11434"
+    if "://" not in host:
+        host = f"http://{host}"
+    host = host.replace("://0.0.0.0", "://localhost")
+    if host.endswith("/v1"):
+        return host
+    return f"{host}/v1"
+
+
 def _build_chat_model(provider: str, model_name: str) -> BaseChatModel:
     """THE model constructor — every ChatX(...) in Nova is built here.
 
@@ -162,31 +178,49 @@ def _build_chat_model(provider: str, model_name: str) -> BaseChatModel:
     effort = nova_config.get("reasoning_effort")
 
     if provider == "ollama":
-        from langchain_ollama import ChatOllama
+        # Ollama is driven through its OpenAI-compatible endpoint (`/v1`) with
+        # the OpenAI client — the same path as every other OpenAI-compatible
+        # provider here, and how OpenCode talks to Ollama.
+        #
+        # What that changes, all checked against a live server (2026-10-11):
+        # - Thinking is switched off with `reasoning_effort="none"`; the native
+        #   `think: false` is ignored on this endpoint.
+        # - A reply is capped with `max_tokens` (a cut-off reply reports
+        #   finish_reason "length"). Uncapped, a thinking model can run away:
+        #   ~394k tokens in one reply, then an empty turn.
+        # - `num_ctx` cannot be sent. Ollama's cloud ignored it anyway. For a
+        #   LOCAL model the server's own setting now applies, so that has to be
+        #   large enough: start the server with OLLAMA_CONTEXT_LENGTH set, or
+        #   bake `num_ctx` into the model with a Modelfile. Nova still reads the
+        #   context Ollama actually allocated (`ollama ps`) to size its window.
+        # - `keep_alive` cannot be sent either; the server's default applies.
+        from langchain_openai import ChatOpenAI
 
-        from novacode_cli.context._dynamic import get_ollama_num_ctx
-        from novacode_cli.utils.backend_patches import apply_ollama_content_block_patch
+        from novacode_cli.utils.backend_patches import (
+            apply_openai_reasoning_content_patch,
+        )
 
-        apply_ollama_content_block_patch()
+        apply_openai_reasoning_content_patch()
 
-        ollama_kwargs = {}
+        ollama_kwargs: dict = {}
         if effort:
-            ollama_kwargs["reasoning"] = False if effort == "off" else effort
+            ollama_kwargs["reasoning_effort"] = "none" if effort == "off" else effort
 
-        return ChatOllama(
+        return ChatOpenAI(
             model=model_name,
+            base_url=ollama_openai_base_url(),
+            # The local server needs no key; the client refuses to start without
+            # one. A real key is only used when pointing straight at a hosted API.
+            api_key=os.environ.get("OLLAMA_API_KEY") or "ollama",
             temperature=0,
-            # Streaming is enabled so the agent loop's `astream` emits tokens as
-            # they're generated instead of buffering the whole response (the
-            # single biggest perceived-latency win for local/Ollama users). The
-            # content-block patch above already handles the file/image edge
-            # cases that originally motivated disabling it.
-            disable_streaming=False,
-            # Keep the model resident for 2 minutes after last use (was 600s).
-            # Long enough to avoid reload churn on back-to-back turns, short
-            # enough to free VRAM/RAM promptly when idle.
-            keep_alive=120,
-            num_ctx=get_ollama_num_ctx(),
+            # Sent as a raw `max_tokens`, NOT through the client's own field: the
+            # client renames that to `max_completion_tokens`, which Ollama
+            # accepts and ignores — a limit of 25 produced an 800-token reply.
+            extra_body={"max_tokens": nova_config.get("max_tokens", 16384)},
+            max_retries=5,
+            # Token usage is only streamed back when asked for, and the client
+            # does not ask by default for a custom base URL.
+            stream_usage=True,
             **ollama_kwargs,
         )
 

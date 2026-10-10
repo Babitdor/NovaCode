@@ -17,13 +17,13 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# The context window Nova requests when loading an Ollama model. This is the
-# REAL hard limit: requests are truncated at ``num_ctx`` tokens regardless of the
-# model's trained ("architecture") context length. The same value must be used
-# both when creating the ChatOllama client AND when sizing the context window for
-# usage tracking, or the two disagree (the bug this fixes). Overridable via the
-# ``OLLAMA_NUM_CTX`` env var for machines that can't allocate a 200K KV cache, or
-# power users who want more.
+# A LAST-RESORT assumption about a local model's context, used only when neither
+# its Modelfile nor ``OLLAMA_CONTEXT_LENGTH`` says (see predicted_local_num_ctx).
+#
+# It used to be the value Nova REQUESTED when loading a model, and so the real
+# limit. Nova now uses Ollama's OpenAI-compatible endpoint, which cannot send
+# ``num_ctx``: the server decides, and this number is no longer enforced by
+# anything. Overridable via ``OLLAMA_NUM_CTX`` to tell Nova what the server uses.
 DEFAULT_OLLAMA_NUM_CTX = 200_000
 
 
@@ -54,6 +54,53 @@ def get_ollama_num_ctx() -> int:
         except ValueError:
             logger.warning("Invalid OLLAMA_NUM_CTX=%r; using default", raw)
     return DEFAULT_OLLAMA_NUM_CTX
+
+
+@lru_cache(maxsize=128)
+def get_ollama_modelfile_num_ctx(model_name: str) -> Optional[int]:
+    """``num_ctx`` baked into a model's Modelfile, or None when it sets none.
+
+    Nova talks to Ollama through its OpenAI-compatible endpoint, which cannot
+    carry ``num_ctx``, so the server decides a local model's context — and a
+    Modelfile value is the first thing it uses. Measured: ``tev1:0.8b`` declares
+    ``num_ctx 2050`` and was allocated exactly 2,050 tokens, where Nova had been
+    assuming the 200,000 it used to request.
+    """
+    try:
+        result = subprocess.run(
+            ["ollama", "show", model_name, "--parameters"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    for line in (result.stdout or "").splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] == "num_ctx" and parts[-1].isdigit():
+            return int(parts[-1]) or None
+    return None
+
+
+def predicted_local_num_ctx(model_name: str, *, use_dynamic: bool = True) -> int:
+    """The context the server will give a LOCAL model that is not loaded yet.
+
+    In the order Ollama itself applies them: the Modelfile's ``num_ctx``, then
+    the server's ``OLLAMA_CONTEXT_LENGTH``. If neither can be seen from here the
+    answer falls back to :func:`get_ollama_num_ctx`, which is then only a guess:
+    the server's built-in default applies and Nova cannot read it until the
+    model is loaded (after which ``ollama ps`` reports the real figure).
+    """
+    if use_dynamic:
+        baked = get_ollama_modelfile_num_ctx(model_name)
+        if baked:
+            return baked
+    raw = os.environ.get("OLLAMA_CONTEXT_LENGTH", "").strip()
+    if raw.isdigit() and int(raw) > 0:
+        return int(raw)
+    return get_ollama_num_ctx()
 
 
 @lru_cache(maxsize=128)

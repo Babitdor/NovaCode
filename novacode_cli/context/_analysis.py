@@ -426,14 +426,24 @@ def get_context_window_size(model_name: str, use_dynamic: bool = True) -> int:
 
     # Cloud (API or Ollama-cloud): the window is the model maximum, NOT capped
     # by the local num_ctx (no local VRAM allocation involved).
+    #
+    # Verified for Ollama cloud on 2026-10-11: a 9,400-token prompt sent to
+    # `deepseek-v4.1-flash:cloud` with num_ctx=2048 was evaluated in full
+    # (prompt_eval_count 9400) and a detail from its first line was recalled.
+    # The cloud ignores num_ctx, so the num_ctx Nova sends is NOT a limit here.
+    # The cost of a huge window is handled separately, by `context_budget_tokens`
+    # (see create_agent_with_config) — not by under-reporting the window.
     if not is_local_ollama:
         return arch_window
 
     # Local Ollama model not currently loaded: predict the effective window as
-    # min(architecture max, configured num_ctx) — the smaller is what truncates.
-    from novacode_cli.context._dynamic import get_ollama_num_ctx
+    # min(architecture max, the context the SERVER will allocate) — the smaller
+    # is what truncates. Nova cannot set that context (its endpoint has no
+    # num_ctx), so it reads what the server will use: the Modelfile's num_ctx,
+    # then OLLAMA_CONTEXT_LENGTH.
+    from novacode_cli.context._dynamic import predicted_local_num_ctx
 
-    effective = min(arch_window, get_ollama_num_ctx())
+    effective = min(arch_window, predicted_local_num_ctx(model_name, use_dynamic=use_dynamic))
     if effective != arch_window:
         logger.debug(f"Capping {model_name} window {arch_window:,} → {effective:,} (num_ctx)")
     return effective
