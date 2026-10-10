@@ -33,6 +33,12 @@ class _FakeSandbox(BaseSandbox):
         return "fake"
 
     def execute(self, command: str, *, timeout=None) -> ExecuteResponse:
+        # This fake stands in for an ordinary sandbox, which has python3; answer
+        # the wrapper's probe so the inherited script path is exercised (the
+        # python3-free fallbacks are covered in test_workdir_backend_no_python3).
+        # Not recorded, so `commands` stays a log of real file ops.
+        if "command -v python3" in command:
+            return ExecuteResponse(output="__NOVA_PY3__", exit_code=0, truncated=False)
         self.commands.append(command)
         return ExecuteResponse(output="", exit_code=0, truncated=False)
 
@@ -86,10 +92,57 @@ def test_registers_as_sandbox_backend():
 
 
 def test_execute_is_not_rebased():
-    # Shell commands run in the workdir already — don't touch them.
+    # Shell commands run in the workdir already — their paths are left alone.
+    # The command still gets the non-interactive env prefix (see
+    # _noninteractive), so check the command itself is unaltered rather than
+    # demanding a byte-identical string.
     w, inner = _wrap()
     w.execute("ls -la /")
-    assert inner.commands[-1] == "ls -la /"
+    assert inner.commands[-1].endswith("ls -la /")
+    assert "/workspace" not in inner.commands[-1]
+
+
+def test_real_path_mode_leaves_absolute_paths_alone():
+    """An agent told its real cwd means `/tmp/x` when it says `/tmp/x`.
+
+    Rebasing sent `write_file("/git/server/hooks/post-receive")` to
+    `/app/git/server/hooks/post-receive` and reported success at the path asked
+    for; the shell, which is never rebased, then could not find the file.
+    """
+    w = WorkdirSandboxBackend(_FakeSandbox(), workdir="/app", virtual_root=False)
+    for real in ("/tmp/test_run.py", "/etc/nginx/conf.d/site.conf", "/git/server/hooks/post-receive"):
+        assert w._rebase(real) == real
+    assert w._rebase("/app/main.py") == "/app/main.py"
+    assert w._rebase("/app/../etc/hosts") == "/etc/hosts"  # normalised, not re-rooted
+    # Relative paths still resolve against the working directory.
+    assert w._rebase("notes.txt") == "/app/notes.txt"
+    assert w._rebase("src/a.py") == "/app/src/a.py"
+    assert w._rebase_opt(None) == "/app"
+
+
+def test_real_path_mode_reaches_the_script_unrebased():
+    inner = _FakeSandbox()
+    w = WorkdirSandboxBackend(inner, workdir="/app", virtual_root=False)
+    w.read("/tmp/frames/frame_0400.png")
+    payload = re.search(r"b64decode\('([^']+)'\)", inner.commands[-1]).group(1)
+    assert base64.b64decode(payload).decode() == "/tmp/frames/frame_0400.png"
+
+
+def test_virtual_root_is_still_the_default():
+    w, _ = _wrap()
+    assert w._rebase("/src/x") == "/workspace/src/x"
+    # Plausible project folders are still treated as the project's.
+    assert w._rebase("/bin/tool") == "/workspace/bin/tool"
+    assert w._rebase("/etc/app.conf") == "/workspace/etc/app.conf"
+
+
+def test_os_only_paths_are_never_rebased():
+    """`write_file("/tmp/t.py")` then `python /tmp/t.py` must be the same file."""
+    w, _ = _wrap()
+    for real in ("/tmp/t.py", "/tmp/a/b.txt", "/dev/null", "/proc/cpuinfo", "/sys/kernel/x"):
+        assert w._rebase(real) == real
+    # Only the directory itself, not a project folder that happens to start the same.
+    assert w._rebase("/tmpl/page.html") == "/workspace/tmpl/page.html"
 
 
 def test_download_upload_rebase_paths():

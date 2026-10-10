@@ -1086,15 +1086,22 @@ def _build_composite_backend(
         # workdir — see novacode_cli/integrations/workdir_backend.py.
         from novacode_cli.integrations.workdir_backend import WorkdirSandboxBackend
 
-        _sandbox_workdir = None
-        if sandbox_type:
+        # A backend can declare that its agent works with REAL paths (the Harbor
+        # eval backend: the agent is shown the container's actual cwd). Then
+        # absolute paths are left alone and the backend's own measured workdir
+        # wins over the per-provider default, which is only a guess.
+        _real_paths = bool(getattr(sandbox, "absolute_paths_are_real", False))
+        _sandbox_workdir = getattr(sandbox, "_workdir", None) if _real_paths else None
+        if _sandbox_workdir is None and sandbox_type:
             try:
                 _sandbox_workdir = get_default_working_dir(sandbox_type)
             except Exception:  # noqa: BLE001
                 _sandbox_workdir = None
         if _sandbox_workdir is None:
             _sandbox_workdir = getattr(sandbox, "_workdir", None) or "/workspace"
-        _default_backend = WorkdirSandboxBackend(sandbox, workdir=_sandbox_workdir)  # type: ignore
+        _default_backend = WorkdirSandboxBackend(  # type: ignore
+            sandbox, workdir=_sandbox_workdir, virtual_root=not _real_paths
+        )
 
     # ------------------------------------------------------------------
     # Build CompositeBackend with routes per deepagents 0.5.6 docs:
