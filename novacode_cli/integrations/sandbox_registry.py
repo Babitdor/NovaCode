@@ -263,15 +263,18 @@ def _terminate_record(rec: dict[str, Any]) -> bool:
             Runloop(bearer_token=token).devboxes.shutdown(id=sandbox_id)
             return True
         if provider == "daytona":
-            # Reconnect-by-id is not generally supported; best-effort only.
-            logger.debug("daytona reclaim by id unsupported: %s", sandbox_id)
+            from daytona import Daytona, DaytonaConfig
+
+            token = os.environ.get("DAYTONA_API_KEY")
+            if not token:
+                return False
+            client = Daytona(DaytonaConfig(api_key=token))
+            client.get(sandbox_id).delete()
             return True
         if provider == "langsmith":
             from langsmith.sandbox import SandboxClient
 
-            token = os.environ.get("LANGSMITH_API_KEY") or os.environ.get(
-                "LANGCHAIN_API_KEY"
-            )
+            token = os.environ.get("LANGSMITH_API_KEY") or os.environ.get("LANGCHAIN_API_KEY")
             if not token:
                 return False
             client = SandboxClient()

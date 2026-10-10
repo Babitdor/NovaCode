@@ -1,6 +1,7 @@
 """Sandbox lifecycle management with context managers."""
 
 import atexit
+import logging
 import os
 import shlex
 import signal
@@ -21,6 +22,8 @@ from deepagents.backends.protocol import (
 from deepagents.backends.sandbox import BaseSandbox
 
 from novacode_cli.config.config import console
+
+logger = logging.getLogger(__name__)
 
 
 def parse_ports(ports_str: str | None) -> dict[int, int] | None:
@@ -105,6 +108,7 @@ def resolve_sandbox_type(
     # sandbox primitive — Docker is opt-in via --sandbox docker); Pattern A
     # (OS-confined shell) on Linux/macOS.
     return ("none" if is_windows else "os"), False
+
 
 # Only these env vars are allowed in setup script template substitution.
 # Prevents accidental leakage of API keys and secrets.
@@ -207,10 +211,7 @@ def _provision_sandbox_tools(backend: SandboxBackendProtocol) -> None:
     be installed, so the user knows execute/test commands may be degraded and
     can point NOVA_SANDBOX_IMAGE at a richer image instead.
     """
-    console.print(
-        "[dim]Provisioning sandbox toolchain "
-        "(git, rg, ruff, pytest, uv, unzip)...[/dim]"
-    )
+    console.print("[dim]Provisioning sandbox toolchain (git, rg, ruff, pytest, uv, unzip)...[/dim]")
     try:
         # execute() already runs the command under `bash -c`; pass the script raw.
         result = backend.execute(_build_provision_script(), timeout=600)
@@ -225,8 +226,7 @@ def _provision_sandbox_tools(backend: SandboxBackendProtocol) -> None:
     )
     if result.exit_code != 0 or "MISSING" in summary:
         console.print(
-            "[yellow]⚠ Sandbox toolchain incomplete[/yellow] "
-            f"[dim]{summary or out[-300:]}[/dim]"
+            f"[yellow]⚠ Sandbox toolchain incomplete[/yellow] [dim]{summary or out[-300:]}[/dim]"
         )
         console.print(
             "[dim]  Some tools may be unavailable. Set NOVA_SANDBOX_IMAGE to a "
@@ -234,9 +234,7 @@ def _provision_sandbox_tools(backend: SandboxBackendProtocol) -> None:
             "for additional packages.[/dim]"
         )
     else:
-        console.print(
-            "[green]✓ Sandbox toolchain ready " "(git, rg, ruff, pytest, uv)[/green]"
-        )
+        console.print("[green]✓ Sandbox toolchain ready (git, rg, ruff, pytest, uv)[/green]")
 
 
 def _await_sandbox_ready(
@@ -290,9 +288,7 @@ def _run_sandbox_setup(backend: SandboxBackendProtocol, setup_script_path: str) 
     cwd = Path.cwd().resolve()
     home = Path.home().resolve()
     if not (script_path.is_relative_to(cwd) or script_path.is_relative_to(home)):
-        msg = (
-            f"Setup script must be under working directory or home: {setup_script_path}"
-        )
+        msg = f"Setup script must be under working directory or home: {setup_script_path}"
         raise ValueError(msg)
 
     if not script_path.exists():
@@ -363,35 +359,28 @@ def create_modal_sandbox(
     app = modal.App("deepagents-sandbox")
 
     with app.run():
-        if sandbox_id:
-            sandbox = modal.Sandbox.from_id(sandbox_id=sandbox_id)
-            should_cleanup = False
-        else:
-            sandbox = modal.Sandbox.create(app=app, workdir="/workspace")
-            should_cleanup = True
-
-            # Poll until ready
-            _await_sandbox_ready(
-                lambda: _modal_is_ready(sandbox),
-                on_timeout=lambda: sandbox.terminate(),
-            )
+        sandbox = None
+        should_cleanup = sandbox_id is None
+        try:
+            if sandbox_id:
+                sandbox = modal.Sandbox.from_id(sandbox_id=sandbox_id)
+            else:
+                sandbox = modal.Sandbox.create(app=app, workdir="/workspace")
+                _await_sandbox_ready(lambda: _modal_is_ready(sandbox))
 
             backend = ModalBackend(sandbox)
-        console.print(f"[green]✓ Modal sandbox ready: {backend.id}[/green]")
-
-        # Run setup script if provided
-        if setup_script_path:
-            _run_sandbox_setup(backend, setup_script_path)
-        try:
+            console.print(f"[green]✓ Modal sandbox ready: {backend.id}[/green]")
+            if setup_script_path:
+                _run_sandbox_setup(backend, setup_script_path)
             yield backend
         finally:
-            if should_cleanup:
+            if should_cleanup and sandbox is not None:
                 try:
                     console.print(
-                        f"[dim]Terminating Modal sandbox {sandbox_id}...[/dim]"
+                        f"[dim]Terminating Modal sandbox {getattr(sandbox, 'object_id', sandbox_id)}...[/dim]"
                     )
                     sandbox.terminate()
-                    console.print(f"[dim]✓ Modal sandbox {sandbox_id} terminated[/dim]")
+                    console.print("[dim]✓ Modal sandbox terminated[/dim]")
                 except Exception as e:
                     console.print(f"[yellow]⚠ Cleanup failed: {e}[/yellow]")
 
@@ -435,37 +424,27 @@ def create_runloop_sandbox(
 
     console.print("[yellow]Starting Runloop devbox...[/yellow]")
 
-    if sandbox_id:
-        devbox = client.devboxes.retrieve(id=sandbox_id)
-        should_cleanup = False
-    else:
-        devbox = client.devboxes.create()
-        sandbox_id = devbox.id
-        should_cleanup = True
-
-        # Poll until running (Runloop requires this)
-        _await_sandbox_ready(
-            lambda: _runloop_is_ready(client, sandbox_id),
-            on_timeout=lambda: client.devboxes.shutdown(id=sandbox_id),
-        )
-
-    console.print(f"[green]✓ Runloop devbox ready: {sandbox_id}[/green]")
-
-    backend = RunloopBackend(devbox_id=devbox.id, client=client)
-
-    # Run setup script if provided
-    if setup_script_path:
-        _run_sandbox_setup(backend, setup_script_path)
+    devbox = None
+    should_cleanup = sandbox_id is None
     try:
+        if sandbox_id:
+            devbox = client.devboxes.retrieve(id=sandbox_id)
+        else:
+            devbox = client.devboxes.create()
+            sandbox_id = devbox.id
+            _await_sandbox_ready(lambda: _runloop_is_ready(client, sandbox_id))
+
+        console.print(f"[green]✓ Runloop devbox ready: {devbox.id}[/green]")
+        backend = RunloopBackend(devbox_id=devbox.id, client=client)
+        if setup_script_path:
+            _run_sandbox_setup(backend, setup_script_path)
         yield backend
     finally:
-        if should_cleanup:
+        if should_cleanup and devbox is not None:
             try:
-                console.print(
-                    f"[dim]Shutting down Runloop devbox {sandbox_id}...[/dim]"
-                )
+                console.print(f"[dim]Shutting down Runloop devbox {devbox.id}...[/dim]")
                 client.devboxes.shutdown(id=devbox.id)
-                console.print(f"[dim]✓ Runloop devbox {sandbox_id} terminated[/dim]")
+                console.print(f"[dim]✓ Runloop devbox {devbox.id} terminated[/dim]")
             except Exception as e:
                 console.print(f"[yellow]⚠ Cleanup failed: {e}[/yellow]")
 
@@ -515,30 +494,24 @@ def create_daytona_sandbox(
     console.print("[yellow]Starting Daytona sandbox...[/yellow]")
 
     daytona = Daytona(DaytonaConfig(api_key=api_key))
-    sandbox = daytona.create()
-    sandbox_id = sandbox.id
-
-    # Poll until running (Daytona requires this)
-    _await_sandbox_ready(
-        lambda: _daytona_is_ready(sandbox),
-        on_timeout=lambda: sandbox.delete(),
-    )
-
-    backend = DaytonaBackend(sandbox)
-    console.print(f"[green]✓ Daytona sandbox ready: {backend.id}[/green]")
-
-    # Run setup script if provided
-    if setup_script_path:
-        _run_sandbox_setup(backend, setup_script_path)
+    sandbox = None
     try:
+        sandbox = daytona.create()
+        sandbox_id = sandbox.id
+        _await_sandbox_ready(lambda: _daytona_is_ready(sandbox))
+        backend = DaytonaBackend(sandbox)
+        console.print(f"[green]✓ Daytona sandbox ready: {backend.id}[/green]")
+        if setup_script_path:
+            _run_sandbox_setup(backend, setup_script_path)
         yield backend
     finally:
-        console.print(f"[dim]Deleting Daytona sandbox {sandbox_id}...[/dim]")
-        try:
-            sandbox.delete()
-            console.print(f"[dim]✓ Daytona sandbox {sandbox_id} terminated[/dim]")
-        except Exception as e:
-            console.print(f"[yellow]⚠ Cleanup failed: {e}[/yellow]")
+        if sandbox is not None:
+            console.print(f"[dim]Deleting Daytona sandbox {sandbox.id}...[/dim]")
+            try:
+                sandbox.delete()
+                console.print(f"[dim]✓ Daytona sandbox {sandbox.id} terminated[/dim]")
+            except Exception as e:
+                console.print(f"[yellow]⚠ Cleanup failed: {e}[/yellow]")
 
 
 @contextmanager
@@ -576,9 +549,7 @@ def create_langsmith_sandbox(  # noqa: PLR0912, PLR0915
 
     from novacode_cli.integrations.langsmith import LangSmithBackend
 
-    api_key = os.environ.get("LANGSMITH_API_KEY") or os.environ.get(
-        "LANGCHAIN_API_KEY"
-    )
+    api_key = os.environ.get("LANGSMITH_API_KEY") or os.environ.get("LANGCHAIN_API_KEY")
     if not api_key:
         msg = (
             "LANGSMITH_API_KEY environment variable not set. "
@@ -588,6 +559,8 @@ def create_langsmith_sandbox(  # noqa: PLR0912, PLR0915
 
     client = SandboxClient()
     sandbox = None
+    should_cleanup = sandbox_id is None
+    started_existing = False
     tunnels: list[object] = []
 
     try:
@@ -597,6 +570,7 @@ def create_langsmith_sandbox(  # noqa: PLR0912, PLR0915
             if sandbox.status == "stopped":
                 console.print("[yellow]Sandbox is stopped. Starting...[/yellow]")
                 sandbox.start()
+                started_existing = True
         else:
             console.print("[yellow]Creating LangSmith sandbox...[/yellow]")
 
@@ -628,13 +602,9 @@ def create_langsmith_sandbox(  # noqa: PLR0912, PLR0915
             if fs_capacity_bytes is not None:
                 _resource_summary_parts.append(f"{fs_capacity_bytes // (1024**3)}GB disk")
             if snapshot_id or snapshot_name:
-                _resource_summary_parts.append(
-                    f"snapshot: {snapshot_name or snapshot_id}"
-                )
+                _resource_summary_parts.append(f"snapshot: {snapshot_name or snapshot_id}")
             if _resource_summary_parts:
-                console.print(
-                    f"[dim]  {', '.join(_resource_summary_parts)}[/dim]"
-                )
+                console.print(f"[dim]  {', '.join(_resource_summary_parts)}[/dim]")
 
         sandbox_id = sandbox.name
         backend = LangSmithBackend(sandbox)
@@ -668,8 +638,7 @@ def create_langsmith_sandbox(  # noqa: PLR0912, PLR0915
                     tunnels.append(tunnel)
                     tunnels_list.append({"host": host_port, "container": container_port})
                     console.print(
-                        f"[dim]Tunnel: localhost:{host_port} -> "
-                        f"sandbox:{container_port}[/dim]"
+                        f"[dim]Tunnel: localhost:{host_port} -> sandbox:{container_port}[/dim]"
                     )
                 except Exception as e:  # noqa: BLE001
                     console.print(
@@ -686,13 +655,27 @@ def create_langsmith_sandbox(  # noqa: PLR0912, PLR0915
         yield backend
 
     finally:
-        if sandbox is not None:
+        for tunnel in reversed(tunnels):
+            try:
+                tunnel.close()
+            except Exception as e:  # noqa: BLE001
+                logger.debug("Could not close LangSmith tunnel: %s", e)
+        if sandbox is not None and should_cleanup:
             console.print(f"[dim]Deleting LangSmith sandbox {sandbox_id}...[/dim]")
             try:
                 sandbox.delete()
                 console.print("[dim]✓ LangSmith sandbox terminated[/dim]")
             except Exception as e:  # noqa: BLE001
                 console.print(f"[yellow]⚠ Cleanup failed: {e}[/yellow]")
+        elif sandbox is not None and started_existing:
+            try:
+                sandbox.stop()
+            except Exception as e:  # noqa: BLE001
+                console.print(f"[yellow]⚠ Could not stop reconnected sandbox: {e}[/yellow]")
+        try:
+            client.close()
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Could not close LangSmith client: %s", e)
 
 
 def _saved_session_ids() -> set[str]:
@@ -769,9 +752,7 @@ def _cleanup_stale_docker_containers(
 
             # Orphan: its session was never saved (or was deleted) and it isn't
             # running, so nothing will ever reconnect it. Remove immediately.
-            session_label = (getattr(cont, "labels", None) or {}).get(
-                "nova.session"
-            ) or ""
+            session_label = (getattr(cont, "labels", None) or {}).get("nova.session") or ""
             if (
                 session_label
                 and session_label not in valid_ids
@@ -885,8 +866,7 @@ def create_docker_sandbox(
         port_bindings = None
         if ports:
             port_bindings = {
-                f"{container_port}/tcp": host_port
-                for container_port, host_port in ports.items()
+                f"{container_port}/tcp": host_port for container_port, host_port in ports.items()
             }
             console.print(f"[dim]Exposing ports: {ports}[/dim]")
 
@@ -922,9 +902,7 @@ def create_docker_sandbox(
             # 409 name conflict: a container by this name already exists —
             # reuse it instead of failing.
             if name and "Conflict" in str(e):
-                console.print(
-                    f"[dim]Container name {name} in use; reconnecting to it...[/dim]"
-                )
+                console.print(f"[dim]Container name {name} in use; reconnecting to it...[/dim]")
                 cont = client.containers.get(name)
                 if cont.status != "running":
                     cont.start()
@@ -934,18 +912,24 @@ def create_docker_sandbox(
         # Wait for container to be ready
         import time
 
-        for _ in range(30):  # 30 second timeout
-            cont.reload()
-            if cont.status == "running":
-                break
-            time.sleep(1)
-        else:
-            msg = "Docker container failed to start within timeout"
-            raise RuntimeError(msg)
+        try:
+            for _ in range(30):  # 30 second timeout
+                cont.reload()
+                if cont.status == "running":
+                    break
+                time.sleep(1)
+            else:
+                msg = "Docker container failed to start within timeout"
+                raise RuntimeError(msg)
+        except BaseException:
+            with suppress(Exception):
+                cont.remove(force=True)
+            raise
 
         return cont, True
 
     container = None
+    backend = None
     created_new = False
 
     try:
@@ -993,29 +977,23 @@ def create_docker_sandbox(
         # The caller may veto persistence at exit — e.g. an immediately-exited
         # session that saved nothing would otherwise leave a freshly-created
         # container orphaned (kept "for resume" but no session references it).
-        keep = _keep_sandbox_on_exit(persist, backend)
+        keep = backend is not None and _keep_sandbox_on_exit(persist, backend)
         if container:
             if keep:
                 # Keep the container (and its writable layer + mount) so a later
                 # session can reconnect. Stop it to free resources.
                 try:
                     container.stop(timeout=10)
-                    boot_status(
-                        f"sandbox: docker {container.id[:12]} stopped (kept for resume)"
-                    )
+                    boot_status(f"sandbox: docker {container.id[:12]} stopped (kept for resume)")
                 except Exception as e:  # noqa: BLE001
                     boot_status(f"sandbox: could not stop container: {e}", "warn")
             elif created_new:
                 # Ephemeral: remove the freshly-created container on exit.
-                console.print(
-                    f"[dim]Stopping Docker container {container.id[:12]}...[/dim]"
-                )
+                console.print(f"[dim]Stopping Docker container {container.id[:12]}...[/dim]")
                 try:
                     container.stop(timeout=10)
                     container.remove()
-                    console.print(
-                        f"[dim]✓ Docker container {container.id[:12]} terminated[/dim]"
-                    )
+                    console.print(f"[dim]✓ Docker container {container.id[:12]} terminated[/dim]")
                 except Exception as e:  # noqa: BLE001
                     console.print(f"[yellow]⚠ Cleanup failed: {e}[/yellow]")
             # else: reused & not persisted — leave running as-is.
@@ -1154,8 +1132,7 @@ def create_sandbox(  # noqa: PLR0912
         reclaimed = reg.reclaim_dead_sandboxes()
         if reclaimed:
             console.print(
-                f"[dim]Reclaimed {len(reclaimed)} orphaned sandbox(es) "
-                "from a previous run.[/dim]"
+                f"[dim]Reclaimed {len(reclaimed)} orphaned sandbox(es) from a previous run.[/dim]"
             )
 
     sandbox_provider = _SANDBOX_PROVIDERS[provider]
@@ -1339,9 +1316,7 @@ class InMemorySandbox(BaseSandbox):
         for path in paths:
             content = self._files.get(path)
             if content is not None:
-                responses.append(
-                    FileDownloadResponse(path=path, content=content, error=None)
-                )
+                responses.append(FileDownloadResponse(path=path, content=content, error=None))
             else:
                 responses.append(
                     FileDownloadResponse(
@@ -1368,9 +1343,7 @@ class InMemorySandbox(BaseSandbox):
         responses: list[FileUploadResponse] = []
         for path, content in files:
             self._files[path] = content
-            responses.append(
-                FileUploadResponse(path=path, error=None, size=len(content))
-            )
+            responses.append(FileUploadResponse(path=path, error=None, size=len(content)))
         return responses
 
     async def aupload_files(

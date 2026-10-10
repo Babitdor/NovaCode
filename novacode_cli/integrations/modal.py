@@ -39,17 +39,25 @@ class ModalBackend(BaseSandbox):
     def execute(
         self,
         command: str,
+        *,
+        timeout: int | None = None,
     ) -> ExecuteResponse:
         """Execute a command in the sandbox and return ExecuteResponse.
 
         Args:
             command: Full shell command string to execute.
+            timeout: Maximum execution time in seconds. Defaults to 30 minutes.
 
         Returns:
             ExecuteResponse with combined output, exit code, and truncation flag.
         """
         # Execute command using Modal's exec API
-        process = self._sandbox.exec("bash", "-c", command, timeout=self._timeout)
+        process = self._sandbox.exec(
+            "bash",
+            "-c",
+            command,
+            timeout=self._timeout if timeout is None else timeout,
+        )
 
         # Wait for process to complete
         process.wait()

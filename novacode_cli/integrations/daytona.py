@@ -39,16 +39,21 @@ class DaytonaBackend(BaseSandbox):
     def execute(
         self,
         command: str,
+        *,
+        timeout: int | None = None,
     ) -> ExecuteResponse:
         """Execute a command in the sandbox and return ExecuteResponse.
 
         Args:
             command: Full shell command string to execute.
+            timeout: Maximum execution time in seconds. Defaults to 30 minutes.
 
         Returns:
             ExecuteResponse with combined output, exit code, optional signal, and truncation flag.
         """
-        result = self._sandbox.process.exec(command, timeout=self._timeout)
+        result = self._sandbox.process.exec(
+            command, timeout=self._timeout if timeout is None else timeout
+        )
 
         return ExecuteResponse(
             output=result.result,  # Daytona combines stdout/stderr
@@ -84,8 +89,8 @@ class DaytonaBackend(BaseSandbox):
         return [
             FileDownloadResponse(
                 path=resp.source,
-                content=resp.result,
-                error=None,  # TODO: map resp.error to FileOperationError
+                content=resp.result or b"",
+                error=resp.error,
             )
             for resp in daytona_responses
         ]

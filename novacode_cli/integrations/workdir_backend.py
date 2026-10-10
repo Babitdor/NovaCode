@@ -144,29 +144,23 @@ class WorkdirSandboxBackend(BaseSandbox):
         return self._inner.id
 
     def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+        if timeout is None:
+            return self._inner.execute(command)
         return self._inner.execute(command, timeout=timeout)
 
-    async def aexecute(
-        self, command: str, *, timeout: int | None = None
-    ) -> ExecuteResponse:
+    async def aexecute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
         return await self._inner.aexecute(command, timeout=timeout)
 
     def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
         return self._inner.download_files([self._rebase(p) for p in paths])
 
     async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
-        return await self._run_async(
-            self._inner.adownload_files([self._rebase(p) for p in paths])
-        )
+        return await self._run_async(self._inner.adownload_files([self._rebase(p) for p in paths]))
 
-    def upload_files(
-        self, files: list[tuple[str, bytes]]
-    ) -> list[FileUploadResponse]:
+    def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
         return self._inner.upload_files([(self._rebase(p), b) for p, b in files])
 
-    async def aupload_files(
-        self, files: list[tuple[str, bytes]]
-    ) -> list[FileUploadResponse]:
+    async def aupload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
         return await self._run_async(
             self._inner.aupload_files([(self._rebase(p), b) for p, b in files])
         )
@@ -222,12 +216,8 @@ class WorkdirSandboxBackend(BaseSandbox):
     def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
         return super().read(self._rebase(file_path), offset, limit)
 
-    async def aread(
-        self, file_path: str, offset: int = 0, limit: int = 2000
-    ) -> ReadResult:
-        return await self._run_async(
-            super().aread(self._rebase(file_path), offset, limit)
-        )
+    async def aread(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+        return await self._run_async(super().aread(self._rebase(file_path), offset, limit))
 
     def write(self, file_path: str, content: str) -> WriteResult:
         return super().write(self._rebase(file_path), content)
@@ -260,18 +250,11 @@ class WorkdirSandboxBackend(BaseSandbox):
         pat = shlex.quote(pattern)
         sp = shlex.quote(search_path)
 
-        rg_excludes = " ".join(
-            f"-g {shlex.quote('!' + d)}" for d in _GREP_EXCLUDE_DIRS
-        )
+        rg_excludes = " ".join(f"-g {shlex.quote('!' + d)}" for d in _GREP_EXCLUDE_DIRS)
         rg_include = f"-g {shlex.quote(glob)} " if glob else ""
-        rg = (
-            f"rg -n --no-heading -F --color=never "
-            f"{rg_include}{rg_excludes} -e {pat} -- {sp}"
-        )
+        rg = f"rg -n --no-heading -F --color=never {rg_include}{rg_excludes} -e {pat} -- {sp}"
 
-        grep_excludes = " ".join(
-            f"--exclude-dir={shlex.quote(d)}" for d in _GREP_EXCLUDE_DIRS
-        )
+        grep_excludes = " ".join(f"--exclude-dir={shlex.quote(d)}" for d in _GREP_EXCLUDE_DIRS)
         grep_include = f"--include={shlex.quote(glob)} " if glob else ""
         gr = f"grep -rHnF {grep_excludes} {grep_include}-e {pat} {sp}"
 
@@ -297,9 +280,7 @@ class WorkdirSandboxBackend(BaseSandbox):
             matches.append({"path": parts[0], "line": line_no, "text": parts[2]})
         return matches
 
-    def grep(
-        self, pattern: str, path: str | None = None, glob: str | None = None
-    ) -> GrepResult:
+    def grep(self, pattern: str, path: str | None = None, glob: str | None = None) -> GrepResult:
         # Override the base sandbox grep (plain `grep -r`, no excludes) with a
         # fast, exclusion-aware search so a project-root grep doesn't scan
         # .venv/node_modules/.git and time out.
@@ -333,9 +314,7 @@ class WorkdirSandboxBackend(BaseSandbox):
     async def agrep_raw(
         self, pattern: str, path: str | None = None, glob: str | None = None
     ) -> list[Any] | str:
-        return await self._run_async(
-            super().agrep_raw(pattern, self._rebase_opt(path), glob)
-        )
+        return await self._run_async(super().agrep_raw(pattern, self._rebase_opt(path), glob))
 
     def glob(self, pattern: str, path: str = "/") -> GlobResult:
         return super().glob(pattern, self._rebase(path))

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import posixpath
+import shlex
 import tarfile
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from typing import TYPE_CHECKING
@@ -110,39 +111,48 @@ class DockerBackend(BaseSandbox):
         """
         try:
             # Docker SDK's Container.exec_run() does NOT support a timeout
-            # parameter, so we implement timeout ourselves via a thread pool.
+            # parameter. Run the command under coreutils' timeout so the
+            # container-side process is stopped too; the thread deadline below
+            # is only a guard against a wedged Docker API call.
             timeout_sec = timeout if timeout is not None else self._timeout
-
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                fut = pool.submit(
-                    self._container.exec_run,
-                    cmd=["bash", "-c", command],
-                    stdout=True,
-                    stderr=True,
-                    stdin=False,
-                    tty=False,
-                    demux=False,  # Combine stdout and stderr
-                    workdir=self._workdir,
-                    environment=_DEFAULT_EXEC_ENV,
+            timeout_command = (
+                f"timeout --signal=TERM --kill-after=2s {max(timeout_sec, 0.001)}s "
+                f"bash -c {shlex.quote(command)}"
+            )
+            pool = ThreadPoolExecutor(max_workers=1)
+            fut = pool.submit(
+                self._container.exec_run,
+                cmd=["bash", "-c", timeout_command],
+                stdout=True,
+                stderr=True,
+                stdin=False,
+                tty=False,
+                demux=False,  # Combine stdout and stderr
+                workdir=self._workdir,
+                environment=_DEFAULT_EXEC_ENV,
+            )
+            try:
+                exec_result = fut.result(timeout=max(timeout_sec, 0.001) + 5)
+            except FuturesTimeout:
+                # A blocked SDK call must not make executor shutdown wait
+                # for its worker. The worker unwinds when the API call returns.
+                pool.shutdown(wait=False, cancel_futures=True)
+                return ExecuteResponse(
+                    output=f"Command timed out after {timeout_sec}s: {command[:200]}",
+                    exit_code=124,  # Standard timeout exit code
+                    truncated=False,
                 )
-                try:
-                    exec_result = fut.result(timeout=timeout_sec)
-                except FuturesTimeout:
-                    return ExecuteResponse(
-                        output=(
-                            f"Command timed out after {timeout_sec}s: {command[:200]}"
-                        ),
-                        exit_code=124,  # Standard timeout exit code
-                        truncated=False,
-                    )
+            except BaseException:
+                pool.shutdown(wait=False, cancel_futures=True)
+                raise
+            else:
+                pool.shutdown(wait=True)
 
             # Decode output. Use errors="replace" so a command that emits any
             # non-UTF-8 byte (binary output, latin-1 logs) still returns its real
             # output instead of crashing the whole execute() with UnicodeDecodeError.
             output = (
-                exec_result.output.decode("utf-8", errors="replace")
-                if exec_result.output
-                else ""
+                exec_result.output.decode("utf-8", errors="replace") if exec_result.output else ""
             )
 
             return ExecuteResponse(

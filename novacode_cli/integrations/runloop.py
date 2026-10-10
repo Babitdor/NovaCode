@@ -64,6 +64,8 @@ class RunloopBackend(BaseSandbox):
     def execute(
         self,
         command: str,
+        *,
+        timeout: int | None = None,
     ) -> ExecuteResponse:
         """Execute a command in the devbox and return ExecuteResponse.
 
@@ -77,7 +79,7 @@ class RunloopBackend(BaseSandbox):
         result = self._client.devboxes.execute_and_await_completion(
             devbox_id=self._devbox_id,
             command=command,
-            timeout=self._timeout,
+            timeout=self._timeout if timeout is None else timeout,
         )
         # Combine stdout and stderr
         output = result.stdout or ""

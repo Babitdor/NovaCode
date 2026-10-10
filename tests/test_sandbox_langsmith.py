@@ -197,9 +197,7 @@ class TestLangSmithFactory:
 
         # After the context manager exits, sandbox.delete() should be called
         mock_sb.delete.assert_called_once()
-        mock_client.create_sandbox.assert_called_once_with(
-            timeout=120, idle_ttl_seconds=0
-        )
+        mock_client.create_sandbox.assert_called_once_with(timeout=120, idle_ttl_seconds=0)
 
     @patch.dict(os.environ, {"LANGSMITH_API_KEY": "test-key-123"}, clear=True)
     @patch("langsmith.sandbox.SandboxClient")
@@ -221,8 +219,9 @@ class TestLangSmithFactory:
         mock_client.get_sandbox.assert_called_once_with("existing-box")
         # Should NOT have called create_sandbox since we reused
         mock_client.create_sandbox.assert_not_called()
-        # Cleanup still deletes on exit
-        mock_sb.delete.assert_called_once()
+        # Reused sandboxes belong to the caller and must survive this context.
+        mock_sb.delete.assert_not_called()
+        mock_client.close.assert_called_once()
 
 
 class TestRegistryTermination:
@@ -240,9 +239,7 @@ class TestRegistryTermination:
         }
 
         with patch.dict(os.environ, {"LANGSMITH_API_KEY": "test-key"}, clear=True):
-            with patch(
-                "langsmith.sandbox.SandboxClient"
-            ) as mock_cls:
+            with patch("langsmith.sandbox.SandboxClient") as mock_cls:
                 mock_client = MagicMock()
                 mock_cls.return_value = mock_client
                 mock_sb = MagicMock()
@@ -356,9 +353,7 @@ class TestFactoryResourceConfig:
         with create_langsmith_sandbox(vcpus=4):
             pass
 
-        mock_client.create_sandbox.assert_called_once_with(
-            timeout=120, idle_ttl_seconds=0, vcpus=4
-        )
+        mock_client.create_sandbox.assert_called_once_with(timeout=120, idle_ttl_seconds=0, vcpus=4)
 
     @patch.dict(os.environ, {"LANGSMITH_API_KEY": "test-key-123"}, clear=True)
     @patch("langsmith.sandbox.SandboxClient")
@@ -418,7 +413,10 @@ class TestFactoryResourceConfig:
             pass
 
         mock_client.create_sandbox.assert_called_once_with(
-            timeout=120, idle_ttl_seconds=0, vcpus=2, mem_bytes=8589934592,
+            timeout=120,
+            idle_ttl_seconds=0,
+            vcpus=2,
+            mem_bytes=8589934592,
             fs_capacity_bytes=107374182400,
         )
 
