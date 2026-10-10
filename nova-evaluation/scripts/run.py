@@ -22,6 +22,7 @@ BENCHMARKS = {
     "tb3": ["-d", "terminal-bench/terminal-bench@1"],  # Terminal-Bench 3.0, 74 tasks
     "tb-latest": ["-d", "terminal-bench/terminal-bench@latest"],
     "nova": ["-p", "nova-tasks"],  # local 6-task sanity set
+    "pairs": ["-p", "learning-pairs"],  # does a lesson transfer? see scripts/make_learning_pairs.py
 }
 
 
@@ -40,7 +41,19 @@ def main() -> int:
     ]  # fmt: skip
     # Harbor prints box-drawing characters; a cp1252 Windows pipe chokes on them.
     env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
-    return subprocess.call(cmd, env=env, cwd=Path(__file__).resolve().parent.parent)
+    root = Path(__file__).resolve().parent.parent
+    code = subprocess.call(cmd, env=env, cwd=root)
+    # After a learning run, hand each trial's real grade back to the learner.
+    if "learning=on" in rest and os.environ.get("NOVA_EVAL_HOME"):
+        jobs_dir = root / (rest[rest.index("-o") + 1] if "-o" in rest else f"jobs/{name}")
+        runs = sorted(p for p in jobs_dir.iterdir() if p.is_dir()) if jobs_dir.is_dir() else []
+        if runs:
+            subprocess.call(
+                [sys.executable, str(root / "scripts" / "learn_outcomes.py"), str(runs[-1]),
+                 os.environ["NOVA_EVAL_HOME"]],
+                env=env, cwd=root,
+            )  # fmt: skip
+    return code
 
 
 if __name__ == "__main__":

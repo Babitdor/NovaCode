@@ -1,0 +1,4 @@
+shipment_id,order_id,carrier,weight_kg
+S900,5001,polar,1.2
+S901,5002,ridge,4.8
+S902,5004,polar,2.1

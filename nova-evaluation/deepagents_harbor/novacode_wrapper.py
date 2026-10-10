@@ -66,7 +66,7 @@ from novacode_cli.agents.core_agent import create_agent_with_config, get_system_
 from novacode_cli.tracking.file_tracker import reset_session_tracker
 from novacode_cli.config.model_manager import ModelManager, MODEL_PRESETS, ProviderType
 from novacode_cli.config.nova_config import NovaConfig
-from novacode_cli.memory.store import DualModeStore, get_async_durable_store
+from novacode_cli.memory.store import DualModeStore
 from langgraph.store.memory import InMemoryStore
 
 def _agent_time_limit_min(environment: Any) -> int | None:  # noqa: ANN401
@@ -424,10 +424,12 @@ Files in `{current_dir}`:
 
         # Create Nova Code agent with full middleware stack.
         # auto_approve=True: evaluation runs unattended — no human-in-the-loop interrupts.
-        # Fresh in-memory store per trial: nothing one task remembers can leak
-        # into another, and concurrent trials don't share a sqlite file.
-        # A learning run instead shares NovaCode's durable store (in its own home).
-        store = await get_async_durable_store() if learning else DualModeStore(InMemoryStore())
+        # Fresh in-memory store per trial, learning or not. The store holds the
+        # tool-call counter and history that decide when a review fires; shared
+        # between trials running side by side, three tasks' calls were counted as
+        # one window. What a learning run carries forward is in files — lessons
+        # and skills under the learning home — not in this store.
+        store = DualModeStore(InMemoryStore())
         # Durations of slow calls, budget checkpoints, and where the time went.
         self._clock = TimeBudgetMiddleware(getattr(self, "_time_limit_min", None))
         Nova_agent, _ = create_agent_with_config(
@@ -523,6 +525,34 @@ Files in `{current_dir}`:
         finally:
             # Save trajectory + token counts for Harbor, timed out or not.
             self._save_trajectory(environment, instruction, result, context, usage)
+            if self._learning == "on":
+                await self._finish_learning(backend)
+
+    @staticmethod
+    async def _finish_learning(backend: HarborSandbox) -> None:
+        """Let this trial's learning review complete before the trial ends.
+
+        NovaCode reviews a task when it finishes, in the background. A trial
+        that simply returned would be torn down with that review still running,
+        and one that hit the time limit never reaches the end-of-task hook at
+        all — so the review is asked for here, then waited on. Never raises.
+        """
+        try:
+            from novacode_cli.hermes.memory_tiers import project_memory_key
+            from novacode_cli.hermes.middleware import (
+                forget_learning_middleware,
+                learning_middleware_for,
+            )
+
+            project = project_memory_key(None, backend.project_id)
+            middleware = learning_middleware_for(project)
+            if middleware is None:
+                return
+            await middleware.consolidate_session(timeout=90)  # no-op if already reviewed
+            await middleware.drain(timeout=120)
+            forget_learning_middleware(project)
+        except Exception:  # noqa: BLE001 — learning must never fail a trial
+            pass
 
     def _save_trajectory(
         self,

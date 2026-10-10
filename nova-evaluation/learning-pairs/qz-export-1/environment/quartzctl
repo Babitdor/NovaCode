@@ -1,0 +1,53 @@
+#!/bin/bash
+# quartzctl - Quartz dataset tool (invented for the learning-pairs eval).
+STATE=/var/lib/quartz/datasets
+case "$1" in
+  ""|--help|-h|help)
+    cat <<'EOF'
+quartzctl - Quartz dataset tool
+
+Usage:
+  quartzctl list                  list datasets
+  quartzctl export <name>         print a dataset as CSV
+  quartzctl import <name> <file>  create a dataset from a CSV file
+  quartzctl status                show session status
+
+Documentation: /usr/share/doc/quartz/
+EOF
+    ;;
+  list)
+    ls "$STATE" 2>/dev/null | sed 's/\.qz$//'
+    ;;
+  status)
+    if [ -f /run/quartz.armed ]; then echo "session: armed"; else echo "session: idle"; fi
+    ;;
+  arm)
+    if [ "$2" = "--token" ] && [ -n "$3" ] && [ "$3" = "$(cat /etc/quartz/arm.token)" ]; then
+      touch /run/quartz.armed
+      echo "session armed"
+    else
+      echo "QZ-4402: bad or missing token" >&2
+      exit 2
+    fi
+    ;;
+  export)
+    if [ ! -f /run/quartz.armed ]; then echo "QZ-4401: session not armed" >&2; exit 3; fi
+    if [ ! -f "$STATE/$2.qz" ]; then echo "QZ-1001: no such dataset: $2" >&2; exit 4; fi
+    base64 -d "$STATE/$2.qz" | gunzip
+    ;;
+  import)
+    name="$2"; file="$3"
+    if [ -z "$name" ] || [ ! -f "$file" ]; then echo "QZ-1002: no such file: $file" >&2; exit 4; fi
+    rows=$(( $(grep -c '' "$file") - 2 ))
+    if [ "$(tail -n 1 "$file")" != "#QZEND $rows" ]; then
+      echo "QZ-2207: missing or wrong trailer" >&2
+      exit 5
+    fi
+    head -n -1 "$file" | gzip -n -c | base64 > "$STATE/$name.qz"
+    echo "imported $name ($rows rows)"
+    ;;
+  *)
+    echo "QZ-0001: unknown command: $1" >&2
+    exit 1
+    ;;
+esac
