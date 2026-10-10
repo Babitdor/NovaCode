@@ -18,10 +18,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, os.environ.get("NOVA_BENCHMARK_ROOT", str(Path(__file__).resolve().parents[1])))
 
 
 async def measure(tabs: int, events: int, history: int) -> dict:
+    readiness_started = time.perf_counter()
     from textual.widgets import ContentSwitcher
 
     from novacode_cli import ui_events as ev
@@ -75,6 +76,7 @@ async def measure(tabs: int, events: int, history: int) -> dict:
         )
         async with app.run_test(size=(100, 35)) as pilot:
             await pilot.pause()
+            readiness_ms = (time.perf_counter() - readiness_started) * 1000
             for i in range(1, tabs):
                 scroll = TranscriptScroll(id=f"pane-bench-{i}")
                 await app.query_one("#panes", ContentSwitcher).mount(scroll)
@@ -144,6 +146,7 @@ async def measure(tabs: int, events: int, history: int) -> dict:
             running = False
             await ticker
             return {
+                "readiness_ms": readiness_ms,
                 "tabs": tabs,
                 "events": events,
                 "history": history,

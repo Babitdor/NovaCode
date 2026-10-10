@@ -9,18 +9,16 @@ wall time. With an agent, its tools and a long conversation loaded the heap is
 several times larger and the pauses scale with it — the freeze watchdog's
 multi-second stalls with ``_weakrefset._remove`` on top of the stack were this.
 
-Three changes, in order of effect:
+Two changes:
 
-* ``gc.freeze()`` once start-up is done. Modules, the agent graph, tool schemas
-  and prompts live for the whole process; freezing moves them to a permanent
-  generation the collector never walks again.
 * Higher thresholds, so young collections are fewer and a full one is rare
   (same run: no full collections, 2% of wall time, worst pause 32 ms).
 * A deliberate full collection when the terminal loses focus — the one moment
   a pause is invisible. Rate-limited, and skipped while a turn is running.
 
-Reference cycles are still collected; only the *timing* moves. Objects freed by
-reference counting (almost all of them) are unaffected.
+Reference cycles are still collected; only the *timing* moves. Freezing after
+mounting would put the app/widget cycles into a permanent generation and retain
+closed apps indefinitely. Objects freed by reference counting are unaffected.
 """
 
 from __future__ import annotations
@@ -46,8 +44,7 @@ def tune() -> bool:
     """
     if "pytest" in sys.modules:
         return False
-    gc.collect()  # so start-up garbage is not frozen along with the keepers
-    gc.freeze()
+    gc.collect()
     gc.set_threshold(*THRESHOLDS)
     return True
 

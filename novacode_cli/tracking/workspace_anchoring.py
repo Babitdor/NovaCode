@@ -5,52 +5,9 @@ and detect drift from saved sessions, ensuring the agent is grounded
 in the current filesystem reality.
 """
 
-import json
 import subprocess
-import time
 from pathlib import Path
 from typing import Any
-
-# TTL for cached git state (seconds). Within this window the previous scan
-# result is reused, avoiding repeated git subprocess calls on fast restarts.
-_GIT_CACHE_TTL = 300.0  # 5 minutes
-_GIT_CACHE_FILENAME = ".git_state_cache.json"
-
-
-def _git_cache_path(project_root: Path) -> Path:
-    """Return path to the git state cache file for this project."""
-    try:
-        nova_dir = project_root / ".nova"
-        nova_dir.mkdir(parents=True, exist_ok=True)
-        return nova_dir / _GIT_CACHE_FILENAME
-    except Exception:
-        return project_root / _GIT_CACHE_FILENAME
-
-
-def _load_git_cache(project_root: Path) -> dict[str, Any] | None:
-    """Return cached workspace state if still within TTL, else None."""
-    try:
-        cache_path = _git_cache_path(project_root)
-        if not cache_path.exists():
-            return None
-        raw = json.loads(cache_path.read_text(encoding="utf-8"))
-        if time.time() - raw.get("_cached_at", 0) < _GIT_CACHE_TTL:
-            data = {k: v for k, v in raw.items() if not k.startswith("_")}
-            return data
-    except Exception:
-        pass
-    return None
-
-
-def _save_git_cache(project_root: Path, state: dict[str, Any]) -> None:
-    """Persist git state with a timestamp for TTL checking."""
-    try:
-        cache_path = _git_cache_path(project_root)
-        payload = {**state, "_cached_at": time.time()}
-        cache_path.write_text(json.dumps(payload), encoding="utf-8")
-    except Exception:
-        pass
-
 
 def scan_workspace(project_root: Path | None = None) -> dict[str, Any]:
     """Scan current workspace state including git and filesystem.
@@ -88,11 +45,6 @@ def scan_workspace(project_root: Path | None = None) -> dict[str, Any]:
     if not git_dir.exists():
         return state
 
-    # Return cached state if still fresh — avoids ~1-5s of git subprocess calls
-    cached = _load_git_cache(project_root)
-    if cached is not None:
-        return cached
-
     state["is_git_repo"] = True
 
     # Get git status
@@ -127,7 +79,7 @@ def scan_workspace(project_root: Path | None = None) -> dict[str, Any]:
 
         # Get status --porcelain for modified/untracked files
         status_result = subprocess.run(
-            ["git", "status", "--porcelain"],
+            ["git", "status", "--porcelain", "-z"],
             cwd=project_root,
             capture_output=True,
             text=True,
@@ -140,12 +92,16 @@ def scan_workspace(project_root: Path | None = None) -> dict[str, Any]:
             modified = []
             untracked = []
 
-            for line in status_result.stdout.strip().split("\n"):
+            records = iter(status_result.stdout.split("\0"))
+            for line in records:
                 if not line:
                     continue
 
                 status_code = line[:2]
                 filename = line[3:]
+                if "R" in status_code or "C" in status_code:
+                    original = next(records, "")
+                    filename = f"{original} -> {filename}"
 
                 if status_code.startswith("??"):
                     untracked.append(filename)
@@ -160,7 +116,6 @@ def scan_workspace(project_root: Path | None = None) -> dict[str, Any]:
         # Git command failed, but that's okay
         pass
 
-    _save_git_cache(project_root, state)
     return state
 
 

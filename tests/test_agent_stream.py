@@ -1209,3 +1209,38 @@ if __name__ == "__main__":
     test_sync_task_dispatch_becomes_a_panel_row_while_it_runs()
     test_async_subagents_appear_at_dispatch_not_at_turn_end()
     print("ALL TESTS PASSED")
+
+
+def test_a_subagents_stream_is_previewed_under_its_panel_row():
+    """Text, tool calls and results of a subagent carry the row id the task tool stamped."""
+    ns = ("tools:abc",)
+    meta = {"nova_task_id": "ptc_task_1"}
+
+    class Agent:
+        async def aget_state(self, config):
+            return _State([])
+
+        async def astream(self, inp, **kw):
+            from langchain_core.messages import ToolMessage
+
+            yield (ns, "messages", (_Chunk("m1", [{"type": "text", "text": "Look"}]), meta))
+            yield (ns, "messages", (_Chunk("m1", [{"type": "text", "text": "ing"}]), meta))
+            call = {"type": "tool_call", "name": "grep", "args": {"pattern": "x"}, "id": "c1"}
+            yield (ns, "messages", (_Chunk("m1", [call]), meta))
+            result = ToolMessage("Error: bad pattern", tool_call_id="c1", name="grep")
+            yield (ns, "messages", (result, meta))
+            # Another subagent in the same namespace (a JS fan-out) stays separate.
+            other = {"nova_task_id": "ptc_task_2"}
+            yield (ns, "messages", (_Chunk("m2", [{"type": "text", "text": "Hi"}]), other))
+
+    previews = [e for e in _collect(Agent()) if isinstance(e, ev.SubagentPreview)]
+    assert [(p.task_id, p.kind) for p in previews] == [
+        ("ptc_task_1", "text"),
+        ("ptc_task_1", "text"),
+        ("ptc_task_1", "tool"),
+        ("ptc_task_1", "error"),
+        ("ptc_task_2", "text"),
+    ]
+    assert "grep" in previews[2].text
+    # Nothing a subagent says leaks into the main transcript.
+    assert not [e for e in _collect(Agent()) if isinstance(e, ev.TextDelta)]

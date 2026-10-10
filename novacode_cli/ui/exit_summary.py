@@ -55,7 +55,7 @@ async def print_exit_summary(app: Any, *, console: Console | None = None) -> Non
     if sid and manager is not None:
         try:
             meta = await asyncio.wait_for(
-                asyncio.to_thread(manager.get_session_meta, sid), timeout=2
+                asyncio.to_thread(manager.load_session_meta, sid), timeout=2
             )
             saved = bool(meta and meta.message_count and not meta.cleared)
             if saved:

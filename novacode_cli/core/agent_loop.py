@@ -53,6 +53,7 @@ from novacode_cli.core.subagent_tracking import (
     get_status_icon,
 )
 from novacode_cli.core.subagent_tasks import (
+    TASK_ID_METADATA_KEY,
     task_from_async_entry,
     task_from_custom_event,
     task_from_sync_completion,
@@ -468,6 +469,9 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
             # launch/check/update tools each write the task back into graph state,
             # so the same entry arrives repeatedly; only a status change is news.
             emitted_async: dict[str, str] = {}
+            # Subagent message ids whose text already streamed as chunks, so the
+            # whole message that follows is not previewed a second time.
+            preview_streamed: set = set()
 
             _current_stream_gen = scoped_stream(
                 agent.astream(
@@ -626,6 +630,13 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                     if not isinstance(data, tuple) or len(data) != 2:
                         continue
                     message, _metadata = data
+                    # Which panel row this subagent message belongs to (stamped by
+                    # the task tool, see core_agent._build_task_tool_with_task_id).
+                    preview_id = (
+                        _metadata.get(TASK_ID_METADATA_KEY)
+                        if is_subagent and isinstance(_metadata, dict)
+                        else None
+                    )
 
                     # Hermes runs its review/skill-refine model calls out-of-band
                     # as fire-and-forget asyncio tasks spawned from inside the
@@ -665,6 +676,7 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                             subagent_tracker=subagent_tracker,
                             agent_display_name=agent_display_name,
                             flush_text=_flush_events,
+                            preview_task_id=preview_id,
                         ):
                             yield _e
                         continue
@@ -772,6 +784,15 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                                     yield ev.TextDelta(preview_text)
                                 if text_guard.feed(text):
                                     raise _RepetitionLoop
+                            elif text and preview_id:
+                                # Chunks as they stream; a model that does not
+                                # stream delivers one whole message instead.
+                                _mid = getattr(message, "id", None)
+                                if not _is_completed_msg:
+                                    preview_streamed.add(_mid)
+                                    yield ev.SubagentPreview(preview_id, "text", text)
+                                elif _mid not in preview_streamed:
+                                    yield ev.SubagentPreview(preview_id, "text", text)
                         elif btype in ("reasoning", "thinking"):
                             if is_main_agent and not _is_completed_msg:
                                 rtext = (
@@ -796,6 +817,7 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                                 file_op_tracker=file_op_tracker,
                                 subagent_tracker=subagent_tracker,
                                 flush_text=_flush_events,
+                                preview_task_id=preview_id,
                             ):
                                 # The agent can self-engage plan mode: when it calls
                                 # enter_plan_mode, flip the session flag so the
@@ -1205,6 +1227,7 @@ async def _handle_tool_message(
     subagent_tracker: SubagentTracker,
     agent_display_name: str,
     flush_text,
+    preview_task_id: str | None = None,
 ) -> AsyncIterator[Any]:
     """Translate a ToolMessage into events (results, file ops, subagent status)."""
     tool_id = getattr(message, "id", None) or getattr(message, "tool_call_id", None)
@@ -1227,6 +1250,13 @@ async def _handle_tool_message(
         # No live SubagentActivity("tool_result") event is emitted here — per-tool
         # cards clutter the UI. Errors are still recorded above for the completion
         # summary, and the dispatched/completed events carry the overall status.
+        # The panel's preview does want each result, but only shows it on demand.
+        if preview_task_id:
+            _line = format_tool_result_preview(tool_name, tool_content, tool_status)
+            if _line:
+                yield ev.SubagentPreview(
+                    preview_task_id, "error" if _line.startswith("✗") else "result", _line
+                )
 
     # Completed subagent (task tool)
     if tool_name == "task" and tool_call_id and tool_call_id in subagent_tracker.active_subagents:
@@ -1314,6 +1344,7 @@ async def _handle_tool_call_chunk(
     file_op_tracker,
     subagent_tracker: SubagentTracker,
     flush_text,
+    preview_task_id: str | None = None,
 ) -> AsyncIterator[Any]:
     """Accumulate streamed tool-call args and emit a ToolCall when complete."""
     chunk_name = block.get("name")
@@ -1322,7 +1353,9 @@ async def _handle_tool_call_chunk(
     chunk_index = block.get("index")
 
     if chunk_index is not None:
-        buffer_key: str | int = chunk_index
+        # Scoped to the agent the chunk came from: parallel subagents each count
+        # their tool calls from index 0, and sharing a buffer interleaved their args.
+        buffer_key: Any = (preview_task_id or namespace, chunk_index)
     elif chunk_id is not None:
         buffer_key = chunk_id
     else:
@@ -1415,6 +1448,8 @@ async def _handle_tool_call_chunk(
                 parsed_args,
                 TOOL_CATEGORIES,
             )
+            if preview_task_id:
+                yield ev.SubagentPreview(preview_task_id, "tool", f"{icon} {display_str}")
 
     if buffer_name == "task" and "subagent_type" in parsed_args:
         subagent_type = parsed_args["subagent_type"]

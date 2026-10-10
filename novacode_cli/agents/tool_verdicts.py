@@ -1106,7 +1106,10 @@ class VerdictScorer:
                 questions: dict[str, dict[str, Any]] = {}
                 for candidate in batch:
                     questions.update(questions_for(candidate))
-                answers = self.client.ask(fitted.state, questions)
+                from novacode_cli.tracking.request_metrics import dispatch
+
+                with dispatch("classifier.tool_verdicts"):
+                    answers = self.client.ask(fitted.state, questions)
                 expected = {
                     f"result_{candidate.label}" for candidate in batch if not candidate.pinned
                 }

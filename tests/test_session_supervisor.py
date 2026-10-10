@@ -409,6 +409,8 @@ async def test_close_shuts_a_child_down(sup_and_child, tmp_path):
     assert closed is child
     assert not child.alive
     assert sup.get("s1") is None
+    assert child.proc.stdin.is_closing()
+    assert not child.tasks
 
 
 @pytest.mark.timeout(60)
@@ -441,6 +443,21 @@ async def test_close_all_closes_everything(sup_and_child, tmp_path):
 async def test_close_unknown_session_is_harmless(sup_and_child, tmp_path):
     sup, _ = sup_and_child()
     assert await sup.close("nope") is None
+
+
+@pytest.mark.timeout(60)
+async def test_unterminated_stderr_is_drained_and_retention_bounded(sup_and_child, tmp_path):
+    sup, coll = sup_and_child()
+    source = (
+        "import sys; sys.stderr.write('x' * (9 * 1024 * 1024)); sys.stderr.flush(); "
+        "sys.stdout.write('{\"t\":\"ready\"}\\n'); sys.stdout.flush()"
+    )
+    child = await sup.spawn(session_id="s1", name="one", worktree=tmp_path, argv=_argv(source))
+    assert await _wait_for(lambda: coll.of("exited"), timeout=20)
+    assert coll.of("ready")
+    assert child.exit_code == 0
+    assert sum(map(len, child.stderr_tail)) <= 100 * 4096
+    assert child.proc.stdin.is_closing()
 
 
 # ── capacity ─────────────────────────────────────────────────────────────────

@@ -16,6 +16,7 @@ from langchain.tools import tool
 from novacode_cli.tools._shared import (
     _BROWSER_USER_AGENTS,
     _get_fetch_session,
+    _retry_delay,
     _secure_random,
 )
 
@@ -260,6 +261,8 @@ def fetch_url(
         fetch_url("https://api.example.com/users", method="POST", data={"name": "John"})
     """
     method = method.upper()
+    timeout = max(1, min(int(timeout), 120))
+    max_retries = max(1, min(int(max_retries), 5))
 
     # Convert GitHub URLs to raw content URLs for better fetching (GET only)
     was_github_url = False
@@ -306,6 +309,7 @@ def fetch_url(
 
     for attempt in range(max_retries):
         attempts = attempt + 1
+        response: requests.Response | None = None
 
         try:
             # Build request kwargs
@@ -364,9 +368,12 @@ def fetch_url(
                 status_code = response.status_code
                 # Retry on server errors (5xx) and rate limiting (429)
                 if (status_code >= 500 or status_code == 429) and attempt < max_retries - 1:
-                    last_error = requests.exceptions.HTTPError(f"HTTP {status_code}")
-                    time.sleep(2 ** (attempt + 1))
-                    continue
+                    delay = _retry_delay(attempt, response.headers.get("Retry-After"))
+                    if delay is not None:
+                        last_error = requests.exceptions.HTTPError(f"HTTP {status_code}")
+                        response.close()
+                        time.sleep(delay)
+                        continue
                 # Try to get error details from response
                 try:
                     error_content = response.json()
@@ -386,6 +393,7 @@ def fetch_url(
             # Check content size before downloading
             content_length_hdr = response.headers.get("Content-Length")
             if content_length_hdr and int(content_length_hdr) > max_content_size:
+                response.close()
                 return {
                     "success": False,
                     "error": (
@@ -433,6 +441,7 @@ def fetch_url(
             for chunk in response.iter_content(chunk_size=8192, decode_unicode=True):
                 total_size += len(chunk)
                 if total_size > max_content_size:
+                    response.close()
                     return {
                         "success": False,
                         "error": (
@@ -501,7 +510,7 @@ def fetch_url(
         except requests.exceptions.Timeout as e:
             last_error = e
             if attempt < max_retries - 1:
-                time.sleep(2 ** (attempt + 1))  # Exponential backoff: 2s, 4s, 8s
+                time.sleep(_retry_delay(attempt) or 0)
                 continue
 
         except requests.exceptions.SSLError as e:
@@ -519,7 +528,7 @@ def fetch_url(
         except requests.exceptions.ConnectionError as e:
             last_error = e
             if attempt < max_retries - 1:
-                time.sleep(2 ** (attempt + 1))
+                time.sleep(_retry_delay(attempt) or 0)
                 continue
 
         except requests.exceptions.HTTPError as e:
@@ -528,7 +537,7 @@ def fetch_url(
                 status_code = e.response.status_code
                 if status_code >= 500 and attempt < max_retries - 1:
                     last_error = e
-                    time.sleep(2 ** (attempt + 1))
+                    time.sleep(_retry_delay(attempt) or 0)
                     continue
                 # Client errors (4xx) don't benefit from retry
                 return {
@@ -543,8 +552,11 @@ def fetch_url(
         except Exception as e:  # noqa: BLE001
             last_error = e
             if attempt < max_retries - 1:
-                time.sleep(2 ** (attempt + 1))
+                time.sleep(_retry_delay(attempt) or 0)
                 continue
+        finally:
+            if response is not None:
+                response.close()
 
     # All retries exhausted
     return {

@@ -293,8 +293,14 @@ def _extract_usage(response: Any) -> dict[str, int]:  # noqa: ANN401 — framewo
             return {
                 "input_tokens": int(meta.get("input_tokens", 0)),
                 "output_tokens": int(meta.get("output_tokens", 0)),
-                "cache_read_tokens": int(meta.get("cache_read_input_tokens", 0)),
-                "cache_creation_tokens": int(meta.get("cache_creation_input_tokens", 0)),
+                "cache_read_tokens": int(
+                    meta.get("cache_read_input_tokens", 0)
+                    or (meta.get("input_token_details") or {}).get("cache_read", 0)
+                ),
+                "cache_creation_tokens": int(
+                    meta.get("cache_creation_input_tokens", 0)
+                    or (meta.get("input_token_details") or {}).get("cache_creation", 0)
+                ),
             }
     except Exception:  # noqa: S110, BLE001 — best-effort extraction
         pass
@@ -349,18 +355,22 @@ class UsageCallbackHandler(BaseCallbackHandler):
         **kwargs: Any,  # noqa: ARG002
     ) -> None:
         """Record usage for a finished LLM run into the active tree."""
+        model = self._model_names.pop(run_id, "") or ""
         tree = _current_tree.get()
         if tree is None:
             return
         usage = _extract_usage(response)
         if not usage:
             return
-        model = self._model_names.pop(run_id, "") or ""
         if not model:
             llm_output = getattr(response, "llm_output", None) or {}
             model = str(llm_output.get("model_name") or "")
         path = _scope_stack.get() or ("turn",)
         tree.record(path, model, usage)
+
+    def on_llm_error(self, error: Any, *, run_id: Any, **kwargs: Any) -> None:
+        """Release request metadata on failed or cancelled calls."""
+        self._model_names.pop(run_id, None)
 
 
 _HANDLER = UsageCallbackHandler()

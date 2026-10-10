@@ -93,104 +93,54 @@ def find_skill_dir(name: str) -> tuple[Path, str] | None:
     return None
 
 
-#: directory -> (signature, parsed skills). Listing parses every SKILL.md's
-#: frontmatter — 11 s cold / 1.4 s warm for ~1,000 skills — and it was redone
-#: from scratch on every call (each skill invocation, each remote slash
-#: command, the /skills screen). A stat per skill answers "did anything change?"
-#: in a few milliseconds; only a changed directory is re-parsed.
-_DIR_CACHE: dict[str, tuple[frozenset, list]] = {}
-
-
-def _dir_signature(directory: Path) -> frozenset:
-    """(name, mtime, size) of every ``<skill>/SKILL.md`` directly under *directory*."""
+def _dir_signature(directory: Path) -> frozenset | None:
+    """Validate current content, including edits with restored timestamps."""
     import os
+    from pathlib import Path
+
+    from novacode_cli.computation_cache import digest
 
     sig = []
     try:
         with os.scandir(directory) as entries:
             for entry in entries:
+                path = Path(entry.path) / "SKILL.md"
                 try:
-                    st = os.stat(os.path.join(entry.path, "SKILL.md"))
-                except OSError:
+                    sig.append((entry.name, digest(path.read_bytes())))
+                except FileNotFoundError:
                     continue
-                sig.append((entry.name, st.st_mtime_ns, st.st_size))
+                except OSError:
+                    return None
     except OSError:
-        pass
+        return None
     return frozenset(sig)
 
 
 def _list_dir(directory: Path) -> list:
-    """Skills under *directory*, re-parsed only when a SKILL.md changed.
+    """Reuse validated directory listings in memory, with defensive copies."""
+    from time import perf_counter_ns
+    from typing import cast
 
-    Returns fresh dicts: callers stamp ``source``/``path`` onto them.
-    """
-    key = str(directory)
+    from deepagents.middleware.skills import _list_skills as list_skills_from_backend
+
+    from novacode_cli.backends import OptimizedFilesystemBackend as FilesystemBackend
+    from novacode_cli.computation_cache import digest, get, put, record_timing
+
+    started = perf_counter_ns()
     signature = _dir_signature(directory)
-    hit = _DIR_CACHE.get(key)
-    if hit is None or hit[0] != signature:
-        skills = _load_persisted(key, signature)
-        if skills is None:
-            from deepagents.middleware.skills import _list_skills as list_skills_from_backend
-
-            from novacode_cli.backends import OptimizedFilesystemBackend as FilesystemBackend
-
-            backend = FilesystemBackend(root_dir=key, virtual_mode=True)
-            skills = list_skills_from_backend(backend=backend, source_path=".")
-            _persist(key, signature, skills)
-        hit = (signature, skills)
-        _DIR_CACHE[key] = hit
-    return [dict(skill) for skill in hit[1]]
-
-
-#: Directories smaller than this are not worth a disk entry (and it keeps the
-#: throwaway directories tests create out of the user's cache file).
-_PERSIST_MIN_SKILLS = 50
-
-
-def _index_file() -> Path:
-    from novacode_cli.config import config
-
-    return config.HOME_DIR / "cache" / "skill_index.json"
-
-
-def _load_persisted(key: str, signature: frozenset) -> list | None:
-    """The parsed skills for *key* from the last process, if still current.
-
-    The in-memory cache dies with the process, and a cold parse of ~1,000
-    SKILL.md files is ~10 s (reading each file, then YAML). With the index on
-    disk a fresh process pays for the stats and one JSON read instead.
-    """
-    import json
-
-    try:
-        entry = json.loads(_index_file().read_text(encoding="utf-8")).get(key)
-        if entry and frozenset(tuple(item) for item in entry["sig"]) == signature:
-            return entry["skills"]
-    except (OSError, ValueError, KeyError, TypeError):
-        pass
-    return None
-
-
-def _persist(key: str, signature: frozenset, skills: list) -> None:
-    """Record *key*'s parsed skills for the next process. Best-effort."""
-    import json
-    import os
-
-    if len(skills) < _PERSIST_MIN_SKILLS:
-        return
-    path = _index_file()
-    try:
-        try:
-            index = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            index = {}
-        index[key] = {"sig": sorted(signature), "skills": skills}
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(index), encoding="utf-8")
-        os.replace(tmp, path)  # atomic: a concurrent reader never sees half a file
-    except (OSError, TypeError, ValueError):
-        pass
+    record_timing("skill_definitions", "validation", perf_counter_ns() - started)
+    key = digest(repr(("skill-listing-v1", str(directory.resolve()), sorted(signature or ()))))
+    cached = get("skill_definitions", key) if signature is not None else None
+    if cached is not None and signature == _dir_signature(directory):
+        return cast("list", cached)
+    backend = FilesystemBackend(root_dir=str(directory), virtual_mode=True)
+    started = perf_counter_ns()
+    skills = list_skills_from_backend(backend=backend, source_path=".")
+    record_timing("skill_definitions", "computation", perf_counter_ns() - started)
+    # If files changed during the parse, do not associate it with the old key.
+    if signature is not None and signature == _dir_signature(directory):
+        put("skill_definitions", key, skills)
+    return skills
 
 
 def list_skills(
@@ -233,7 +183,6 @@ def list_skills(
     """
     # Lazy deepagents imports (see module docstring): only needed when actually
     # listing skills, not at import time.
-    from deepagents.middleware.skills import SkillMetadata
 
     all_skills: dict[str, SkillMetadata] = {}
 

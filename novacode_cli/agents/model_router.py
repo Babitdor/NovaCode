@@ -221,7 +221,11 @@ class ModelRouter:
 
             client = self._decision_client()
             if isinstance(client, OpenAIDecisionsClient):
-                return self._interpret(client.ask_route({"messages": state}, criteria), criteria)
+                from novacode_cli.tracking.request_metrics import dispatch
+
+                with dispatch("router"):
+                    response = client.ask_route({"messages": state}, criteria)
+                    return self._interpret(response, criteria)
             # Imported here rather than at module scope so a missing dependency
             # degrades to "routing unavailable" instead of breaking the import of
             # every module that touches the agent.
@@ -234,7 +238,10 @@ class ModelRouter:
                 ),
                 criteria=criteria,
             )
-            response = self._decision_client().ask({"messages": state}, {"route": question})
+            from novacode_cli.tracking.request_metrics import dispatch
+
+            with dispatch("router"):
+                response = self._decision_client().ask({"messages": state}, {"route": question})
         except Exception as exc:
             logger.warning("Model routing decision failed; using the default route", exc_info=True)
             return self._fallback(f"classifier failed: {type(exc).__name__}")

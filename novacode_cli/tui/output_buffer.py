@@ -39,12 +39,21 @@ class OutputTail:
                 self._chunks.appendleft(oldest[removed:])
             self._truncated = True
 
-    def drain(self) -> str:
-        """Return the bounded text, with an explicit display truncation marker."""
+    def peek(self) -> str:
+        """Read the bounded display tail without consuming it."""
         text = "".join(self._chunks)
         if self._truncated:
             text = "[live output truncated; showing recent output]\n" + text
+        return text
+
+    def drain(self) -> str:
+        """Return the bounded text, with an explicit display truncation marker."""
+        text = self.peek()
+        self.clear()
+        return text
+
+    def clear(self) -> None:
+        """Release chunks without allocating a joined string."""
         self._chunks.clear()
         self._size = 0
         self._truncated = False
-        return text

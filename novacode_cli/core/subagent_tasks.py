@@ -22,7 +22,7 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from rich.text import Text
 
@@ -33,6 +33,9 @@ if TYPE_CHECKING:
 #: (``langchain_quickjs._subagent.SUBAGENT_STREAM_EVENT_TYPE``). Compared as a
 #: literal so this module never needs the package imported to be testable.
 CUSTOM_EVENT_TYPE = "subagent"
+
+#: Run-config metadata key naming the panel row a subagent's stream belongs to.
+TASK_ID_METADATA_KEY = "nova_task_id"
 
 #: The phase id async (remote) tasks are grouped under.
 ASYNC_PHASE = "async"
@@ -50,6 +53,7 @@ MODEL_COLUMN = 18
 TIME_COLUMN = 8
 MAX_ROWS = 200
 MAX_PHASES = 20
+MAX_PREVIEW_ENTRIES = 400
 
 #: Layout thresholds, named so the intent survives a later tweak.
 WIDE_PANEL = 70  # a pane this wide can afford a real model column
@@ -394,6 +398,8 @@ class PanelBody:
     lines: list[Text]
     row_phases: list[str | None]
     row_tasks: list[str | None]
+    #: The cell the task table starts at: a click left of it is on the phases pane.
+    task_column: int = 0
 
     def phase_at(self, index: int) -> str | None:
         """The phase for line *index*, or ``None`` if it is not a phase row."""
@@ -463,10 +469,10 @@ def panel_body(
         line = Text()
         if left_width:
             pane = left[index] if index < len(left) else None
-            # A line can only be one thing: the phase pane wins, because that is
-            # the row the user aimed at.
+            # A line holds a phase and a task side by side; `task_column` tells
+            # a click which of the two it landed on.
             row_phases.append(left_phases[index] if index < len(left_phases) else None)
-            row_tasks.append(None)
+            row_tasks.append(right_tasks[index] if index < len(right_tasks) else None)
             line.append_text(_pad(pane, left_width))
             line.append("│", style="dim")
         else:
@@ -475,7 +481,12 @@ def panel_body(
         if index < len(right):
             line.append_text(right[index])
         lines.append(line)
-    return PanelBody(lines=lines, row_phases=row_phases, row_tasks=row_tasks)
+    return PanelBody(
+        lines=lines,
+        row_phases=row_phases,
+        row_tasks=row_tasks,
+        task_column=left_width + 1 if left_width else 0,
+    )
 
 
 def panel_lines(
@@ -488,6 +499,112 @@ def panel_lines(
 ) -> list[Text]:
     """Just the rendered lines of :func:`panel_body`."""
     return panel_body(tasks, width=width, now=now, phase_order=phase_order, selected=selected).lines
+
+
+# ── preview: what one row is doing ───────────────────────────────────────────
+
+#: One preview item: ``(kind, text)`` with kind "text" | "tool" | "result" | "error".
+PreviewEntry = tuple[str, str]
+
+
+def append_preview(entries: list[PreviewEntry], kind: str, text: str) -> None:
+    """Add one item, joining streamed text onto the text before it."""
+    if kind == "text" and entries and entries[-1][0] == "text":
+        entries[-1] = ("text", entries[-1][1] + text)
+    else:
+        entries.append((kind, text))
+    del entries[:-MAX_PREVIEW_ENTRIES]
+
+
+def preview_renderable(
+    entries: list[PreviewEntry],
+    *,
+    markdown: Any = None,
+    cache: dict[PreviewEntry, Any] | None = None,
+) -> Any:
+    """The preview body: prose as Markdown, each tool call with its result under it.
+
+    A subagent writes Markdown (headings, lists, code fences), so its prose is
+    rendered as such rather than shown as source. Tool calls are one marked line
+    each, with the result hung beneath, and a blank line separates prose from a
+    run of tool calls so the two read as blocks.
+
+    ``markdown`` is the Markdown class to build prose with (the TUI passes its
+    caching one). ``cache`` keeps each entry's renderable between calls: a
+    preview is rebuilt on every update, and only the entry still streaming has
+    changed.
+    """
+    from rich.console import Group
+
+    if markdown is None:
+        from rich.markdown import Markdown as markdown  # noqa: N813
+
+    parts: list[Any] = []
+    previous = ""
+    for entry in entries:
+        kind, text = entry
+        body = text.strip()
+        if not body:
+            continue
+        block = "prose" if kind == "text" else "tools"
+        if previous and block != previous or block == previous == "prose":
+            parts.append(Text(""))
+        previous = block
+        part = cache.get(entry) if cache is not None else None
+        if part is None:
+            if kind == "text":
+                part = markdown(body)
+            elif kind == "tool":
+                part = Text.assemble(("▸ ", "cyan"), (body, "bold cyan"))
+            else:
+                part = Text.assemble(("  ⎿ ", "dim"), (body, "red" if kind == "error" else "dim"))
+            if cache is not None:
+                cache[entry] = part
+        parts.append(part)
+    if cache is not None and len(cache) > 2 * MAX_PREVIEW_ENTRIES:
+        cache.clear()  # superseded streaming prefixes; the next call refills it
+    return Group(*parts)
+
+
+def remote_preview(messages: object) -> list[PreviewEntry]:
+    """Preview entries from an async agent's thread messages.
+
+    They arrive from the server as plain dicts, and only as whole messages, so
+    this is rebuilt from the full list on every poll rather than appended to.
+    """
+    from novacode_cli.ui.ui_elements import format_tool_display, format_tool_result_preview
+
+    entries: list[PreviewEntry] = []
+    for message in messages if isinstance(messages, list) else []:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if isinstance(content, list):
+            content = "".join(
+                part if isinstance(part, str) else str(part.get("text") or "")
+                for part in content
+                if isinstance(part, (str, dict))
+            )
+        content = str(content or "")
+        kind = message.get("type")
+        if kind == "human":
+            entries.append(("result", f"task: {content}"))
+        elif kind == "ai":
+            if content.strip():
+                entries.append(("text", content))
+            for call in message.get("tool_calls") or []:
+                if isinstance(call, dict):
+                    name = str(call.get("name") or "tool")
+                    args = call.get("args")
+                    entries.append(
+                        ("tool", format_tool_display(name, args if isinstance(args, dict) else {}))
+                    )
+        elif kind == "tool":
+            status = str(message.get("status") or "success")
+            line = format_tool_result_preview(str(message.get("name") or ""), content, status)
+            if line:
+                entries.append(("error" if line.startswith("✗") else "result", line))
+    return entries[-MAX_PREVIEW_ENTRIES:]
 
 
 def _ordered_phases(tasks: list[SubagentTask], phase_order: list[str] | None) -> list[str]:

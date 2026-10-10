@@ -53,7 +53,7 @@ def _get_server(session_state: SessionState, *, port: int = _DEFAULT_PORT) -> We
 
         queue = getattr(session_state, "_remote_message_queue", None)
         if queue is None:
-            queue = asyncio.Queue()
+            queue = asyncio.Queue(maxsize=100)
             session_state._remote_message_queue = queue
         server = WebhookServer(queue, store=get_durable_store(), port=port)
         session_state._webhook_server = server

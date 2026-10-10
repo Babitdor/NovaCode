@@ -20,6 +20,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _DEBUG_LOG = os.path.expanduser("~/.nova/remote_debug.log")
+_MAX_ACTIVE_REMOTE_TASKS = 16
 
 
 async def _debug_log(line: str) -> None:
@@ -419,6 +420,17 @@ async def remote_message_processor(
                     logger.error(f"Error handling remote steer: {ex}")
                 finally:
                     queue.task_done()
+                continue
+
+            if len(active_tasks) >= _MAX_ACTIVE_REMOTE_TASKS:
+                try:
+                    await remote_msg.reply_fn(
+                        "⏳ Nova is handling several remote requests already. "
+                        "Please send this request again in a moment."
+                    )
+                except Exception:
+                    pass
+                queue.task_done()
                 continue
 
             # Start the run in a background task

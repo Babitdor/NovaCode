@@ -210,23 +210,23 @@ async def wait_healthy(
     deadline = time.monotonic() + timeout
     health_url = f"{url}/ok"
     last_status: int | None = None
-    while time.monotonic() < deadline:
-        if process is not None and process.poll() is not None:
-            msg = (
-                f"agent server exited during startup (code {process.returncode})"
-                f"{_log_tail(read_log)}"
-            )
-            raise RuntimeError(msg)
-        try:
-            async with httpx.AsyncClient(timeout=2.0) as client:
+    async with httpx.AsyncClient(timeout=2.0) as client:
+        while time.monotonic() < deadline:
+            if process is not None and process.poll() is not None:
+                msg = (
+                    f"agent server exited during startup (code {process.returncode})"
+                    f"{_log_tail(read_log)}"
+                )
+                raise RuntimeError(msg)
+            try:
                 response = await client.get(health_url)
-        except (httpx.TransportError, httpx.TimeoutException, OSError):
+            except (httpx.TransportError, httpx.TimeoutException, OSError):
+                await asyncio.sleep(HEALTH_POLL_INTERVAL)
+                continue
+            if response.status_code == HTTP_OK:
+                return
+            last_status = response.status_code
             await asyncio.sleep(HEALTH_POLL_INTERVAL)
-            continue
-        if response.status_code == HTTP_OK:
-            return
-        last_status = response.status_code
-        await asyncio.sleep(HEALTH_POLL_INTERVAL)
     detail = f" (last status {last_status})" if last_status is not None else ""
     msg = f"agent server did not become healthy within {timeout:g}s{detail}{_log_tail(read_log)}"
     raise RuntimeError(msg)
@@ -251,22 +251,22 @@ async def wait_graph_ready(
     deadline = time.monotonic() + timeout
     graph_url = f"{url}/assistants/{quote(graph, safe='')}/graph"
     last_status: int | None = None
-    while time.monotonic() < deadline:
-        if process is not None and process.poll() is not None:
-            msg = f"agent server exited before graph '{graph}' was ready{_log_tail(read_log)}"
-            raise RuntimeError(msg)
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        while time.monotonic() < deadline:
+            if process is not None and process.poll() is not None:
+                msg = f"agent server exited before graph '{graph}' was ready{_log_tail(read_log)}"
+                raise RuntimeError(msg)
+            try:
                 response = await client.get(graph_url)
-        except (httpx.TransportError, httpx.TimeoutException, OSError):
+            except (httpx.TransportError, httpx.TimeoutException, OSError):
+                await asyncio.sleep(HEALTH_POLL_INTERVAL)
+                continue
+            if response.status_code == HTTP_OK:
+                return
+            # Retry rather than fail: a 404 here means the server has not compiled
+            # the graph yet, which is exactly what this function exists to wait for.
+            last_status = response.status_code
             await asyncio.sleep(HEALTH_POLL_INTERVAL)
-            continue
-        if response.status_code == HTTP_OK:
-            return
-        # Retry rather than fail: a 404 here means the server has not compiled
-        # the graph yet, which is exactly what this function exists to wait for.
-        last_status = response.status_code
-        await asyncio.sleep(HEALTH_POLL_INTERVAL)
     detail = f" (last status {last_status})" if last_status is not None else ""
     msg = f"graph '{graph}' did not become ready within {timeout:g}s{detail}{_log_tail(read_log)}"
     raise RuntimeError(msg)
@@ -544,7 +544,7 @@ class AgentServerProcess:
 
     async def __aexit__(self, *args: object) -> None:
         """Stop the server on the way out."""
-        self.stop()
+        await asyncio.to_thread(self.stop)
 
 
 # ── the session-level policy ────────────────────────────────────────────────

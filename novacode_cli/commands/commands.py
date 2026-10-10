@@ -668,7 +668,7 @@ async def _handle_remote_command(cmd_args: str | None, session_state, console) -
     if session_state._remote_bridge_manager is None:
         queue = getattr(session_state, "_remote_message_queue", None)
         if queue is None:
-            queue = asyncio.Queue()
+            queue = asyncio.Queue(maxsize=100)
             session_state._remote_message_queue = queue
         session_state._remote_bridge_manager = RemoteBridgeManager(queue)
 

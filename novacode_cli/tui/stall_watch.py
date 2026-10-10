@@ -13,19 +13,22 @@ Cost when nothing is stuck: one ``call_soon_threadsafe`` every 0.25s.
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 import threading
 import time
 import traceback
+from collections import deque
 from datetime import datetime
 from pathlib import Path
-
-import os
 
 LOG_PATH = Path(os.environ.get("NOVA_FREEZE_LOG") or Path.home() / ".nova" / "logs" / "freeze.log")
 _MAX_LOG_BYTES = 2_000_000
 _PING_EVERY = 0.25
 _SAMPLE_EVERY = 1.0
+_MAX_STALLS = 32
+_MAX_SAMPLES = 4
+_MAX_SAMPLE_CHARS = 16_384
 
 
 class StallWatch:
@@ -44,7 +47,7 @@ class StallWatch:
         self._loop_thread = threading.get_ident()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self.stalls: list[tuple[float, list[str]]] = []  # (seconds, stack samples)
+        self.stalls: deque[tuple[float, list[str]]] = deque(maxlen=_MAX_STALLS)
 
     def start(self) -> None:
         # Tests stall the loop on purpose; don't fill the user's log with them.
@@ -77,13 +80,14 @@ class StallWatch:
             samples: list[str] = []
             while not answered.wait(0 if not samples else _SAMPLE_EVERY):
                 stack = self._sample()
-                if stack not in samples:
-                    samples.append(stack)
+                if len(samples) < _MAX_SAMPLES and stack not in samples:
+                    samples.append(stack[-_MAX_SAMPLE_CHARS:])
                 if self._stop.is_set():
                     return
             self._record(time.monotonic() - started, samples)
 
     def _record(self, seconds: float, samples: list[str]) -> None:
+        samples = [sample[-_MAX_SAMPLE_CHARS:] for sample in samples[-_MAX_SAMPLES:]]
         self.stalls.append((seconds, samples))
         try:
             self._log_path.parent.mkdir(parents=True, exist_ok=True)

@@ -50,6 +50,7 @@ class _Emitter:
     """
 
     def __init__(self, fd: int | None) -> None:
+        self._owns_fd = fd is None
         # The caller's dup can fail (it returns None), and falling back to
         # `sys.stdout` is not safe: a stdio MCP server closes that object during
         # agent build, after which every frame we write vanishes and the parent
@@ -89,6 +90,15 @@ class _Emitter:
         except (OSError, ValueError):
             # Parent went away mid-write; stop trying so shutdown stays quiet.
             self.closed = True
+
+    def close(self) -> None:
+        """Release our fallback descriptor; the caller retains supplied ones."""
+        with self._lock:
+            self.closed = True
+            if self._owns_fd and self._fd is not None:
+                with contextlib.suppress(OSError):
+                    os.close(self._fd)
+                self._fd = None
 
 
 class SessionWorker:
@@ -456,4 +466,7 @@ async def run_session_worker(
         model_name=model_name,
         session_manager=session_manager,
     )
-    return await worker.run()
+    try:
+        return await worker.run()
+    finally:
+        worker._emit.close()

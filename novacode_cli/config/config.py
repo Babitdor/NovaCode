@@ -42,8 +42,8 @@ from rich.text import Text
 
 from novacode_cli._version import __version__
 from novacode_cli.brand import (
+    format_version_banner as format_version_banner,
     TAGLINE,
-    WORDMARK_WIDTH,
     art_for,
     compact_mark,
     get_accent_hex,
@@ -285,15 +285,6 @@ TOOL_ICONS = {
 config = {"recursion_limit": 1000}
 
 
-def format_version_banner(version: str) -> str:
-    """Return the styled version banner for ``nova --version``.
-
-    Uses the shared wordmark from :mod:`novacode_cli.brand` — this used to
-    inline a fourth, differently-sized copy of the logo (missing the braille
-    half entirely and stamped with its own version row).
-    """
-    caption = f"NOVA · {TAGLINE} · v{version}"
-    return f"\n{wordmark()}\n{caption.center(WORDMARK_WIDTH)}\n"
 
 
 # Rich console instance
@@ -657,16 +648,11 @@ def boot_status(message: str, level: str = "info") -> None:
     console.print(Text(f"  {glyph} {message}", style=style))
 
 
-# Cache for project skills directories with TTL
-_project_skills_cache: dict[str, tuple[float, list[Path]]] = {}
-_PROJECT_SKILLS_CACHE_TTL = 30.0  # seconds
-
-
 def find_project_skills(project_root: Path) -> list[Path]:
     """Find project-specific skills directories.
 
     Checks .agents/, .claude/, and .nova/ skills directories.
-    Uses a cache with TTL to avoid repeated filesystem scans.
+    Checks current directories so additions and removals take effect immediately.
 
     Args:
         project_root: Path to the project root directory.
@@ -674,16 +660,6 @@ def find_project_skills(project_root: Path) -> list[Path]:
     Returns:
         List of skills directory paths that exist.
     """
-    import time
-
-    # Check cache first
-    cache_key = str(project_root)
-    now = time.time()
-    if cache_key in _project_skills_cache:
-        cached_time, cached_value = _project_skills_cache[cache_key]
-        if now - cached_time < _PROJECT_SKILLS_CACHE_TTL:
-            return cached_value
-
     skills_dirs = []
 
     # The official Skills CLI stores shared project skills here.
@@ -700,9 +676,6 @@ def find_project_skills(project_root: Path) -> list[Path]:
     deepagents_skills = project_root / ".nova" / "skills"
     if deepagents_skills.exists() and deepagents_skills.is_dir():
         skills_dirs.append(deepagents_skills)
-
-    # Cache the result
-    _project_skills_cache[cache_key] = (now, skills_dirs)
 
     return skills_dirs
 

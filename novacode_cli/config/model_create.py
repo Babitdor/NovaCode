@@ -132,6 +132,16 @@ def opencode_session_id() -> str:
 
 
 def build_chat_model(provider: str, model_name: str) -> BaseChatModel:
+    """Build a provider model, attaching local diagnostics only when requested."""
+    model = _build_chat_model(provider, model_name)
+    if os.environ.get("NOVA_LOCAL_METRICS") == "1":
+        from novacode_cli.tracking.local_metrics import callbacks
+
+        model.callbacks = [*(getattr(model, "callbacks", None) or []), *callbacks()]
+    return model
+
+
+def _build_chat_model(provider: str, model_name: str) -> BaseChatModel:
     """THE model constructor — every ChatX(...) in Nova is built here.
 
     One deep module for provider construction: reasoning-effort / thinking

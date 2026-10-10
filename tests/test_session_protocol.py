@@ -75,6 +75,9 @@ def _sample(name: str):
             error="'charmap' codec can't decode byte 0x8f",
             model="deepseek-v4.1-flash",
         ),
+        "SubagentPreview": lambda: ev.SubagentPreview(
+            task_id="ptc_task_ab12cd34", kind="tool", text="grep(docling)"
+        ),
         "UsageUpdate": lambda: ev.UsageUpdate(
             input_tokens=10, output_tokens=2, cache_read_tokens=1, cache_creation_tokens=4
         ),

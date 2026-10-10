@@ -100,51 +100,13 @@ def _text(msg: Any) -> str:
     return str(content)
 
 
-#: Parsed skill lists from earlier processes, keyed by sources + file signature.
-#: Listing parses every SKILL.md (2.4 s warm, ~10 s on a cold disk for ~1,000
-#: skills) and the first model call of a session waits for it. The signature
-#: already says whether anything changed, so an unchanged tree is one JSON read.
-_DISK_CACHE_ENTRIES = 4
-
-
-def _disk_cache_file() -> Path:
-    from novacode_cli.config import config
-
-    return config.HOME_DIR / "cache" / "skills_listing.json"
-
-
-def _disk_get(key: str) -> list | None:
-    import json
-
-    try:
-        return json.loads(_disk_cache_file().read_text(encoding="utf-8")).get(key)
-    except (OSError, ValueError, AttributeError):
-        return None
+def _disk_get(_key: str) -> list | None:
+    """Legacy disk listings are untrusted; always parse current source."""
+    return None
 
 
 def _disk_put(key: str, skills: list) -> None:
-    """Best-effort; a missing cache only costs the parse it would have saved."""
-    import json
-    import os
-
-    if len(skills) < 50:  # small trees parse instantly (and tests use tiny ones)
-        return
-    path = _disk_cache_file()
-    try:
-        try:
-            entries = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            entries = {}
-        entries.pop(key, None)
-        entries[key] = skills
-        while len(entries) > _DISK_CACHE_ENTRIES:  # dicts keep insertion order
-            entries.pop(next(iter(entries)))
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(entries), encoding="utf-8")
-        os.replace(tmp, path)
-    except (OSError, TypeError, ValueError):
-        pass
+    """Instruction-derived listings are no longer persisted."""
 
 
 class _SkillsSearchArgs(BaseModel):
@@ -192,7 +154,7 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
         )
         self._watch_dirs = [Path(d) for d in watch_dirs]
         self._library_names = tuple(library_names) if library_names is not None else None
-        self._last_signature: frozenset[tuple[str, float]] | None = None
+        self._last_signature: frozenset[tuple[str, str]] | None = None
         self._listing_chars = listing_chars
         self._usage: dict[str, int] | None = None  # read once, then frozen
         self._skills: list[SkillMetadata] = []
@@ -624,8 +586,8 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
 
     # ── refresh when skill files change ────────────────────────────────────
 
-    def _compute_signature(self) -> frozenset[tuple[str, float]]:
-        """A (path, mtime) frozenset over watched ``*/SKILL.md`` files + prefs.
+    def _compute_signature(self) -> frozenset[tuple[str, str]]:
+        """A (path, content digest) set over watched skills and preferences.
 
         The skill-curation preference files are folded in so toggling a skill
         on/off (which only rewrites ``skills_prefs.json``) forces a re-list on
@@ -633,20 +595,18 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
         """
         import os
 
+        from novacode_cli.computation_cache import digest
         from novacode_cli.skills.skills_prefs import prefs_signature
 
-        # os.scandir + os.stat, not Path.glob + Path.stat: this runs before
-        # every turn over ~1,000 skills, and pathlib's per-entry object churn
-        # made it the slowest part of the check (160 ms vs ~40 ms).
-        sig: set[tuple[str, float]] = set()
+        # Read current bytes: metadata alone cannot detect restored timestamps.
+        sig: set[tuple[str, str]] = set()
         for directory in self._watch_dirs:
             if self._library_names is not None:
                 for name in self._library_names:
                     skill_md = str(directory / name / "SKILL.md")
                     try:
-                        stat = os.stat(skill_md)
-                        sig.add((skill_md, (stat.st_mtime_ns, stat.st_size)))
-                    except OSError:
+                        sig.add((skill_md, digest(Path(skill_md).read_bytes())))
+                    except FileNotFoundError:
                         continue
                 continue
             try:
@@ -654,9 +614,8 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
                     for entry in entries:
                         skill_md = os.path.join(entry.path, "SKILL.md")
                         try:
-                            stat = os.stat(skill_md)
-                            sig.add((skill_md, (stat.st_mtime_ns, stat.st_size)))
-                        except OSError:
+                            sig.add((skill_md, digest(Path(skill_md).read_bytes())))
+                        except FileNotFoundError:
                             continue
             except OSError:
                 continue
@@ -669,7 +628,7 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
         try:
             current = self._compute_signature()
         except Exception:  # noqa: BLE001 - best-effort; never break a turn
-            return False
+            return True
         changed = current != self._last_signature
         self._last_signature = current
         return changed

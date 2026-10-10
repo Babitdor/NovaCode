@@ -7,6 +7,8 @@ These commands are registered with the CLI via main.py:
 - Nova mcp install <url>
 """
 
+from novacode_cli.cli_args import setup_mcp_parser
+
 import argparse
 import sys
 import urllib.request
@@ -733,105 +735,6 @@ def _auto_install_package(package: str) -> None:
                 console.print(f"[yellow]Warning: {e}[/yellow]")
 
 
-def setup_mcp_parser(subparsers: Any) -> argparse.ArgumentParser:
-    """Setup the MCP subcommand parser with all its subcommands.
-
-    Args:
-        subparsers: The subparsers object from argparse
-
-    Returns:
-        The MCP parser instance
-    """
-    mcp_parser = subparsers.add_parser(
-        "mcp",
-        help="Manage MCP (Model Context Protocol) servers",
-        description="Manage MCP servers - add, remove, list, and install servers",
-    )
-    mcp_subparsers = mcp_parser.add_subparsers(
-        dest="mcp_command",
-        help="MCP command",
-    )
-
-    # MCP add
-    add_parser = mcp_subparsers.add_parser(
-        "add",
-        help="Add an MCP server",
-        description="Add or update an MCP server configuration",
-    )
-    add_parser.add_argument("name", help="Server name/identifier")
-    add_parser.add_argument(
-        "--transport",
-        required=True,
-        choices=["http", "stdio"],
-        help="Transport type (http or stdio)",
-    )
-    add_parser.add_argument(
-        "--url",
-        help="Server URL (required for HTTP transport)",
-    )
-    add_parser.add_argument(
-        "--command",
-        help="Command to execute (required for stdio transport)",
-    )
-    add_parser.add_argument(
-        "--args",
-        nargs="*",
-        help="Command arguments (for stdio transport)",
-    )
-    add_parser.add_argument(
-        "--env",
-        action="append",
-        help="Environment variables in KEY=VALUE format (can be specified multiple times)",
-    )
-    add_parser.add_argument(
-        "--description",
-        help="Server description",
-    )
-
-    # MCP remove
-    remove_parser = mcp_subparsers.add_parser(
-        "remove",
-        help="Remove an MCP server",
-        description="Remove an MCP server configuration",
-    )
-    remove_parser.add_argument("name", help="Server name/identifier to remove")
-
-    # MCP enable
-    enable_parser = mcp_subparsers.add_parser(
-        "enable",
-        help="Enable a configured MCP server",
-        description="Enable a configured MCP server configuration",
-    )
-    enable_parser.add_argument("name", help="Server name/identifier to enable")
-
-    # MCP disable
-    disable_parser = mcp_subparsers.add_parser(
-        "disable",
-        help="Disable a configured MCP server",
-        description="Disable a configured MCP server configuration",
-    )
-    disable_parser.add_argument("name", help="Server name/identifier to disable")
-
-    # MCP list
-    mcp_subparsers.add_parser(
-        "list",
-        help="List all MCP servers",
-        description="List all configured MCP servers",
-    )
-
-    # MCP install
-    install_parser = mcp_subparsers.add_parser(
-        "install",
-        help="Install an MCP server from URL",
-        description="Auto-discover and install an MCP server from a URL",
-    )
-    install_parser.add_argument("url", help="URL to discover the MCP server from")
-    install_parser.add_argument(
-        "--name",
-        help="Custom name for the server (auto-detected if not provided)",
-    )
-
-    return mcp_parser
 
 
 async def execute_bash_command_async(command: str) -> None:

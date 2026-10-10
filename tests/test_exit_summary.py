@@ -52,7 +52,7 @@ async def test_exit_checks_root_saved_metadata_and_prints_resume_command():
     app = SimpleNamespace(
         _root_pane=SimpleNamespace(state={"session_state": root_state}, title="root"),
         session_state=SimpleNamespace(session_id="visible-child"),
-        session_manager=SimpleNamespace(get_session_meta=get_meta),
+        session_manager=SimpleNamespace(load_session_meta=get_meta),
     )
     output = StringIO()
     await print_exit_summary(app, console=Console(file=output, width=100, color_system=None))
@@ -66,7 +66,7 @@ async def test_exit_read_error_never_claims_session_saved():
 
     app = SimpleNamespace(
         session_state=SimpleNamespace(session_id="s"),
-        session_manager=SimpleNamespace(get_session_meta=Mock(side_effect=OSError("unavailable"))),
+        session_manager=SimpleNamespace(load_session_meta=Mock(side_effect=OSError("unavailable"))),
     )
     output = StringIO()
     await print_exit_summary(app, console=Console(file=output, width=100, color_system=None))
@@ -116,3 +116,15 @@ async def test_tui_exit_prints_after_terminal_restore_and_save_only_on_normal_ex
     else:
         await app_module.run_tui(**kwargs)
         assert sequence == ["terminal restored", "saved", "exit summary"]
+
+
+def test_exit_summary_calls_a_method_the_session_manager_has():
+    """A mocked manager accepted any name, so a misspelt lookup hid behind the
+    summary's own error handling and every exit read "No saved conversation"."""
+    import inspect
+
+    from novacode_cli.session.session_persistence import SessionManager
+    from novacode_cli.ui import exit_summary
+
+    assert callable(SessionManager.load_session_meta)
+    assert "manager.load_session_meta" in inspect.getsource(exit_summary.print_exit_summary)

@@ -23,6 +23,7 @@ from novacode_cli.core.autonomous_loop import run_with_goal
 from novacode_cli.file_ops import get_session_file_op_tracker
 from novacode_cli.input_utils import ImageTracker
 from novacode_cli.ui import status_phrases
+from novacode_cli.ui.stream_preview import ConsoleStreamPreview
 from novacode_cli.core.input_preparation import (
     build_agent_config,
     get_agent_display_name,
@@ -317,28 +318,6 @@ async def execute_task(  # type: ignore
 
 
 
-    try:
-
-        import logging as _vixie_logging
-
-
-
-        _vixie_logging.getLogger("vixie").info("Setting Vixie state to THINKING")
-
-        await vixie_set_thinking()
-
-        _vixie_logging.getLogger("vixie").info("Vixie state set to THINKING complete")
-
-    except Exception as e:
-
-        import logging as _logging
-
-
-
-        _logging.getLogger("vixie").warning(f"Failed to set Vixie state: {e}")
-
-
-
     status = console.status(
 
         f"[bold {agent_colors}]{status_phrases.status_line('thinking', agent_display_name)}",
@@ -503,9 +482,17 @@ async def execute_task(  # type: ignore
 
 
 
+    preview = ConsoleStreamPreview(console)
     try:
+        # Feedback is already visible before ancillary status I/O begins.
+        try:
+            await asyncio.wait_for(vixie_set_thinking(), timeout=1.0)
+        except Exception:
+            pass
 
         async for event in _event_source:
+            if not isinstance(event, (ev.TextDelta, ev.StatusUpdate)):
+                preview.stop()
             remote_notify = getattr(session_state, "_remote_stream_notify", None)
             if remote_notify is not None:
                 remote_notify(event)
@@ -519,14 +506,17 @@ async def execute_task(  # type: ignore
 
 
             elif isinstance(event, ev.TextDelta):
-
-                pass  # Rich batching: text accumulated in core loop, rendered via AssistantMessage
+                if console.is_terminal:
+                    if spinner_active:
+                        status.stop()
+                        spinner_active = False
+                    preview.append(event.text)
 
 
 
             elif isinstance(event, ev.TextDiscard):
 
-                pass  # No live preview in rich console
+                pass  # The transient preview was cleared before dispatch.
 
 
 
@@ -1171,7 +1161,7 @@ async def execute_task(  # type: ignore
 
 
     except KeyboardInterrupt:
-
+        preview.stop()
         if spinner_active:
 
             status.stop()
@@ -1237,7 +1227,7 @@ async def execute_task(  # type: ignore
 
 
     except asyncio.CancelledError:
-
+        preview.stop()
         if spinner_active:
 
             status.stop()
@@ -1255,6 +1245,19 @@ async def execute_task(  # type: ignore
         return
 
 
+
+    finally:
+        preview.stop()
+        status.stop()
+        if _prev_auto_approve is not None:
+            session_state.auto_approve = _prev_auto_approve
+        close_source = getattr(_event_source, "aclose", None)
+        if close_source is not None:
+            try:
+                await asyncio.wait_for(close_source(), timeout=2.0)
+            except (asyncio.CancelledError, Exception):
+                # Renderer cleanup must not replace the turn's original error.
+                pass
 
     # ------------------------------------------------------------------
 

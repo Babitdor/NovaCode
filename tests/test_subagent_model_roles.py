@@ -163,10 +163,9 @@ def test_cache_clear_makes_a_role_change_take_effect(monkeypatch, tmp_path):
     first = core_agent.build_named_subagents("nova-agent", [])
     assert first[0]["model"] is calls["model"]
 
-    stale = calls["model"]
     calls["model"] = object()
     cached = core_agent.build_named_subagents("nova-agent", [])
-    assert cached[0]["model"] is stale, "expected the cache to serve the old build"
+    assert cached[0]["model"] is calls["model"], "roles must be bound afresh on every build"
 
     core_agent.clear_named_subagents_cache()
     refreshed = core_agent.build_named_subagents("nova-agent", [])

@@ -324,3 +324,75 @@ def test_the_phases_pane_shows_progress_and_elapsed():
     row = st.phase_row("1", tasks, now=108.3)
     assert "1/2" in row.plain
     assert "38.3s" in row.plain  # 30s finished + 8.3s running
+
+
+# ── preview: what one row is doing ──────────────────────────────────────────
+
+
+def test_a_click_can_tell_a_task_from_the_phase_beside_it():
+    rows = [SubagentTask(task_id="a", phase_id="p1"), SubagentTask(task_id="b", phase_id="p1")]
+    wide = st.panel_body(rows, width=100, now=0.0)
+    # Line 1 holds phase p1 on the left and task "a" on the right.
+    assert (wide.phase_at(1), wide.task_at(1)) == ("p1", "a")
+    assert wide.task_at(2) == "b"
+    assert wide.task_column == st.PHASE_COLUMN + 1
+    assert st.panel_body(rows, width=50, now=0.0).task_column == 0
+
+
+def test_preview_joins_streamed_text_and_stays_bounded():
+    entries: list[tuple[str, str]] = []
+    for kind, text in [("text", "Read"), ("text", "ing."), ("tool", "grep(x)"), ("error", "✗ no")]:
+        st.append_preview(entries, kind, text)
+    assert entries == [("text", "Reading."), ("tool", "grep(x)"), ("error", "✗ no")]
+    for i in range(st.MAX_PREVIEW_ENTRIES + 50):
+        st.append_preview(entries, "tool", str(i))
+    assert len(entries) == st.MAX_PREVIEW_ENTRIES
+
+
+def test_preview_renders_markdown_and_hangs_results_under_their_tool():
+    from rich.console import Console
+
+    entries = [
+        ("text", "## Findings\n\n- **two** hits\n"),
+        ("tool", "grep(x)"),
+        ("result", "✓ 2 matches"),
+        ("error", "✗ no such file"),
+        ("text", "Done."),
+    ]
+    cache: dict = {}
+    console = Console(width=60, record=True, color_system=None)
+    console.print(st.preview_renderable(entries, cache=cache))
+    lines = [line.rstrip() for line in console.export_text().splitlines()]
+
+    # Markdown is rendered, not shown as source.
+    assert not any("##" in line or "**" in line for line in lines)
+    assert any("Findings" in line for line in lines)
+    assert any("two hits" in line for line in lines)
+    # A tool call, its results beneath it, and a gap either side of the run.
+    at = lines.index("▸ grep(x)")
+    assert lines[at - 1] == ""
+    assert lines[at + 1 : at + 4] == ["  ⎿ ✓ 2 matches", "  ⎿ ✗ no such file", ""]
+    assert lines[at + 4] == "Done."
+    # Unchanged entries are not rebuilt on the next update.
+    first = cache[entries[0]]
+    st.preview_renderable([*entries, ("tool", "ls()")], cache=cache)
+    assert cache[entries[0]] is first
+
+
+def test_a_remote_thread_becomes_the_same_preview():
+    entries = st.remote_preview(
+        [
+            {"type": "human", "content": "audit deps"},
+            {
+                "type": "ai",
+                "content": [{"type": "text", "text": "Checking."}],
+                "tool_calls": [{"name": "grep", "args": {"pattern": "requests"}, "id": "c1"}],
+            },
+            {"type": "tool", "name": "grep", "content": "Error: bad pattern", "status": "error"},
+            "not a message",
+        ]
+    )
+    assert [kind for kind, _ in entries] == ["result", "text", "tool", "error"]
+    assert entries[0][1] == "task: audit deps"
+    assert "grep" in entries[2][1]
+    assert st.remote_preview(None) == []

@@ -18,13 +18,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 #: Given to every subagent by deepagents' own middleware; not selectable.
 ALWAYS_INCLUDED = ("ls", "read_file", "write_file", "edit_file", "glob", "grep", "execute")
 
 
-def _split(content: str) -> tuple[dict[str, Any], str]:
+def _parse(content: str) -> tuple[dict[str, Any], str]:
     if not content.startswith("---"):
         return {}, content
     parts = content.split("---", 2)
@@ -43,6 +43,27 @@ def _split(content: str) -> tuple[dict[str, Any], str]:
                 key, value = line.split(":", 1)
                 front[key.strip()] = value.strip().strip('"').strip("'")
     return front, parts[2].lstrip("\n")
+
+
+def _split(content: str) -> tuple[dict[str, Any], str]:
+    """Reuse parsed frontmatter by exact content, never resolved capabilities."""
+    from time import perf_counter_ns
+
+    from novacode_cli.computation_cache import digest, get, put, record_timing
+
+    started = perf_counter_ns()
+    key = digest("agent-definition-v1\0" + content)
+    record_timing("agent_definitions", "validation", perf_counter_ns() - started)
+    cached = get("agent_definitions", key)
+    if cached is not None:
+        cached = cast("list[Any]", cached)
+        return cached[0], cached[1]
+    started = perf_counter_ns()
+    front, body = _parse(content)
+    record_timing("agent_definitions", "computation", perf_counter_ns() - started)
+    if set(front) <= {"name", "description", "tools", "model", "color", "skill_names"}:
+        put("agent_definitions", key, [front, body])
+    return front, body
 
 
 def read_agent(path: Path) -> tuple[dict[str, Any], str]:

@@ -27,7 +27,7 @@ async def connect_telegram(session_state):
     if manager is None:
         queue = getattr(session_state, "_remote_message_queue", None)
         if queue is None:
-            queue = asyncio.Queue()
+            queue = asyncio.Queue(maxsize=100)
             session_state._remote_message_queue = queue
         manager = RemoteBridgeManager(queue)
         session_state._remote_bridge_manager = manager

@@ -130,6 +130,7 @@ from novacode_cli.tui.screens import (
     SettingsScreen,
     SkillCreateModal,
     SkillsScreen,
+    SubagentPreviewScreen,
     ThemeScreen,
     WikiScreen,
 )
@@ -1846,6 +1847,11 @@ class NovaApp(App):
         #: next turn's first dispatch replaces them.
         self._subagents_stale = False
         self._subagents_rows_by_line: list[tuple[str | None, str | None]] = []
+        #: Cell where the task table starts; a click left of it is on a phase.
+        self._subagents_task_column = 0
+        #: What each row has done so far (task id -> preview entries), shown
+        #: when the row is clicked.
+        self._subagent_previews: dict[str, list[tuple[str, str]]] = {}
         self._subagents_paint_timer: Any = None
         #: Monotonic deadline for the coalesced repaint. The coalescer is gated on
         #: this rather than on the timer handle, because the handle is cleared only
@@ -2220,6 +2226,7 @@ class NovaApp(App):
 
             try:
                 mgr.set_status_callback(_status_cb)
+                self._remote_status_callback = _status_cb
             except Exception:  # noqa: BLE001
                 pass
         # Consume remote (Discord/Telegram) messages and render them in the TUI.
@@ -2257,14 +2264,17 @@ class NovaApp(App):
             except Exception:  # noqa: BLE001 — a UI update must never kill the caller
                 logger.debug("UI update failed", exc_info=True)
 
+        update = run()
         try:
-            asyncio.run_coroutine_threadsafe(run(), loop)
+            asyncio.run_coroutine_threadsafe(update, loop)
         except RuntimeError:  # loop closed between the check and the call
-            pass
+            update.close()
 
     def _on_tool_output(self, call_id: str, text: str) -> None:
         """Queue a chunk of live tool output; it is painted in batches (<=20/s)."""
         with self._tool_out_lock:
+            if getattr(self, "_output_stopped", False):
+                return
             buffer = self._tool_out_pending.get(call_id)
             if buffer is None:
                 if len(self._tool_out_pending) >= MAX_PENDING_CALLS:
@@ -2623,15 +2633,54 @@ class NovaApp(App):
         self.query_one("#prompt", PromptInput).focus()
 
     async def on_unmount(self):
-        notifier = self._desktop_notifier
-        if notifier is not None:
-            await asyncio.to_thread(notifier.close)
+        # Unmount also runs after failed/interrupted tasks and run_test exits,
+        # where action_quit may never have been reached.
+        self._release_output_observers()
+        watchdog = getattr(self, "_stall_watch", None)
+        if watchdog is not None:
+            watchdog.stop()
         for pane in getattr(self, "_panes", []):
             state = (
                 self.session_state if pane is self._active_pane else pane.state.get("session_state")
             )
             if state is not None:
                 state._notification_callback = None
+        supervisor = getattr(self, "_session_supervisor", None)
+        if supervisor is not None:
+            with contextlib.suppress(Exception):
+                await supervisor.close_all(timeout=1.0)
+        watcher = getattr(self, "_async_watcher", None)
+        if watcher is not None:
+            with contextlib.suppress(Exception):
+                await watcher.aclose()
+        notifier = self._desktop_notifier
+        if notifier is not None:
+            await asyncio.to_thread(notifier.close)
+
+    def _release_output_observers(self) -> None:
+        """Stop producers and release process-global references to this app."""
+        owner = self._remote_owner_state()
+        manager = getattr(owner, "_remote_bridge_manager", None)
+        callback = getattr(self, "_remote_status_callback", None)
+        if callback is not None and getattr(manager, "_on_status", None) is callback:
+            with contextlib.suppress(Exception):
+                manager.set_status_callback(None)
+        self._remote_status_callback = None
+        for registry_attr, callback in (
+            ("_task_registry", self._on_task_event_threadsafe),
+            ("_artifact_registry", self._on_artifact_event_threadsafe),
+        ):
+            registry = getattr(self, registry_attr, None)
+            if registry is not None:
+                with contextlib.suppress(Exception):
+                    registry.remove_observer(callback)
+        from novacode_cli.events import unregister_tool_output_callback
+
+        unregister_tool_output_callback(self._on_tool_output)
+        with self._tool_out_lock:
+            self._output_stopped = True
+            self._tool_out_pending.clear()
+            self._tool_out_scheduled = False
 
     async def _dispatch_to_child(self, pane, text: str) -> None:
         """Handle input while a spawned session's tab is active.
@@ -4997,6 +5046,11 @@ class NovaApp(App):
             phases = {row.phase_id for row in self._subagent_rows.values()}
             self._subagent_phase_order = [p for p in self._subagent_phase_order if p in phases]
             self._subagent_collapsed_phases.intersection_update(phases)
+            self._subagent_previews = {
+                key: log
+                for key, log in self._subagent_previews.items()
+                if key in self._subagent_rows
+            }
             self._subagents_stale = False
         if existing is not None:
             for field in (
@@ -5081,6 +5135,7 @@ class NovaApp(App):
             (rendered.row_phases[index], rendered.row_tasks[index])
             for index in range(len(rendered.lines))
         ]
+        self._subagents_task_column = rendered.task_column
         dock.add_class("active")
         # Only a running row's TIME moves, so the 1s repaint is only worth having
         # while something runs.
@@ -5128,6 +5183,7 @@ class NovaApp(App):
         self._subagent_rows.clear()
         self._subagent_phase_order.clear()
         self._subagent_collapsed_phases.clear()
+        self._subagent_previews.clear()
         self._subagents_collapsed = False
         self._subagents_stale = False
         self._subagents_rows_by_line = []
@@ -5174,21 +5230,83 @@ class NovaApp(App):
             )
             self._schedule_subagents_paint()
 
+    def _open_subagent_preview(self, task_id: str) -> None:
+        """Show what one row is doing, updating while it runs."""
+        opened = self._subagent_rows.get(task_id)
+        if opened is None:
+            return
+
+        def snapshot() -> tuple[Text, list]:
+            row = self._subagent_rows.get(task_id, opened)
+            title = Text()
+            title.append(f"{subagent_tasks.status_glyph(row.status)} ", style="cyan")
+            title.append(row.subagent_type or "subagent", style="bold")
+            elapsed = subagent_tasks.format_elapsed(subagent_tasks.elapsed_for(row))
+            title.append(f"  {row.status} · {elapsed} · {row.model or '—'}", style="dim")
+            if row.phase_kind != "async" and (row.description or row.label):
+                title.append(f"\n{row.description or row.label}", style="dim")
+            return title, self._subagent_previews.get(task_id) or []
+
+        screen = SubagentPreviewScreen(snapshot)
+        self.push_screen(screen)
+        if opened.phase_kind == "async":
+            self._follow_async_preview(task_id, screen)
+
+    @work(exclusive=True, group="subagent-preview")
+    async def _follow_async_preview(self, task_id: str, screen: SubagentPreviewScreen) -> None:
+        """Poll a remote agent's thread while its preview is open.
+
+        An async agent runs on the agent server, so nothing it does reaches this
+        process's stream: its messages are read from the thread's state instead.
+        That is checkpointed per step, so this is step-by-step rather than
+        token-by-token.
+        """
+        from langgraph_sdk import get_client
+
+        from novacode_cli.agents.default_subagents.async_subagents import retrieve_async_subagents
+
+        row = self._subagent_rows.get(task_id)
+        if row is None:
+            return
+        spec = next((s for s in retrieve_async_subagents() if s["name"] == row.subagent_type), None)
+        if spec is None:
+            self._subagent_previews[task_id] = [("error", "The agent server is not available.")]
+            return
+        client = get_client(url=spec.get("url"), headers=spec.get("headers") or {})
+        thread_id = row.description or task_id.removeprefix("async:")
+        while screen in self.screen_stack:
+            try:
+                state = await client.threads.get_state(thread_id)
+                messages = (state.get("values") or {}).get("messages")
+                self._subagent_previews[task_id] = subagent_tasks.remote_preview(messages)
+            except Exception as exc:  # noqa: BLE001 — a preview must never break the session
+                self._subagent_previews[task_id] = [
+                    ("error", f"Could not read the agent's thread: {exc}")
+                ]
+            if self._subagent_rows.get(task_id, row).status != "running":
+                return
+            await asyncio.sleep(2.0)
+
     def action_toggle_subagents(self) -> None:
         """Collapse/expand the subagents panel (click the dock, or alt+s)."""
         self._subagents_collapsed = not self._subagents_collapsed
         self._paint_subagents()
 
-    def _on_subagents_click(self, y: int) -> None:
-        """A click on a phase row folds that phase; anywhere else folds the panel.
+    def _on_subagents_click(self, y: int, x: int | None = None) -> None:
+        """A click on a task previews it, on a phase folds it; elsewhere folds the panel.
 
         ``y`` is dock-relative, so line 0 is the header and the table starts one
-        line below it.
+        line below it. ``x`` is body-relative and says which pane a line was
+        clicked in, since a phase and a task share a line; without it the phase
+        wins.
         """
         row = y - 1
         if 0 <= row < len(self._subagents_rows_by_line):
-            phase_id, _task_id = self._subagents_rows_by_line[row]
-            if phase_id:
+            phase_id, task_id = self._subagents_rows_by_line[row]
+            if task_id and x is not None and x >= self._subagents_task_column:
+                self._open_subagent_preview(task_id)
+                return
+            if phase_id and (x is None or x < self._subagents_task_column):
                 if phase_id in self._subagent_collapsed_phases:
                     self._subagent_collapsed_phases.discard(phase_id)
                 else:
@@ -7868,16 +7986,7 @@ class NovaApp(App):
         a slow exit can be diagnosed from the log instead of merely felt.
         """
         started = time.monotonic()
-        # Registries outlive this TUI process-wide; retaining bound callbacks
-        # would keep every closed App and its widget tree alive indefinitely.
-        for registry_attr, callback in (
-            ("_task_registry", self._on_task_event_threadsafe),
-            ("_artifact_registry", self._on_artifact_event_threadsafe),
-        ):
-            registry = getattr(self, registry_attr, None)
-            if registry is not None:
-                with contextlib.suppress(Exception):
-                    registry.remove_observer(callback)
+        self._release_output_observers()
         # Stop any turn still running. Without this a mid-turn /exit would leave
         # the agent streaming while we tear the app down underneath it.
         await self._cancel_active_turn()
@@ -9874,6 +9983,7 @@ class NovaApp(App):
                 self._log(Text(f"🔗 Remote: {message}", style="dim"))
 
             manager.set_status_callback(status_callback)
+            self._remote_status_callback = status_callback
         worker = self._remote_consumer_worker
         if worker is None or worker.is_finished:
             self._remote_consumer_worker = self._remote_consumer()
@@ -14109,6 +14219,11 @@ class NovaApp(App):
             # The panel's own row for the same dispatch: a fan-out is visible as
             # a list while it runs, rather than as N cards.
             self._ingest_subagent_task(e)
+        elif isinstance(e, ev.SubagentPreview):
+            # Collected unseen; the preview screen reads it when a row is opened.
+            subagent_tasks.append_preview(
+                self._subagent_previews.setdefault(e.task_id, []), e.kind, e.text
+            )
         elif isinstance(e, ev.UsageUpdate):
             if self.token_tracker is not None:
                 try:

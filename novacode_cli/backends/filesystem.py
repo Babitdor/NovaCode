@@ -427,12 +427,16 @@ class OptimizedFilesystemBackend(FilesystemBackend):
             p = raw if raw.is_absolute() else (base_full / raw)
             # Containment guard: drop any result that resolves outside the root.
             try:
-                p.resolve().relative_to(base_resolved)
+                resolved = p.resolve()
+                resolved.relative_to(base_resolved)
             except (ValueError, OSError):
                 continue
             if self.virtual_mode:
                 try:
-                    virt = self._to_virtual_path(p)
+                    # Already canonicalized for containment above. Resolving it
+                    # again performs another Windows filesystem round trip per
+                    # match; derive the identical virtual path from this result.
+                    virt = "/" + resolved.relative_to(self.cwd).as_posix()
                 except (ValueError, OSError, RuntimeError):
                     continue
             else:

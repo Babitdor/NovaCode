@@ -1,0 +1,52 @@
+{
+  "repetitions": 3,
+  "baseline_observers": false,
+  "tool_output_callbacks": 0,
+  "traced_retained_bytes": 14729774,
+  "traced_peak_bytes": 20296781,
+  "working_set_bytes": 136835072,
+  "samples": [
+    {
+      "readiness_ms": 1969.3483000155538,
+      "tabs": 1,
+      "events": 100,
+      "history": 1,
+      "burst_ms": 304.5,
+      "burst_cpu_ms": 312.5,
+      "tab_refresh_calls_during_burst": 0,
+      "switch_ms": null,
+      "history_remaining_when_switch_returned": 0,
+      "loop_delay_max_ms": 288.38
+    },
+    {
+      "readiness_ms": 1562.4526000465266,
+      "tabs": 1,
+      "events": 100,
+      "history": 1,
+      "burst_ms": 276.18,
+      "burst_cpu_ms": 281.25,
+      "tab_refresh_calls_during_burst": 0,
+      "switch_ms": null,
+      "history_remaining_when_switch_returned": 0,
+      "loop_delay_max_ms": 259.9
+    },
+    {
+      "readiness_ms": 1561.959000013303,
+      "tabs": 1,
+      "events": 100,
+      "history": 1,
+      "burst_ms": 381.1,
+      "burst_cpu_ms": 375.0,
+      "tab_refresh_calls_during_burst": 0,
+      "switch_ms": null,
+      "history_remaining_when_switch_returned": 0,
+      "loop_delay_max_ms": 357.55
+    }
+  ],
+  "apps_surviving_gc_after_loop_close": 0,
+  "frozen_objects": 0,
+  "background_threads": [
+    "MainThread"
+  ],
+  "survivor_referrer_types": {}
+}

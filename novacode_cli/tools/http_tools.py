@@ -12,6 +12,7 @@ from typing import Any
 from novacode_cli.tools._shared import (
     _BROWSER_USER_AGENTS,
     _get_http_session,
+    _retry_delay,
     _secure_random,
 )
 
@@ -83,6 +84,8 @@ def http_request(
             auth=("username", "password")
         )
     """
+    timeout = max(1, min(int(timeout), 120))
+    max_retries = max(1, min(int(max_retries), 5))
     start_time = time.time()
 
     # Build headers
@@ -113,6 +116,7 @@ def http_request(
 
     for attempt in range(max_retries):
         attempts = attempt + 1
+        response = None
 
         try:
             kwargs: dict[str, Any] = {
@@ -152,9 +156,12 @@ def http_request(
                 if (
                     status_code >= 500 or status_code == 429
                 ) and attempt < max_retries - 1:
-                    last_error = Exception(f"HTTP {status_code}")
-                    time.sleep(2 ** (attempt + 1))  # Exponential backoff
-                    continue
+                    delay = _retry_delay(attempt, response.headers.get("Retry-After"))
+                    if delay is not None:
+                        last_error = Exception(f"HTTP {status_code}")
+                        response.close()
+                        time.sleep(delay)
+                        continue
 
                 # Try to get error details from response
                 try:
@@ -253,8 +260,11 @@ def http_request(
         except Exception as e:  # noqa: BLE001
             last_error = e
             if attempt < max_retries - 1:
-                time.sleep(2 ** (attempt + 1))
+                time.sleep(_retry_delay(attempt) or 0)
                 continue
+        finally:
+            if response is not None:
+                response.close()
 
     # All retries exhausted
     elapsed = time.time() - start_time

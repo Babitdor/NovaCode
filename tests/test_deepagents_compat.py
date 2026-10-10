@@ -112,3 +112,49 @@ def test_create_deep_agent_accepts_every_kwarg_nova_passes():
         "subagents",
     ):
         assert kwarg in params, f"create_deep_agent no longer accepts {kwarg!r}"
+
+
+def test_task_tool_names_its_dispatch_on_the_subagents_stream():
+    """The subagents panel previews a row by the id the task tool stamps.
+
+    Breaks if deepagents renames ``_build_task_tool`` (the patch becomes a no-op)
+    or stops running the subagent under the tool's ambient config.
+    """
+    import asyncio
+
+    from deepagents import create_deep_agent
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import AIMessage
+
+    class Model(FakeMessagesListChatModel):
+        def bind_tools(self, tools, **kwargs):  # noqa: ANN001, ANN003, ANN202, ARG002
+            return self
+
+    call = {"name": "task", "args": {"description": "do it", "subagent_type": "helper"}}
+    main = Model(
+        responses=[
+            AIMessage(content="", tool_calls=[{**call, "id": "call_A"}, {**call, "id": "call_B"}]),
+            AIMessage(content="done"),
+        ]
+    )
+    helper = {
+        "name": "helper",
+        "description": "h",
+        "system_prompt": "p",
+        # One reply per dispatch: a repeated message object is streamed only once.
+        "model": Model(responses=[AIMessage(content="hi"), AIMessage(content="hello")]),
+        "tools": [],
+    }
+    agent = create_deep_agent(model=main, subagents=[helper])
+
+    async def stamped() -> set:
+        seen = set()
+        stream = agent.astream(
+            {"messages": [("user", "x")]}, stream_mode=["messages"], subgraphs=True
+        )
+        async for namespace, _mode, (_message, metadata) in stream:
+            if namespace:
+                seen.add(metadata.get("nova_task_id"))
+        return seen
+
+    assert asyncio.run(stamped()) == {"call_A", "call_B"}

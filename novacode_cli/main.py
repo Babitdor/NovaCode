@@ -24,6 +24,8 @@ Key Functions:
 - _run_agent_session(): Build the agent/session, then hand off to the TUI
 """
 
+from novacode_cli.cli_args import parse_args
+
 # Suppress transformer warnings before any imports that might trigger them
 import os
 import warnings
@@ -66,7 +68,6 @@ warnings.filterwarnings(
     category=LangChainDeprecationWarning,
 )
 
-import argparse
 import contextlib
 import asyncio
 import io
@@ -147,10 +148,9 @@ _proc_logger = logging.getLogger("novacode_cli.remote")
 
 # Initialize LangSmith tracing from environment variables (no-op when not configured)
 _auto_configure_tracing()
-from novacode_cli.mcp.commands import execute_mcp_command, setup_mcp_parser
+from novacode_cli.mcp.commands import execute_mcp_command
 from novacode_cli.migrate import check_migration_status, migrate_agents
 from novacode_cli.path_approval import PathApprovalManager, check_path_approval
-from novacode_cli.skills.skill_creation import setup_skills_parser
 from novacode_cli.states.Session import SessionState
 from novacode_cli.tools import (
     code_search,
@@ -225,19 +225,6 @@ def check_cli_dependencies() -> None:
         sys.exit(1)
 
 
-def _add_agent_server_args(parser: argparse.ArgumentParser) -> None:
-    """The local-agent-server flags, kept out of parse_args' statement count."""
-    parser.add_argument(
-        "--no-agent-server",
-        action="store_true",
-        help="Do not launch a local LangGraph server for the async subagents",
-    )
-    parser.add_argument(
-        "--agent-server-port",
-        type=int,
-        default=None,
-        help="Port for the local agent server (default: a free ephemeral port)",
-    )
 
 
 def _stop_agent_server() -> None:
@@ -255,341 +242,6 @@ def _stop_agent_server() -> None:
     cleanup_user_config()
 
 
-def parse_args():
-    """Parse command line arguments."""
-    from novacode_cli.skills.upstream import add_arguments
-
-    upstream_args = add_arguments(sys.argv[1:])
-    if upstream_args is not None:
-        return argparse.Namespace(
-            command="skills", skills_command="add", upstream_args=upstream_args,
-        )
-    parser = argparse.ArgumentParser(
-        description="DeepAgents - AI Coding Assistant",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        add_help=False,
-    )
-
-    subparsers = parser.add_subparsers(dest="command", help="Command to run")
-
-    # Init command - interactive configuration setup
-    init_parser = subparsers.add_parser("init", help="Initialize project or global configuration")
-    init_parser.add_argument(
-        "--scope",
-        choices=["project", "global"],
-        help="Create project-specific or global configuration",
-    )
-    init_parser.add_argument(
-        "--style",
-        choices=["deepagents", "claude"],
-        help="Use .nova/ or .claude/ directory structure",
-    )
-    init_parser.add_argument(
-        "--reset",
-        action="store_true",
-        help="Re-run onboarding wizard to reset configuration",
-    )
-
-    # List command
-    subparsers.add_parser("list", help="List all available agents")
-
-    # Help command
-    subparsers.add_parser("help", help="Show help information")
-
-    # Reset command
-    reset_parser = subparsers.add_parser("reset", help="Reset an agent")
-    reset_parser.add_argument("--agent", required=True, help="Name of agent to reset")
-    reset_parser.add_argument(
-        "--target", dest="source_agent", help="Copy prompt from another agent"
-    )
-
-    # Skills command - setup delegated to skills module
-    setup_skills_parser(subparsers)
-
-    # MCP command - setup delegated to mcp module
-    setup_mcp_parser(subparsers)
-
-    # Config command - view/edit configuration
-    config_parser = subparsers.add_parser("config", help="View or edit configuration (non-secret)")
-    config_parser.add_argument(
-        "config_command",
-        nargs="?",
-        choices=["show", "set", "get"],
-        default="show",
-        help="Config operation to perform",
-    )
-    config_parser.add_argument(
-        "key",
-        nargs="?",
-        help="Configuration key to get/set",
-    )
-    config_parser.add_argument(
-        "value",
-        nargs="?",
-        help="Value to set (for 'set' command)",
-    )
-
-    # Secrets command - manage API keys
-    secrets_parser = subparsers.add_parser("secrets", help="Manage API keys securely")
-    secrets_parser.add_argument(
-        "secrets_command",
-        choices=["set", "list", "delete"],
-        help="Secrets operation to perform",
-    )
-    secrets_parser.add_argument(
-        "key",
-        nargs="?",
-        help="API key name (e.g., 'openai_api_key')",
-    )
-
-    # Doctor command - validate setup
-    subparsers.add_parser("doctor", help="Validate configuration and connections")
-    update_parser = subparsers.add_parser("update", help="Update Nova or check for new code")
-    update_parser.add_argument("--check", action="store_true", help="Check without installing")
-
-    # Paths command - manage approved paths
-    paths_parser = subparsers.add_parser(
-        "paths",
-        help="Manage approved file system paths",
-    )
-    paths_subparsers = paths_parser.add_subparsers(dest="paths_command", help="Paths command")
-
-    # paths list
-    paths_subparsers.add_parser(
-        "list",
-        help="List all approved paths",
-    )
-
-    # paths revoke
-    revoke_parser = paths_subparsers.add_parser(
-        "revoke",
-        help="Revoke approval for a path",
-    )
-    revoke_parser.add_argument(
-        "path",
-        help="Path to revoke (absolute path)",
-    )
-
-    # paths clear
-    paths_subparsers.add_parser(
-        "clear",
-        help="Clear all approved paths",
-    )
-
-    # Migrate command - migrate from old to new directory structure
-    migrate_parser = subparsers.add_parser(
-        "migrate",
-        help="Migrate from old directory structure to new Claude Code-compatible structure",
-    )
-    migrate_parser.add_argument(
-        "--check",
-        action="store_true",
-        help="Check migration status without performing migration",
-    )
-
-    # Default interactive mode
-    parser.add_argument(
-        "--agent",
-        default="nova-agent",
-        help="Agent identifier for separate memory stores (default: nova-agent).",
-    )
-    parser.add_argument(
-        "--auto-approve",
-        action="store_true",
-        help="Auto-approve tool usage without prompting (disables human-in-the-loop)",
-    )
-    parser.add_argument(
-        "--sandbox",
-        choices=["none", "os", "modal", "daytona", "runloop", "docker", "langsmith"],
-        default=None,
-        help="Sandbox for code execution. Default: 'os' on Linux/macOS (files on the "
-        "host, shell confined to the workspace via an OS sandbox); host execution + "
-        "approvals on Windows. 'docker' is an opt-in, Windows-only container. "
-        "'langsmith' uses LangSmith Sandboxes (hardware-virtualized microVMs). Use "
-        "--no-sandbox for unconfined local execution.",
-    )
-    parser.add_argument(
-        "--no-sandbox",
-        action="store_true",
-        help="Run shell commands unconfined on the host (disables the OS/Docker sandbox)",
-    )
-    parser.add_argument(
-        "--sandbox-id",
-        help="Existing sandbox ID to reuse (skips creation and cleanup)",
-    )
-    parser.add_argument(
-        "--sandbox-setup",
-        help="Path to setup script to run in sandbox after creation",
-    )
-    parser.add_argument(
-        "--sandbox-vcpus",
-        type=int,
-        default=None,
-        help="Number of virtual CPUs for the sandbox (LangSmith only)",
-    )
-    parser.add_argument(
-        "--sandbox-mem-bytes",
-        type=int,
-        default=None,
-        help="Memory in bytes for the sandbox (LangSmith only). Example: 8589934592 for 8GB",
-    )
-    parser.add_argument(
-        "--sandbox-fs-capacity-bytes",
-        type=int,
-        default=None,
-        help="Filesystem capacity in bytes for the sandbox (LangSmith only)",
-    )
-    parser.add_argument(
-        "--sandbox-snapshot",
-        type=str,
-        default=None,
-        help="Snapshot name to boot the sandbox from (LangSmith only, mutually "
-        "exclusive with --sandbox-snapshot-id)",
-    )
-    parser.add_argument(
-        "--sandbox-snapshot-id",
-        type=str,
-        default=None,
-        help="Snapshot ID to boot the sandbox from (LangSmith only, mutually "
-        "exclusive with --sandbox-snapshot)",
-    )
-    parser.add_argument(
-        "--ports",
-        type=str,
-        help="Port forwarding for Docker sandbox (format: 'PORT' or 'HOST_PORT:CONTAINER_PORT'). "
-        "Multiple ports separated by comma. Example: '8080,3000:3000,5432:5432'",
-    )
-    parser.add_argument(
-        "--no-splash",
-        action="store_true",
-        help="Disable the startup splash screen",
-    )
-    parser.add_argument(
-        "--continue",
-        "-c",
-        dest="continue_session",
-        nargs="?",
-        const=True,
-        default=False,
-        help="Continue last session (optionally specify session ID)",
-    )
-    parser.add_argument(
-        "--resume",
-        "-r",
-        action="store_true",
-        help="Interactively select and resume a session",
-    )
-    # Headless (non-interactive) mode: run one prompt to completion and exit.
-    from novacode_cli.headless.input import positive_int, positive_seconds
-
-    parser.add_argument("--mode", choices=("tui", "pipe"), default="tui",
-                        help="Persistent JSONL interface for remote-app bridges: --mode pipe")
-    parser.add_argument("--headless", action="store_true", help="Alias for --mode pipe")
-    parser.add_argument("--input-format", choices=("jsonl", "text"), default="jsonl")
-    parser.add_argument("--startup-timeout", type=positive_seconds, default=120)
-    parser.add_argument("--request-timeout", type=positive_seconds, default=None)
-    parser.add_argument("--approval-timeout", type=positive_seconds, default=300)
-    parser.add_argument("--model", help="Process-local provider:model override")
-
-    parser.add_argument(
-        "--print",
-        "-p",
-        dest="print_prompt",
-        nargs="?",
-        const=True,
-        default=None,
-        help="Run a single prompt non-interactively and exit. Pass the prompt as "
-        "the value (nova -p \"...\"), or omit it to read the prompt from stdin "
-        "(echo \"...\" | nova -p).",
-    )
-    parser.add_argument(
-        "--output-format",
-        choices=["text", "json", "stream-json"],
-        default="text",
-        help="Headless output format: 'text' (final answer only), 'json' (a single "
-        "result object), or 'stream-json' (newline-delimited JSON events). "
-        "Only used with --print.",
-    )
-    parser.add_argument(
-        "--max-turns",
-        type=positive_int,
-        default=None,
-        help="Headless only: cap observed main-agent turns. The run "
-        "stops with a max-turns error if exceeded.",
-    )
-    parser.add_argument(
-        "--deny-tools",
-        action="store_true",
-        help="Headless only: auto-reject tool approvals (fail-closed) instead of "
-        "approving. This rejects approvals; it does not disable every tool.",
-    )
-    parser.add_argument(
-        "--timeout", type=positive_seconds, default=None,
-        help="Headless only: deadline in seconds, including agent startup.",
-    )
-    parser.add_argument(
-        "--include-partial-messages", action="store_true",
-        help="Emit text_delta/text_discard events with --output-format stream-json.",
-    )
-    parser.add_argument(
-        "--trust-workspace", action="store_true",
-        help="Headless only: explicitly grant folder-only trust to the current directory.",
-    )
-    # Internal: how a parent Nova TUI launches a parallel session. The child
-    # speaks JSONL on stdio (see novacode_cli.sessions.worker) and is bound to
-    # its own git worktree purely by the cwd it is spawned in. Not for humans.
-    parser.add_argument(
-        "--safe-ui", action="store_true",
-        help="Start with the default UI, skipping saved customizations",
-    )
-    parser.add_argument(
-        "--import", dest="import_provider",
-        help="Import a local conversation (codex, claude, nova, or an installed adapter)",
-    )
-    parser.add_argument(
-        "--latest", action="store_true", help="Import the selected provider's latest session",
-    )
-    parser.add_argument("--import-session", help="Source session ID or transcript file path")
-    parser.add_argument("--import-mode", choices=("compact", "full", "relevant"), default="compact")
-    parser.add_argument("--session-worker", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--session-id", default=None, help=argparse.SUPPRESS)
-    _add_agent_server_args(parser)
-    parser.add_argument(
-        "--version",
-        action="version",
-        version=format_version_banner(settings.version),
-        help="Show the version number and exit",
-    )
-    parser.add_argument("-h", "--help", action="help", help="Show this help message and exit")
-
-    args = parser.parse_args()
-    if args.headless:
-        args.mode = "pipe"
-    if args.mode == "pipe" and (args.print_prompt is not None or args.command or args.session_worker or args.resume or args.import_provider):
-        parser.error("Pipe mode cannot use --print, subcommands, --session-worker, --resume, or --import; resume with --continue <id>")
-    if args.model and (":" not in args.model or not all(args.model.split(":", 1))):
-        parser.error("--model requires provider:model")
-    if args.mode == "pipe" and (args.timeout or args.max_turns or args.include_partial_messages):
-        parser.error("Pipe mode uses --request-timeout; --timeout, --max-turns and --include-partial-messages are one-shot options")
-    if args.print_prompt is not None and (args.command is not None or args.session_worker):
-        parser.error("--print cannot be combined with a subcommand or --session-worker")
-    if args.print_prompt is not None and args.resume:
-        parser.error("--resume opens an interactive picker; use --continue <session-id> with --print")
-    if args.print_prompt is None and args.mode != "pipe" and (
-        args.timeout is not None or args.trust_workspace or args.include_partial_messages
-        or args.max_turns is not None or args.deny_tools
-    ):
-        parser.error("--timeout, --trust-workspace, and --include-partial-messages require --print")
-    if args.include_partial_messages and args.output_format != "stream-json":
-        parser.error("--include-partial-messages requires --output-format stream-json")
-    if args.import_provider:
-        if args.resume or args.continue_session:
-            parser.error("--import cannot be combined with --resume or --continue")
-        if bool(args.latest) == bool(args.import_session):
-            parser.error("--import requires exactly one of --latest or --import-session <id/file>")
-    elif args.latest or args.import_session:
-        parser.error("--latest and --import-session require --import <provider>")
-    return args
 
 
 def _is_rate_limit_error(e: Exception) -> bool:
@@ -971,7 +623,7 @@ async def _run_agent_session(
     # Queue for messages from Discord/Telegram; processed by a background task
     # NOTE: This must be set up BEFORE the processor task starts, otherwise
     # the processor gets a None reference and silently crashes
-    session_state._remote_message_queue: asyncio.Queue = asyncio.Queue()
+    session_state._remote_message_queue: asyncio.Queue = asyncio.Queue(maxsize=100)
     session_state._remote_message_lock = asyncio.Lock()  # serialize remote+local agent calls
     from novacode_cli.remote.bridge import RemoteBridgeManager
 

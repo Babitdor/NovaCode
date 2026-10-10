@@ -5,6 +5,7 @@ by generating an intelligent summary that preserves key context.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 from datetime import UTC, datetime
@@ -31,6 +32,31 @@ COMPACTION_SUMMARY_MARKER = "[Conversation context — previous session summariz
 logger = logging.getLogger(__name__)
 SUMMARY_TIMEOUT_SECONDS = 60.0
 SUMMARY_ATTEMPTS = 3
+
+
+async def _summary_call(model: BaseChatModel, prompt: str, purpose: str) -> BaseMessage:
+    """Preserve each independent summary request and label its actual dispatch."""
+    from novacode_cli.tracking.request_metrics import dispatch
+
+    with dispatch(purpose):
+        return await model.ainvoke([HumanMessage(content=prompt)])
+
+
+def _state_generation(state: Any) -> str:  # noqa: ANN401 - compiled graph state is framework-defined
+    """Fingerprint checkpoint and complete messages before preparing a rewrite."""
+    data = {
+        "checkpoint": getattr(state, "config", None),
+        "messages": [m.model_dump(mode="json") for m in state.values.get("messages", [])],
+        "summarization_event": state.values.get("_summarization_event"),
+    }
+    return hashlib.sha256(json.dumps(data, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _validate_generation(state: Any, expected: str) -> None:  # noqa: ANN401 - custom graph state
+    """Discard a prepared summary whose source checkpoint was superseded."""
+    if _state_generation(state) != expected:
+        message = "Conversation changed during compaction; original history retained"
+        raise SummaryUnavailableError(message)
 
 
 class SummaryUnavailableError(RuntimeError):
@@ -289,7 +315,7 @@ async def _summarize_text(
     for attempt in range(SUMMARY_ATTEMPTS):
         try:
             response = await asyncio.wait_for(
-                model.ainvoke([HumanMessage(content=prompt)]), SUMMARY_TIMEOUT_SECONDS
+                _summary_call(model, prompt, "summary.generate"), SUMMARY_TIMEOUT_SECONDS
             )
             summary = _format_message_content(response.content).strip()
             if not summary:
@@ -319,7 +345,7 @@ def _answer_budget(budget: int, questions: str) -> int:
 async def _generate_questions(model: BaseChatModel, summary: str) -> str:
     """One LLM call: read the summary and ask what important details are missing."""
     prompt = render_template("summarization_questions.jinja", summary=summary)
-    response = await model.ainvoke([HumanMessage(content=prompt)])
+    response = await _summary_call(model, prompt, "summary.questions")
     return _format_message_content(response.content).strip()
 
 
@@ -337,7 +363,7 @@ async def _answer_questions(
         prompt = render_template(
             "summarization_answers.jinja", questions=questions, conversation=text
         )
-        response = await model.ainvoke([HumanMessage(content=prompt)])
+        response = await _summary_call(model, prompt, "summary.answers")
         return _format_message_content(response.content).strip()
 
     per_chunk: list[str] = []
@@ -347,7 +373,7 @@ async def _answer_questions(
             questions=questions,
             conversation="\n\n".join(chunk),
         )
-        response = await model.ainvoke([HumanMessage(content=prompt)])
+        response = await _summary_call(model, prompt, "summary.chunk_answers")
         per_chunk.append(_format_message_content(response.content).strip())
 
     # Merge: consolidate the per-chunk answers into one Q&A block (bounded).
@@ -359,13 +385,11 @@ async def _answer_questions(
         questions=questions,
         conversation=merged[:q_budget],
     )
-    response = await model.ainvoke([HumanMessage(content=prompt)])
+    response = await _summary_call(model, prompt, "summary.merge_answers")
     return _format_message_content(response.content).strip()
 
 
-async def _qa_refine(
-    model: BaseChatModel, summary: str, parts: list[str], budget: int
-) -> str:
+async def _qa_refine(model: BaseChatModel, summary: str, parts: list[str], budget: int) -> str:
     """Gap-fill a lossy summary: ask what it missed, restore it from the source.
 
     Best-effort — any failure returns ``""`` so compaction falls back to the
@@ -464,6 +488,24 @@ async def compact_conversation(
     context_window: int | None = None,
     agent_dir: Path | None = None,
 ) -> CompactionResult:
+    """Prepare a generation-validated rewrite with correlated summary requests."""
+    from novacode_cli.computation_cache import digest
+    from novacode_cli.tracking.request_metrics import correlate
+
+    with correlate(digest(thread_id)):
+        return await _compact_conversation(
+            agent, model, thread_id, focus_instructions, context_window, agent_dir
+        )
+
+
+async def _compact_conversation(
+    agent: Any,  # noqa: ANN401 - custom compiled graphs share a duck-typed state API
+    model: BaseChatModel,
+    thread_id: str,
+    focus_instructions: str | None = None,
+    context_window: int | None = None,
+    agent_dir: Path | None = None,
+) -> CompactionResult:
     """Compact a conversation by summarizing and replacing history.
 
     This function:
@@ -489,6 +531,7 @@ async def compact_conversation(
     try:
         # Get current state
         state = await agent.aget_state(config)
+        generation = _state_generation(state)
         messages = state.values.get("messages", [])
 
         if not messages:
@@ -548,14 +591,11 @@ async def compact_conversation(
             "restate this summary."
         )
         archive_note = (
-            f"The full pre-compaction transcript is at {archived} if an exact "
-            "detail is needed."
+            f"The full pre-compaction transcript is at {archived} if an exact detail is needed."
             if archived
             else ""
         )
-        body = "\n\n".join(
-            filter(None, [framing, summary, _rehydration_note(), archive_note])
-        )
+        body = "\n\n".join(filter(None, [framing, summary, _rehydration_note(), archive_note]))
         summary_message = HumanMessage(content=f"{COMPACTION_SUMMARY_MARKER}\n\n{body}")
         # Also clear any prior auto-summarization event. deepagents'
         # SummarizationMiddleware reconstructs the effective message list from
@@ -568,11 +608,15 @@ async def compact_conversation(
             "messages": new_messages,
             "_summarization_event": None,
         }
+        current = await agent.aget_state(config)
+        _validate_generation(current, generation)
         try:
             await agent.aupdate_state(config=config, values=update_values, as_node="model")
         except Exception:
             # Older graphs without the summarization state key reject the extra
             # field; retry with just the message rewrite.
+            current = await agent.aget_state(config)
+            _validate_generation(current, generation)
             await agent.aupdate_state(
                 config=config,
                 values={"messages": new_messages},

@@ -37,7 +37,7 @@ async def _ensure_scheduler(session_state: SessionState) -> CronScheduler:
         if queue is None:
             import asyncio
 
-            queue = asyncio.Queue()
+            queue = asyncio.Queue(maxsize=100)
             session_state._remote_message_queue = queue
         scheduler = CronScheduler(queue, store=get_durable_store())
         session_state._cron_scheduler = scheduler

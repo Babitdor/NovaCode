@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import ClassVar
 from unittest.mock import patch
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(os.environ.get("NOVA_BENCHMARK_ROOT", Path(__file__).resolve().parents[1]))
 MAX_SESSIONS = 4
 sys.path.insert(0, str(ROOT))
 

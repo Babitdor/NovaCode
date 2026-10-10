@@ -171,6 +171,19 @@ class SubagentTask:
 
 
 @dataclass
+class SubagentPreview:
+    """One thing a running in-process subagent just did, for its panel row.
+
+    ``task_id`` is the :class:`SubagentTask` row it belongs to. Shown only when
+    the user opens that row, so consumers without a preview can ignore it.
+    """
+
+    task_id: str
+    kind: str  # "text" | "tool" | "result" | "error"
+    text: str = ""
+
+
+@dataclass
 class UsageUpdate:
     """Latest main-model context plus cumulative usage across its calls."""
 

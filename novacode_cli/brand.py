@@ -312,3 +312,14 @@ def get_accent_hex() -> str:
     except Exception:  # noqa: BLE001 -- branding must never break startup
         return FALLBACK_ACCENT
     return THEME_ACCENTS.get(str(name), FALLBACK_ACCENT)
+
+
+def format_version_banner(version: str) -> str:
+    """Return the styled version banner for ``nova --version``.
+
+    Uses the shared wordmark from :mod:`novacode_cli.brand` — this used to
+    inline a fourth, differently-sized copy of the logo (missing the braille
+    half entirely and stamped with its own version row).
+    """
+    caption = f"NOVA · {TAGLINE} · v{version}"
+    return f"\n{wordmark()}\n{caption.center(WORDMARK_WIDTH)}\n"

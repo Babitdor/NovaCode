@@ -596,3 +596,32 @@ def test_subagent_log_trims_completed_rows_and_keeps_active_call() -> None:
     assert len(comp._log_entries) == 301
     assert comp._log_entries[0]["id"] == 0
     assert comp._tool_lines == {"active": 0}
+
+
+@pytest.mark.asyncio
+async def test_clicking_a_task_opens_its_live_preview():
+    from novacode_cli.tui.screens import SubagentPreviewScreen
+
+    app = _app()
+    async with app.run_test(size=(120, 44)) as pilot:
+        await app._render(_task("a", phase_id="p1", subagent_type="researcher"))
+        await app._render(ev.SubagentPreview("a", "tool", "grep(docling)"))
+        await asyncio.sleep(0.2)
+        await pilot.pause()
+
+        # Dock line 2 is the first phase and the first task, side by side.
+        app._on_subagents_click(2, app._subagents_task_column + 3)
+        await pilot.pause()
+        assert isinstance(app.screen, SubagentPreviewScreen)
+        assert "p1" not in app._subagent_collapsed_phases
+        assert app.screen._shown == [("tool", "grep(docling)")]
+
+        # It keeps following the row while open.
+        await app._render(ev.SubagentPreview("a", "text", "Found three hits."))
+        await asyncio.sleep(0.7)
+        await pilot.pause()
+        assert app.screen._shown[-1] == ("text", "Found three hits.")
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not isinstance(app.screen, SubagentPreviewScreen)

@@ -32,10 +32,12 @@ Everything runs on CPU with **no API keys, GPU, or external services**.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import time
 from pathlib import Path
+from threading import RLock
 from typing import Any
 
 from langchain.tools import tool
@@ -54,9 +56,8 @@ logger = logging.getLogger(__name__)
 
 _index: Any = None  # semble.SembleIndex | None
 _index_root: Path | None = None
-_index_mtime: float = 0.0  # last modification time of the index snapshot
-_index_created_at: float = 0.0  # wall-clock time when the index was built
-_REINDEX_TTL = 300.0  # seconds; re-index if older than this and files changed
+_index_snapshot: tuple = ()
+_index_lock = RLock()
 
 # Flag to suppress repeated "semble not installed" warnings.
 _semble_unavailable_warned = False
@@ -77,19 +78,24 @@ def _reset_index() -> None:
 
     Called by the ``/reindex`` command and after significant file changes.
     """
-    global _index, _index_root, _index_mtime, _index_created_at
-    _index = None
-    _index_root = None
-    _index_mtime = 0.0
-    _index_created_at = 0.0
+    global _index, _index_root, _index_snapshot
+    with _index_lock:
+        _index = None
+        _index_root = None
+        _index_snapshot = ()
 
 
 def _get_index(workspace_root: Path) -> Any:
+    """Serialize builds and return an index validated for this workspace."""
+    with _index_lock:
+        return _get_index_locked(workspace_root)
+
+
+def _get_index_locked(workspace_root: Path) -> Any:
     """Get or create the Semble index for the project.
 
     The index is built lazily on first call and cached for the session.
-    If more than ``_REINDEX_TTL`` seconds have passed and the project's
-    file modification time has changed, the index is rebuilt automatically.
+    The source snapshot is validated before every use; changes rebuild the index.
 
     Args:
         workspace_root: Path to the project root directory.
@@ -97,7 +103,7 @@ def _get_index(workspace_root: Path) -> Any:
     Returns:
         A ``semble.SembleIndex`` instance, or None if semble is unavailable.
     """
-    global _index, _index_root, _index_mtime, _index_created_at, _semble_unavailable_warned
+    global _index, _index_root, _index_snapshot, _semble_unavailable_warned
 
     if not _is_semble_available():
         if not _semble_unavailable_warned:
@@ -110,91 +116,58 @@ def _get_index(workspace_root: Path) -> Any:
 
     from semble import SembleIndex
 
-    now = time.time()
-
-    # Return cached index if root matches and not stale
-    if _index is not None and _index_root == workspace_root:
-        cache_age = now - _index_created_at
-        if cache_age < _REINDEX_TTL:
-            return _index
-        # TTL expired — check if any source files actually changed
-        # (cheap heuristic: check if the most-recently-modified .py/.ts/.js
-        #  file under the workspace is newer than our index snapshot)
-        try:
-            _marker = _newest_source_mtime(workspace_root)
-            if _marker <= _index_mtime:
-                # No files changed since last index — extend TTL
-                _index_created_at = now
-                return _index
-        except Exception:
-            pass  # fallback: re-index
-
-    # Build a fresh index
+    workspace_root = workspace_root.resolve()
     try:
-        t0 = now
-        _first_time = _index is None
-        if _first_time:
-            logger.info("Building code search index for %s (first time)...", workspace_root)
-        _index = SembleIndex.from_path(str(workspace_root))
+        marker = _source_snapshot(workspace_root)
+        if _index is not None and _index_root == workspace_root and marker == _index_snapshot:
+            return _index
+
+        # Build into a local variable: a failed refresh must never return the old index.
+        started = time.monotonic()
+        fresh = SembleIndex.from_path(str(workspace_root))
+        if _source_snapshot(workspace_root) != marker:
+            logger.warning("Workspace changed while code search was indexing; retry the search")
+            _reset_index()
+            return None
+        _index = fresh
         _index_root = workspace_root
-        _index_created_at = time.time()
-        _index_mtime = _newest_source_mtime(workspace_root)
-        elapsed_ms = (_index_created_at - t0) * 1000
-        if _first_time or elapsed_ms > 1000:
-            logger.info(
-                "Semble index built for %s in %.0f ms",
-                workspace_root,
-                elapsed_ms,
-            )
+        _index_snapshot = marker
+        logger.debug("Code search index built in %.0f ms", (time.monotonic() - started) * 1000)
+        return _index
     except Exception as exc:
-        logger.warning("Failed to build Semble index: %s", exc)
-        _index = None
+        logger.warning("Failed to refresh Semble index: %s", exc)
+        _reset_index()
         return None
 
-    return _index
 
+def _source_snapshot(root: Path) -> tuple:
+    """Fingerprint exactly the files Semble indexes, using its ignore rules.
 
-def _newest_source_mtime(root: Path) -> float:
-    """Return the modification time of the most recently changed source file.
-
-    Walks the top two directory levels (fast heuristic) and checks common
-    source extensions.  Returns 0.0 if nothing is found.
-
-    Args:
-        root: Project root directory.
-
-    Returns:
-        ``st_mtime`` of the newest source file, or 0.0.
+    Full-depth paths detect additions, renames and deletions. Content digests
+    detect edits even when an editor restores the file's size and timestamps.
+    Semble's walker supports Python 3.11 and honors nested ignore files.
+    An I/O error propagates, so a partial scan cannot validate an old index.
     """
-    _SOURCE_EXTS = {
-        ".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".go", ".rs",
-        ".rb", ".php", ".c", ".cpp", ".h", ".hpp", ".cs", ".swift",
-        ".kt", ".scala", ".sh", ".bash", ".lua", ".r", ".m", ".sql",
-    }
-    newest = 0.0
-    try:
-        for dirpath, _dirnames, filenames in root.walk():
-            # Limit depth for speed (3 levels is enough for most projects)
-            depth = len(dirpath.relative_to(root).parts)
-            if depth > 3:
-                continue
-            # Skip hidden, .git, node_modules, __pycache__, .venv
-            _dirnames[:] = [
-                d for d in _dirnames
-                if not d.startswith(".")
-                and d not in ("node_modules", "__pycache__", ".venv", "venv")
-            ]
-            for fname in filenames:
-                if Path(fname).suffix.lower() in _SOURCE_EXTS:
-                    try:
-                        mtime = (dirpath / fname).stat().st_mtime
-                        if mtime > newest:
-                            newest = mtime
-                    except OSError:
-                        continue
-    except Exception:
-        pass
-    return newest
+    from semble.index.file_walker import walk_files
+    from semble.index.files import get_extensions
+
+    entries = []
+    for path in walk_files(root, get_extensions(False, None)):
+        stat = path.stat()
+        digest = hashlib.blake2b(digest_size=16)
+        with path.open("rb") as stream:
+            for block in iter(lambda: stream.read(64 * 1024), b""):
+                digest.update(block)
+        entries.append(
+            (
+                path.relative_to(root).as_posix(),
+                stat.st_mtime_ns,
+                stat.st_ctime_ns,
+                stat.st_size,
+                digest.digest(),
+            )
+        )
+    return tuple(sorted(entries))
 
 
 # ---------------------------------------------------------------------------

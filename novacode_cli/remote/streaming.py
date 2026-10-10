@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from collections.abc import Callable
 
 from novacode_cli import ui_events as ev
@@ -105,15 +106,19 @@ class RemoteAnswerStream:
             self.cancelled = True
 
     async def _pump(self) -> None:
+        retry_delay = self.interval
         try:
             while True:
-                await asyncio.sleep(self.interval)
+                await asyncio.sleep(retry_delay)
                 if self.dirty and self.text.strip():
                     self.dirty = False
                     try:
                         await asyncio.wait_for(self.edit(self.text, False), timeout=15)
+                        retry_delay = self.interval
                     except Exception:
                         self.dirty = True
+                        retry_delay = min(max(self.interval, retry_delay * 2), 30.0)
+                        retry_delay += random.uniform(0.0, min(1.0, retry_delay * 0.1))
                         logger.debug(
                             "Remote answer edit failed; retrying latest text", exc_info=True
                         )

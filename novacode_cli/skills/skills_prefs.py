@@ -108,17 +108,19 @@ def set_skill_enabled(name: str, *, enabled: bool, scope: Scope) -> None:
     save_disabled(path, disabled)
 
 
-def prefs_signature() -> frozenset[tuple[str, float]]:
-    """A ``(path, mtime)`` set over the existing prefs files.
+def prefs_signature() -> frozenset[tuple[str, str]]:
+    """A ``(path, content digest)`` set over the existing prefs files.
 
     Feeds the skills-middleware refresh check so toggling a skill re-lists the
     available set on the next turn without a restart.
     """
-    sig: set[tuple[str, float]] = set()
+    sig: set[tuple[str, str]] = set()
     for path in (global_prefs_path(), project_prefs_path()):
         if path is not None and path.exists():
             try:
-                sig.add((str(path), path.stat().st_mtime))
+                from novacode_cli.computation_cache import digest
+
+                sig.add((str(path), digest(path.read_bytes())))
             except OSError:
                 continue
     return frozenset(sig)

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import codecs
 import contextlib
 import itertools
 import logging
@@ -138,6 +139,7 @@ class SessionSupervisor:
         return {
             **os.environ,
             "PYTHONIOENCODING": "utf-8",
+            "PYTHONUNBUFFERED": "1",
             "PYTHONSAFEPATH": "1",
             "PYTHONPATH": f"{pkg_root}{os.pathsep}{existing}" if existing else str(pkg_root),
         }
@@ -240,15 +242,21 @@ class SessionSupervisor:
             await self._on_exit(child)
 
     async def _read_stderr(self, child: ChildSession) -> None:
-        """Keep the tail of stderr so a crash can be explained."""
+        """Drain bounded chunks, including output with no newline, until EOF."""
         stream = child.proc.stderr
         lines = 0
+        decoder = codecs.getincrementaldecoder("utf-8")("replace")
         with contextlib.suppress(asyncio.CancelledError, Exception):
             while True:
-                raw = await stream.readline()
+                raw = await stream.read(4096)
                 if not raw:
+                    last = decoder.decode(b"", final=True)
+                    if last:
+                        child.stderr_tail.append(last)
                     break
-                child.stderr_tail.append(raw.decode("utf-8", "replace").rstrip())
+                text = decoder.decode(raw)
+                if text:
+                    child.stderr_tail.append(text.rstrip())
                 lines += 1
                 if lines >= 32:
                     await asyncio.sleep(0)
@@ -316,6 +324,10 @@ class SessionSupervisor:
         """
         self._children.pop(child.session_id, None)
         _live.discard(child)
+        if child.proc is not None and child.proc.stdin is not None:
+            # The app retains the ChildSession for its exited tab. Close the
+            # writer explicitly rather than waiting for that tab to be removed.
+            child.proc.stdin.close()
         child.tasks = []
 
     # ── sending ──────────────────────────────────────────────────────────
@@ -402,6 +414,7 @@ class SessionSupervisor:
         _live.discard(child)
         if child.status not in ("crashed",):
             child.status = "exited"
+        self._reap(child)
         return child
 
     async def close_all(self, *, timeout: float = _SHUTDOWN_GRACE) -> list[ChildSession]:

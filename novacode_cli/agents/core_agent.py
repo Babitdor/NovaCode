@@ -177,6 +177,63 @@ class _LazySubAgent:
 _dsub.create_sub_agent = _cached_create_sub_agent
 # ────────────────────────────────────────────────────────────────────────────
 
+# ── Patch deepagents' task tool so a subagent's stream names its dispatch ───
+# A subagent's messages arrive on the parent stream under a namespace that says
+# which *tool node* ran it, not which dispatch: a JS fan-out runs every task()
+# inside one `eval` call, so all of them share a namespace. The task tool does
+# know the dispatch (`runtime.tool_call_id`, which is the panel row's id for a
+# direct call and for a quickjs one alike), so it is stamped into the ambient
+# config's metadata, which langgraph carries onto every message the subagent
+# streams. The subagents panel reads it back to show what a row is doing.
+from novacode_cli.core.subagent_tasks import TASK_ID_METADATA_KEY  # noqa: E402
+
+_original_build_task_tool = _dsub._build_task_tool
+
+
+def _build_task_tool_with_task_id(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+    import functools
+
+    from langchain_core.runnables.config import var_child_runnable_config
+
+    tool = _original_build_task_tool(*args, **kwargs)
+
+    def _stamp(call_kwargs: dict):  # noqa: ANN202
+        config = dict(var_child_runnable_config.get() or {})
+        config["metadata"] = {
+            **(config.get("metadata") or {}),
+            TASK_ID_METADATA_KEY: getattr(call_kwargs.get("runtime"), "tool_call_id", None),
+        }
+        return var_child_runnable_config.set(config)
+
+    func, coroutine = tool.func, tool.coroutine
+    if func is not None:
+
+        @functools.wraps(func)
+        def task(*a, **kw):  # noqa: ANN002, ANN003, ANN202
+            token = _stamp(kw)
+            try:
+                return func(*a, **kw)
+            finally:
+                var_child_runnable_config.reset(token)
+
+        tool.func = task
+    if coroutine is not None:
+
+        @functools.wraps(coroutine)
+        async def atask(*a, **kw):  # noqa: ANN002, ANN003, ANN202
+            token = _stamp(kw)
+            try:
+                return await coroutine(*a, **kw)
+            finally:
+                var_child_runnable_config.reset(token)
+
+        tool.coroutine = atask
+    return tool
+
+
+_dsub._build_task_tool = _build_task_tool_with_task_id
+# ────────────────────────────────────────────────────────────────────────────
+
 from langchain.tools import BaseTool
 from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -287,11 +344,6 @@ def _extract_agent_description(agent_md_content: str) -> str:
     return "Agent with custom system prompt and tools"
 
 
-# Cache for named subagents with TTL to avoid repeated filesystem reads
-_named_subagents_cache: dict[str, tuple[float, list[SubAgent]]] = {}
-_NAMED_SUBAGENTS_CACHE_TTL = 60.0  # seconds
-
-
 def build_named_subagents(
     assistant_id: str,
     tools: list[BaseTool],
@@ -302,7 +354,7 @@ def build_named_subagents(
     directories, excluding the current main agent, and converts them into SubAgent
     specifications that can be passed to SubAgentMiddleware.
 
-    Uses a cache with TTL to avoid repeated filesystem reads on agent restarts.
+    Discovers current files on every build; only parsed definitions are reused.
 
     Args:
         assistant_id: The name of the current main agent (to exclude from subagents)
@@ -312,14 +364,6 @@ def build_named_subagents(
         List of SubAgent specifications ready for SubAgentMiddleware
     """
     from novacode_cli.config.config import settings
-
-    # Check cache first
-    now = time.time()
-    cache_key = assistant_id
-    if cache_key in _named_subagents_cache:
-        cached_time, cached_value = _named_subagents_cache[cache_key]
-        if now - cached_time < _NAMED_SUBAGENTS_CACHE_TTL:
-            return cached_value
 
     subagents: list[SubAgent] = []
     all_agents = settings.get_all_agents()
@@ -438,21 +482,14 @@ def build_named_subagents(
             subagent["skill_names"] = metadata["skill_names"]
         subagents.append(subagent)
 
-    # Cache the result
-    _named_subagents_cache[cache_key] = (now, subagents)
-
     return subagents
 
 
 def clear_named_subagents_cache() -> None:
-    """Drop the built subagent specs so the next build picks up a changed role.
+    """Invalidate parsed definitions after configuration changes."""
+    from novacode_cli.computation_cache import clear
 
-    Without this, a per-role model change waits out `_NAMED_SUBAGENTS_CACHE_TTL`
-    (60s) before it takes effect, which reads as the setting being ignored. Called
-    by whatever sets a role, rather than from the config layer, so config never has
-    to import the agent stack.
-    """
-    _named_subagents_cache.clear()
+    clear("agent_definitions")
 
 
 def list_agents() -> None:
@@ -2340,4 +2377,8 @@ This file stores your preferences and context that persist across sessions.
     except Exception:
         pass
 
+    if os.environ.get("NOVA_LOCAL_METRICS") == "1":
+        from novacode_cli.tracking.local_metrics import callbacks
+
+        agent = agent.with_config(callbacks=callbacks())
     return agent, composite_backend

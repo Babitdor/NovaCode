@@ -5501,6 +5501,62 @@ class BackgroundTasksScreen(ModalScreen[dict | None]):
         self.dismiss(None)
 
 
+class SubagentPreviewScreen(ModalScreen[None]):
+    """What one subagent is doing: its text, tool calls and results, live.
+
+    Polls a snapshot rather than being pushed to: the app keeps collecting a
+    row's activity whether or not anyone is watching it.
+    """
+
+    BINDINGS = [("escape", "close", "Close")]
+    DEFAULT_CSS = """
+    SubagentPreviewScreen #modal-box { width: 94%; height: 90%; max-height: 96%; padding: 1 2; }
+    SubagentPreviewScreen #preview-scroll { height: 1fr; }
+    """
+
+    def __init__(self, snapshot: Any) -> None:
+        """``snapshot()`` returns the current ``(title, preview entries)``."""
+        super().__init__()
+        self._snapshot = snapshot
+        self._shown: list | None = None
+        self._rendered: dict = {}
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="modal-box"):
+            yield Static("", id="modal-title")
+            with VerticalScroll(id="preview-scroll"):
+                yield Static("", id="preview-body")
+            yield Static(Text("Esc close", style="dim"), id="modal-hint")
+
+    def on_mount(self) -> None:
+        self._refresh()
+        self.set_interval(0.5, self._refresh)
+
+    def _refresh(self) -> None:
+        from novacode_cli.core.subagent_tasks import preview_renderable
+        from novacode_cli.tui.widgets import CachedMarkdown
+
+        title, entries = self._snapshot()
+        self.query_one("#modal-title", Static).update(title)
+        if entries == self._shown:
+            return
+        self._shown = list(entries)
+        scroll = self.query_one("#preview-scroll", VerticalScroll)
+        # Follow the output unless the reader has scrolled back to read.
+        follow = scroll.scroll_offset.y >= scroll.max_scroll_y - 1
+        body = (
+            preview_renderable(entries, markdown=CachedMarkdown, cache=self._rendered)
+            if entries
+            else Text("No activity yet.", style="dim")
+        )
+        self.query_one("#preview-body", Static).update(body)
+        if follow:
+            scroll.scroll_end(animate=False)
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
 class RouterScreen(ModalScreen[dict | None]):
     """Native ``/router``: configure per-turn model routing.
 

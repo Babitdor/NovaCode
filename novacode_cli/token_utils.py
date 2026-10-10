@@ -3,7 +3,10 @@
 import hashlib
 import json
 import os
+import tempfile
 import warnings
+from contextlib import suppress
+from importlib import metadata
 from pathlib import Path
 
 # Suppress transformers warnings about missing ML frameworks
@@ -11,6 +14,7 @@ from pathlib import Path
 os.environ["TRANSFORMERS_VERBOSITY"] = "error"
 warnings.filterwarnings("ignore", message=".*PyTorch.*TensorFlow.*Flax.*")
 
+from langchain_core.language_models import BaseChatModel  # noqa: E402
 from langchain_core.messages import SystemMessage
 
 from novacode_cli.config.config import settings
@@ -18,6 +22,46 @@ from novacode_cli.prompts import render_template
 
 # Cache file name stored alongside the agent directory
 _TOKEN_CACHE_FILENAME = "token_cache.json"
+_TOKEN_CACHE_VERSION = 2
+
+
+def _counting_identity(model: BaseChatModel) -> str | None:
+    """Identify supported native counters; bypass ambiguous/custom tokenizers."""
+    module = type(model).__module__
+    if not module.startswith(("langchain_openai.", "langchain_anthropic.")):
+        return None
+    if getattr(model, "custom_get_token_ids", None) is not None:
+        return None
+    name = getattr(model, "model_name", None) or getattr(model, "model", None)
+    if not isinstance(name, str) or not name:
+        return None
+    packages = ["langchain-core"]
+    if module.startswith("langchain_openai."):
+        packages += ["langchain-openai", "openai", "tiktoken"]
+    else:
+        packages += ["langchain-anthropic", "anthropic"]
+    try:
+        versions = {package: metadata.version(package) for package in packages}
+        if not all(versions.values()):
+            return None
+        # JSON mode excludes SDK clients and represents declared model configuration.
+        config = model.model_dump(mode="json", exclude={"callbacks", "tags", "metadata"})
+        identity = json.dumps(
+            {
+                "version": _TOKEN_CACHE_VERSION,
+                "provider": module,
+                "class": type(model).__qualname__,
+                "model": name,
+                "config": config,
+                "tokenizer": getattr(model, "tiktoken_model_name", None) or name,
+                "versions": versions,
+                "method": "get_num_tokens_from_messages",
+            },
+            sort_keys=True,
+        )
+    except (metadata.PackageNotFoundError, TypeError, ValueError, AttributeError):
+        return None
+    return _prompt_hash(identity)
 
 
 def _prompt_hash(full_system_prompt: str) -> str:
@@ -32,8 +76,13 @@ def _load_token_cache(agent_dir: Path, prompt_hash: str) -> int | None:
         return None
     try:
         data = json.loads(cache_path.read_text(encoding="utf-8"))
-        if data.get("hash") == prompt_hash:
-            return int(data["tokens"])
+        if (
+            data.get("version") == _TOKEN_CACHE_VERSION
+            and data.get("hash") == prompt_hash
+            and type(data.get("tokens")) is int
+            and data["tokens"] >= 0
+        ):
+            return data["tokens"]
     except Exception:
         pass
     return None
@@ -41,28 +90,40 @@ def _load_token_cache(agent_dir: Path, prompt_hash: str) -> int | None:
 
 def _save_token_cache(agent_dir: Path, prompt_hash: str, tokens: int) -> None:
     """Persist the token count keyed by prompt hash."""
+    temporary: Path | None = None
     try:
         agent_dir.mkdir(parents=True, exist_ok=True)
         cache_path = agent_dir / _TOKEN_CACHE_FILENAME
-        cache_path.write_text(
-            json.dumps({"hash": prompt_hash, "tokens": tokens}),
+        with tempfile.NamedTemporaryFile(
+            mode="w",
             encoding="utf-8",
-        )
+            dir=agent_dir,
+            prefix="token-cache-",
+            suffix=".tmp",
+            delete=False,
+        ) as tmp:
+            temporary = Path(tmp.name)
+            json.dump({"version": _TOKEN_CACHE_VERSION, "hash": prompt_hash, "tokens": tokens}, tmp)
+        temporary.replace(cache_path)
     except Exception:
         pass
+    finally:
+        if temporary is not None:
+            with suppress(OSError):
+                temporary.unlink(missing_ok=True)
 
 
 def calculate_baseline_tokens(
-    model, agent_dir: Path, system_prompt: str, assistant_id: str
+    model: BaseChatModel, agent_dir: Path, system_prompt: str, assistant_id: str
 ) -> int:
     """Calculate baseline context tokens using the model's official tokenizer.
 
     This uses the model's get_num_tokens_from_messages() method to get
     accurate token counts for the initial context (system prompt + agent.md).
 
-    Results are cached to disk keyed by SHA-256 of the full assembled prompt,
-    so repeat startups with the same prompt skip the (potentially slow)
-    tokenisation step entirely.
+    Supported native counters use a versioned digest of the complete prompt,
+    model configuration, tokenizer and installed SDK versions. Ambiguous
+    identities and fallback counts are never persisted.
 
     Note: Tool definitions cannot be accurately counted before the first API call
     due to LangChain limitations. They will be included in the total after the
@@ -109,25 +170,36 @@ def calculate_baseline_tokens(
         assistant_id, project_root, bool(project_memory)
     )
 
-    full_system_prompt = (
-        memory_section + "\n\n" + system_prompt + "\n\n" + memory_system_prompt
-    )
+    full_system_prompt = memory_section + "\n\n" + system_prompt + "\n\n" + memory_system_prompt
 
     # --- Cache check ---
-    prompt_hash = _prompt_hash(full_system_prompt)
-    cached = _load_token_cache(agent_dir, prompt_hash)
+    identity = _counting_identity(model)
+    prompt_hash = _prompt_hash(full_system_prompt + (identity or ""))
+    enabled = os.environ.get("NOVA_DISABLE_COMPUTATION_CACHE") != "1"
+    cached = _load_token_cache(agent_dir, prompt_hash) if identity and enabled else None
     if cached is not None:
         return cached
 
     # --- Compute ---
-    tokens = _count_tokens_for_prompt(model, full_system_prompt)
-
-    # --- Persist ---
-    _save_token_cache(agent_dir, prompt_hash, tokens)
+    # A fallback must never be recorded under the native counter's identity.
+    try:
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore", message="Token indices sequence length is longer than"
+            )
+            warnings.filterwarnings("ignore", message=".*transformers.*")
+            tokens = model.get_num_tokens_from_messages([SystemMessage(content=full_system_prompt)])
+        if type(tokens) is not int or tokens < 0:
+            message = "Invalid native token count"
+            raise ValueError(message)  # noqa: TRY301 - discard invalid counters
+    except Exception:  # noqa: BLE001 - providers expose different counting errors
+        return _count_fallback_tokens(model, full_system_prompt)
+    if identity and enabled:
+        _save_token_cache(agent_dir, prompt_hash, tokens)
     return tokens
 
 
-def _count_tokens_for_prompt(model, full_system_prompt: str) -> int:
+def _count_tokens_for_prompt(model: BaseChatModel, full_system_prompt: str) -> int:
     """Run the actual (potentially slow) token counting, with fallbacks."""
     messages = [SystemMessage(content=full_system_prompt)]
 
@@ -145,6 +217,11 @@ def _count_tokens_for_prompt(model, full_system_prompt: str) -> int:
     except Exception:
         pass
 
+    return _count_fallback_tokens(model, full_system_prompt)
+
+
+def _count_fallback_tokens(model: BaseChatModel, full_system_prompt: str) -> int:
+    """Fallback counts are never stored as a successful native count."""
     # Fallback 1: Anthropic SDK native token counter
     try:
         import anthropic

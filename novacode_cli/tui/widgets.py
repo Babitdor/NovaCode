@@ -1759,9 +1759,10 @@ class SubagentsDock(Vertical):
     """The dynamic-subagents panel: phases beside their tasks, while they run.
 
     Owns its own click handling rather than adding branches to the app's global
-    click walk: a click on a phase line folds that phase, a click anywhere else
-    folds the whole panel. Row coordinates are the dock's, so the header occupies
-    line 0 and the rendered table starts at line 1.
+    click walk: a click on a phase line folds that phase, a click on a task opens
+    its preview, a click anywhere else folds the whole panel. Row coordinates are
+    the dock's, so the header occupies line 0 and the rendered table starts at
+    line 1.
     """
 
     def on_click(self, event: events.Click) -> None:
@@ -1769,4 +1770,4 @@ class SubagentsDock(Vertical):
         handler = getattr(self.app, "_on_subagents_click", None)
         if handler is not None:
             body = self.query_one("#subagents-body")
-            handler(event.screen_y - body.region.y + 1)
+            handler(event.screen_y - body.region.y + 1, event.screen_x - body.region.x)
