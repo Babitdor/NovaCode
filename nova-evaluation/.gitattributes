@@ -1,0 +1,3 @@
+# Task files run inside Linux containers: always LF, whatever the host.
+learning-pairs/** text eol=lf
+nova-tasks/** text eol=lf
