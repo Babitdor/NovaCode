@@ -299,8 +299,9 @@ class TestRunawayMemoryGuards:
             update_from_review,
         )
 
+        # Genuinely different topics, so this measures the per-review cap alone.
         lessons = [
-            {"topic": f"nova-readme-audit-{w}", "bullets": f"- The {w} check needs a follow-up run"}
+            {"topic": w, "bullets": f"- The {w} check needs a follow-up run"}
             for w in ("alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta")
         ]
         update_from_review(temp_agent_dir, "", lessons)
@@ -308,6 +309,21 @@ class TestRunawayMemoryGuards:
         written = list((temp_agent_dir / "memories").glob("*.md"))
         topics = [p for p in written if p.name != "INDEX.md"]
         assert len(topics) == MAX_LESSONS_PER_REVIEW, [p.name for p in topics]
+
+    def test_a_flood_of_near_identical_topic_names_is_one_topic(self, temp_agent_dir: Path) -> None:
+        """The runaway's actual shape: one subject under an endless run of suffixes."""
+        from novacode_cli.hermes.memory_tiers import update_from_review
+
+        lessons = [
+            {"topic": f"nova-readme-audit-{w}", "bullets": f"- The {w} check needs a follow-up run"}
+            for w in ("alpha", "beta", "gamma", "delta")
+        ]
+        update_from_review(temp_agent_dir, "", lessons)
+
+        topics = [p for p in (temp_agent_dir / "memories").glob("*.md") if p.name != "INDEX.md"]
+        assert [p.name for p in topics] == ["nova-readme-audit-alpha.md"]
+        body = topics[0].read_text(encoding="utf-8")
+        assert all(w in body for w in ("alpha", "beta", "gamma", "delta"))
 
     def test_one_word_bullets_are_not_memories(self, temp_agent_dir: Path) -> None:
         """The exact shape of the runaway: a topic whose whole content is '- **Abhorring.**'."""

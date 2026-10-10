@@ -1,6 +1,7 @@
 """Middleware for loading agent-specific long-term memory into the system prompt."""
 
 import asyncio
+import logging
 import os
 import re
 from collections.abc import Awaitable, Callable
@@ -33,6 +34,8 @@ from novacode_cli.memory.limits import (
 )
 from novacode_cli.prompts import render_template
 
+logger = logging.getLogger(__name__)
+
 # Injection-time truncation keeps the file *head* (newest, given memory files are
 # written newest-first — see novacode_cli/memory/limits.py for the invariant).
 _MEMORY_TRUNCATION_NOTICE = "\n\n... [memory truncated — use read_file for full content]"
@@ -46,6 +49,25 @@ _MAX_RETRIEVED_MEMORIES = 3  # top-K topic bodies injected per turn
 _RETRIEVAL_PER_FILE_CAP = 900  # chars per injected memory body
 _RETRIEVAL_CHAR_BUDGET = 2200  # total chars across injected bodies
 _MIN_RELEVANCE = 2  # min lexical score to inject (drops weak single-word hits)
+# Retrieval also looks at what the agent is facing right now — the tail of its
+# last tool result — not only at what the user asked. A lesson like "`apt-get
+# install` fails until `apt-get update` has run" shares no words with a request
+# to build a web server; it shares several with the error it is about. Tool
+# output is wordier and noisier than a request, so it has to match harder.
+_SITUATION_TAIL_CHARS = 600
+_MIN_SITUATION_RELEVANCE = 3
+# ...except when that output is a failure. An error is short ("python3: command
+# not found"), is the moment a lesson is most useful, and is far less wordy than
+# a file listing, so two shared words are allowed to count there.
+_MIN_FAILURE_RELEVANCE = 2
+_FAILURE_MARKERS = (
+    "error", "not found", "no such", "failed", "cannot", "unable", "denied",
+    "traceback", "exception", "refused", "exit code: 1", "exit code: 2",
+    "exit code: 100", "exit code: 126", "exit code: 127",
+)  # fmt: skip
+_MAX_RETRIEVED_BULLETS = 8
+# How far below the best-matching lesson another may be and still be recalled.
+_MEANING_MARGIN = 0.12
 
 
 # Generic words (>=4 chars) that survive the length filter but carry no topical
@@ -164,6 +186,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
         context_window: int = 0,
         memory_block_chars: int | None = None,
         memory_index_chars: int | None = None,
+        project_key: str = "",
     ) -> None:
         """Initialize the agent memory middleware.
 
@@ -184,8 +207,13 @@ class AgentMemoryMiddleware(AgentMiddleware):
                 HABITS, project memory). Defaults to the configured budget.
             memory_index_chars: Chars of the topic index injected; the rest is
                 reachable via ``memory_search``.
+            project_key: Key of the codebase this session is in (see
+                ``hermes.memory_tiers.project_memory_key``). Lessons recorded
+                for that project are retrieved alongside the general ones;
+                other projects' lessons are never read.
         """
         self.settings = settings
+        self._project_key = project_key
         self._max_chars = memory_budget(
             context_window, cap=memory_block_chars or DEFAULT_MEMORY_BLOCK_CHARS
         )
@@ -228,7 +256,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
         # signature) and the last query's retrieved block (so tool-loop
         # iterations don't re-scan).
         self._corpus_cache: dict[str, tuple[frozenset[str], str, frozenset[str]]] | None = None
-        self._corpus_sig: tuple[int, float] | None = None
+        self._corpus_sig: tuple | None = None  # one (count, mtime) per lesson dir
         self._retrieval_cache: tuple[str, str] | None = None
 
         # Progressive disclosure for topic memory: the system prompt carries only
@@ -645,10 +673,14 @@ class AgentMemoryMiddleware(AgentMiddleware):
         add/update files), so scoring doesn't re-read 58 files every turn.
         """
         mem_dir = self.agent_dir / "memories"
-        signature = self._corpus_signature(mem_dir)
-        if signature is None:
-            self._corpus_cache, self._corpus_sig = {}, None
-            return {}
+        # General lessons, plus the ones recorded for THIS project. Other
+        # projects' lessons sit in sibling directories and are never read.
+        dirs = [mem_dir]
+        project_key = getattr(self, "_project_key", "")  # absent on bare test instances
+        if project_key:
+            dirs.append(mem_dir / "projects" / project_key)
+        signatures = [self._corpus_signature(d) for d in dirs]
+        signature = tuple(signatures)
         # Compare the WHOLE signature. Comparing only the newest mtime (the old
         # ``signature[1]``) discarded the file count, so deleting a topic file
         # that was not the newest left its lessons in the cached corpus — and
@@ -657,7 +689,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
             return self._corpus_cache
 
         corpus: dict[str, tuple[frozenset[str], str, frozenset[str]]] = {}
-        for path in mem_dir.glob("*.md"):
+        for path in (p for d in dirs if d.is_dir() for p in d.glob("*.md")):
             if path.name == "INDEX.md":
                 continue
             try:
@@ -668,6 +700,13 @@ class AgentMemoryMiddleware(AgentMiddleware):
                 continue
             title_toks = _tokens(path.stem.replace("-", " ").replace("_", " "))
             corpus[path.stem] = (title_toks, body, _tokens(body))
+        # The lessons every installation starts with (see builtin_lessons).
+        # Recalled like any other; a learned topic of the same name wins.
+        from novacode_cli.memory import builtin_lessons
+
+        if builtin_lessons.enabled() and builtin_lessons.TOPIC not in corpus:
+            text = builtin_lessons.body()
+            corpus[builtin_lessons.TOPIC] = (frozenset(), text, _tokens(text))
         self._corpus_cache, self._corpus_sig = corpus, signature
         return corpus
 
@@ -716,34 +755,59 @@ class AgentMemoryMiddleware(AgentMiddleware):
         return await asyncio.to_thread(self._relevant_memories, request)
 
     def _relevant_memories(self, request: ModelRequest) -> str:
-        """Retrieve topic bodies relevant to this turn's user message, formatted
-        for injection. Lexical overlap scoring (title hits weighted 2x); cached
-        per-query so tool-loop iterations reuse the result. '' when nothing scores."""
+        """Retrieve the lessons relevant to this turn, formatted for injection.
+
+        Scored per BULLET, not per topic file: a topic collects many facts over
+        time and only some bear on the moment, and injecting the head of the
+        file (as this used to) sent whichever bullets happened to be newest.
+        A bullet qualifies by sharing words with the user's request (a hit on
+        the topic's title counts double) or, more strictly, with the tail of the
+        last tool result. Cached per (request, situation), so repeated model
+        calls on an unchanged conversation reuse it. '' when nothing scores.
+        """
         query = self._latest_user_text(request)
-        if not query:
+        situation = self._situation_text(request)
+        if not query and not situation:
             return ""
-        if self._retrieval_cache is not None and self._retrieval_cache[0] == query:
+        key = f"{query}\x00{situation}"
+        if self._retrieval_cache is not None and self._retrieval_cache[0] == key:
             return self._retrieval_cache[1]
 
-        q = _tokens(query)
+        q, facing_words = _tokens(query), _tokens(situation)
+        lowered = situation.lower()
+        needed = (
+            _MIN_FAILURE_RELEVANCE
+            if any(marker in lowered for marker in _FAILURE_MARKERS)
+            else _MIN_SITUATION_RELEVANCE
+        )
         block = ""
-        if q:
-            corpus = self._load_memory_corpus()
-            scored = []
-            for topic, (title_toks, body, body_toks) in corpus.items():
-                score = 2 * len(q & title_toks) + len(q & body_toks)
-                if score >= _MIN_RELEVANCE:
-                    scored.append((score, topic, body))
+        if q or facing_words:
+            scored: list[tuple[int, str, str]] = []
+            # (word score, topic, bullet, qualified by shared words)
+            candidates: list[tuple[int, str, str, bool]] = []
+            for topic, (title_toks, body, body_toks) in self._load_memory_corpus().items():
+                title_bonus = 2 * len(q & title_toks)
+                topic_asked = title_bonus + len(q & body_toks) >= _MIN_RELEVANCE
+                lines = [ln for ln in body.splitlines() if ln.lstrip().startswith(("-", "*", "•"))]
+                if not lines and topic_asked:  # a hand-written topic with no bullets
+                    scored.append((title_bonus + len(q & body_toks), topic, body.strip()[:_RETRIEVAL_PER_FILE_CAP]))
+                for line in lines:
+                    words = _tokens(line)
+                    asked, facing = len(q & words), len(facing_words & words)
+                    by_words = (topic_asked and asked > 0) or facing >= needed
+                    candidates.append((asked + title_bonus + 2 * facing, topic, line.strip(), by_words))
+            scored += self._by_meaning(candidates, query, situation)
             scored.sort(key=lambda t: t[0], reverse=True)
 
             used = 0
-            chunks: list[str] = []
-            for _score, topic, body in scored[:_MAX_RETRIEVED_MEMORIES]:
-                snippet = body.strip()[:_RETRIEVAL_PER_FILE_CAP]
-                if used + len(snippet) > _RETRIEVAL_CHAR_BUDGET:
+            by_topic: dict[str, list[str]] = {}
+            for _score, topic, line in scored[:_MAX_RETRIEVED_BULLETS]:
+                if used + len(line) > _RETRIEVAL_CHAR_BUDGET:
                     break
-                chunks.append(f"### {topic}\n{snippet}")
-                used += len(snippet)
+                by_topic.setdefault(topic, []).append(line)
+                used += len(line)
+            chunks = [f"### {topic}\n" + "\n".join(found) for topic, found in by_topic.items()]
+            self._track_recall([ln for found in by_topic.values() for ln in found], situation)
             if chunks:
                 block = (
                     "<relevant_memory>\n"
@@ -752,8 +816,91 @@ class AgentMemoryMiddleware(AgentMiddleware):
                     + "\n\n".join(chunks)
                     + "\n</relevant_memory>"
                 )
-        self._retrieval_cache = (query, block)
+        self._retrieval_cache = (key, block)
         return block
+
+    def _track_recall(self, recalled: list[str], situation: str) -> None:
+        """Count what was recalled, and credit the last recall if its failure cleared.
+
+        Runs once per new (request, situation), never on a cache hit. Never raises:
+        statistics must not be able to break a turn.
+        """
+        try:
+            from novacode_cli.memory import recall_stats
+
+            lowered = situation.lower()
+            failing = any(marker in lowered for marker in _FAILURE_MARKERS)
+            previous = getattr(self, "_last_recall", None)
+            if previous and previous[1] and situation and not failing:
+                recall_stats.note_resolved(self.agent_dir, previous[0])
+            keys = recall_stats.note_recalled(self.agent_dir, recalled)
+            if recalled:
+                self._last_recall = (keys, failing)
+            elif situation:
+                self._last_recall = None  # a later success is not this lesson's doing
+        except Exception:  # noqa: BLE001
+            logger.debug("recall tracking failed", exc_info=True)
+
+    @staticmethod
+    def _by_meaning(
+        candidates: list[tuple[int, str, str, bool]], query: str, situation: str
+    ) -> list[tuple[int, str, str]]:
+        """Keep the bullets that bear on this moment, judged by meaning too.
+
+        Shared words find a lesson only when it happens to use the same ones as
+        the request or the error. The embedding connects ``python3: command not
+        found`` to a lesson that says "install Python with apt-get" (0.50) and
+        keeps a file listing or a passing test run well away from everything
+        (under 0.2). When the model is unavailable this reduces to the word
+        test, which is what ran before.
+        """
+        if not candidates:
+            return []
+        from novacode_cli.memory import semantic
+
+        bullets = [c[2].lstrip("-*• ").strip() for c in candidates]
+        zeros = [0.0] * len(bullets)
+        # Tool output is compared by meaning only when it is a FAILURE. Ordinary
+        # output about the same tool reads as related (`python3 --version`
+        # scores 0.47 against the missing-Python lesson) and is not a moment
+        # anyone needs a lesson.
+        lowered = situation.lower()
+        failing = any(marker in lowered for marker in _FAILURE_MARKERS)
+        # An error is usually the last thing printed; the whole tail of a long
+        # log dilutes it, so both are tried.
+        last_lines = "\n".join([ln for ln in situation.splitlines() if ln.strip()][-3:])
+        closeness = [
+            max(scores)
+            for scores in zip(
+                (semantic.similarities(situation, bullets) if failing else None) or zeros,
+                (semantic.similarities(last_lines, bullets) if failing else None) or zeros,
+                semantic.similarities(query[:1000], bullets) or zeros,
+                strict=True,
+            )
+        ]
+        # Only the lessons nearly as close as the closest one: the apt error
+        # matches its own lesson at 0.79 and an unrelated pip note at 0.62.
+        floor = max(semantic.RELEVANT, max(closeness) - _MEANING_MARGIN)
+        return [
+            (word_score + round(20 * close), topic, line)
+            for (word_score, topic, line, by_words), close in zip(candidates, closeness, strict=True)
+            if by_words or close >= floor
+        ]
+
+    @staticmethod
+    def _situation_text(request: ModelRequest) -> str:
+        """Tail of the most recent tool result — what the agent is looking at now."""
+        messages = getattr(request, "messages", None) or []
+        last = messages[-1] if messages else None
+        role = getattr(last, "type", None) or (last.get("role") if isinstance(last, dict) else None)
+        if role != "tool":
+            return ""
+        content = getattr(last, "content", None)
+        if content is None and isinstance(last, dict):
+            content = last.get("content")
+        if isinstance(content, list):  # provider block format
+            content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
+        return str(content or "")[-_SITUATION_TAIL_CHARS:]
 
     async def _memory_search(self, query: str, k: int = 5) -> str:
         """Search topic memory by what you are trying to recall.
@@ -766,6 +913,11 @@ class AgentMemoryMiddleware(AgentMiddleware):
         # Reading + tokenizing every topic file is synchronous disk I/O; off the
         # event loop so a large memory dir cannot stall the TUI.
         corpus = await asyncio.to_thread(self._load_memory_corpus)
+        # The built-in lessons have no file behind them to point the agent at;
+        # they are recalled automatically, so the search covers learned topics.
+        from novacode_cli.memory import builtin_lessons
+
+        corpus = {k: v for k, v in corpus.items() if k != builtin_lessons.TOPIC}
         if not corpus:
             return "No topic memory yet. Proceed without it."
         q = _tokens(query)

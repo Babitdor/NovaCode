@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from langchain_core.messages import SystemMessage
 
@@ -55,6 +56,67 @@ _TRIVIAL_BUILTINS: frozenset[str] = frozenset(
 # the central config so the threshold tuner (Enhancement 4) has one home for it;
 # ReviewRunner prefers a store-tuned value at runtime (see __init__).
 _FAILURE_BURST = config.FAILURE_BURST_DEFAULT
+
+
+_SHELL_TOOLS = frozenset({"bash", "shell", "execute"})
+# Output that reads like a check having been run: a test runner, a build, an
+# assertion, an explicit verdict.
+_CHECK_RE = re.compile(
+    r"\b\d+ (?:passed|failed|errors?)\b|\bPASS(?:ED)?\b|\bFAIL(?:ED|URE)?\b|\bOK\b"
+    r"|Traceback \(most recent call last\)|AssertionError|\bTests? (?:passed|failed)\b"
+    r"|exit(?:ed with)? code:? ?\d+|\berror:|compil(?:ed|ation)",
+    re.IGNORECASE,
+)
+# How many of the most recent shell results to look through for the last check.
+_OUTCOME_LOOKBACK = 8
+
+
+def session_outcome(messages: list[Any]) -> tuple[str, str]:
+    """How the work stood when it was last checked: ``(status, evidence)``.
+
+    ``status`` is "passed", "failed" or "unknown". It is read from the session's
+    own tool results — the most recent shell output that looks like a check —
+    because a review that is not told the outcome writes down whatever approach
+    is on screen as though it had worked.
+    """
+    from novacode_cli.hermes.middleware import _FAILURE_PATTERNS, _content_to_text
+
+    shell_results = []
+    for msg in messages:
+        if getattr(msg, "type", None) != "tool":
+            continue
+        if (getattr(msg, "name", None) or "") not in _SHELL_TOOLS:
+            continue
+        text = _content_to_text(msg)
+        if text:
+            shell_results.append(text)
+    for text in reversed(shell_results[-_OUTCOME_LOOKBACK:]):
+        if not _CHECK_RE.search(text):
+            continue
+        failed = any(p.search(text) for p in _FAILURE_PATTERNS)
+        return ("failed" if failed else "passed"), " ".join(text.split())[-240:]
+    return "unknown", ""
+
+
+def outcome_text(status: str, evidence: str) -> str:
+    """The outcome as the review prompt states it."""
+    if status == "failed":
+        return (
+            "The most recent check in this session FAILED:\n"
+            f"    {evidence}\n"
+            "The approach on screen is unproven. Record only pitfalls you actually hit, "
+            "with scope `project`, and do not propose a skill."
+        )
+    if status == "passed":
+        return (
+            "The most recent check in this session passed:\n"
+            f"    {evidence}\n"
+            "What led to that result may be recorded as having worked."
+        )
+    return (
+        "No test, build or other check was run in this session, so nothing in it is "
+        "verified. Record observations and pitfalls, not solutions."
+    )
 
 
 def _window_recovered(window: list[dict]) -> bool:
@@ -117,8 +179,16 @@ class ReviewRunner:
         review_threshold: int = config.REVIEW_THRESHOLD_DEFAULT,
         agent_dir: Path | None = None,
         enabled: bool = True,
+        project: str | None = None,
+        mode: str | None = None,
     ) -> None:
         self._store = store
+        # Key of the codebase being worked in; scopes lessons (see memory_tiers).
+        self._project = project
+        # "task_end" or "periodic" (see config.REVIEW_MODE_DEFAULT).
+        self._mode = mode or config.REVIEW_MODE_DEFAULT
+        # (status, evidence) of the session's last check, as of the last review.
+        self._outcome: tuple[str, str] = ("unknown", "")
         self._tracker = tracker
         self._skill_manager = skill_manager
         self._review_threshold = review_threshold
@@ -178,7 +248,13 @@ class ReviewRunner:
         # window is non-empty here because count >= min_floor (>= 3).
         clean_win = bool(window) and substantive and failures == 0 and count >= min_floor
 
-        if not (hard_cap or failure_burst or (reached and substantive) or clean_win):
+        if self._mode == "task_end":
+            # Mid-task, the only thing worth an extra model call is an error the
+            # agent has just worked through: that is fresh, specific, and already
+            # has its outcome. Everything else waits for the end of the task.
+            if not (failure_burst and _window_recovered(window)):
+                return False
+        elif not (hard_cap or failure_burst or (reached and substantive) or clean_win):
             return False
 
         just_completed = await self._get_review_just_completed()
@@ -250,12 +326,15 @@ class ReviewRunner:
             recovered_from_error = _window_recovered(recent)
             clean_win = self._pending_clean_win
             self._pending_clean_win = False
+            self._outcome = session_outcome(request.messages)
             review_content = render_template(
                 "nova_review.jinja",
                 tool_call_count=self._review_threshold,
                 prior_lessons=prior_lessons,
                 recovered_from_error=recovered_from_error,
                 clean_win=clean_win,
+                existing_topics=self._existing_topics(),
+                outcome=outcome_text(*self._outcome),
             )
             messages = [*request.messages, SystemMessage(content=review_content)]
 
@@ -347,6 +426,17 @@ class ReviewRunner:
         finally:
             _emit_event("nova_review_complete", "✓ Nova review cycle complete")
 
+    def _existing_topics(self) -> str:
+        """Topic names already on file, for the reviewer to reuse. Best-effort."""
+        if not self._agent_dir:
+            return ""
+        try:
+            from novacode_cli.hermes.memory_tiers import existing_topics
+
+            return ", ".join(existing_topics(self._agent_dir, self._project))
+        except Exception:  # noqa: BLE001
+            return ""
+
     async def _recent_lessons(self, limit: int = 5, max_chars: int = 1500) -> str:
         """Return a digest of recent prior reviews to suppress repeat lessons.
 
@@ -402,6 +492,9 @@ class ReviewRunner:
                 self._agent_dir,
                 parsed["user_model"],
                 parsed["lessons"],
+                project=self._project,
+                # Work whose last check failed proves nothing general.
+                shareable=self._outcome[0] != "failed",
             )
             logger.info(
                 "Nova review applied: user_model=%s, lessons=%d",
@@ -506,7 +599,10 @@ class ReviewRunner:
 
             if self._skill_manager:
                 await self._skill_manager.cleanup_legacy_skills_once()
-                await self._skill_manager.maybe_create_from_review(response_content)
+                if self._outcome[0] == "failed":
+                    logger.info("Review proposed a skill, but the last check failed; not saved")
+                else:
+                    await self._skill_manager.maybe_create_from_review(response_content)
 
             if self._skill_manager and new_count % 5 == 0:
                 await self._skill_manager.maybe_refine_skills()

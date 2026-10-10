@@ -8,7 +8,9 @@ decisions (when to create, guard against duplicates, rate-limit refinement).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -20,6 +22,33 @@ logger = logging.getLogger("nova.hermes.skill_manager")
 # Minimum wall-clock gap between curation passes (curation is piggybacked on the
 # review cycle but gated to roughly daily so cadence doesn't depend on chattiness).
 _CURATION_INTERVAL_SECS = 86_400.0  # 24h
+
+
+# Skill proposals seen so far, by project (see SkillManager._proposed_elsewhere).
+_PROPOSALS_FILE = ".skill-proposals.json"
+
+# `<scope>general</scope>` inside a review's `<skill>` block.
+_GENERAL_SKILL_RE = re.compile(
+    r"<skill>.*?<scope>\s*general\s*</scope>.*?</skill>", re.DOTALL | re.IGNORECASE
+)
+
+
+def _similar_skill(skills_dir: Path, name: str, overlap: float = 0.6) -> str | None:
+    """An existing skill whose name is mostly the same words as ``name``, if any.
+
+    An exact match is not reported: writing over a skill of the same name is the
+    existing update path and stays as it was.
+    """
+    words = {w for w in re.split(r"[-_\s]+", name.lower()) if w}
+    if not words or not skills_dir.is_dir():
+        return None
+    for path in skills_dir.iterdir():
+        if not path.is_dir() or path.name == name:
+            continue
+        other = {w for w in re.split(r"[-_\s]+", path.name.lower()) if w}
+        if other and len(words & other) / len(words | other) >= overlap:
+            return path.name
+    return None
 
 
 class SkillManager:
@@ -34,8 +63,10 @@ class SkillManager:
         *,
         skills_dir: Path | None = None,
         enabled: bool = True,
+        project: str | None = None,
     ) -> None:
         self._store = store
+        self._project = project or ""
         self._skills_dir = skills_dir
         self._enabled = enabled
         self._refinement_tasks: set[asyncio.Task] = set()
@@ -101,10 +132,81 @@ class SkillManager:
             spec = parse_skill_spec(review_text)
             if spec is None:
                 return
+            # Skills live in one directory shared by every project. A workflow
+            # that only fits a throwaway sandbox would be offered everywhere
+            # afterwards and useful nowhere: on Terminal-Bench the loop saved
+            # `build-rust-cpp-polyglot` — one task's answer — as a skill. Keep
+            # only what the review marked as general.
+            if self._project.startswith("sandbox-"):
+                if not _GENERAL_SKILL_RE.search(review_text):
+                    self._log_refinement("skill", "skip", f"{spec.get('name')} (sandbox-specific)")
+                    return
+                # "General" is the review's opinion, and it is generous with it
+                # (it called `write-arithmetic-coder-encoder` general). Wait for
+                # a second, different sandbox to propose the same kind of skill.
+                if not self._proposed_elsewhere(spec):
+                    self._log_refinement("skill", "hold", f"{spec.get('name')} (seen in one project)")
+                    return
+            # Reviews name skills freely, so one workflow came back as
+            # `setup-python-torch-container` and `setup-python-torch-env`.
+            # Exact-name dedup does not catch that; word overlap does.
+            twin = _similar_skill(self._skills_dir, spec.get("name") or "")
+            if twin:
+                self._log_refinement("skill", "skip", f"{spec.get('name')} (same as {twin})")
+                return
             await write_skill_from_spec(spec, self._skills_dir, self._store)
             self._log_refinement("skill", "create", spec.get("name") or "unknown")
         except Exception:  # noqa: BLE001
             logger.exception("Failed to create skill from review")
+
+    def _proposed_elsewhere(self, spec: dict) -> bool:
+        """Has a different project already proposed this kind of skill?
+
+        Proposals are remembered in a small ledger beside the skills. A match is
+        a similar name or a description stating the same thing; the first
+        sighting is recorded and answers False.
+        """
+        from novacode_cli.hermes.memory_tiers import _fact_words, _same_fact
+
+        name = str(spec.get("name") or "")
+        described = _fact_words(str(spec.get("description") or ""))
+        named = {w for w in re.split(r"[-_\s]+", name.lower()) if w}
+        ledger_path = self._skills_dir / _PROPOSALS_FILE
+        try:
+            ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            ledger = {}
+        for other_name, entry in ledger.items():
+            if entry.get("project") == self._project:
+                continue
+            other_named = {w for w in re.split(r"[-_\s]+", other_name.lower()) if w}
+            same_name = named and len(named & other_named) / len(named | other_named) >= 0.6
+            if same_name or _same_fact(described, frozenset(entry.get("words") or ())):
+                return True
+        # One entry per idea per project: a long task re-proposes the same skill
+        # under a new name at every review (five "raw tensor dump" variants from
+        # one task), and none of those is a second opinion.
+        for other_name, entry in ledger.items():
+            if entry.get("project") != self._project:
+                continue
+            other_named = {w for w in re.split(r"[-_\s]+", other_name.lower()) if w}
+            # Looser than the cross-project test (share of the SHORTER name):
+            # `inspect-raw-tensor-dump` and `reverse-engineer-raw-tensor-dump`
+            # from one task are plainly the same proposal.
+            same_name = (
+                named
+                and other_named
+                and len(named & other_named) / min(len(named), len(other_named)) >= 0.6
+            )
+            if same_name or _same_fact(described, frozenset(entry.get("words") or ())):
+                return False  # already holding this one
+        ledger[name] = {"project": self._project, "words": sorted(described)}
+        try:
+            self._skills_dir.mkdir(parents=True, exist_ok=True)
+            ledger_path.write_text(json.dumps(ledger, indent=1), encoding="utf-8")
+        except OSError:
+            logger.debug("Could not record skill proposal", exc_info=True)
+        return False
 
     # -- Legacy cleanup -----------------------------------------------------
 

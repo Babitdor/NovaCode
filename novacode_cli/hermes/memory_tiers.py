@@ -25,6 +25,8 @@ read side via ``novacode_cli/memory/limits.py``), keeping the newest content.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import re
 from datetime import UTC, datetime
@@ -265,7 +267,80 @@ def _worthwhile_bullets(bullets: str) -> str:
     return "\n".join(kept).strip()
 
 
-def record_lesson(agent_dir: Path, topic: str, bullets: str) -> None:
+# ── Lesson scope ───────────────────────────────────────────────────────────
+# One assistant works in many codebases, but its memory was a single pool: a
+# fact about project A ("`/app/run.py` implements run_tasks…") was offered in
+# project B. Battle-testing the loop across unrelated Terminal-Bench tasks made
+# it obvious — nearly every lesson was the answer to one task. Lessons now carry
+# a scope: "general" ones go to the shared pool, "project" ones to a directory
+# only that project reads.
+PROJECTS_DIRNAME = "projects"
+
+
+def project_memory_key(workspace_root: Path | str | None, sandbox_id: str | None = None) -> str:
+    """A stable directory name for the codebase a session is working in.
+
+    A remote sandbox is its own, throwaway project (two sandboxes that both
+    mount ``/app`` have nothing in common), so it is keyed by the sandbox id.
+    A local session is keyed by its workspace path: the folder name for
+    readability plus a short hash so two ``backend/`` folders do not collide.
+    """
+    if sandbox_id:
+        return f"sandbox-{_slugify_topic(str(sandbox_id)) or 'unknown'}"
+    if not workspace_root:
+        return ""
+    resolved = str(Path(workspace_root).expanduser().resolve())
+    digest = hashlib.sha1(resolved.encode("utf-8")).hexdigest()[:8]  # noqa: S324 — a name, not security
+    return f"{_slugify_topic(Path(resolved).name)[:30] or 'project'}-{digest}"
+
+
+def lesson_dir(agent_dir: Path, project: str | None = None) -> Path:
+    """Where lessons of this scope live: the shared pool, or one project's own."""
+    base = agent_dir / "memories"
+    return base / PROJECTS_DIRNAME / project if project else base
+
+
+def existing_topics(agent_dir: Path, project: str | None = None, limit: int = 40) -> list[str]:
+    """Topic names already on file (general, plus this project's), newest first.
+
+    Shown to the reviewer so it files a lesson under a topic that exists instead
+    of coining a near-synonym for it.
+    """
+    dirs = [lesson_dir(agent_dir)] + ([lesson_dir(agent_dir, project)] if project else [])
+    files = [p for d in dirs if d.is_dir() for p in d.glob("*.md") if p.name != "INDEX.md"]
+    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return list(dict.fromkeys(p.stem for p in files))[:limit]
+
+
+def _same_topic(memories_dir: Path, topic_slug: str) -> str:
+    """Map a new topic name onto an existing one that means the same thing.
+
+    Reviews name topics freely, and the same subject came back as
+    ``polyglot-rust-cpp`` and ``rust-cpp-polyglot`` — two files, two index
+    pointers, half the lessons in each. Two names made of the same words are the
+    same topic; so are names that mostly overlap.
+    """
+    if (memories_dir / f"{topic_slug}.md").exists() or not memories_dir.is_dir():
+        return topic_slug
+    words = set(topic_slug.split("-"))
+    best, best_score = topic_slug, 0.0
+    for path in memories_dir.glob("*.md"):
+        if path.name == "INDEX.md":
+            continue
+        other = set(path.stem.split("-"))
+        score = len(words & other) / len(words | other)
+        if score > best_score:
+            best, best_score = path.stem, score
+    return best if best_score >= _SAME_TOPIC_OVERLAP else topic_slug
+
+
+# Share of words two topic names must have in common to be treated as one.
+# Half is not enough — `build-and-test` would swallow `build-and-deploy` — so it
+# takes a clear majority; a reordering of the same words always qualifies.
+_SAME_TOPIC_OVERLAP = 0.6
+
+
+def record_lesson(agent_dir: Path, topic: str, bullets: str, *, project: str | None = None) -> None:
     """Record cross-session lesson bullets to ``memories/<topic>.md`` + INDEX.
 
     Lessons are prepended (newest-first) under a timestamped section, deduped
@@ -276,13 +351,15 @@ def record_lesson(agent_dir: Path, topic: str, bullets: str) -> None:
         agent_dir: Path to the agent directory.
         topic: Topic name (slugified into the filename).
         bullets: Bullet lines to record under this topic.
+        project: Project key (see :func:`project_memory_key`) for a lesson that
+            only holds in that codebase; ``None`` for a general one.
     """
     bullets = _worthwhile_bullets(bullets)
     if not bullets:
         return
-    topic_slug = _slugify_topic(topic) or _DEFAULT_TOPIC
-    memories_dir = agent_dir / "memories"
+    memories_dir = lesson_dir(agent_dir, project)
     memories_dir.mkdir(parents=True, exist_ok=True)
+    topic_slug = _same_topic(memories_dir, _slugify_topic(topic) or _DEFAULT_TOPIC)
     topic_file = memories_dir / f"{topic_slug}.md"
 
     if topic_file.exists():
@@ -344,10 +421,17 @@ def record_habit(agent_dir: Path, bullets: str) -> None:
     compact_memory_file(habits_file)
 
 
-_LESSON_BLOCK_RE = re.compile(
-    r'<lesson(?:\s+topic\s*=\s*["\']?([^"\'>]*)["\']?)?\s*>(.*?)</lesson>',
-    re.DOTALL | re.IGNORECASE,
-)
+_LESSON_BLOCK_RE = re.compile(r"<lesson\b([^>]*)>(.*?)</lesson>", re.DOTALL | re.IGNORECASE)
+_LESSON_ATTR_RE = re.compile(r'(\w+)\s*=\s*["\']?([^"\'\s>]*)["\']?')
+# A pitfall is recorded in three fields so the symptom is always there to match
+# against: a free-text lesson that gave only the fix could not be found by the
+# session that next hit the same error.
+_PITFALL_BLOCK_RE = re.compile(r"<pitfall\b([^>]*)>(.*?)</pitfall>", re.DOTALL | re.IGNORECASE)
+
+
+def _pitfall_field(body: str, name: str) -> str:
+    match = re.search(rf"<{name}>(.*?)</{name}>", body, re.DOTALL | re.IGNORECASE)
+    return " ".join(match.group(1).split()) if match else ""
 
 
 def parse_review_response(response_content: str) -> dict[str, Any]:
@@ -387,10 +471,31 @@ def parse_review_response(response_content: str) -> dict[str, Any]:
         result["user_model"] = "\n".join(m.strip() for m in user_matches)
 
     for match in _LESSON_BLOCK_RE.finditer(response_content):
-        topic = (match.group(1) or _DEFAULT_TOPIC).strip() or _DEFAULT_TOPIC
+        attrs = {k.lower(): v for k, v in _LESSON_ATTR_RE.findall(match.group(1) or "")}
+        topic = (attrs.get("topic") or _DEFAULT_TOPIC).strip() or _DEFAULT_TOPIC
         bullets = match.group(2).strip()
         if bullets:
-            result["lessons"].append({"topic": topic, "bullets": bullets})
+            # "" when the model did not say; update_from_review decides then.
+            scope = attrs.get("scope", "").strip().lower()
+            result["lessons"].append({"topic": topic, "bullets": bullets, "scope": scope})
+
+    for match in _PITFALL_BLOCK_RE.finditer(response_content):
+        attrs = {k.lower(): v for k, v in _LESSON_ATTR_RE.findall(match.group(1) or "")}
+        symptom, cause, fix = (_pitfall_field(match.group(2), f) for f in ("symptom", "cause", "fix"))
+        if not symptom:
+            continue  # without a symptom there is nothing to recall it by
+        bullet = f"- **Symptom:** {symptom}"
+        if cause:
+            bullet += f" **Cause:** {cause}"
+        if fix:
+            bullet += f" **Fix:** {fix}"
+        result["lessons"].append(
+            {
+                "topic": (attrs.get("topic") or "pitfalls").strip() or "pitfalls",
+                "bullets": bullet,
+                "scope": attrs.get("scope", "").strip().lower(),
+            }
+        )
 
     habit_matches = re.findall(
         r"<habit>(.*?)</habit>",
@@ -414,33 +519,288 @@ def _normalize_bullet(line: str) -> str:
     return re.sub(r"\s+", " ", line.lstrip("-*• ").strip().lower())
 
 
+# ── Same fact, different words ─────────────────────────────────────────────
+# A review re-derives what earlier reviews already wrote down, in new words each
+# time: one run filed "run `apt-get update` first" four times in one topic and
+# "`all_gather` is not autograd-aware" four times in another. Exact-text dedup
+# sees four different strings. Comparing the words that carry the meaning sees
+# one fact.
+_FACT_STOPWORDS = frozenset(
+    "the and for with that this from into onto over then than when while until "
+    "can will may must should would could has have had are was were been being "
+    "its it's you your use used using via also just only very more most such "
+    "one two any all each both own same other".split()
+)
+# Shared meaningful words needed, and the share of the SHORTER bullet they must
+# cover. Measured against the shorter one because a paraphrase is often the same
+# fact plus an explanation; the floor of 5 keeps two short bullets that merely
+# name the same tool from being called the same fact.
+_SAME_FACT_MIN_SHARED = 5
+_SAME_FACT_OVERLAP = 0.55
+
+
+def _fact_words(line: str) -> frozenset[str]:
+    """The meaning-bearing words of a bullet, lightly stemmed."""
+    words = set()
+    for word in re.findall(r"[a-z0-9_]+", line.lower()):
+        if len(word) < 3 or word in _FACT_STOPWORDS:
+            continue
+        for suffix in ("ing", "ed", "es", "s"):
+            # Leave at least three letters: "thing" must not become "th".
+            if len(word) - len(suffix) >= 3 and word.endswith(suffix):
+                word = word[: -len(suffix)]
+                break
+        words.add(word)
+    return frozenset(words)
+
+
+def _same_fact(
+    a: frozenset[str], b: frozenset[str], overlap: float = _SAME_FACT_OVERLAP
+) -> bool:
+    shared = len(a & b)
+    return shared >= _SAME_FACT_MIN_SHARED and shared / min(len(a), len(b)) >= overlap
+
+
+def _bullets(text: str) -> list[str]:
+    return [ln for ln in text.splitlines() if ln.lstrip().startswith(("-", "*", "•"))]
+
+
 def _dedup_against(existing: str, block: str) -> str:
     """Drop bullet lines from ``block`` already present in ``existing``.
 
-    Compares normalized bullet text so trivial whitespace/case differences
-    don't slip a near-duplicate into a topic file. Non-bullet lines (headers,
-    prose) are always kept.
+    A bullet is "already present" when its normalized text matches, or when it
+    states the same fact in other words (see :func:`_same_fact`). Non-bullet
+    lines (headers, prose) are always kept.
     """
-    known = {
-        _normalize_bullet(ln)
-        for ln in existing.splitlines()
-        if ln.lstrip().startswith(("-", "*", "•"))
-    }
+    known = {_normalize_bullet(ln) for ln in _bullets(existing)}
+    known_lines = list(_bullets(existing))
     kept: list[str] = []
     for line in block.splitlines():
         if line.lstrip().startswith(("-", "*", "•")):
             norm = _normalize_bullet(line)
             if norm and norm in known:
                 continue
+            if _says_the_same(line, known_lines):
+                continue
             known.add(norm)
+            known_lines.append(line)
         kept.append(line)
     return "\n".join(kept).strip()
+
+
+def _is_variant(a: str, b: str) -> bool:
+    """Two bullets that share a template but differ in the part that matters.
+
+    An embedding averages over the words, so swapping one of them barely moves
+    it: "tests run with `pytest -x`" against "`pytest -q`" scores 0.999, and
+    "listens on port 8080" against "9090" scores 0.78. Those are different
+    facts. When two bullets differ by only a word or two on each side, the
+    difference IS the content, so they are never treated as one.
+    """
+    words_a = set(re.findall(r"[\w.+/:=-]+", a.lower()))
+    words_b = set(re.findall(r"[\w.+/:=-]+", b.lower()))
+    only_a, only_b = len(words_a - words_b), len(words_b - words_a)
+    return 1 <= only_a <= _VARIANT_MAX_DIFF and 1 <= only_b <= _VARIANT_MAX_DIFF
+
+
+# Words that may differ on each side before two look-alike bullets stop being
+# "the same template with a different value" and become a real rewording.
+_VARIANT_MAX_DIFF = 2
+
+
+def _says_the_same(line: str, others: list[str], *, confirming: bool = False) -> bool:
+    """Does ``line`` state the same fact as any of ``others``?
+
+    Judged by meaning when the local embedding model is available (see
+    :mod:`novacode_cli.memory.semantic`), otherwise by shared words.
+    ``confirming`` selects the stricter word test used when one project's fact
+    is vouching for another's; the embedding needs no second setting, because it
+    already keeps the pair that test exists for well apart.
+    """
+    if not others:
+        return False
+    from novacode_cli.memory import semantic
+
+    def plain(text: str) -> str:
+        return text.strip().lstrip("-*• ").strip()
+
+    scores = semantic.similarities(plain(line), [plain(o) for o in others])
+    if scores:
+        return any(
+            score >= semantic.SAME_FACT and not _is_variant(line, other)
+            for score, other in zip(scores, others, strict=True)
+        )
+    facts = _fact_words(line)
+    overlap = _CONFIRMATION_OVERLAP if confirming else _SAME_FACT_OVERLAP
+    return any(
+        _same_fact(facts, _fact_words(o), overlap) and not _is_variant(line, o) for o in others
+    )
+
+
+# ── Earning the shared pool ────────────────────────────────────────────────
+# The reviewer's own "this is general" cannot be trusted: asked to keep task
+# answers private, it still marked `range-coder-encoding` — the internals of one
+# task's decoder — and four single-task skills as general. Generality is a claim
+# about OTHER projects, so it is settled by other projects: a lesson moves to the
+# shared pool once a second, different project has independently recorded the
+# same fact. Until then it stays with the project that learned it, where it is
+# still available every time that project is worked on.
+_PROMOTION_SCAN_PROJECTS = 60  # newest other projects checked for a matching fact
+# Confirmation asks for more agreement than deduplication does. Dropping a
+# paraphrase by mistake loses one bullet; sharing by mistake puts one project's
+# detail in front of every other. At the dedup threshold a note about the MIPS
+# cross-compiler package was "confirmed" because it ended with the same remark
+# about `apt-get update` that other tasks had made.
+_CONFIRMATION_OVERLAP = 0.7
+
+
+_OUTCOME_FILE = "OUTCOME"  # in a project's lesson dir; no .md, so never read as a lesson
+_SOURCES_FILE = ".shared-sources.json"  # which projects stand behind each shared bullet
+
+
+def project_outcome(agent_dir: Path, project: str) -> str:
+    """"passed", "failed", or "" when nobody outside the session has judged it."""
+    try:
+        return (lesson_dir(agent_dir, project) / _OUTCOME_FILE).read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def _corroborated(agent_dir: Path, project: str, line: str) -> str | None:
+    """The other project that recorded this same fact, if there is one.
+
+    A project whose work was judged a failure cannot confirm anything.
+    """
+    root = agent_dir / "memories" / PROJECTS_DIRNAME
+    if not root.is_dir():
+        return None
+    others = [d for d in root.iterdir() if d.is_dir() and d.name != project]
+    others.sort(key=lambda d: d.stat().st_mtime, reverse=True)
+    for directory in others[:_PROMOTION_SCAN_PROJECTS]:
+        if project_outcome(agent_dir, directory.name) == "failed":
+            continue
+        for path in directory.glob("*.md"):
+            if path.name == "INDEX.md":
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            if _says_the_same(line, _bullets(text), confirming=True):
+                return directory.name
+    return None
+
+
+def _read_sources(agent_dir: Path) -> dict[str, list[str]]:
+    try:
+        data = json.loads((lesson_dir(agent_dir) / _SOURCES_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_sources(agent_dir: Path, sources: dict[str, list[str]]) -> None:
+    directory = lesson_dir(agent_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / _SOURCES_FILE).write_text(json.dumps(sources, indent=1), encoding="utf-8")
+
+
+def _promote_corroborated(agent_dir: Path, topic: str, bullets: str, project: str) -> int:
+    """Copy to the shared pool the bullets a second project has confirmed."""
+    # Facts already in the shared pool under ANY topic: two tasks confirmed the
+    # same `apt-get update` lesson under two topic names and it was shared twice.
+    shared = [
+        ln
+        for path in lesson_dir(agent_dir).glob("*.md")
+        if path.name != "INDEX.md"
+        for ln in _bullets(path.read_text(encoding="utf-8"))
+    ]
+    sources = _read_sources(agent_dir)
+    confirmed = []
+    for line in _bullets(_worthwhile_bullets(bullets)):
+        if _says_the_same(line, shared):
+            continue
+        other = _corroborated(agent_dir, project, line)
+        if other:
+            confirmed.append(line)
+            shared.append(line)
+            sources[_normalize_bullet(line)] = sorted({project, other})
+    if confirmed:
+        record_lesson(agent_dir, topic, "\n".join(confirmed))  # general; dedups itself
+        _write_sources(agent_dir, sources)
+    return len(confirmed)
+
+
+def _drop_shared_bullet(agent_dir: Path, normalized: str) -> int:
+    """Remove one bullet from the shared pool, and its topic file if that empties it."""
+    removed = 0
+    directory = lesson_dir(agent_dir)
+    for path in directory.glob("*.md"):
+        if path.name == "INDEX.md":
+            continue
+        lines = path.read_text(encoding="utf-8").splitlines()
+        kept = [
+            ln
+            for ln in lines
+            if not (ln.lstrip().startswith(("-", "*", "•")) and _normalize_bullet(ln) == normalized)
+        ]
+        if len(kept) == len(lines):
+            continue
+        removed += len(lines) - len(kept)
+        if _bullets("\n".join(kept)):
+            path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+            continue
+        path.unlink()
+        index = directory / "INDEX.md"
+        if index.exists():
+            pointer = f"]({path.stem}.md)"
+            index.write_text(
+                "\n".join(ln for ln in index.read_text(encoding="utf-8").splitlines() if pointer not in ln)
+                + "\n",
+                encoding="utf-8",
+            )
+    return removed
+
+
+def mark_project_outcome(agent_dir: Path, project: str, passed: bool) -> int:
+    """Record how a project's work was judged from OUTSIDE the session.
+
+    A session only sees its own checks. A grader, a CI run or the user may know
+    better: on Terminal-Bench one agent's own verification printed "ALL PASS"
+    while the task's real tests failed four of thirteen. When the outside verdict
+    is a failure, anything that project helped put in the shared pool is taken
+    back out unless two other projects still stand behind it.
+
+    Returns:
+        The number of shared bullets retracted.
+    """
+    directory = lesson_dir(agent_dir, project)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / _OUTCOME_FILE).write_text("passed" if passed else "failed", encoding="utf-8")
+    if passed:
+        return 0
+    sources = _read_sources(agent_dir)
+    retracted = 0
+    for normalized, backers in list(sources.items()):
+        if project not in backers:
+            continue
+        standing = [b for b in backers if b != project and project_outcome(agent_dir, b) != "failed"]
+        if len(standing) >= 2:  # noqa: PLR2004 — two projects is the bar for "general"
+            sources[normalized] = standing
+            continue
+        retracted += _drop_shared_bullet(agent_dir, normalized)
+        del sources[normalized]
+    _write_sources(agent_dir, sources)
+    return retracted
 
 
 def update_from_review(
     agent_dir: Path,
     user_model: str,
     lessons: list[dict[str, str]],
+    *,
+    project: str | None = None,
+    shareable: bool = True,
 ) -> None:
     """Apply review learnings to the injected semantic surface.
 
@@ -450,7 +810,15 @@ def update_from_review(
     Args:
         agent_dir: Path to the agent directory.
         user_model: ``## Section`` block(s) for ``agent.md`` (may be empty).
-        lessons: ``[{"topic", "bullets"}, ...]`` from the review.
+        lessons: ``[{"topic", "bullets", "scope"}, ...]`` from the review.
+        project: Key of the codebase this session is in. Every lesson is
+            recorded for this project. One the review marked
+            ``scope="general"`` is additionally copied to the shared pool, but
+            only once a different project has recorded the same fact — the
+            review's label alone is not enough. With no project key everything
+            is general, as before.
+        shareable: False when the session's own last check failed. Lessons are
+            still kept for the project, but none can reach the shared pool.
     """
     if user_model:
         update_user_model(agent_dir, user_model)
@@ -468,7 +836,12 @@ def update_from_review(
         topic = (lesson.get("topic") or _DEFAULT_TOPIC).strip() or _DEFAULT_TOPIC
         bullets = lesson.get("bullets") or ""
         if bullets.strip():
-            record_lesson(agent_dir, topic, bullets)
+            # With a project, every lesson is first the project's own. One the
+            # review calls general is then shared only if another project has
+            # already recorded the same fact (see _promote_corroborated).
+            record_lesson(agent_dir, topic, bullets, project=project or None)
+            if project and shareable and lesson.get("scope") == "general":
+                _promote_corroborated(agent_dir, topic, bullets, project)
             written += 1
 
 

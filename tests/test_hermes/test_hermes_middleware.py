@@ -30,6 +30,9 @@ def middleware(mock_store):
         store=mock_store,
         review_threshold=3,  # Low threshold for testing
         enabled=True,
+        # The count-based trigger these tests exercise is the "periodic" mode;
+        # the default ("task_end") is covered in tests/test_review_task_end.py.
+        review_mode="periodic",
     )
 
 

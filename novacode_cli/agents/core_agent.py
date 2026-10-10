@@ -1503,6 +1503,20 @@ def _build_middleware_stack(
     from novacode_cli.config.nova_config import NovaConfig
 
     _learning_enabled = NovaConfig().get_learning_enabled()
+    # Which codebase this session is in: project-scoped lessons are written to,
+    # and read from, that project's own memory only.
+    from novacode_cli.hermes.memory_tiers import project_memory_key
+
+    # A sandbox may name the project it holds (`project_id`); otherwise each
+    # sandbox instance is its own project. The name matters when the same work
+    # is opened in a fresh sandbox: keyed by instance, a second run would count
+    # as a second project and "confirm" its own lessons as general.
+    _sandbox_project = (
+        (getattr(sandbox, "project_id", None) or getattr(sandbox, "id", None))
+        if sandbox is not None
+        else None
+    )
+    _project_key = project_memory_key(workspace_root, _sandbox_project)
 
     # Decision-model tool-result pruning: opt-in, off by default, because it was
     # measured and lost (see NovaConfig.get_tool_verdicts_enabled). When it is
@@ -1580,6 +1594,7 @@ def _build_middleware_stack(
             skills_dir=skills_dir,
             agent_dir=agent_dir,
             enabled=_learning_enabled,
+            project=_project_key,
         ),
         # Screen URL-bearing tool args for deceptive Unicode / spoofed domains
         # (warn + sanitize) before the tool runs. Early in the stack so the
@@ -1649,6 +1664,7 @@ def _build_middleware_stack(
         AgentMemoryMiddleware(
             settings=settings,
             assistant_id=assistant_id,
+            project_key=_project_key,
             # Always load project memory (NOVA.md/CLAUDE.md) into <project_memory>,
             # even on resume. It's standing project config that must be present in
             # the system prompt EVERY turn (and hot-reloaded). The continuation
@@ -2094,6 +2110,22 @@ This file stores your preferences and context that persist across sessions.
         _context_window = ContextManager(_model_name).window_size()
     except Exception:  # noqa: BLE001 — an unknown window falls back to fixed triggers
         _context_window = 0
+
+    # An optional working budget BELOW the model's window (`context_budget_tokens`
+    # in the config). The reducers fire at a share of the window — clear old tool
+    # results at 60%, summarize at 82% — which on a 200K window means a long task
+    # carries 100K+ tokens into every call. That is the capacity, not the need:
+    # across 82 Terminal-Bench trials, 68% of all input tokens were spent by the
+    # few trials averaging over 60K per call. Sizing the reducers from a budget
+    # keeps the context the model can use and bills for less of it.
+    try:
+        from novacode_cli.config.nova_config import NovaConfig as _NovaConfig
+
+        _context_budget = int(_NovaConfig().get("context_budget_tokens") or 0)
+    except (TypeError, ValueError):
+        _context_budget = 0
+    if _context_budget > 0 and (_context_window <= 0 or _context_budget < _context_window):
+        _context_window = _context_budget
 
     # Core middleware stack (retry → vision → learning → security → bootstrap →
     # steering → file tracker → loop guard → rubric → context editing → shell →

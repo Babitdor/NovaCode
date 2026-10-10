@@ -199,3 +199,13 @@ def _no_leaked_agent_server_plan():
     if launcher is not None:
         launcher._state["planned"] = None
         launcher._state["process"] = None
+
+
+@pytest.fixture(autouse=True)
+def _no_builtin_lessons(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Memory tests assert on exactly the lessons they wrote.
+
+    The lessons Nova ships (``novacode_cli.memory.builtin_lessons``) would be
+    recalled alongside them; ``tests/test_builtin_lessons.py`` turns them back on.
+    """
+    monkeypatch.setenv("NOVA_BUILTIN_LESSONS", "0")

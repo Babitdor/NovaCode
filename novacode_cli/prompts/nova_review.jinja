@@ -9,21 +9,63 @@ Previously recorded (do not restate or re-derive):
 
 {{ prior_lessons }}
 {% endif %}
+{% if outcome %}
+### How this work turned out
+{{ outcome }}
+
+{% endif %}
 ### 1. Extract Lessons
 What did you learn that should be remembered? (1-3 bullets; skip anything above)
 
-If not already recorded, capture at least one concrete **project fact** that would
-save time next session: the exact test/build/lint command, where key code lives,
-a naming or structural convention, or a non-obvious constraint. These are worth
-recording even when they feel routine — they're what makes future work faster.
+**Record what the transcript showed to be true — not what you hope is true.** An
+approach counts as a lesson only if a check in this window actually passed with
+it (a test, a build, a command whose output you saw). If the work is unfinished,
+untested or still failing, do NOT write down your current approach as if it
+worked: record the pitfall you hit and what it looked like, or nothing.
+
+**Write a pitfall so it can be found again.** A lesson is recalled later by
+matching its words against what is on screen at that moment — usually an error.
+So when a lesson is about something that went wrong, lead with the symptom
+exactly as it appeared (quote the error text), then the fix:
+"`bash: python3: command not found` in a bare container → `apt-get update &&
+apt-get install -y python3`". A lesson that gives only the fix cannot be found
+by the next session that hits the same error.
+
+Every lesson has a **scope**:
+- `general` — true in ANY codebase: how a tool or environment behaves, a pitfall
+  and its fix, a technique. Test: would it help on an unrelated project? ("`apt-get
+  install` fails with 'Unable to locate package' until `apt-get update` has run.")
+- `project` — true only here: the exact test/build/lint command, where key code
+  lives, a naming or structural convention, a non-obvious constraint. Capture at
+  least one such fact when none is recorded yet — they are what makes the next
+  session in this codebase faster.
+
+The design of the specific thing you just built (what a file implements, how
+this task's solution works) is `project` scope at most, and usually not worth
+recording at all: the code already says it.
+{% if existing_topics %}
+
+Topics already on file: {{ existing_topics }}
+Name a topic after the SUBJECT of the lesson (the tool, library or area it is
+about). Reuse a name above only when the lesson is about that same subject — do
+not file a lesson under an unrelated topic just because it exists, and do not
+coin a second name for a subject that already has one.
+{% endif %}
 
 ### 2. Reusable Skills
 Did this session use a workflow worth repeating on a future similar task? Propose a
 skill (kebab-case name, trigger description, concrete body) when you can capture
-something **project-specific and reusable** — the real commands, steps, and
-pitfalls for a recurring task here (e.g. "add a TUI slash command", "run the
-integration suite", "wire a new tool") — even if its shape was edit→test. Only
-skip a truly one-off edit with nothing generalizable. At most one per review.
+the real commands, steps, and pitfalls for a task that will **recur** — e.g. "add
+a TUI slash command", "run the integration suite", "set up Python in a bare
+container" — even if its shape was edit→test. At most one per review.
+
+Do not propose a skill when:
+- the workflow was not shown to work in this window (same rule as lessons), or
+- it is the solution to one specific problem rather than a recurring kind of
+  task — a skill named after the thing you just built is a sign of this.
+
+Give the skill a `<scope>`: `general` if it would apply in an unrelated codebase,
+`project` if it only makes sense here.
 {% if recovered_from_error %}
 **You recovered from an error** — strongly consider capturing the working fix + gotcha as a skill.
 {% endif %}
@@ -58,8 +100,9 @@ Keep it concise — this is a checkpoint, not a full summary.
 Record learnings in XML blocks. Omit empty blocks.
 
 - `<user_model>` — user model entries (each as `## Section Header`). Merged into `agent.md` (always in context).
-- `<lesson topic="...">` — cross-session decisions, patterns, facts as bullets, grouped under a short kebab-case `topic`. Written to `memories/<topic>.md` and indexed (surfaced in context via the memory INDEX). Emit one block per topic.
-- `<skill>` — at most one. Only if step 2 identified a genuinely reusable workflow.
+- `<lesson topic="..." scope="general|project">` — decisions, patterns, facts as bullets, grouped under a short kebab-case `topic`. `general` lessons are kept for every project; `project` lessons only for this one. Emit one block per topic.
+- `<pitfall topic="..." scope="general|project">` — one thing that went wrong and how it was resolved, as three short fields: `<symptom>` (what appeared, quoting the error text exactly), `<cause>` (why), `<fix>` (what resolved it — only if you saw it work). Prefer this over a `<lesson>` whenever there is an error to point to: the symptom is what the next session will be looking at.
+- `<skill>` — at most one, with a `<scope>general|project</scope>` line. Only if step 2 identified a recurring workflow that was shown to work.
 - `<habit>` — at most one. Only on a clean win (step 2b): 1-2 bullets of reusable good-practice guidance. Written to `HABITS.md` (always injected). Omit unless genuinely notable.
 - `<prompt_issue template="...">` — per step 5, when a system-prompt template's wording caused a misread or wrong approach this session. One short paragraph: what was unclear + the behaviour it caused.
 
@@ -71,12 +114,23 @@ Example blocks — these are illustrative, do not output them unless you have re
 - Prefers concise bullet points over prose
 </user_model>
 
-<lesson topic="testing">
+<lesson topic="testing" scope="project">
 - Tests are run with `pytest -x` for fast feedback
 </lesson>
 
+<lesson topic="apt-in-containers" scope="general">
+- `apt-get install` reports "Unable to locate package" in a fresh container until `apt-get update` has run
+</lesson>
+
+<pitfall topic="bare-container-python" scope="general">
+<symptom>bash: python3: command not found</symptom>
+<cause>The image ships without Python.</cause>
+<fix>apt-get update && apt-get install -y python3</fix>
+</pitfall>
+
 <skill>
 <name>add-tui-slash-command</name>
+<scope>project</scope>
 <description>Use when adding a new /command to the Textual TUI (novacode_cli/tui/app.py).</description>
 <body>
 ## When to Use

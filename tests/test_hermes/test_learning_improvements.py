@@ -217,7 +217,11 @@ class TestCheckSkillEffectivenessNewSchema:
 def _make_review(store, threshold=4):
     tracker = ToolUsageTracker(store, enabled=True)
     sm = SkillManager(store, enabled=True)
-    return ReviewRunner(store, tracker, sm, review_threshold=threshold, enabled=True)
+    # These classes pin the count-and-signal triggers, which are the "periodic"
+    # mode. The default ("task_end") is covered in tests/test_review_task_end.py.
+    return ReviewRunner(
+        store, tracker, sm, review_threshold=threshold, enabled=True, mode="periodic"
+    )
 
 
 async def _seed_window(store, entries):

@@ -32,6 +32,15 @@ from typing import Final
 
 #: Tool calls between automatic reviews when no tuned value is stored.
 REVIEW_THRESHOLD_DEFAULT: Final[int] = 10
+# When a review runs.
+#   "task_end" — once when the agent finishes a task, plus mid-task only when it
+#                has just worked through an error.
+#   "periodic" — the original behaviour: every REVIEW_THRESHOLD tool calls.
+# Periodic reviews cannot know how the work turns out, and a long task gets one
+# every ten calls: a 200-step Terminal-Bench task was reviewed ~20 times, wrote
+# 98 bullets, and recorded approaches that went on to fail. Each one is also an
+# extra model call carrying the whole conversation.
+REVIEW_MODE_DEFAULT: Final[str] = "task_end"
 #: A review fires early once this many failed tool calls occur in one window.
 FAILURE_BURST_DEFAULT: Final[int] = 3
 

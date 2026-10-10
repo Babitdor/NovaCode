@@ -133,6 +133,22 @@ def get_active_learning_middleware() -> "NovaLearningMiddleware | None":
     return _active_middleware
 
 
+# Several agents can be alive in one process (a harness running trials side by
+# side), and "the active one" is then whichever was built last. Each registers
+# under its project key so its owner can reach that instance specifically.
+_by_project: "dict[str, NovaLearningMiddleware]" = {}
+
+
+def learning_middleware_for(project: str) -> "NovaLearningMiddleware | None":
+    """The learning middleware built for ``project``, if it is still registered."""
+    return _by_project.get(project)
+
+
+def forget_learning_middleware(project: str) -> None:
+    """Drop a finished project's middleware from the registry."""
+    _by_project.pop(project, None)
+
+
 class NovaLearningMiddleware(AgentMiddleware[NovaState]):
     """Track tool usage, trigger periodic reviews, and manage learning state.
 
@@ -153,6 +169,8 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
         skills_dir: Path | None = None,
         agent_dir: Path | None = None,
         enabled: bool = True,
+        project: str | None = None,
+        review_mode: str | None = None,
     ) -> None:
         """Initialize the Nova learning middleware.
 
@@ -162,6 +180,9 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
             skills_dir: Path to the skills directory (for skill creation/refinement).
             agent_dir: Path to the agent directory (for USER.md / MEMORY.md).
             enabled: If False, all hooks are no-ops.
+            project: Key of the codebase being worked in (see
+                ``memory_tiers.project_memory_key``). Lessons that only hold
+                there are kept apart from the ones worth carrying everywhere.
         """
         super().__init__()
         self._store = store
@@ -180,6 +201,7 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
             store,
             skills_dir=skills_dir,
             enabled=enabled,
+            project=project,
         )
         self._tracker = ToolUsageTracker(
             store,
@@ -192,6 +214,8 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
             review_threshold=review_threshold,
             agent_dir=agent_dir,
             enabled=enabled,
+            project=project,
+            mode=review_mode,
         )
         # Self-evolution: complex-task completion unlocks / levels up a skill.
         self._evolution = EvolutionEngine(
@@ -214,6 +238,8 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
         # reach this session's tracker.
         global _active_middleware
         _active_middleware = self
+        if project:
+            _by_project[project] = self
 
     @property
     def _refinement_tasks(self) -> set[asyncio.Task]:
@@ -377,6 +403,42 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
             await self._evolution.maybe_evolve(dict(state), self._task_start_ts)
         except Exception:  # noqa: BLE001
             logger.debug("aafter_agent evolution failed", exc_info=True)
+        await self._review_finished_task(state)
+
+    async def _review_finished_task(self, state: AgentState) -> None:
+        """Review the task that just ended, out of band. Never raises.
+
+        This is the main review in "task_end" mode: it sees the whole task,
+        including how it turned out, and it happens once. It runs as a
+        background task so the user's turn ends when the agent's answer does.
+        """
+        if getattr(self._review, "_mode", "") != "task_end" or self._last_request is None:
+            return
+        try:
+            if not await self._review.should_consolidate():
+                return
+            messages = dict(state).get("messages") if state is not None else None
+            request = (
+                self._last_request.override(messages=list(messages))
+                if messages
+                else self._last_request
+            )
+            await self._tracker.reset_counter()
+            task = asyncio.create_task(self._review.run_review_task(request))
+            self._skill_manager._refinement_tasks.add(task)
+            task.add_done_callback(self._skill_manager._refinement_tasks.discard)
+        except Exception:  # noqa: BLE001
+            logger.debug("end-of-task review failed to start", exc_info=True)
+
+    async def drain(self, timeout: float = 60.0) -> None:
+        """Wait for reviews still running in the background. Never raises."""
+        tasks = list(self._skill_manager._refinement_tasks)
+        if not tasks:
+            return
+        try:
+            await asyncio.wait(tasks, timeout=timeout)
+        except Exception:  # noqa: BLE001
+            logger.debug("draining reviews failed", exc_info=True)
 
     def wrap_tool_call(
         self,
