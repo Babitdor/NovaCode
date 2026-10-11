@@ -14233,9 +14233,17 @@ class NovaApp(App):
                         cache_read_tokens=e.cache_read_tokens,
                         cache_creation_tokens=e.cache_creation_tokens,
                         session_tokens=e.session_tokens,
+                        # Cache reads are summed over every call of the turn, so
+                        # the input they are a share of has to be as well: with
+                        # only the last call's input the hit rate passed 100%.
+                        session_input_tokens=e.session_input_tokens,
                     )
                 except Exception:  # noqa: BLE001
                     pass
+        elif isinstance(e, ev.ContextUsage):
+            if self.token_tracker is not None and e.input_tokens > 0:
+                self.token_tracker.current_context = e.input_tokens
+                self.token_tracker.has_api_data = True
         elif isinstance(e, ev.InterruptRequest):
             if getattr(self, "_accumulated_reply", None):
                 self._speak_reply(self._accumulated_reply)

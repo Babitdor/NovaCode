@@ -196,6 +196,17 @@ class UsageUpdate:
 
 
 @dataclass
+class ContextUsage:
+    """The size of the main model's latest request, as its provider counted it.
+
+    Sent as each model call reports usage, so the context gauge moves during a
+    long turn; :class:`UsageUpdate` arrives once, when the turn ends.
+    """
+
+    input_tokens: int = 0
+
+
+@dataclass
 class InterruptRequest:
     """A human-in-the-loop request that needs a response before resuming.
 

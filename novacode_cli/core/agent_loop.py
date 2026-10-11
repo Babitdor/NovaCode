@@ -301,6 +301,7 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     _streamed_pending = False  # whether TextDelta(s) were emitted for the buffer
 
     captured = ev.UsageUpdate()
+    context_shown = 0  # last request size sent to the UI as ContextUsage
     usage_calls: dict[object, tuple[int, int, int, int]] = {}
     compacted = False
 
@@ -764,6 +765,9 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                                 captured.session_input_tokens = sum(
                                     i for i, _, _, _ in usage_calls.values()
                                 )
+                                if captured.input_tokens != context_shown:
+                                    context_shown = captured.input_tokens
+                                    yield ev.ContextUsage(context_shown)
 
                     if not blocks:
                         continue

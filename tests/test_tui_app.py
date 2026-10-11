@@ -2031,8 +2031,17 @@ async def test_tui_token_usage_and_compacted_context(monkeypatch: pytest.MonkeyP
         backend=None, token_tracker=tracker, image_tracker=None, model_name="gpt-4o",
     )
     async with app.run_test(size=(150, 40)):
-        await app._render(ev.UsageUpdate(input_tokens=500, output_tokens=40, session_tokens=2570))
+        await app._render(ev.ContextUsage(input_tokens=2000))
+        assert tracker.current_context == 2000, "the gauge moves during the turn"
+        await app._render(
+            ev.UsageUpdate(
+                input_tokens=500, output_tokens=40, session_tokens=2570,
+                cache_read_tokens=1500, session_input_tokens=2500,
+            )
+        )
         assert tracker.current_context == 500
+        # 1,500 cached of 2,500 sent over the turn's two calls, not of the last 500.
+        assert tracker.cache_hit_percentage == 60
         assert tracker.session_total_tokens == 2570
         await app._render(ev.CompactionNotice())
         assert tracker.session_total_tokens == 2570
@@ -5364,6 +5373,8 @@ def test_tui_ctx_survives_a_resume():
 
 @pytest.mark.asyncio
 async def test_context_screen_refreshes_categories_model_and_usage(monkeypatch):
+    # The models' own windows are what is compared here, not the default budget.
+    monkeypatch.setattr("novacode_cli.context._analysis.DEFAULT_CONTEXT_BUDGET_TOKENS", 0)
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
     from textual.widgets import Static
     from novacode_cli.config.nova_config import NovaConfig

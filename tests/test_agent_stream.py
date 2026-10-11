@@ -68,7 +68,10 @@ def test_usage_sums_calls_but_context_uses_latest_call():
             ]:
                 yield ((), "messages", (_Chunk(mid, [], usage=usage), {}))
 
-    updates = [e for e in _collect(Agent()) if isinstance(e, ev.UsageUpdate)]
+    events = _collect(Agent())
+    # The gauge follows each call as it reports, not only the end of the turn.
+    assert [e.input_tokens for e in events if isinstance(e, ev.ContextUsage)] == [2000, 500]
+    updates = [e for e in events if isinstance(e, ev.UsageUpdate)]
     assert len(updates) == 1
     assert updates[0].input_tokens == 500
     assert updates[0].output_tokens == 40
