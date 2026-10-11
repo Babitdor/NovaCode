@@ -52,6 +52,9 @@ def test_words_containing_the_command_are_allowed(command):
         "rm -rf /*",
         "rm -rf ~",
         "rm -rf /etc",
+        "rm --recursive --force /",
+        "rm --force --recursive /tests && cat /app/out.html",
+        "rm -r --force /etc",
         # The grader's own directory: an agent really did try this, and the
         # guard stopping it is exactly what should happen.
         "rm -rf /tests && cat /app/out.html",
@@ -86,6 +89,7 @@ def test_the_dangerous_target_is_found_however_it_is_written(command):
         "rm -rf /tmp/a /var/cache/apt/archives 2>/dev/null",
         "rm -rf build; cd /",
         "rm -rf '/tmp/my dir'",
+        "rm --recursive --force /tmp/build",
     ],
 )
 def test_cleaning_up_below_the_top_level_is_allowed(command):

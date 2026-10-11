@@ -110,6 +110,17 @@ def test_a_failing_last_check_is_a_failed_outcome() -> None:
     assert status == "failed" and "2 failed" in evidence
 
 
+def test_unittest_and_pytest_failure_summaries_are_not_learned_as_success() -> None:
+    for output in (
+        "FAILED (failures=1)",
+        "FAIL: test_rejects_invalid_input (tests.test_api.ApiTests)",
+        "FAILED tests/test_api.py::test_rejects_invalid_input - AssertionError",
+    ):
+        status, evidence = session_outcome(_session(output))
+        assert status == "failed", output
+        assert evidence, output
+
+
 def test_no_check_at_all_is_unknown() -> None:
     assert session_outcome(_session("total 8\n-rw-r--r-- a.py"))[0] == "unknown"
     assert session_outcome([HumanMessage(content="hi")])[0] == "unknown"

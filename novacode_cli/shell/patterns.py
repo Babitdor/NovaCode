@@ -153,8 +153,11 @@ DANGEROUS_PATTERNS = [
     # Recursive/forced deletion of root, home, a top-level directory (/etc, /app),
     # or all files in cwd — as any argument. A deeper path (/tmp/build) is
     # ordinary cleanup and is allowed.
-    r"rm\s+(-\w*r\w*f|-\w*f\w*r)\b[^;&|\n]*?\s[\"']?(?:~|\$HOME\b|/\*|/[^/\s\"']*/?(?=[\"']?(?:[\s;&|)]|$)))",
-    r"rm\s+(-\w*r\w*f|-\w*f\w*r)\s+\*",
+    # Recognize short and long recursive/force options, including mixed forms
+    # such as `rm -r --force /`. GNU rm accepts options after other options,
+    # so inspect the whole command segment before the dangerous target.
+    r"rm\s+(?=[^;&|\n]*(?:--recursive\b|-[a-z]*r[a-z]*))(?=[^;&|\n]*(?:--force\b|-[a-z]*f[a-z]*))[^;&|\n]*?\s[\"']?(?:~|\$HOME\b|/\*|/[^/\s\"']*/?(?=[\"']?(?:[\s;&|)]|$)))",
+    r"rm\s+(?=[^;&|\n]*(?:--recursive\b|-[a-z]*r[a-z]*))(?=[^;&|\n]*(?:--force\b|-[a-z]*f[a-z]*))[^;&|\n]*?\s\*",
     # Raw disk writes (data destruction)
     r"dd\s+.*of\s*=\s*/dev/",
     r">\s*/dev/(sd|hd|nvme|vd)",

@@ -74,6 +74,10 @@ _FAILURE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"npm err!", re.IGNORECASE),
     re.compile(r"\b[1-9]\d* failed\b", re.IGNORECASE),
     re.compile(r"\b[1-9]\d* error(?:s)?\b", re.IGNORECASE),
+    # Common unittest/pytest summaries and per-test status lines. Keep these
+    # explicit rather than treating every occurrence of "fail" as a failure.
+    re.compile(r"^\s*(?:FAILED|FAIL(?:ED)?\s*:)(?:\s|$|\()", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"\b(?:failures?|errors?)\s*=\s*[1-9]\d*\b", re.IGNORECASE),
 )
 
 

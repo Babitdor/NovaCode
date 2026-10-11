@@ -104,7 +104,7 @@ _DEFAULT_SHELL_DENY: list[str] = [
     # rm -r[f] / -fr of root, home or a top-level directory, as any argument.
     # Deeper paths (/tmp/build) are ordinary cleanup — same rule as
     # shell.patterns.DANGEROUS_PATTERNS.
-    r"\brm\s+-(?:[a-z]*r[a-z]*f?|[a-z]*f[a-z]*r)\b[^;&|\n]*?\s[\"']?(?:~|\$HOME\b|/\*|/[^/\s\"']*/?(?=[\"']?(?:[\s;&|)]|$)))",
+    r"\brm\s+(?=[^;&|\n]*(?:--recursive\b|-[a-z]*r[a-z]*))(?=[^;&|\n]*(?:--force\b|-[a-z]*f[a-z]*))[^;&|\n]*?\s[\"']?(?:~|\$HOME\b|/\*|/[^/\s\"']*/?(?=[\"']?(?:[\s;&|)]|$)))",
     r":\s*\(\s*\)\s*\{",  # fork bomb :(){
     r"\bsudo\b",  # privilege escalation
     r"\bmkfs\b",  # format a filesystem
