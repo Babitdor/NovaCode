@@ -72,6 +72,46 @@ async def _never() -> None:
     await asyncio.sleep(3600)
 
 
+async def test_child_resolves_remote_skill_before_calling_the_model(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    resolve = AsyncMock(return_value=SimpleNamespace(prompt="full skill", pinned_prompt="$review file.py"))
+    monkeypatch.setattr("novacode_cli.commands.skill_invoke._try_skill_invocation", resolve)
+    seen = []
+
+    async def stream(text, *args, **kwargs):
+        seen.append(text)
+        yield ev.Done()
+
+    worker, sent = _make(monkeypatch, stream)
+    await worker._run_turn("skill", "/skill:review file.py")
+    assert seen == ["$review file.py"]
+    assert resolve.call_args.args[:2] == ("review", "file.py")
+    assert sent[-1] == {"t": "turn_done", "id": "skill", "ok": True}
+
+
+async def test_child_command_output_is_returned_without_a_model_call(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr("novacode_cli.commands.commands._get_registry", lambda: SimpleNamespace(get=lambda name: True))
+    handler = AsyncMock(return_value=True)
+    monkeypatch.setattr("novacode_cli.commands.commands.handle_command", handler)
+    seen = []
+
+    async def stream(text, *args, **kwargs):
+        seen.append(text)
+        yield ev.Done()
+
+    worker, sent = _make(monkeypatch, stream)
+    await worker._run_turn("command", "/plan status")
+    assert not seen
+    assert handler.call_args.args[0] == "/plan status"
+    assert any(frame.get("t") == "ev" for frame in sent)
+    assert sent[-1]["ok"]
+
+
 @pytest.mark.asyncio
 async def test_job_controls_use_worker_registry_and_ignore_output_events(monkeypatch):
     from novacode_cli.shell import jobs

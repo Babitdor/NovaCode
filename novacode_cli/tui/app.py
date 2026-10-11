@@ -2636,6 +2636,14 @@ class NovaApp(App):
         # Unmount also runs after failed/interrupted tasks and run_test exits,
         # where action_quit may never have been reached.
         self._release_output_observers()
+        panel = getattr(self, "_remote_command_panel", None)
+        if panel is not None:
+            await panel.close(dismiss=True)
+        pending_commands = list(getattr(self, "_remote_command_waiters", ()))
+        for task in pending_commands:
+            task.cancel()
+        if pending_commands:
+            await asyncio.gather(*pending_commands, return_exceptions=True)
         watchdog = getattr(self, "_stall_watch", None)
         if watchdog is not None:
             watchdog.stop()
@@ -3748,11 +3756,18 @@ class NovaApp(App):
         """
         from novacode_cli.remote.routing import ROOT, RemoteRouter
 
+        panel = getattr(self, "_remote_command_panel", None)
+        if panel is not None and await panel.handle(msg):
+            return True
         router = getattr(self, "_remote_router", None)
         if router is None:
             router = self._remote_router = RemoteRouter()
         sessions = self._remote_sessions()
         text = (getattr(msg, "text", "") or "").strip()
+        if text.startswith("/"):
+            command, separator, arguments = text.partition(" ")
+            text = command.split("@", 1)[0] + separator + arguments
+            msg.text = text
         low = text.lower()
         route_ctx = getattr(msg, "route", None)
         if not isinstance(route_ctx, dict):
@@ -4340,9 +4355,62 @@ class NovaApp(App):
         return self.session_state
 
     async def _sync_remote_topics(self, *, attach_running: bool = True) -> None:
+        self._schedule_remote_command_menu()
         for pane in getattr(self, "_panes", []):
             if pane.kind == "root" or pane.status not in ("crashed", "exited"):
                 await self._open_remote_topics(pane, attach_running=attach_running)
+
+    def _schedule_remote_command_menu(self) -> None:
+        """Refresh menus off the prompt path, with at most one worker."""
+        if not getattr(self, "is_running", False) or not self._remote_telegram_bridges():
+            return
+        self._remote_menu_dirty = True
+        worker = getattr(self, "_remote_menu_worker", None)
+        if worker is None or worker.is_finished:
+            async def refresh():
+                while self._remote_menu_dirty:
+                    self._remote_menu_dirty = False
+                    await self._sync_remote_command_menu()
+
+            self._remote_menu_worker = self.run_worker(
+                refresh(), group="remote_menu"
+            )
+
+    async def _sync_remote_command_menu(self) -> None:
+        """Keep Telegram's native slash menu aligned with commands and enabled skills."""
+        from novacode_cli.remote.command_menu import build_command_menu
+        from novacode_cli.skills.skills_prefs import effective_disabled
+
+        bridges = [bridge for bridge in self._remote_telegram_bridges()
+                   if hasattr(bridge, "sync_command_menu")]
+        if not bridges:
+            return
+        try:
+            def enabled_skills():
+                disabled = effective_disabled()
+                return [name for name in self._collect_skill_names() if name not in disabled]
+
+            try:
+                skills = await asyncio.to_thread(enabled_skills)
+            except Exception:
+                logger.debug("Could not discover skills for Telegram menu", exc_info=True)
+                skills = []
+            commands = [(name, spec.help) for name, spec in TUI_COMMANDS.items()]
+            commands.extend((name, "Plugin command") for name in self._plugin_commands)
+            commands.extend([
+                ("tab", "Choose a project or close a session tab"),
+                ("use", "Choose which session receives messages"),
+                ("choose", "Select a numbered panel action"),
+                ("set", "Fill a numbered panel field"),
+                ("input", "Fill and submit a numbered panel field"),
+                ("panel", "Show the current command panel or another page"),
+                ("back", "Close the current command panel"),
+            ])
+            menu = build_command_menu(commands, skills)
+            for bridge in bridges:
+                await bridge.sync_command_menu(menu)
+        except Exception:
+            logger.debug("Telegram command menu refresh failed", exc_info=True)
 
     async def _open_remote_topics(self, pane, *, attach_running: bool = True) -> None:
         """Bind every live session to its own stable Telegram topic."""
@@ -4523,15 +4591,7 @@ class NovaApp(App):
                 if low.startswith("/steer"):
                     text = text[len("/steer") :].strip()
                 elif text.startswith("/"):
-                    reply_fn = getattr(m, "reply_fn", None)
-                    if reply_fn is not None:
-                        try:
-                            await reply_fn(
-                                "◐ Busy with the current task — send "
-                                "`/steer <text>` (or just text) to add to it."
-                            )
-                        except Exception:  # noqa: BLE001
-                            pass
+                    await self._defer_remote_slash(m, queue)
                     continue
                 if not text:
                     continue
@@ -4548,10 +4608,34 @@ class NovaApp(App):
                         await reply_fn(f"↗ Added to the running task: {text}")
                     except Exception:  # noqa: BLE001
                         pass
+
             finally:
                 with suppress(ValueError):
                     queue.task_done()
-                    pass
+
+    async def _defer_remote_slash(self, msg, queue) -> None:
+        """Queue commands without mutating a running agent or losing skill invocations."""
+        pending = getattr(self, "_remote_command_waiters", None)
+        if pending is None:
+            pending = self._remote_command_waiters = set()
+        if len(pending) >= 32:
+            await msg.reply_fn("Command queue is full. Try again after the current task.")
+            return
+
+        async def enqueue():
+            while self._turn_active or (
+                getattr(self, "_remote_turn_task", None) is not None
+                and not self._remote_turn_task.done()
+            ):
+                await asyncio.sleep(0.1)
+            await queue.put(msg)
+
+        task = asyncio.create_task(enqueue())
+        pending.add(task)
+        self._bg_tasks.add(task)
+        task.add_done_callback(pending.discard)
+        task.add_done_callback(self._bg_tasks.discard)
+        await msg.reply_fn("Command queued — it will run after the current task.")
 
     def _remote_react(self, emoji: str, msg: Any = None) -> None:
         """Add a reaction emoji to the remote user's message (best-effort).
@@ -4574,6 +4658,11 @@ class NovaApp(App):
 
     def _log(self, renderable: Any) -> None:
         """Mount an ancillary line (errors, command output, notices)."""
+        from novacode_cli.remote.command_ui import command_output
+
+        captured = command_output.get()
+        if captured is not None:
+            captured.append(renderable)
         self._close_tool_group()
         self._transcript().mount(Static(renderable, classes="logline"))
         self._schedule_prune()
@@ -8526,6 +8615,12 @@ class NovaApp(App):
             tracker.set_breakdown(breakdown)
         except Exception:  # noqa: BLE001
             logger.debug("Could not rebuild /context metrics from session state", exc_info=True)
+        # An idle status bar is not repainted by anything else: its CTX gauge kept
+        # the startup baseline (prompt only, no tool schemas) while the footer,
+        # which is on a refresh timer, showed the full count beside it.
+        with suppress(Exception):  # not mounted yet, or mid-teardown
+            self._status_tail = None
+            self._refresh_status()
 
         await self._maybe_warn_ollama_offload(tracker.model_name)
 
@@ -8793,15 +8888,7 @@ class NovaApp(App):
                         if low.startswith("/steer"):
                             text = text[len("/steer") :].strip()
                         elif text.startswith("/"):
-                            reply_fn = getattr(msg, "reply_fn", None)
-                            if reply_fn is not None:
-                                try:
-                                    await reply_fn(
-                                        "◐ Busy with the current task — send "
-                                        "`/steer <text>` (or just text) to add to it."
-                                    )
-                                except Exception:
-                                    pass
+                            await self._defer_remote_slash(msg, queue)
                             continue
                         if not text:
                             continue
@@ -8982,45 +9069,16 @@ class NovaApp(App):
                 with suppress(ValueError):
                     queue.task_done()
 
-    # Slash commands that require the interactive local TUI (modals, pickers,
-    # launchers) and can't be driven over a chat bridge.
-    _REMOTE_LOCAL_ONLY = frozenset(
-        {
-            "sessions",
-            "mcp",
-            "theme",
-            "remote",
-            "router",
-            "agents",
-            "skills",
-            "init",
-            "trello",
-            "browser-use",
-            "hooks",
-            "servers",
-            "files",
-            "images",
-            "vision",
-            "kill",
-            "restore",
-            "reindex",
-            "plan",
-            "steer",
-            "notifications",
-            "trace",
-            "log",
-            "tests",
-            "fast",
-        }
-    )
-
     def _remote_help_text(self) -> str:
         """Plain-text help listing the commands that work over a remote chat."""
+        commands = "\n".join(f"• /{name} — {spec.help}" for name, spec in TUI_COMMANDS.items())
         return (
+            commands + "\n\n"
+            "Panels: /choose N, /set N value, /input N value (submit), /panel, /back.\n"
             "Remote commands:\n"
             "• /help — this list\n"
             "• /context (/tokens, /cost) — context window usage\n"
-            "• /model — show the current model\n"
+            "• /model — choose a model\n"
             "• /clear — reset the conversation\n"
             "• /compact — summarize & free up context\n"
             "• /save — save the session\n"
@@ -9039,8 +9097,8 @@ class NovaApp(App):
             "• /use <name> — where plain messages go (main = the first one)\n"
             "• @name <text> — send to one session, or reply to its message\n"
             "• In a group with Topics on, each session gets its own topic\n"
-            "Anything without a leading / is sent to the agent. Interactive "
-            "panels (/model picker, /mcp, /theme…) are local-only."
+            "Anything without a leading / is sent to the agent. "
+            "Interactive panels show numbered choices in this chat."
         )
 
     async def _remote_slash(self, text: str) -> "tuple[str | None, Any]":
@@ -9050,25 +9108,26 @@ class NovaApp(App):
           * ``(str, None)`` — send this text back; no agent turn.
           * ``(None, str)`` — stream this prompt as an agent turn (skills).
           * ``(None, callable)`` — execute this coroutine/callable in the turn context.
-        Interactive / local-only commands return an explanatory reply.
+        Interactive commands expose their normal panels as scoped chat choices.
         """
         parts = text[1:].split(maxsplit=1)
         cmd = parts[0].lower() if parts else ""
+        cmd = cmd.split("@", 1)[0]
+        # Telegram permits underscores rather than hyphens in its native menu.
+        kebab = cmd.replace("_", "-")
+        if cmd not in TUI_COMMANDS and cmd not in self._plugin_commands:
+            if kebab in TUI_COMMANDS or kebab in self._plugin_commands:
+                cmd = kebab
+        cmd = _TUI_COMMAND_ALIASES.get(cmd, cmd)
         arg = parts[1].strip() if len(parts) > 1 else ""
 
         if cmd in ("help", "?", "commands"):
             return self._remote_help_text(), None
-        if cmd in ("tokens", "context", "cost"):
+        if cmd in ("tokens", "context", "cost") and not arg:
             try:
                 return self._token_text().plain, None
             except Exception:  # noqa: BLE001
                 return "(token usage unavailable)", None
-        if cmd == "model":
-            return (
-                f"Current model: {self.model_name}\n"
-                "Switching models is only available in the local TUI (/model).",
-                None,
-            )
         if cmd == "verbose":
             new = self.session_state.toggle_verbose()
             return f"Verbose mode {'on' if new else 'off'}.", None
@@ -9341,8 +9400,15 @@ class NovaApp(App):
 
             return None, run_ralph
 
-        if cmd in self._REMOTE_LOCAL_ONLY:
-            return f"/{cmd} is only available in the local TUI.", None
+        harness = getattr(self, "_ui_harness", None)
+        if (
+            cmd in TUI_COMMANDS or cmd in self._plugin_commands or cmd == "ui"
+            or (harness is not None and cmd in harness.applied.commands)
+        ):
+            async def run_command():
+                await self._run_remote_command(f"/{cmd}" + (f" {arg}" if arg else ""))
+
+            return None, run_command
 
         # Otherwise treat it as a skill: /skill:<name> or a bare /<name>.
         skill_name = cmd[len("skill:") :] if cmd.startswith("skill:") else cmd
@@ -9362,6 +9428,40 @@ class NovaApp(App):
             f"Unknown command: /{cmd}. Send /help for what works over remote.",
             None,
         )
+
+    async def _run_remote_command(self, text: str) -> None:
+        """Execute the normal TUI handler and expose its output/panels in chat."""
+        from novacode_cli.remote.command_ui import RemoteCommandPanel, command_output, plain
+
+        msg = self._remote_msg
+        if msg is None:
+            return
+        previous = getattr(self, "_remote_command_panel", None)
+        if previous is not None:
+            await previous.close(dismiss=True)
+        panel = self._remote_command_panel = RemoteCommandPanel(self, msg)
+        output = []
+        token = command_output.set(output)
+        panel.start()
+        try:
+            await self._run_slash(text)
+        except BaseException:
+            await panel.close(dismiss=True)
+            raise
+        finally:
+            command_output.reset(token)
+        try:
+            if output:
+                body = "\n\n".join(plain(item) for item in output)
+                for offset in range(0, len(body), 3500):
+                    await asyncio.wait_for(msg.reply_fn(body[offset:offset + 3500]), 15)
+            if self.screen is panel.original:
+                await panel.close()
+            elif not panel.closed and self.screen is not panel.current:
+                await panel.refresh()
+        except BaseException:
+            await panel.close(dismiss=True)
+            raise
 
     async def _run_bash(self, text: str) -> None:
         """Run a ``!`` shell command.
@@ -10388,6 +10488,7 @@ class NovaApp(App):
             slash = f"/{name}"
             if slash not in _TUI_SLASH_COMMANDS:
                 _TUI_SLASH_COMMANDS.append(slash)
+        self._schedule_remote_command_menu()
 
     def _discover_plugin_commands(self) -> dict[str, Any]:
         """Name → async handler for every enabled plugin's commands. Thread-safe.
@@ -13924,6 +14025,7 @@ class NovaApp(App):
     async def _run_skills(self) -> None:
         """Show installed skills (interactive)."""
         selected = await self.push_screen_wait(SkillsScreen())
+        self._schedule_remote_command_menu()
         if selected:
             composer = self.query_one("#prompt", PromptInput)
             composer.text = f"${selected} " + composer.text

@@ -1232,17 +1232,17 @@ async def _drive_remote_slash():
         reply, stream = await app._remote_slash("/context")
         assert stream is None and isinstance(reply, str)
 
-        # /model → shows current model, declines switching
+        # /model → normal command handler, with remote panel controls
         reply, stream = await app._remote_slash("/model")
-        assert stream is None and "test-model" in reply
+        assert reply is None and callable(stream)
 
         # /verbose → toggles and reports state
         reply, stream = await app._remote_slash("/verbose")
         assert stream is None and "Verbose mode on" in reply
 
-        # interactive command → declined as local-only
+        # Interactive commands are usable through the remote panel adapter.
         reply, stream = await app._remote_slash("/sessions")
-        assert stream is None and "local TUI" in reply
+        assert reply is None and callable(stream)
 
         # unknown / non-skill → safe non-crashing reply, no stream
         reply, stream = await app._remote_slash("/definitelynotacommand")
@@ -5369,6 +5369,38 @@ def test_tui_ctx_survives_a_resume():
     if not _HAS_TEXTUAL:
         return
     asyncio.run(_drive_ctx_survives_a_resume())
+
+
+@pytest.mark.asyncio
+async def test_ctx_gauge_follows_a_context_update_while_idle():
+    """The gauge showed the startup figure until something else repainted the bar."""
+    from types import SimpleNamespace
+
+    from langchain_core.messages import HumanMessage
+    from textual.widgets import Static
+
+    from novacode_cli.tui.app import NovaApp
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    class Agent(_FakeAgent):
+        messages: list = []
+
+        async def aget_state(self, config):  # noqa: ANN001, ANN202
+            return SimpleNamespace(values={"messages": self.messages})
+
+    tracker = TokenTracker()
+    tracker.set_model("claude-opus-5")
+    agent = Agent()
+    app = NovaApp(agent=agent, assistant_id="nova-agent", session_state=_SS(),
+                  backend=None, token_tracker=tracker, image_tracker=None,
+                  model_name="claude-opus-5")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        agent.messages = [HumanMessage(content="x" * 200_000)]
+        await app._update_context_breakdown()
+        pct = tracker.get_breakdown().usage_percentage
+        assert pct >= 1
+        assert f"{pct:.0f}%" in str(app.query_one("#prompt-hint-bar", Static).render())
 
 
 @pytest.mark.asyncio

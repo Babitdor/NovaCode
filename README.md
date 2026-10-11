@@ -432,6 +432,23 @@ that topic. The new tab gets its own topic; chat there to work in that project.
 Use `/tab close` to choose a tab to close. Telegram photos and image documents
 are delivered to the session belonging to their topic.
 
+In the main session's Telegram topic, slash commands use the normal TUI handlers,
+including `/skills`, `/model`, `/settings`, and plugin commands. Interactive panels
+show numbered choices: `/choose N` selects an action, `/set N value` fills a field,
+`/input N value` submits it, `/panel N` changes pages, and `/back` closes the panel.
+Only the requester in that topic can operate its controls. Commands received during
+a task wait until it finishes. Invoke skills with `/skill:name arguments` or
+`/name arguments`; skill invocation also works in child-session topics, using that
+session's workspace. Child topics use the shared CLI handlers for other commands;
+TUI-only management panels are available in the main topic.
+
+Type `/` in Telegram to open its native command autocomplete menu. Nova publishes
+commands and enabled skills for the configured chat on connection and refreshes
+after skill management or plugin reload. Telegram allows up to 100 menu entries;
+commands take priority, followed by skills. Names with hyphens appear with
+underscores (for example `/api_testing`). Skills outside the menu remain available
+with `/skill:name`. The menu is shared by all topics in that chat.
+
 Each TUI tab shows its own Tasks footer. Open `/tasks` (or Ctrl+B with an empty
 prompt) to select and terminate a background command. You can also ask Nova to
 list or stop its background tasks; task IDs apply only within that session.

@@ -202,16 +202,21 @@ class SessionWorker:
         from novacode_cli.remote.images import attach_images
 
         self.image_tracker = attach_images(self.image_tracker, images)
-        source = iterate_agent_events(
-            text,
-            self.agent,
-            self.assistant_id,
-            self.session_state,
-            backend=self.backend,
-            seen_message_ids=self._seen,
-            image_tracker=self.image_tracker,
-        )
+        source = None
         try:
+            if text.lstrip().startswith("/") and not images:
+                text = await self._resolve_slash(text)
+                if text is None:
+                    return
+            source = iterate_agent_events(
+                text,
+                self.agent,
+                self.assistant_id,
+                self.session_state,
+                backend=self.backend,
+                seen_message_ids=self._seen,
+                image_tracker=self.image_tracker,
+            )
             async for event in source:
                 if isinstance(event, ev.InterruptRequest):
                     await self._forward_interrupt(event)
@@ -235,9 +240,47 @@ class SessionWorker:
                 )}
             )
         finally:
-            with contextlib.suppress(Exception):
-                await asyncio.wait_for(source.aclose(), timeout=2)
+            if source is not None:
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(source.aclose(), timeout=2)
             self._emit({"t": "turn_done", "id": prompt_id, "ok": ok})
+
+    async def _resolve_slash(self, text: str) -> str | None:
+        """Resolve commands in the child's own workspace, never as raw model input."""
+        from novacode_cli.commands.commands import _get_registry, handle_command
+        from novacode_cli.commands.skill_invoke import _try_skill_invocation
+        from novacode_cli.config.config import console
+        from novacode_cli.ui.ui_elements import TokenTracker
+
+        parts = text.strip()[1:].split(maxsplit=1)
+        cmd = parts[0].lower().split("@", 1)[0] if parts else ""
+        kebab = cmd.replace("_", "-")
+        if _get_registry().get(cmd) is None and _get_registry().get(kebab) is not None:
+            cmd = kebab
+        args = parts[1] if len(parts) > 1 else None
+        if cmd.startswith("skill:") or _get_registry().get(cmd) is None:
+            name = cmd.removeprefix("skill:")
+            skill = await _try_skill_invocation(name, args, self.session_state, self.assistant_id)
+            if skill is not None:
+                return skill.pinned_prompt or skill.prompt
+        with console.capture() as captured:
+            result = await handle_command(
+                f"/{cmd}" + (f" {args}" if args else ""), self.agent,
+                TokenTracker(), self.session_state, self.assistant_id,
+                session_manager=self.session_manager,
+                model_name=self.model_name, image_tracker=self.image_tracker,
+            )
+        output = captured.get().strip()
+        self.agent = getattr(self.session_state, "_agent", self.agent) or self.agent
+        self.backend = getattr(self.session_state, "_backend", self.backend) or self.backend
+        if result == "exit":
+            await self.inbox.put({"t": "shutdown"})
+        elif isinstance(result, str):
+            return result
+        self._emit({"t": "ev", **protocol.encode_event(ev.AssistantMessage(
+            text=output or "Command completed.", agent_name="Nova", agent_color="cyan",
+        ))})
+        return None
 
     def _start_turn(self, prompt_id: str, text: str, images=None, auto_approve=None) -> None:
         self._turn_id = prompt_id

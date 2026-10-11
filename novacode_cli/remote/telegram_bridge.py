@@ -69,6 +69,8 @@ class TelegramBridge:
         self._topic_handlers: dict[int, Any] = {}
         self._topic_lock = asyncio.Lock()
         self._keyboard_lock = asyncio.Lock()
+        self._command_menu_lock = asyncio.Lock()
+        self._command_menu: list[dict[str, str]] | None = None
         self._shared_polling = None
         self._on_status = None
         self._last_sender_warning = 0.0
@@ -85,6 +87,22 @@ class TelegramBridge:
             (int(self._config.chat_id), 0),
             *[(int(self._config.chat_id), tid) for tid in self._topic_handlers],
         ]
+
+    async def sync_command_menu(self, commands: list[dict[str, str]]) -> bool:
+        """Publish autocomplete for this chat, retrying failures on the next refresh."""
+        async with self._command_menu_lock:
+            if commands == self._command_menu:
+                return True
+            result = await self._api_call(
+                "setMyCommands",
+                {"commands": commands, "scope": {"type": "chat", "chat_id": self._config.chat_id}},
+                req_timeout=aiohttp.ClientTimeout(total=10),
+            )
+            if not result or not result.get("ok"):
+                logger.warning("Telegram command menu could not be updated")
+                return False
+            self._command_menu = [dict(command) for command in commands]
+            return True
 
     def set_topic_handler(self, topic_id: int, handler) -> None:
         """Reserve a non-conversation topic's messages for a dedicated feature."""
