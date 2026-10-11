@@ -61,7 +61,7 @@ _MIN_SITUATION_RELEVANCE = 3
 # a file listing, so two shared words are allowed to count there.
 _MIN_FAILURE_RELEVANCE = 2
 _FAILURE_MARKERS = (
-    "error", "not found", "no such", "failed", "cannot", "unable", "denied",
+    "error", "not found", "no such", "failed", "cannot", "could not", "unable", "denied",
     "traceback", "exception", "refused", "exit code: 1", "exit code: 2",
     "exit code: 100", "exit code: 126", "exit code: 127",
 )  # fmt: skip
@@ -773,27 +773,32 @@ class AgentMemoryMiddleware(AgentMiddleware):
         if self._retrieval_cache is not None and self._retrieval_cache[0] == key:
             return self._retrieval_cache[1]
 
+        from novacode_cli.memory import builtin_lessons
+
         q, facing_words = _tokens(query), _tokens(situation)
         lowered = situation.lower()
-        needed = (
-            _MIN_FAILURE_RELEVANCE
-            if any(marker in lowered for marker in _FAILURE_MARKERS)
-            else _MIN_SITUATION_RELEVANCE
-        )
+        failing = any(marker in lowered for marker in _FAILURE_MARKERS)
+        needed = _MIN_FAILURE_RELEVANCE if failing else _MIN_SITUATION_RELEVANCE
         block = ""
         if q or facing_words:
             scored: list[tuple[int, str, str]] = []
             # (word score, topic, bullet, qualified by shared words)
             candidates: list[tuple[int, str, str, bool]] = []
             for topic, (title_toks, body, body_toks) in self._load_memory_corpus().items():
+                # The built-in lessons answer an error, never a request: a long
+                # task description shares a few words with all of them, which
+                # put every one in front of the model on nearly every turn.
+                builtin = topic == builtin_lessons.TOPIC
+                if builtin and not failing:
+                    continue
                 title_bonus = 2 * len(q & title_toks)
-                topic_asked = title_bonus + len(q & body_toks) >= _MIN_RELEVANCE
+                topic_asked = not builtin and title_bonus + len(q & body_toks) >= _MIN_RELEVANCE
                 lines = [ln for ln in body.splitlines() if ln.lstrip().startswith(("-", "*", "•"))]
                 if not lines and topic_asked:  # a hand-written topic with no bullets
                     scored.append((title_bonus + len(q & body_toks), topic, body.strip()[:_RETRIEVAL_PER_FILE_CAP]))
                 for line in lines:
                     words = _tokens(line)
-                    asked, facing = len(q & words), len(facing_words & words)
+                    asked, facing = (0 if builtin else len(q & words)), len(facing_words & words)
                     by_words = (topic_asked and asked > 0) or facing >= needed
                     candidates.append((asked + title_bonus + 2 * facing, topic, line.strip(), by_words))
             scored += self._by_meaning(candidates, query, situation)
@@ -869,12 +874,19 @@ class AgentMemoryMiddleware(AgentMiddleware):
         # An error is usually the last thing printed; the whole tail of a long
         # log dilutes it, so both are tried.
         last_lines = "\n".join([ln for ln in situation.splitlines() if ln.strip()][-3:])
+        from novacode_cli.memory import builtin_lessons
+
+        to_request = semantic.similarities(query[:1000], bullets) or zeros
+        to_request = [  # built-ins are matched against the error only
+            0.0 if c[1] == builtin_lessons.TOPIC else close
+            for c, close in zip(candidates, to_request, strict=True)
+        ]
         closeness = [
             max(scores)
             for scores in zip(
                 (semantic.similarities(situation, bullets) if failing else None) or zeros,
                 (semantic.similarities(last_lines, bullets) if failing else None) or zeros,
-                semantic.similarities(query[:1000], bullets) or zeros,
+                to_request,
                 strict=True,
             )
         ]

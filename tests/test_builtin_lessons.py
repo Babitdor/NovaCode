@@ -57,6 +57,33 @@ def test_they_are_not_offered_until_something_goes_wrong(mw) -> None:
     assert mw._relevant_memories(_facing("total 8\n-rw-r--r-- 1 root root 612 nginx.conf")) == ""
 
 
+def test_a_long_task_description_does_not_summon_them(mw) -> None:
+    # A real task text shares a few words with every built-in ("install",
+    # "python", "command", ...). In a ten-task eval that injected each of them
+    # 50-160 times, on turns with no such error in sight.
+    task = (
+        "Build POV-Ray 2.2. Find and download the source archives with curl, extract them, "
+        "then compile and install to /usr/local/bin/povray. Use apt-get to install any package "
+        "you need, and python3 or pip to check the rendered image. The command must not fail."
+    )
+
+    def facing(output: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            messages=[
+                {"role": "user", "content": task},
+                {"role": "assistant", "content": ""},
+                {"role": "tool", "content": output},
+            ]
+        )
+
+    assert mw._relevant_memories(facing("gcc -c povray.c -o povray.o\ngcc -c render.c -o render.o")) == ""
+    unrelated_failure = "povray.c:12:10: fatal error: config.h: No such file or directory\nExit code: 2"
+    assert mw._relevant_memories(facing(unrelated_failure)) == ""
+    assert "apt-get update" in mw._relevant_memories(
+        facing("E: Unable to locate package nginx\napt-get install failed, exit code: 100")
+    )
+
+
 def test_every_builtin_leads_with_its_symptom() -> None:
     for lesson in builtin_lessons.LESSONS:
         assert lesson.startswith("- **Symptom:**"), lesson
