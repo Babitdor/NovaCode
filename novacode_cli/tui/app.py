@@ -4251,7 +4251,7 @@ class NovaApp(App):
             await self._add_message(
                 Text(f"📡 {msg.user_name} → {pane.title}", style="bold cyan"),
                 "user",
-                Text(msg.text),
+                self._remote_user_body(msg),
             )
         turn = SimpleNamespace(
             msg=msg,
@@ -4681,6 +4681,18 @@ class NovaApp(App):
         from novacode_cli.tui.palette import user_label_style
 
         return Text(name, style=user_label_style(self._palette))
+
+    @staticmethod
+    def _remote_user_body(msg: Any) -> Text:
+        """Show remote attachments alongside the caption without exposing image data."""
+        body = Text(msg.text or "")
+        count = len(getattr(msg, "images", None) or [])
+        if count:
+            if body.plain:
+                body.append("\n\n")
+            label = "Image attached" if count == 1 else f"{count} images attached"
+            body.append(f"📎 {label}", style="dim")
+        return body
 
     def _agent_label(self, name: str, agent_color: str | None = None) -> Text:
         """The transcript header for the agent's own turn.
@@ -8866,7 +8878,7 @@ class NovaApp(App):
                                 style="bold cyan",
                             ),
                             "user",
-                            Text(msg.text),
+                            self._remote_user_body(msg),
                         )
                         # Treat as steer / question response
                         if (
@@ -8917,7 +8929,7 @@ class NovaApp(App):
                         style="bold cyan",
                     ),
                     "user",
-                    Text(msg.text),
+                    self._remote_user_body(msg),
                 )
                 # A remote sender inherits the user's approval preference.
                 config = {"configurable": {"thread_id": self.session_state.thread_id}}
