@@ -27,19 +27,34 @@ The detection stays conservative to avoid false positives:
 """
 
 import hashlib
+import difflib
 import json
 from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
-from langchain.agents.middleware.types import AgentMiddleware
+from langchain.agents.middleware.types import AgentMiddleware, hook_config
 from langchain.tools.tool_node import ToolCallRequest
-from langchain_core.messages import ToolMessage
-from langgraph.graph import END
+from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.types import Command
 
 if TYPE_CHECKING:
     from langchain.tools import BaseTool
+
+
+#: Temperature used for a model call made while the model is repeating itself.
+_UNSTICK_TEMPERATURE = 0.7
+
+#: How alike two calls' arguments must be to count as one call restated, when
+#: both returned the same result. A long identical result is strong evidence on
+#: its own, so the arguments may differ a little...
+_NEAR_MIN_RESULT_CHARS = 200
+_NEAR_ARGS_RATIO = 0.9
+#: ...but a short one ("ok", "NO ALERT") is what honest trial and error prints
+#: too, so there the calls must be long and all but identical: a rename, not a
+#: different attempt.
+_NEAR_ARGS_RATIO_SHORT_RESULT = 0.99
+_NEAR_MIN_ARGS_CHARS = 300
 
 
 def _canonical_args(tool_call: dict) -> str:
@@ -51,6 +66,18 @@ def _canonical_args(tool_call: dict) -> str:
     except (TypeError, ValueError):
         args_str = repr(args)
     return f"{name}\x00{args_str}"
+
+
+def _restates(previous_args: str, args: str, long_result: bool) -> bool:  # noqa: FBT001
+    """Whether ``args`` is ``previous_args`` again, give or take a rename."""
+    if long_result:
+        needed = _NEAR_ARGS_RATIO
+    elif min(len(previous_args), len(args)) >= _NEAR_MIN_ARGS_CHARS:
+        needed = _NEAR_ARGS_RATIO_SHORT_RESULT
+    else:
+        return previous_args == args
+    matcher = difflib.SequenceMatcher(None, previous_args, args, autojunk=False)
+    return matcher.real_quick_ratio() >= needed and matcher.ratio() >= needed
 
 
 def _result_text(result: ToolMessage | Command) -> str | None:
@@ -84,8 +111,11 @@ class LoopGuardMiddleware(AgentMiddleware):
       reliable way to perturb a degenerate loop, so varying the text gives the
       model a real chance to choose a different action.
     - **Hard stop.** If the model ignores ``escalate_after`` escalations anyway,
-      the guard ends the turn (``Command(goto=END)``) with a final message
-      rather than letting the wall scroll forever.
+      the guard ends the turn with a final message rather than letting the
+      wall scroll forever. The stop is made in ``before_model`` (``jump_to:
+      "end"``): a ``Command(goto=END)`` returned from the tool node does not
+      end the turn, because the node's own edge back to the model still fires
+      — one eval trial repeated a single command 318 times through 80 "halts".
 
     Args:
         threshold: Number of identical (tool, args, result) calls — within the
@@ -113,6 +143,68 @@ class LoopGuardMiddleware(AgentMiddleware):
         # Consecutive-block escalation state for the currently-stuck signature.
         self._blocked_sig: str | None = None
         self._block_streak: int = 0
+        self._halt = False  # set by _terminate, acted on in before_model
+        self._repeats = 0  # identical (call, result) count for the latest call
+        # (tool, result hash, consecutive count, last args, result was long) for
+        # the run of restated calls with one result that the latest call is in.
+        self._near: tuple[str, str, int, str, bool] | None = None
+
+    @hook_config(can_jump_to=["end"])
+    def before_model(self, state, runtime) -> dict | None:  # noqa: ANN001, ARG002
+        """End the turn if the last tool step hit the hard stop."""
+        if not self._halt:
+            return None
+        self._halt = False
+        note = (
+            "I stopped: I was repeating the same tool call without getting anywhere. "
+            "The work so far is as the tool results above show it."
+        )
+        return {"messages": [AIMessage(content=note)], "jump_to": "end"}
+
+    async def abefore_model(self, state, runtime) -> dict | None:  # noqa: ANN001
+        """(async) End the turn if the last tool step hit the hard stop."""
+        return self.before_model(state, runtime)
+
+    def _unstick(self, request):  # noqa: ANN001, ANN202
+        """Let a model that is repeating itself sample its way out.
+
+        At temperature 0 the reply to a context is fixed, and a context that
+        ends in the same call and the same result again is nearly the same
+        context — so the model emits the same call again, warnings or not.
+        Only applied to a model configured with a low temperature, which shows
+        it accepts the setting at all.
+        """
+        stuck = self._block_streak or self._repeats >= 2  # noqa: PLR2004
+        base = getattr(request.model, "temperature", None)
+        if not stuck or base is None or base >= _UNSTICK_TEMPERATURE:
+            return request
+        settings = {**(request.model_settings or {}), "temperature": _UNSTICK_TEMPERATURE}
+        return request.override(model_settings=settings)
+
+    def wrap_model_call(self, request, handler):  # noqa: ANN001, ANN201
+        """Raise the temperature for this call if the model is repeating itself."""
+        return handler(self._unstick(request))
+
+    async def awrap_model_call(self, request, handler):  # noqa: ANN001, ANN201
+        """(async) Raise the temperature if the model is repeating itself."""
+        return await handler(self._unstick(request))
+
+    def _near_loop(self, sig: str) -> str | None:
+        """A stable signature if ``sig`` restates a call that keeps returning the same thing.
+
+        A stuck model does not always repeat itself exactly. In two eval trials
+        it rewrote one script again and again under a new file name each time
+        (``analyze2.pl`` ... ``analyze170.pl``; ``expCB.py``, ``expCC.py`` ...)
+        and got the identical output 170 and 274 times — invisible to a guard
+        that compares arguments exactly.
+        """
+        if self._near is None:
+            return None
+        name, result_hash, count, last_args, long_result = self._near
+        tool, _, args = sig.partition("\x00")
+        if tool != name or count < self.threshold or not _restates(last_args, args, long_result):
+            return None
+        return f"{name}\x00~same-result~{result_hash}"
 
     def _repeat_count(self, sig: str) -> int:
         """Count identical (sig, result) repeats for ``sig`` within the window.
@@ -136,7 +228,7 @@ class LoopGuardMiddleware(AgentMiddleware):
 
     def _on_blocked(
         self, sig: str, request: ToolCallRequest, count: int
-    ) -> ToolMessage | Command:
+    ) -> ToolMessage:
         """Handle a blocked call: escalate the message, then hard-stop the turn.
 
         Tracks how many times *this same signature* has been blocked in a row.
@@ -182,15 +274,15 @@ class LoopGuardMiddleware(AgentMiddleware):
         return ToolMessage(
             content=(
                 f"**LOOP STOPPED** (repeat #{count + streak}): `{name}` was already "
-                f"called {count} times with identical arguments and got the identical "
-                f"result each time. Repeating it will not produce anything new.\n\n"
+                f"called {count} times with the same (or nearly the same) arguments and got "
+                f"the identical result each time. Repeating it will not produce anything new.\n\n"
                 f"{guidance}"
             ),
             tool_call_id=tool_call.get("id", ""),
             status="error",
         )
 
-    def _terminate(self, request: ToolCallRequest, count: int) -> Command:
+    def _terminate(self, request: ToolCallRequest, count: int) -> ToolMessage:
         """End the agent turn after the model ignored every escalation."""
         tool_call = request.tool_call
         name = tool_call.get("name", "this tool")
@@ -207,22 +299,43 @@ class LoopGuardMiddleware(AgentMiddleware):
         )
         # Reset so a later, legitimately-repeating signature starts fresh.
         self._reset_block_state()
-        return Command(goto=END, update={"messages": [msg]})
+        self._halt = True
+        return msg
 
     def _reset_block_state(self) -> None:
         """Clear consecutive-block escalation tracking (progress was made)."""
         self._blocked_sig = None
         self._block_streak = 0
 
-    def _record(self, sig: str, result: ToolMessage | Command) -> None:
-        """Append an executed result to the window, if it is guardable."""
+    def _record(self, sig: str, result: ToolMessage | Command) -> ToolMessage | Command:
+        """Append an executed result to the window, if it is guardable.
+
+        From the second identical (call, result) on, the result is returned with
+        a note saying so. Waiting for the block at ``threshold`` leaves the
+        model several turns of unchanged context to settle into the loop.
+        """
         text = _result_text(result)
         if text is None:
             # Non-guardable result (Command) — don't record; it can't anchor a
             # loop and shouldn't occupy a window slot.
-            return
+            return result
         result_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
         self._history.append((sig, result_hash))
+        tool, _, args = sig.partition("\x00")
+        long_result = len(text) >= _NEAR_MIN_RESULT_CHARS
+        run = 1
+        if self._near and self._near[:2] == (tool, result_hash) and _restates(self._near[3], args, long_result):
+            run = self._near[2] + 1
+        self._near = (tool, result_hash, run, args, long_result)
+        self._repeats = max(self._repeat_count(sig), run)
+        if self._repeats < 2 or not isinstance(result.content, str):  # noqa: PLR2004
+            return result
+        note = (
+            f"\n\n[note: this is the same result as the last {self._repeats - 1} time(s) — "
+            f"{self._repeats} in a row. Running the same thing again, or the same thing under "
+            "another name, will not change it — do something different.]"
+        )
+        return result.model_copy(update={"content": result.content + note})
 
     def wrap_tool_call(
         self,
@@ -234,12 +347,13 @@ class LoopGuardMiddleware(AgentMiddleware):
         count = self._repeat_count(sig)
         if count >= self.threshold:
             return self._on_blocked(sig, request, count)
+        near = self._near_loop(sig)
+        if near:
+            return self._on_blocked(near, request, self._near[2])
         # A real call is running — the model made a different move; clear any
         # in-progress block escalation so it doesn't bleed into a future loop.
         self._reset_block_state()
-        result = handler(request)
-        self._record(sig, result)
-        return result
+        return self._record(sig, handler(request))
 
     async def awrap_tool_call(
         self,
@@ -251,11 +365,12 @@ class LoopGuardMiddleware(AgentMiddleware):
         count = self._repeat_count(sig)
         if count >= self.threshold:
             return self._on_blocked(sig, request, count)
+        near = self._near_loop(sig)
+        if near:
+            return self._on_blocked(near, request, self._near[2])
         # A real call is running — clear any in-progress block escalation.
         self._reset_block_state()
-        result = await handler(request)
-        self._record(sig, result)
-        return result
+        return self._record(sig, await handler(request))
 
 
 class TextRepetitionGuard:

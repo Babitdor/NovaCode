@@ -12,7 +12,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from langchain_core.messages import ToolMessage
-from langgraph.graph import END
 from langgraph.types import Command
 
 from novacode_cli.tracking.loop_guard import LoopGuardMiddleware
@@ -43,7 +42,7 @@ def test_blocks_after_threshold_identical_calls():
     # First three identical calls execute normally.
     for _ in range(3):
         out = _run(mw, "grep", args, "no matches")
-        assert out.content == "no matches"
+        assert out.content.startswith("no matches")  # a repeat carries a note
     # The fourth is short-circuited.
     blocked = _run(mw, "grep", args, "no matches")
     assert blocked.status == "error"
@@ -76,7 +75,7 @@ def test_different_args_reset_streak():
         _run(mw, "grep", {"q": "a"}, "no matches")
     # Switching the query is real progress — must run, not block.
     out = _run(mw, "grep", {"q": "b"}, "no matches")
-    assert out.content == "no matches"
+    assert out.content.startswith("no matches")  # a repeat carries a note
 
 
 def test_changed_result_resets_streak():
@@ -87,7 +86,7 @@ def test_changed_result_resets_streak():
     # Same call but now it finds something → streak resets, never blocks.
     _run(mw, "grep", args, "found it!")
     out = _run(mw, "grep", args, "found it!")
-    assert out.content == "found it!"
+    assert out.content.startswith("found it!")
 
 
 def test_intervening_call_does_not_reset_count():
@@ -98,7 +97,7 @@ def test_intervening_call_does_not_reset_count():
     _run(mw, "read_file", {"path": "/x"}, "contents")  # interleaved, skipped
     # Third identical grep is still allowed (only 2 repeats so far)…
     out = _run(mw, "grep", args, "no matches")
-    assert out.content == "no matches"
+    assert out.content.startswith("no matches")  # a repeat carries a note
     # …but the fourth crosses the threshold despite the interleaved read.
     blocked = _run(mw, "grep", args, "no matches")
     assert blocked.status == "error"
@@ -111,7 +110,7 @@ def test_blocks_loop_that_alternates_with_another_tool():
     args = {"pattern": "knowledge"}
     for _ in range(3):
         out = _run(mw, "grep", args, "no matches")
-        assert out.content == "no matches"
+        assert out.content.startswith("no matches")  # a repeat carries a note
         _run(mw, "think", {"thought": "still looking"}, "ok")  # interleaved
     blocked = _run(mw, "grep", args, "no matches")
     assert blocked.status == "error"
@@ -129,7 +128,7 @@ def test_heavy_interleaving_ages_streak_out_of_window():
     for i in range(4):
         _run(mw, "read_file", {"path": f"/x{i}"}, "contents")
     out = _run(mw, "grep", args, "no matches")  # earlier greps aged out
-    assert out.content == "no matches"
+    assert out.content.startswith("no matches")  # a repeat carries a note
 
 
 def test_command_result_is_not_guarded():
@@ -174,9 +173,11 @@ def test_hard_stops_turn_after_escalation_limit():
     out3 = _run(mw, "grep", args, "no matches")  # exceeds escalate_after -> halt
     assert isinstance(out1, ToolMessage)
     assert isinstance(out2, ToolMessage)
-    assert isinstance(out3, Command)
-    assert out3.goto == END
-    assert "LOOP HALTED" in out3.update["messages"][0].content
+    assert "LOOP HALTED" in out3.content
+    # The stop itself happens before the next model call; a Command(goto=END)
+    # from the tool node never ended the turn (tests/test_loop_guard_halts.py).
+    assert mw.before_model({}, None)["jump_to"] == "end"
+    assert mw.before_model({}, None) is None  # once
 
 
 def test_real_call_resets_block_escalation():
@@ -209,7 +210,7 @@ async def test_async_blocks_after_threshold():
 
     for _ in range(3):
         out = await mw.awrap_tool_call(_request("grep", args), handler)
-        assert out.content == "no matches"
+        assert out.content.startswith("no matches")  # a repeat carries a note
     blocked = await mw.awrap_tool_call(_request("grep", args), handler)
     assert blocked.status == "error"
     assert "LOOP STOPPED" in blocked.content
