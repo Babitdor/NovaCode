@@ -508,6 +508,19 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                         elif phase == "recovered":
                             yield ev.StatusUpdate("thinking…")
                         continue
+                    # Sent by ContextCompactionMiddleware before it asks for a
+                    # summary: that call does not stream, so without this the UI
+                    # would sit silent for as long as the summary takes.
+                    if isinstance(data, dict) and data.get("type") == "nova_compaction_start":
+                        if not compaction_status_started:
+                            compaction_status_started = True
+                            yield ev.ContextMessage(
+                                message="Context is compacting",
+                                event_type="nova_compaction_start",
+                                icon="⟳",
+                                color="dim",
+                            )
+                        continue
                     # A fan-out's tasks, one event each as they start and finish.
                     # The mapper rejects every other custom payload, so middleware
                     # writing to this stream costs nothing here.
@@ -1104,7 +1117,7 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
         #
         # Two shapes, and only one shrinks the message list:
         #   - Nova's own /compact REPLACES history with a summary (count drops).
-        #   - deepagents' SummarizationMiddleware does NOT delete messages; it
+        #   - ContextCompactionMiddleware does NOT delete messages; it
         #     records a `_summarization_event` carrying a cutoff_index and
         #     rebuilds the effective list from it. The count is unchanged.
         # Detecting only the count drop meant a library compaction never emitted

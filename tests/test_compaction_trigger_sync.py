@@ -29,14 +29,14 @@ from novacode_cli.context._analysis import (
 
 
 def test_internal_compaction_uses_the_displayed_threshold_for_each_window():
-    from novacode_cli.agents.core_agent import _context_summarization_trigger
+    from novacode_cli.agents.context_compaction import limits_for
     from novacode_cli.context import compact_threshold_pct
 
     for window in (40_960, 128_000, 200_000):
-        assert _context_summarization_trigger(window) == (
-            "fraction",
-            compact_threshold_pct(window) / 100,
-        )
+        limits = limits_for(window)
+        assert limits.trigger == int(window * compact_threshold_pct(window) / 100)
+        # Pruning is the cheap stage and always gets its chance first.
+        assert limits.prune < limits.trigger
 
 
 def test_auto_compact_is_above_the_warning_line():
@@ -81,42 +81,6 @@ def test_small_windows_compact_earlier_to_keep_headroom():
 def test_should_auto_compact_fires_at_threshold():
     assert _bd(AUTO_COMPACT_THRESHOLD * 100).should_auto_compact is True
     assert _bd(AUTO_COMPACT_THRESHOLD * 100 - 1).should_auto_compact is False
-
-
-def test_internal_compaction_threshold_applies_small_window_reserve():
-    from novacode_cli.agents.core_agent import _context_summarization_trigger
-    from novacode_cli.context import compact_threshold_pct
-
-    trigger = _context_summarization_trigger(40_960)
-    assert trigger[1] * 100 == compact_threshold_pct(40_960)
-
-
-def test_configured_summarizer_replaces_deepagents_default_by_name():
-    """Pin the graph merge behavior used to supply Nova's threshold."""
-    from deepagents.backends import StateBackend
-    from deepagents.graph import _apply_custom_middleware
-    from deepagents.middleware.summarization import (
-        SummarizationMiddleware,
-        create_summarization_middleware,
-    )
-    from langchain_core.language_models.fake_chat_models import FakeListChatModel
-
-    from novacode_cli.agents.core_agent import _context_summarization_trigger
-
-    model = FakeListChatModel(responses=["summary"])
-    model.profile = {"max_input_tokens": 128_000}
-    backend = StateBackend()
-    default = create_summarization_middleware(model, backend)
-    configured = SummarizationMiddleware(
-        model=model,
-        backend=backend,
-        trigger=_context_summarization_trigger(128_000),
-        keep=("fraction", 0.10),
-    )
-
-    merged = _apply_custom_middleware([default], [configured])
-    assert len(merged) == 1
-    assert merged[0] is configured
 
 
 def test_auto_compact_precedes_critical():

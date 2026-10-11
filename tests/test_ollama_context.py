@@ -2,7 +2,7 @@
 
 Covers the num_ctx single-source-of-truth, `ollama ps` runtime parsing
 (allocated CONTEXT + PROCESSOR split), and the effective-window logic in
-get_context_window_size.
+model_window_size.
 """
 
 from types import SimpleNamespace
@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from novacode_cli.context import _dynamic
-from novacode_cli.context._analysis import get_context_window_size
+from novacode_cli.context._analysis import model_window_size
 
 PS_HEADER = "NAME             ID              SIZE      PROCESSOR    CONTEXT    UNTIL"
 PS_GPU = (
@@ -93,32 +93,32 @@ def test_runtime_info_handles_missing_context_column(monkeypatch):
 def test_running_context_is_authoritative(monkeypatch):
     monkeypatch.setattr(_dynamic.subprocess, "run", _fake_ps(PS_HEADER + "\n" + PS_GPU))
     # gemma3 arch is large + num_ctx is 200k, but ps says 65536 is allocated.
-    assert get_context_window_size("gemma3", use_dynamic=True) == 65536
+    assert model_window_size("gemma3", use_dynamic=True) == 65536
 
 
 def test_local_window_capped_by_num_ctx_when_not_loaded(monkeypatch):
     monkeypatch.setenv("OLLAMA_NUM_CTX", "100000")
     # use_dynamic=False → skip subprocess; local llama3.1 arch (131072) capped to 100000.
-    assert get_context_window_size("llama3.1", use_dynamic=False) == 100000
+    assert model_window_size("llama3.1", use_dynamic=False) == 100000
 
 
 def test_local_window_uses_arch_when_smaller_than_num_ctx(monkeypatch):
     monkeypatch.setenv("OLLAMA_NUM_CTX", "200000")
     # local qwen3 arch is 40960 < 200000 → effective is the arch ceiling.
-    assert get_context_window_size("qwen3", use_dynamic=False) == 40960
+    assert model_window_size("qwen3", use_dynamic=False) == 40960
 
 
 def test_cloud_api_model_not_capped(monkeypatch):
     monkeypatch.setenv("OLLAMA_NUM_CTX", "8000")
     # Claude is a cloud API model — num_ctx must NOT apply.
-    assert get_context_window_size("claude-opus-4-8", use_dynamic=False) == 200_000
+    assert model_window_size("claude-opus-4-8", use_dynamic=False) == 200_000
 
 
 def test_ollama_cloud_model_uses_max_uncapped(monkeypatch):
     monkeypatch.setenv("OLLAMA_NUM_CTX", "8000")
     # `:cloud` models run on Ollama's servers — the window is the model MAX
     # (from the table / ollama show), never capped by the local num_ctx.
-    assert get_context_window_size("qwen3-coder:480b-cloud", use_dynamic=False) == 262_144
+    assert model_window_size("qwen3-coder:480b-cloud", use_dynamic=False) == 262_144
 
 
 def test_ollama_cloud_model_skips_ollama_ps(monkeypatch):
@@ -132,7 +132,7 @@ def test_ollama_cloud_model_skips_ollama_ps(monkeypatch):
 
     monkeypatch.setattr(_dynamic.subprocess, "run", _track)
     monkeypatch.setenv("OLLAMA_NUM_CTX", "8000")
-    win = get_context_window_size("qwen3-coder:480b-cloud", use_dynamic=True)
+    win = model_window_size("qwen3-coder:480b-cloud", use_dynamic=True)
     assert win == 262_144  # table max, uncapped
     assert not any("ps" in c for c in calls), f"ollama ps was called: {calls}"
 
@@ -164,7 +164,7 @@ def test_an_unloaded_local_model_uses_its_modelfile_num_ctx(monkeypatch):
     _dynamic.get_ollama_modelfile_num_ctx.cache_clear()
     monkeypatch.setattr(_dynamic.subprocess, "run", _show_parameters("num_ctx    2050\ntemperature    0.7\n"))
     monkeypatch.delenv("OLLAMA_CONTEXT_LENGTH", raising=False)
-    assert get_context_window_size("qwen3", use_dynamic=True) == 2050
+    assert model_window_size("qwen3", use_dynamic=True) == 2050
     _dynamic.get_ollama_modelfile_num_ctx.cache_clear()
 
 
@@ -172,17 +172,17 @@ def test_without_a_modelfile_value_the_servers_context_length_is_used(monkeypatc
     _dynamic.get_ollama_modelfile_num_ctx.cache_clear()
     monkeypatch.setattr(_dynamic.subprocess, "run", _show_parameters("temperature    0.7\n"))
     monkeypatch.setenv("OLLAMA_CONTEXT_LENGTH", "32768")
-    assert get_context_window_size("qwen3", use_dynamic=True) == 32768
+    assert model_window_size("qwen3", use_dynamic=True) == 32768
     _dynamic.get_ollama_modelfile_num_ctx.cache_clear()
 
 
 def test_the_architecture_is_still_the_ceiling(monkeypatch):
     _dynamic.get_ollama_modelfile_num_ctx.cache_clear()
     monkeypatch.setattr(_dynamic.subprocess, "run", _show_parameters("num_ctx    999999\n"))
-    assert get_context_window_size("qwen3", use_dynamic=True) == 40960
+    assert model_window_size("qwen3", use_dynamic=True) == 40960
     _dynamic.get_ollama_modelfile_num_ctx.cache_clear()
 
 
 def test_a_cloud_model_is_untouched_by_local_settings(monkeypatch):
     monkeypatch.setenv("OLLAMA_CONTEXT_LENGTH", "4096")
-    assert get_context_window_size("qwen3-coder:480b-cloud", use_dynamic=False) == 262_144
+    assert model_window_size("qwen3-coder:480b-cloud", use_dynamic=False) == 262_144

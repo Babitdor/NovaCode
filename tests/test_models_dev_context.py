@@ -21,7 +21,7 @@ import pytest
 import novacode_cli.context._models_dev as md
 from novacode_cli.context._analysis import (
     build_context_breakdown,
-    get_context_window_size,
+    model_window_size,
 )
 from novacode_cli.context._models_dev import get_models_dev_context
 
@@ -114,7 +114,7 @@ def test_empty_catalog_returns_none(monkeypatch):
 def test_gateway_model_uses_models_dev_uncapped(monkeypatch):
     _inject_catalog(monkeypatch, _FAKE_CATALOG)
     _neutralise_ollama(monkeypatch, num_ctx=4096)
-    win = get_context_window_size("glm-5.3", use_dynamic=True)
+    win = model_window_size("glm-5.3", use_dynamic=True)
     # The real 1M window — NOT the 128K default and NOT capped to num_ctx (4096).
     assert win == 1_048_576
 
@@ -123,6 +123,12 @@ def test_gateway_216_percent_cannot_recur(monkeypatch):
     """With the real window, a heavy conversation stays well under 100%."""
     _inject_catalog(monkeypatch, _FAKE_CATALOG)
     _neutralise_ollama(monkeypatch, num_ctx=4096)
+    # With no working budget, so this measures the model's own window.
+    from novacode_cli.config.nova_config import NovaConfig
+
+    monkeypatch.setattr(
+        NovaConfig, "get", lambda _s, key, default=None: 0 if key == "context_budget_tokens" else default
+    )
     from langchain_core.messages import HumanMessage
 
     # ~250K tokens of conversation. Against the OLD wrong 128K window this reads
@@ -142,7 +148,7 @@ def test_cloud_api_model_bypasses_models_dev(monkeypatch):
         {"x": {"models": {"claude-opus-4-8": {"limit": {"context": 999}}}}},
     )
     _neutralise_ollama(monkeypatch)
-    assert get_context_window_size("claude-opus-4-8", use_dynamic=True) == 200_000
+    assert model_window_size("claude-opus-4-8", use_dynamic=True) == 200_000
 
 
 def test_unknown_gateway_model_falls_back_to_default(monkeypatch):
@@ -151,7 +157,7 @@ def test_unknown_gateway_model_falls_back_to_default(monkeypatch):
     # treated as local Ollama, where min(window, num_ctx) legitimately applies.)
     _inject_catalog(monkeypatch, _FAKE_CATALOG)
     _neutralise_ollama(monkeypatch, num_ctx=1_000_000)
-    assert get_context_window_size("brand-new-gateway-model", use_dynamic=True) == 128_000
+    assert model_window_size("brand-new-gateway-model", use_dynamic=True) == 128_000
 
 
 if __name__ == "__main__":

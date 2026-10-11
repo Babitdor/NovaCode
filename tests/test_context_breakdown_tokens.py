@@ -12,7 +12,7 @@ from novacode_cli.context._analysis import (
     _message_text,
     _tool_call_text,
     build_context_breakdown,
-    get_context_window_size,
+    model_window_size,
 )
 
 MODEL = "claude-opus-4-8"
@@ -73,10 +73,10 @@ def test_message_text_reads_tool_result_blocks():
 
 
 def test_current_models_have_exact_windows():
-    assert get_context_window_size("claude-opus-4-8") == 200_000
-    assert get_context_window_size("claude-sonnet-4-8") == 200_000
+    assert model_window_size("claude-opus-4-8") == 200_000
+    assert model_window_size("claude-sonnet-4-8") == 200_000
     # Unknown claude variants still fall back to 200K, never the 128K default.
-    assert get_context_window_size("claude-something-new") == 200_000
+    assert model_window_size("claude-something-new") == 200_000
 
 
 def test_full_conversation_totals_add_up():

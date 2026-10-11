@@ -6,7 +6,7 @@ history (``summarize_messages_to_memory``) and gated it behind
 
 * :mod:`novacode_cli.compaction` — ``compact_conversation`` / ``summarize_conversation``
   (the ``/compact`` and auto-compact path), and
-* deepagents' built-in ``SummarizationMiddleware`` (the mid-turn backstop),
+* :mod:`novacode_cli.agents.context_compaction` (mid-turn: prune, trim, summarize),
 
 so the dead trigger and its summarizer were removed.
 

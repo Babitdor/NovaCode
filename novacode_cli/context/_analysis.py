@@ -143,11 +143,10 @@ def compact_threshold_pct(context_window: int) -> float:
     return min(AUTO_COMPACT_THRESHOLD * 100, max(50.0, by_reserve))
 
 
-# Where ``ContextEditingMiddleware``/``ClearToolUsesEdit`` starts clearing older
-# tool results (the lightweight, deterministic reducer that runs BEFORE whole
-# history compaction). Expressed as a fraction of the model's window and
-# converted to an absolute token count at agent-build time — the library's
-# ``trigger`` is an ``int``, so the fraction cannot be passed through directly.
+# Where ``ContextCompactionMiddleware`` starts moving older tool results out and
+# trimming old tool-call arguments (the cheap, deterministic stages that run
+# BEFORE summarizing). Expressed as a fraction of the model's window and
+# converted to an absolute token count at agent-build time.
 #
 # MUST stay below :data:`AUTO_COMPACT_THRESHOLD`: clearing tool results is far
 # cheaper than replacing the conversation, so it must get its chance first.
@@ -344,8 +343,48 @@ def _lookup_hardcoded_window(model_name: str) -> int:
     return MODEL_CONTEXT_WINDOWS["default"]
 
 
+#: What Nova works within when `context_budget_tokens` is not set. A window is
+#: what a model accepts, not what a task needs: at 128K old tool results move out
+#: at ~77K and the conversation is summarized at ~105K, which a long session
+#: reaches rarely and a 1M window would never get near.
+DEFAULT_CONTEXT_BUDGET_TOKENS = 128_000
+
+
+def working_window(window: int, configured: object) -> int:
+    """The context Nova budgets against: the smaller of the window and the budget.
+
+    ``configured`` is the `context_budget_tokens` setting: unset means the
+    default budget, 0 means no budget (the whole window), anything else is the
+    budget. A window that is unknown (0) becomes the budget.
+    """
+    try:
+        budget = DEFAULT_CONTEXT_BUDGET_TOKENS if configured is None else int(configured)
+    except (TypeError, ValueError):
+        budget = DEFAULT_CONTEXT_BUDGET_TOKENS
+    if budget > 0 and (window <= 0 or budget < window):
+        return budget
+    return window
+
+
 def get_context_window_size(model_name: str, use_dynamic: bool = True) -> int:
-    """Get the *effective* context window size for a given model.
+    """The context Nova works within for a model: its window, capped by the budget.
+
+    This is the one number every part of context management measures against —
+    the ``/context`` bar, the auto-compact decision, the compaction middleware —
+    so the indicator and the behaviour cannot disagree. A 1M-token model used to
+    show 10% while compaction, sized from the budget, was already firing.
+    """
+    try:
+        from novacode_cli.config.nova_config import NovaConfig
+
+        configured = NovaConfig().get("context_budget_tokens")
+    except Exception:  # noqa: BLE001 - an unreadable config means the default budget
+        configured = None
+    return working_window(model_window_size(model_name, use_dynamic), configured)
+
+
+def model_window_size(model_name: str, use_dynamic: bool = True) -> int:
+    """Get the *effective* context window size for a given model, before any budget.
 
     For cloud API models (Claude/GPT/Gemini/o-series) this is the model's
     published window. For Ollama-served models the effective window is
@@ -432,7 +471,7 @@ def get_context_window_size(model_name: str, use_dynamic: bool = True) -> int:
     # (prompt_eval_count 9400) and a detail from its first line was recalled.
     # The cloud ignores num_ctx, so the num_ctx Nova sends is NOT a limit here.
     # The cost of a huge window is handled separately, by `context_budget_tokens`
-    # (see create_agent_with_config) — not by under-reporting the window.
+    # (applied in get_context_window_size) — not by misreporting what the model accepts.
     if not is_local_ollama:
         return arch_window
 

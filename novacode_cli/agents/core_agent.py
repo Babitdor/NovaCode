@@ -875,6 +875,15 @@ def _harden_subagent_specs(
             # and clamps it. A fresh instance per subagent.
             mw_to_add.append(SkillCurationMiddleware())
 
+        # Nova's compaction in place of the library summarizer deepagents gives
+        # every subagent: it is swapped in by name, wherever it sits in this
+        # list. No model or window is fixed — a subagent may run on its own
+        # model, so both are taken from each request.
+        if not any(getattr(m, "name", "") == "SummarizationMiddleware" for m in existing):
+            from novacode_cli.agents.context_compaction import ContextCompactionMiddleware
+
+            mw_to_add.append(ContextCompactionMiddleware(backend=skill_backend))
+
         new_spec["middleware"] = mw_to_add + existing
         out.append(new_spec)
     return out
@@ -929,17 +938,6 @@ def _seed_summarization_profile(
         __import__("logging").getLogger(__name__).debug(
             "Could not seed model profile for summarization", exc_info=True
         )
-
-
-def _context_summarization_trigger(context_window: int) -> tuple[str, float]:
-    """Return the library trigger at Nova's displayed context threshold."""
-    from novacode_cli.context import compact_threshold_pct
-
-    if context_window <= 0:
-        from novacode_cli.context._analysis import AUTO_COMPACT_THRESHOLD
-
-        return ("fraction", AUTO_COMPACT_THRESHOLD)
-    return ("fraction", compact_threshold_pct(context_window) / 100)
 
 
 def _declare_image_support(model: object) -> None:
@@ -1466,6 +1464,7 @@ def _build_middleware_stack(
     exec_sandbox: bool,  # noqa: FBT001
     context_window: int = 0,
     main_model_supports_images: bool = False,
+    compaction_model: BaseChatModel | None = None,
 ) -> list:
     """Build the core agent middleware stack.
 
@@ -1475,8 +1474,10 @@ def _build_middleware_stack(
 
     Args:
         context_window: The bound model's effective context window in tokens,
-            used to size the window-relative context-editing trigger. 0 (or
-            negative) falls back to the legacy fixed trigger.
+            used to size the compaction thresholds. 0 (or negative) reads the
+            window from the model on each request.
+        compaction_model: The model that writes context summaries; ``None``
+            uses the model each request is for.
     """
     # Lazy imports for middleware (speeds up startup)
     from novacode_cli.agents.model_retry import NovaModelRetryMiddleware as ModelRetryMiddleware
@@ -1494,10 +1495,6 @@ def _build_middleware_stack(
     from novacode_cli.shell import ShellMiddleware
     from novacode_cli.tracking.file_tracker import FileTrackerMiddleware
     from novacode_cli.tracking.loop_guard import LoopGuardMiddleware
-    from langchain.agents.middleware import (
-        ContextEditingMiddleware,
-    )
-
     # Hermes learning loop is opt-in (persisted config). Off by default so the
     # periodic review + skill-creation LLM calls don't run unless the user asks.
     from novacode_cli.config.nova_config import NovaConfig
@@ -1528,7 +1525,6 @@ def _build_middleware_stack(
         from novacode_cli.agents.tool_verdicts import (
             ToolVerdictCache,
             VerdictScorer,
-            build_verdict_middleware,
             create_system_one_client,
             verdict_cache_path,
         )
@@ -1541,6 +1537,10 @@ def _build_middleware_stack(
             create_system_one_client(_verdict_config),
             _verdict_cache,
         )
+        # Lookups run on the event loop the UI shares; parse the store off it.
+        __import__("threading").Thread(
+            target=_verdict_cache.warm, name="nova-verdict-warm", daemon=True
+        ).start()
 
     import warnings as _warnings
 
@@ -1626,30 +1626,6 @@ def _build_middleware_stack(
         # max_iterations). Uses Nova's own model so there's no provider/key
         # assumption; default grader prompt. No rubric ⇒ zero added cost.
         _rubric_middleware,
-        # Context editing — clear older tool call outputs when token limits
-        # are reached, preserving only the most recent results. This is a
-        # lightweight, deterministic alternative to LLM-based compaction.
-        # Placed after FileTracker (which needs full history) and before
-        # ShellMiddleware/AgentMemoryMiddleware so it operates on the final
-        # message list that will be sent to the model.
-        #
-        # The trigger is WINDOW-RELATIVE: the library takes an absolute token
-        # count, so the fraction is resolved here against the bound model's
-        # window. A fixed count was window-independent — it never fired on the
-        # ~40K Ollama windows in MODEL_CONTEXT_WINDOWS (leaving those models
-        # with no tool-result reducer at all) while clearing needlessly early
-        # on 200K models. Kept below AUTO_COMPACT_THRESHOLD so the cheap
-        # reducer always gets its chance before whole-history compaction.
-        ContextEditingMiddleware(
-            edits=[
-                _tool_result_clearing(
-                    context_window,
-                    cleared_dir(agent_dir) if agent_dir else None,
-                    _verdict_cache,
-                    _verdict_scorer,
-                )
-            ]
-        ),
         ShellMiddleware(
             workspace_root=str(workspace_root),
             env=dict(os.environ),
@@ -1702,26 +1678,26 @@ def _build_middleware_stack(
             ),
         )
 
-    # Decision-model scoring, when enabled: hands each turn's messages to a
-    # background scorer so the tool-result edit has verdicts to read by the time
-    # it runs. Inserted BEFORE ContextEditingMiddleware, and only when the flag
-    # is on -- off by default, so the stack is exactly as it was.
-    #
-    # Appended here rather than unpacked into the literal above: `*_([...])` is
-    # not valid inside a list literal (ruff caught it as an undefined name), and
-    # an insert keeps the middleware's position relative to the edit explicit.
-    if _verdict_scorer is not None:
-        _clearing_index = next(
-            (
-                index
-                for index, entry in enumerate(agent_middleware)
-                if type(entry).__name__ == "ContextEditingMiddleware"
+    # Context compaction: prune old tool results (by age, or by System One
+    # verdicts when enabled), trim old tool-call arguments, then summarize. It
+    # takes the place of the summarizer create_deep_agent builds in, so it runs
+    # OUTSIDE everything above and they all see the reduced conversation.
+    from novacode_cli.agents.context_compaction import ContextCompactionMiddleware
+
+    agent_middleware.append(
+        ContextCompactionMiddleware(
+            compaction_model,
+            backend=composite_backend,
+            context_window=context_window,
+            prune_edit=_tool_result_clearing(
+                context_window,
+                cleared_dir(agent_dir) if agent_dir else None,
+                _verdict_cache,
+                _verdict_scorer,
             ),
-            len(agent_middleware),
+            scorer=_verdict_scorer,
         )
-        agent_middleware.insert(
-            _clearing_index, build_verdict_middleware(_verdict_scorer)
-        )
+    )
 
     return agent_middleware
 
@@ -2118,18 +2094,25 @@ This file stores your preferences and context that persist across sessions.
     # across 82 Terminal-Bench trials, 68% of all input tokens were spent by the
     # few trials averaging over 60K per call. Sizing the reducers from a budget
     # keeps the context the model can use and bills for less of it.
-    try:
+    #
+    # Unset, the budget is DEFAULT_CONTEXT_BUDGET_TOKENS; 0 uses the whole
+    # window. The budget is applied inside the window lookup above
+    # (context._analysis.get_context_window_size), so the /context bar and the
+    # auto-compact decision measure against the same number as this build. Only
+    # an unknown window is left to resolve here.
+    if _context_window <= 0:
         from novacode_cli.config.nova_config import NovaConfig as _NovaConfig
+        from novacode_cli.context._analysis import working_window
 
-        _context_budget = int(_NovaConfig().get("context_budget_tokens") or 0)
-    except (TypeError, ValueError):
-        _context_budget = 0
-    if _context_budget > 0 and (_context_window <= 0 or _context_budget < _context_window):
-        _context_window = _context_budget
+        _context_window = working_window(0, _NovaConfig().get("context_budget_tokens"))
+
+    # The profile carries the window everything else measures against (the
+    # budget, when one is set), so /context and compaction agree.
+    _seed_summarization_profile(wrapped_model, _model_name, window=_context_window)
 
     # Core middleware stack (retry → vision → learning → security → bootstrap →
-    # steering → file tracker → loop guard → rubric → context editing → shell →
-    # agent memory). Ordering is load-bearing — see _build_middleware_stack.
+    # steering → file tracker → loop guard → rubric → shell → agent memory →
+    # context compaction). Ordering is load-bearing — see _build_middleware_stack.
     agent_middleware = _build_middleware_stack(
         model=model,
         assistant_id=assistant_id,
@@ -2144,6 +2127,7 @@ This file stores your preferences and context that persist across sessions.
         exec_sandbox=exec_sandbox,
         context_window=_context_window,
         main_model_supports_images=_main_model_supports_images,
+        compaction_model=wrapped_model if isinstance(wrapped_model, BaseChatModel) else None,
     )
 
     # Plugin middleware injection — discover and inject user-enabled plugins
@@ -2242,32 +2226,6 @@ This file stores your preferences and context that persist across sessions.
     else:
         # Full HITL for destructive operations
         interrupt_on = get_interrupt_configs()
-
-    # Make deepagents' built-in SummarizationMiddleware actually fire on OUR
-    # context budget. Reuse the window already resolved above for the context-
-    # editing trigger — for local Ollama models a second resolve would re-run
-    # the uncached `ollama ps` probe. create_deep_agent replaces its default
-    # summarizer with this same-named custom middleware, so the real model
-    # profile stays truthful while its trigger matches /context exactly.
-    _seed_summarization_profile(wrapped_model, _model_name, window=_context_window)
-    from deepagents.middleware.summarization import (
-        SummarizationMiddleware as DeepAgentsSummarizationMiddleware,
-    )
-
-    _summary_trigger = _context_summarization_trigger(_context_window)
-    agent_middleware.append(
-        DeepAgentsSummarizationMiddleware(
-            model=wrapped_model,
-            backend=composite_backend,
-            trigger=_summary_trigger,
-            keep=("fraction", 0.10),
-            trim_tokens_to_summarize=None,
-            truncate_args_settings={
-                "trigger": _summary_trigger,
-                "keep": ("fraction", 0.10),
-            },
-        )
-    )
 
     # Pass named_subagents directly to create_deep_agent
     # It will create the SubAgentMiddleware internally

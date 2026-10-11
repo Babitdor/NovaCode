@@ -1155,35 +1155,3 @@ def _slice_to_window(
     ):
         cutoff -= 1
     return list(messages[cutoff:])
-
-
-def build_verdict_middleware(scorer: VerdictScorer) -> Any:
-    """Wrap a :class:`VerdictScorer` as an ``AgentMiddleware``.
-
-    Scoring happens in ``awrap_model_call`` — the moment before a turn is sent —
-    because that is the only place the full message list is available, and it is
-    where the results the edit will read are already in place. The work itself is
-    handed to the scorer's background thread and this returns immediately, so a
-    slow or unreachable model never blocks a turn. The edit uses normal clearing
-    once the scorer reports a failure or exceeds its time budget.
-
-    Imported lazily so a disabled flag never pays for the middleware base class.
-    """
-    import threading
-
-    from langchain.agents.middleware import AgentMiddleware
-
-    threading.Thread(target=scorer.cache.warm, name="nova-verdict-warm", daemon=True).start()
-
-    class _VerdictMiddleware(AgentMiddleware):  # type: ignore[misc]
-        """Hands each turn's messages to the scorer, off the critical path."""
-
-        async def awrap_model_call(self, request: Any, handler: Any) -> Any:
-            """Queue a scoring pass, then run the model call unchanged."""
-            try:
-                scorer.maybe_score(request.messages)
-            except Exception:  # noqa: BLE001 - scoring never blocks or fails a turn
-                logger.debug("Could not queue a scoring pass", exc_info=True)
-            return await handler(request)
-
-    return _VerdictMiddleware()

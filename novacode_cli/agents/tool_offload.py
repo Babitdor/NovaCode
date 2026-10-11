@@ -138,7 +138,10 @@ class OffloadingToolUsesEdit(ClearToolUsesEdit):
         try:
             self.offload_dir.mkdir(parents=True, exist_ok=True)
             _prune(self.offload_dir)
-            path.write_text(text, encoding="utf-8", errors="replace")
+            # The edit runs on every model call and the name is a digest of the
+            # payload, so an existing file already holds exactly these bytes.
+            if not path.exists():
+                path.write_text(text, encoding="utf-8", errors="replace")
         except OSError:
             logger.debug("Could not offload tool result %s", call_id, exc_info=True)
             return None

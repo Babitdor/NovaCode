@@ -108,6 +108,13 @@ def _message_parts(messages: list[BaseMessage]) -> list[str]:
     parts: list[str] = []
     for msg in messages:
         if isinstance(msg, HumanMessage):
+            # An earlier summary being folded into a new one goes in whole: cut
+            # to 2,000 characters like a user message, everything it carried
+            # from before the previous compaction would be lost at this one.
+            earlier = msg.additional_kwargs.get("nova_summary")
+            if earlier:
+                parts.append(f"EARLIER SUMMARY (carry its facts forward):\n{earlier}")
+                continue
             content = _format_message_content(msg.content)
             if len(content) > 2000:
                 content = content[:2000] + "... [truncated]"
@@ -597,8 +604,8 @@ async def _compact_conversation(
         )
         body = "\n\n".join(filter(None, [framing, summary, _rehydration_note(), archive_note]))
         summary_message = HumanMessage(content=f"{COMPACTION_SUMMARY_MARKER}\n\n{body}")
-        # Also clear any prior auto-summarization event. deepagents'
-        # SummarizationMiddleware reconstructs the effective message list from
+        # Also clear any prior auto-summarization event.
+        # ContextCompactionMiddleware reconstructs the effective message list from
         # `_summarization_event` (a cutoff index into the OLD message list); if we
         # rewrite messages without clearing it, the next turn would slice the new
         # list at a stale index and corrupt context. Resetting it makes the fresh

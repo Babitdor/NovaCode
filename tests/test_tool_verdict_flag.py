@@ -121,46 +121,6 @@ def test_an_empty_endpoint_or_model_falls_back(config) -> None:
     assert config.get_tool_verdict_model() == NovaConfig.TOOL_VERDICT_DEFAULT_MODEL
 
 
-# ── the scorer middleware ──────────────────────────────────────────────────
-
-
-def test_the_middleware_queues_scoring_and_never_blocks_the_call() -> None:
-    """A model call must proceed whether or not scoring starts or raises."""
-    import asyncio
-
-    from novacode_cli.agents.tool_verdicts import (
-        FakeDecisionClient,
-        VerdictScorer,
-        build_verdict_middleware,
-    )
-
-    class Exploding:
-        cache = ToolVerdictCache(path=None)
-
-        def maybe_score(self, _messages):  # noqa: ANN001
-            raise RuntimeError("scorer is broken")
-
-    class Request:
-        messages: list = []
-
-    async def run(scorer) -> str:
-        middleware = build_verdict_middleware(scorer)
-
-        async def handler(_request):
-            return "ran"
-
-        return await middleware.awrap_model_call(Request(), handler)
-
-    # A working scorer: the call still runs.
-    working = VerdictScorer(
-        FakeDecisionClient(0.1), ToolVerdictCache(path=None), min_interval_seconds=0.0
-    )
-    assert asyncio.run(run(working)) == "ran"
-
-    # A broken scorer: the call STILL runs. Scoring is never worth a turn.
-    assert asyncio.run(run(Exploding())) == "ran"
-
-
 # ── the switch itself must fail closed ─────────────────────────────────────
 
 

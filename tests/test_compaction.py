@@ -249,10 +249,11 @@ def test_compact_persists_summary_to_memory_when_agent_dir_given(
     assert "SUMMARY" in memory.read_text(encoding="utf-8")
 
 
-def test_compact_skips_memory_without_agent_dir(tmp_path) -> None:
+def test_compact_skips_memory_without_agent_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
     """No agent_dir → no memory write, learnings stays empty (the pre-existing
     callers — e.g. the CLI /compact — are unaffected)."""
-    monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(C, "_budget_chars", lambda _m, _cw=None: 2000)
     agent = _CompactAgent([HumanMessage(content="build X", id="h1"), AIMessage(content="done", id="a1")])
     result = asyncio.run(C.compact_conversation(agent, _compact_model(), "t1"))
