@@ -71,7 +71,10 @@ def embed(texts: list[str]) -> Any:  # noqa: ANN401
         return None
     import numpy as np
 
-    missing = [t for t in dict.fromkeys(texts) if t not in _cache]
+    # Read hits into a local dict first: the cache may be cleared below (or by
+    # another thread), and a text cached a moment ago must still be returned.
+    found = {t: v for t in dict.fromkeys(texts) if (v := _cache.get(t)) is not None}
+    missing = [t for t in dict.fromkeys(texts) if t not in found]
     if missing:
         try:
             vectors = _load().encode(missing)
@@ -83,8 +86,8 @@ def embed(texts: list[str]) -> Any:  # noqa: ANN401
         if len(_cache) + len(missing) > _CACHE_LIMIT:
             _cache.clear()
         for text, vector in zip(missing, vectors, strict=True):
-            _cache[text] = vector
-    return np.stack([_cache[t] for t in texts])
+            _cache[text] = found[text] = vector
+    return np.stack([found[t] for t in texts])
 
 
 def best_match(text: str, candidates: list[str]) -> tuple[float, int]:

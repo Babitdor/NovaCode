@@ -107,3 +107,28 @@ def test_empty_conversation_still_counts_tool_definitions():
     )
     assert bd.tool_definitions_tokens > 0
     assert bd.total_tokens == bd.tool_definitions_tokens
+
+
+def test_a_tool_without_a_json_schema_does_not_zero_the_breakdown():
+    """One such tool used to raise out of the breakdown, leaving /context at 0."""
+    from collections.abc import Callable
+
+    from langchain_core.messages import HumanMessage
+    from pydantic import BaseModel
+
+    from novacode_cli.context._analysis import build_context_breakdown
+
+    class Args(BaseModel):
+        callback: Callable[[], None]
+
+    class Odd:
+        name = "odd"
+        description = "takes a callable"
+        args_schema = Args
+
+    bd = build_context_breakdown(
+        [HumanMessage("hello " * 40)], "gpt-4o", use_dynamic=False, tools=[Odd()]
+    )
+
+    assert bd.user_message_tokens > 0
+    assert bd.tool_definitions_tokens > 0

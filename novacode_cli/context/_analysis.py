@@ -585,15 +585,22 @@ def _tool_schema_text(tools: list[Any]) -> str:
         )
         if description:
             parts.append(str(description))
-        schema = getattr(tool, "args_schema", None)
+        try:
+            # What the model is sent: injected arguments (runtime, state) are
+            # left out, and those are the ones with no JSON schema.
+            schema = getattr(tool, "tool_call_schema", None)
+        except Exception:  # noqa: BLE001
+            schema = None
+        if schema is None:
+            schema = getattr(tool, "args_schema", None)
         if schema is not None:
             try:
                 if hasattr(schema, "model_json_schema"):
                     parts.append(json.dumps(schema.model_json_schema(), ensure_ascii=False))
                 elif isinstance(schema, dict):
                     parts.append(json.dumps(schema, ensure_ascii=False))
-            except (TypeError, ValueError):
-                parts.append(str(schema))
+            except Exception:  # noqa: BLE001 — one odd tool must not zero the whole breakdown
+                logger.debug("no JSON schema for tool %s", name, exc_info=True)
         elif isinstance(tool, dict) and tool.get("parameters"):
             try:
                 parts.append(json.dumps(tool["parameters"], ensure_ascii=False))
@@ -682,6 +689,13 @@ def build_context_breakdown(
 
     # Tool schemas are bound to the model, not carried in the message list, but
     # they consume context on every request — count them into the baseline.
+    if tools and any(getattr(t, "name", None) == "search_tools" for t in tools):
+        # Most schemas are deferred behind search_tools; count what is sent.
+        # ponytail: skips the middleware's "frequently used" extras (at most 10).
+        from novacode_cli.agents.tool_search import CORE_TOOLS, loaded_names
+
+        sent = CORE_TOOLS | loaded_names(messages)
+        tools = [t for t in tools if getattr(t, "name", None) in sent]
     tool_def_tokens = _estimate_tokens(_tool_schema_text(tools)) if tools else 0
 
     total = system_tokens + user_tokens + assistant_tokens + tool_tokens + tool_def_tokens
