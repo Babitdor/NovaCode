@@ -739,6 +739,7 @@ def _harden_subagent_specs(
     """
     from novacode_cli.agents.model_retry import NovaModelRetryMiddleware as ModelRetryMiddleware
     from novacode_cli.agents.agent_mailbox import read_agent_messages, send_agent_message
+    from novacode_cli.sessions.gateway import SESSION_TOOLS
     from novacode_cli.bootstrap import VisionCaptionMiddleware
     from novacode_cli.errors import is_retryable_model_error
     from novacode_cli.security.middleware import SecurityMiddleware
@@ -787,7 +788,7 @@ def _harden_subagent_specs(
         _sa_name = new_spec.get("name") or "subagent"
         _cur_tools = list(new_spec.get("tools") or [])
         _have = {getattr(t, "name", None) for t in _cur_tools}
-        for _mb in (send_agent_message, read_agent_messages):
+        for _mb in (send_agent_message, read_agent_messages, *SESSION_TOOLS):
             if _mb.name not in _have:
                 _cur_tools.append(_mb)
         new_spec["tools"] = _cur_tools
@@ -1913,7 +1914,8 @@ def create_agent_with_config(
     from novacode_cli.agents.agent_mailbox import read_agent_messages, send_agent_message
 
     _have_tool = {getattr(t, "name", None) for t in tools}
-    _mb_extra = [t for t in (send_agent_message, read_agent_messages) if t.name not in _have_tool]
+    from novacode_cli.sessions.gateway import SESSION_TOOLS
+    _mb_extra = [t for t in (send_agent_message, read_agent_messages, *SESSION_TOOLS) if t.name not in _have_tool]
     if _mb_extra:
         tools = list(tools) + _mb_extra
 

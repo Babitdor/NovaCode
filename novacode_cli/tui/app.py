@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     # Annotation-only: the clipboard image is passed straight to the tracker, so
     # the module is never imported at runtime on this path.
     from novacode_cli.image_utils import ImageData
+    from novacode_cli.sessions.supervisor import SessionSupervisor
 
     # Also annotation-only: the palette module is imported lazily at call sites
     # (see _active_palette), so this adds no module-scope import cost.
@@ -475,7 +476,7 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     ),
     "tabs": SlashCommand(
         "_run_tabs_command",
-        "manage parallel session tabs: launch / list / close (ctrl+n, alt+<n>)",
+        "manage parallel session tabs: launch / resume / list / close (ctrl+n, alt+<n>)",
         aliases=("session",),
     ),
     "resume": SlashCommand("_run_resume", "resume a saved session for this path (/resume <id>)"),
@@ -2636,6 +2637,9 @@ class NovaApp(App):
         # Unmount also runs after failed/interrupted tasks and run_test exits,
         # where action_quit may never have been reached.
         self._release_output_observers()
+        communication = getattr(self, "_session_communication", None)
+        if communication is not None:
+            await communication.close()
         panel = getattr(self, "_remote_command_panel", None)
         if panel is not None:
             await panel.close(dismiss=True)
@@ -2735,10 +2739,14 @@ class NovaApp(App):
         self._refresh_tabs()
 
     async def _run_tabs_command(self, text: str) -> None:
-        """``/tabs launch|new|list|close`` for parallel session tabs."""
+        """``/tabs launch|resume|new|list|close`` for parallel session tabs."""
         parts = text.split(maxsplit=2)
         sub = (parts[1] if len(parts) > 1 else "list").lower()
         rest = parts[2] if len(parts) > 2 else ""
+
+        if sub == "resume":
+            await self._resume_tab(rest.strip())
+            return
 
         if sub in ("launch", "pick"):
             await self._launch_project_session(rest)
@@ -2780,10 +2788,88 @@ class NovaApp(App):
                 block.append(f"  {pane.branch}", style="dim")
             block.append("\n")
         block.append(
-            "\n/tabs new <name>[: task] · /tabs launch · /tabs close · alt+<n>",
+            "\n/tabs new <name>[: task] · /tabs launch · /tabs resume [id] · /tabs close · alt+<n>",
             style="dim",
         )
         self._log(block)
+
+    async def _resume_tab(self, selector: str = "") -> None:
+        """Reopen a saved conversation in its own approved project tab."""
+        from novacode_cli.sessions.resume import resolve_saved_tab
+        from novacode_cli.session.session_restore import format_session_age
+
+        manager = self.session_manager
+        if manager is None:
+            self._log(Text("Session resume is unavailable.", style="yellow"))
+            return
+        if not selector:
+            live_ids = {
+                getattr(
+                    self.session_state
+                    if pane is self._active_pane
+                    else pane.state.get("session_state"),
+                    "session_id",
+                    None,
+                )
+                for pane in self._panes
+                if pane.status not in ("crashed", "exited")
+            }
+            sessions = [
+                meta
+                for meta in await asyncio.to_thread(manager.list_sessions, limit=200)
+                if meta.session_id not in live_ids
+            ]
+            if not sessions:
+                self._log(Text("No saved sessions available to reopen as tabs.", style="yellow"))
+                return
+            labels = [
+                f"{meta.session_id[:8]} · {meta.project_root or 'unknown project'} · "
+                f"{meta.message_count} msgs · {format_session_age(meta.last_active)}"
+                for meta in sessions
+            ]
+            selected = await self.push_screen_wait(
+                PickScreen(
+                    "Resume session in a new tab",
+                    labels,
+                    hint="↑/↓ select · Enter resume · Esc cancel",
+                )
+            )
+            if selected is None or not 0 <= selected < len(sessions):
+                return
+            selector = sessions[selected].session_id
+        try:
+            meta = await asyncio.to_thread(resolve_saved_tab, manager, selector)
+        except (OSError, ValueError) as exc:
+            self._log(Text(f"Could not resume tab: {exc}", style="yellow"))
+            return
+        for pane in self._panes:
+            state = (
+                self.session_state if pane is self._active_pane else pane.state.get("session_state")
+            )
+            if getattr(state, "session_id", None) == meta.session_id and pane.status not in (
+                "crashed",
+                "exited",
+            ):
+                await self._switch_to(pane)
+                self._log(Text("That session is already open; switched to its tab.", style="dim"))
+                return
+        pending = getattr(self, "_resuming_session_ids", None)
+        if pending is None:
+            pending = self._resuming_session_ids = set()
+        if meta.session_id in pending:
+            self._log(Text("That session is already being resumed.", style="yellow"))
+            return
+        pending.add(meta.session_id)
+        try:
+            await self.spawn_session(
+                f"{Path(meta.project_root).name} · {meta.session_id[:8]}",
+                directory=Path(meta.project_root),
+                resume_id=meta.session_id,
+            )
+        except (OSError, ValueError) as exc:
+            self._log(Text(f"Could not resume tab: {exc}", style="yellow"))
+        finally:
+            pending.discard(meta.session_id)
 
     async def _launch_project_session(
         self, arguments: str = "", *, folder: str | None = None, task: str | None = None
@@ -3105,7 +3191,7 @@ class NovaApp(App):
 
     # ── spawning child sessions ──────────────────────────────────────────
 
-    def _supervisor(self):
+    def _supervisor(self) -> SessionSupervisor:
         """The child-process manager, created on first use."""
         sup = getattr(self, "_session_supervisor", None)
         if sup is None:
@@ -3155,6 +3241,7 @@ class NovaApp(App):
         *,
         directory: Path | None = None,
         auto_approve: bool | None = None,
+        resume_id: str | None = None,
     ) -> Any | None:
         """Create a child session in a worktree or approved folder and show its tab."""
         import uuid
@@ -3202,6 +3289,19 @@ class NovaApp(App):
         for warn in info.warnings:
             self._log(Text(f"⚠ {warn}", style="#e0af68"))
 
+        saved = None
+        history = None
+        if resume_id:
+            from novacode_cli.session.adapters.harness_native import NativeAdapter
+            from novacode_cli.sessions.resume import resolve_saved_tab
+
+            saved = await asyncio.to_thread(resolve_saved_tab, self.session_manager, resume_id)
+            if Path(saved.project_root).resolve() != info.path.resolve():
+                raise ValueError("Saved project changed while resuming; retry /tabs resume.")
+            history = await asyncio.to_thread(
+                NativeAdapter(self.session_manager).load, saved.session_id
+            )
+
         # Mount the pane immediately: agent build takes seconds and the UI must
         # never block on it.
         scroll = TranscriptScroll(id=f"pane-{sid}")
@@ -3229,14 +3329,19 @@ class NovaApp(App):
         from novacode_cli.tui.session_pane import fresh_state
 
         child_state = SessionState(auto_approve=approval_mode, no_splash=True)
-        child_state.session_id = sid
+        child_state.session_id = saved.session_id if saved else sid
         pane.state = fresh_state(
             session_state=child_state,
-            assistant_id=self.assistant_id,
-            model_name=self.model_name,
+            assistant_id=saved.assistant_id if saved else self.assistant_id,
+            model_name=saved.model_name if saved else self.model_name,
+            model_provider=saved.model_provider if saved else None,
         )
         self._bind_notification_source(pane)
         self._panes.append(pane)
+        if history is not None:
+            from novacode_cli.tui.session_transcript import SessionTranscript
+
+            await scroll.mount(SessionTranscript(history, latest=True, heading="Resumed history"))
         self._refresh_tabs()
         self._pending_task_for = getattr(self, "_pending_task_for", {})
         if task:
@@ -3250,13 +3355,25 @@ class NovaApp(App):
         await self._switch_to(pane)
 
         try:
+            continuation = {"resume_id": saved.session_id} if saved else {}
             child = await sup.spawn(
                 session_id=sid,
                 name=name,
                 worktree=info.path,
                 branch=info.branch,
-                assistant_id=self.assistant_id or "nova-agent",
+                assistant_id=(saved.assistant_id if saved else self.assistant_id) or "nova-agent",
+                **continuation,
             )
+        except asyncio.CancelledError:
+            getattr(self, "_pending_task_for", {}).pop(sid, None)
+            pane.status = "exited"
+            if pane in self._panes:
+                self._panes.remove(pane)
+            if pane is self._active_pane:
+                await self._switch_to(self._root_pane)
+            await pane.scroll.remove()
+            self._refresh_tabs()
+            raise
         except Exception as e:  # noqa: BLE001
             getattr(self, "_pending_task_for", {}).pop(sid, None)
             pane.status = "crashed"
@@ -3284,9 +3401,41 @@ class NovaApp(App):
             return
         kind = msg.get("t")
         previous_status = pane.status
+        communication = getattr(self, "_session_communication", None)
+
+        if kind == "session_request":
+            result = await self._session_messaging().handle(
+                sid, msg.get("method", ""), msg.get("payload", {})
+            )
+            await self._supervisor()._send(pane.child, {
+                "t": "session_reply", "id": msg.get("id"), "result": result,
+            })
+            return
 
         if kind == "ready":
             pane.status = "idle"
+            state = (
+                self.session_state if pane is self._active_pane else pane.state.get("session_state")
+            )
+            if state is not None:
+                for key in ("session_id", "thread_id"):
+                    if isinstance(msg.get(key), str) and msg[key]:
+                        setattr(state, key, msg[key])
+            if msg.get("model"):
+                pane.state["model_name"] = msg["model"]
+                if pane is self._active_pane:
+                    self.model_name = msg["model"]
+            if "model_provider" in msg:
+                pane.state["_model_provider"] = msg["model_provider"]
+                if pane is self._active_pane:
+                    self._model_provider = msg["model_provider"]
+            if isinstance(msg.get("todos"), list):
+                pane.state["_todos"] = msg["todos"]
+                if state is not None:
+                    state.todos = msg["todos"]
+                if pane is self._active_pane:
+                    self._todos = msg["todos"]
+                    self._paint_todos(self._todos)
             # Send the task it was spawned with, now that it can accept one.
             task = getattr(self, "_pending_task_for", {}).pop(sid, None)
             if task:
@@ -3296,7 +3445,17 @@ class NovaApp(App):
         elif kind == "ev":
             event = protocol.decode_event(msg)
             if event is not None:
-                await self._deliver(pane, event)
+                if (
+                    communication is not None
+                    and isinstance(event, ev.AssistantMessage)
+                    and not event.is_subagent
+                ):
+                    communication.child_answer(sid, event.text, msg.get("prompt_id"))
+                pane.event_prompt_id = msg.get("prompt_id")
+                try:
+                    await self._deliver(pane, event)
+                finally:
+                    pane.event_prompt_id = None
 
         elif kind == "interrupt":
             pane.status = "needs-approval"
@@ -3328,7 +3487,10 @@ class NovaApp(App):
 
         elif kind == "turn_done":
             pane.status = "idle"
-            await self._finish_remote_turn(pane)
+            if communication is not None:
+                communication.child_done(sid, msg.get("id", ""), bool(msg.get("ok")))
+            if not pane.remote_turns or getattr(pane.remote_turns[0], "prompt_id", msg.get("id")) == msg.get("id"):
+                await self._finish_remote_turn(pane)
 
         elif kind == "notification":
             from datetime import datetime
@@ -3362,6 +3524,8 @@ class NovaApp(App):
 
         elif kind == "exited":
             pane.status = "crashed" if msg.get("crashed") else "exited"
+            if communication is not None:
+                communication.child_exited(sid)
             self._tasks_registry(pane).mark_exited()
             for future in getattr(pane, "job_log_waiters", {}).values():
                 if not future.done():
@@ -3741,6 +3905,9 @@ class NovaApp(App):
                 return
             if pane.remote_turns:
                 turn = pane.remote_turns[0]
+                event_pid = getattr(pane, "event_prompt_id", None)
+                if event_pid is not None and getattr(turn, "prompt_id", event_pid) != event_pid:
+                    return
                 if turn.status is not None:
                     feed(turn.status, event)
                 if getattr(turn, "answer_stream", None) is not None:
@@ -3779,7 +3946,12 @@ class NovaApp(App):
                 await msg.reply_fn(body)
 
         async def route_prompt() -> bool:
-            route = router.resolve(msg, sessions)
+            from novacode_cli.sessions.messaging import MessageError
+            try:
+                route = router.resolve(msg, sessions)
+            except MessageError as exc:
+                await reply(str(exc))
+                return True
             if route is None:
                 await reply(
                     "This topic's session has ended. Send /sessions to see what is running."
@@ -4225,7 +4397,7 @@ class NovaApp(App):
         )
         return "\n".join(lines)
 
-    async def _send_child_prompt(self, pane, text: str, *, images=None):
+    async def _send_child_prompt(self, pane, text: str, *, images=None, prompt_id=None):
         """Send the tab's explicit approval preference with each prompt."""
         from novacode_cli.remote.streaming import RemoteAnswerStream
 
@@ -4233,12 +4405,15 @@ class NovaApp(App):
             pane.remote_snapshot = RemoteAnswerStream(None)
         state = pane.state.get("session_state")
         options = {"auto_approve": bool(getattr(state, "auto_approve", False))}
+        if prompt_id is not None:
+            options["prompt_id"] = prompt_id
         if images:
             options["images"] = images
         return await self._supervisor().send_prompt(pane.sid, text, **options)
 
     async def _remote_child_turn(self, pane, msg: Any) -> None:
         """Run a remote prompt in a spawned session; answer at its turn_done."""
+        import uuid
         from types import SimpleNamespace
 
         from novacode_cli.remote.status import RemoteStatusLine
@@ -4258,6 +4433,7 @@ class NovaApp(App):
             status=None,
             answer="",
             answer_stream=None,
+            prompt_id="remote-" + uuid.uuid4().hex,
         )
         if getattr(msg, "edit_fn", None) is not None:
             turn.status = RemoteStatusLine(msg.edit_fn, label=self._remote_label(pane))
@@ -4267,7 +4443,7 @@ class NovaApp(App):
             turn.answer_stream = RemoteAnswerStream(msg.answer_edit_fn)
         pane.remote_turns.append(turn)
         if (
-            await self._send_child_prompt(pane, msg.text, images=getattr(msg, "images", None))
+            await self._send_child_prompt(pane, msg.text, images=getattr(msg, "images", None), prompt_id=turn.prompt_id)
             is None
         ):
             pane.remote_turns.remove(turn)
@@ -7033,6 +7209,13 @@ class NovaApp(App):
         """Build @agent + @file completions for an ``@`` fragment (no leading @)."""
         at_prefix = f"@{fragment}".lower()
         candidates: list[str] = []
+        for pane in getattr(self, "_panes", []):
+            if pane.status not in ("crashed", "exited"):
+                for name in (pane.sid, pane.title):
+                    candidate = f"@tab:{name}"
+                    if not any(char.isspace() for char in name) and candidate.casefold().startswith(at_prefix):
+                        if candidate not in candidates:
+                            candidates.append(candidate)
         # Agent completions
         for n in self._get_agent_names():
             if f"@{n}".lower().startswith(at_prefix):
@@ -7283,6 +7466,19 @@ class NovaApp(App):
         # Submitting is an explicit act: resume following the tail so the user
         # always sees their own message, even if they had scrolled up to read.
         self._follow_tail = True
+        if text.startswith("@"):
+            from novacode_cli.sessions.messaging import MessageError
+            try:
+                address = self._resolve_tab_mention(text)
+            except MessageError as exc:
+                self._log(Text(str(exc), style="yellow"))
+                return
+            if address is not None:
+                sender = getattr(getattr(self, "_active_pane", None), "sid", "root")
+                self.run_worker(
+                    self._send_tab_message(sender, *address), group="session_route", exclusive=False
+                )
+                return
         # While the agent is working, a submitted prompt steers the current run
         # (injected for its next step) instead of cancelling it or starting a new
         # turn. Esc still cancels. Empty turns route normally.
@@ -7388,6 +7584,9 @@ class NovaApp(App):
         )
 
     def action_cancel_turn(self) -> None:
+        communication = getattr(self, "_session_communication", None)
+        if communication is not None:
+            communication.cancel(getattr(getattr(self, "_active_pane", None), "sid", "root"))
         pane = getattr(self, "_active_pane", None)
         if pane is not None and pane.kind == "child":
             self.run_worker(self._supervisor().cancel(pane.sid))
@@ -8368,6 +8567,30 @@ class NovaApp(App):
         except Exception:  # noqa: BLE001
             logger.warning("Session recovery save failed", exc_info=True)
 
+    def _session_messaging(self):
+        from novacode_cli.sessions.tui_messaging import SessionCommunication
+        communication = getattr(self, "_session_communication", None)
+        if communication is None:
+            communication = self._session_communication = SessionCommunication(self)
+        return communication
+
+    def _resolve_tab_mention(self, text: str):
+        from novacode_cli.sessions.messaging import resolve_mention
+        reserved = set(self._get_agent_names())
+        token = text.strip().split(maxsplit=1)[0].lstrip("@")
+        if not token.startswith("tab:"):
+            from novacode_cli.config.config import settings
+            if (settings.get_workspace_root() / token).exists():
+                reserved.add(token)
+        sessions = {pane.sid: pane.title for pane in getattr(self, "_panes", [])
+                    if pane.status not in ("crashed", "exited")}
+        return resolve_mention(text, sessions, reserved)
+
+    async def _send_tab_message(self, sender: str, target: str, text: str) -> None:
+        result = await self._session_messaging().handle(sender, "send", {"target": target, "text": text})
+        if "error" in result:
+            self._log(Text(result["error"], style="yellow"))
+
     # -- input routing --------------------------------------------------------
     @work(exclusive=True, group="turn")
     async def _dispatch(self, text: str) -> None:
@@ -8816,6 +9039,7 @@ class NovaApp(App):
 
     async def _do_stream(self, text: str, assistant_id: str | None = None) -> None:
         from novacode_cli.input_utils import parse_file_mentions
+        from novacode_cli.sessions.gateway import session_events
 
         if "@" in text:
             _, files = await asyncio.to_thread(parse_file_mentions, text)
@@ -8825,7 +9049,7 @@ class NovaApp(App):
                 )
         ag, backend = self._active_agent()
         aid = assistant_id or self.assistant_id
-        async for e in run_agent_stream(
+        async for e in session_events(run_agent_stream(
             text,
             ag,
             aid,
@@ -8833,7 +9057,7 @@ class NovaApp(App):
             backend=backend,
             image_tracker=self.image_tracker,
             seen_message_ids=self._seen,
-        ):
+        ), self._session_messaging().gateway("root")):
             # Through _deliver, not _render directly: if the user switches tabs
             # mid-turn, this turn's events must keep going to the ROOT pane
             # rather than into whichever pane is now on screen.

@@ -123,6 +123,8 @@ class SessionWorker:
 
         self._emit = _Emitter(getattr(session_state, "headless_out_fd", None))
         self._pending: dict[str, asyncio.Future] = {}
+        self._session_pending: dict[str, asyncio.Future] = {}
+        self._session_ids = itertools.count(1)
         self._interrupt_ids = itertools.count(1)
         self._queued: deque[tuple[str, str, list, bool]] = deque()
         self._turn: asyncio.Task | None = None
@@ -142,6 +144,23 @@ class SessionWorker:
         self._emit({"t": "notification", "notification": asdict(notification)})
 
     # ── stdin ────────────────────────────────────────────────────────────
+    async def session_request(self, method: str, payload: dict) -> dict:
+        """Ask the parent broker; identity comes from the pipe, not tool arguments."""
+        if self._stop:
+            return {"error": "Session has closed."}
+        if len(self._session_pending) >= 16:
+            return {"error": "Too many pending session requests."}
+        request_id = f"s{next(self._session_ids)}"
+        future = asyncio.get_running_loop().create_future()
+        self._session_pending[request_id] = future
+        try:
+            self._emit({"t": "session_request", "id": request_id, "method": method, "payload": payload})
+            return await asyncio.wait_for(future, timeout=10)
+        except asyncio.TimeoutError:
+            return {"error": "Session broker did not answer before the timeout."}
+        finally:
+            self._session_pending.pop(request_id, None)
+
 
     async def _stdin_pump(self) -> None:
         """Feed parsed parent messages onto :attr:`inbox`; ``None`` on EOF.
@@ -203,9 +222,11 @@ class SessionWorker:
 
         self.image_tracker = attach_images(self.image_tracker, images)
         source = None
+        from novacode_cli.sessions.gateway import endpoint
+        token = endpoint.set(self.session_request)
         try:
             if text.lstrip().startswith("/") and not images:
-                text = await self._resolve_slash(text)
+                text = await self._resolve_slash(text, prompt_id=prompt_id)
                 if text is None:
                     return
             source = iterate_agent_events(
@@ -222,30 +243,35 @@ class SessionWorker:
                     await self._forward_interrupt(event)
                     continue
                 try:
-                    self._emit({"t": "ev", **protocol.encode_event(event)})
+                    self._emit({"t": "ev", "prompt_id": prompt_id, **protocol.encode_event(event)})
                 except ValueError:
                     logger.debug("unencodable event %s", type(event).__name__)
                 if isinstance(event, ev.Error):
                     ok = False
         except asyncio.CancelledError:
-            self._emit({"t": "ev", **protocol.encode_event(ev.Cancelled())})
+            self._emit({"t": "ev", "prompt_id": prompt_id, **protocol.encode_event(ev.Cancelled())})
             ok = False
             raise
         except Exception as exc:  # noqa: BLE001 — a turn must never kill the worker
             ok = False
             logger.debug("turn failed", exc_info=True)
             self._emit(
-                {"t": "ev", **protocol.encode_event(
+                {"t": "ev", "prompt_id": prompt_id, **protocol.encode_event(
                     ev.Error(message=f"{type(exc).__name__}: {exc}")
                 )}
             )
         finally:
+            endpoint.reset(token)
             if source is not None:
                 with contextlib.suppress(Exception):
                     await asyncio.wait_for(source.aclose(), timeout=2)
-            self._emit({"t": "turn_done", "id": prompt_id, "ok": ok})
+            try:
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(self._save(is_error=not ok), timeout=5)
+            finally:
+                self._emit({"t": "turn_done", "id": prompt_id, "ok": ok})
 
-    async def _resolve_slash(self, text: str) -> str | None:
+    async def _resolve_slash(self, text: str, *, prompt_id: str | None = None) -> str | None:
         """Resolve commands in the child's own workspace, never as raw model input."""
         from novacode_cli.commands.commands import _get_registry, handle_command
         from novacode_cli.commands.skill_invoke import _try_skill_invocation
@@ -277,7 +303,7 @@ class SessionWorker:
             await self.inbox.put({"t": "shutdown"})
         elif isinstance(result, str):
             return result
-        self._emit({"t": "ev", **protocol.encode_event(ev.AssistantMessage(
+        self._emit({"t": "ev", "prompt_id": prompt_id, **protocol.encode_event(ev.AssistantMessage(
             text=output or "Command completed.", agent_name="Nova", agent_color="cyan",
         ))})
         return None
@@ -326,6 +352,8 @@ class SessionWorker:
                 "cwd": os.getcwd(),
                 "model": self.model_name,
                 "assistant_id": self.assistant_id,
+                "model_provider": getattr(self.session_state, "session_model_provider", None),
+                "todos": getattr(self.session_state, "todos", []),
             }
         )
 
@@ -399,6 +427,12 @@ class SessionWorker:
                     else:
                         self._start_turn(pid, text, images, auto_approve)
 
+                elif kind == "session_reply":
+                    future = self._session_pending.get(str(msg.get("id")))
+                    if future is not None and not future.done():
+                        result = msg.get("result")
+                        future.set_result(result if isinstance(result, dict) else {"error": "Invalid broker reply."})
+
                 elif kind == "interrupt_reply":
                     fut = self._pending.get(str(msg.get("id")))
                     if fut is not None and not fut.done():
@@ -440,6 +474,9 @@ class SessionWorker:
             registry.remove_observer(jobs_changed)
             from novacode_cli.shell.jobs import request_kill, _kill_pid_tree
             self._stop = True
+            for future in list(self._session_pending.values()):
+                if not future.done():
+                    future.set_result({"error": "Session has closed."})
             get_msg.cancel()
             request_kill()
             await self._cancel_turn()
@@ -474,7 +511,7 @@ class SessionWorker:
         for prompt_id, *_ in queued:
             self._emit({"t": "turn_done", "id": prompt_id, "ok": False})
 
-    async def _save(self) -> None:
+    async def _save(self, *, is_error: bool = False) -> None:
         """Persist the conversation so the session is resumable like any other."""
         try:
             from novacode_cli.headless.runner import _autosave
@@ -485,7 +522,7 @@ class SessionWorker:
                 session_state=self.session_state,
                 model_name=self.model_name,
                 session_manager=self.session_manager,
-                is_error=False,
+                is_error=is_error,
             )
         except Exception:  # noqa: BLE001 — never fail shutdown on a save
             logger.debug("worker session save skipped", exc_info=True)

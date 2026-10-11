@@ -144,8 +144,8 @@ class SessionSupervisor:
             "PYTHONPATH": f"{pkg_root}{os.pathsep}{existing}" if existing else str(pkg_root),
         }
 
-    def _argv(self, session_id: str, assistant_id: str) -> list[str]:
-        return [
+    def _argv(self, session_id: str, assistant_id: str, resume_id: str | None = None) -> list[str]:
+        argv = [
             sys.executable,
             "-m",
             "novacode_cli.main",
@@ -155,6 +155,9 @@ class SessionSupervisor:
             "--agent",
             assistant_id,
         ]
+        if resume_id:
+            argv.extend(["--continue", resume_id])
+        return argv
 
     async def spawn(
         self,
@@ -165,6 +168,7 @@ class SessionSupervisor:
         branch: str | None = None,
         assistant_id: str = "nova-agent",
         argv: list[str] | None = None,
+        resume_id: str | None = None,
     ) -> ChildSession:
         """Launch a child bound to *worktree*.
 
@@ -184,7 +188,7 @@ class SessionSupervisor:
         self._starting.add(session_id)
         try:
             proc = await asyncio.create_subprocess_exec(
-                *(argv or self._argv(session_id, assistant_id)),
+                *(argv or self._argv(session_id, assistant_id, resume_id)),
                 cwd=str(worktree),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
@@ -343,12 +347,12 @@ class SessionSupervisor:
             return False
         return True
 
-    async def send_prompt(self, session_id: str, text: str, *, images=None, auto_approve: bool | None = None) -> str | None:
+    async def send_prompt(self, session_id: str, text: str, *, images=None, auto_approve: bool | None = None, prompt_id: str | None = None) -> str | None:
         """Queue a prompt on the child; returns its id, or None if unreachable."""
         child = self._children.get(session_id)
         if child is None:
             return None
-        pid = f"p{next(self._prompt_ids)}"
+        pid = prompt_id or f"p{next(self._prompt_ids)}"
         payload = {"t": "prompt", "id": pid, "text": text}
         if auto_approve is not None:
             payload["auto_approve"] = auto_approve
@@ -392,6 +396,11 @@ class SessionSupervisor:
         await self._send(child, {"t": "shutdown"})
         proc = child.proc
         if proc is not None:
+            # Cancelling a to_thread(readline) task cannot stop its OS read.
+            # EOF releases that reader so asyncio.run can join the executor.
+            with contextlib.suppress(OSError, ValueError, AttributeError):
+                if proc.stdin is not None:
+                    proc.stdin.close()
             try:
                 child.exit_code = await asyncio.wait_for(proc.wait(), timeout=timeout)
             except (TimeoutError, asyncio.TimeoutError):

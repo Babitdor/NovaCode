@@ -66,6 +66,7 @@ class TelegramBridge:
         self._retry_at = 0.0
         self._last_api_error: str | None = None
         self._session_topics: dict[str, tuple[str, int]] = {}
+        self._session_topic_titles: dict[str, tuple[int, str]] = {}
         self._topic_handlers: dict[int, Any] = {}
         self._topic_lock = asyncio.Lock()
         self._keyboard_lock = asyncio.Lock()
@@ -133,8 +134,10 @@ class TelegramBridge:
         from novacode_cli.memory.store import get_durable_store
 
         async with self._topic_lock:
+            title = f"NovaCode · {' '.join(name.split()) or session_id[:8]}"[:128]
             cached = self._session_topics.get(sid)
             if cached and cached[0] == session_id and not verify:
+                await self._sync_session_topic_title(sid, cached[1], title)
                 return cached[1]
             if self._shared_polling:
                 await self._shared_polling.reserve_session(self._config.chat_id, session_id)
@@ -180,8 +183,9 @@ class TelegramBridge:
                     )
                 elif saved.value.get("closed"):
                     await store.aput(namespace, session_id, {"topic": tid})
-            if not isinstance(tid, int) or isinstance(tid, bool) or tid <= 0:
-                tid = await self.open_topic(f"NOVA · {session_id} · {name}")
+            created = not isinstance(tid, int) or isinstance(tid, bool) or tid <= 0
+            if created:
+                tid = await self.open_topic(title)
                 if tid is None:
                     return None
                 await store.aput(namespace, session_id, {"topic": tid})
@@ -195,7 +199,33 @@ class TelegramBridge:
                     ]
                 )
             self._session_topics = proposed
+            if created:
+                self._session_topic_titles[sid] = (tid, title)
+            else:
+                await self._sync_session_topic_title(sid, tid, title)
             return tid
+
+    async def _sync_session_topic_title(self, sid: str, tid: int, title: str) -> None:
+        """Update reused topics without replacing their history or route.
+
+        Called under the topic lock. Failed edits remain eligible for retry.
+        """
+        if self._session_topic_titles.get(sid) == (tid, title):
+            return
+        result = await self._api_call(
+            "editForumTopic",
+            {"chat_id": self._config.chat_id, "message_thread_id": tid, "name": title},
+            req_timeout=aiohttp.ClientTimeout(total=10),
+            return_errors=True,
+        )
+        unchanged = (
+            (result or {}).get("error_code") == 400
+            and "TOPIC_NOT_MODIFIED" in str((result or {}).get("description", "")).upper()
+        )
+        if (result or {}).get("ok") or unchanged:
+            self._session_topic_titles[sid] = (tid, title)
+        else:
+            logger.warning("Telegram topic title update failed; retaining the existing topic.")
 
     @property
     def is_connected(self) -> bool:
@@ -346,6 +376,7 @@ class TelegramBridge:
                     continue
                 await store.aput(namespace, session_id, {"topic": tid, "closed": True})
                 del self._session_topics[sid]
+                self._session_topic_titles.pop(sid, None)
                 if self._shared_polling:
                     await self._shared_polling.release_session(
                         self._config.chat_id,

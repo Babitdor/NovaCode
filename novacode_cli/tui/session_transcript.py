@@ -24,15 +24,18 @@ class SessionTranscript(Vertical):
     PAGE_SIZE = 20
     TEXT_LIMIT = 16000
 
-    def __init__(self, session: ImportedSession, *, latest: bool = False) -> None:
+    def __init__(
+        self, session: ImportedSession, *, latest: bool = False, heading: str = "Imported history"
+    ) -> None:
         super().__init__()
         self.session = session
+        self.heading = heading
         self.page = (max(0, len(session.messages) - 1) // self.PAGE_SIZE) if latest else 0
 
     def compose(self):
         yield Static(
             Text(
-                f"Imported history · {self.session.provider.title()} · {self.session.session_id}\n"
+                f"{self.heading} · {self.session.provider.title()} · {self.session.session_id}\n"
                 f"Workspace: {self.session.cwd or 'unknown'}",
                 style="bold",
             ),

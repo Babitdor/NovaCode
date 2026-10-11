@@ -1197,6 +1197,8 @@ async def main(
                 bool(nova_md_content),
             )
         else:
+            if getattr(session_state, "worker", False):
+                raise ValueError("The saved session is no longer available; tab resume aborted.")
             console.print()
             console.print("[yellow]No previous session found.[/yellow]")
             console.print("[dim]Starting new session.[/dim]")

@@ -19,9 +19,11 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from novacode_cli.sessions.messaging import MessageError, resolve_mention, resolve_target
+
 ROOT = "root"
 
-_ADDRESS = re.compile(r"^@([\w.-]+)[,:]?\s+(.+)$", re.S)
+_ADDRESS = re.compile(r"^@(tab:)?([\w.-]+)[,:]?\s+(.+)$", re.S)
 
 
 @dataclass
@@ -63,11 +65,15 @@ class RemoteRouter:
         """
         text = str(getattr(msg, "text", "") or "")
         chat = getattr(msg, "chat_id", None)
-        by_title = {title.lower(): sid for sid, title in sessions.items()}
-
+        if text.strip().startswith("@tab:"):
+            address = resolve_mention(text, sessions)
+            if address is not None:
+                return Route(address[0], address[1], "address")
         m = _ADDRESS.match(text.strip())
-        if m and m.group(1).lower() in by_title:
-            return Route(by_title[m.group(1).lower()], m.group(2).strip(), "address")
+        if m:
+            name = m.group(2)
+            if m.group(1) or name in sessions or any(title.casefold() == name.casefold() for title in sessions.values()):
+                return Route(resolve_target(name, sessions), m.group(3).strip(), "address")
 
         thread = getattr(msg, "thread_id", None)
         if thread is not None:
@@ -83,7 +89,8 @@ class RemoteRouter:
 
     def match(self, name: str, sessions: dict[str, str]) -> str | None:
         """sid of the session called ``name`` (case-insensitive; "main" = root)."""
-        name = name.strip().lstrip("@").lower()
-        if name in ("main", "root"):
-            return ROOT
-        return next((sid for sid, title in sessions.items() if title.lower() == name), None)
+        name = name.strip().lstrip("@").removeprefix("tab:")
+        try:
+            return resolve_target(name, sessions)
+        except MessageError:
+            return None

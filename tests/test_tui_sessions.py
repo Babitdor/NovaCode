@@ -396,7 +396,9 @@ async def test_remote_photo_routes_to_child_topic_without_root_attachment():
         image = ImageData("aGVsbG8=", "png", "[image]")
         msg = RemoteMessage(RemotePlatform.TELEGRAM, 7, "user", "inspect", AsyncMock(), thread_id=88, images=[image])
         assert await app._remote_route(msg)
-        send.assert_awaited_once_with(child.sid, "inspect", images=[image], auto_approve=False)
+        pid = child.remote_turns[0].prompt_id
+        assert pid.startswith("remote-")
+        send.assert_awaited_once_with(child.sid, "inspect", images=[image], auto_approve=False, prompt_id=pid)
         assert app.image_tracker is None
         assert msg.route["sid"] == child.sid
 
@@ -481,7 +483,7 @@ async def test_child_tab_inherits_mode_and_sends_it_on_remote_and_local_turns(mo
         send.assert_awaited_with(child.sid, "local", auto_approve=auto)
         msg = RemoteMessage(RemotePlatform.TELEGRAM, 7, "user", "remote", AsyncMock())
         await app._remote_child_turn(child, msg)
-        send.assert_awaited_with(child.sid, "remote", auto_approve=auto)
+        send.assert_awaited_with(child.sid, "remote", auto_approve=auto, prompt_id=child.remote_turns[-1].prompt_id)
         assert child.state["session_state"].auto_approve is auto
 
 

@@ -171,7 +171,7 @@ def test_child_session_turn_round_trip() -> None:
                                                  icon="", call_id="c1"))
             await app._deliver(pane, ev.AssistantMessage(text="All 12 tests pass.",
                                                          agent_name="nova", agent_color="c"))
-            await app._on_child_message("s-1", {"t": "turn_done"})
+            await app._on_child_message("s-1", {"t": "turn_done", "id": pane.remote_turns[0].prompt_id, "ok": True})
 
             assert replies[-1] == "**[alpha]** All 12 tests pass."
             assert any("shell" in e and "alpha" in e for e in edits), "labelled live status"

@@ -3,7 +3,7 @@
 
 # NOVA : Agentic Coding Tool
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/Babitdor/NovaCode)
+[![Version](https://img.shields.io/badge/version-1.0.32-blue)](https://github.com/Babitdor/NovaCode)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://opensource.org/licenses/MIT)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 
@@ -42,6 +42,7 @@ An open-source, terminal-based AI coding assistant built on LangGraph and the `d
 - **Built to Stay Smooth**: Status ticks repaint in place instead of reflowing the screen, rendered Markdown is cached per width, static data stays out of checkpoints, subagent graphs compile on first use, the skill listing is cached across restarts, and garbage collection is tuned to run while you are idle. A watchdog logs any UI freeze over 1s to `~/.nova/logs/freeze.log`
 - **Multi-line Prompt**: The input grows with its content; `shift+enter` inserts a newline
 - **Parallel Session Panes**: Run several sessions side by side (`/session new`, `ctrl+n`, `alt+<n>`) and switch between them
+- **Cross-project Agent Messages**: Address another live tab with `@tab:<session-id> <message>` or `@<unique-title> <message>`. Tab addresses appear in `@` autocomplete. Requests queue while the recipient is busy; linked final replies appear in collapsed Markdown panels in both transcripts. Expand a panel to read it, use **Attach to prompt** to append it to your draft, or **Open tab** to navigate to the peer. Attachment never submits the draft or stops your current task. Agents can use `list_sessions`, `send_session_message`, `read_session_messages`, and `reply_session_message`. Each recipient keeps its own project and tool approvals. Only the explicit message is shared. Communication currently covers tabs in one Nova window; pending messages are held in memory. Use the explicit `@tab:` form when a title also names a file or subagent. Peer messages are agent prompts; slash-command text inside them is context rather than a CLI command.
 - **Docked Todo Checklist**: The todo list stays on screen and can be clicked to collapse/expand
 - **Condensed Tool UI**: Consecutive tool calls grouped into collapsible sections — full diffs shown for code edits; reads, searches, and other calls stay compact
 - **Syntax-Highlighted Diffs**: Diff previews are syntax-highlighted per line (Pygments, keyed off the file extension) — token colours overlay the `+`/`-` marker colour, so added/removed lines stay visually distinct
@@ -368,7 +369,7 @@ mypy novacode_cli/
 | `/compact` | Compact conversation history with optional focus |
 | `/sessions` | List, select, or delete saved sessions |
 | `/ui` | Inspect the optional UI panels; use `patch`, `preview`, `commit`, `rollback`, or `reset` |
-| `/tabs` | Session tabs: `launch` opens the approved project picker; `list` / `close` manage tabs (`ctrl+n`, `alt+<n>`) |
+| `/tabs` | Session tabs: `launch` opens the approved project picker; `resume` picks a saved session to reopen as a tab; `resume <id>` accepts an exact ID or unique prefix. `list` / `close` manage tabs (`ctrl+n`, `alt+<n>`) |
 | `/resume` | Resume a saved session for this path (`/resume <id>`) |
 | `/restore` | Restore a previous file version from snapshots |
 | `/files` | Show file operation summary for the session |
@@ -428,7 +429,10 @@ mypy novacode_cli/
 | `/wiki` | List all synthesized pages in the project wiki vault |
 
 In Telegram, send `/tab` to pick an approved project, then confirm the launch in
-that topic. The new tab gets its own topic; chat there to work in that project.
+that topic. The new tab gets its own topic named `NovaCode · <session name>`;
+chat there to work in that project. Existing topics adopt the session name on
+reconnect, preserving their history. Names are synchronized when topics are
+attached, with long names shortened to Telegram's 128-character limit.
 Use `/tab close` to choose a tab to close. Telegram photos and image documents
 are delivered to the session belonging to their topic.
 

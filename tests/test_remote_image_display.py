@@ -74,4 +74,6 @@ async def test_child_remote_image_is_visible_and_forwarded_unchanged(monkeypatch
         await app._remote_child_turn(pane, msg)
         user = next(entry for entry in app.query(ChatMessage) if entry.has_class("user"))
         assert "2 images attached" in user.raw_text
-        send.assert_awaited_once_with(pane, msg.text, images=msg.images)
+        send.assert_awaited_once_with(
+            pane, msg.text, images=msg.images, prompt_id=pane.remote_turns[-1].prompt_id
+        )

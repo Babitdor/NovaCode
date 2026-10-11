@@ -14,6 +14,116 @@ def bridge():
     return TelegramBridge(BridgeConfig(RemotePlatform.TELEGRAM, "test-token", 7), asyncio.Queue())
 
 
+@pytest.fixture
+def topic_store(monkeypatch):
+    from langgraph.store.memory import InMemoryStore
+
+    store = InMemoryStore()
+    monkeypatch.setattr("novacode_cli.memory.store.get_durable_store", lambda: store)
+    return store
+
+
+@pytest.mark.parametrize(
+    "name, expected",
+    [
+        ("API tests", "NovaCode · API tests"),
+        ("  Prøject\n  🚀  ", "NovaCode · Prøject 🚀"),
+        (" ", "NovaCode · session-"),
+        ("🚀" * 200, "NovaCode · " + "🚀" * 117),
+    ],
+)
+async def test_topic_title_uses_session_name_with_valid_length(topic_store, name, expected):
+    bot = bridge()
+    bot.open_topic = AsyncMock(return_value=55)
+    bot._api_call = AsyncMock()
+    assert await bot.ensure_session_topic("child", "session-alpha", name) == 55
+    bot.open_topic.assert_awaited_once_with(expected)
+    assert 1 <= len(expected) <= 128
+    assert await bot.ensure_session_topic("child", "session-alpha", name) == 55
+    bot._api_call.assert_not_awaited()
+
+
+async def test_reconnect_renames_old_topic_without_losing_history(topic_store):
+    import hashlib
+
+    namespace = ("nova", "telegram_topics", hashlib.sha256(b"test-token").hexdigest(), "7")
+    await topic_store.aput(namespace, "session-alpha", {"topic": 55})
+    bot = bridge()
+    bot.open_topic = AsyncMock()
+    bot._api_call = AsyncMock(return_value={"ok": True, "result": True})
+    assert await bot.ensure_session_topic("child", "session-alpha", "API tests") == 55
+    calls = bot._api_call.await_args_list
+    assert [call.args[0] for call in calls] == ["reopenForumTopic", "editForumTopic"]
+    assert calls[1].args[1] == {
+        "chat_id": 7,
+        "message_thread_id": 55,
+        "name": "NovaCode · API tests",
+    }
+    assert calls[1].kwargs["req_timeout"].total == 10
+    assert bot._session_topics == {"child": ("session-alpha", 55)}
+    assert (await topic_store.aget(namespace, "session-alpha")).value == {"topic": 55}
+    bot.open_topic.assert_not_awaited()
+
+
+async def test_concurrent_name_updates_edit_once_and_preserve_route(topic_store):
+    bot = bridge()
+    bot.open_topic = AsyncMock(return_value=55)
+    bot._api_call = AsyncMock(return_value={"ok": True, "result": True})
+    await bot.ensure_session_topic("child", "session-alpha", "Old name")
+    assert (
+        await asyncio.gather(
+            *(bot.ensure_session_topic("child", "session-alpha", "New name") for _ in range(4))
+        )
+        == [55] * 4
+    )
+    bot.open_topic.assert_awaited_once()
+    bot._api_call.assert_awaited_once()
+    assert bot._api_call.await_args.args[1]["name"] == "NovaCode · New name"
+    assert bot._session_topics == {"child": ("session-alpha", 55)}
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        None,
+        {"ok": False, "error_code": 403, "description": "Forbidden"},
+        {"ok": False, "error_code": 429, "description": "Too Many Requests"},
+        {"ok": False, "error_code": 500, "description": "Internal Server Error"},
+    ],
+)
+async def test_failed_rename_preserves_route_and_can_retry(topic_store, failure):
+    bot = bridge()
+    bot.open_topic = AsyncMock(return_value=55)
+    await bot.ensure_session_topic("child", "session-alpha", "Old name")
+    bot._api_call = AsyncMock(side_effect=[failure, {"ok": True, "result": True}])
+    assert await bot.ensure_session_topic("child", "session-alpha", "New name") == 55
+    assert bot._session_topic_titles["child"] == (55, "NovaCode · Old name")
+    assert bot._session_topics["child"] == ("session-alpha", 55)
+    assert await bot.ensure_session_topic("child", "session-alpha", "New name") == 55
+    assert bot._session_topic_titles["child"] == (55, "NovaCode · New name")
+    assert bot._api_call.await_count == 2
+    bot.open_topic.assert_awaited_once()
+
+
+async def test_unchanged_name_response_is_cached_and_close_releases_title(topic_store):
+    bot = bridge()
+    bot.open_topic = AsyncMock(return_value=55)
+    await bot.ensure_session_topic("child", "session-alpha", "Old name")
+    bot._api_call = AsyncMock(
+        return_value={
+            "ok": False,
+            "error_code": 400,
+            "description": "Bad Request: TOPIC_NOT_MODIFIED",
+        }
+    )
+    await bot.ensure_session_topic("child", "session-alpha", "New name")
+    await bot.ensure_session_topic("child", "session-alpha", "New name")
+    bot._api_call.assert_awaited_once()
+    bot._api_call = AsyncMock(return_value={"ok": True, "result": True})
+    await bot.close_topic(55)
+    assert not bot._session_topic_titles
+
+
 @pytest.mark.asyncio
 async def test_keyboard_transitions_cannot_overtake_an_inflight_removal():
     bot = bridge()
@@ -114,7 +224,7 @@ async def test_topic_creation_is_idempotent_concurrent_and_durable(monkeypatch):
     )
     assert results == [55] * 4
     bot.open_topic.assert_awaited_once()
-    assert "session-alpha" in bot.open_topic.call_args.args[0]
+    bot.open_topic.assert_awaited_once_with("NovaCode · main")
     restarted = bridge()
     restarted._api_call = AsyncMock(return_value={"ok": True, "result": True})
     restarted.open_topic = AsyncMock(return_value=99)
@@ -189,7 +299,10 @@ async def test_closed_session_topic_reopens_instead_of_creating_another(monkeypa
     assert not bot._session_topics
     assert await bot.ensure_session_topic("child", "session-alpha", "alpha") == 55
     bot.open_topic.assert_awaited_once()
-    assert bot._api_call.call_args.args[0] == "reopenForumTopic"
+    assert [call.args[0] for call in bot._api_call.await_args_list][-2:] == [
+        "reopenForumTopic",
+        "editForumTopic",
+    ]
 
 
 @pytest.mark.asyncio
