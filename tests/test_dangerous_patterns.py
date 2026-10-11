@@ -4,9 +4,17 @@ The system-control case comes from a Terminal-Bench trajectory where
 `pdflatex -halt-on-error` was blocked because `halt` appeared inside a flag.
 """
 
+import re
+
 import pytest
 
+from novacode_cli.security.policy import _DEFAULT_SHELL_DENY
 from novacode_cli.shell.utils import is_dangerous_command
+
+
+def _policy_denies(command: str) -> bool:
+    # The approval policy keeps its own copy of the rule; both must agree.
+    return any(re.search(p, command) for p in _DEFAULT_SHELL_DENY)
 
 
 @pytest.mark.parametrize(
@@ -51,3 +59,35 @@ def test_words_containing_the_command_are_allowed(command):
 )
 def test_wiping_the_root_home_or_a_top_level_directory_is_blocked(command):
     assert is_dangerous_command(command)[0], command
+    assert _policy_denies(command), command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'rm -rf "/"',
+        "rm -fr $HOME",
+        "rm -rf ~/",
+        "rm -rf /tmp/build /",  # the dangerous one is not the first argument
+        "rm -rf /app/",
+    ],
+)
+def test_the_dangerous_target_is_found_however_it_is_written(command):
+    assert is_dangerous_command(command)[0], command
+    assert _policy_denies(command), command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # From a Terminal-Bench trial: plain cleanup, blocked by the old pattern.
+        "rm -rf /tmp/povray-build",
+        "rm -rf /app/build/ && make",
+        "rm -rf /tmp/a /var/cache/apt/archives 2>/dev/null",
+        "rm -rf build; cd /",
+        "rm -rf '/tmp/my dir'",
+    ],
+)
+def test_cleaning_up_below_the_top_level_is_allowed(command):
+    assert not is_dangerous_command(command)[0], command
+    assert not _policy_denies(command), command

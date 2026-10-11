@@ -101,8 +101,10 @@ _DEFAULT_SHELL_ALLOW: list[str] = [
 
 # Built-in shell denylist — destructive or privilege-escalating commands.
 _DEFAULT_SHELL_DENY: list[str] = [
-    r"\brm\s+-[a-z]*r[a-z]*f?\s+[\"']?[/~]",  # rm -rf / or ~
-    r"\brm\s+-[a-z]*f[a-z]*r\s+[\"']?[/~]",  # rm -fr / variant
+    # rm -r[f] / -fr of root, home or a top-level directory, as any argument.
+    # Deeper paths (/tmp/build) are ordinary cleanup — same rule as
+    # shell.patterns.DANGEROUS_PATTERNS.
+    r"\brm\s+-(?:[a-z]*r[a-z]*f?|[a-z]*f[a-z]*r)\b[^;&|\n]*?\s[\"']?(?:~|\$HOME\b|/\*|/[^/\s\"']*/?(?=[\"']?(?:[\s;&|)]|$)))",
     r":\s*\(\s*\)\s*\{",  # fork bomb :(){
     r"\bsudo\b",  # privilege escalation
     r"\bmkfs\b",  # format a filesystem

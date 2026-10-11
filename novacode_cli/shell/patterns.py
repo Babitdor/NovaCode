@@ -150,8 +150,10 @@ INTERACTIVE_COMMANDS = [
 # Commands that are destructive, irreversible, or enable remote code execution.
 # These are hard-blocked before any subprocess is spawned.
 DANGEROUS_PATTERNS = [
-    # Recursive/forced deletion of root, home, or all files in cwd
-    r"rm\s+(-\w*r\w*f|-\w*f\w*r)\s+[/~]",
+    # Recursive/forced deletion of root, home, a top-level directory (/etc, /app),
+    # or all files in cwd — as any argument. A deeper path (/tmp/build) is
+    # ordinary cleanup and is allowed.
+    r"rm\s+(-\w*r\w*f|-\w*f\w*r)\b[^;&|\n]*?\s[\"']?(?:~|\$HOME\b|/\*|/[^/\s\"']*/?(?=[\"']?(?:[\s;&|)]|$)))",
     r"rm\s+(-\w*r\w*f|-\w*f\w*r)\s+\*",
     # Raw disk writes (data destruction)
     r"dd\s+.*of\s*=\s*/dev/",
