@@ -382,13 +382,9 @@ def _model_window(model: object) -> int:
         if isinstance(window, int) and window > 0:
             # The profile is the model's real window; a subagent on its own
             # model works within the same budget as the main agent.
-            from novacode_cli.config.nova_config import NovaConfig
-            from novacode_cli.context._analysis import working_window
+            from novacode_cli.context._analysis import configured_budget, working_window
 
-            try:
-                return working_window(window, NovaConfig().get("context_budget_tokens"))
-            except Exception:  # noqa: BLE001 - an unreadable config is not worth a turn
-                return window
+            return working_window(window, configured_budget())
     return _window_tokens(model)  # type: ignore[arg-type]
 
 

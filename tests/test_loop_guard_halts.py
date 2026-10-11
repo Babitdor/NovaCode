@@ -160,3 +160,22 @@ def test_a_stop_left_over_from_an_interrupted_turn_does_not_end_the_next_one():
 
     assert guard.before_model({"messages": [HumanMessage("something new")]}, None) is None
     assert guard._halt is False
+
+
+def test_comparing_two_large_calls_does_not_stall_the_ui_loop():
+    """A character diff of two 40 KB heredocs took 23 s, on the loop the UI shares."""
+    import json
+    import time
+
+    from novacode_cli.tracking.loop_guard import _restates
+
+    script = "".join(f"my $v{n} = step({n});\n" for n in range(2_000))
+    first = json.dumps({"command": f"cat > analyze1.pl <<'E'\n{script}E\nperl analyze1.pl"})
+    renamed = first.replace("analyze1", "analyze2")
+    rewritten = json.dumps({"command": "".join(f"print {n} * {n};\n" for n in range(3_300))})
+
+    started = time.perf_counter()
+    assert _restates(first, renamed, True)
+    assert _restates(first, renamed, False)
+    assert not _restates(first, rewritten, True)
+    assert time.perf_counter() - started < 1.0

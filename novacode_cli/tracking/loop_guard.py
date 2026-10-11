@@ -26,9 +26,11 @@ The detection stays conservative to avoid false positives:
   is. A changed result for the same args stops the count — progress, not a loop.
 """
 
-import hashlib
 import difflib
+import hashlib
 import json
+import os
+import re
 from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
@@ -76,8 +78,48 @@ def _restates(previous_args: str, args: str, long_result: bool) -> bool:  # noqa
         needed = _NEAR_ARGS_RATIO_SHORT_RESULT
     else:
         return previous_args == args
-    matcher = difflib.SequenceMatcher(None, previous_args, args, autojunk=False)
-    return matcher.real_quick_ratio() >= needed and matcher.ratio() >= needed
+    return previous_args == args or _alike(previous_args, args, needed)
+
+
+#: Above this many differing characters the comparison is made line by line.
+_CHAR_DIFF_LIMIT = 1_000
+#: Arguments differing in more than this are not compared at all.
+_DIFF_LIMIT = 400_000
+#: Splits after each newline as the canonical (JSON) arguments spell it.
+_LINE_ENDS = re.compile(r"(?<=\\n)")
+
+
+def _alike(a: str, b: str, needed: float) -> bool:
+    """Whether ``a`` and ``b`` match in at least ``needed`` of their characters.
+
+    This runs on the event loop the UI shares, for every tool call that returns
+    what the previous one did. A character diff of the whole arguments is
+    quadratic: 1.4 s for two 10 KB heredocs, 23 s for 42 KB. So what the two
+    share at each end is set aside first, and only the part between is
+    diffed — by character when it is short, by line otherwise. A line that
+    differs at all then counts as wholly different, which errs towards not
+    calling two calls the same.
+    """
+    total = len(a) + len(b)
+    if 2 * min(len(a), len(b)) < needed * total:
+        return False
+    head = len(os.path.commonprefix([a, b]))
+    a, b = a[head:], b[head:]
+    tail = len(os.path.commonprefix([a[::-1], b[::-1]]))
+    a, b = a[: len(a) - tail], b[: len(b) - tail]
+    same = head + tail
+    if 2 * same >= needed * total:
+        return True
+    if 2 * (same + min(len(a), len(b))) < needed * total or len(a) + len(b) > _DIFF_LIMIT:
+        return False
+    if len(a) + len(b) <= _CHAR_DIFF_LIMIT:
+        blocks = difflib.SequenceMatcher(None, a, b, autojunk=False).get_matching_blocks()
+        same += sum(block.size for block in blocks)
+    else:
+        lines = _LINE_ENDS.split(a)
+        for block in difflib.SequenceMatcher(None, lines, _LINE_ENDS.split(b)).get_matching_blocks():
+            same += sum(map(len, lines[block.a : block.a + block.size]))
+    return 2 * same >= needed * total
 
 
 def _result_text(result: ToolMessage | Command) -> str | None:

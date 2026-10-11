@@ -459,6 +459,7 @@ def test_the_context_bar_measures_against_the_same_budget(monkeypatch: pytest.Mo
     assert ContextManager("big-model").window_size() == A.DEFAULT_CONTEXT_BUDGET_TOKENS
     assert ContextManager("big-model").breakdown([]).context_window_size == A.DEFAULT_CONTEXT_BUDGET_TOKENS
     setting["context_budget_tokens"] = 0
+    A._budget_read = None  # the setting is re-read every few seconds, not per call
     assert ContextManager("big-model").window_size() == 1_000_000
 
 
@@ -524,3 +525,22 @@ def test_a_model_profile_window_is_budgeted_like_the_main_agents(monkeypatch) ->
     huge = SimpleNamespace(profile={"max_input_tokens": 1_000_000})
 
     assert ContextCompactionMiddleware().limits(huge).window == 50_000
+
+
+def test_old_results_are_checked_on_disk_once_not_on_every_model_call(tmp_path, monkeypatch) -> None:
+    """Each call paid a mkdir and two stats per cleared result: 190 ms of 230."""
+    from pathlib import Path
+
+    from novacode_cli.agents.core_agent import _tool_result_clearing
+
+    middleware = ContextCompactionMiddleware(context_window=WINDOW, prune_edit=_tool_result_clearing(WINDOW, tmp_path))
+    request = _request(_history(10))
+    first = middleware._plan(request).messages
+
+    def touched(self: Path, *args: Any, **kwargs: Any) -> None:
+        raise AssertionError(f"filesystem touched again for {self}")
+
+    monkeypatch.setattr(Path, "mkdir", touched)
+    monkeypatch.setattr(Path, "exists", touched)
+
+    assert _results(middleware._plan(request).messages) == _results(first)

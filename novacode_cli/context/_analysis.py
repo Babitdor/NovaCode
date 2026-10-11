@@ -366,6 +366,30 @@ def working_window(window: int, configured: object) -> int:
     return window
 
 
+_budget_read: tuple[float, object] | None = None
+
+
+def configured_budget() -> object:
+    """The ``context_budget_tokens`` setting, re-read at most every 5 seconds.
+
+    Reading the config costs ~8 ms (it parses the file), and a subagent's
+    compaction asks on every model call, on the loop the UI shares.
+    """
+    global _budget_read  # noqa: PLW0603
+    import time
+
+    now = time.monotonic()
+    if _budget_read is None or now - _budget_read[0] > 5:  # noqa: PLR2004
+        try:
+            from novacode_cli.config.nova_config import NovaConfig
+
+            value = NovaConfig().get("context_budget_tokens")
+        except Exception:  # noqa: BLE001 - an unreadable config means the default budget
+            value = None
+        _budget_read = (now, value)
+    return _budget_read[1]
+
+
 def get_context_window_size(model_name: str, use_dynamic: bool = True) -> int:
     """The context Nova works within for a model: its window, capped by the budget.
 
@@ -374,13 +398,7 @@ def get_context_window_size(model_name: str, use_dynamic: bool = True) -> int:
     so the indicator and the behaviour cannot disagree. A 1M-token model used to
     show 10% while compaction, sized from the budget, was already firing.
     """
-    try:
-        from novacode_cli.config.nova_config import NovaConfig
-
-        configured = NovaConfig().get("context_budget_tokens")
-    except Exception:  # noqa: BLE001 - an unreadable config means the default budget
-        configured = None
-    return working_window(model_window_size(model_name, use_dynamic), configured)
+    return working_window(model_window_size(model_name, use_dynamic), configured_budget())
 
 
 def model_window_size(model_name: str, use_dynamic: bool = True) -> int:

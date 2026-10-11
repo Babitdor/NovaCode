@@ -34,6 +34,16 @@ _CREDENTIAL_ENV_VARS = (
 
 
 @pytest.fixture(autouse=True)
+def _forget_the_cached_context_budget() -> Iterator[None]:
+    """The budget setting is cached for a few seconds; no test may inherit one."""
+    from novacode_cli.context import _analysis
+
+    _analysis._budget_read = None
+    yield
+    _analysis._budget_read = None
+
+
+@pytest.fixture(autouse=True)
 def _restore_credential_env_vars() -> Iterator[None]:
     """Undo credential exports a test made directly through ``os.environ``.
 
