@@ -8,8 +8,10 @@ apiece that was its entire 15 minutes, spent before it wrote a line of the
 answer. Another spent 163 of its 202 turns studying its input before it first
 wrote the script it had been asked for.
 
-So this middleware does three things, all facts about the run:
+So this middleware does four things, all facts about the run:
 
+* one command may use at most a share of the time that is left — a trial with
+  12 minutes ran two scripts that each sat until the 5-minute command limit;
 * a slow call says how long it took;
 * the agent gets a short time check as it passes each checkpoint of its budget;
 * if a checkpoint arrives and nothing has been written yet, it is told so.
@@ -39,6 +41,11 @@ SLOW_SECONDS = 20
 CHECKPOINTS = (0.5, 0.75, 0.9)
 # Earlier fractions that speak up ONLY if nothing has been written by then.
 NOTHING_WRITTEN_CHECKPOINTS = (0.25, 0.4)
+# One command may run for at most this share of the time left (never under a minute).
+COMMAND_SHARE = 0.3
+MIN_COMMAND_SECONDS = 60
+# What a command gets when it names no timeout (the backend's default).
+DEFAULT_COMMAND_SECONDS = 300
 
 _FILE_TOOLS = frozenset({"write_file", "edit_file"})
 _SHELL_TOOLS = frozenset({"bash", "shell", "execute"})
@@ -78,8 +85,28 @@ class TimeBudgetMiddleware(AgentMiddleware):
                 self._wrote = True
         return name
 
-    def _note(self, took: float) -> str:
+    def _capped(self, request: Any) -> tuple[Any, int | None]:  # noqa: ANN401
+        """Limit a shell command to a share of the time left; returns the cap if set."""
+        call = getattr(request, "tool_call", None) or {}
+        if not self._limit or call.get("name") not in _SHELL_TOOLS:
+            return request, None
+        left = self._limit - (self._clock() - self._start)
+        cap = int(max(MIN_COMMAND_SECONDS, left * COMMAND_SHARE))
+        args = call.get("args") or {}
+        if (args.get("timeout") or DEFAULT_COMMAND_SECONDS) <= cap:
+            return request, None
+        return request.override(tool_call={**call, "args": {**args, "timeout": cap}}), cap
+
+    def _note(self, took: float, cap: int | None = None) -> str:
         parts = []
+        if cap and took >= cap - 1:
+            left = max(0.0, self._limit - (self._clock() - self._start)) / 60
+            parts.append(
+                f"[this command was stopped at {cap}s: with about {left:.0f} minutes left, one "
+                f"command may not use more. Anything it had not finished is not done — use a "
+                f"faster approach, or run long work in the background and poll it.]"
+            )
+            return "\n\n".join(parts + [self._note(0)]).strip()
         if took >= SLOW_SECONDS:
             # Rounded to 10s so the same slow command yields the same text each
             # time: the loop guard compares results, and a jittering duration
@@ -109,8 +136,8 @@ class TimeBudgetMiddleware(AgentMiddleware):
                 )
         return "\n\n".join(parts)
 
-    def _annotate(self, result: Any, took: float) -> Any:  # noqa: ANN401
-        note = self._note(took)
+    def _annotate(self, result: Any, took: float, cap: int | None = None) -> Any:  # noqa: ANN401
+        note = self._note(took, cap)
         if note and isinstance(result, ToolMessage) and isinstance(result.content, str):
             return result.model_copy(update={"content": f"{result.content}\n\n{note}"})
         return result
@@ -119,24 +146,26 @@ class TimeBudgetMiddleware(AgentMiddleware):
     def wrap_tool_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:  # noqa: ANN401
         """Time the call and annotate its result."""
         name = self._saw(request)
+        request, cap = self._capped(request)
         started = self._clock()
         result = handler(request)
         took = self._clock() - started
         self._tool_seconds[name] += took
         self._tool_calls[name] += 1
-        return self._annotate(result, took)
+        return self._annotate(result, took, cap)
 
     async def awrap_tool_call(  # noqa: ANN401
         self, request: Any, handler: Callable[[Any], Awaitable[Any]]
     ) -> Any:
         """Async twin of :meth:`wrap_tool_call`."""
         name = self._saw(request)
+        request, cap = self._capped(request)
         started = self._clock()
         result = await handler(request)
         took = self._clock() - started
         self._tool_seconds[name] += took
         self._tool_calls[name] += 1
-        return self._annotate(result, took)
+        return self._annotate(result, took, cap)
 
     def wrap_model_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:  # noqa: ANN401
         """Time the model call."""

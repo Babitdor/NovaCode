@@ -16,7 +16,7 @@ from pathlib import Path
 _real_home = Path.home()
 _eval_home = Path(
     os.environ.get("NOVA_EVAL_HOME") or Path(__file__).resolve().parent.parent / ".eval-home"
-)
+).resolve()  # absolute: a child process started in another directory must land in the same home
 _eval_home.mkdir(parents=True, exist_ok=True)
 # The docker/modal subprocesses harbor spawns still need the real credentials.
 os.environ.setdefault("DOCKER_CONFIG", str(_real_home / ".docker"))

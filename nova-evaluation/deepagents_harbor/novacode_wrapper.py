@@ -499,11 +499,19 @@ Files in `{current_dir}`:
 
         async def _run_agent() -> None:
             nonlocal result
+            from langgraph.errors import GraphRecursionError
+
             inputs = {"messages": [{"role": "user", "content": instruction}]}
-            async for result in Nova_agent.astream(
-                inputs, config=config, stream_mode="values"
-            ):
-                pass
+            try:
+                async for result in Nova_agent.astream(
+                    inputs, config=config, stream_mode="values"
+                ):
+                    pass
+            except GraphRecursionError:
+                # The agent ran out of steps. Whatever it left in the sandbox is
+                # still its answer: return normally so the verifier grades it,
+                # instead of the trial ending in an exception with no reward.
+                self.logger.warning("agent hit the step limit; grading what it left")
 
         try:
             if langsmith_experiment_name:
