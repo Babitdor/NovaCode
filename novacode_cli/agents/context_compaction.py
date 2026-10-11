@@ -78,6 +78,7 @@ from novacode_cli.compaction import (
     _window_tokens,
     summarize_conversation,
 )
+from novacode_cli.core.streaming import is_internal_context_text
 
 logger = logging.getLogger(__name__)
 
@@ -275,7 +276,8 @@ def user_messages(head: Sequence[AnyMessage], budget_chars: int) -> list[str]:
             said.extend(message.additional_kwargs.get("user_messages") or [])
         elif isinstance(message, HumanMessage) and not message.additional_kwargs.get("lc_source"):
             text = _text(message).strip()
-            if text:
+            # Skill hints, memory and the like are injected as human messages.
+            if text and not is_internal_context_text(text):
                 said.append(_abridge(text, MAX_USER_MESSAGE_CHARS))
     if not said:
         return []
@@ -378,7 +380,15 @@ def _model_window(model: object) -> int:
     if isinstance(profile, Mapping):
         window = profile.get("max_input_tokens")
         if isinstance(window, int) and window > 0:
-            return window
+            # The profile is the model's real window; a subagent on its own
+            # model works within the same budget as the main agent.
+            from novacode_cli.config.nova_config import NovaConfig
+            from novacode_cli.context._analysis import working_window
+
+            try:
+                return working_window(window, NovaConfig().get("context_budget_tokens"))
+            except Exception:  # noqa: BLE001 - an unreadable config is not worth a turn
+                return window
     return _window_tokens(model)  # type: ignore[arg-type]
 
 
@@ -450,10 +460,27 @@ class ContextCompactionMiddleware(AgentMiddleware):
             found = self._limits[window] = limits_for(window, prune=prune)
         return found
 
-    def _learn_refusal(self, model: object, tokens: int) -> None:
-        """A request of ``tokens`` was refused as too long: that is the window."""
+    def _learn_refusal(self, model: object, tokens: int) -> tuple[int, int | None]:
+        """A request of ``tokens`` was refused as too long: that is the window.
+
+        Returns what :meth:`_unlearn` needs to take it back.
+        """
         believed = self._window or _model_window(model)
-        self._refused[believed] = max(1_000, min(tokens, self._refused.get(believed, believed)))
+        previous = self._refused.get(believed)
+        self._refused[believed] = max(1_000, min(tokens, previous or believed))
+        return believed, previous
+
+    def _unlearn(self, learned: tuple[int, int | None]) -> None:
+        """The shrunk retry failed too, so size was not the problem: forget it.
+
+        Otherwise one misread error on a small request would leave the rest of
+        the session compacting against a window of a few thousand tokens.
+        """
+        believed, previous = learned
+        if previous is None:
+            self._refused.pop(believed, None)
+        else:
+            self._refused[believed] = previous
 
     def _overhead(self, request: ModelRequest) -> int:
         """Tokens the system prompt and tool schemas add to every request."""
@@ -475,6 +502,7 @@ class ContextCompactionMiddleware(AgentMiddleware):
 
     def _calibrate(self, response: Any, raw_tokens: int) -> None:  # noqa: ANN401
         """Learn how far the estimate was from what the provider counted."""
+        response = getattr(response, "model_response", response)
         results = [response] if isinstance(response, AIMessage) else getattr(response, "result", None)
         reply = next((m for m in reversed(results or []) if isinstance(m, AIMessage)), None)
         seen = ((getattr(reply, "usage_metadata", None) or {}).get("input_tokens")) or 0
@@ -506,9 +534,9 @@ class ContextCompactionMiddleware(AgentMiddleware):
             if self._prune_edit is not None:
                 pruned = list(messages)
                 try:
-                    self._prune_edit.apply(
-                        pruned, count_tokens=(lambda _view: 10**12) if force else count
-                    )
+                    # Whether to prune is decided above; the edit's own trigger
+                    # may be sized for a window larger than the one in force.
+                    self._prune_edit.apply(pruned, count_tokens=lambda _view: 10**12)
                     view = pruned
                 except Exception:  # noqa: BLE001 - an unpruned turn beats a failed one
                     logger.warning("Tool-result pruning failed; sending them as they are", exc_info=True)
@@ -644,26 +672,35 @@ class ContextCompactionMiddleware(AgentMiddleware):
     ) -> ModelResponse | ExtendedModelResponse:
         """Shrink the request as far as needed, then make the call."""
         plan = self._plan(request)
-        overflow = False
+        learned = None
         if not plan.cutoff:
             try:
                 response = await handler(request.override(messages=plan.messages))
             except Exception as error:
                 if not _is_overflow(error):
                     raise
-                self._learn_refusal(request.model, int(plan.raw_tokens * self._scale))
                 # The provider knows the real limit; whatever we estimated, cut now.
-                overflow = True
+                learned = self._learn_refusal(request.model, int(plan.raw_tokens * self._scale))
                 plan = self._plan(request, force=True)
             else:
                 self._calibrate(response, plan.raw_tokens)
                 return response
 
         if plan.cutoff:
-            messages, update = await self._compact(request, plan, overflow=overflow)
+            messages, update = await self._compact(request, plan, overflow=learned is not None)
         else:  # too long, and nothing before the tail to summarize
             messages, update = _clip_results(plan.messages), None
-        response = await handler(request.override(messages=messages))
+        try:
+            response = await handler(request.override(messages=messages))
+        except Exception as error:
+            if learned is not None:
+                self._unlearn(learned)
+                raise
+            if not _is_overflow(error):
+                raise
+            # Summarized on schedule and still refused: the kept tail holds a
+            # result that is too large on its own.
+            response = await handler(request.override(messages=_clip_results(messages)))
         if update is None:
             return response
         return ExtendedModelResponse(model_response=response, command=Command(update=update))
@@ -675,25 +712,35 @@ class ContextCompactionMiddleware(AgentMiddleware):
     ) -> ModelResponse | ExtendedModelResponse:
         """Synchronous twin of :meth:`awrap_model_call`."""
         plan = self._plan(request)
-        overflow = False
+        learned = None
         if not plan.cutoff:
             try:
                 response = handler(request.override(messages=plan.messages))
             except Exception as error:
                 if not _is_overflow(error):
                     raise
-                self._learn_refusal(request.model, int(plan.raw_tokens * self._scale))
-                overflow = True
+                # The provider knows the real limit; whatever we estimated, cut now.
+                learned = self._learn_refusal(request.model, int(plan.raw_tokens * self._scale))
                 plan = self._plan(request, force=True)
             else:
                 self._calibrate(response, plan.raw_tokens)
                 return response
 
         if plan.cutoff:
-            messages, update = _run_sync(self._compact(request, plan, overflow=overflow))
-        else:
+            messages, update = _run_sync(self._compact(request, plan, overflow=learned is not None))
+        else:  # too long, and nothing before the tail to summarize
             messages, update = _clip_results(plan.messages), None
-        response = handler(request.override(messages=messages))
+        try:
+            response = handler(request.override(messages=messages))
+        except Exception as error:
+            if learned is not None:
+                self._unlearn(learned)
+                raise
+            if not _is_overflow(error):
+                raise
+            # Summarized on schedule and still refused: the kept tail holds a
+            # result that is too large on its own.
+            response = handler(request.override(messages=_clip_results(messages)))
         if update is None:
             return response
         return ExtendedModelResponse(model_response=response, command=Command(update=update))

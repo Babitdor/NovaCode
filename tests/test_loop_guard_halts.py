@@ -148,3 +148,15 @@ def test_trying_a_different_payload_in_the_same_script_is_not_a_loop() -> None:
         for payload in payloads
     ]
     assert not any("LOOP STOPPED" in o.content for o in outs)
+
+
+def test_a_stop_left_over_from_an_interrupted_turn_does_not_end_the_next_one():
+    from langchain_core.messages import HumanMessage
+
+    from novacode_cli.tracking.loop_guard import LoopGuardMiddleware
+
+    guard = LoopGuardMiddleware()
+    guard._halt = True  # the hard stop fired, then the user interrupted
+
+    assert guard.before_model({"messages": [HumanMessage("something new")]}, None) is None
+    assert guard._halt is False

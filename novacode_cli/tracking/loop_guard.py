@@ -155,6 +155,11 @@ class LoopGuardMiddleware(AgentMiddleware):
         if not self._halt:
             return None
         self._halt = False
+        # Only straight after the tool step that asked for it. If that turn was
+        # interrupted first, the flag would otherwise end the user's next one.
+        messages = state.get("messages") or []
+        if not messages or not isinstance(messages[-1], ToolMessage):
+            return None
         note = (
             "I stopped: I was repeating the same tool call without getting anywhere. "
             "The work so far is as the tool results above show it."

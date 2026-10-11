@@ -176,8 +176,9 @@ def test_hard_stops_turn_after_escalation_limit():
     assert "LOOP HALTED" in out3.content
     # The stop itself happens before the next model call; a Command(goto=END)
     # from the tool node never ended the turn (tests/test_loop_guard_halts.py).
-    assert mw.before_model({}, None)["jump_to"] == "end"
-    assert mw.before_model({}, None) is None  # once
+    after_the_halt = {"messages": [out3]}
+    assert mw.before_model(after_the_halt, None)["jump_to"] == "end"
+    assert mw.before_model(after_the_halt, None) is None  # once
 
 
 def test_real_call_resets_block_escalation():

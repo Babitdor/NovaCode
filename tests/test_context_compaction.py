@@ -252,8 +252,13 @@ def _history(turns: int) -> list:
     return messages
 
 
+class _Request(SimpleNamespace):
+    def override(self, **changes: Any) -> _Request:
+        return _Request(**{**vars(self), **changes})
+
+
 def _request(messages: list, model: Any = None) -> Any:
-    return SimpleNamespace(model=model, messages=messages, system_message=None, tools=[], state={})
+    return _Request(model=model, messages=messages, system_message=None, tools=[], state={})
 
 
 def _results(messages: list) -> dict:
@@ -455,3 +460,67 @@ def test_the_context_bar_measures_against_the_same_budget(monkeypatch: pytest.Mo
     assert ContextManager("big-model").breakdown([]).context_window_size == A.DEFAULT_CONTEXT_BUDGET_TOKENS
     setting["context_budget_tokens"] = 0
     assert ContextManager("big-model").window_size() == 1_000_000
+
+
+# ── found in review ────────────────────────────────────────────────────────
+
+
+def test_injected_notes_are_not_quoted_as_the_users_words() -> None:
+    head = [
+        HumanMessage(TASK),
+        HumanMessage("Internal context: skills that may apply. If one fits, read it."),
+        HumanMessage("also keep the tests green"),
+    ]
+    assert user_messages(head, 10_000) == [TASK, "also keep the tests green"]
+
+
+def test_a_refusal_that_shrinking_does_not_cure_is_not_remembered() -> None:
+    """A misread error on a small request must not shrink the window for good."""
+    middleware = ContextCompactionMiddleware(context_window=128_000)
+    request = _request(_history(4))
+
+    def refuse(_request: Any) -> Any:
+        raise ValueError("context_length_exceeded")
+
+    with pytest.raises(ValueError, match="context_length"):
+        middleware.wrap_model_call(request, refuse)
+
+    assert middleware.limits(request.model).window == 128_000
+
+
+def test_a_summary_on_schedule_that_is_still_too_long_is_clipped_and_retried() -> None:
+    middleware = ContextCompactionMiddleware(Worker(), context_window=WINDOW)
+    history = _history(12)
+    history[-1] = ToolMessage("x" * 40_000, tool_call_id=history[-1].tool_call_id)
+    sizes: list[int] = []
+
+    def handler(request: Any) -> Any:
+        sizes.append(count_tokens_approximately(request.messages))
+        if sizes[-1] > 5_000:
+            raise ValueError("context_length_exceeded")
+        return AIMessage(content="ok")
+
+    middleware.wrap_model_call(_request(history), handler)
+
+    assert len(sizes) == 2 and sizes[1] < 5_000 < sizes[0]
+
+
+def test_pruning_does_not_wait_for_a_trigger_sized_for_a_larger_window() -> None:
+    from langchain.agents.middleware import ClearToolUsesEdit
+
+    edit = ClearToolUsesEdit(trigger=10**9, keep=1)
+    middleware = ContextCompactionMiddleware(prune_edit=edit)
+    small = SimpleNamespace(profile={"max_input_tokens": 4_000})
+
+    plan = middleware._plan(_request(_history(12), small))
+
+    assert any(m.content == edit.placeholder for m in plan.messages if isinstance(m, ToolMessage))
+
+
+def test_a_model_profile_window_is_budgeted_like_the_main_agents(monkeypatch) -> None:
+    from novacode_cli.config.nova_config import NovaConfig
+
+    monkeypatch.setattr(NovaConfig, "get", lambda self, key, default=None: 50_000)
+    huge = SimpleNamespace(profile={"max_input_tokens": 1_000_000})
+
+    assert ContextCompactionMiddleware().limits(huge).window == 50_000
