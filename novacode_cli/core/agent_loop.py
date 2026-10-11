@@ -1269,11 +1269,13 @@ async def _handle_tool_message(
         # summary, and the dispatched/completed events carry the overall status.
         # The panel's preview does want each result, but only shows it on demand.
         if preview_task_id:
-            _line = format_tool_result_preview(tool_name, tool_content, tool_status)
-            if _line:
-                yield ev.SubagentPreview(
-                    preview_task_id, "error" if _line.startswith("✗") else "result", _line
-                )
+            # Sent even with no summary (file tools have none): it is what marks
+            # the call as finished in the preview.
+            _line = format_tool_result_preview(tool_name, tool_content, tool_status) or ""
+            _failed = tool_status != "success" or _line.startswith("✗")
+            yield ev.SubagentPreview(
+                preview_task_id, "error" if _failed else "result", _line, tool_call_id or ""
+            )
 
     # Completed subagent (task tool)
     if tool_name == "task" and tool_call_id and tool_call_id in subagent_tracker.active_subagents:
@@ -1466,7 +1468,9 @@ async def _handle_tool_call_chunk(
                 TOOL_CATEGORIES,
             )
             if preview_task_id:
-                yield ev.SubagentPreview(preview_task_id, "tool", f"{icon} {display_str}")
+                yield ev.SubagentPreview(
+                    preview_task_id, "tool", f"{icon} {display_str}", buffer_id or ""
+                )
 
     if buffer_name == "task" and "subagent_type" in parsed_args:
         subagent_type = parsed_args["subagent_type"]

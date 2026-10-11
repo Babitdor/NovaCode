@@ -181,6 +181,7 @@ class SubagentPreview:
     task_id: str
     kind: str  # "text" | "tool" | "result" | "error"
     text: str = ""
+    call_id: str = ""  # ties a "result"/"error" to the "tool" it answers
 
 
 @dataclass

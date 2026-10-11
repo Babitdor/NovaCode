@@ -2640,6 +2640,7 @@ class NovaApp(App):
         if watchdog is not None:
             watchdog.stop()
         for pane in getattr(self, "_panes", []):
+            await self._finish_remote_mirrors(pane, cancelled=True)
             state = (
                 self.session_state if pane is self._active_pane else pane.state.get("session_state")
             )
@@ -3710,8 +3711,17 @@ class NovaApp(App):
     def _feed_remote(self, pane, event) -> None:
         """Feed a stream event to the remote status of the session it belongs to."""
         from novacode_cli.remote.status import feed
+        from novacode_cli.remote.streaming import RemoteAnswerStream
 
         try:
+            owner = pane or getattr(self, "_root_pane", None)
+            if owner is not None:
+                if owner.remote_snapshot is None:
+                    owner.remote_snapshot = RemoteAnswerStream(None)
+                owner.remote_snapshot.feed(event)
+                for _target, status, answer in owner.remote_mirrors.values():
+                    feed(status, event)
+                    answer.feed(event)
             if pane is None or pane.kind == "root":
                 if self._remote_status is not None:
                     feed(self._remote_status, event)
@@ -4202,6 +4212,10 @@ class NovaApp(App):
 
     async def _send_child_prompt(self, pane, text: str, *, images=None):
         """Send the tab's explicit approval preference with each prompt."""
+        from novacode_cli.remote.streaming import RemoteAnswerStream
+
+        if pane.remote_snapshot is None:
+            pane.remote_snapshot = RemoteAnswerStream(None)
         state = pane.state.get("session_state")
         options = {"auto_approve": bool(getattr(state, "auto_approve", False))}
         if images:
@@ -4261,6 +4275,7 @@ class NovaApp(App):
 
     async def _finish_remote_turn(self, pane, error: str | None = None) -> None:
         """Settle the oldest remote turn of a spawned session and send its answer."""
+        await self._finish_remote_mirrors(pane, error=error)
         if not pane.remote_turns:
             return
         turn = pane.remote_turns.popleft()
@@ -4324,12 +4339,12 @@ class NovaApp(App):
             return root.state.get("session_state", self.session_state)
         return self.session_state
 
-    async def _sync_remote_topics(self) -> None:
+    async def _sync_remote_topics(self, *, attach_running: bool = True) -> None:
         for pane in getattr(self, "_panes", []):
             if pane.kind == "root" or pane.status not in ("crashed", "exited"):
-                await self._open_remote_topics(pane)
+                await self._open_remote_topics(pane, attach_running=attach_running)
 
-    async def _open_remote_topics(self, pane) -> None:
+    async def _open_remote_topics(self, pane, *, attach_running: bool = True) -> None:
         """Bind every live session to its own stable Telegram topic."""
         from novacode_cli.remote.routing import RemoteRouter
 
@@ -4357,10 +4372,76 @@ class NovaApp(App):
                         thread_id=tid,
                         sid=pane.sid,
                     )
+                if attach_running:
+                    await self._attach_running_remote_topic(pane, bridge, tid)
             except Exception as error:
                 self.notify(
                     f"Telegram session topic could not connect: {error}", severity="warning"
                 )
+
+    async def _attach_running_remote_topic(self, pane, bridge, tid: int) -> None:
+        """Join the current turn, without waiting for the next local prompt."""
+        from novacode_cli.remote.status import RemoteStatusLine
+        from novacode_cli.remote.streaming import RemoteAnswerStream
+
+        if getattr(pane, "status", "idle") not in ("running", "needs-approval"):
+            return
+        async with pane.remote_attach_lock:
+            if pane.status not in ("running", "needs-approval"):
+                return
+            key = (bridge, tid)
+            if key in pane.remote_mirrors:
+                return
+
+            def same_topic(target):
+                route = getattr(target, "route", None) or {}
+                return (
+                    str(getattr(target, "chat_id", "")) == str(bridge._config.chat_id)
+                    and route.get("thread") == tid
+                )
+
+            existing = [turn.msg for turn in pane.remote_turns]
+            if pane.kind == "root":
+                existing += [target for target, _status, _answer in self._local_remote_streams]
+                if self._remote_msg is not None:
+                    existing.append(self._remote_msg)
+            if any(same_topic(target) for target in existing):
+                return
+            snapshot = pane.remote_snapshot
+            if snapshot is None:
+                return
+            target = await bridge.stream_target(sid=pane.sid)
+            # The turn may finish while a bridge prepares its destination.
+            if (
+                target is None
+                or pane.status not in ("running", "needs-approval")
+                or pane.remote_snapshot is not snapshot
+            ):
+                return
+            status = RemoteStatusLine(target.edit_fn, label=f"NOVA · {pane.title}")
+            answer = RemoteAnswerStream(target.answer_edit_fn)
+            if snapshot is not None:
+                answer.text = snapshot.text
+                answer.dirty = bool(answer.text)
+                answer.truncated = snapshot.truncated
+                answer.error = snapshot.error
+                answer.cancelled = snapshot.cancelled
+            pane.remote_mirrors[key] = (target, status, answer)
+            status.start()
+            answer.start(immediate=True)
+
+    async def _finish_remote_mirrors(self, pane, *, error=None, cancelled=False) -> None:
+        if pane is None:
+            return
+        streams = list(pane.remote_mirrors.values())
+        pane.remote_mirrors.clear()
+        pane.remote_snapshot = None
+        for _target, _status, answer in streams:
+            if error:
+                answer.error = error
+            if cancelled:
+                answer.cancelled = True
+        await self._finish_remote_streams(streams)
 
     async def _close_remote_topics(self, pane) -> None:
         router = getattr(self, "_remote_router", None)
@@ -5236,18 +5317,22 @@ class NovaApp(App):
         if opened is None:
             return
 
-        def snapshot() -> tuple[Text, list]:
+        # The same header the main page gives the agent's own turns.
+        label = self._agent_label(opened.subagent_type or "subagent")
+        label.stylize("bold")
+
+        def snapshot() -> tuple[Text, str, list]:
             row = self._subagent_rows.get(task_id, opened)
             title = Text()
             title.append(f"{subagent_tasks.status_glyph(row.status)} ", style="cyan")
-            title.append(row.subagent_type or "subagent", style="bold")
+            title.append_text(label)
             elapsed = subagent_tasks.format_elapsed(subagent_tasks.elapsed_for(row))
             title.append(f"  {row.status} · {elapsed} · {row.model or '—'}", style="dim")
-            if row.phase_kind != "async" and (row.description or row.label):
-                title.append(f"\n{row.description or row.label}", style="dim")
-            return title, self._subagent_previews.get(task_id) or []
+            # An async row's description is its thread id, not a prompt.
+            task = "" if row.phase_kind == "async" else (row.description or row.label)
+            return title, task, self._subagent_previews.get(task_id) or []
 
-        screen = SubagentPreviewScreen(snapshot)
+        screen = SubagentPreviewScreen(snapshot, label=label, palette=self._palette)
         self.push_screen(screen)
         if opened.phase_kind == "async":
             self._follow_async_preview(task_id, screen)
@@ -5270,7 +5355,7 @@ class NovaApp(App):
             return
         spec = next((s for s in retrieve_async_subagents() if s["name"] == row.subagent_type), None)
         if spec is None:
-            self._subagent_previews[task_id] = [("error", "The agent server is not available.")]
+            self._subagent_previews[task_id] = [("error", "The agent server is not available.", "")]
             return
         client = get_client(url=spec.get("url"), headers=spec.get("headers") or {})
         thread_id = row.description or task_id.removeprefix("async:")
@@ -5281,7 +5366,7 @@ class NovaApp(App):
                 self._subagent_previews[task_id] = subagent_tasks.remote_preview(messages)
             except Exception as exc:  # noqa: BLE001 — a preview must never break the session
                 self._subagent_previews[task_id] = [
-                    ("error", f"Could not read the agent's thread: {exc}")
+                    ("error", f"Could not read the agent's thread: {exc}", "")
                 ]
             if self._subagent_rows.get(task_id, row).status != "running":
                 return
@@ -8315,6 +8400,10 @@ class NovaApp(App):
         self._reset_streaming()
         self._current_assistant_id = assistant_id
         self._turn_active = True
+        if turn_pane is not None:
+            from novacode_cli.remote.streaming import RemoteAnswerStream
+
+            turn_pane.remote_snapshot = RemoteAnswerStream(None)
         self._turn_start = time.monotonic()
         if turn_pane is not None:
             turn_pane.status = "running"
@@ -8335,7 +8424,8 @@ class NovaApp(App):
                 await self._do_stream(text, assistant_id)
         except asyncio.CancelledError:
             self._reset_streaming()
-            for _target, _status, answer in self._local_remote_streams:
+            mirrors = list(turn_pane.remote_mirrors.values()) if turn_pane is not None else []
+            for _target, _status, answer in self._local_remote_streams + mirrors:
                 answer.cancelled = True
             # A Ctrl+B detach surfaces as an ev.Cancelled event (handled with its
             # own "moved to background" note); only a real cancel reaches here.
@@ -8343,7 +8433,8 @@ class NovaApp(App):
                 self._log(Text("Cancelled.", style="yellow"))
         except Exception as ex:  # noqa: BLE001
             msg = str(ex).lower()
-            for _target, _status, answer in self._local_remote_streams:
+            mirrors = list(turn_pane.remote_mirrors.values()) if turn_pane is not None else []
+            for _target, _status, answer in self._local_remote_streams + mirrors:
                 answer.error = str(ex)
             if any(
                 kw in msg
@@ -8368,6 +8459,7 @@ class NovaApp(App):
             else:
                 self._log(Text(f"Error: {ex}", style="red"))
         finally:
+            await self._finish_remote_mirrors(turn_pane)
             await self._finish_local_remote_stream()
             self._turn_active = False
             if turn_pane is not None:
@@ -10003,10 +10095,19 @@ class NovaApp(App):
         manager = getattr(self._remote_owner_state(), "_remote_bridge_manager", None)
         if manager is None:
             return []
-        await self._sync_remote_topics()
+        await self._sync_remote_topics(attach_running=False)
         streams = []
         targets = await manager.stream_targets(sid="root")
         for target in targets:
+            root = getattr(self, "_root_pane", None)
+            route = getattr(target, "route", None) or {}
+            if label == "main" and root is not None and route.get("thread") is not None:
+                if any(
+                    str(bridge._config.chat_id) == str(target.chat_id)
+                    and tid == route["thread"]
+                    for bridge, tid in root.remote_mirrors
+                ):
+                    continue
             status = RemoteStatusLine(
                 target.edit_fn, label=f"NOVA · {label} · " + " ".join(prompt.split())[:80]
             )
@@ -14222,7 +14323,7 @@ class NovaApp(App):
         elif isinstance(e, ev.SubagentPreview):
             # Collected unseen; the preview screen reads it when a row is opened.
             subagent_tasks.append_preview(
-                self._subagent_previews.setdefault(e.task_id, []), e.kind, e.text
+                self._subagent_previews.setdefault(e.task_id, []), e.kind, e.text, e.call_id
             )
         elif isinstance(e, ev.UsageUpdate):
             if self.token_tracker is not None:

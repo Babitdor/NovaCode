@@ -137,6 +137,123 @@ async def test_enabling_remote_after_launch_starts_one_consumer():
         worker.cancel()
 
 
+async def test_new_topic_joins_current_local_response_and_keeps_streaming(monkeypatch):
+    app = _app()
+    updates = []
+    painted = asyncio.Event()
+
+    async def edit(text, final=False):
+        updates.append((text, final))
+        painted.set()
+
+    target = SimpleNamespace(
+        chat_id=123,
+        route={"thread": 42},
+        edit_fn=AsyncMock(),
+        answer_edit_fn=edit,
+        reply_fn=AsyncMock(),
+    )
+    bridge = SimpleNamespace(
+        _config=SimpleNamespace(chat_id=123),
+        ensure_session_topic=AsyncMock(return_value=42),
+        post=AsyncMock(),
+        stream_target=AsyncMock(return_value=target),
+    )
+
+    # A bridge instance is the connection identity (normally a hashable object).
+    class Connection:
+        pass
+
+    connection = Connection()
+    connection.__dict__.update(bridge.__dict__)
+    monkeypatch.setattr(app, "_remote_telegram_bridges", lambda: [connection])
+    async with app.run_test():
+        pane = app._root_pane
+        pane.status = "running"
+        app._feed_remote(pane, ev.TextDelta("Already running"))
+        await asyncio.gather(app._open_remote_topics(pane), app._open_remote_topics(pane))
+        await asyncio.wait_for(painted.wait(), 5)
+        assert updates == [("Already running", False)]
+        connection.stream_target.assert_awaited_once_with(sid="root")
+        app.session_state._remote_bridge_manager = SimpleNamespace(
+            stream_targets=AsyncMock(return_value=[target]),
+            bridges=lambda *_args: [],
+        )
+        assert await app._create_local_remote_streams("Original prompt") == []
+        app._feed_remote(pane, ev.TextDelta(" — more output"))
+        app._feed_remote(
+            pane,
+            ev.AssistantMessage(
+                text="Already running — more output",
+                agent_name="Nova",
+                agent_color="cyan",
+            ),
+        )
+        pane.status = "idle"
+        await app._finish_remote_mirrors(pane)
+        assert updates[-1] == ("Already running — more output", True)
+        assert sum(final for _text, final in updates) == 1
+        assert not pane.remote_mirrors
+        assert pane.remote_snapshot is None
+        target.reply_fn.assert_not_awaited()
+
+
+async def test_hidden_child_topic_streams_its_own_response_and_cancellation():
+    app = _app()
+    edit = AsyncMock()
+    target = SimpleNamespace(
+        chat_id=123,
+        route={"thread": 43},
+        edit_fn=AsyncMock(),
+        answer_edit_fn=edit,
+        reply_fn=AsyncMock(),
+    )
+
+    class Connection:
+        _config = SimpleNamespace(chat_id=123)
+        stream_target = AsyncMock(return_value=target)
+
+    async with app.run_test():
+        pane = await _add_pane(app, sid="hidden", title="reviewer")
+        pane.status = "running"
+        app._feed_remote(app._root_pane, ev.TextDelta("Main session"))
+        app._feed_remote(pane, ev.TextDelta("Child session"))
+        await app._attach_running_remote_topic(pane, Connection(), 43)
+        app._feed_remote(pane, ev.Cancelled())
+        await app._finish_remote_turn(pane)
+        assert "Child session" in edit.call_args.args[0]
+        assert "Task stopped" in edit.call_args.args[0]
+        assert "Main session" not in edit.call_args.args[0]
+        assert not pane.remote_mirrors
+        assert pane.remote_snapshot is None
+
+
+async def test_topic_attachment_discards_a_turn_that_finished_during_setup():
+    app = _app()
+    entered, release = asyncio.Event(), asyncio.Event()
+    target = SimpleNamespace(edit_fn=AsyncMock(), answer_edit_fn=AsyncMock())
+
+    class Connection:
+        _config = SimpleNamespace(chat_id=123)
+
+        async def stream_target(self, **_kwargs):
+            entered.set()
+            await release.wait()
+            return target
+
+    async with app.run_test():
+        pane = app._root_pane
+        pane.status = "running"
+        app._feed_remote(pane, ev.TextDelta("Finishing"))
+        attaching = asyncio.create_task(app._attach_running_remote_topic(pane, Connection(), 42))
+        await asyncio.wait_for(entered.wait(), 5)
+        await app._finish_remote_mirrors(pane)
+        release.set()
+        await attaching
+        assert not pane.remote_mirrors
+        target.answer_edit_fn.assert_not_awaited()
+
+
 async def test_local_tui_turn_streams_answer_and_tools_to_both_platforms(monkeypatch):
     app = _app()
     outputs = {"discord": [], "telegram": []}
@@ -190,7 +307,8 @@ async def test_local_tui_turn_streams_answer_and_tools_to_both_platforms(monkeyp
         monkeypatch.setattr(app, name, AsyncMock())
     async with app.run_test():
         app.session_state._remote_bridge_manager = SimpleNamespace(
-            stream_targets=AsyncMock(return_value=targets)
+            stream_targets=AsyncMock(return_value=targets),
+            bridges=lambda *_args: [],
         )
         await app._stream_prompt("Inspect a.py")
         for records in outputs.values():

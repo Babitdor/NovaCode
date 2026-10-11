@@ -22,6 +22,7 @@ trackers) — those handlers are the existing definition of conversation state.
 
 from __future__ import annotations
 
+import asyncio
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
@@ -192,6 +193,10 @@ class SessionPane:
     remote_turns: deque = field(default_factory=deque)
     """Remote (Telegram/Discord) prompts sent to this child, oldest first. The
     head receives the child's events and is answered at its ``turn_done``."""
+    remote_snapshot: Any = None
+    """Bounded current response, including while no remote client is connected."""
+    remote_mirrors: dict = field(default_factory=dict)
+    remote_attach_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def save_from(self, app: Any) -> None:
         """Capture the app's conversation attributes into this pane."""

@@ -76,9 +76,9 @@ class RemoteAnswerStream:
         self._parts = [value] if value else []
         self._characters = len(value)
 
-    def start(self) -> None:
+    def start(self, *, immediate: bool = False) -> None:
         if self.task is None:
-            self.task = asyncio.create_task(self._pump())
+            self.task = asyncio.create_task(self._pump(immediate=immediate))
 
     def feed(self, event: object) -> None:
         if self.closed:
@@ -105,11 +105,12 @@ class RemoteAnswerStream:
         elif isinstance(event, ev.Cancelled):
             self.cancelled = True
 
-    async def _pump(self) -> None:
+    async def _pump(self, *, immediate: bool = False) -> None:
         retry_delay = self.interval
         try:
             while True:
-                await asyncio.sleep(retry_delay)
+                await asyncio.sleep(0 if immediate else retry_delay)
+                immediate = False
                 if self.dirty and self.text.strip():
                     self.dirty = False
                     try:

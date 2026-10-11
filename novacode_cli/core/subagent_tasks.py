@@ -503,16 +503,17 @@ def panel_lines(
 
 # ── preview: what one row is doing ───────────────────────────────────────────
 
-#: One preview item: ``(kind, text)`` with kind "text" | "tool" | "result" | "error".
-PreviewEntry = tuple[str, str]
+#: One preview item: ``(kind, text, call_id)`` with kind "text" | "tool" |
+#: "result" | "error". ``call_id`` ties a result to its tool call; "" for prose.
+PreviewEntry = tuple[str, str, str]
 
 
-def append_preview(entries: list[PreviewEntry], kind: str, text: str) -> None:
+def append_preview(entries: list[PreviewEntry], kind: str, text: str, call_id: str = "") -> None:
     """Add one item, joining streamed text onto the text before it."""
     if kind == "text" and entries and entries[-1][0] == "text":
-        entries[-1] = ("text", entries[-1][1] + text)
+        entries[-1] = ("text", entries[-1][1] + text, "")
     else:
-        entries.append((kind, text))
+        entries.append((kind, text, call_id))
     del entries[:-MAX_PREVIEW_ENTRIES]
 
 
@@ -521,48 +522,84 @@ def preview_renderable(
     *,
     markdown: Any = None,
     cache: dict[PreviewEntry, Any] | None = None,
+    label: Text | None = None,
+    palette: Any = None,
 ) -> Any:
-    """The preview body: prose as Markdown, each tool call with its result under it.
+    """The preview body, laid out like the main transcript.
 
-    A subagent writes Markdown (headings, lists, code fences), so its prose is
-    rendered as such rather than shown as source. Tool calls are one marked line
-    each, with the result hung beneath, and a blank line separates prose from a
-    run of tool calls so the two read as blocks.
+    Prose is a message: the agent's name (``label``) over rendered Markdown. A
+    run of tool calls is one block under an "N tool calls" heading, one line per
+    call -- a bullet coloured by outcome, the call, then its result after a
+    dash -- which is how the main page's tool group draws them. A result is
+    matched to its call by ``call_id``; one with no call to sit beside (its call
+    was trimmed, or it never had an id) is hung on a line of its own.
 
     ``markdown`` is the Markdown class to build prose with (the TUI passes its
-    caching one). ``cache`` keeps each entry's renderable between calls: a
-    preview is rebuilt on every update, and only the entry still streaming has
-    changed.
+    caching one). ``cache`` keeps each prose renderable between calls: a preview
+    is rebuilt on every update, and only the entry still streaming has changed.
+    ``palette`` is the TUI's theme palette; plain colour names stand in without.
     """
+    from itertools import groupby
+
     from rich.console import Group
+    from rich.padding import Padding
 
     if markdown is None:
         from rich.markdown import Markdown as markdown  # noqa: N813
 
-    parts: list[Any] = []
-    previous = ""
-    for entry in entries:
-        kind, text = entry
-        body = text.strip()
-        if not body:
+    ok = getattr(palette, "tool_ok", "green")
+    fail = getattr(palette, "tool_fail", "red")
+    pending = getattr(palette, "tool_pending", "yellow")
+    dim = getattr(palette, "dim", "dim")
+
+    outcome = {cid: (kind, text) for kind, text, cid in entries if cid and kind != "tool"}
+    called = {cid for kind, _, cid in entries if cid and kind == "tool"}
+    shown = [
+        e
+        for e in entries
+        # A result drawn on its call's line is not drawn again; blanks say nothing.
+        if (e[0] == "tool" or e[2] not in called) and e[1].strip()
+    ]
+
+    blocks: list[Any] = []
+    for is_prose, run in groupby(shown, key=lambda e: e[0] == "text"):
+        if is_prose:
+            for entry in run:
+                body = cache.get(entry) if cache is not None else None
+                if body is None:
+                    body = markdown(entry[1].strip())
+                    if cache is not None:
+                        cache[entry] = body
+                blocks.append(Group(label, body) if label is not None else body)
             continue
-        block = "prose" if kind == "text" else "tools"
-        if previous and block != previous or block == previous == "prose":
-            parts.append(Text(""))
-        previous = block
-        part = cache.get(entry) if cache is not None else None
-        if part is None:
-            if kind == "text":
-                part = markdown(body)
-            elif kind == "tool":
-                part = Text.assemble(("▸ ", "cyan"), (body, "bold cyan"))
-            else:
-                part = Text.assemble(("  ⎿ ", "dim"), (body, "red" if kind == "error" else "dim"))
-            if cache is not None:
-                cache[entry] = part
-        parts.append(part)
+        lines: list[Text] = []
+        calls = 0
+        for kind, text, cid in run:
+            if kind != "tool":
+                style = fail if kind == "error" else dim
+                lines.append(Text.assemble(("  ⎿ ", dim), (text.strip(), style)))
+                continue
+            calls += 1
+            result, detail = outcome.get(cid, ("", ""))
+            mark = fail if result == "error" else ok if result else pending if cid else dim
+            style = fail if result == "error" else dim
+            line = Text.assemble(("• ", f"bold {mark}"), (text.strip(), style))
+            # The summary's own ✓/✗ repeats what the bullet's colour already says.
+            if detail := detail.strip().lstrip("✓✗ "):
+                line.append(f"  — {detail}", style=style)
+            lines.append(line)
+        if calls:
+            lines.insert(0, Text(f"{calls} tool call{'' if calls == 1 else 's'}", style="bold"))
+        blocks.append(Group(*lines))
     if cache is not None and len(cache) > 2 * MAX_PREVIEW_ENTRIES:
         cache.clear()  # superseded streaming prefixes; the next call refills it
+
+    parts: list[Any] = []
+    for block in blocks:
+        if parts:
+            parts.append(Text(""))
+        # The transcript's own inset (ChatMessage and the tool group pad by 2).
+        parts.append(Padding(block, (0, 2)))
     return Group(*parts)
 
 
@@ -588,22 +625,30 @@ def remote_preview(messages: object) -> list[PreviewEntry]:
         content = str(content or "")
         kind = message.get("type")
         if kind == "human":
-            entries.append(("result", f"task: {content}"))
+            entries.append(("result", f"task: {content}", ""))
         elif kind == "ai":
             if content.strip():
-                entries.append(("text", content))
+                entries.append(("text", content, ""))
             for call in message.get("tool_calls") or []:
                 if isinstance(call, dict):
                     name = str(call.get("name") or "tool")
                     args = call.get("args")
                     entries.append(
-                        ("tool", format_tool_display(name, args if isinstance(args, dict) else {}))
+                        (
+                            "tool",
+                            format_tool_display(name, args if isinstance(args, dict) else {}),
+                            str(call.get("id") or ""),
+                        )
                     )
         elif kind == "tool":
             status = str(message.get("status") or "success")
-            line = format_tool_result_preview(str(message.get("name") or ""), content, status)
-            if line:
-                entries.append(("error" if line.startswith("✗") else "result", line))
+            line = format_tool_result_preview(str(message.get("name") or ""), content, status) or ""
+            # Kept even when it has no summary (file tools): it is what marks
+            # the call beside it as finished.
+            failed = status != "success" or line.startswith("✗")
+            entries.append(
+                ("error" if failed else "result", line, str(message.get("tool_call_id") or ""))
+            )
     return entries[-MAX_PREVIEW_ENTRIES:]
 
 

@@ -5509,24 +5509,42 @@ class SubagentPreviewScreen(ModalScreen[None]):
     """
 
     BINDINGS = [("escape", "close", "Close")]
+    # A page, not a dialog: it fills the screen and is laid out like the main
+    # transcript (#transcript's padding, ChatMessage.user's bar for the task).
+    # Its ids are its own so the app's #modal-box rules, which outrank any
+    # DEFAULT_CSS, cannot shrink it back into a box.
     DEFAULT_CSS = """
-    SubagentPreviewScreen #modal-box { width: 94%; height: 90%; max-height: 96%; padding: 1 2; }
-    SubagentPreviewScreen #preview-scroll { height: 1fr; }
+    SubagentPreviewScreen #preview-page { width: 100%; height: 100%; background: $background; }
+    SubagentPreviewScreen #preview-head { height: auto; padding: 0 2; background: $surface; }
+    SubagentPreviewScreen #preview-scroll { height: 1fr; padding: 1 2; }
+    SubagentPreviewScreen #preview-task {
+        height: auto; margin: 1 0; padding: 1 2;
+        border-left: thick $primary; background: $panel; color: $foreground;
+    }
+    SubagentPreviewScreen #preview-body { height: auto; }
+    SubagentPreviewScreen #preview-hint { height: auto; padding: 0 2; color: $text-muted; }
     """
 
-    def __init__(self, snapshot: Any) -> None:
-        """``snapshot()`` returns the current ``(title, preview entries)``."""
+    def __init__(self, snapshot: Any, *, label: Text | None = None, palette: Any = None) -> None:
+        """``snapshot()`` returns the current ``(title, task, preview entries)``.
+
+        ``label`` heads each of the agent's messages, as its name does on the
+        main page; ``palette`` colours the tool lines from the active theme.
+        """
         super().__init__()
         self._snapshot = snapshot
+        self._label = label
+        self._palette = palette
         self._shown: list | None = None
         self._rendered: dict = {}
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="modal-box"):
-            yield Static("", id="modal-title")
+        with Vertical(id="preview-page"):
+            yield Static("", id="preview-head")
             with VerticalScroll(id="preview-scroll"):
+                yield Static("", id="preview-task")
                 yield Static("", id="preview-body")
-            yield Static(Text("Esc close", style="dim"), id="modal-hint")
+            yield Static(Text("Esc · back to the session", style="dim"), id="preview-hint")
 
     def on_mount(self) -> None:
         self._refresh()
@@ -5536,18 +5554,27 @@ class SubagentPreviewScreen(ModalScreen[None]):
         from novacode_cli.core.subagent_tasks import preview_renderable
         from novacode_cli.tui.widgets import CachedMarkdown
 
-        title, entries = self._snapshot()
-        self.query_one("#modal-title", Static).update(title)
+        title, task, entries = self._snapshot()
+        self.query_one("#preview-head", Static).update(title)
         if entries == self._shown:
             return
         self._shown = list(entries)
+        prompt = self.query_one("#preview-task", Static)
+        prompt.display = bool(task)
+        prompt.update(Text.assemble(("Task\n", "bold"), task))
         scroll = self.query_one("#preview-scroll", VerticalScroll)
         # Follow the output unless the reader has scrolled back to read.
         follow = scroll.scroll_offset.y >= scroll.max_scroll_y - 1
         body = (
-            preview_renderable(entries, markdown=CachedMarkdown, cache=self._rendered)
+            preview_renderable(
+                entries,
+                markdown=CachedMarkdown,
+                cache=self._rendered,
+                label=self._label,
+                palette=self._palette,
+            )
             if entries
-            else Text("No activity yet.", style="dim")
+            else Text("  No activity yet.", style="dim")
         )
         self.query_one("#preview-body", Static).update(body)
         if follow:

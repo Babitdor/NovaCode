@@ -614,13 +614,13 @@ async def test_clicking_a_task_opens_its_live_preview():
         await pilot.pause()
         assert isinstance(app.screen, SubagentPreviewScreen)
         assert "p1" not in app._subagent_collapsed_phases
-        assert app.screen._shown == [("tool", "grep(docling)")]
+        assert app.screen._shown == [("tool", "grep(docling)", "")]
 
         # It keeps following the row while open.
         await app._render(ev.SubagentPreview("a", "text", "Found three hits."))
         await asyncio.sleep(0.7)
         await pilot.pause()
-        assert app.screen._shown[-1] == ("text", "Found three hits.")
+        assert app.screen._shown[-1] == ("text", "Found three hits.", "")
 
         await pilot.press("escape")
         await pilot.pause()
