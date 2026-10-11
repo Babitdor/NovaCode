@@ -544,3 +544,28 @@ def test_old_results_are_checked_on_disk_once_not_on_every_model_call(tmp_path, 
     monkeypatch.setattr(Path, "exists", touched)
 
     assert _results(middleware._plan(request).messages) == _results(first)
+
+
+def test_the_planning_pass_runs_off_the_event_loop() -> None:
+    """Its first pruning pass writes hundreds of files; the UI shares that loop."""
+    import threading
+
+    middleware = ContextCompactionMiddleware(context_window=WINDOW)
+    ran_on: list[int] = []
+    real_plan = middleware._plan
+
+    def plan(request: Any, **kwargs: Any) -> Any:
+        ran_on.append(threading.get_ident())
+        return real_plan(request, **kwargs)
+
+    middleware._plan = plan  # type: ignore[method-assign]
+
+    async def handler(_request: Any) -> Any:
+        return AIMessage(content="ok")
+
+    async def run() -> int:
+        await middleware.awrap_model_call(_request(_history(2)), handler)
+        return threading.get_ident()
+
+    loop_thread = asyncio.run(run())
+    assert ran_on and all(thread != loop_thread for thread in ran_on)

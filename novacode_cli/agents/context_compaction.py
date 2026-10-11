@@ -667,7 +667,10 @@ class ContextCompactionMiddleware(AgentMiddleware):
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse | ExtendedModelResponse:
         """Shrink the request as far as needed, then make the call."""
-        plan = self._plan(request)
+        # Off the loop the UI shares: the first pruning pass writes every
+        # cleared result to disk (1.4 s for 600 of them), and even a warm
+        # pass over a long conversation is tens of milliseconds.
+        plan = await asyncio.to_thread(self._plan, request)
         learned = None
         if not plan.cutoff:
             try:
@@ -677,7 +680,7 @@ class ContextCompactionMiddleware(AgentMiddleware):
                     raise
                 # The provider knows the real limit; whatever we estimated, cut now.
                 learned = self._learn_refusal(request.model, int(plan.raw_tokens * self._scale))
-                plan = self._plan(request, force=True)
+                plan = await asyncio.to_thread(self._plan, request, force=True)
             else:
                 self._calibrate(response, plan.raw_tokens)
                 return response
