@@ -58,7 +58,9 @@ async def concurrent_measure():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", default="context-learning-benchmarks.json")
+    parser.add_argument(
+        "--output", default="reports/context-learning/context-learning-benchmarks.json"
+    )
     args = parser.parse_args()
     results = {"live_provider_calls": 0, "recall": "observational; usefulness not demonstrated",
                "small_corpus": corpus_measure(32, 1024), "large_corpus": corpus_measure(2000, 8192),

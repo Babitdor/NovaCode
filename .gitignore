@@ -11,7 +11,10 @@ __pycache__/
 build/
 develop-eggs/
 dist/
-docs/
+docs/*
+!docs/context-learning/
+# Any nested docs/ folder stays ignored, as the old bare docs/ rule had it.
+*/**/docs/
 downloads/
 eggs/
 .eggs/
@@ -174,5 +177,10 @@ tmp/
 /SECURITY_REMEDIATION_SPEC.md
 
 # Context/learning verification outputs (scripts/*context_learning*.py); local only
+/reports/
 /context-learning-*.json
 /context-learning-*.xml
+# Test and tool scratch at the root
+/.pytest-*/
+/.tmp-*
+/.uv-cache-pty/

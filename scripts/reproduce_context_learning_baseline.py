@@ -27,10 +27,12 @@ def main():
             targets.append(target)
     if not targets:
         raise RuntimeError("No baseline test targets found")
-    output = Path("context-learning-baseline-tests.xml").resolve()
+    reports = Path("reports/context-learning")
+    reports.mkdir(parents=True, exist_ok=True)
+    output = (reports / "context-learning-baseline-tests.xml").resolve()
     command = [sys.executable, "-m", "pytest", *targets, "-q", "--tb=short", "--timeout=" + args.timeout, "--junitxml=" + str(output)]
     result = subprocess.run(command, cwd=args.baseline.resolve(), capture_output=True, encoding="utf-8", errors="replace")
-    Path("context-learning-baseline.json").write_text(json.dumps({"command": command, "exit_code": result.returncode, "targets": targets, "output": result.stdout}, indent=2), encoding="utf-8")
+    (reports / "context-learning-baseline.json").write_text(json.dumps({"command": command, "exit_code": result.returncode, "targets": targets, "output": result.stdout}, indent=2), encoding="utf-8")
     print(result.stdout)
     print(result.stderr, file=sys.stderr)
     return result.returncode

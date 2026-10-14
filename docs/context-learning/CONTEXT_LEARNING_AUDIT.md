@@ -27,7 +27,7 @@ archive sequences. Offline Google stdio fixtures validate all three preset
 service/port/account configurations alongside existing OAuth fixtures.
 
 The complete local acceptance entry point `scripts/verify_context_learning.py`
-reports `passed=true` in `context-learning-acceptance-final.json`, with the same
+reports `passed=true` in `reports/context-learning/context-learning-acceptance-final.json`, with the same
 source hash before and after its run. Affected tests passed **608**, and the
 same **608 passed** in global shuffled order. Two fresh full-suite processes
 each passed **3,985 tests** (13 skipped, 1 xpassed); the first ran under
@@ -109,8 +109,8 @@ The dedicated SQLite ledger serializes revisions across connections/processes, r
 ## Verification evidence
 
 - Initial RED: all four original regression cases failed on the original implementation.
-- Final combined runner: **485 tests passed**, including 20 MCP preset checks; new-module lint passed. `context-learning-results.json` records the source hash, exact commands, timings and model-free accounting sample.
-- Four manual mutants were detected: dropped steering, shared counter ownership, stale revision approval, and stale content identity. Every target file was restored byte-for-byte. `context-learning-mutations.json` records actual failing tests. The runner also failed closed when an initial mutation target did not match Windows line endings; this is a limited negative control, not proof that every checker is sound.
+- Final combined runner: **485 tests passed**, including 20 MCP preset checks; new-module lint passed. `reports/context-learning/context-learning-results.json` records the source hash, exact commands, timings and model-free accounting sample.
+- Four manual mutants were detected: dropped steering, shared counter ownership, stale revision approval, and stale content identity. Every target file was restored byte-for-byte. `reports/context-learning/context-learning-mutations.json` records actual failing tests. The runner also failed closed when an initial mutation target did not match Windows line endings; this is a limited negative control, not proof that every checker is sound.
 - Configured mypy checked snapshot and ledger modules successfully. Existing modules retain pre-existing lint debt; new-module lint is a strict gate.
 - Complete broad run: **3,859 passed, 48 failed, 15 skipped, 1 xpassed**. Of those 48 failures, **37 also failed on untouched HEAD** in the baseline replay; **11 passed** there. Contract mismatches in compaction/subagent tests and the persistence callback seam were corrected and reverified in focused runs. Other cases passed in isolation and remain suite-order/environment concerns rather than established product defects.
 - A later fresh full run with a 20-second test deadline terminated in a headless HTTP test. It is not a green full-suite result. Preserve the XML/output artifacts; do not interpret focused passes as a clean release gate.
@@ -121,8 +121,8 @@ Reproduce:
 
 ```powershell
 .venv/Scripts/python.exe scripts/verify_context_learning.py
-.venv/Scripts/python.exe scripts/verify_context_learning.py --mutations --output context-learning-mutations.json
-.venv/Scripts/python.exe scripts/verify_context_learning.py --full --output context-learning-full-results.json
+.venv/Scripts/python.exe scripts/verify_context_learning.py --mutations --output reports/context-learning/context-learning-mutations.json
+.venv/Scripts/python.exe scripts/verify_context_learning.py --full --output reports/context-learning/context-learning-full-results.json
 .venv/Scripts/mypy.exe novacode_cli/context/snapshot.py novacode_cli/hermes/ledger.py --follow-imports=silent --ignore-missing-imports
 ```
 

@@ -97,9 +97,10 @@ def test_source_hash_includes_runtime_templates_and_packaged_assets(tmp_path, mo
     for name in (
         "pyproject.toml",
         "uv.lock",
-        "CONTEXT_LEARNING_SPEC.md",
-        "CONTEXT_LEARNING_CONTRACT.md",
+        "docs/context-learning/CONTEXT_LEARNING_SPEC.md",
+        "docs/context-learning/CONTEXT_LEARNING_CONTRACT.md",
     ):
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / name).write_text(name, encoding="utf-8")
     template = tmp_path / "novacode_cli" / "prompts" / "system.jinja"
     template.parent.mkdir(parents=True)

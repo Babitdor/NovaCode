@@ -13,6 +13,8 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+#: Local, git-ignored home of the results (relative to ROOT, where commands run).
+REPORTS = "reports/context-learning"
 TARGETS = [
     "tests/test_checkpoint_coordinator.py",
     "tests/test_provider_accounting.py",
@@ -117,8 +119,8 @@ def source_hash() -> str:
     for filename in (
         "pyproject.toml",
         "uv.lock",
-        "CONTEXT_LEARNING_SPEC.md",
-        "CONTEXT_LEARNING_CONTRACT.md",
+        "docs/context-learning/CONTEXT_LEARNING_SPEC.md",
+        "docs/context-learning/CONTEXT_LEARNING_CONTRACT.md",
     ):
         path = ROOT / filename
         digest.update(filename.encode())
@@ -328,12 +330,13 @@ def main() -> int:  # noqa: PLR0912, PLR0915 - linear fail-closed acceptance orc
     """Run partial diagnostics or the complete offline acceptance gauntlet."""
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    (ROOT / REPORTS).mkdir(parents=True, exist_ok=True)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--full", action="store_true")
     parser.add_argument("--mutations", action="store_true")
     parser.add_argument("--coverage", action="store_true")
     parser.add_argument("--affected-only", action="store_true")
-    parser.add_argument("--output", default="context-learning-results.json")
+    parser.add_argument("--output", default=f"{REPORTS}/context-learning-results.json")
     args = parser.parse_args()
     acceptance = not (args.affected_only or args.full or args.mutations or args.coverage)
     results = {
@@ -360,7 +363,7 @@ def main() -> int:  # noqa: PLR0912, PLR0915 - linear fail-closed acceptance orc
                 "-q",
                 "--tb=short",
                 "--timeout=120",
-                "--junitxml=context-learning-tests.xml",
+                f"--junitxml={REPORTS}/context-learning-tests.xml",
             ]
         )
         ruff = ROOT / ".venv" / ("Scripts/ruff.exe" if sys.platform == "win32" else "bin/ruff")
