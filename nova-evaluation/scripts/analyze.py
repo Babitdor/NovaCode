@@ -7,10 +7,21 @@ Scans through trial directories, extracts trajectory data and success metrics.
 import argparse
 import asyncio
 import json
+import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Optional
+
+_CHECK_COMMAND = re.compile(
+    r"(?:^|[;&|\n])\s*(?:(?:uv|poetry|pipenv)\s+run\s+)?"
+    r"(?:(?:python(?:3(?:\.\d+)?)?|py)\s+-m\s+)?"
+    r"(?:pytest|unittest|tox|nox|ruff|mypy|pyright|compileall|"
+    r"cargo\s+test|go\s+test|dotnet\s+test|mvn\s+test|"
+    r"gradle\s+test|make\s+(?:test|check)|"
+    r"(?:npm|pnpm|yarn)\s+(?:run\s+)?test)\b",
+    re.IGNORECASE,
+)
 
 
 def scan_dataset_for_solutions(dataset_path: Path) -> dict[str, Path]:
@@ -49,9 +60,7 @@ def scan_dataset_for_solutions(dataset_path: Path) -> dict[str, Path]:
     return task_to_solution
 
 
-def find_task_directory(
-    trial_dir: Path, task_name: str, task_source: str
-) -> Optional[Path]:
+def find_task_directory(trial_dir: Path, task_name: str, task_source: str) -> Optional[Path]:
     """Find the task directory for a given trial.
 
     Args:
@@ -104,6 +113,7 @@ class Trial:
     trial_dir: Optional[Path] = None
     tool_usage: Optional[dict[str, int]] = None
     failure_kind: Optional[str] = None
+    post_edit_check: Optional[bool] = None
     input_tokens: Optional[int] = None
     cache_tokens: Optional[int] = None
     output_tokens: Optional[int] = None
@@ -120,6 +130,41 @@ async def parse_reward(reward_path: Path) -> bool:
     content = reward_path.read_text()
     reward_value = content.strip()
     return reward_value == "1"
+
+
+def observed_post_edit_check(steps: list[dict]) -> Optional[bool]:
+    """Return whether a recognized check was observed after the last file edit.
+
+    This is a trace signal, not a judgment about check relevance or success.
+    None means the trace does not establish that a file edit occurred.
+    """
+    if not isinstance(steps, list):
+        return None
+    last_edit = -1
+    last_check = -1
+    for index, step in enumerate(steps):
+        if not isinstance(step, dict):
+            continue
+        if step.get("source") == "user":
+            last_edit = last_check = -1
+        observation = step.get("observation")
+        results = observation.get("results") if isinstance(observation, dict) else []
+        observed_ids = {
+            result.get("source_call_id") for result in results or [] if isinstance(result, dict)
+        }
+        for call in step.get("tool_calls") or []:
+            if not isinstance(call, dict) or call.get("tool_call_id") not in observed_ids:
+                continue
+            name = call.get("function_name")
+            if name in {"edit_file", "write_file"}:
+                last_edit = index
+            elif name in {"bash", "execute", "powershell"}:
+                command = (call.get("arguments") or {}).get("command", "")
+                if isinstance(command, str) and _CHECK_COMMAND.search(command):
+                    last_check = index
+    if last_edit < 0:
+        return None
+    return last_check > last_edit
 
 
 def extract_task_metadata(trial_dir: Path) -> dict:
@@ -142,9 +187,7 @@ def extract_task_metadata(trial_dir: Path) -> dict:
                 metadata["task_name"] = config.get("task", {}).get("path", "")
                 metadata["task_source"] = config.get("task", {}).get("source", "")
                 metadata["git_url"] = config.get("task", {}).get("git_url", "")
-                metadata["git_commit_id"] = config.get("task", {}).get(
-                    "git_commit_id", ""
-                )
+                metadata["git_commit_id"] = config.get("task", {}).get("git_commit_id", "")
         except Exception:
             pass
 
@@ -155,9 +198,7 @@ def extract_task_metadata(trial_dir: Path) -> dict:
             with open(result_path, "r") as f:
                 result = json.load(f)
                 metadata["reward"] = (
-                    result.get("verifier_result", {})
-                    .get("rewards", {})
-                    .get("reward", 0.0)
+                    result.get("verifier_result", {}).get("rewards", {}).get("reward", 0.0)
                 )
                 metadata["started_at"] = result.get("started_at", "")
                 metadata["finished_at"] = result.get("finished_at", "")
@@ -355,10 +396,16 @@ async def analyze_trial(
     truncated_final = False
     timing = None
     time_limit_min = None
+    post_edit_check = None
     if traj_exists:
         try:
             trajectory = json.loads(trajectory_path.read_text(encoding="utf-8"))
+            if not isinstance(trajectory, dict):
+                raise ValueError("trajectory is not an object")
             trajectory_steps = trajectory.get("steps", [])
+            if not isinstance(trajectory_steps, list):
+                raise ValueError("trajectory steps are not a list")
+            post_edit_check = observed_post_edit_check(trajectory_steps)
             steps = len(trajectory_steps)
             agent_extra = (trajectory.get("agent") or {}).get("extra") or {}
             timing = agent_extra.get("timing")
@@ -393,6 +440,7 @@ async def analyze_trial(
         trial_dir=trial_dir,
         tool_usage=tool_usage,
         failure_kind=failure_kind,
+        post_edit_check=post_edit_check,
         input_tokens=agent_result.get("n_input_tokens"),
         cache_tokens=agent_result.get("n_cache_tokens"),
         output_tokens=agent_result.get("n_output_tokens"),
@@ -450,6 +498,10 @@ def print_summary(trials: list[Trial]) -> None:
     print(f"Harness cutoffs: {sum(t.failure_kind == 'harness cutoff' for t in trials)}")
     print(f"Loop stops: {sum(t.loop_stopped for t in trials)}")
     print(f"Truncated endings: {sum(t.truncated_final for t in trials)}")
+    print(
+        "Task failures without observed post-edit check: "
+        f"{sum(t.failure_kind == 'task failure' and t.post_edit_check is False for t in trials)}"
+    )
     metered = [t for t in trials if t.input_tokens is not None]
     if metered:
         input_tokens = sum(t.input_tokens for t in metered)
@@ -480,9 +532,7 @@ def print_summary(trials: list[Trial]) -> None:
         if trial.tool_usage:
             trials_with_tools += 1
             for tool_name, count in trial.tool_usage.items():
-                overall_tool_usage[tool_name] = (
-                    overall_tool_usage.get(tool_name, 0) + count
-                )
+                overall_tool_usage[tool_name] = overall_tool_usage.get(tool_name, 0) + count
 
     if overall_tool_usage:
         print(f"\n{'=' * 80}")
@@ -491,9 +541,7 @@ def print_summary(trials: list[Trial]) -> None:
         print(f"Trials with tool usage data: {trials_with_tools}/{len(trials)}")
         print("\nTool usage across all trials:")
         # Sort by usage count (descending) then alphabetically
-        sorted_overall_tools = sorted(
-            overall_tool_usage.items(), key=lambda x: (-x[1], x[0])
-        )
+        sorted_overall_tools = sorted(overall_tool_usage.items(), key=lambda x: (-x[1], x[0]))
         for tool_name, count in sorted_overall_tools:
             print(f"  {tool_name}: {count}")
 
@@ -534,9 +582,7 @@ def print_summary(trials: list[Trial]) -> None:
                 exception_content = trial.exception_path.read_text()
                 # Show last 100 characters
                 exception_snippet = (
-                    exception_content[-100:]
-                    if len(exception_content) > 100
-                    else exception_content
+                    exception_content[-100:] if len(exception_content) > 100 else exception_content
                 )
                 print(f"  Exception: ...{exception_snippet}")
             except Exception:
@@ -544,6 +590,11 @@ def print_summary(trials: list[Trial]) -> None:
 
         if trial.failure_kind:
             print(f"  Failure kind: {trial.failure_kind}")
+        if trial.post_edit_check is not None:
+            print(
+                "  Recognized check after last file edit: "
+                f"{'yes' if trial.post_edit_check else 'no'} (outcome unverified)"
+            )
         if trial.steps is not None:
             print(f"  Steps: {trial.steps}")
         if trial.input_tokens is not None:
@@ -577,9 +628,7 @@ def print_summary(trials: list[Trial]) -> None:
         if trial.tool_usage:
             # Sort tools by usage count (descending) then alphabetically
             sorted_tools = sorted(trial.tool_usage.items(), key=lambda x: (-x[1], x[0]))
-            tool_summary = ", ".join(
-                [f"{tool}: {count}" for tool, count in sorted_tools]
-            )
+            tool_summary = ", ".join([f"{tool}: {count}" for tool, count in sorted_tools])
             print(f"  Tool usage: {tool_summary}")
 
 
@@ -679,9 +728,7 @@ If clear from the trajectory, suggest:
 """  # noqa: E501
 
 
-async def analyze_failed_trial(
-    trial: Trial, analyze_pending: bool = False
-) -> Optional[str]:
+async def analyze_failed_trial(trial: Trial, analyze_pending: bool = False) -> Optional[str]:
     """
     Run deep agent analysis on a failed or pending trial trajectory.
 
@@ -722,11 +769,15 @@ async def analyze_failed_trial(
 
     # Add reference solution if available
     if solution_content:
-        user_message += f"**REFERENCE SOLUTION (solve.sh):**\n\n```bash\n{solution_content}\n```\n\n"
+        user_message += (
+            f"**REFERENCE SOLUTION (solve.sh):**\n\n```bash\n{solution_content}\n```\n\n"
+        )
     else:
         user_message += "**REFERENCE SOLUTION:** Not provided\n\n"
 
-    user_message += f"Please analyze this {status_desc} agent trajectory:\n\n```json\n{trajectory_json}\n```\n"
+    user_message += (
+        f"Please analyze this {status_desc} agent trajectory:\n\n```json\n{trajectory_json}\n```\n"
+    )
 
     # Only detailed analysis needs the model dependency; --summary-only stays local.
     from deepagents import create_deep_agent
@@ -734,9 +785,7 @@ async def analyze_failed_trial(
     analysis_agent = create_deep_agent(tools=[], system_prompt=ANALYSIS_PROMPT)
 
     # Run the deep agent analysis
-    result = analysis_agent.invoke(
-        {"messages": [{"role": "user", "content": user_message}]}
-    )
+    result = analysis_agent.invoke({"messages": [{"role": "user", "content": user_message}]})
 
     # Extract the analysis from the response
     analysis = result["messages"][-1].content
@@ -833,9 +882,7 @@ async def write_trial_analysis(
 
 async def main():
     """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description="Analyze job trials from a jobs directory"
-    )
+    parser = argparse.ArgumentParser(description="Analyze job trials from a jobs directory")
     parser.add_argument(
         "jobs_dir",
         type=Path,

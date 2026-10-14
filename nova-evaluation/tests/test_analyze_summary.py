@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from scripts.analyze import TrialStatus, analyze_trial, print_summary
+from scripts.analyze import TrialStatus, analyze_trial, observed_post_edit_check, print_summary
 
 
 def make_trial(tmp_path, name, *, reward=None, exception=None, stopped=False, truncated=False):
@@ -125,3 +125,118 @@ async def test_graph_step_limit_is_reported_as_harness_cutoff(tmp_path, capsys):
     output = capsys.readouterr().out
     assert "Harness cutoffs: 1" in output
     assert "Graph step limit: hit" in output
+
+
+@pytest.mark.asyncio
+async def test_post_edit_check_signal_uses_ordered_observed_tool_calls(tmp_path, capsys):
+    trial_dir = make_trial(tmp_path, "unchecked", reward=0)
+    path = trial_dir / "agent" / "trajectory.json"
+    trajectory = json.loads(path.read_text())
+    trajectory["steps"] = [
+        {"source": "user", "message": "fix"},
+        {
+            "source": "agent",
+            "tool_calls": [
+                {
+                    "tool_call_id": "t",
+                    "function_name": "bash",
+                    "arguments": {"command": "pytest tests/test_x.py"},
+                }
+            ],
+            "observation": {"results": [{"source_call_id": "t", "content": "1 passed"}]},
+        },
+        {
+            "source": "agent",
+            "tool_calls": [
+                {
+                    "tool_call_id": "e",
+                    "function_name": "edit_file",
+                    "arguments": {"file_path": "/app/x.py"},
+                }
+            ],
+            "observation": {"results": [{"source_call_id": "e", "content": "updated"}]},
+        },
+        {"source": "agent", "message": "done"},
+    ]
+    path.write_text(json.dumps(trajectory))
+    unchecked = await analyze_trial(trial_dir)
+    assert unchecked.post_edit_check is False
+    print_summary([unchecked])
+    assert "Task failures without observed post-edit check: 1" in capsys.readouterr().out
+
+    trajectory["steps"].insert(
+        -1,
+        {
+            "source": "agent",
+            "tool_calls": [
+                {
+                    "tool_call_id": "t2",
+                    "function_name": "bash",
+                    "arguments": {"command": "python -m pytest tests/test_x.py"},
+                }
+            ],
+            "observation": {"results": [{"source_call_id": "t2", "content": "1 passed"}]},
+        },
+    )
+    path.write_text(json.dumps(trajectory))
+    assert (await analyze_trial(trial_dir)).post_edit_check is True
+
+
+@pytest.mark.asyncio
+async def test_missing_or_unconfirmed_edit_is_unknown(tmp_path):
+    trial_dir = make_trial(tmp_path, "missing", reward=0)
+    path = trial_dir / "agent" / "trajectory.json"
+    path.write_text("{malformed")
+    assert (await analyze_trial(trial_dir)).post_edit_check is None
+
+    path.write_text(
+        json.dumps(
+            {
+                "steps": [
+                    {
+                        "source": "agent",
+                        "observation": "bad",
+                        "tool_calls": [{"tool_call_id": "e", "function_name": "edit_file"}],
+                    }
+                ]
+            }
+        )
+    )
+    assert (await analyze_trial(trial_dir)).post_edit_check is None
+    path.write_text(
+        json.dumps(
+            {
+                "steps": [
+                    {
+                        "source": "agent",
+                        "tool_calls": [
+                            {"tool_call_id": "e", "function_name": "edit_file", "arguments": {}}
+                        ],
+                    }
+                ]
+            }
+        )
+    )
+    assert (await analyze_trial(trial_dir)).post_edit_check is None
+
+
+def test_installed_test_runner_is_not_a_post_edit_check():
+    steps = [
+        {
+            "source": "agent",
+            "tool_calls": [{"tool_call_id": "e", "function_name": "write_file"}],
+            "observation": {"results": [{"source_call_id": "e", "content": "updated"}]},
+        },
+        {
+            "source": "agent",
+            "tool_calls": [
+                {
+                    "tool_call_id": "c",
+                    "function_name": "bash",
+                    "arguments": {"command": "pip install pytest"},
+                }
+            ],
+            "observation": {"results": [{"source_call_id": "c", "content": "installed"}]},
+        },
+    ]
+    assert observed_post_edit_check(steps) is False

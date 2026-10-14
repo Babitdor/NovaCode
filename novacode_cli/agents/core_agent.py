@@ -1660,7 +1660,7 @@ def _build_middleware_stack(
         ),
         # Last, so its todo recitation is appended to the FINAL system message
         # (AgentMemoryMiddleware rebuilds it) and sits after the cache breakpoint.
-        TaskDisciplineMiddleware(),
+        TaskDisciplineMiddleware(verify_after_edit=os.environ.get("NOVA_VERIFY_AFTER_EDIT") == "1"),
     ]
 
     # deepagents 0.7 dropped its built-in todo list (0.6 installed one inside

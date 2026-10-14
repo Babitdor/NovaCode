@@ -37,7 +37,9 @@ def _recited(messages: list, todos: list | None = TODOS) -> str:
 
 
 def test_plan_is_recited_once_it_scrolls_out_of_view() -> None:
-    old = [_write_todos_call()] + [HumanMessage(content=str(i)) for i in range(td.RECITE_AFTER_MESSAGES)]
+    old = [_write_todos_call()] + [
+        HumanMessage(content=str(i)) for i in range(td.RECITE_AFTER_MESSAGES)
+    ]
     text = _recited(old)
     assert text.startswith("BASE"), "the recitation must come AFTER the cached prompt"
     assert "[>] Fix parse_date" in text and "[ ] test_dates passes" in text
@@ -58,7 +60,9 @@ def test_nothing_to_recite_without_open_items() -> None:
 
 
 def _gate(messages: list, todos: list | None = TODOS):  # noqa: ANN202
-    return TaskDisciplineMiddleware().after_model({"messages": messages, "todos": todos}, None)
+    return TaskDisciplineMiddleware(verify_after_edit=True).after_model(
+        {"messages": messages, "todos": todos}, None
+    )
 
 
 def test_stopping_with_open_todos_sends_the_agent_back() -> None:
@@ -90,6 +94,242 @@ def test_the_nudge_is_hidden_from_the_transcript() -> None:
     from novacode_cli.core.streaming import is_internal_context_text
 
     assert is_internal_context_text(DONE_GATE_MARKER + " You ended your turn")
+
+
+def _tool_step(
+    name: str, call_id: str, args: dict, result: str = "ok", *, status: str = "success"
+) -> list[AIMessage | ToolMessage]:
+    return [
+        AIMessage(content="", tool_calls=[{"id": call_id, "name": name, "args": args}]),
+        ToolMessage(content=result, tool_call_id=call_id, status=status),
+    ]
+
+
+def test_edit_without_later_check_gets_one_verification_reminder() -> None:
+    history = [HumanMessage(content="fix it"), *_tool_step("edit_file", "e", {"file_path": "x.py"})]
+    out = _gate([*history, AIMessage(content="Fixed")], todos=None)
+    assert out["jump_to"] == "model"
+    assert out["messages"][0].content.startswith(td.VERIFY_GATE_MARKER)
+    assert "passed" not in out["messages"][0].content
+    assert "already ran" in out["messages"][0].content
+    assert "cite the command and its result" in out["messages"][0].content
+
+    history += [AIMessage(content="Fixed"), *out["messages"]]
+    assert _gate([*history, AIMessage(content="Cannot run tests here")], todos=None) is None
+    assert (
+        _gate(
+            [
+                HumanMessage(content="fix another"),
+                *_tool_step("write_file", "e2", {}),
+                AIMessage(content="Done"),
+            ],
+            todos=None,
+        )
+        is not None
+    )
+
+
+def test_edit_reminder_is_off_by_default() -> None:
+    history = [HumanMessage(content="fix"), *_tool_step("write_file", "e", {})]
+    assert (
+        TaskDisciplineMiddleware().after_model(
+            {"messages": [*history, AIMessage(content="Done")], "todos": None}, None
+        )
+        is None
+    )
+
+
+def test_check_must_follow_last_successful_edit() -> None:
+    check = _tool_step("bash", "t", {"command": "python -m pytest tests/test_x.py"})
+    edit = _tool_step("write_file", "e", {"file_path": "x.py"})
+    start = [HumanMessage(content="fix it")]
+    assert _gate([*start, *check, *edit, AIMessage(content="Done")], todos=None)
+    assert _gate([*start, *edit, *check, AIMessage(content="Done")], todos=None) is None
+
+
+def test_failed_check_after_edit_does_not_satisfy_verification() -> None:
+    history = [
+        HumanMessage(content="fix it"),
+        *_tool_step("edit_file", "e", {"file_path": "x.py"}),
+        AIMessage(
+            content="",
+            tool_calls=[{"id": "t", "name": "bash", "args": {"command": "pytest test_x.py"}}],
+        ),
+        ToolMessage(
+            content="1 failed", tool_call_id="t", artifact={"exit_code": 1}, status="success"
+        ),
+        AIMessage(content="Done"),
+    ]
+    out = _gate(history, todos=None)
+    assert out is not None
+    assert out["messages"][0].content.startswith(td.VERIFY_GATE_MARKER)
+    assert "failed" in out["messages"][0].content
+    assert _gate([*history, *out["messages"], AIMessage(content="Blocked")], todos=None) is None
+
+
+def test_unpaired_check_does_not_satisfy_verification() -> None:
+    history = [
+        HumanMessage(content="fix it"),
+        *_tool_step("edit_file", "e", {"file_path": "x.py"}),
+        AIMessage(
+            content="",
+            tool_calls=[{"id": "t", "name": "bash", "args": {"command": "pytest test_x.py"}}],
+        ),
+        AIMessage(content="Done"),
+    ]
+    assert _gate(history, todos=None) is not None
+
+
+def test_successful_check_after_failed_check_clears_reminder() -> None:
+    history = [
+        HumanMessage(content="fix it"),
+        *_tool_step("edit_file", "e", {"file_path": "x.py"}),
+        AIMessage(
+            content="",
+            tool_calls=[{"id": "bad", "name": "bash", "args": {"command": "pytest test_x.py"}}],
+        ),
+        ToolMessage(content="1 failed", tool_call_id="bad", artifact={"exit_code": 1}),
+        *_tool_step("bash", "good", {"command": "pytest test_x.py"}, "1 passed"),
+        AIMessage(content="Done"),
+    ]
+    assert _gate(history, todos=None) is None
+
+
+def test_shell_failure_wrapper_is_treated_as_failed_check() -> None:
+    history = [
+        HumanMessage(content="fix it"),
+        *_tool_step("edit_file", "e", {"file_path": "x.py"}),
+        *_tool_step(
+            "execute",
+            "t",
+            {"command": "pytest test_x.py"},
+            "FAILED test_x.py\n[Command failed with exit code 1]",
+        ),
+        AIMessage(content="Done"),
+    ]
+    out = _gate(history, todos=None)
+    assert out is not None
+    assert "failed" in out["messages"][0].content
+
+
+def test_mentioning_a_test_tool_does_not_count_as_running_it() -> None:
+    history = [
+        HumanMessage(content="fix"),
+        *_tool_step("edit_file", "e", {"file_path": "x.py"}),
+        *_tool_step("bash", "install", {"command": "pip install pytest"}),
+        AIMessage(content="Done"),
+    ]
+    assert _gate(history, todos=None)["messages"][0].content.startswith(td.VERIFY_GATE_MARKER)
+
+
+def test_failed_edit_and_non_file_work_do_not_trigger_verification() -> None:
+    start = [HumanMessage(content="help")]
+    failed = _tool_step("edit_file", "e", {}, "path not found", status="error")
+    assert _gate([*start, *failed, AIMessage(content="Blocked")], todos=None) is None
+    read = _tool_step("read_file", "r", {"file_path": "x.py"})
+    assert _gate([*start, *read, AIMessage(content="Explained")], todos=None) is None
+
+
+def test_verification_reminder_is_hidden_from_transcript() -> None:
+    from novacode_cli.core.streaming import is_internal_context_text
+
+    assert is_internal_context_text(td.VERIFY_GATE_MARKER + " Run a check")
+
+
+def test_verification_reminder_runs_in_an_agent_graph() -> None:
+    from langchain.agents import create_agent
+    from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+    from langchain_core.tools import tool
+
+    class _Model(GenericFakeChatModel):
+        def bind_tools(self, *_a, **_k):  # noqa: ANN002, ANN003, ANN201
+            return self
+
+    @tool
+    def edit_file(file_path: str) -> str:
+        """Edit one file in the scripted replay."""
+        return f"updated {file_path}"
+
+    @tool
+    def bash(command: str) -> str:
+        """Run a check in the scripted replay."""
+        return f"{command}: 1 passed"
+
+    model = _Model(
+        messages=iter(
+            [
+                AIMessage(
+                    content="",
+                    tool_calls=[{"id": "e", "name": "edit_file", "args": {"file_path": "x.py"}}],
+                ),
+                AIMessage(content="Done"),
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {"id": "t", "name": "bash", "args": {"command": "pytest tests/test_x.py"}}
+                    ],
+                ),
+                AIMessage(content="Checked and done"),
+            ]
+        )
+    )
+    result = create_agent(
+        model,
+        tools=[edit_file, bash],
+        middleware=[TaskDisciplineMiddleware(verify_after_edit=True)],
+    ).invoke({"messages": [HumanMessage(content="Fix x.py")]})
+    contents = [str(message.content) for message in result["messages"]]
+    assert any(content.startswith(td.VERIFY_GATE_MARKER) for content in contents)
+    assert contents[-1] == "Checked and done"
+
+
+def test_failed_check_recovery_runs_in_an_agent_graph() -> None:
+    from langchain.agents import create_agent
+    from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+    from langchain_core.tools import tool
+
+    class _Model(GenericFakeChatModel):
+        def bind_tools(self, *_a, **_k) -> _Model:  # noqa: ANN002, ANN003
+            return self
+
+    @tool
+    def edit_file(file_path: str) -> str:
+        """Edit one file in the scripted replay."""
+        return f"updated {file_path}"
+
+    @tool
+    def bash(command: str) -> str:
+        """Run a check in the scripted replay."""
+        return "[Command failed with exit code 1]" if "first" in command else "1 passed"
+
+    model = _Model(
+        messages=iter(
+            [
+                AIMessage(
+                    content="",
+                    tool_calls=[{"id": "e", "name": "edit_file", "args": {"file_path": "x.py"}}],
+                ),
+                AIMessage(
+                    content="",
+                    tool_calls=[{"id": "t1", "name": "bash", "args": {"command": "pytest first"}}],
+                ),
+                AIMessage(content="Done"),
+                AIMessage(
+                    content="",
+                    tool_calls=[{"id": "t2", "name": "bash", "args": {"command": "pytest second"}}],
+                ),
+                AIMessage(content="Checked and done"),
+            ]
+        )
+    )
+    result = create_agent(
+        model,
+        tools=[edit_file, bash],
+        middleware=[TaskDisciplineMiddleware(verify_after_edit=True)],
+    ).invoke({"messages": [HumanMessage(content="Fix x.py")]})
+    contents = [str(message.content) for message in result["messages"]]
+    assert sum(content.startswith(td.VERIFY_GATE_MARKER) for content in contents) == 1
+    assert contents[-1] == "Checked and done"
 
 
 def test_the_gate_really_jumps_back_in_an_agent_graph() -> None:
@@ -223,8 +463,35 @@ def test_the_end_state_must_be_checked_and_left_clean() -> None:
         assert scratch in text, scratch
 
 
+def test_numeric_requirements_guidance_reaches_a_model_in_an_agent_graph() -> None:
+    from langchain.agents import create_agent
+    from langchain.agents.middleware import AgentMiddleware
+    from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+
+    from novacode_cli.prompts import render_template
+
+    class _Capture(AgentMiddleware):
+        seen: str = ""
+
+        def wrap_model_call(self, request, handler) -> object:  # noqa: ANN001
+            self.seen = str(request.system_message.content)
+            return handler(request)
+
+    capture = _Capture()
+    model = GenericFakeChatModel(messages=iter([AIMessage(content="Done")]))
+    result = create_agent(
+        model,
+        middleware=[capture],
+        system_prompt=render_template("core_agent_system.jinja"),
+    ).invoke({"messages": [HumanMessage(content="Compute the inclusive amount")]})
+    assert result["messages"][-1].content == "Done"
+    assert "what each source number includes or excludes" in capture.seen
+    assert "check the final aggregate" in capture.seen
+    assert "ambiguous items against the full category definition" in capture.seen
+
+
 def test_unverifiable_is_a_last_resort_not_an_exit() -> None:
-    """"I cannot verify" must come after trying to get the means, not instead.
+    """ "I cannot verify" must come after trying to get the means, not instead.
 
     A Terminal-Bench trial ran `apt-get install python3 >/dev/null 2>&1` once,
     never saw why it failed, declared the sandbox had "no network/apt access"
@@ -258,7 +525,9 @@ def test_empty_tool_results_are_filled_before_the_model_sees_them() -> None:
 
     call = AIMessage(content="", tool_calls=[{"id": "c", "name": "serena_read_file", "args": {}}])
     empty = ToolMessage(content=[{"type": "text", "text": ""}], tool_call_id="c", id="t")
-    out = RepairToolCallsEachStep().before_model({"messages": [HumanMessage(content="x"), call, empty]}, None)
+    out = RepairToolCallsEachStep().before_model(
+        {"messages": [HumanMessage(content="x"), call, empty]}, None
+    )
     assert out["messages"][-1].content == EMPTY_TOOL_RESULT
     assert out["messages"][-1].tool_call_id == "c"
 

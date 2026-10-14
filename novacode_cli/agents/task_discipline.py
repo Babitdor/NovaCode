@@ -24,10 +24,11 @@ Two mechanisms from how the leading coding agents run long tasks:
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 from langchain.agents.middleware import AgentMiddleware, hook_config
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -42,6 +43,23 @@ RECITE_AFTER_MESSAGES = 20
 # (core/streaming.py::is_internal_context_text) — the user did not type them.
 DONE_GATE_MARKER = "Internal context: open todos."
 CUT_OFF_MARKER = "Internal context: truncated turn."
+VERIFY_GATE_MARKER = "Internal context: verification after edit."
+
+_EDIT_TOOLS = frozenset({"write_file", "edit_file"})
+_COMMAND_TOOLS = frozenset({"bash", "execute", "powershell"})
+_CHECK_COMMAND = re.compile(
+    r"(?:^|[;&|\n])\s*(?:(?:uv|poetry|pipenv)\s+run\s+)?"
+    r"(?:(?:python(?:3(?:\.\d+)?)?|py)\s+-m\s+)?"
+    r"(?:pytest|unittest|tox|nox|ruff|mypy|pyright|compileall|"
+    r"cargo\s+test|go\s+test|dotnet\s+test|mvn\s+test|"
+    r"gradle\s+test|make\s+(?:test|check)|"
+    r"(?:npm|pnpm|yarn)\s+(?:run\s+)?test)\b",
+    re.IGNORECASE,
+)
+_SHELL_FAILURE = re.compile(
+    r"(?m)^(?:exit=[1-9]\d*\b|Exit code: [1-9]\d*\b|"
+    r"\[Command failed with exit code [1-9]\d*\])"
+)
 
 # CONSECUTIVE cut-offs — the count resets as soon as the model acts (calls a
 # tool). It was first counted per user turn, but an unattended run is a single
@@ -88,9 +106,7 @@ def _since_last_user_turn(messages: list[Any]) -> list[Any]:
 
 def _count_marker(messages: list[Any], marker: str) -> int:
     return sum(
-        1
-        for m in messages
-        if isinstance(m, HumanMessage) and str(m.content).startswith(marker)
+        1 for m in messages if isinstance(m, HumanMessage) and str(m.content).startswith(marker)
     )
 
 
@@ -123,8 +139,60 @@ def _was_cut_off(msg: AIMessage) -> bool:
     return (meta.get("done_reason") or meta.get("finish_reason")) == "length"
 
 
+def _check_failed(result: ToolMessage) -> bool:
+    """Use a structured outcome when available; recognize shell failure wrappers."""
+    if result.status == "error":
+        return True
+    artifact = result.artifact if isinstance(result.artifact, dict) else {}
+    exit_code = artifact.get("exit_code")
+    if isinstance(exit_code, int):
+        return exit_code != 0
+    if artifact.get("execution_outcome") == "failure":
+        return True
+    return bool(_SHELL_FAILURE.search(str(result.content)))
+
+
+def _verification_gap(messages: list[Any]) -> str | None:
+    """Return a missing or failed check after the last observed file edit.
+
+    Shell writes and arbitrary custom test scripts cannot be identified reliably
+    from the transcript. A successful command is not proof of check relevance.
+    """
+    results = {msg.tool_call_id: msg for msg in messages if isinstance(msg, ToolMessage)}
+    last_edit = -1
+    last_check = -1
+    check_failed = False
+    for index, msg in enumerate(messages):
+        if not isinstance(msg, AIMessage):
+            continue
+        for call in msg.tool_calls or []:
+            name = call.get("name")
+            call_id = call.get("id")
+            result = results.get(call_id) if isinstance(call_id, str) else None
+            if name in _EDIT_TOOLS and result and result.status != "error":
+                last_edit = index
+            elif name in _COMMAND_TOOLS:
+                command = (call.get("args") or {}).get("command", "")
+                if (
+                    isinstance(command, str)
+                    and _CHECK_COMMAND.search(command)
+                    and result is not None
+                ):
+                    last_check = index
+                    check_failed = _check_failed(result)
+    if last_edit < 0:
+        return None
+    if last_check <= last_edit:
+        return "missing"
+    return "failed" if check_failed else None
+
+
 class TaskDisciplineMiddleware(AgentMiddleware):
     """Recite the open todo list when it is out of view; gate an unfinished stop."""
+
+    def __init__(self, *, verify_after_edit: bool = False) -> None:
+        """Enable the experimental post-edit reminder only when requested."""
+        self.verify_after_edit = verify_after_edit
 
     def _with_recitation(self, request: ModelRequest) -> ModelRequest:
         todos = request.state.get("todos") if isinstance(request.state, dict) else None
@@ -182,6 +250,31 @@ class TaskDisciplineMiddleware(AgentMiddleware):
                 "jump_to": "model",
             }
 
+        gap = _verification_gap(this_turn) if self.verify_after_edit else None
+        if gap and not _count_marker(this_turn, VERIFY_GATE_MARKER):
+            reason = (
+                "Your last recognized check after the edit failed. Inspect its result, "
+                "fix the cause, and rerun a focused check. "
+                if gap == "failed"
+                else "You edited a file and ended this turn without an observed completed "
+                "check command after the last edit. "
+            )
+            return {
+                "messages": [
+                    HumanMessage(
+                        content=(
+                            f"{VERIFY_GATE_MARKER} {reason}"
+                            "If you already ran a relevant check using a command this "
+                            "detector did not recognize, cite the command and its result. "
+                            "Otherwise run a focused check and inspect its result. If "
+                            "verification is unavailable, explain what you tried and "
+                            "what remains unverified."
+                        )
+                    )
+                ],
+                "jump_to": "model",
+            }
+
         open_items = _open_todos(state.get("todos"))
         if not open_items:
             return None
@@ -196,8 +289,6 @@ class TaskDisciplineMiddleware(AgentMiddleware):
         return {"messages": [HumanMessage(content=nudge)], "jump_to": "model"}
 
     @hook_config(can_jump_to=["model"])
-    async def aafter_model(
-        self, state: AgentState, runtime: Runtime[Any]
-    ) -> dict[str, Any] | None:
+    async def aafter_model(self, state: AgentState, runtime: Runtime[Any]) -> dict[str, Any] | None:
         """Async twin of :meth:`after_model`."""
         return self.after_model(state, runtime)

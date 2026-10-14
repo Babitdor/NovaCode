@@ -1,6 +1,6 @@
-# Nova Code Evaluation with Harbor & Terminal-Bench 2.0
+# Nova Code Evaluation with Harbor
 
-Runs the Nova Code CLI agent on [Terminal-Bench 2.0](https://github.com/laude-institute/terminal-bench-2) using [Harbor](https://github.com/laude-institute/harbor) as the evaluation harness, with optional [LangSmith](https://smith.langchain.com) tracing.
+Runs the Nova Code CLI agent on Terminal-Bench and SWE-bench Verified using [Harbor](https://github.com/harbor-framework/harbor) as the evaluation harness, with optional [LangSmith](https://smith.langchain.com) tracing.
 
 ---
 
@@ -46,6 +46,7 @@ uv run python scripts/run.py <benchmark> -m <provider/model> [harbor run flags]
 | `tb2.1` | `terminal-bench/terminal-bench-2-1` | 89 |
 | `tb3` | `terminal-bench/terminal-bench@1` (Terminal-Bench 3.0) | 74 |
 | `tb-latest` | `terminal-bench/terminal-bench@latest` | changes |
+| `swe-verified` | `swe-bench/swe-bench-verified@2` (SWE-bench Verified) | 500 |
 
 ```bash
 # Sanity check: 6 small local tasks
@@ -59,6 +60,18 @@ uv run python scripts/run.py tb2 -m opencode/deepseek-v4.1-flash -n 3
 
 # Terminal-Bench 3.0 on Modal (tasks need up to 32 GB RAM, 4 need a GPU, 1-5 h timeouts)
 uv run python scripts/run.py tb3 -m openai/gpt-5.5 -e modal -n 8
+
+# SWE-bench Verified: check Harbor and Modal without running a task
+uv run python scripts/run.py swe-verified -e modal -l 3 --dry-run
+
+# Check one reference patch before a paid model run
+uv run harbor run -d swe-bench/swe-bench-verified@2 -a oracle -e modal -l 1 -n 1 -y
+
+# Trial three verified issues with NovaCode
+uv run python scripts/run.py swe-verified -m ollama/deepseek-v4.1-flash:cloud -e modal -l 3 -n 2
+
+# Select an exact issue (Harbor task filters include the swe-bench/ prefix)
+uv run python scripts/run.py swe-verified -m ollama/deepseek-v4.1-flash:cloud -e modal -i swe-bench/astropy__astropy-12907
 ```
 
 The model is `provider/model`, where provider is a NovaCode provider id (`opencode`,
@@ -94,6 +107,9 @@ make run-terminal-bench-modal      # 4 tasks, Modal
 # Summarize a job run locally, without model calls
 uv run python scripts/analyze.py jobs/tb2/<timestamp> --summary-only
 
+# SWE-bench Verified trials use the same local analyzer
+uv run python scripts/analyze.py jobs/swe-verified/<timestamp> --summary-only
+
 # Example
 uv run python scripts/analyze.py jobs/Novacode/2026-03-28__23-52-59 --summary-only
 ```
@@ -101,8 +117,24 @@ uv run python scripts/analyze.py jobs/Novacode/2026-03-28__23-52-59 --summary-on
 The local summary separates verifier task failures, execution errors, and graph step
 limit cutoffs. It reports loop stops, truncated final responses, step counts, tool and wall time, and input,
 cached, uncached, and output tokens.
+It also counts task failures where a file-edit tool result was observed without
+a later recognized check command. This is an observable trace signal, not a
+failure diagnosis or proof that any check passed. Shell-based file writes and
+custom check scripts are outside this detector.
+The agent-side reminder is experimental and disabled by default. Set
+`NOVA_VERIFY_AFTER_EDIT=1` for a local run to make NovaCode send one internal
+verification reminder after an observed file edit with no completed recognized
+later check, or when the latest recognized check reports failure. It can add a
+model turn when custom validation was already sufficient. A successful command
+does not prove the check covered the requested behavior.
 Missing result files remain pending. Omit `--summary-only` only when detailed model
 analysis is wanted.
+
+For a before/after comparison, run `python scripts/compare_jobs.py
+jobs/tb2/<baseline> jobs/tb2/<candidate>` from `nova-evaluation/`. It compares
+overlapping tasks and rejects mismatched model, agent options, environment,
+task source, or task revision before reporting gains and regressions. Keep
+multiple attempts in separate jobs; duplicate task IDs are rejected.
 
 ---
 

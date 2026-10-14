@@ -4,6 +4,7 @@
     uv run python scripts/run.py tb2 -m opencode/deepseek-v4.1-flash -n 2
     uv run python scripts/run.py tb3 -m openai/gpt-5.5 -e modal -n 8
     uv run python scripts/run.py tb2 -m ... -i terminal-bench/fix-git
+    uv run python scripts/run.py swe-verified -m ollama/deepseek-v4.1-flash:cloud -e modal -l 3
 
 Everything after the benchmark name goes straight to `harbor run`
 (-m model, -i task, -l limit, -n concurrency, -k attempts, -e environment, --ak key=value).
@@ -21,6 +22,7 @@ BENCHMARKS = {
     "tb2.1": ["-d", "terminal-bench/terminal-bench-2-1"],  # 89 tasks
     "tb3": ["-d", "terminal-bench/terminal-bench@1"],  # Terminal-Bench 3.0, 74 tasks
     "tb-latest": ["-d", "terminal-bench/terminal-bench@latest"],
+    "swe-verified": ["-d", "swe-bench/swe-bench-verified@2"],  # fixed 500-task revision
     "nova": ["-p", "nova-tasks"],  # local 6-task sanity set
     "pairs": ["-p", "learning-pairs"],  # does a lesson transfer? see scripts/make_learning_pairs.py
 }
