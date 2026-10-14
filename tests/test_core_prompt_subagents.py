@@ -37,3 +37,10 @@ def test_core_prompt_has_artifacts_block():
     assert "proactively" in out
     for name in ("create_artifact", "update_artifact", "list_artifacts"):
         assert name in out
+
+
+def test_async_prompt_collects_required_results_before_completion():
+    out = render_template("core_agent_system.jinja", has_async_agents=True)
+    assert "wait_for_task(task_id)" in out
+    assert "five minutes" in out
+    assert "claim its work is finished" in out

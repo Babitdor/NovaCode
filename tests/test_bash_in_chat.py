@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sys
+from types import SimpleNamespace
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pytest
 
 sys.path.insert(0, "tests")
 
@@ -77,6 +83,29 @@ def test_a_double_bang_takes_the_terminal_path_not_the_card():
     started, took_terminal_path = asyncio.run(drive())
     assert started == [], "!! must not open a card"
     assert took_terminal_path
+
+
+def test_double_bang_returns_to_tui_when_command_exits(monkeypatch: pytest.MonkeyPatch):
+    """Finishing an interactive command must not wait for another Enter key."""
+    import builtins
+    import subprocess
+
+    app = _app()
+    logged = []
+    monkeypatch.setattr(app, "suspend", contextlib.nullcontext)
+    monkeypatch.setattr(app, "_log", logged.append)
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr(
+        builtins, "input", lambda: (_ for _ in ()).throw(AssertionError("extra Enter"))
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=0),
+    )
+
+    asyncio.run(asyncio.wait_for(app._run_bash("!!install something"), timeout=2))
+    assert any("Command finished successfully" in entry.plain for entry in logged)
 
 
 def test_a_command_with_no_output_gets_a_small_card():

@@ -96,11 +96,14 @@ work. If no narrower specialist fits, use `general-purpose-async` for scoped
 coding, investigation, testing, research or analysis instead of sync general-purpose.
 
 `start_async_task(description, subagent_type)` returns a task ID immediately.
-Continue the current work without polling. Use `check_async_task` when the user
-asks for a status/result or a completion notification arrives. Never poll in a
-loop. When only delegated results remain, return control to the user; explain
-what is running and let the completion notification trigger continuation.
-Needing a result for the final answer is not a reason to block with sync `task`.
+Continue independent work while it runs. Before giving a final answer that
+depends on its work, call `wait_for_task(task_id)` to collect the result. If
+the bounded wait times out, continue bounded waits for up to five minutes in
+total when its result is required. If it is still running, tell the user its
+full task ID and continue when its completion notification arrives; do not
+claim its work is finished or summarize a result you have not received. Use
+`check_async_task` when the user asks for status or a completion notification arrives. Do not
+poll `check_async_task` in a loop.
 Use synchronous `task` as the fallback when async dispatch is unavailable/fails
 or the work requires tools or session state available only in-process.
 {% else -%}
@@ -112,7 +115,8 @@ needed immediately.
 
 When the user asks you to wait for a background shell command or async
 subagent, call `wait_for_task(task_id)` for a bounded wait. A timeout means it
-is still running; call again only if the user requested continued waiting.
+is still running; repeat for required results for up to five minutes total,
+or while the user explicitly requests continued waiting.
 Use `list_waiters` to see active waits and their targets.
 
 The `task` tool is synchronous: the subagent runs to completion and its full

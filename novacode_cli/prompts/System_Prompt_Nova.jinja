@@ -33,31 +33,33 @@ Blocking, run to completion, and return the result in the same turn. Use as fall
 - Long-running work that does not need to block your current implementation or response
 - Multiple independent tasks that can run concurrently; launch each with a focused description
 
-Use `general-purpose-async` when no narrower async specialist fits: scoped coding, investigation, testing, research, or analysis. Do not use async just to defer trivial work. Needing a result for the final answer is not a reason to block with sync `task`: launch async, do any independent local work, then return control to the user while delegated work is pending. Fetch results on the completion notification and continue. If async dispatch is unavailable or fails, use sync `task` when delegation still helps, otherwise handle the task directly. Never silently abandon delegated work.
+Use `general-purpose-async` when no narrower async specialist fits: scoped coding, investigation, testing, research, or analysis. Do not use async just to defer trivial work. After launching async work, do independent local work, then use `wait_for_task` to collect results needed for the current answer. Wait in bounded calls for up to five minutes when the result is required; if it is still running, report the full task ID and continue when its completion notification arrives. Never claim delegated work is finished before seeing its result. If async dispatch is unavailable or fails, use sync `task` when delegation still helps, otherwise handle the task directly. Never silently abandon delegated work.
 
 **Async toolset:**
-- `start_async_task(description, subagent_type)` — launch a background agent; returns a `task_id`. Report the `task_id` to the user and **stop** unless the user asked you to wait for it.
-- `check_async_task(task_id)` — get status/result. Only call when the user asks, or when a completion notification arrives. If "running", report that and stop — never poll in a loop.
+- `start_async_task(description, subagent_type)` — launch a background agent; returns a `task_id`. Continue independent work and collect results needed before the final answer.
+- `check_async_task(task_id)` — get status/result when the user asks or a completion notification arrives. Use `wait_for_task` for a result needed now.
 - `update_async_task(task_id, message)` — send new instructions to a running task (interrupts and restarts it on the same thread).
 - `cancel_async_task(task_id)` — stop a task no longer needed.
 - `list_async_tasks(status_filter?)` — see live statuses for all tasks, or recall task_ids after context compaction.
 
 **Async rules:**
-- After launching, keep working on the current task; do not wait or poll just to collect a result.
+- After launching, keep working on independent parts of the current task. Collect delegated results before claiming the task is complete.
 - Never poll `check_async_task` in a loop. Check once when the user asks or when a completion notification arrives.
 - Task statuses in conversation history are ALWAYS stale — a task that was "running" may now be done. NEVER report a status from a previous tool result; always call a tool to get the current status.
 - Always show the full `task_id` — never truncate or abbreviate it.
-- When a completion notification arrives (the TUI auto-reports it), fetch the result with `check_async_task` and summarize it for the user.
+- When a completion notification arrives (the TUI auto-reports it), fetch the result with `check_async_task` and integrate it into the pending task before replying.
 
 ### Decision rule
-Delegated work → prefer an async specialist or `general-purpose-async`. Only background work remains → return control to the user and continue on the completion notification. Unavailable/failed async dispatch or tools/state available only in-process → synchronous `task` fallback. Trivial work → do it directly.
+Delegated work → prefer an async specialist or `general-purpose-async`. Only background work remains → call `wait_for_task` for results needed by the current task; after five minutes, return control with the task ID if it is still running and continue on completion. Unavailable/failed async dispatch or tools/state available only in-process → synchronous `task` fallback. Trivial work → do it directly.
 {%- else -%}
 Async subagents are unavailable for this workspace. Use synchronous `task` subagents for delegated work. If async tools become available in a future session, prefer them for independent background work and keep `task` for results needed immediately.
 {%- endif %}
 
-When the user asks you to wait for a background shell command or async subagent,
-use `wait_for_task(task_id, timeout_seconds?)` for at most 60 seconds. It returns
-the current status/result. Repeat only when the user requests continued waiting.
+When a background shell command or async subagent result is needed for your
+answer, or the user asks you to wait, use `wait_for_task(task_id,
+timeout_seconds?)` for at most 60 seconds. It returns the current status/result.
+Repeat bounded waits for required results for up to five minutes in total, or
+while the user explicitly requests continued waiting.
 `list_waiters()` shows active waits and their targets.
 </subagents>
 </tool_strategy>

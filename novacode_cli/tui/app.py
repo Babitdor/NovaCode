@@ -1771,6 +1771,9 @@ class NovaApp(App):
         # Notes for detached (Ctrl+B) shell jobs that finished; prepended to the
         # agent's next turn so it learns of completions without an interrupt.
         self._pending_job_notes: list[str] = []
+        # Completions arriving during a turn must be fetched after that turn.
+        self._pending_async_completion_ids: list[str] = []
+        self._async_report_scheduled = False
         # 1s timer that ticks the ⚙ tasks-bar runtime; only runs while tasks are
         # active (see _refresh_tasks_bar) so it never interferes when idle.
         self._tasks_timer: Any = None
@@ -8831,6 +8834,7 @@ class NovaApp(App):
         # prompts that weren't consumed as steers.
         await self._drain_deferred_commands()
         await self._drain_deferred_prompts()
+        self._schedule_pending_async_report()
 
     async def _update_context_breakdown(self) -> None:
         """Recompute the context breakdown from agent state after a turn.
@@ -9768,12 +9772,9 @@ class NovaApp(App):
                     exit_code = -1
                     print(f"Error executing command: {ex}")
 
-                if sys.stdin.isatty():
-                    print("\n--- Command finished. Press Enter to return to TUI ---")
-                    try:
-                        await asyncio.to_thread(input)
-                    except (KeyboardInterrupt, EOFError):
-                        pass
+                # The TUI resumes as soon as the child exits. Reading an extra
+                # Enter here can hang after installers finish because Textual's
+                # input driver may still consume that key on some terminals.
         except SuspendNotSupported:
             # Fallback for non-interactive/headless test environments where suspend is not supported
             cwd = settings.get_workspace_root()
@@ -14809,11 +14810,28 @@ class NovaApp(App):
                 f"Async task {task_id} finished. Fetch it with check_async_task('{task_id}')."
             )
             return
-        # Only auto-report when the agent is idle — never interrupt an active
-        # turn. If busy, the notification (🔔 badge) still surfaces the event.
-        if getattr(self, "_turn_active", False):
+        pending = self._pending_async_completion_ids
+        if task_id not in pending:
+            pending.append(task_id)
+        self._schedule_pending_async_report()
+
+    def _schedule_pending_async_report(self) -> None:
+        """Fetch queued completions once the current turn has fully settled."""
+        if (
+            not self._pending_async_completion_ids
+            or getattr(self, "_turn_active", False)
+            or self._async_report_scheduled
+        ):
             return
-        self._log(Text(f"↻ Async agent finished — fetching result…", style="cyan"))
+        self._async_report_scheduled = True
+        self.set_timer(0.05, self._dispatch_pending_async_report)
+
+    def _dispatch_pending_async_report(self) -> None:
+        self._async_report_scheduled = False
+        if getattr(self, "_turn_active", False) or not self._pending_async_completion_ids:
+            return
+        task_id = self._pending_async_completion_ids.pop(0)
+        self._log(Text("↻ Async agent finished — fetching result…", style="cyan"))
         self._auto_report_async_done(task_id)
 
     @work(exclusive=True, group="turn")
