@@ -8,7 +8,17 @@ that both front-ends render identically. See
 
 from __future__ import annotations
 
-from novacode_cli.errors import friendly_model_error, is_retryable_model_error
+from novacode_cli.errors import (
+    friendly_model_error,
+    is_context_overflow,
+    is_retryable_model_error,
+)
+
+
+def test_provider_413_request_entity_too_large_needs_compaction() -> None:
+    error = _ResponseError("Error code: 413 - Request Entity Too Large", 413)
+    assert is_context_overflow(error)
+    assert not is_retryable_model_error(error)
 
 
 class _ResponseError(Exception):

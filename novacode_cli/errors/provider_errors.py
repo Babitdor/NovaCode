@@ -191,6 +191,7 @@ _OVERFLOW_MARKERS: tuple[str, ...] = (
     "reduce the length of the messages",
     "exceeds the maximum",
     "request too large",
+    "request entity too large",
 )
 
 

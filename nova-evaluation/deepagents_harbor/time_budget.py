@@ -52,15 +52,44 @@ _SHELL_TOOLS = frozenset({"bash", "shell", "execute"})
 # A shell command that leaves a file behind: a redirect to something other than
 # /dev/null or another descriptor, or one of the usual in-place writers.
 _SHELL_WRITES = re.compile(
-    r"(?<![0-9&>])>>?\s*(?!/dev/null|&)[\w./~\"'$]|\btee\b|\bsed\s+-i|\bpatch\b|\bcp\s|\bmv\s"
+    r"(?<![0-9&>=])>>?\s*(?!/dev/null|&)[\w./~\"'$]|\btee\b|\bsed\s+-i|\bpatch\b|\bcp\s|\bmv\s"
 )
+
+
+def _shell_syntax(command: str) -> str:
+    """Mask quoted arguments so code passed to ``node -e`` is not shell syntax.
+
+    Preserve quote delimiters: ``> "file"`` is still a real redirect. This is
+    intentionally conservative about nested shells and command substitution.
+    """
+    output: list[str] = []
+    quote: str | None = None
+    escaped = False
+    for char in command:
+        if escaped:
+            output.append(" " if quote else char)
+            escaped = False
+        elif char == "\\" and quote != "'":
+            output.append(" " if quote else char)
+            escaped = True
+        elif char == quote:
+            output.append(char)
+            quote = None
+        elif quote:
+            output.append(" ")
+        elif char in {"'", '"'}:
+            output.append(char)
+            quote = char
+        else:
+            output.append(char)
+    return "".join(output)
 
 
 class TimeBudgetMiddleware(AgentMiddleware):
     """Append call durations and budget checkpoints to tool results; time the run."""
 
     def __init__(
-        self, limit_min: int | None, *, clock: Callable[[], float] = time.monotonic
+        self, limit_min: float | None, *, clock: Callable[[], float] = time.monotonic
     ) -> None:
         self._limit = limit_min * 60 if limit_min else None
         self._clock = clock
@@ -81,7 +110,7 @@ class TimeBudgetMiddleware(AgentMiddleware):
             self._wrote = True
         elif name in _SHELL_TOOLS:
             command = str((call.get("args") or {}).get("command") or "")
-            if _SHELL_WRITES.search(command):
+            if _SHELL_WRITES.search(_shell_syntax(command)):
                 self._wrote = True
         return name
 

@@ -318,6 +318,21 @@ class LoopGuardMiddleware(AgentMiddleware):
                 f"Calling `{name}` with these same arguments again is forbidden and "
                 f"will keep failing."
             )
+        if name in {"bash", "execute", "shell"}:
+            # A repeated test command needs different advice from a repeated search.
+            # In circuit-fibsqrt the agent kept changing tool names and adding
+            # commands around an unchanged simulator check until the turn halted.
+            guidance = (
+                "Do not rerun this check through another tool or with unrelated "
+                "commands added. Inspect the source or data that produced the "
+                "unchanged result, make a concrete change, then rerun the check. "
+                "If the result is expected, move on."
+                if streak == 1
+                else f"You repeated this unchanged check {streak} times after the "
+                "warning. Stop testing the same artifact. On your next step, "
+                "inspect and edit the source or data, or explain why you cannot "
+                "proceed. Switching tools or wrapping the command is not progress."
+            )
         return ToolMessage(
             content=(
                 f"**LOOP STOPPED** (repeat #{count + streak}): `{name}` was already "

@@ -11,6 +11,7 @@ if sys.platform == "win32":
 # benchmark runs, and benchmark runs stay out of their memory store. Must happen
 # before novacode_cli is imported (it resolves its home at import time).
 import os
+import tomllib
 from pathlib import Path
 
 _real_home = Path.home()
@@ -22,6 +23,23 @@ _eval_home.mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("DOCKER_CONFIG", str(_real_home / ".docker"))
 if (_real_home / ".modal.toml").exists():
     os.environ.setdefault("MODAL_CONFIG_PATH", str(_real_home / ".modal.toml"))
+    # Harbor's Modal preflight checks Path.home(), which becomes the isolated
+    # eval home below. Pass the active profile through Modal's supported env
+    # variables so both Harbor and the SDK can authenticate without copying
+    # the user's credential file into the eval home.
+    if not os.environ.get("MODAL_TOKEN_ID") and not os.environ.get("MODAL_TOKEN_SECRET"):
+        try:
+            profiles = tomllib.loads((_real_home / ".modal.toml").read_text(encoding="utf-8"))
+            active = next(
+                (profile for profile in profiles.values()
+                 if isinstance(profile, dict) and profile.get("active")),
+                None,
+            )
+            if active and active.get("token_id") and active.get("token_secret"):
+                os.environ.setdefault("MODAL_TOKEN_ID", active["token_id"])
+                os.environ.setdefault("MODAL_TOKEN_SECRET", active["token_secret"])
+        except (OSError, tomllib.TOMLDecodeError):
+            pass  # Modal reports its own authentication error during preflight.
 os.environ["USERPROFILE"] = os.environ["HOME"] = str(_eval_home)
 
 from deepagents_harbor.backend import HarborSandbox

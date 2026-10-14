@@ -160,6 +160,19 @@ def test_successive_blocks_escalate_with_changing_message():
     assert first.content != second.content  # escalated, not identical
 
 
+def test_repeated_shell_check_gets_artifact_guidance():
+    mw = LoopGuardMiddleware(threshold=2)
+    args = {"command": "cd /app && ./sim 208"}
+    _run(mw, "bash", args, "104")
+    _run(mw, "bash", args, "104")
+
+    first = _run(mw, "bash", args, "104")
+    second = _run(mw, "bash", args, "104")
+    assert "Inspect the source or data" in first.content
+    assert "another tool" in first.content
+    assert "edit the source or data" in second.content
+
+
 def test_hard_stops_turn_after_escalation_limit():
     # After escalate_after escalating blocks, the guard ends the turn instead of
     # emitting the wall forever.

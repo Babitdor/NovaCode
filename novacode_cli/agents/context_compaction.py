@@ -180,6 +180,39 @@ def _abridge(text: str, limit: int) -> str:
     return f"{text[:head]}\n[… {len(text) - head - tail} characters omitted …]\n{text[-tail:]}"
 
 
+def _encoded_image_chars(message: AnyMessage) -> int:
+    """Count inline image bytes that LangChain's token estimate largely ignores."""
+    if not isinstance(message.content, list):
+        return 0
+    total = 0
+    for block in message.content:
+        if not isinstance(block, Mapping) or block.get("type") not in {
+            "image",
+            "image_url",
+            "input_image",
+        }:
+            continue
+        payload = block.get("base64") or block.get("image_url") or block.get("url")
+        if isinstance(payload, Mapping):
+            payload = payload.get("url") or payload.get("data")
+        source = block.get("source")
+        if not payload and isinstance(source, Mapping):
+            payload = source.get("data")
+        if isinstance(payload, str):
+            if payload.startswith("data:"):
+                payload = payload.partition(",")[2]
+            elif payload.startswith(("http://", "https://")):
+                continue
+            total += len(payload)
+    return total
+
+
+def _request_size_tokens(messages: Sequence[AnyMessage]) -> int:
+    """Budget model tokens and encoded image transport size together."""
+    image_chars = sum(_encoded_image_chars(message) for message in messages)
+    return count_tokens_approximately(messages) + (image_chars + 3) // 4
+
+
 def effective_view(
     messages: Sequence[AnyMessage], event: object
 ) -> tuple[list[AnyMessage], int | None]:
@@ -207,7 +240,7 @@ def tail_start(messages: Sequence[AnyMessage], keep_tokens: int) -> int:
     start = len(messages)
     size = 0
     for index in range(len(messages) - 1, 0, -1):
-        size += count_tokens_approximately([messages[index]])
+        size += _request_size_tokens([messages[index]])
         if size > keep_tokens and start < len(messages):
             break
         if not isinstance(messages[index], ToolMessage):
@@ -253,6 +286,16 @@ def _clip_results(messages: list[AnyMessage]) -> list[AnyMessage]:
     out = list(messages)
     for index, message in enumerate(out):
         if not isinstance(message, ToolMessage):
+            continue
+        if _encoded_image_chars(message):
+            blocks = [
+                {"type": "text", "text": "[image omitted: provider rejected an oversized request]"}
+                if isinstance(block, Mapping)
+                and block.get("type") in {"image", "image_url", "input_image"}
+                else block
+                for block in message.content
+            ]
+            out[index] = message.model_copy(update={"content": blocks})
             continue
         text = _text(message)
         if len(text) > limit + 200:
@@ -481,7 +524,7 @@ class ContextCompactionMiddleware(AgentMiddleware):
     def _overhead(self, request: ModelRequest) -> int:
         """Tokens the system prompt and tool schemas add to every request."""
         system = request.system_message
-        tokens = count_tokens_approximately([system]) if system is not None else 0
+        tokens = _request_size_tokens([system]) if system is not None else 0
         tools = list(request.tools or [])
         if tools:
             key = tuple(
@@ -514,7 +557,7 @@ class ContextCompactionMiddleware(AgentMiddleware):
         overhead = self._overhead(request)
 
         def raw(view: Sequence[AnyMessage]) -> int:
-            return count_tokens_approximately(view) + overhead
+            return _request_size_tokens(view) + overhead
 
         def count(view: Sequence[AnyMessage]) -> int:
             return int(raw(view) * self._scale)

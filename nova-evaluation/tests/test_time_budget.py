@@ -1,6 +1,6 @@
 """A command may not use more than a share of the time left.
 
-    cd nova-evaluation && .venv/Scripts/python tests/test_time_budget.py   (or pytest)
+cd nova-evaluation && .venv/Scripts/python tests/test_time_budget.py   (or pytest)
 """
 
 from langchain.tools.tool_node import ToolCallRequest
@@ -52,7 +52,28 @@ def test_no_limit_means_no_cap() -> None:
     assert "timeout" not in seen
 
 
+def test_quoted_program_comparisons_are_not_file_writes() -> None:
+    clock = Clock()
+    mw = TimeBudgetMiddleware(12, clock=clock)
+    run(
+        mw,
+        clock,
+        {"command": "node -e 'const sh=(i)=>a; if (sh(2) > answer) console.log(\"tee\")'"},
+        takes=1,
+    )
+    assert not mw.summary()["wrote_a_file"]
+
+
+def test_real_shell_redirect_is_a_file_write() -> None:
+    clock = Clock()
+    mw = TimeBudgetMiddleware(12, clock=clock)
+    run(mw, clock, {"command": 'echo code > "/app/vm.js"'}, takes=1)
+    assert mw.summary()["wrote_a_file"]
+
+
 if __name__ == "__main__":
     test_a_command_gets_a_share_of_the_time_left()
     test_no_limit_means_no_cap()
+    test_quoted_program_comparisons_are_not_file_writes()
+    test_real_shell_redirect_is_a_file_write()
     print("ok")

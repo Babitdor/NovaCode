@@ -30,12 +30,13 @@ import threading
 import tomllib
 import uuid
 from collections import defaultdict
-from typing import Any
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, ClassVar, Literal
 
 from dotenv import load_dotenv
 from harbor.agents.base import BaseAgent
+from harbor.agents.options import AgentOptions
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext, ModelUsage
 from harbor.models.trajectories import (
@@ -57,29 +58,47 @@ from langsmith import trace
 # Load .env file if present
 load_dotenv()
 
+from langgraph.store.memory import InMemoryStore
+
+# Import Nova Code components
+from novacode_cli.agents.core_agent import create_agent_with_config, get_system_prompt
+from novacode_cli.config.model_manager import MODEL_PRESETS, ModelManager, ProviderType
+from novacode_cli.config.nova_config import NovaConfig
+from novacode_cli.memory.store import DualModeStore
+from novacode_cli.tracking.file_tracker import reset_session_tracker
+
 from deepagents_harbor.backend import HarborSandbox
 from deepagents_harbor.time_budget import TimeBudgetMiddleware
 from deepagents_harbor.tracing import create_example_id_from_instruction
 
-# Import Nova Code components
-from novacode_cli.agents.core_agent import create_agent_with_config, get_system_prompt
-from novacode_cli.tracking.file_tracker import reset_session_tracker
-from novacode_cli.config.model_manager import ModelManager, MODEL_PRESETS, ProviderType
-from novacode_cli.config.nova_config import NovaConfig
-from novacode_cli.memory.store import DualModeStore
-from langgraph.store.memory import InMemoryStore
+# Harbor enforces each task's wall-clock limit. This is only a safety net for
+# graph nodes, whose count is several times the number of agent tool steps.
+AGENT_RECURSION_LIMIT = 10_000
 
-def _agent_time_limit_min(environment: Any) -> int | None:  # noqa: ANN401
-    """The task's agent timeout in whole minutes, from its ``task.toml``.
 
-    Harbor enforces the limit but does not hand it to the agent; the task
-    directory is the parent of the environment directory. ``None`` if it cannot
-    be read — the prompt then simply omits the time line.
+def _agent_time_limit_min(
+    environment: Any, trial_config: dict[str, Any]
+) -> float | None:  # noqa: ANN401
+    """The agent timeout Harbor will enforce, in minutes.
+
+    Harbor starts from the task limit (or agent override), applies the agent
+    maximum, then applies the agent-specific or job-wide multiplier. ``None``
+    if the task limit cannot be read; the prompt then omits the time line.
     """
     try:
         task_toml = Path(environment.environment_dir).parent / "task.toml"
-        seconds = tomllib.loads(task_toml.read_text(encoding="utf-8"))["agent"]["timeout_sec"]
-        return int(seconds // 60) or None
+        task_seconds = tomllib.loads(task_toml.read_text(encoding="utf-8"))["agent"]["timeout_sec"]
+        agent_config = trial_config.get("agent") or {}
+        seconds = agent_config.get("override_timeout_sec") or task_seconds
+        maximum = agent_config.get("max_timeout_sec")
+        if maximum is not None:
+            seconds = min(seconds, maximum)
+        multiplier = trial_config.get("agent_timeout_multiplier")
+        if multiplier is None:
+            multiplier = trial_config.get("timeout_multiplier")
+        if multiplier is None:
+            multiplier = 1.0
+        return seconds * multiplier / 60 or None
     except Exception:  # noqa: BLE001 — a missing limit must never fail a trial
         return None
 
@@ -142,12 +161,26 @@ class _UsageCollector(BaseCallbackHandler):
             }
 
 
+class NovaCodeOptions(AgentOptions):
+    """Validate Harbor's user-supplied NovaCode trial settings."""
+
+    temperature: float = 0.0
+    verbose: bool = True
+    provider: ProviderType | None = None
+    reasoning_effort: Literal["off", "low", "medium", "high"] | None = None
+    max_tokens: int | None = None
+    learning: Literal["off", "on", "frozen"] = "off"
+    context_budget: int | None = None
+
+
 class NovaCodeWrapper(BaseAgent):
     """Harbor agent implementation using the full Nova Code CLI agent.
 
     This wrapper uses create_agent_with_config from novacode_cli to create
     a fully-featured agent with all middleware (FileTracker, SharedMemory, etc.).
     """
+
+    options_model: ClassVar[type[AgentOptions]] = NovaCodeOptions
 
     def __init__(
         self,
@@ -311,7 +344,7 @@ class NovaCodeWrapper(BaseAgent):
         reset_session_tracker()
 
     async def _build_system_prompt(
-        self, backend: HarborSandbox, assistant_id: str
+        self, backend: HarborSandbox, assistant_id: str, trial_config: dict[str, Any]
     ) -> str:
         """Build system prompt with actual container CWD and file listing injected.
 
@@ -354,10 +387,10 @@ class NovaCodeWrapper(BaseAgent):
         # the tests in your environment", and it spent a whole budget on scratch
         # files (check.c … check8.c) without once writing the file it was asked
         # for. These are facts about the run, not hints about any task.
-        minutes = _agent_time_limit_min(backend.environment)
+        minutes = _agent_time_limit_min(backend.environment, trial_config)
         self._time_limit_min = minutes  # recorded in the trajectory
         time_line = (
-            f"You have about {minutes} minutes in total and are stopped without warning "
+            f"You have about {minutes:g} minutes in total and are stopped without warning "
             f"when they run out.\n"
             if minutes
             else ""
@@ -412,7 +445,7 @@ Files in `{current_dir}`:
         # shared id when trials are meant to build on each other.
         learning = self._learning != "off"
         assistant_id = "Nova-eval-learner" if learning else f"Nova-eval-{environment.session_id}"
-        system_prompt = await self._build_system_prompt(backend, assistant_id)
+        system_prompt = await self._build_system_prompt(backend, assistant_id, configuration)
 
         # Create tools list for the agent
         # Using empty list — deepagents provides built-in tools
@@ -468,12 +501,10 @@ Files in `{current_dir}`:
             # the per-task step budget so completion is bounded by the agent
             # timeout, not the recursion limit. (200 was still too low:
             # build-pov-ray burned through it in 207s.)
-            # 10_000 was effectively no bound: a looping task reached 254 turns
-            # and 32M input tokens. The longest *productive* run observed was
-            # ~254 turns, so 2_000 graph steps leaves ample headroom while still
-            # ending a runaway. Completion is still normally bounded by the
-            # harbor agent timeout.
-            "recursion_limit": 2_000,
+            # Four full TB2 trials hit 2_000 at only 285 agent steps while 9–35
+            # minutes remained. The repeat-loop guard handles identical calls;
+            # Harbor's wall-clock timeout bounds novel work and model usage.
+            "recursion_limit": AGENT_RECURSION_LIMIT,
             "tags": [
                 self._model_name,
                 environment.session_id,

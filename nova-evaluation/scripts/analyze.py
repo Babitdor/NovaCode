@@ -12,8 +12,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
-from deepagents import create_deep_agent
-
 
 def scan_dataset_for_solutions(dataset_path: Path) -> dict[str, Path]:
     """Scan a dataset directory and create a mapping from task names to solution paths.
@@ -105,6 +103,16 @@ class Trial:
     solution_path: Optional[Path] = None
     trial_dir: Optional[Path] = None
     tool_usage: Optional[dict[str, int]] = None
+    failure_kind: Optional[str] = None
+    input_tokens: Optional[int] = None
+    cache_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    steps: Optional[int] = None
+    loop_stopped: bool = False
+    truncated_final: bool = False
+    graph_step_limit_hit: bool = False
+    timing: Optional[dict] = None
+    time_limit_min: Optional[float] = None
 
 
 async def parse_reward(reward_path: Path) -> bool:
@@ -264,6 +272,8 @@ async def analyze_trial(
     trajectory_path = trial_dir / "agent" / "trajectory.json"
     reward_path = trial_dir / "verifier" / "reward.txt"
     exception_path = trial_dir / "exception.txt"
+    trial_log_path = trial_dir / "trial.log"
+    result_path = trial_dir / "result.json"
 
     # Read config to find the task directory for the solution
     config_path = trial_dir / "config.json"
@@ -315,6 +325,62 @@ async def analyze_trial(
     if traj_exists:
         tool_usage = count_tool_usage(trajectory_path)
 
+    result = {}
+    if result_path.exists():
+        try:
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pass
+    agent_result = result.get("agent_result") or {}
+    exception_info = result.get("exception_info")
+    graph_step_limit_hit = False
+    if trial_log_path.exists():
+        try:
+            graph_step_limit_hit = (
+                "agent hit the step limit; grading what it left"
+                in trial_log_path.read_text(encoding="utf-8")
+            )
+        except OSError:
+            pass
+    failure_kind = None
+    if exception_exists or exception_info:
+        failure_kind = "execution error"
+    elif graph_step_limit_hit:
+        failure_kind = "harness cutoff"
+    elif reward_value is False:
+        failure_kind = "task failure"
+
+    steps = None
+    loop_stopped = False
+    truncated_final = False
+    timing = None
+    time_limit_min = None
+    if traj_exists:
+        try:
+            trajectory = json.loads(trajectory_path.read_text(encoding="utf-8"))
+            trajectory_steps = trajectory.get("steps", [])
+            steps = len(trajectory_steps)
+            agent_extra = (trajectory.get("agent") or {}).get("extra") or {}
+            timing = agent_extra.get("timing")
+            time_limit_min = agent_extra.get("time_limit_min_told_to_agent")
+            loop_stopped = any(
+                step.get("source") == "agent"
+                and "I stopped: I was repeating the same tool call" in str(step.get("message", ""))
+                for step in trajectory_steps
+            )
+            if trajectory_steps:
+                last_step = trajectory_steps[-1]
+                truncated_final = (
+                    last_step.get("source") == "agent"
+                    and (last_step.get("extra") or {}).get("finish_reason") == "length"
+                    and not last_step.get("tool_calls")
+                )
+        except (OSError, ValueError):
+            pass
+
+    if failure_kind == "execution error":
+        status = TrialStatus.FAILED
+
     trial_id = trial_dir.name
     return Trial(
         trial_id=trial_id,
@@ -326,6 +392,16 @@ async def analyze_trial(
         solution_path=solution_path if solution_exists else None,
         trial_dir=trial_dir,
         tool_usage=tool_usage,
+        failure_kind=failure_kind,
+        input_tokens=agent_result.get("n_input_tokens"),
+        cache_tokens=agent_result.get("n_cache_tokens"),
+        output_tokens=agent_result.get("n_output_tokens"),
+        steps=steps,
+        loop_stopped=loop_stopped,
+        truncated_final=truncated_final,
+        graph_step_limit_hit=graph_step_limit_hit,
+        timing=timing,
+        time_limit_min=time_limit_min,
     )
 
 
@@ -369,6 +445,21 @@ def print_summary(trials: list[Trial]) -> None:
     print(f"Completed: {completed}")
     print(f"Failed: {failed}")
     print(f"Pending: {pending}")
+    print(f"Task failures: {sum(t.failure_kind == 'task failure' for t in trials)}")
+    print(f"Execution errors: {sum(t.failure_kind == 'execution error' for t in trials)}")
+    print(f"Harness cutoffs: {sum(t.failure_kind == 'harness cutoff' for t in trials)}")
+    print(f"Loop stops: {sum(t.loop_stopped for t in trials)}")
+    print(f"Truncated endings: {sum(t.truncated_final for t in trials)}")
+    metered = [t for t in trials if t.input_tokens is not None]
+    if metered:
+        input_tokens = sum(t.input_tokens for t in metered)
+        cache_tokens = sum(t.cache_tokens or 0 for t in metered)
+        output_tokens = sum(t.output_tokens or 0 for t in metered)
+        print(f"Token usage reported: {len(metered)}/{len(trials)} trials")
+        print(
+            f"Tokens: input={input_tokens:,}, cached={cache_tokens:,}, "
+            f"uncached={input_tokens - cache_tokens:,}, output={output_tokens:,}"
+        )
 
     if trials:
         complete_trials = completed + failed
@@ -450,6 +541,37 @@ def print_summary(trials: list[Trial]) -> None:
                 print(f"  Exception: ...{exception_snippet}")
             except Exception:
                 print("  Exception: [Error reading exception file]")
+
+        if trial.failure_kind:
+            print(f"  Failure kind: {trial.failure_kind}")
+        if trial.steps is not None:
+            print(f"  Steps: {trial.steps}")
+        if trial.input_tokens is not None:
+            cached = trial.cache_tokens or 0
+            print(
+                f"  Tokens: input={trial.input_tokens:,}, cached={cached:,}, "
+                f"uncached={trial.input_tokens - cached:,}, "
+                f"output={trial.output_tokens or 0:,}"
+            )
+        if trial.loop_stopped:
+            print("  Loop guard: stopped repeated tool calls")
+        if trial.truncated_final:
+            print("  Final model response: truncated without a tool call")
+        if trial.graph_step_limit_hit:
+            print("  Graph step limit: hit")
+        if trial.timing:
+            timing = trial.timing
+            print(
+                f"  Time: wall={timing.get('wall_seconds', 0):.1f}s, "
+                f"model={timing.get('model_seconds', 0):.1f}s, "
+                f"tools={timing.get('tool_seconds', 0):.1f}s"
+            )
+            tools = timing.get("tools") or {}
+            if tools:
+                name, data = max(tools.items(), key=lambda item: item[1].get("seconds", 0))
+                print(f"  Slowest tool: {name} ({data.get('seconds', 0):.1f}s)")
+        if trial.time_limit_min is not None:
+            print(f"  Agent time budget told: {trial.time_limit_min:g} min")
 
         # Display tool usage if available
         if trial.tool_usage:
@@ -570,9 +692,6 @@ async def analyze_failed_trial(
     Returns:
         Analysis result as a string, or None if trajectory cannot be read
     """
-    # Create the deep agent for trajectory analysis
-    analysis_agent = create_deep_agent(tools=[], system_prompt=ANALYSIS_PROMPT)
-
     # Skip completed trials
     if trial.status == TrialStatus.COMPLETED:
         return None
@@ -608,6 +727,11 @@ async def analyze_failed_trial(
         user_message += "**REFERENCE SOLUTION:** Not provided\n\n"
 
     user_message += f"Please analyze this {status_desc} agent trajectory:\n\n```json\n{trajectory_json}\n```\n"
+
+    # Only detailed analysis needs the model dependency; --summary-only stays local.
+    from deepagents import create_deep_agent
+
+    analysis_agent = create_deep_agent(tools=[], system_prompt=ANALYSIS_PROMPT)
 
     # Run the deep agent analysis
     result = analysis_agent.invoke(
@@ -803,7 +927,7 @@ async def main():
                     if output_file:
                         print(f"  [OK] Analysis written to: {output_file}")
                     else:
-                        print(f"  [--] Skipped (no trajectory or already completed)")
+                        print("  [--] Skipped (no trajectory or already completed)")
                 except Exception as e:
                     print(f"  [FAIL] Error: {e}")
 

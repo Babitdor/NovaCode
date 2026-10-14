@@ -27,6 +27,9 @@ Runs are isolated from your own Nova setup: the wrapper points the process home 
 overrides and memory store are not loaded, and each trial gets a fresh in-memory
 store. What is measured is NovaCode as shipped. Set `NOVA_EVAL_HOME` to use a
 different directory.
+For Modal runs, the active profile in your real `~/.modal.toml` is passed to
+Harbor through process environment variables; the credential file is not copied
+into the isolated eval home.
 
 ---
 
@@ -61,7 +64,9 @@ uv run python scripts/run.py tb3 -m openai/gpt-5.5 -e modal -n 8
 The model is `provider/model`, where provider is a NovaCode provider id (`opencode`,
 `nvidia`, `openai`, `anthropic`, `google`, `openrouter`, `ollama`). Useful harbor
 flags: `-i` one task, `-l` first N tasks, `-n` concurrency, `-k` attempts per task,
-`-e docker|modal|daytona`, `--dry-run`. Results land in `jobs/<benchmark>/<timestamp>/`.
+`-e docker|modal|daytona`, `--agent-timeout-multiplier` to cap the agent phase,
+and `--dry-run`. Nova's prompt and time-budget checkpoints use the effective
+agent timeout after this multiplier. Results land in `jobs/<benchmark>/<timestamp>/`.
 
 Check the harness itself without spending tokens (runs each task's reference solution):
 
@@ -86,14 +91,18 @@ make run-terminal-bench-modal      # 4 tasks, Modal
 ## Analyzing Results
 
 ```bash
-# Summarize a completed job run
-uv run python scripts/analyze.py jobs/Novacode/<timestamp>
+# Summarize a job run locally, without model calls
+uv run python scripts/analyze.py jobs/tb2/<timestamp> --summary-only
 
 # Example
-uv run python scripts/analyze.py jobs/Novacode/2026-03-28__23-52-59
+uv run python scripts/analyze.py jobs/Novacode/2026-03-28__23-52-59 --summary-only
 ```
 
-Output includes: trial status, reward scores, step counts, tool usage, and exception details.
+The local summary separates verifier task failures, execution errors, and graph step
+limit cutoffs. It reports loop stops, truncated final responses, step counts, tool and wall time, and input,
+cached, uncached, and output tokens.
+Missing result files remain pending. Omit `--summary-only` only when detailed model
+analysis is wanted.
 
 ---
 

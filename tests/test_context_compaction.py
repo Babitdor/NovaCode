@@ -24,6 +24,7 @@ from pydantic import Field
 import novacode_cli.compaction as C
 from novacode_cli.agents.context_compaction import (
     ContextCompactionMiddleware,
+    _clip_results,
     effective_view,
     limits_for,
     mechanical_digest,
@@ -263,6 +264,42 @@ def _request(messages: list, model: Any = None) -> Any:
 
 def _results(messages: list) -> dict:
     return {m.tool_call_id: _text(m) for m in messages if isinstance(m, ToolMessage)}
+
+
+def test_encoded_image_payloads_trigger_compaction_before_provider_refusal() -> None:
+    """A video frame is a large request body even when token counting says 90."""
+    history = [HumanMessage(content=TASK)]
+    for index in range(3):
+        call_id = f"frame{index}"
+        history.append(
+            AIMessage(
+                content="",
+                tool_calls=[{"id": call_id, "name": "read_file", "args": {}, "type": "tool_call"}],
+            )
+        )
+        history.append(
+            ToolMessage(
+                content=[{"type": "image", "base64": "a" * 12_000}],
+                tool_call_id=call_id,
+            )
+        )
+
+    assert count_tokens_approximately(history) < WINDOW
+    plan = ContextCompactionMiddleware(context_window=WINDOW)._plan(_request(history))
+    assert plan.raw_tokens > WINDOW
+    assert plan.cutoff > 0
+    _well_formed(plan.messages[plan.cutoff :])
+
+
+def test_overflow_fallback_omits_inline_tool_images_without_mutating_history() -> None:
+    frame = ToolMessage(
+        content=[{"type": "image", "base64": "a" * 12_000}],
+        tool_call_id="frame",
+    )
+    clipped = _clip_results([frame])[0]
+    assert "image omitted" in str(clipped.content)
+    assert "a" * 12_000 not in str(clipped.content)
+    assert "a" * 12_000 in str(frame.content)
 
 
 def test_old_tool_results_are_moved_out_by_age_by_default(tmp_path) -> None:
