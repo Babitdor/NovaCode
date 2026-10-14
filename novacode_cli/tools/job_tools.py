@@ -116,11 +116,7 @@ def restart_task(task_id: str) -> str:
     return f"Restarted as {new.task_id}: {new.command[:60]}"
 
 
-# NOTE: there is intentionally NO blocking "wait_for_job" tool. Background tasks
-# are fire-and-forget: keep working and check progress with the non-blocking
-# get_task_status / get_task_logs, or terminate_task to stop one. A Ctrl+B-
-# detached task auto-resumes the agent with its result when it finishes, so the
-# agent never needs to block a turn waiting.
+# Bounded waiting for these jobs and for async subagents lives in waiter_tools.
 
 
 __all__ = [

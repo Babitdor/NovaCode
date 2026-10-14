@@ -479,8 +479,6 @@ async def _run_agent_session(
     tools.extend([list_trash, restore_file])
 
     # Background-task tools: inspect / control commands detached with Ctrl+B.
-    # (No blocking wait — background tasks are fire-and-forget; these are all
-    # non-blocking so the agent stays free while a task runs.)
     from novacode_cli.tools.job_tools import (
         get_task_logs,
         get_task_status,
@@ -488,6 +486,7 @@ async def _run_agent_session(
         restart_task,
         terminate_task,
     )
+    from novacode_cli.tools.waiter_tools import list_waiters, wait_for_task
 
     tools.extend([
         list_background_tasks,
@@ -495,6 +494,8 @@ async def _run_agent_session(
         get_task_logs,
         terminate_task,
         restart_task,
+        wait_for_task,
+        list_waiters,
     ])
 
     # Artifact tools: turn session outputs into live, shareable web pages.

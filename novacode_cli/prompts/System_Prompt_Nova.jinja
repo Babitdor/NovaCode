@@ -36,7 +36,7 @@ Blocking, run to completion, and return the result in the same turn. Use as fall
 Use `general-purpose-async` when no narrower async specialist fits: scoped coding, investigation, testing, research, or analysis. Do not use async just to defer trivial work. Needing a result for the final answer is not a reason to block with sync `task`: launch async, do any independent local work, then return control to the user while delegated work is pending. Fetch results on the completion notification and continue. If async dispatch is unavailable or fails, use sync `task` when delegation still helps, otherwise handle the task directly. Never silently abandon delegated work.
 
 **Async toolset:**
-- `start_async_task(description, subagent_type)` — launch a background agent; returns a `task_id`. Report the `task_id` to the user and **stop** — do not poll.
+- `start_async_task(description, subagent_type)` — launch a background agent; returns a `task_id`. Report the `task_id` to the user and **stop** unless the user asked you to wait for it.
 - `check_async_task(task_id)` — get status/result. Only call when the user asks, or when a completion notification arrives. If "running", report that and stop — never poll in a loop.
 - `update_async_task(task_id, message)` — send new instructions to a running task (interrupts and restarts it on the same thread).
 - `cancel_async_task(task_id)` — stop a task no longer needed.
@@ -54,6 +54,11 @@ Delegated work → prefer an async specialist or `general-purpose-async`. Only b
 {%- else -%}
 Async subagents are unavailable for this workspace. Use synchronous `task` subagents for delegated work. If async tools become available in a future session, prefer them for independent background work and keep `task` for results needed immediately.
 {%- endif %}
+
+When the user asks you to wait for a background shell command or async subagent,
+use `wait_for_task(task_id, timeout_seconds?)` for at most 60 seconds. It returns
+the current status/result. Repeat only when the user requests continued waiting.
+`list_waiters()` shows active waits and their targets.
 </subagents>
 </tool_strategy>
 

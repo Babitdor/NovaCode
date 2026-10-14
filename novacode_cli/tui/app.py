@@ -2170,9 +2170,11 @@ class NovaApp(App):
         # runtime clock advances while tasks run.
         try:
             from novacode_cli.shell.jobs import get_registry
+            from novacode_cli.tools.waiter_tools import add_waiter_observer
 
             self._task_registry = get_registry()
             self._task_registry.add_observer(self._on_task_event_threadsafe)
+            add_waiter_observer(self._on_waiter_event_threadsafe)
         except Exception:  # noqa: BLE001
             pass
         self._refresh_tasks_bar()
@@ -2687,6 +2689,9 @@ class NovaApp(App):
             if registry is not None:
                 with contextlib.suppress(Exception):
                     registry.remove_observer(callback)
+        from novacode_cli.tools.waiter_tools import remove_waiter_observer
+
+        remove_waiter_observer(self._on_waiter_event_threadsafe)
         from novacode_cli.events import unregister_tool_output_callback
 
         unregister_tool_output_callback(self._on_tool_output)
@@ -7998,9 +8003,7 @@ class NovaApp(App):
             self._log(text)
 
     def _refresh_tasks_bar(self) -> None:
-        """Rebuild the ``●`` indicator: background shell jobs (●) + running async
-        subagents (◇), with live runtime + count. Runs on the 1s timer (live
-        clock) and on every registry event."""
+        """Show running jobs, subagents, and the targets of active waiters."""
         active = []
         fmt_runtime = lambda s: f"{int(s)}s"  # noqa: E731 — fallback if jobs import fails
         try:
@@ -8015,12 +8018,17 @@ class NovaApp(App):
             for task in self._background_agent_tasks()
             if task.status == "running"
         ]
+        from novacode_cli.tools.waiter_tools import active_waiters
+
+        pane = getattr(self, "_active_pane", None)
+        waiters = [] if pane is not None and pane.kind == "child" else active_waiters()
         try:
             bar = self._w("#tasks-bar", Static)
         except NoMatches:
             return
-        if not active and not agents:
+        if not active and not agents and not waiters:
             bar.remove_class("active")
+            bar.tooltip = None
             _paint(bar, "")
             # Nothing running → stop the runtime ticker so it never interferes
             # with the rest of the UI when idle.
@@ -8040,9 +8048,10 @@ class NovaApp(App):
         t = Text()
         pal = self._palette
         total = len(active) + len(agents)
-        pane = getattr(self, "_active_pane", None)
         title = getattr(pane, "title", "Main")[:20]
-        if total == 1 and active:
+        if total == 0:
+            t.append(f"⏳ Waiters · {title}", style=f"bold {pal.accent}")
+        elif total == 1 and active:
             job = active[0]
             t.append(f"● Tasks · {title}  ", style=f"bold {pal.primary}")
             t.append("● ", style=pal.success)
@@ -8065,6 +8074,16 @@ class NovaApp(App):
             shown = min(len(active), 2) + min(len(agents), 2)
             if total > shown:
                 t.append(f"  +{total - shown} more", style=pal.dim)
+        if waiters:
+            targets = ", ".join(item.target for item in waiters[:2])
+            if len(waiters) > 2:
+                targets += f" +{len(waiters) - 2} more"
+            t.append(f"  ⏳ {len(waiters)} waiting: {targets[:70]}", style=pal.accent)
+            bar.tooltip = "Active waiters:\n" + "\n".join(
+                f"{item.kind}: {item.target}" for item in waiters
+            )
+        else:
+            bar.tooltip = None
         _paint(bar, t)
         bar.add_class("active")
 
@@ -8077,6 +8096,10 @@ class NovaApp(App):
         if event == "output":
             return
         self._post_to_ui(self._on_task_event, event, job)
+
+    def _on_waiter_event_threadsafe(self) -> None:
+        """Refresh the waiter count without touching widgets from a worker thread."""
+        self._post_to_ui(self._refresh_tasks_bar)
 
     def _on_task_event(self, event: str, job: Any) -> None:
         self._refresh_tasks_bar()

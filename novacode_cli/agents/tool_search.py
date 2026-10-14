@@ -76,6 +76,8 @@ CORE_TOOLS = frozenset(
         "update_async_task",
         "cancel_async_task",
         "list_async_tasks",
+        "wait_for_task",
+        "list_waiters",
         # Artifacts: the prompt tells the agent to create these proactively, so
         # the schemas must be bound without a search_tools round-trip — otherwise
         # the instruction names tools the model cannot see.

@@ -110,6 +110,11 @@ session, prefer them for independent background work and keep `task` for results
 needed immediately.
 {% endif %}
 
+When the user asks you to wait for a background shell command or async
+subagent, call `wait_for_task(task_id)` for a bounded wait. A timeout means it
+is still running; call again only if the user requested continued waiting.
+Use `list_waiters` to see active waits and their targets.
+
 The `task` tool is synchronous: the subagent runs to completion and its full
 report is returned in the same turn. Give it complete context and a clear scope.
 Never end your turn to wait on a synchronous subagent. When its result returns,
