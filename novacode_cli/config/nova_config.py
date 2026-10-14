@@ -488,6 +488,10 @@ class NovaConfig:
     TOOL_VERDICT_OPENCODE_FREE_MODEL = "jev-1.13-free"
     TOOL_VERDICT_OPENAI_ENDPOINT = "https://api.openai.com/v1/decisions"
     TOOL_VERDICT_OPENAI_MODEL = "gpt-6-luna"
+    #: ``llama serve`` speaks System One at its default address. In router mode
+    #: (the llama.cpp app) the model must be an id it lists at /v1/models.
+    TOOL_VERDICT_LLAMACPP_ENDPOINT = "http://127.0.0.1:9931/v1/systemone"
+    TOOL_VERDICT_LLAMACPP_MODEL = "ggml-org/Kev-4B-GGUF"
 
     def set_tool_verdict_settings(self, *, enabled: bool, endpoint: str, model: str) -> None:
         """Persist a complete decision configuration in one write."""

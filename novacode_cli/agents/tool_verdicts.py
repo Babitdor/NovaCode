@@ -682,8 +682,13 @@ class SystemOneClient:
             headers=headers,
         )
         if response.status_code >= 400:
+            # The server's own reason ("model 'x' not found") is the actionable part.
+            try:
+                detail = str(response.json()["error"]["message"])[:200]
+            except Exception:  # noqa: BLE001 - any other body: the status alone
+                detail = ""
             message = f"System One request failed ({response.status_code})."
-            raise ValueError(message)
+            raise ValueError(f"{message} {detail}".strip())
         payload = response.json()
         if any(question.get("type") == "choice" for question in normalized.values()):
             return payload

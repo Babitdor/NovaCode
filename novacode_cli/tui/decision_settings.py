@@ -62,6 +62,7 @@ class DecisionSettings(VerticalScroll):
                 ("Jev · OpenCode Zen", "opencode_zen"),
                 ("Jev Free · OpenCode Zen", "opencode_zen_free"),
                 ("Tev1 · local Ollama", "tev1"),
+                ("llama.cpp · local (llama serve)", "llamacpp"),
                 ("Custom System One", "custom"),
             ],
             value="tev1",
@@ -120,6 +121,8 @@ class DecisionSettings(VerticalScroll):
             preset = "opencode_zen_free" if model == NovaConfig.TOOL_VERDICT_OPENCODE_FREE_MODEL else "opencode_zen"
         elif endpoint == NovaConfig.TOOL_VERDICT_DEFAULT_ENDPOINT and model.startswith("tev1"):
             preset = "tev1"
+        elif endpoint == NovaConfig.TOOL_VERDICT_LLAMACPP_ENDPOINT:
+            preset = "llamacpp"
         self._preset = preset
         self.query_one("#decision-preset", Select).value = preset
         for widget in self.query("Switch, Input, Select"):
@@ -171,6 +174,15 @@ class DecisionSettings(VerticalScroll):
                 "#decision-endpoint", Input
             ).value = NovaConfig.TOOL_VERDICT_DEFAULT_ENDPOINT
             self.query_one("#decision-model", Input).value = NovaConfig.TOOL_VERDICT_DEFAULT_MODEL
+        elif event.value == "llamacpp":
+            self.query_one(
+                "#decision-endpoint", Input
+            ).value = NovaConfig.TOOL_VERDICT_LLAMACPP_ENDPOINT
+            self.query_one("#decision-model", Input).value = NovaConfig.TOOL_VERDICT_LLAMACPP_MODEL
+            self._hint(
+                "Run: llama serve -hf ggml-org/Kev-4B-GGUF. In router mode the model must "
+                "be an id listed at /v1/models; change the port if --port differs."
+            )
 
     def _hint(self, message: str, *, error: bool = False) -> None:
         self.query_one("#decision-status", Static).update(

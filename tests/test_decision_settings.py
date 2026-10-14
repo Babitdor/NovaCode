@@ -277,3 +277,21 @@ async def test_a_custom_decisions_compatible_endpoint_is_saved_and_reloaded():
 
         screen, panel = await open_decisions(app, pilot)
         assert panel.query_one("#decision-preset", Select).value == "openai_custom"
+
+
+async def test_the_llamacpp_preset_fills_llama_serve_defaults_and_reloads():
+    app = App()
+    async with app.run_test(size=(100, 35)) as pilot:
+        screen, panel = await open_decisions(app, pilot)
+        panel.query_one("#decision-preset", Select).value = "llamacpp"
+        await pilot.pause()
+        assert panel.query_one("#decision-endpoint", Input).value == (
+            NovaConfig.TOOL_VERDICT_LLAMACPP_ENDPOINT
+        )
+        assert panel.query_one("#decision-model", Input).value == (
+            NovaConfig.TOOL_VERDICT_LLAMACPP_MODEL
+        )
+        await save_and_settle(screen, pilot)
+
+        screen, panel = await open_decisions(app, pilot)
+        assert panel.query_one("#decision-preset", Select).value == "llamacpp"

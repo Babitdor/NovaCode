@@ -162,3 +162,18 @@ def test_a_custom_decisions_endpoint_gets_the_protocol_but_never_the_openai_key(
     assert isinstance(create_system_one_client(_Config()), od.OpenAIDecisionsClient)
     _Config.get_tool_verdict_endpoint = staticmethod(lambda: "http://localhost:9/v1/systemone")
     assert isinstance(create_system_one_client(_Config()), SystemOneClient)
+
+
+def test_a_system_one_error_carries_the_servers_reason():
+    """llama.cpp names the problem ("model 'x' not found"); keep it."""
+    from novacode_cli.agents.tool_verdicts import SystemOneClient
+
+    transport = httpx.MockTransport(lambda _: httpx.Response(400, json={
+        "error": {"code": 400, "message": "model 'x' not found"}
+    }))
+    client = SystemOneClient(
+        endpoint="http://127.0.0.1:9931/v1/systemone", model="x",
+        client=httpx.Client(transport=transport),
+    )
+    with pytest.raises(ValueError, match=r"\(400\)\. model 'x' not found"):
+        client.ask({}, {"k": {"type": "noul", "instructions": "Keep?"}})
