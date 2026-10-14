@@ -172,3 +172,7 @@ tmp/
 /SECURITY_AUDIT.md
 /SECURITY_REMEDIATION.md
 /SECURITY_REMEDIATION_SPEC.md
+
+# Context/learning verification outputs (scripts/*context_learning*.py); local only
+/context-learning-*.json
+/context-learning-*.xml
