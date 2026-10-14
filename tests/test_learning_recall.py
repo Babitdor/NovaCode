@@ -202,6 +202,9 @@ def test_one_task_renaming_a_skill_does_not_fill_the_ledger(tmp_path: Path) -> N
     ledger = json.loads((tmp_path / "skills" / ".skill-proposals.json").read_text(encoding="utf-8"))
     assert len(ledger) == 1, list(ledger)
     # A second task wanting it is still what creates the skill.
-    assert _propose(tmp_path, "sandbox-task-b", "inspect-raw-tensor-dump") == [
-        "inspect-raw-tensor-dump"
-    ]
+    assert _propose(tmp_path, "sandbox-task-b", "inspect-raw-tensor-dump") == []
+    from novacode_cli.hermes.ledger import LearningLedger
+    records = LearningLedger(tmp_path / "learning.sqlite3").list()
+    assert len(records) == 1
+    assert records[0].target == "inspect-raw-tensor-dump"
+    assert records[0].status == "candidate"

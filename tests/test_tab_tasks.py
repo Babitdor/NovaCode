@@ -99,9 +99,12 @@ async def test_child_tasks_panel_controls_only_selected_worker(monkeypatch):
     monkeypatch.setattr(jobs, "get_registry", lambda: parent)
     app = _app()
     sent = []
+    terminated = asyncio.Event()
 
     async def control(pane, action, job_id):
         sent.append((pane.sid, action, job_id))
+        if action == "terminate":
+            terminated.set()
 
     monkeypatch.setattr(app, "_send_job_control", control)
     async with app.run_test() as pilot:
@@ -114,9 +117,17 @@ async def test_child_tasks_panel_controls_only_selected_worker(monkeypatch):
         await app._dispatch_to_child(pane, "/tasks")
         await pilot.pause()
         assert isinstance(app.screen, BackgroundTasksScreen)
-        app.screen.query_one("#tasks-list").highlighted = 0
-        await pilot.press("t")
+        app.screen._refresh()
+        tasks_list = app.screen.query_one("#tasks-list")
+        assert any(task.id == child_job.id for task in app.screen._tasks)
+        tasks_list.highlighted = next(
+            index for index, task in enumerate(app.screen._tasks) if task.id == child_job.id
+        )
+        tasks_list.focus()
+        assert app.screen._selected().id == child_job.id
+        app.screen.action_terminate()
         await pilot.pause()
+        await asyncio.wait_for(terminated.wait(), timeout=5)
         assert (pane.sid, "terminate", child_job.id) in sent
         assert not root_job.kill.is_set()
         await pilot.press("escape")

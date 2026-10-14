@@ -130,7 +130,7 @@ class UIHarness:
         if os.environ.get("NOVA_SAFE_UI") == "1":
             return "Safe UI: saved customizations were skipped. Use /ui reset to clear them."
         try:
-            if self.path.exists():
+            if await asyncio.to_thread(self.path.exists):
                 spec = UISpec.model_validate_json(
                     await asyncio.to_thread(self.path.read_text, encoding="utf-8")
                 )

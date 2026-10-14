@@ -162,7 +162,7 @@ def test_named_subagent_gets_only_its_tools(tmp_path, monkeypatch) -> None:
     write_agent(tmp_path / "picky" / "agent.md", {"description": "Picky", "tools": ["web_search"]},
                 "Be picky.")
     monkeypatch.setattr(settings, "get_all_agents", lambda: [("picky", tmp_path / "picky", "global")])
-    core_agent._named_subagents_cache.clear()
+    core_agent.clear_named_subagents_cache()
 
     class _T:
         def __init__(self, name):

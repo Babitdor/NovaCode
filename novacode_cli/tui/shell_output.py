@@ -7,12 +7,23 @@ import codecs
 from collections.abc import AsyncIterator
 
 
-async def shell_output_batches(stream: asyncio.StreamReader) -> AsyncIterator[list[str]]:
+async def shell_output_batches(
+    stream: asyncio.StreamReader, *, flush_partial: bool = False
+) -> AsyncIterator[list[str]]:
     """Handle split UTF-8 and long newline-free output without readline limits."""
     decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
     pending = ""
     while True:
-        chunk = await stream.read(16384)
+        try:
+            if flush_partial:
+                chunk = await asyncio.wait_for(stream.read(16384), 0.1)
+            else:
+                chunk = await stream.read(16384)
+        except TimeoutError:
+            if pending:
+                yield [pending.rstrip("\r")]
+                pending = ""
+            continue
         pending += decoder.decode(chunk, final=not chunk)
         lines = pending.split("\n")
         pending = lines.pop()

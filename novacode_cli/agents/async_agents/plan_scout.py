@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from deepagents import create_deep_agent
+from novacode_cli.context.snapshot import background_context_middleware
 from deepagents.backends.filesystem import FilesystemBackend
 from langchain_core.tools import tool
 
@@ -203,7 +204,7 @@ def _build_agent() -> Any:
         # A dispatch may name the model to run on (see novacode_cli.agents.async_context).
         # PLAN_SCOUT_MODEL stays in charge when it is set, since it was aimed at this one
         # agent; otherwise the async role decides, and the environment is the last word.
-        middleware=[AsyncModelOverrideMiddleware(per_agent_model_var="PLAN_SCOUT_MODEL"), DelegatedApprovalMiddleware(), background_library("plan-scout-agent")],
+        middleware=[AsyncModelOverrideMiddleware(per_agent_model_var="PLAN_SCOUT_MODEL"), DelegatedApprovalMiddleware(), background_library("plan-scout-agent"), *background_context_middleware()],
         context_schema=NovaAsyncContext,
     )
 

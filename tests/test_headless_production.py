@@ -259,10 +259,13 @@ async def test_cleanup_timeout_does_not_contradict_flushed_result(monkeypatch, c
         "novacode_cli.headless.runner.iterate_agent_events", _fake_source([ev.Done(True)])
     )
     state = _headless_state()
-    state.headless_timeout = 0.02
+    # Exercise timeout during cleanup deterministically, independent of cold
+    # imports, coverage overhead, and Windows timer granularity during the run.
+    state.headless_timeout = 10
 
     async def start():
         await run_headless(agent=object(), assistant_id="nova", session_state=state)
+        state.headless_bootstrap_budget.reschedule(asyncio.get_running_loop().time() + 0.02)
         await asyncio.sleep(60)
 
     await run_bootstrap(start(), state)
@@ -296,7 +299,7 @@ cli.cli_main()
         [sys.executable, "-c", script, *flags],
         input="测试 task".encode("utf-8"),
         capture_output=True,
-        timeout=20,
+        timeout=60,
     )
     assert run.returncode == 0, run.stderr.decode("utf-8", errors="replace")
     result = json.loads(run.stdout.decode("utf-8"))

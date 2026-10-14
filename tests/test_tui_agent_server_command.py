@@ -58,6 +58,7 @@ async def _drive(command: str, *, monkeypatch: pytest.MonkeyPatch) -> str:
 def test_status_reports_the_server_and_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     """The default action. Reading the palette must not call it."""
     import asyncio
+    monkeypatch.setattr("novacode_cli.agents.server_launcher.server_extra_available", lambda: False)
 
     text = asyncio.run(_drive("", monkeypatch=monkeypatch))
 

@@ -38,11 +38,11 @@ class _Store:
 
 async def _runner(entries: list[dict], mode: str | None = None) -> ReviewRunner:
     store = _Store()
-    await store.aput(("nova", "tool_history"), "history", {"entries": entries})
-    await store.aput(("nova", "tool_counter"), "counter", {"count": len(entries)})
+    await store.aput(("nova", "test-session", "tool_history"), "history", {"entries": entries})
+    await store.aput(("nova", "test-session", "tool_counter"), "counter", {"count": len(entries)})
     return ReviewRunner(
         store,  # type: ignore[arg-type]
-        ToolUsageTracker(store, enabled=True),  # type: ignore[arg-type]
+        ToolUsageTracker(store, enabled=True, owner="test-session"),  # type: ignore[arg-type]
         SkillManager(store, enabled=True),  # type: ignore[arg-type]
         review_threshold=4,
         enabled=True,

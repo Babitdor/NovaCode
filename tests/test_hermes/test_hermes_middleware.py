@@ -27,7 +27,7 @@ def mock_store():
 @pytest.fixture
 def middleware(mock_store):
     return NovaLearningMiddleware(
-        store=mock_store,
+        store=mock_store, owner="test-session",
         review_threshold=3,  # Low threshold for testing
         enabled=True,
         # The count-based trigger these tests exercise is the "periodic" mode;
@@ -61,8 +61,8 @@ class TestCounter:
         """Reset should set counter to 0 and clear injected flag."""
         # Use a callable side_effect to simulate a stateful store
         store_state: dict = {
-            ("nova", "tool_counter"): {"counter": {"count": 10}},
-            ("nova", "meta"): {},
+            ("nova", "test-session", "tool_counter"): {"counter": {"count": 10}},
+            ("nova", "test-session", "meta"): {},
         }
 
         async def stateful_aget(namespace, key):
@@ -89,7 +89,7 @@ class TestCounter:
         """Counter should be persisted via store.aput."""
         mock_store.aget.return_value = None
         await middleware._increment_counter()
-        mock_store.aput.assert_awaited_with(("nova", "tool_counter"), "counter", {"count": 1})
+        mock_store.aput.assert_awaited_with(("nova", "test-session", "tool_counter"), "counter", {"count": 1})
 
     async def test_cap_at_max(self, middleware, mock_store):
         """Counter should be capped at _MAX_COUNTER."""
@@ -114,7 +114,11 @@ class TestReviewTriggers:
 
     async def test_should_review_at_threshold(self, middleware, mock_store):
         """should_review should be True when count equals threshold."""
-        mock_store.aget.return_value = MagicMock(value={"count": 3})  # threshold=3
+        async def read(namespace, key):
+            if namespace[-1] == "tool_history":
+                return MagicMock(value={"entries": [{"tool": "edit_file", "success": True}] * 3})
+            return MagicMock(value={"count": 3}) if key == "counter" else None
+        mock_store.aget.side_effect = read
         assert await middleware._should_review()
 
     async def test_should_review_above_threshold(self, middleware, mock_store):
@@ -126,8 +130,8 @@ class TestReviewTriggers:
         """Applying review content should persist review + meta to the store."""
         await middleware._apply_review_content("Lessons: learned a lot")
         namespaces = [c[0][0] for c in mock_store.aput.await_args_list]
-        assert ("nova", "reviews") in namespaces
-        assert ("nova", "meta") in namespaces
+        assert ("nova", "test-session", "reviews") in namespaces
+        assert ("nova", "test-session", "meta") in namespaces
 
 
 class TestToolUsageRecording:
@@ -140,7 +144,7 @@ class TestToolUsageRecording:
         await middleware._record_tool_usage("edit_file", True)
         # Should have called aput with the history entry
         calls = mock_store.aput.await_args_list
-        history_calls = [c for c in calls if c[0][0] == ("nova", "tool_history")]
+        history_calls = [c for c in calls if c[0][0] == ("nova", "test-session", "tool_history")]
         assert len(history_calls) >= 1
 
     async def test_record_tool_usage_failure(self, middleware, mock_store):
@@ -148,7 +152,7 @@ class TestToolUsageRecording:
         mock_store.aget.return_value = None
         await middleware._record_tool_usage("execute", False)
         calls = mock_store.aput.await_args_list
-        history_calls = [c for c in calls if c[0][0] == ("nova", "tool_history")]
+        history_calls = [c for c in calls if c[0][0] == ("nova", "test-session", "tool_history")]
         assert len(history_calls) >= 1
 
 
@@ -157,7 +161,7 @@ class TestMiddlewareHooks:
 
     async def test_enabled_false_is_noop(self, middleware, mock_store):
         """When enabled=False, hooks should pass through without tracking."""
-        disabled = NovaLearningMiddleware(store=mock_store, enabled=False)
+        disabled = NovaLearningMiddleware(store=mock_store, owner="test-session", enabled=False)
         call_fn = AsyncMock(return_value="result")
         # (request, handler) order
         result = await disabled.awrap_tool_call(MagicMock(tool_name="test"), call_fn)
@@ -176,7 +180,7 @@ class TestMiddlewareHooks:
 
         # Counter should have been persisted
         counter_calls = [
-            c for c in mock_store.aput.await_args_list if c[0][0] == ("nova", "tool_counter")
+            c for c in mock_store.aput.await_args_list if c[0][0] == ("nova", "test-session", "tool_counter")
         ]
         assert len(counter_calls) >= 1
 
@@ -204,7 +208,11 @@ class TestOutOfBandReview:
         """At threshold: a SEPARATE model.ainvoke runs; the real turn is still returned."""
         import asyncio
 
-        mock_store.aget.return_value = MagicMock(value={"count": 3})  # threshold=3
+        async def read(namespace, key):
+            if namespace[-1] == "tool_history":
+                return MagicMock(value={"entries": [{"tool": "edit_file", "success": True}] * 3})
+            return MagicMock(value={"count": 3}) if key == "counter" else None
+        mock_store.aget.side_effect = read
         real_response = MagicMock()
         handler = AsyncMock(return_value=real_response)
 
@@ -212,8 +220,12 @@ class TestOutOfBandReview:
         review_ai.content = '<lesson topic="testing">- learned X</lesson>'
         request = MagicMock()
         request.messages = []
-        request.model = MagicMock()
+        from langchain_core.language_models.fake_chat_models import FakeListChatModel
+        request.state = {}
+        request.model = MagicMock(spec=FakeListChatModel)
         request.model.ainvoke = AsyncMock(return_value=review_ai)
+        request.model.bind.return_value = request.model
+        request.override.return_value = request
 
         result = await middleware.awrap_model_call(request, handler)
 
@@ -229,11 +241,11 @@ class TestOutOfBandReview:
         request.model.ainvoke.assert_awaited_once()
         # Review learnings were persisted.
         namespaces = [c[0][0] for c in mock_store.aput.await_args_list]
-        assert ("nova", "reviews") in namespaces
+        assert ("nova", "test-session", "reviews") in namespaces
 
     async def test_disabled_skips_review_and_returns_response(self, mock_store):
         """When disabled, no review runs and the response passes straight through."""
-        disabled = NovaLearningMiddleware(store=mock_store, enabled=False)
+        disabled = NovaLearningMiddleware(store=mock_store, owner="test-session", enabled=False)
         real = MagicMock()
         handler = AsyncMock(return_value=real)
         request = MagicMock()
@@ -247,7 +259,7 @@ class TestOutOfBandReview:
 
     async def test_apply_review_content_returns_none_when_disabled(self, mock_store):
         """Disabled middleware does not persist review content."""
-        disabled = NovaLearningMiddleware(store=mock_store, enabled=False)
+        disabled = NovaLearningMiddleware(store=mock_store, owner="test-session", enabled=False)
         result = await disabled._apply_review_content("anything")
         assert result is None
         mock_store.aput.assert_not_awaited()
@@ -258,7 +270,7 @@ class TestSyncToolCallHook:
 
     def test_disabled_passes_through(self, mock_store):
         """When enabled=False, handler is called and result returned directly."""
-        disabled = NovaLearningMiddleware(store=mock_store, enabled=False)
+        disabled = NovaLearningMiddleware(store=mock_store, owner="test-session", enabled=False)
         handler = MagicMock(return_value="direct_result")
         result = disabled.wrap_tool_call(MagicMock(tool_name="test"), handler)
         assert result == "direct_result"
@@ -295,7 +307,7 @@ class TestSyncModelCallHook:
 
     def test_disabled_passes_through(self, mock_store):
         """When enabled=False, handler is called and result returned directly."""
-        disabled = NovaLearningMiddleware(store=mock_store, enabled=False)
+        disabled = NovaLearningMiddleware(store=mock_store, owner="test-session", enabled=False)
         handler = MagicMock(return_value="direct_result")
         result = disabled.wrap_model_call(MagicMock(messages=[]), handler)
         assert result == "direct_result"
@@ -350,21 +362,25 @@ class TestSessionConsolidation:
         review_ai.content = '<lesson topic="testing">- learned X</lesson>'
         request = MagicMock()
         request.messages = []
-        request.model = MagicMock()
+        from langchain_core.language_models.fake_chat_models import FakeListChatModel
+        request.state = {}
+        request.model = MagicMock(spec=FakeListChatModel)
         request.model.ainvoke = AsyncMock(return_value=review_ai)
+        request.model.bind.return_value = request.model
+        request.override.return_value = request
         return request
 
     async def test_skips_without_live_request(self, mock_store):
         """No turn happened this session → nothing to consolidate, no model call."""
-        mw = NovaLearningMiddleware(store=mock_store, enabled=True)
+        mw = NovaLearningMiddleware(store=mock_store, owner="test-session", enabled=True)
         assert await mw.consolidate_session() is False
         mock_store.aput.assert_not_awaited()
 
     async def test_skips_when_only_trivial_work(self):
         """Read-only browsing is not worth distilling into memory."""
         state = {
-            ("nova", "tool_counter"): {"counter": {"count": 4}},
-            ("nova", "tool_history"): {
+            ("nova", "test-session", "tool_counter"): {"counter": {"count": 4}},
+            ("nova", "test-session", "tool_history"): {
                 "history": {
                     "entries": [
                         {"tool": "read_file", "success": True, "timestamp": 1.0},
@@ -374,10 +390,10 @@ class TestSessionConsolidation:
                     ]
                 }
             },
-            ("nova", "meta"): {"review_just_completed": {"value": False}},
+            ("nova", "test-session", "meta"): {"review_just_completed": {"value": False}},
         }
         store = self._stateful_store(state)
-        mw = NovaLearningMiddleware(store=store, enabled=True)
+        mw = NovaLearningMiddleware(store=store, owner="test-session", enabled=True)
         mw._last_request = self._request()
 
         assert await mw.consolidate_session() is False
@@ -387,8 +403,8 @@ class TestSessionConsolidation:
     async def test_skips_after_just_completed_review(self):
         """A review that just ran means there is nothing left to distill."""
         state = {
-            ("nova", "tool_counter"): {"counter": {"count": 2}},
-            ("nova", "tool_history"): {
+            ("nova", "test-session", "tool_counter"): {"counter": {"count": 2}},
+            ("nova", "test-session", "tool_history"): {
                 "history": {
                     "entries": [
                         {"tool": "edit_file", "success": True, "timestamp": 1.0},
@@ -396,10 +412,10 @@ class TestSessionConsolidation:
                     ]
                 }
             },
-            ("nova", "meta"): {"review_just_completed": {"value": True}},
+            ("nova", "test-session", "meta"): {"review_just_completed": {"value": True}},
         }
         store = self._stateful_store(state)
-        mw = NovaLearningMiddleware(store=store, enabled=True)
+        mw = NovaLearningMiddleware(store=store, owner="test-session", enabled=True)
         mw._last_request = self._request()
 
         assert await mw.consolidate_session() is False
@@ -408,8 +424,8 @@ class TestSessionConsolidation:
     async def test_runs_review_on_substantive_work(self):
         """Real edits below the threshold get distilled on the way out."""
         state = {
-            ("nova", "tool_counter"): {"counter": {"count": 2}},
-            ("nova", "tool_history"): {
+            ("nova", "test-session", "tool_counter"): {"counter": {"count": 2}},
+            ("nova", "test-session", "tool_history"): {
                 "history": {
                     "entries": [
                         {"tool": "edit_file", "success": True, "timestamp": 1.0},
@@ -417,21 +433,21 @@ class TestSessionConsolidation:
                     ]
                 }
             },
-            ("nova", "meta"): {"review_just_completed": {"value": False}},
+            ("nova", "test-session", "meta"): {"review_just_completed": {"value": False}},
         }
         store = self._stateful_store(state)
-        mw = NovaLearningMiddleware(store=store, enabled=True)
+        mw = NovaLearningMiddleware(store=store, owner="test-session", enabled=True)
         mw._last_request = self._request()
 
         assert await mw.consolidate_session() is True
         # The review ran as an out-of-band model call.
         mw._last_request.model.ainvoke.assert_awaited_once()
         # The counter was reset so the next session starts clean.
-        assert state[("nova", "tool_counter")]["counter"]["count"] == 0
+        assert state[("nova", "test-session", "tool_counter")]["counter"]["count"] == 0
 
     async def test_disabled_is_noop(self, mock_store):
         """Disabled middleware never consolidates."""
-        mw = NovaLearningMiddleware(store=mock_store, enabled=False)
+        mw = NovaLearningMiddleware(store=mock_store, owner="test-session", enabled=False)
         mw._last_request = self._request()
         assert await mw.consolidate_session() is False
         mock_store.aput.assert_not_awaited()

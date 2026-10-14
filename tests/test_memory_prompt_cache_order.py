@@ -244,7 +244,7 @@ def test_corpus_cache_invalidates_on_deleting_a_non_newest_file(tmp_path) -> Non
     mw._load_memory_corpus()
     sig_before = AgentMemoryMiddleware._corpus_signature(mem_dir)
     assert sig_before is not None
-    newest_before = sig_before[1]
+    newest_before = dict(sig_before)["zzz-new.md"]
 
     (mem_dir / "aaa-old.md").unlink()
 
@@ -252,7 +252,7 @@ def test_corpus_cache_invalidates_on_deleting_a_non_newest_file(tmp_path) -> Non
     assert after is not None
     # Guard the guard: if the max mtime shifted, this test would pass for the
     # wrong reason (a max-only key would have caught it too).
-    assert after[1] == newest_before, "test bug: the newest mtime changed"
+    assert dict(after)["zzz-new.md"] == newest_before, "test bug: surviving content changed"
 
     assert "aaa-old" not in mw._load_memory_corpus(), (
         "a deleted topic was still served — the corpus key ignored the file count"
@@ -264,14 +264,14 @@ def test_corpus_cache_reused_when_files_unchanged(tmp_path) -> None:
     assert mw._load_memory_corpus() is mw._load_memory_corpus()
 
 
-def test_corpus_signature_uses_newest_file_mtime(tmp_path) -> None:
-    """Signature must track file mtimes, not the directory's own mtime."""
+def test_corpus_signature_uses_current_file_content(tmp_path) -> None:
+    """Content identity remains valid even when timestamps are restored."""
     mw = _bare_middleware(tmp_path, topics={"a-topic": "body"})
     mem_dir = mw.agent_dir / "memories"
 
     before = AgentMemoryMiddleware._corpus_signature(mem_dir)
     assert before is not None
-    count, newest = before
-    assert count == 1
-    assert newest > 0
+    assert len(before) == 1
+    assert before[0][0] == "a-topic.md"
+    assert len(before[0][1]) == 64
 

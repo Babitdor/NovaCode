@@ -109,8 +109,8 @@ async def _drive_non_exit_command_still_queues():
         app._turn_active = True
         app.action_cancel_turn = lambda: None
         prompt = app.query_one("#prompt", PromptInput)
-        prompt.value = "/tokens"
-        prompt.post_message(PromptInput.Submitted(prompt, "/tokens"))
+        prompt.value = "/model"
+        prompt.post_message(PromptInput.Submitted(prompt, "/model"))
         for _ in range(6):
             await pilot.pause()
         return list(app._deferred_commands)
@@ -118,4 +118,4 @@ async def _drive_non_exit_command_still_queues():
 
 def test_other_commands_still_queue_behind_a_turn():
     """Sensitivity: the bypass must be exit-only."""
-    assert asyncio.run(_drive_non_exit_command_still_queues()) == ["/tokens"]
+    assert asyncio.run(_drive_non_exit_command_still_queues()) == ["/model"]

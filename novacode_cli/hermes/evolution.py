@@ -310,10 +310,13 @@ class EvolutionEngine:
         if not new_md or new_md == current.strip():
             return False
         try:
-            from novacode_cli.skills import versioning
-
-            versioning.snapshot(skill_dir, reason="level_up", source="evolution")
-            skill_path.write_text(new_md.rstrip() + "\n", encoding="utf-8")
+            from novacode_cli.hermes.ledger import LearningLedger
+            from novacode_cli.hermes.activation import content_hash
+            LearningLedger(skill_dir.parent.parent / "learning.sqlite3").propose(
+                content=new_md.rstrip() + "\n", kind="skill", target=skill_dir.name,
+                source_hash=content_hash(current.encode()), scope="shared", origin="evolution",
+                evidence=(f"session:{self._tracker.owner}",),
+            )
         except OSError:
             logger.exception("Failed to write levelled-up skill '%s'", skill_dir.name)
             return False

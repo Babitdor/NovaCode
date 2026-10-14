@@ -14,6 +14,8 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 import novacode_cli.prompts as P
 from novacode_cli.hermes import config
+from novacode_cli.hermes.activation import ActivationManager
+from novacode_cli.hermes.ledger import LearningLedger
 from novacode_cli.hermes.prompt_evolution import (
     PromptEvolutionEngine,
     _decide_ab,
@@ -48,6 +50,7 @@ def engine(tmp_path, monkeypatch):
     prompts_dir.mkdir()
     (prompts_dir / "test_tpl.jinja").write_text("ORIGINAL BODY\n", encoding="utf-8")
     monkeypatch.setattr(P, "PROMPT_HISTORY_DIR", history)
+    monkeypatch.setattr(P, "TEMPLATES_DIR", prompts_dir)
     monkeypatch.setattr("novacode_cli.hermes.prompt_evolution.PROMPT_HISTORY_DIR", history)
     P.reset_ab_choices()
     return PromptEvolutionEngine(FakeStore(), prompts_dir=prompts_dir), history
@@ -118,8 +121,14 @@ class TestLifecycle:
 
         assert await eng.promote("test_tpl.jinja") is True
         active = history / "test_tpl" / "active.jinja"
-        assert "NEW BODY" in active.read_text(encoding="utf-8")
-        assert not cand.exists()
+        assert not active.exists()
+        assert cand.exists()
+        ledger = LearningLedger(history.parent / "learning.sqlite3")
+        proposal = ledger.list()[-1]
+        assert proposal.status == "candidate"
+        ledger.transition(proposal.reference, "approve")
+        captured = ActivationManager(history.parent, "").apply_pending()
+        assert ("prompt", "test_tpl.jinja", "NEW BODY\n") in captured
 
     async def test_discard(self, engine):
         eng, history = engine
@@ -135,8 +144,12 @@ class TestLifecycle:
         # Promote a new candidate, then rollback should revert active → package.
         await eng._write_candidate("test_tpl.jinja", "PROMO")
         await eng.promote("test_tpl.jinja")
-        assert (history / "test_tpl" / "active.jinja").exists()
-        assert "reverted" in await eng.rollback("test_tpl.jinja")
+        ledger = LearningLedger(history.parent / "learning.sqlite3")
+        ledger.transition(ledger.list()[-1].reference, "approve")
+        manager = ActivationManager(history.parent, "")
+        assert manager.apply_pending() == (("prompt", "test_tpl.jinja", "PROMO\n"),)
+        assert "pending" in await eng.rollback("test_tpl.jinja")
+        assert manager.apply_pending() == ()
         assert not (history / "test_tpl" / "active.jinja").exists()
 
     async def test_status_reflects_state(self, engine):
@@ -241,8 +254,10 @@ class TestResolution:
         await eng.record_outcome(passed=False)
         await eng.record_outcome(passed=False)
         # Candidate (100%) beat active (0%) over >= min runs → promoted.
-        assert (history / "test_tpl" / "active.jinja").exists()
-        assert not (history / "test_tpl" / "candidate.jinja").exists()
+        assert not (history / "test_tpl" / "active.jinja").exists()
+        assert (history / "test_tpl" / "candidate.jinja").exists()
+        ledger = LearningLedger(history.parent / "learning.sqlite3")
+        assert all(record.status == "candidate" for record in ledger.list())
 
 
 # ── render routing ───────────────────────────────────────────────────────────
@@ -277,7 +292,8 @@ class TestRenderRouting:
 
     def test_candidate_variant_used(self, routed):
         P._AB_CHOICE["demo.jinja"] = "candidate"
-        assert P.render_template("demo.jinja", x=1) == "CANDIDATE 1"
+        assert P.render_template("demo.jinja", x=1) == "ACTIVE 1"
+        assert P.current_variant("demo.jinja") is None
 
     def test_active_variant_used(self, routed):
         P._AB_CHOICE["demo.jinja"] = "active"

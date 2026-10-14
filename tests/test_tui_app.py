@@ -360,6 +360,7 @@ async def _drive_sessions_screen():
     from textual.widgets import Button, OptionList
 
     from novacode_cli.tui.app import NovaApp, NovaStatusBar, SessionsScreen
+    from novacode_cli.tui.screens import PickScreen
     from novacode_cli.ui.ui_elements import TokenTracker
 
     class _Meta:
@@ -395,12 +396,17 @@ async def _drive_sessions_screen():
         inp.value = "/sessions"
         inp.focus()
         await pilot.press("enter")
-        await pilot.pause()
-        from novacode_cli.tui.screens import PickScreen
+        for _ in range(120):
+            await pilot.pause()
+            if isinstance(app.screen, PickScreen):
+                break
         assert isinstance(app.screen, PickScreen)
         assert app.screen.query_one("#pick-list", OptionList).option_count == 2
         await pilot.press("enter")  # choose Nova saved sessions
-        await pilot.pause()
+        for _ in range(120):
+            await pilot.pause()
+            if isinstance(app.screen, SessionsScreen):
+                break
         assert isinstance(app.screen, SessionsScreen), type(app.screen).__name__
         assert app.screen.query_one("#sessions", OptionList).option_count == 2
         app.screen.query_one("#close", Button).press()
@@ -3428,9 +3434,9 @@ async def _drive_native_diff_body():
 
 
 async def _drive_native_bash():
-    """! commands run natively (subprocess) by suspending the TUI app."""
+    """! commands stream their subprocess output into the chat."""
     from textual.widgets import Input, Static
-    from novacode_cli.tui.widgets import PromptInput
+    from novacode_cli.tui.widgets import OutputLog, PromptInput
 
     from novacode_cli.tui.app import NovaApp, NovaStatusBar
     from novacode_cli.ui.ui_elements import TokenTracker
@@ -3452,16 +3458,15 @@ async def _drive_native_bash():
         await app.workers.wait_for_complete()
         for _ in range(5):
             await pilot.pause()
-        # `!cmd` runs in the chat, inline: a `! cmd` row, then the output
-        # hanging under an elbow.
-        from novacode_cli.tui.widgets import OutputLog
+        # `!cmd` renders in chat while the Nova prompt stays usable.
 
         block = app.query_one("#transcript").query(".bash-inline").last()
         head = str(block.query_one(".bash-inline-head", Static).render())
         assert head.startswith("! echo hi-from-shell"), head
         assert "running" not in head, head
-        out = [strip.text for strip in block.query_one(OutputLog).lines]
-        assert out[0].startswith("  └  hi-from-shell"), out
+        assert "hi-from-shell" in " ".join(
+            strip.text for strip in block.query_one(OutputLog).lines
+        )
 
 
 def test_tui_native_diff_body():
@@ -5519,11 +5524,14 @@ async def test_remote_child_keeps_approval_preference(monkeypatch, auto_approve)
     app = NovaApp(agent=_FakeAgent(), assistant_id="nova-agent", session_state=_SS(),
                   backend=None, token_tracker=TokenTracker(), image_tracker=None, model_name="m")
     proxy = SimpleNamespace(auto_approve=auto_approve)
-    pane = SimpleNamespace(child=object(), status="idle", sid="child", title="child",
-                           state={"session_state": proxy}, remote_turns=deque())
+    from novacode_cli.tui.session_pane import SessionPane
+    pane = SessionPane(sid="child", title="child", scroll=None, kind="child", child=object(),
+                       state={"session_state": proxy}, remote_turns=deque())
 
-    async def send_prompt(sid, text):
+    async def send_prompt(sid, text, *, auto_approve=None, prompt_id=None):
         assert proxy.auto_approve is auto_approve
+        assert auto_approve is proxy.auto_approve
+        assert prompt_id
         return "turn-1"
 
     monkeypatch.setattr(app, "_supervisor", lambda: SimpleNamespace(send_prompt=send_prompt))

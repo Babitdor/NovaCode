@@ -10,9 +10,9 @@ Extracted from ``NovaLearningMiddleware`` to make the counter and history
 independently testable.  Owns four durable-store namespaces:
 
 - ``("nova", "tool_counter")`` → simple integer count
-- ``("nova", "tool_history")`` → the episodic timeline (capped list of episodes)
-- ``("nova", "tool_stats")``    → per-(non-builtin)-tool usage counters (telemetry)
-- ``("nova", "skill_usage")``   → per-SKILL.md effectiveness:
+- ``("nova", self.owner, "tool_history")`` → the episodic timeline (capped list of episodes)
+- ``("nova", self.owner, "tool_stats")``    → per-(non-builtin)-tool usage counters (telemetry)
+- ``("nova", self.owner, "skill_usage")``   → per-SKILL.md effectiveness:
   ``{skill_name: {"invocations","successes","failures","last_used"}}``
 
 The distinction between the last two matters: ``tool_stats`` tracks *tools*
@@ -31,6 +31,7 @@ import asyncio
 import logging
 import re
 import time
+import uuid
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -77,27 +78,29 @@ _BUILTIN_TOOLS: frozenset[str] = frozenset(
 class AtomicCounter:
     """Atomic counter using asyncio lock for thread-safe operations."""
 
-    def __init__(self, store: BaseStore) -> None:
+    def __init__(self, store: BaseStore, *, owner: str | None = None) -> None:
         self._store = store
+        self.owner = owner or uuid.uuid4().hex
+        self.namespace = ("nova", self.owner, "tool_counter")
         self._lock = asyncio.Lock()
 
     async def increment(self) -> int:
         """Increment counter atomically and return new value."""
         async with self._lock:
-            entry = await self._store.aget(("nova", "tool_counter"), "counter")
+            entry = await self._store.aget(self.namespace, "counter")
             current = 0
             if entry and isinstance(entry.value, dict):
                 current = entry.value.get("count", 0)
 
             new_value = min(current + 1, _MAX_COUNTER)
 
-            await self._store.aput(("nova", "tool_counter"), "counter", {"count": new_value})
+            await self._store.aput(self.namespace, "counter", {"count": new_value})
             return new_value
 
     async def get(self) -> int:
         """Get current counter value."""
         async with self._lock:
-            entry = await self._store.aget(("nova", "tool_counter"), "counter")
+            entry = await self._store.aget(self.namespace, "counter")
             if entry and isinstance(entry.value, dict):
                 return min(entry.value.get("count", 0), _MAX_COUNTER)
             return 0
@@ -105,7 +108,7 @@ class AtomicCounter:
     async def reset(self) -> None:
         """Reset counter to zero."""
         async with self._lock:
-            await self._store.aput(("nova", "tool_counter"), "counter", {"count": 0})
+            await self._store.aput(self.namespace, "counter", {"count": 0})
 
 
 class ToolUsageTracker:
@@ -120,10 +123,14 @@ class ToolUsageTracker:
         store: BaseStore,
         *,
         enabled: bool = True,
+        owner: str | None = None,
     ) -> None:
         self._store = store
         self._enabled = enabled
-        self._counter = AtomicCounter(store)
+        self.owner = owner or uuid.uuid4().hex
+        self._counter = AtomicCounter(store, owner=self.owner)
+        self.task = self.owner
+        self._history_lock = asyncio.Lock()
         # In-memory effectiveness window: the most recently invoked skill owns
         # the outcomes of the next ``_active_skill_budget`` tool calls. Lives for
         # the process; a fresh session simply starts with no active skill.
@@ -131,6 +138,13 @@ class ToolUsageTracker:
         self._active_skill_budget = 0
 
     # -- Counter ------------------------------------------------------------
+
+    def start_task(self, task: str | None = None) -> None:
+        """Give a new task its own counter and attribution window."""
+        self.task = task or uuid.uuid4().hex
+        self._counter = AtomicCounter(self._store, owner=f"{self.owner}:{self.task}")
+        self._active_skill = None
+        self._active_skill_budget = 0
 
     async def get_call_count(self) -> int:
         """Return the current tool call count from the durable store."""
@@ -179,6 +193,29 @@ class ToolUsageTracker:
         *,
         skill_invoked: str | None = None,
         error_excerpt: str | None = None,
+        outcome: str | None = None,
+        evidence_source: str = "legacy_boolean",
+    ) -> None:
+        """Serialize a structured episode update within this session owner."""
+        async with self._history_lock:
+            await self._record_tool_usage(
+                tool_name,
+                success=success,
+                skill_invoked=skill_invoked,
+                error_excerpt=error_excerpt,
+                outcome=outcome,
+                evidence_source=evidence_source,
+            )
+
+    async def _record_tool_usage(
+        self,
+        tool_name: str,
+        *,
+        success: bool,
+        skill_invoked: str | None = None,
+        error_excerpt: str | None = None,
+        outcome: str | None = None,
+        evidence_source: str = "legacy_boolean",
     ) -> None:
         """Record a single tool call in the tool history.
 
@@ -190,7 +227,7 @@ class ToolUsageTracker:
         if not self._enabled:
             return
         try:
-            existing = await self._store.aget(("nova", "tool_history"), "history")
+            existing = await self._store.aget(("nova", self.owner, "tool_history"), "history")
             history: list[dict[str, Any]] = []
             if existing and isinstance(existing.value, dict) and "entries" in existing.value:
                 history = existing.value["entries"][-199:]
@@ -200,15 +237,26 @@ class ToolUsageTracker:
                     "tool": tool_name,
                     "success": success,
                     "timestamp": time.time(),
+                    "outcome": outcome or ("success" if success else "failure"),
+                    "evidence_source": evidence_source,
+                    "session": self.owner,
+                    "task": self.task,
+                    "event_id": uuid.uuid4().hex,
                 }
             )
-            await self._store.aput(("nova", "tool_history"), "history", {"entries": history})
+            await self._store.aput(
+                ("nova", self.owner, "tool_history"), "history", {"entries": history}
+            )
 
             await self._track_tool_stats(tool_name, success)
 
             if skill_invoked:
                 await self._record_skill_invocation(skill_invoked)
-            elif self._active_skill and self._active_skill_budget > 0:
+            elif (
+                self._active_skill
+                and self._active_skill_budget > 0
+                and outcome not in {"unknown", "cancelled"}
+            ):
                 self._active_skill_budget -= 1
                 await self._attribute_skill_outcome(
                     self._active_skill,
@@ -224,7 +272,7 @@ class ToolUsageTracker:
     async def get_tool_history(self, limit: int = 50) -> list[dict[str, Any]]:
         """Return the most recent tool usage history."""
         try:
-            entry = await self._store.aget(("nova", "tool_history"), "history")
+            entry = await self._store.aget(("nova", self.owner, "tool_history"), "history")
             if entry and isinstance(entry.value, dict):
                 entries = entry.value.get("entries", [])
                 if isinstance(entries, list):
@@ -280,7 +328,7 @@ class ToolUsageTracker:
             return
 
         try:
-            entry = await self._store.aget(("nova", "tool_stats"), tool_name)
+            entry = await self._store.aget(("nova", self.owner, "tool_stats"), tool_name)
             stats: dict[str, int] = {"uses": 0, "successes": 0, "failures": 0}
             if entry and isinstance(entry.value, dict):
                 stats = dict(entry.value)
@@ -291,14 +339,14 @@ class ToolUsageTracker:
             else:
                 stats["failures"] += 1
 
-            await self._store.aput(("nova", "tool_stats"), tool_name, stats)
+            await self._store.aput(("nova", self.owner, "tool_stats"), tool_name, stats)
         except Exception:  # noqa: BLE001
             logger.exception("Failed to track tool stats for '%s'", tool_name)
 
     async def get_skill_stats(self) -> dict[str, dict[str, int]]:
         """Return all tracked tool-level usage statistics (telemetry)."""
         try:
-            results = await self._store.asearch(("nova", "tool_stats"))
+            results = await self._store.asearch(("nova", self.owner, "tool_stats"))
             out: dict[str, dict[str, int]] = {}
             for item in results:
                 if hasattr(item, "key") and hasattr(item, "value"):
@@ -315,7 +363,7 @@ class ToolUsageTracker:
         self._active_skill = skill_name
         self._active_skill_budget = _SKILL_ATTRIBUTION_BUDGET
         try:
-            entry = await self._store.aget(("nova", "skill_usage"), skill_name)
+            entry = await self._store.aget(("nova", self.owner, "skill_usage"), skill_name)
             stats: dict[str, Any] = {
                 "invocations": 0,
                 "successes": 0,
@@ -326,7 +374,7 @@ class ToolUsageTracker:
                 stats.update(entry.value)
             stats["invocations"] = int(stats.get("invocations", 0)) + 1
             stats["last_used"] = time.time()
-            await self._store.aput(("nova", "skill_usage"), skill_name, stats)
+            await self._store.aput(("nova", self.owner, "skill_usage"), skill_name, stats)
         except Exception:  # noqa: BLE001
             logger.exception("Failed to record skill invocation for '%s'", skill_name)
 
@@ -345,7 +393,7 @@ class ToolUsageTracker:
         are what makes ``refine_skill`` failure-*grounded* rather than blind.
         """
         try:
-            entry = await self._store.aget(("nova", "skill_usage"), skill_name)
+            entry = await self._store.aget(("nova", self.owner, "skill_usage"), skill_name)
             stats: dict[str, Any] = {
                 "invocations": 0,
                 "successes": 0,
@@ -369,14 +417,14 @@ class ToolUsageTracker:
                         }
                     )
                     stats["failure_samples"] = samples[-_MAX_FAILURE_SAMPLES:]
-            await self._store.aput(("nova", "skill_usage"), skill_name, stats)
+            await self._store.aput(("nova", self.owner, "skill_usage"), skill_name, stats)
         except Exception:  # noqa: BLE001
             logger.exception("Failed to attribute outcome to skill '%s'", skill_name)
 
     async def get_skill_usage(self) -> dict[str, dict[str, Any]]:
         """Return all per-skill effectiveness stats (invocations + outcomes)."""
         try:
-            results = await self._store.asearch(("nova", "skill_usage"))
+            results = await self._store.asearch(("nova", self.owner, "skill_usage"))
             out: dict[str, dict[str, Any]] = {}
             for item in results:
                 if hasattr(item, "key") and hasattr(item, "value"):

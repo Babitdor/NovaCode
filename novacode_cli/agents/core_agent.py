@@ -885,7 +885,8 @@ def _harden_subagent_specs(
 
             mw_to_add.append(ContextCompactionMiddleware(backend=skill_backend))
 
-        new_spec["middleware"] = mw_to_add + existing
+        from novacode_cli.context.snapshot import ContextSnapshotMiddleware
+        new_spec["middleware"] = mw_to_add + existing + [ContextSnapshotMiddleware()]
         out.append(new_spec)
     return out
 
@@ -1212,7 +1213,6 @@ def _build_composite_backend(
     # like /.nova/plans/plan-refactor.md. The FilesystemBackend maps these
     # to {workspace_root}/.nova/plans/ on disk.
     _plans_dir = workspace_root / ".nova" / "plans"
-    _plans_dir.mkdir(parents=True, exist_ok=True)
     _plans_backend = FilesystemBackend(
         root_dir=str(_plans_dir),
         virtual_mode=True,
@@ -1224,7 +1224,6 @@ def _build_composite_backend(
     # via virtual paths like /project-memory/NOVA.md. The FilesystemBackend
     # maps these to {workspace_root}/.nova/ on disk.
     _project_nova_dir = workspace_root / ".nova"
-    _project_nova_dir.mkdir(parents=True, exist_ok=True)
     _project_memory_backend = FilesystemBackend(
         root_dir=str(_project_nova_dir),
         virtual_mode=True,
@@ -2233,6 +2232,8 @@ This file stores your preferences and context that persist across sessions.
     # It will create the SubAgentMiddleware internally
     # Use provided checkpointer or fallback to InMemorySaver
     final_checkpointer = checkpointer if checkpointer is not None else InMemorySaver()
+    from novacode_cli.session.checkpoint_coordinator import coordinate_saver
+    checkpoint_coordinator = coordinate_saver(final_checkpointer)
 
     # Refresh the injected skills list when the skill dirs change, so a skill
     # created mid-session (skill_manage / Hermes review) is usable this session
@@ -2341,6 +2342,13 @@ This file stores your preferences and context that persist across sessions.
             for spec in subagents:
                 spec["middleware"] = [m for m in (spec.get("middleware") or []) if type(m).__name__ not in {"AsyncServerOnDemandMiddleware", "AsyncSubAgentMiddleware"}] + brokers
 
+    from novacode_cli.context.snapshot import ContextSnapshotMiddleware
+    from novacode_cli.agents.context_compaction import ContextCompactionMiddleware
+    compactors = [m for m in agent_middleware if isinstance(m, ContextCompactionMiddleware)]
+    agent_middleware = [m for m in agent_middleware if not isinstance(m, ContextCompactionMiddleware)]
+    agent_middleware.extend(compactors)
+    agent_middleware.append(ContextSnapshotMiddleware())
+
     agent = create_deep_agent(
         name=assistant_id,
         model=wrapped_model,
@@ -2356,6 +2364,9 @@ This file stores your preferences and context that persist across sessions.
     ).with_config(
         config  # type: ignore
     )
+    learning_owner = next((m.owner for m in agent_middleware if type(m).__name__ == "NovaLearningMiddleware"), None)
+    if learning_owner:
+        agent = agent.with_config(metadata={**config.get("metadata", {}), "nova_learning_owner": learning_owner})
 
     # Plugin after_agent_setup hooks — call any registered lifecycle hooks
     # now that the agent graph is fully built.
@@ -2380,4 +2391,11 @@ This file stores your preferences and context that persist across sessions.
         from novacode_cli.tracking.local_metrics import callbacks
 
         agent = agent.with_config(callbacks=callbacks())
+    from novacode_cli.session.checkpoint_coordinator import CoordinatedGraph
+    learning = next((m for m in agent_middleware if type(m).__name__ == "NovaLearningMiddleware"), None)
+    from novacode_cli.hermes.activation import ActivationManager
+    learning_project = getattr(learning, "_project", "") or ""
+    activation = ActivationManager(learning._agent_dir, learning_project) if learning and learning._agent_dir else None
+    agent = CoordinatedGraph(agent, checkpoint_coordinator, learning_project, activation)
+    agent.runtime_resources = [*compactors, *([learning] if learning else [])]
     return agent, composite_backend

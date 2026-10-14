@@ -22,6 +22,24 @@ window.fetch = (url, opts = {}) => {
 class LocalRequestHandler(BaseHTTPRequestHandler):
     """Reject foreign origins, DNS rebinding and simple cross-origin mutations."""
 
+    def _reject(self, status: int, reason: str) -> None:
+        """Drain small request bodies so Windows can deliver the denial response."""
+        if self.command not in {"GET", "HEAD", "OPTIONS"}:
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except (TypeError, ValueError):
+                length = 0
+            if 0 < length <= 2_000_000:
+                previous_timeout = self.connection.gettimeout()
+                try:
+                    self.connection.settimeout(0.5)
+                    self.rfile.read(length)
+                except OSError:
+                    pass
+                finally:
+                    self.connection.settimeout(previous_timeout)
+        self.send_error(status, reason)
+
     def parse_request(self):
         if not super().parse_request():
             return False
@@ -33,7 +51,7 @@ class LocalRequestHandler(BaseHTTPRequestHandler):
         }
         origin = self.headers.get("Origin")
         if authority not in allowed or (origin and origin != f"http://{authority}"):
-            self.send_error(403, "Local origin required")
+            self._reject(403, "Local origin required")
             return False
         parsed = urlsplit(self.path)
         expected = getattr(self.server, "auth_token", "")
@@ -43,22 +61,22 @@ class LocalRequestHandler(BaseHTTPRequestHandler):
         if not expected or not secrets.compare_digest(
             token.encode("utf-8"), expected.encode("utf-8")
         ):
-            self.send_error(403, "Nova authorization required")
+            self._reject(403, "Nova authorization required")
             return False
         self.path = parsed.path
         if self.command not in {"GET", "HEAD", "OPTIONS"}:
             try:
                 length = int(self.headers.get("Content-Length", "0"))
             except ValueError:
-                self.send_error(400, "Invalid request length")
+                self._reject(400, "Invalid request length")
                 return False
             if not 0 <= length <= 2_000_000:
-                self.send_error(413, "Request body too large")
+                self._reject(413, "Request body too large")
                 return False
         if (
             self.command not in {"GET", "HEAD", "OPTIONS"}
             and self.headers.get("X-Nova-Request") != "1"
         ):
-            self.send_error(403, "Nova request header required")
+            self._reject(403, "Nova request header required")
             return False
         return True

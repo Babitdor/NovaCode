@@ -14,7 +14,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import threading
 import time
+from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -32,6 +34,8 @@ if TYPE_CHECKING:
     from novacode_cli.hermes.tracker import ToolUsageTracker
 
 logger = logging.getLogger("nova.hermes.review")
+REVIEW_INPUT_CAP = 16_000
+_REVIEW_SLOTS = threading.BoundedSemaphore(2)
 
 # Tools that signal *real work* happened in a window (vs. read-only browsing).
 # Any non-builtin tool (a skill or MCP tool) also counts as substantive.
@@ -199,6 +203,7 @@ class ReviewRunner:
         self._thresholds_loaded = False
         self._agent_dir = agent_dir
         self._enabled = enabled
+        self._running = False
         # Set by should_review when a clean-win review fires; read (and cleared)
         # by run_review to render the good-habit prompt section.
         self._pending_clean_win = False
@@ -305,6 +310,10 @@ class ReviewRunner:
     # -- OOB model invoke ---------------------------------------------------
 
     async def run_review(self, request: ModelRequest) -> None:
+        """Compatibility entry point using the bounded preparation lifecycle."""
+        await self.run_review_task(request)
+
+    async def _prepare_review(self, request: ModelRequest) -> None:
         """Run a self-review as a *separate, out-of-band* model call.
 
         CRITICAL: the review must NOT be injected into the agent's task turn.
@@ -320,10 +329,18 @@ class ReviewRunner:
             # The counter is reset before this task runs, so look back a fixed
             # recent window (history isn't reset) to detect an error-recovery.
             try:
-                recent = await self._tracker.get_tool_history(limit=2 * self._review_threshold)
+                import json
+                frozen = (getattr(request, "state", None) or {}).get("_nova_review_episodes")
+                recent = json.loads(frozen) if frozen is not None else await self._tracker.get_tool_history(limit=2 * self._review_threshold)
             except Exception:  # noqa: BLE001
                 recent = []
             recovered_from_error = _window_recovered(recent)
+            task_id = recent[-1].get("task", self._tracker.task) if recent else self._tracker.task
+            evidence = tuple(
+                f"episode:{e.get('event_id', 'legacy')}:{e.get('outcome', 'unknown')}:"
+                f"{e.get('evidence_source', 'fallback')}"
+                for e in recent
+            )
             clean_win = self._pending_clean_win
             self._pending_clean_win = False
             self._outcome = session_outcome(request.messages)
@@ -359,13 +376,42 @@ class ReviewRunner:
                     "nova_prior_lessons": bool(prior_lessons),
                 },
             }
-            review_msg = await request.model.ainvoke(messages, config=review_config)
+            from langchain_core.messages.utils import count_tokens_approximately
+
+            from novacode_cli.tracking.request_metrics import dispatch
+
+            if count_tokens_approximately(messages) > REVIEW_INPUT_CAP or not recent:
+                return
+            # bind caps the auxiliary request independently of the coding turn.
+            model = request.model
+            module = type(model).__module__
+            from langchain_core.language_models.fake_chat_models import FakeListChatModel
+            if not module.startswith(("langchain_openai.", "langchain_anthropic.",
+                                      "langchain_core.language_models.fake")) and not isinstance(model, FakeListChatModel):
+                logger.info("Learning review skipped: adapter retry/output caps unavailable")
+                return
+            if "max_retries" in getattr(type(model), "model_fields", {}):
+                model = model.model_copy(update={"max_retries": 1})
+                # Cached SDK clients otherwise retain the coding model's retry
+                # policy even after copying its max_retries field.
+                for name in ("_client", "_async_client"):
+                    model.__dict__.pop(name, None)
+                for name in ("root_client", "root_async_client"):
+                    client = getattr(model, name, None)
+                    if client is not None and hasattr(client, "with_options"):
+                        bounded = client.with_options(max_retries=1)
+                        setattr(model, name, bounded)
+                        resource = "async_client" if name == "root_async_client" else "client"
+                        setattr(model, resource, bounded.chat.completions)
+            reviewer = model.bind(max_tokens=4096)
+            with dispatch("learning_review", task_id=self._tracker.owner):
+                review_msg = await reviewer.ainvoke(messages, config=review_config)
 
             content = ""
             raw = getattr(review_msg, "content", "")
             content = raw if isinstance(raw, str) else str(raw)
 
-            await self._apply_review_content(content)
+            await self._apply_review_content(content, task_id=task_id, evidence=evidence)
         except Exception as e:  # noqa: BLE001
             # A known provider problem (region opt-in, auth, quota) on the review's
             # out-of-band model call means it can't run right now — one clean line,
@@ -421,9 +467,23 @@ class ReviewRunner:
         Emits the completion event in a ``finally`` so the live indicator is
         always cleared/updated even if the review call fails.
         """
+        if self._running:
+            return
+        self._running = True
+        acquired = False
         try:
-            await self.run_review(request)
+            snapshot = request.override(messages=deepcopy(request.messages))
+            async with asyncio.timeout(60):
+                while not _REVIEW_SLOTS.acquire(blocking=False):
+                    await asyncio.sleep(0.05)
+                acquired = True
+                await self._prepare_review(snapshot)
+        except TimeoutError:
+            logger.info("Learning review skipped: 60-second deadline")
         finally:
+            if acquired:
+                _REVIEW_SLOTS.release()
+            self._running = False
             _emit_event("nova_review_complete", "✓ Nova review cycle complete")
 
     def _existing_topics(self) -> str:
@@ -440,12 +500,12 @@ class ReviewRunner:
     async def _recent_lessons(self, limit: int = 5, max_chars: int = 1500) -> str:
         """Return a digest of recent prior reviews to suppress repeat lessons.
 
-        Pulls the most recent ``("nova", "reviews")`` entries (newest first) and
+        Pulls the most recent ``self._namespace("reviews")`` entries (newest first) and
         concatenates their content up to ``max_chars``. Injected into the review
         prompt so the LLM doesn't re-derive lessons already captured. Best-effort.
         """
         try:
-            results = await self._store.asearch(("nova", "reviews"))
+            results = await self._store.asearch(self._namespace("reviews"))
         except Exception:  # noqa: BLE001
             return ""
 
@@ -474,180 +534,88 @@ class ReviewRunner:
     # -- Content persistence -------------------------------------------------
 
     def _persist_review(self, parsed: dict, response_content: str) -> None:
-        """Apply a parsed review to disk. Synchronous — call via ``to_thread``.
+        """Prepare proposals only. No review may mutate instructions or skills."""
+        if not self._agent_dir:
+            return
+        from novacode_cli.hermes.ledger import LearningLedger
 
-        Split out of :meth:`_apply_review_content` so the whole read-modify-write
-        block can run in a worker thread instead of stalling the event loop.
+        ledger = LearningLedger(self._agent_dir / "learning.sqlite3")
+        session = self._tracker.owner
+        task_id = str(parsed.get("_task_id") or self._tracker.task)
+        evidence = tuple(parsed.get("_evidence") or ())
+        for lesson in parsed.get("lessons", []):
+            bullets = lesson.get("bullets") or []
+            content = "\n".join(bullets) if isinstance(bullets, list) else str(bullets)
+            if content.strip():
+                ledger.propose(
+                    content=content,
+                    project=self._project or "",
+                    session=session,
+                    task=task_id or self._tracker.task,
+                    applicability=str(lesson.get("topic") or ""),
+                    evidence=evidence
+                    or (f"review:{session}:outcome:{self._outcome[0]}:heuristic",),
+                )
+        for kind, value in (
+            ("user_model", parsed.get("user_model")),
+            ("habit", parsed.get("habits")),
+        ):
+            if value:
+                ledger.propose(
+                    content=str(value), scope="shared", kind=kind, session=session, origin="review"
+                )
+        from novacode_cli.hermes.skill_discovery import parse_skill_spec
 
-        Args:
-            parsed: The parsed review payload (``user_model``, ``lessons``,
-                ``habits``).
-            response_content: The raw review text (unused here; kept for parity
-                with the caller's logging).
-        """
-        if self._agent_dir and (parsed["user_model"] or parsed["lessons"]):
-            from novacode_cli.hermes.memory_tiers import update_from_review
-
-            update_from_review(
-                self._agent_dir,
-                parsed["user_model"],
-                parsed["lessons"],
-                project=self._project,
-                # Work whose last check failed proves nothing general.
-                shareable=self._outcome[0] != "failed",
+        spec = parse_skill_spec(response_content)
+        if spec:
+            from novacode_cli.skills.schema import normalize_skill_frontmatter
+            content = normalize_skill_frontmatter(spec["body"], spec["name"], spec["description"])
+            ledger.propose(
+                content=content, project=self._project or "", kind="skill", session=session,
+                target=spec["name"], evidence=evidence,
             )
-            logger.info(
-                "Nova review applied: user_model=%s, lessons=%d",
-                bool(parsed["user_model"]),
-                len(parsed["lessons"]),
-            )
+        for block in re.findall(
+            r"<prompt_improvement>(.*?)</prompt_improvement>", response_content, re.DOTALL
+        ):
+            ledger.propose(content=block.strip(), scope="shared", kind="lesson", session=session,
+                           applicability="prompt improvement suggestion; requires a template proposal")
 
-        if self._agent_dir and parsed.get("habits"):
-            from novacode_cli.hermes.memory_tiers import record_habit
-
-            record_habit(self._agent_dir, parsed["habits"])
-            logger.info("Nova review recorded a good habit")
-
-        # Unified refinement audit trail: record what this review changed.
-        # Best-effort — a failed append must never block applying the review.
-        # ONE batched append, not one per lesson: each individual append re-read
-        # and re-wrote the whole ledger, so a 20-lesson review did 20 full
-        # read-modify-writes of a 500-entry JSON file.
-        if self._agent_dir:
-            try:
-                from novacode_cli.hermes.refinement_log import append_refinement_events
-
-                nova_root = self._agent_dir.parent.parent
-                batch: list[dict] = []
-                if parsed["user_model"]:
-                    batch.append(
-                        {
-                            "domain": "memory",
-                            "action": "update_user_model",
-                            "target": "agent.md",
-                            "detail": "review user-model update",
-                        }
-                    )
-                for lesson in parsed["lessons"]:
-                    batch.append(
-                        {
-                            "domain": "memory",
-                            "action": "record_lesson",
-                            "target": lesson.get("topic") or "lessons",
-                            "detail": "review lesson",
-                        }
-                    )
-                if parsed.get("habits"):
-                    batch.append(
-                        {
-                            "domain": "memory",
-                            "action": "record_habit",
-                            "target": "HABITS.md",
-                            "detail": "review good habit",
-                        }
-                    )
-                append_refinement_events(nova_root, batch)
-            except Exception:  # noqa: BLE001
-                logger.debug("Could not append refinement events", exc_info=True)
-
-    async def _apply_review_content(self, response_content: str) -> None:
-        """Persist a completed review's learnings.
-
-        Parses structured updates from XML tags, updates memory files,
-        stores review metadata, compacts memory, and triggers skill
-        creation/refinement.
-        """
+    async def _apply_review_content(
+        self, response_content: str, *, task_id: str = "", evidence: tuple[str, ...] = ()
+    ) -> None:
+        """Store proposals and scoped metadata without any global promotion."""
         if not self._enabled:
             return
+        import uuid
 
-        try:
-            response_content = response_content or ""
+        from novacode_cli.hermes.memory_tiers import parse_review_response
 
-            from novacode_cli.hermes.memory_tiers import parse_review_response
+        parsed = parse_review_response(response_content or "")
+        parsed["_task_id"] = task_id
+        parsed["_evidence"] = evidence
+        await asyncio.to_thread(self._persist_review, parsed, response_content)
+        review_id = uuid.uuid4().hex
+        await self._store.aput(
+            self._namespace("reviews"),
+            review_id,
+            {"timestamp": time.time(), "content": response_content[:2000]},
+        )
+        count = await self._get_review_count()
+        await self._store.aput(
+            self._namespace("meta"),
+            "last_review",
+            {"timestamp": time.time(), "review_count": count + 1},
+        )
 
-            parsed = parse_review_response(response_content)
-
-            # All of the persistence below is synchronous disk I/O (read/write
-            # memory topic files, rewrite the refinement ledger). This runs on the
-            # shared UI/agent event loop, where the stall watchdog recorded a 263s
-            # freeze with the loop blocked in pathlib read_text/write_text under
-            # this method. Off-load the whole block to a worker thread.
-            await asyncio.to_thread(self._persist_review, parsed, response_content)
-
-            current_count = await self._get_review_count()
-
-            review_id = f"review_{int(time.time())}"
-            await self._store.aput(
-                ("nova", "reviews"),
-                review_id,
-                {"timestamp": time.time(), "content": response_content[:2000]},
-            )
-
-            new_count = current_count + 1
-            await self._store.aput(
-                ("nova", "meta"),
-                "last_review",
-                {
-                    "timestamp": time.time(),
-                    "lessons_str": response_content[:500] if response_content else "",
-                    "review_count": new_count,
-                },
-            )
-
-            # Compaction is handled inside the semantic writers
-            # (update_user_model / record_lesson), so nothing extra here.
-
-            if self._skill_manager:
-                await self._skill_manager.cleanup_legacy_skills_once()
-                if self._outcome[0] == "failed":
-                    logger.info("Review proposed a skill, but the last check failed; not saved")
-                else:
-                    await self._skill_manager.maybe_create_from_review(response_content)
-
-            if self._skill_manager and new_count % 5 == 0:
-                await self._skill_manager.maybe_refine_skills()
-
-            # Periodic library hygiene: archive unused, flag overlaps.
-            if self._skill_manager and new_count % 10 == 0:
-                await self._skill_manager.maybe_curate()
-                # Hill-climb inward: re-tune review thresholds from trace data.
-                # Fire-and-forget (reuses the skill manager's tracked-task pump)
-                # so a slow tuning pass never blocks applying the review. It is
-                # NOT gated on skills_dir — tuning is independent of skills.
-                from novacode_cli.hermes.tuner import ThresholdTuner
-
-                self._skill_manager.spawn_task(ThresholdTuner(self._store).run_tuning_pass())
-
-                # Proactive prompt evolution (Enhancement 2, proactive arm):
-                # on the same cadence, propose a candidate for a template even
-                # when no review flagged one, so the loop explores rather than
-                # only reacting to complaints. The candidate flows through the
-                # same A/B evaluate/select machinery. Best-effort.
-                from novacode_cli.hermes.prompt_evolution import PromptEvolutionEngine
-
-                engine = PromptEvolutionEngine(
-                    self._store, spawn=self._skill_manager.spawn_task
-                )
-                self._skill_manager.spawn_task(engine.maybe_auto_evolve())
-
-            # Prompt hill-climbing (Enhancement 2): if this review (and enough
-            # recent ones) flag the same template, evolve it. Runs on every
-            # review — persistence is judged inside the engine. Best-effort.
-            if self._skill_manager:
-                from novacode_cli.hermes.prompt_evolution import PromptEvolutionEngine
-
-                engine = PromptEvolutionEngine(self._store, spawn=self._skill_manager.spawn_task)
-                self._skill_manager.spawn_task(engine.detect_and_maybe_evolve(response_content))
-
-        except Exception:  # noqa: BLE001
-            logger.exception("Failed to apply review content")
+    def _namespace(self, name: str) -> tuple[str, ...]:
+        return ("nova", self._tracker.owner, name)
 
     # -- Review state helpers ------------------------------------------------
 
     async def _get_review_count(self) -> int:
         """Return the total number of reviews completed from the durable store."""
         try:
-            entry = await self._store.aget(("nova", "meta"), "last_review")
+            entry = await self._store.aget(self._namespace("meta"), "last_review")
             if entry and isinstance(entry.value, dict):
                 return entry.value.get("review_count", 0)
         except Exception:  # noqa: BLE001
@@ -657,7 +625,7 @@ class ReviewRunner:
     async def _get_review_just_completed(self) -> bool:
         """Check if a review was just completed."""
         try:
-            entry = await self._store.aget(("nova", "meta"), "review_just_completed")
+            entry = await self._store.aget(self._namespace("meta"), "review_just_completed")
             if entry and isinstance(entry.value, dict):
                 return entry.value.get("value", False)
         except Exception:  # noqa: BLE001
@@ -670,7 +638,7 @@ class ReviewRunner:
             return
         try:
             await self._store.aput(
-                ("nova", "meta"),
+                self._namespace("meta"),
                 "review_just_completed",
                 {"value": value},
             )

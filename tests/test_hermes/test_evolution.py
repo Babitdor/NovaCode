@@ -140,7 +140,12 @@ class TestRunEvolutionCreate:
         engine = _engine(store, tmp_path)
         await engine.run_evolution([], _FULL_BREAKDOWN)
 
-        assert (tmp_path / "add-tui-command" / "SKILL.md").exists()
+        assert not (tmp_path / "add-tui-command" / "SKILL.md").exists()
+        from novacode_cli.hermes.ledger import LearningLedger
+        proposal = LearningLedger(tmp_path.parent / "learning.sqlite3").list()[-1]
+        assert proposal.status == "candidate"
+        assert proposal.target == "add-tui-command"
+        assert "edit app.py" in proposal.content
         # evolution_log + counter bumped
         log = store.data.get(("nova", "evolution_log"), {})
         assert any(v["kind"] == "unlock" for v in log.values())
@@ -168,9 +173,13 @@ class TestRunEvolutionLevelUp:
         await engine.run_evolution([], _FULL_BREAKDOWN)
 
         content = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
-        assert "improved steps" in content
-        # a prior-version snapshot was taken under .history/
-        assert (skill_dir / ".history").exists()
+        assert "old steps" in content
+        from novacode_cli.hermes.ledger import LearningLedger
+        proposal = LearningLedger(tmp_path.parent / "learning.sqlite3").list()[-1]
+        assert proposal.status == "candidate"
+        assert "improved steps" in proposal.content
+        assert proposal.source_hash
+        assert not (skill_dir / ".history").exists()
         assert store.data[("nova", "meta")]["evolution"]["leveled"] == 1
 
 
@@ -182,7 +191,7 @@ class TestMaybeEvolveGate:
         engine = _engine(store, tmp_path)
         # Seed a trivial window.
         await store.aput(
-            ("nova", "tool_history"),
+            ("nova", engine._tracker.owner, "tool_history"),
             "history",
             {"entries": [{"tool": "read_file", "success": True, "timestamp": 1.0}]},
         )
@@ -199,7 +208,7 @@ class TestMaybeEvolveGate:
             {"tool": "execute", "success": True, "timestamp": 3.0},
             {"tool": "task", "success": True, "timestamp": 4.0},
         ]
-        await store.aput(("nova", "tool_history"), "history", {"entries": window})
+        await store.aput(("nova", engine._tracker.owner, "tool_history"), "history", {"entries": window})
 
         spawned: list = []
 

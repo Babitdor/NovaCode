@@ -72,7 +72,9 @@ from novacode_cli.compaction import (
     COMPACTION_SUMMARY_MARKER,
     KEEP_TAIL_FRACTION,
     KEEP_TAIL_MAX_TOKENS,
+    _continuation_framing,
     _format_message_content,
+    _historical_user_requests,
     _rehydration_note,
     _render_tool_call,
     _window_tokens,
@@ -245,7 +247,18 @@ def tail_start(messages: Sequence[AnyMessage], keep_tokens: int) -> int:
             break
         if not isinstance(messages[index], ToolMessage):
             start = index
-    return start
+    return min(start, pending_tool_start(messages))
+
+
+def pending_tool_start(messages: Sequence[AnyMessage]) -> int:
+    """Unresolved tool calls and everything following them remain verbatim."""
+    completed = {m.tool_call_id for m in messages if isinstance(m, ToolMessage)}
+    for index, message in enumerate(messages):
+        if isinstance(message, AIMessage) and any(
+            call.get("id") not in completed for call in message.tool_calls or []
+        ):
+            return index
+    return len(messages)
 
 
 def trim_old_arguments(messages: list[AnyMessage], upto: int) -> list[AnyMessage]:
@@ -308,31 +321,36 @@ def _clip_results(messages: list[AnyMessage]) -> list[AnyMessage]:
 
 
 def user_messages(head: Sequence[AnyMessage], budget_chars: int) -> list[str]:
-    """What the user said in ``head``, verbatim, within ``budget_chars``.
-
-    Carries forward the messages an earlier summary already quoted. When they
-    do not all fit, the first (the task) and the most recent are kept.
-    """
+    """Carry all user constraints forward; the legacy budget never abridges them."""
+    del budget_chars  # legacy compatibility parameter; constraints never truncate
     said: list[str] = []
     for message in head:
         if _is_summary(message):
             said.extend(message.additional_kwargs.get("user_messages") or [])
         elif isinstance(message, HumanMessage) and not message.additional_kwargs.get("lc_source"):
-            text = _text(message).strip()
+            text = _text(message)
             # Skill hints, memory and the like are injected as human messages.
             if text and not is_internal_context_text(text):
-                said.append(_abridge(text, MAX_USER_MESSAGE_CHARS))
-    if not said:
-        return []
-    kept = [said[0]]
-    used = len(said[0])
-    recent: list[str] = []
-    for text in reversed(said[1:]):
-        if used + len(text) > budget_chars:
-            break
-        recent.append(text)
-        used += len(text)
-    return kept + recent[::-1]
+                said.append(text)
+    # A size budget may trigger a refusal, never deletion of user constraints.
+    return said
+
+
+def user_content_blocks(head: Sequence[AnyMessage]) -> list:
+    """Preserve original multimodal blocks alongside protected user quotations."""
+    from copy import deepcopy
+
+    blocks = []
+    for message in head:
+        if _is_summary(message):
+            blocks.extend(message.additional_kwargs.get("user_content_blocks") or [])
+        elif (
+            isinstance(message, HumanMessage)
+            and not message.additional_kwargs.get("lc_source")
+            and isinstance(message.content, list)
+        ):
+            blocks.extend(message.content)
+    return deepcopy(blocks)
 
 
 def mechanical_digest(head: Sequence[AnyMessage]) -> str:
@@ -470,10 +488,12 @@ class ContextCompactionMiddleware(AgentMiddleware):
         self._limits: dict[int, Limits] = {}
         # believed window -> the size a provider actually refused. Nova's idea
         # of a window can be wrong (an Ollama num_ctx, a proxy's own limit).
-        self._refused: dict[int, int] = {}
+        self._refusals = {}
+        self._refused = {}
         self._tool_tokens: dict[tuple[str, ...], int] = {}
         # Provider-reported input tokens over this middleware's own estimate.
         # ponytail: one running value per instance; per-model if models are mixed.
+        self._scales = {}
         self._scale = 1.0
         root = str(getattr(backend, "artifacts_root", "/") or "/").rstrip("/")
         self._history_dir = f"{root}/conversation_history"
@@ -527,8 +547,10 @@ class ContextCompactionMiddleware(AgentMiddleware):
         tokens = _request_size_tokens([system]) if system is not None else 0
         tools = list(request.tools or [])
         if tools:
+            from langchain_core.utils.function_calling import convert_to_openai_tool
+
             key = tuple(
-                str(getattr(tool, "name", None) or (tool.get("name") if isinstance(tool, dict) else tool))
+                json.dumps(convert_to_openai_tool(tool), sort_keys=True, default=str)
                 for tool in tools
             )
             if key not in self._tool_tokens:
@@ -539,10 +561,36 @@ class ContextCompactionMiddleware(AgentMiddleware):
             tokens += self._tool_tokens[key]
         return tokens
 
+    @property
+    def _refused(self) -> dict[int, int]:
+        from novacode_cli.session.runtime_identity import current_identity
+        identity = current_identity.get()
+        return self._refusals.setdefault(identity.session if identity else "unbound", {})
+
+    @_refused.setter
+    def _refused(self, value: dict[int, int]) -> None:
+        from novacode_cli.session.runtime_identity import current_identity
+        identity = current_identity.get()
+        self._refusals[identity.session if identity else "unbound"] = value
+
+    @property
+    def _scale(self) -> float:
+        from novacode_cli.session.runtime_identity import current_identity
+        identity = current_identity.get()
+        return self._scales.get(identity.session if identity else "unbound", 1.0)
+
+    @_scale.setter
+    def _scale(self, value: float) -> None:
+        from novacode_cli.session.runtime_identity import current_identity
+        identity = current_identity.get()
+        self._scales[identity.session if identity else "unbound"] = value
+
     def _calibrate(self, response: Any, raw_tokens: int) -> None:  # noqa: ANN401
         """Learn how far the estimate was from what the provider counted."""
         response = getattr(response, "model_response", response)
-        results = [response] if isinstance(response, AIMessage) else getattr(response, "result", None)
+        results = (
+            [response] if isinstance(response, AIMessage) else getattr(response, "result", None)
+        )
         reply = next((m for m in reversed(results or []) if isinstance(m, AIMessage)), None)
         seen = ((getattr(reply, "usage_metadata", None) or {}).get("input_tokens")) or 0
         if seen > 0 and raw_tokens > 0:
@@ -554,6 +602,18 @@ class ContextCompactionMiddleware(AgentMiddleware):
         state = request.state or {}
         messages, prior = effective_view(request.messages, state.get("_summarization_event"))
         limits = self.limits(request.model)
+        from novacode_cli.context.snapshot import ContextSnapshot
+
+        snapshot = ContextSnapshot.capture(request)
+        snapshot.validate(limits.window)
+        if snapshot.output_reservation:
+            usable = max(1, limits.window - snapshot.output_reservation)
+            limits = Limits(
+                limits.window,
+                min(limits.trigger, usable),
+                min(limits.prune, usable),
+                min(limits.keep, usable),
+            )
         overhead = self._overhead(request)
 
         def raw(view: Sequence[AnyMessage]) -> int:
@@ -578,7 +638,9 @@ class ContextCompactionMiddleware(AgentMiddleware):
                     self._prune_edit.apply(pruned, count_tokens=lambda _view: 10**12)
                     view = pruned
                 except Exception:  # noqa: BLE001 - an unpruned turn beats a failed one
-                    logger.warning("Tool-result pruning failed; sending them as they are", exc_info=True)
+                    logger.warning(
+                        "Tool-result pruning failed; sending them as they are", exc_info=True
+                    )
             view = trim_old_arguments(view, tail_start(view, limits.keep))
 
         raw_tokens = raw(view)
@@ -604,38 +666,54 @@ class ContextCompactionMiddleware(AgentMiddleware):
 
     async def _archive(self, head: list[AnyMessage]) -> str | None:
         """Save the messages being replaced; the path, or ``None`` if it failed."""
-        if self._backend is None:
-            return None
         stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         path = f"{self._history_dir}/{stamp}-{uuid.uuid4().hex[:8]}.md"
         try:
-            result = await self._backend.awrite(path, _transcript(head))
-            if result is None or getattr(result, "error", None):
-                logger.warning("Could not save replaced messages to %s", path)
-                return None
+            if self._backend is not None:
+                result = await self._backend.awrite(path, _transcript(head))
+                if result is None or getattr(result, "error", None):
+                    logger.warning("Could not save replaced messages to %s", path)
+                    return None
         except Exception:  # noqa: BLE001 - the summary is still worth having
             logger.warning("Could not save replaced messages to %s", path, exc_info=True)
+            return None
+        try:
+            from novacode_cli.context.archives import default_recovery_store
+            from novacode_cli.session.runtime_identity import current_identity
+            identity = current_identity.get()
+            manifest = await asyncio.to_thread(
+                default_recovery_store().archive, identity.thread if identity else "unbound",
+                list(head), source="automatic",
+            )
+            # Keep the readable backend transcript as a compatibility reference;
+            # its companion manifest is the authoritative recovery format.
+            if self._backend is None:
+                return str(manifest)
+        except Exception:
+            logger.warning("Full-message archive publication failed", exc_info=True)
             return None
         return path
 
     def _summary_message(
-        self, head: list[AnyMessage], summary: str, path: str | None, limits: Limits
+        self, head: list[AnyMessage], summary: str, path: str | None, limits: Limits,
+        todos: object = None,
     ) -> HumanMessage:
+        from novacode_cli.context.task_progress import render_task_progress, task_progress
+
+        progress = task_progress(head, todos)
         said = user_messages(head, budget_chars=limits.keep * 2)
-        parts = [
-            "The earlier part of this conversation was compacted to save context; the "
-            "most recent messages follow this one verbatim. Continue the work from where "
-            "it stopped. Do not acknowledge or restate this summary."
-        ]
+        parts = [_continuation_framing(tail_kept=True)]
         if said:
-            numbered = "\n\n".join(f"{n}. {text}" for n, text in enumerate(said, 1))
-            parts.append(
-                "## What the user asked (their own words — these outrank the summary)\n\n"
-                + numbered
-            )
+            parts.append(_historical_user_requests(said))
         parts.append(summary)
+        parts.append(render_task_progress(progress))
         parts.append(_rehydration_note())
-        files = [f for m in head if _is_summary(m) for f in m.additional_kwargs.get("history_files") or []]
+        files = [
+            f
+            for m in head
+            if _is_summary(m)
+            for f in m.additional_kwargs.get("history_files") or []
+        ]
         if path:
             files.append(path)
         if files:
@@ -645,13 +723,17 @@ class ContextCompactionMiddleware(AgentMiddleware):
                 + ". read_file one if an exact detail is needed."
             )
         body = "\n\n".join(filter(None, parts))
+        blocks = user_content_blocks(head)
+        content = f"{COMPACTION_SUMMARY_MARKER}\n\n{body}"
         return HumanMessage(
-            content=f"{COMPACTION_SUMMARY_MARKER}\n\n{body}",
+            content=[{"type": "text", "text": content}, *blocks] if blocks else content,
             additional_kwargs={
                 "lc_source": SUMMARY_SOURCE,
                 "nova_summary": summary,
+                "nova_task_progress": progress,
                 "user_messages": said,
                 "history_files": files,
+                "user_content_blocks": blocks,
             },
         )
 
@@ -661,6 +743,9 @@ class ContextCompactionMiddleware(AgentMiddleware):
         """Stage 3. Returns the messages to send and the state update, if any."""
         state = request.state or {}
         backoff = state.get("_compaction_backoff") or {}
+        from novacode_cli.context.snapshot import ContextSnapshot
+
+        source_generation = ContextSnapshot.capture(request).generation
         failures = int(backoff.get("failures") or 0)
         waiting = len(request.messages) < int(backoff.get("retry_at") or 0)
         head, tail = plan.messages[: plan.cutoff], plan.messages[plan.cutoff :]
@@ -686,8 +771,15 @@ class ContextCompactionMiddleware(AgentMiddleware):
                 return plan.messages, update
             summary = mechanical_digest(head)
 
-        path = await self._archive(head)
-        message = self._summary_message(head, summary, path, plan.limits)
+        source_messages = (request.state or {}).get("messages") or head
+        path = await self._archive(list(source_messages))
+        if path is None:
+            logger.warning("Compaction preparation discarded because archival failed")
+            return list(request.messages), None
+        if ContextSnapshot.capture(request).generation != source_generation:
+            logger.info("Discarded superseded automatic compaction")
+            return list(request.messages), None
+        message = self._summary_message(head, summary, path, plan.limits, state.get("todos"))
         cutoff = plan.cutoff if plan.prior_cutoff is None else plan.prior_cutoff + plan.cutoff - 1
         logger.info(
             "Compacted %d messages into a summary (~%d tokens before)",
@@ -699,6 +791,7 @@ class ContextCompactionMiddleware(AgentMiddleware):
                 "cutoff_index": cutoff,
                 "summary_message": message,
                 "file_path": path,
+                "source_generation": source_generation,
             },
             "_compaction_backoff": None,
         }
@@ -745,6 +838,10 @@ class ContextCompactionMiddleware(AgentMiddleware):
             response = await handler(request.override(messages=_clip_results(messages)))
         if update is None:
             return response
+        from novacode_cli.context.snapshot import ContextSnapshot
+        source = (update.get("_summarization_event") or {}).get("source_generation")
+        if source and ContextSnapshot.capture(request).generation != source:
+            return response
         return ExtendedModelResponse(model_response=response, command=Command(update=update))
 
     def wrap_model_call(
@@ -784,6 +881,10 @@ class ContextCompactionMiddleware(AgentMiddleware):
             # result that is too large on its own.
             response = handler(request.override(messages=_clip_results(messages)))
         if update is None:
+            return response
+        from novacode_cli.context.snapshot import ContextSnapshot
+        source = (update.get("_summarization_event") or {}).get("source_generation")
+        if source and ContextSnapshot.capture(request).generation != source:
             return response
         return ExtendedModelResponse(model_response=response, command=Command(update=update))
 

@@ -2569,6 +2569,17 @@ class ContextScreen(ModalScreen[None]):
             usage_source,
             style="dim green" if exact else "dim yellow",
         )
+        snapshot = getattr(tracker, "context_snapshot", None)
+        if snapshot:
+            hero.append(f"\nLast assembled request: ~{snapshot['estimated_input_tokens']:,} input tokens; "
+                        f"{snapshot['protected_tokens']:,} protected; "
+                        f"{snapshot['output_reservation']:,} reserved output.", style="dim")
+            observed = snapshot.get("provider_input_tokens")
+            if observed is not None:
+                hero.append(f"\nProvider-reported input: {observed:,}.", style="dim")
+            hero.append(f"\nCheckpoint: {snapshot['generation'][:16]}", style="dim")
+            for reference in snapshot.get("recovery", []):
+                hero.append(f"\nRecovery: {reference}", style="dim")
         self.query_one("#context-hero", Static).update(hero)
 
         categories = (
@@ -3976,11 +3987,9 @@ class SkillsScreen(ModalScreen[None]):
     async def _reload_from_disk(self) -> None:
         import asyncio
 
-        from novacode_cli.skills import load
         from novacode_cli.skills.runtime import request_reload
 
         request_reload()
-        load._DIR_CACHE.clear()
         self.app._skill_names_cache = await asyncio.to_thread(self.app._collect_skill_names)
         if not self.is_mounted:
             return

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from typing import TYPE_CHECKING
 
 import pytest
@@ -31,6 +32,43 @@ _CREDENTIAL_ENV_VARS = (
     "TYPESAFE_API_KEY",
     "SYSTEM_ONE_API_KEY",
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_recovery_archives(tmp_path, monkeypatch):
+    """Test compaction never publishes archives into the user's recovery store."""
+    from novacode_cli.context import archives
+    store = archives.RecoveryStore(tmp_path / "recovery")
+    monkeypatch.setattr(archives, "default_recovery_store", lambda: store)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_prompt_overrides(tmp_path, monkeypatch):
+    """A user's active prompts must never alter offline fixture behavior."""
+    from jinja2 import Environment, FileSystemLoader, select_autoescape
+    from novacode_cli import prompts
+    from novacode_cli.hermes import prompt_evolution
+    directory = tmp_path / "prompt-history"
+    monkeypatch.setattr(prompts, "PROMPT_HISTORY_DIR", directory)
+    monkeypatch.setattr(prompt_evolution, "PROMPT_HISTORY_DIR", directory)
+    monkeypatch.setattr(prompts, "_override_env", Environment(
+        loader=FileSystemLoader(str(directory)), autoescape=select_autoescape(default=False),
+    ))
+
+
+@pytest.fixture(autouse=True)
+def _restore_async_graph_imports():
+    """Discard graphs imported while a test replaced the graph builder/model."""
+    prefix = "novacode_cli.agents.async_agents."
+    before = {name for name in sys.modules if name.startswith(prefix)}
+    yield
+    for name in list(sys.modules):
+        if name.startswith(prefix) and name not in before:
+            module = sys.modules.pop(name, None)
+            parent, _, attribute = name.rpartition(".")
+            package = sys.modules.get(parent)
+            if package is not None and getattr(package, attribute, None) is module:
+                delattr(package, attribute)
 
 
 @pytest.fixture(autouse=True)

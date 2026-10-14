@@ -445,9 +445,9 @@ class PipeSession(SessionWorker):
                 await asyncio.wait_for(self._save(), timeout=5)
             self._finish(pid, status)
 
-    async def _save(self):
+    async def _save(self, *, is_error=False):
         with contextlib.suppress(Exception):
-            await asyncio.wait_for(super()._save(), timeout=5)
+            await asyncio.wait_for(super()._save(is_error=is_error), timeout=5)
 
     async def run(self):
         self._loop = asyncio.get_running_loop()

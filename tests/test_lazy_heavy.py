@@ -65,7 +65,7 @@ def test_langchain_degrades_gracefully_rather_than_crashing():
         import json
         import novacode_cli  # installs the guard
         import langchain_core.language_models.base as b
-        print(json.dumps({"has_transformers": b._HAS_TRANSFORMERS}))
+        print(json.dumps({"has_transformers": b._get_tokenizer_module() is not None}))
         """
     )
     import json

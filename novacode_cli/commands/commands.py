@@ -244,6 +244,16 @@ async def handle_command(
 
     if cmd == "context":
         try:
+            if (cmd_args or "").startswith("recovery"):
+                from novacode_cli.context.archives import handle_recovery_command
+                result, restored = await handle_recovery_command(
+                    (cmd_args or "")[len("recovery"):].strip(), agent=agent,
+                    thread=session_state.thread_id,
+                )
+                if restored:
+                    session_state.thread_id = restored
+                console.print(result, markup=False)
+                return True
             token_tracker.display_context()
         except Exception as e:
             console.print(f"[red]Error running /context command: {e}[/red]")

@@ -704,17 +704,18 @@ def _find_project_root(start_path: Path | None = None) -> Path | None:
 
 
 def _find_project_agent_md(project_root: Path) -> list[Path]:
-    """Find ALL project-specific CLAUDE.md and Nova.md files.
+    """Find all project instruction files, including Codex's AGENTS.md.
 
     Returns every memory file that exists, ordered from most general to most
-    specific (matching Claude Code's hierarchical loading behavior). All found
-    files are combined so later entries take higher precedence.
+    specific. All found files are combined so later entries take higher
+    precedence.
 
     Load order (general → specific):
     1. project_root/NOVA.md       (NOVA root — created by /init)
     2. project_root/.nova/NOVA.md (NOVA directory)
     3. project_root/CLAUDE.md     (Claude Code root)
-    4. project_root/.claude/CLAUDE.md (Claude Code directory — highest precedence)
+    4. project_root/.claude/CLAUDE.md (Claude Code directory)
+    5. project_root/AGENTS.md     (Codex-compatible project instructions)
 
     Args:
         project_root: Path to the project root directory.
@@ -727,6 +728,7 @@ def _find_project_agent_md(project_root: Path) -> list[Path]:
         project_root / ".nova" / "NOVA.md",
         project_root / "CLAUDE.md",
         project_root / ".claude" / "CLAUDE.md",
+        project_root / "AGENTS.md",
     ]
     return [p for p in candidates if p.exists()]
 
@@ -1173,7 +1175,7 @@ class Settings:
         return self.project_root / ".nova" / "NOVA.md"
 
     def get_project_agent_md_paths(self) -> list[Path]:
-        """Get all project-level memory file paths (CLAUDE.md, NOVA.md).
+        """Get all project-level instruction file paths (AGENTS/CLAUDE/NOVA.md).
 
         Returns every memory file that exists at the project root, ordered from
         most general to most specific — matching Claude Code's hierarchical

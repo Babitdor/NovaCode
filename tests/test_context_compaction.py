@@ -388,13 +388,13 @@ def test_the_tail_never_starts_on_a_tool_result_and_keeps_parallel_calls_togethe
 # ── what the summary carries ───────────────────────────────────────────────
 
 
-def test_user_messages_keep_the_task_and_the_most_recent_within_budget() -> None:
+def test_user_messages_keep_all_constraints_even_over_quote_budget() -> None:
     head = [HumanMessage(content=TASK)] + [HumanMessage(content=f"follow-up {n} " + "w" * 300) for n in range(10)]
 
     said = user_messages(head, budget_chars=1_200)
 
     assert said[0] == TASK
-    assert said[-1].startswith("follow-up 9") and len(said) < 11
+    assert said == [message.content for message in head]
 
     # A later compaction carries them forward from the earlier summary message.
     summary = HumanMessage(content="…", additional_kwargs={"lc_source": "summarization", "user_messages": said})

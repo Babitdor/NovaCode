@@ -112,6 +112,7 @@ async def test_tui_hot_paths_do_not_block_the_loop(
         # branch every non-interactive environment takes, because `suspend()` is
         # unavailable under `run_test()`.
         await app._run_bash("!echo nova-no-blocking-probe")
+        await app.workers.wait_for_complete()
         for _ in range(2):
             await pilot.pause()
 

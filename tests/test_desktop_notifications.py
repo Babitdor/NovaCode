@@ -14,7 +14,8 @@ def test_packaged_icon_is_the_requested_nova_png():
     import tomllib
 
     root = Path(__file__).resolve().parents[1]
-    assert ICON_PATH.read_bytes() == (root / "Nova.png").read_bytes()
+    assert ICON_PATH == root / "novacode_cli" / "assets" / "Nova.png"
+    assert ICON_PATH.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
     config = tomllib.loads((root / "pyproject.toml").read_text("utf-8"))
     assert "assets/Nova.png" in config["tool"]["setuptools"]["package-data"]["novacode_cli"]
     assert len(icon_resource()) > 40

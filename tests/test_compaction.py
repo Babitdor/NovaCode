@@ -58,7 +58,7 @@ def test_unavailable_summary_never_rewrites_history(monkeypatch: pytest.MonkeyPa
     model = _MockModel()
     model.ainvoke = AsyncMock(return_value=AIMessage(content=""))
     monkeypatch.setattr(C.asyncio, "sleep", AsyncMock())
-    monkeypatch.setattr(C, "_archive_messages", lambda *_args: None)
+    monkeypatch.setattr(C, "_archive_messages", lambda *_args: "recoverable-transcript.md")
     messages = [HumanMessage(content="keep this exactly", id="h1")]
     agent = _CompactAgent(messages)
     result = asyncio.run(C.compact_conversation(agent, model, "test"))

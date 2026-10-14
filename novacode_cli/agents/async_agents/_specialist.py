@@ -19,7 +19,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from deepagents import create_deep_agent
+import deepagents
+from novacode_cli.context.snapshot import background_context_middleware
 from deepagents.backends.filesystem import FilesystemBackend
 
 from novacode_cli.agents.async_context import AsyncModelOverrideMiddleware, NovaAsyncContext
@@ -66,12 +67,12 @@ def build_specialist_graph(
     # unreachable MCP server yields fewer tools, never a graph that fails to
     # build (which would stop the whole server from starting).
     mcp = mcp_tools_for(declared)
-    return create_deep_agent(
+    return deepagents.create_deep_agent(
         name=name,
         model=build_async_agent_model(),
         tools=[*named, *mcp, *(extra_tools or [])],
         system_prompt=definition["prompt"] + BACKGROUND_NOTE + note,
         backend=FilesystemBackend(root_dir=str(workspace_root()), virtual_mode=True),
-        middleware=[AsyncModelOverrideMiddleware(), DelegatedApprovalMiddleware(), background_library(name, definition)],
+        middleware=[AsyncModelOverrideMiddleware(), DelegatedApprovalMiddleware(), background_library(name, definition), *background_context_middleware()],
         context_schema=NovaAsyncContext,
     )

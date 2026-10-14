@@ -176,6 +176,9 @@ async def test_invalid_endpoints_do_not_save(endpoint: str):
         screen, panel = await open_decisions(app, pilot)
         panel.query_one("#decision-endpoint", Input).value = endpoint
         screen._submit()
+        await app.workers.wait_for_complete(
+            [worker for worker in app.workers if worker.node is panel]
+        )
         await pilot.pause()
         assert screen.is_mounted
         assert "Endpoint" in str(panel.query_one("#decision-status", Static).content)
@@ -193,6 +196,9 @@ async def test_failed_config_write_keeps_the_dialog_open(monkeypatch: pytest.Mon
 
         monkeypatch.setattr(NovaConfig, "_save", fail_save)
         screen._submit()
+        await app.workers.wait_for_complete(
+            [worker for worker in app.workers if worker.node is panel]
+        )
         await pilot.pause()
         assert screen.is_mounted
         assert "Could not save" in str(panel.query_one("#decision-status", Static).content)

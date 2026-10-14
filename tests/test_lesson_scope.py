@@ -242,7 +242,12 @@ def test_a_general_skill_waits_for_a_second_sandbox_to_propose_it(tmp_path: Path
     assert _create(tmp_path, "sandbox-task-a", "setup-python-torch-bare-container", GENERAL) == []
     # A different sandbox wanting much the same skill is.
     kept = _create(tmp_path, "sandbox-task-b", "setup-python-torch-container", GENERAL)
-    assert kept == ["setup-python-torch-container"]
+    assert kept == []
+    from novacode_cli.hermes.ledger import LearningLedger
+    proposals = LearningLedger(tmp_path / "learning.sqlite3").list()
+    assert len(proposals) == 1
+    assert proposals[0].target == "setup-python-torch-container"
+    assert proposals[0].status == "candidate"
 
 
 def test_an_unrelated_general_skill_does_not_ride_on_another(tmp_path: Path) -> None:
@@ -251,15 +256,24 @@ def test_an_unrelated_general_skill_does_not_ride_on_another(tmp_path: Path) -> 
 
 
 def test_a_real_project_still_gets_its_project_skills(tmp_path: Path) -> None:
-    assert _create(tmp_path, "backend-1a2b3c4d", "add-tui-slash-command") == ["add-tui-slash-command"]
+    assert _create(tmp_path, "backend-1a2b3c4d", "add-tui-slash-command") == []
+    from novacode_cli.hermes.ledger import LearningLedger
+    proposals = LearningLedger(tmp_path / "learning.sqlite3").list()
+    assert len(proposals) == 1
+    assert proposals[0].target == "add-tui-slash-command"
+    assert proposals[0].status == "candidate"
 
 
 def test_a_reworded_skill_name_is_not_a_second_skill(tmp_path: Path) -> None:
     _create(tmp_path, "backend-1a2b3c4d", "setup-python-torch-container")
     after = _create(tmp_path, "backend-1a2b3c4d", "setup-python-torch-env")
-    assert after == ["setup-python-torch-container"]
+    assert after == []
+    from novacode_cli.hermes.ledger import LearningLedger
+    proposals = LearningLedger(tmp_path / "learning.sqlite3").list()
+    assert all(record.status == "candidate" for record in proposals)
 
     skills = tmp_path / "skills"
+    (skills / "setup-python-torch-container").mkdir()
     assert _similar_skill(skills, "setup-python-torch-env") == "setup-python-torch-container"
     assert _similar_skill(skills, "setup-python-torch-container") is None  # itself: the update path
     assert _similar_skill(skills, "add-tui-slash-command") is None

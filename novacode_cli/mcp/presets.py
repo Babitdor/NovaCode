@@ -8,8 +8,48 @@ from typing import Any
 
 from novacode_cli.mcp.config import MCPServerConfig
 
+
+def _google_workspace_preset(name: str, service: str, port: int) -> dict[str, Any]:
+    """Use service-scoped Workspace MCP tools with local Google OAuth setup."""
+    return {
+        "name": name,
+        "description": (
+            f"{name.removesuffix(' MCP')} core tools via Workspace MCP "
+            "(Google OAuth client JSON required)"
+        ),
+        "package": "workspace-mcp",
+        "config": {
+            "transport": "stdio",
+            "command": "uvx",
+            "args": [
+                "workspace-mcp",
+                "--transport",
+                "stdio",
+                "--tools",
+                service,
+                "--tool-tier",
+                "core",
+            ],
+            "env": {
+                "GOOGLE_CLIENT_SECRET_PATH": "{google_client_secret_path}",
+                "MCP_ENABLE_OAUTH21": "false",
+                "WORKSPACE_MCP_PORT": str(port),
+                "PORT": str(port),
+                "GOOGLE_OAUTH_REDIRECT_URI": f"http://localhost:{port}/oauth2callback",
+                "OAUTHLIB_INSECURE_TRANSPORT": "1",
+            },
+        },
+        "setup_prompt": "Enter the full path to your Google OAuth client JSON file:",
+        "setup_key": "google_client_secret_path",
+        "env_mapping": {"google_client_secret_path": "GOOGLE_CLIENT_SECRET_PATH"},
+    }
+
+
 # Pre-defined MCP server presets
 MCP_PRESETS: dict[str, dict[str, Any]] = {
+    "google-drive": _google_workspace_preset("Google Drive MCP", "drive", 8001),
+    "gmail": _google_workspace_preset("Gmail MCP", "gmail", 8002),
+    "google-docs": _google_workspace_preset("Google Docs MCP", "docs", 8003),
     "playwright": {
         "name": "Playwright MCP",
         "description": "Browser automation using Playwright for web scraping and testing",

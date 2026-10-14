@@ -6,8 +6,29 @@ from langchain_core.messages import ToolMessage
 from novacode_cli.security.policy import get_policy
 
 
+def _parent_auto_approves(request) -> bool:
+    """Whether the session that dispatched this agent is in auto-approve.
+
+    In process (sync and dynamic subagents) that is the turn's own flag, which the
+    agent loop sets; on the agent server (async agents) it is the run's context,
+    stamped when the run was launched. Either way the subagent gets the answer the
+    main agent would have got, instead of a refusal it cannot appeal.
+    """
+    from novacode_cli.tools.plan_mode_tools import _auto_approve_var
+
+    if _auto_approve_var.get():
+        return True
+    context = getattr(getattr(request, "runtime", None), "context", None)
+    if isinstance(context, dict):
+        return bool(context.get("auto_approve"))
+    return bool(getattr(context, "auto_approve", False))
+
+
 class DelegatedApprovalMiddleware(AgentMiddleware):
-    """Refuse actions requiring approval; the parent must perform them instead."""
+    """Refuse actions requiring approval; the parent must perform them instead.
+
+    Unless the parent session is in auto-approve: then only a deny is refused.
+    """
 
     def _denial(self, request):
         call = request.tool_call
@@ -18,6 +39,8 @@ class DelegatedApprovalMiddleware(AgentMiddleware):
         if verdict.tier == "allow" or (
             name in readonly and policy.tool_default(name) != "deny" and verdict.tier != "deny"
         ):
+            return None
+        if verdict.tier != "deny" and _parent_auto_approves(request):
             return None
         return ToolMessage(
             content=f"Delegated action {name} requires parent authorization; ask the parent to perform it.",

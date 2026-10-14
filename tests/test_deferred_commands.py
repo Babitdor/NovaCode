@@ -41,11 +41,11 @@ async def _drive() -> None:
         app._turn_active = True  # simulate the agent being busy
 
         # A slash command queues as a command (not steered).
-        app.on_input_submitted(Input.Submitted(inp, "/tasks"))
+        app.on_input_submitted(Input.Submitted(inp, "/model"))
         await pilot.pause()
-        assert "/tasks" in app._deferred_commands
+        assert "/model" in app._deferred_commands
         steers = [getattr(si, "instruction", "") for si in (ss.steering_instructions or [])]
-        assert "/tasks" not in steers
+        assert "/model" not in steers
 
         # A !bash command also queues as a command.
         app.on_input_submitted(Input.Submitted(inp, "!echo hi"))
@@ -71,7 +71,7 @@ async def _drive() -> None:
         app._turn_active = False
         await app._drain_deferred_commands()
 
-        assert slash_calls == ["/tasks"]
+        assert slash_calls == ["/model"]
         assert bash_calls == ["!echo hi"]
         assert app._deferred_commands == []
 

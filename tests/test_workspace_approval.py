@@ -51,9 +51,10 @@ async def test_buttons_choose_exact_scope(tmp_path: Path, button: str, expected:
     app = WorkspaceApprovalApp(tmp_path)
     async with app.run_test(size=(120, 45)) as pilot:
         target = app.query_one(f"#{button}", Button)
-        target.scroll_visible(animate=False)
+        target.scroll_visible(animate=False, force=True, immediate=True)
         await pilot.pause()
-        await pilot.click(f"#{button}")
+        assert await pilot.click(target, offset=(2, 1))
+        await pilot.pause()
     assert app.return_value == expected
 
 

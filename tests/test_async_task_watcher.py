@@ -35,7 +35,7 @@ async def test_ignores_empty_and_malformed():
     w.sync_from_state(None)
     w.sync_from_state({"x": "not-a-dict"})
     await asyncio.sleep(0.01)
-    assert w._watched == set()
+    assert set(w._watched) == set()
 
 
 async def test_running_tasks_lists_watched_with_runtime():

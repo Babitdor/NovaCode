@@ -25,7 +25,7 @@ from novacode_cli.context._analysis import (
     build_context_breakdown,
     get_context_window_size,
 )
-from novacode_cli.context._budget import ContextBudget, get_context_budget
+from novacode_cli.context._budget import ContextBudget
 from novacode_cli.context._conversation import get_recent_conversation_digest
 from novacode_cli.context._model_config import ModelConfig, get_model_config
 
@@ -46,12 +46,12 @@ class ContextManager:
         """
         self.model_name = model_name
         self.use_dynamic = use_dynamic
+        self._budget = None
 
     def _require_model(self) -> str:
         if not self.model_name:
             raise ValueError(
-                "ContextManager was created without a model_name; this operation "
-                "requires one."
+                "ContextManager was created without a model_name; this operation requires one."
             )
         return self.model_name
 
@@ -59,9 +59,7 @@ class ContextManager:
 
     def window_size(self) -> int:
         """Context window size in tokens for the bound model."""
-        return get_context_window_size(
-            self._require_model(), use_dynamic=self.use_dynamic
-        )
+        return get_context_window_size(self._require_model(), use_dynamic=self.use_dynamic)
 
     def breakdown(
         self, messages: list[BaseMessage], tools: list[Any] | None = None
@@ -85,7 +83,9 @@ class ContextManager:
 
     def budget(self, max_tokens: int = 50000) -> ContextBudget:
         """The process-global middleware context-budget tracker."""
-        return get_context_budget(max_tokens)
+        if self._budget is None or self._budget.max_tokens != max_tokens:
+            self._budget = ContextBudget(max_tokens)
+        return self._budget
 
     async def digest(
         self,

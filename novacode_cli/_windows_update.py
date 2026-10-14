@@ -106,7 +106,10 @@ def wait_for_exit(pid: int, *, launcher_only: bool = False) -> None:
             buffer = ctypes.create_unicode_buffer(32768)
             size = wintypes.DWORD(len(buffer))
             if not kernel.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):
-                raise ctypes.WinError(ctypes.get_last_error())
+                # Some supervisors expose a parent handle with no queryable
+                # image. Wait only for a confirmed Nova wrapper; installation
+                # still respects Windows executable file locks.
+                return
             if Path(buffer.value).name.lower() != "nova.exe":
                 return  # Never wait for the user's PowerShell or terminal to close.
         result = kernel.WaitForSingleObject(handle, 60000)
@@ -124,6 +127,7 @@ def run_installer(command: list[str]) -> bool:
     no_upgrade = False
     with subprocess.Popen(
         command,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,

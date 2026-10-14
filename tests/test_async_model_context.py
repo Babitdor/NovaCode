@@ -335,6 +335,37 @@ def test_an_explicit_run_context_is_not_overwritten(monkeypatch):
     assert sent[0]["context"] is explicit
 
 
+def test_an_auto_approve_session_stamps_its_async_launches(monkeypatch):
+    """The run cannot ask the session later, so the answer travels with it."""
+    from novacode_cli.tools.plan_mode_tools import _auto_approve_var
+
+    monkeypatch.setattr(
+        "novacode_cli.config.nova_config.NovaConfig.get_role_model",
+        lambda self, role: {"provider": "opencode", "model": "deepseek-v4.1-flash"},
+    )
+    sent: list[dict] = []
+
+    class _Runs:
+        def create(self, *args: object, **kwargs: object) -> dict[str, str]:  # noqa: ARG002
+            sent.append(dict(kwargs))
+            return {"run_id": "r"}
+
+    client = type("_C", (), {})()
+    client.runs = _Runs()
+    client = ac._bind_context(client)
+    client.runs.create(thread_id="t", assistant_id="a", input={})
+    token = _auto_approve_var.set(True)
+    try:
+        client.runs.create(thread_id="t", assistant_id="a", input={})
+    finally:
+        _auto_approve_var.reset(token)
+
+    assert sent[0]["context"].auto_approve is False
+    assert sent[1]["context"] == NovaAsyncContext(
+        provider="opencode", model="deepseek-v4.1-flash", auto_approve=True
+    )
+
+
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 

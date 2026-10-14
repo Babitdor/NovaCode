@@ -686,6 +686,7 @@ _PCT_CRITICAL = 90
 #: Cap on the background-agent final answer echoed back to the main agent, so a
 #: verbose run cannot flood the next turn's context.
 _BG_REPORT_MAX_CHARS = 2000
+_PTY_COMMAND_LABEL_MAX = 80
 
 
 def _pct_color(percent: float, base: str, pal: FooterPalette | None = None) -> str:
@@ -982,8 +983,10 @@ class NovaApp(App):
        included) to a 1-row sliver, so nothing rendered once the bar appeared. */
     #session-tabs { display: none; height: 3; width: 100%; }
     #transcript { height: 1fr; padding: 1 2; }
+    /* No accent bar: the background and padding already mark the card, and the
+       dispatch title carries the subagent's own colour. */
     #transcript > .subagent {
-        border-left: thick $accent; padding: 0 2;
+        padding: 0 2;
         margin: 1 0; background: $surface;
     }
     #transcript > .tool { color: $warning; padding: 0 2; margin: 1 0; background: $background; }
@@ -1515,14 +1518,25 @@ class NovaApp(App):
         padding: 0 1;
     }
     .bgshell-card Contents > Vertical { height: auto; }
-    /* A plain `!cmd`: no card, just the command on a highlighted row and its
-       output indented beneath, the way a shell transcript reads. */
-    .bash-inline { height: auto; margin: 1 0 0 0; }
-    .bash-inline-head { width: 1fr; background: $panel; }
+    /* Inline interactive command: a compact terminal with a persistent view cue. */
+    .bash-inline {
+        height: auto; margin: 1 0 0 0; background: $surface;
+    }
+    .bash-inline-head {
+        width: 1fr; background: $panel; padding: 0 1;
+    }
+    .bash-inline-hint {
+        width: 1fr; color: $text-muted; background: $panel; padding: 0 1;
+    }
     .bash-inline-log {
         height: auto; max-height: 22;
         border: none; background: transparent; padding: 0;
     }
+    .bash-terminal {
+        height: auto; max-height: 18; width: 1fr; overflow: hidden;
+        border: round $border; background: $boost; padding: 0 1;
+    }
+    .bash-terminal:focus { border: round $accent; }
     /* The agent card emits discrete progress lines, not a firehose of command
        output, so it sizes to its content instead of reserving 30vh. Capped so a
        long run cannot swallow the transcript. */
@@ -2094,7 +2108,7 @@ class NovaApp(App):
     async def on_mount(self) -> None:
         import threading
 
-        self._load_ui_preferences()
+        await asyncio.to_thread(self._load_ui_preferences)
         self._thread_id = threading.get_ident()
         # Log what the loop was running whenever the UI freezes for >1s
         # (~/.nova/logs/freeze.log). The UI and the agent share this loop, so
@@ -2119,7 +2133,9 @@ class NovaApp(App):
         self.set_interval(5, self._schedule_session_autosave)
         from novacode_cli.config.config import settings
 
-        self._ui_harness = UIHarness(self, settings.get_workspace_root() or Path.cwd())
+        self._ui_harness = await asyncio.to_thread(
+            lambda: UIHarness(self, settings.get_workspace_root() or Path.cwd())
+        )
         harness_notice = await self._ui_harness.initialize()
         if harness_notice:
             self._log(Text(harness_notice, style="yellow"))
@@ -3012,7 +3028,7 @@ class NovaApp(App):
             from novacode_cli.remote.bridge import RemotePlatform
 
             manager = getattr(self._remote_owner_state(), "_remote_bridge_manager", None)
-            if manager is not None and any(
+            if manager is not None and hasattr(manager, "bridges") and any(
                 getattr(bridge, "is_connected", False)
                 for bridge in manager.bridges(RemotePlatform.DISCORD)
             ):
@@ -3896,7 +3912,7 @@ class NovaApp(App):
         try:
             owner = pane or getattr(self, "_root_pane", None)
             if owner is not None:
-                if owner.remote_snapshot is None:
+                if getattr(owner, "remote_snapshot", None) is None:
                     owner.remote_snapshot = RemoteAnswerStream(None)
                 owner.remote_snapshot.feed(event)
                 for _target, status, answer in owner.remote_mirrors.values():
@@ -4409,7 +4425,7 @@ class NovaApp(App):
         """Send the tab's explicit approval preference with each prompt."""
         from novacode_cli.remote.streaming import RemoteAnswerStream
 
-        if pane.remote_snapshot is None:
+        if getattr(pane, "remote_snapshot", None) is None:
             pane.remote_snapshot = RemoteAnswerStream(None)
         state = pane.state.get("session_state")
         options = {"auto_approve": bool(getattr(state, "auto_approve", False))}
@@ -4659,7 +4675,7 @@ class NovaApp(App):
                     existing.append(self._remote_msg)
             if any(same_topic(target) for target in existing):
                 return
-            snapshot = pane.remote_snapshot
+            snapshot = getattr(pane, "remote_snapshot", None)
             if snapshot is None:
                 return
             target = await bridge.stream_target(sid=pane.sid)
@@ -5272,8 +5288,10 @@ class NovaApp(App):
 
     def _set_pane_timer(self, delay, callback, latch) -> None:
         """A deferred repaint belongs to the pane that scheduled it."""
+        from functools import wraps
         pane = getattr(self, "_active_pane", None)
 
+        @wraps(callback)
         def flush():
             if pane is None or pane is self._active_pane:
                 callback()
@@ -6996,7 +7014,7 @@ class NovaApp(App):
         if plan and bash:
             t = Text()
             t.append("  ⏸ PLAN  ", style=f"bold {pal.primary}")
-            t.append("$ BASH — runs in chat · !! for the terminal", style=f"bold {pal.accent}")
+            t.append("$ BASH — ! chat · !! terminal", style=f"bold {pal.accent}")
             _paint(badge, t)
             badge.display = True
         elif plan:
@@ -7007,7 +7025,7 @@ class NovaApp(App):
         elif bash:
             _paint(
                 badge,
-                Text("  $ BASH — runs in chat · !! for the terminal", style=f"bold {pal.accent}"),
+                Text("  $ BASH — ! chat · !! terminal", style=f"bold {pal.accent}"),
             )
             badge.display = True
         elif goal:
@@ -7901,7 +7919,7 @@ class NovaApp(App):
         self._bg_job_count += 1
         job_id = self._bg_job_count
         if raw.startswith("!"):
-            cmd = raw[1:].strip()
+            cmd = raw[2 if raw.startswith("!!") else 1:].strip()
             if not cmd:
                 self._log(Text("ctrl+b: empty command after !", style="dim"))
                 return
@@ -8106,6 +8124,10 @@ class NovaApp(App):
 
     def _on_task_event(self, event: str, job: Any) -> None:
         self._refresh_tasks_bar()
+        # Inline shell rows publish their own bounded output note on exit.
+        # Avoid a duplicate generic background notification for the same run.
+        if job is not None and job.tool_name == "tui-shell":
+            return
         # The process-local registry belongs to the root conversation. Never
         # inject its logs, notes, or completion prompts into a selected child.
         root = getattr(self, "_root_pane", None)
@@ -8374,6 +8396,12 @@ class NovaApp(App):
         Lets users select text in the transcript (chat messages, tool output)
         and copy it with ctrl+c. With no selection, behaves like quit.
         """
+        focused = self.focused
+        if focused is not None and focused.has_class("bash-terminal"):
+            sender = getattr(focused, "action_send_ctrl_c", None)
+            if callable(sender):
+                sender()
+                return
         try:
             selected = self.screen.get_selected_text()
         except Exception:  # noqa: BLE001
@@ -8465,15 +8493,16 @@ class NovaApp(App):
         best-effort — exiting must never hang or fail on it.
         """
         try:
-            from novacode_cli.hermes.middleware import get_active_learning_middleware
+            from novacode_cli.hermes.middleware import learning_middleware_for_agent
 
             # LangGraph compiles middleware into the graph and does not expose
             # the instances, so the module publishes the live one.
-            mw = get_active_learning_middleware()
-            if mw is None:
-                return
-            if await mw.consolidate_session():
+            agent, _ = self._active_agent()
+            mw = learning_middleware_for_agent(agent, self.session_state.thread_id)
+            if mw is not None and await mw.consolidate_session():
                 self._log(Text("● Session learnings consolidated.", style="dim"))
+            if hasattr(agent, "close_session"):
+                await agent.close_session(self.session_state.thread_id)
         except Exception:  # noqa: BLE001 — never block exit on learning
             pass
 
@@ -8853,6 +8882,7 @@ class NovaApp(App):
             ag, _ = self._active_agent()
             config = {"configurable": {"thread_id": self.session_state.thread_id}}
             state = await ag.aget_state(config)
+            tracker.context_snapshot = (state.values if state else {}).get("_context_snapshot")
             self._refresh_router_model_from_state(state.values if state else {})
             msgs = effective_messages(state.values) if state else []
             # Off the loop: it can shell out to `ollama show`, which hangs
@@ -8872,6 +8902,9 @@ class NovaApp(App):
             baseline = getattr(tracker, "baseline_context", 0)
             breakdown.system_prompt_tokens += baseline
             breakdown.total_tokens += baseline
+            snapshot = getattr(tracker, "context_snapshot", None)
+            if snapshot and isinstance(snapshot.get("estimated_input_tokens"), int):
+                breakdown = breakdown.scaled_to(snapshot["estimated_input_tokens"])
             tracker.model_name = model
             tracker.context_window_size = breakdown.context_window_size
             tracker.set_breakdown(breakdown)
@@ -9391,6 +9424,15 @@ class NovaApp(App):
                 return self._token_text().plain, None
             except Exception:  # noqa: BLE001
                 return "(token usage unavailable)", None
+        if cmd == "context" and arg.startswith("recovery"):
+            from novacode_cli.context.archives import handle_recovery_command
+            agent, _ = self._active_agent()
+            result, restored = await handle_recovery_command(
+                arg[len("recovery"):].strip(), agent=agent, thread=self.session_state.thread_id,
+            )
+            if restored:
+                self.session_state.thread_id = restored
+            return result, None
         if cmd == "verbose":
             new = self.session_state.toggle_verbose()
             return f"Verbose mode {'on' if new else 'off'}.", None
@@ -9727,77 +9769,193 @@ class NovaApp(App):
             raise
 
     async def _run_bash(self, text: str) -> None:
-        """Run a ``!`` shell command.
-
-        ``!cmd`` runs in the chat: output streams into a card and the prompt
-        stays usable, so a long command never holds the UI (``/kill bg-<n>``
-        stops it). ``!!cmd`` hands the real terminal to the command instead, by
-        suspending the TUI, for anything that needs a keyboard (an editor, a
-        REPL, a password prompt): a card has no stdin to give it.
-        """
-        cmd = text[1:].strip()
+        """Stream ``!cmd`` in chat or open ``!!cmd`` in a terminal view."""
+        terminal_view = text.startswith("!!")
+        cmd = text[2 if terminal_view else 1:].strip()
         if not cmd:
             return
-        if not cmd.startswith("!"):
-            self._bg_job_count += 1
+        self._bg_job_count += 1
+        if terminal_view:
+            self._pty_shell_worker(cmd, self._bg_job_count)
+        else:
             self._bg_shell_worker(cmd, self._bg_job_count, foreground=True)
-            return
-        cmd = cmd[1:].strip()
-        if not cmd:
-            return
 
-        import sys
-        import subprocess
+    @work(group="bgshell")
+    async def _pty_shell_worker(self, cmd: str, job_id: int) -> None:  # noqa: PLR0915
+        """Run a shell command with a real TTY in its own TUI screen."""
         from novacode_cli.config.config import settings
-
-        # Log the command in the transcript
-        self._log(Text(f"Executing: !{cmd}", style="bold yellow"))
-
-        # Suspend Textual and run the command directly on the system terminal
-        from textual.app import SuspendNotSupported
+        from novacode_cli.process_manager import ProcessInfo, ProcessManager, ProcessStatus
+        from novacode_cli.shell import jobs as shell_jobs
+        from novacode_cli.shell.middleware import ShellMiddleware
+        from novacode_cli.tui.pty_shell import PtyShell
 
         try:
-            with self.suspend():
-                cwd = settings.get_workspace_root()
-                if sys.stdin.isatty():
-                    print(f"\n--- Executing command in {cwd.name} ---")
-                    print(f"> {cmd}\n")
-                try:
-                    # Off the loop: the child still inherits this terminal, but a
-                    # synchronous run here freezes the agent stream, the status
-                    # tick and the stall watchdog for the whole command.
-                    res = await asyncio.to_thread(subprocess.run, cmd, shell=True, cwd=cwd)
-                    exit_code = res.returncode
-                except Exception as ex:  # noqa: BLE001
-                    exit_code = -1
-                    print(f"Error executing command: {ex}")
-
-                # The TUI resumes as soon as the child exits. Reading an extra
-                # Enter here can hang after installers finish because Textual's
-                # input driver may still consume that key on some terminals.
-        except SuspendNotSupported:
-            # Fallback for non-interactive/headless test environments where suspend is not supported
-            cwd = settings.get_workspace_root()
-            try:
-                # Same reason as the suspend path, and this is the branch every
-                # headless/`run_test()` environment takes, so a synchronous run
-                # put a blocking subprocess on the loop in every such test.
-                res = await asyncio.to_thread(
-                    subprocess.run,
-                    cmd,
-                    shell=True,
-                    cwd=cwd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
+            from novacode_cli.tui.terminal_view import InlineTerminal, TerminalCommandScreen
+        except ImportError as exc:
+            if exc.name == "pyte":
+                message = (
+                    "Interactive terminal needs pyte. Update Nova's environment "
+                    "with `uv tool install -e . --force` (tool install) or "
+                    "`uv sync` (repo run), then restart Nova."
                 )
-                exit_code = res.returncode
-            except Exception:  # noqa: BLE001
-                exit_code = -1
+            else:
+                message = f"Interactive terminal unavailable: {exc}"
+            self._log(Text(message, style="red"))
+            return
 
-        if exit_code == 0:
-            self._log(Text("● Command finished successfully.", style="green"))
+        cwd = settings.get_workspace_root()
+        session: PtyShell | None = None
+
+        def send(keys: str) -> None:
+            if session is not None and session.returncode is None:
+                with contextlib.suppress(OSError, EOFError):
+                    session.write(keys)
+
+        columns = max(40, min(160, self.size.width - 8))
+        rows = max(4, self.size.height - 7)
+        hint = Static(classes="bash-inline-hint")
+        terminal_state = "RUNNING"
+        last_view: tuple[int, int, str] | None = None
+
+        def update_hint(offset: int, total: int) -> None:
+            nonlocal last_view
+            state = (offset, total, terminal_state)
+            if state == last_view:
+                return
+            last_view = state
+            view = f"HISTORY ↑{offset}/{total}" if offset else "LIVE"
+            details = (
+                "Wheel: scroll · Ctrl+G or Shift+Tab: chat"
+                if terminal_state == "RUNNING" else "Wheel: scroll output · Ctrl+G: chat"
+            )
+            state_style = {
+                "RUNNING": "bold yellow", "DONE": "bold green", "FAILED": "bold red",
+            }
+            status = Text(terminal_state, style=state_style[terminal_state])
+            status.append(f"  {view}", style="bold cyan" if offset else "bold green")
+            status.append(f"  ·  {details}")
+            hint.update(status)
+
+        terminal_screen: TerminalCommandScreen | None = None
+
+        def return_to_chat() -> None:
+            if terminal_screen is not None and self.screen is terminal_screen:
+                self.pop_screen()
+                self.query_one("#prompt", PromptInput).focus()
+
+        terminal = InlineTerminal(
+            send, columns=columns, rows=rows, on_view_change=update_hint,
+            return_to_chat=return_to_chat,
+        )
+        short = (
+            cmd if len(cmd) <= _PTY_COMMAND_LABEL_MAX
+            else cmd[:_PTY_COMMAND_LABEL_MAX - 3] + "…"
+        )
+        prefix = "!!"
+        head = Static(
+            Text(f"{prefix} {short}   starting", style="bold yellow"), classes="bash-inline-head"
+        )
+        update_hint(0, 0)
+        terminal_screen = TerminalCommandScreen(head, terminal, hint)
+        self.push_screen(terminal_screen)
+
+        try:
+            session = await PtyShell.spawn(cmd, cwd, rows=rows, columns=columns)
+        except Exception as exc:  # noqa: BLE001 — surface spawn failure in the card
+            head.update(Text(f"{prefix} {short}   failed to start", style="bold red"))
+            terminal.update(Text(str(exc), style="red"))
+            terminal_state = "FAILED"
+            update_hint(*terminal.view_position)
+            self._queue_pending_job_note(f"Interactive command failed to start: {cmd[:500]}. {exc}")
+            return
+
+        info = ProcessInfo(
+            pid=session.pid, name=f"bg-{job_id}", command=cmd,
+            status=ProcessStatus.RUNNING, working_dir=str(cwd), _process=session,
+        )
+        ProcessManager.get_instance().register_process(info)
+        job = shell_jobs.get_registry().add(cmd, "tui-shell", None)
+        shell_jobs.get_registry().attach_pid(job.id, session.pid)
+        self._queue_pending_job_note(
+            f"Interactive command {job.task_id} started: {cmd[:500]}. "
+            f"Read its output with get_task_logs('{job.task_id}')."
+        )
+        head.update(Text(f"{prefix} {short}   running · {job.task_id}", style="bold yellow"))
+        last_screen = ""
+        exit_code: int | None = None
+
+        async def monitor_kill() -> None:
+            while session is not None and session.returncode is None:
+                if job.kill.is_set():
+                    await ShellMiddleware._terminate_tree(session, grace=0)
+                    if session.returncode is None:
+                        session.kill()
+                    return
+                await asyncio.sleep(0.1)
+
+        monitor = asyncio.create_task(monitor_kill())
+        try:
+            while True:
+                if job.kill.is_set():
+                    break
+                chunk = await session.read()
+                if chunk is None:
+                    continue
+                if not chunk:
+                    break
+                terminal.feed(chunk)
+                screen = terminal.snapshot()
+                if screen and screen != last_screen:
+                    # Screen snapshots preserve the choices shown by programs
+                    # that redraw with cursor movement rather than newlines.
+                    shell_jobs.get_registry().append_log(job.id, screen[-2000:] + "\n")
+                    last_screen = screen
+                await asyncio.sleep(0)
+            exit_code = (
+                session.returncode if job.kill.is_set() else await session.wait()
+            )
+        except asyncio.CancelledError:
+            await asyncio.shield(ShellMiddleware._terminate_tree(session, grace=0))
+            with contextlib.suppress(Exception):
+                exit_code = await asyncio.wait_for(session.wait(), timeout=2)
+            shell_jobs.get_registry().mark_terminated(job.id, exit_code)
+            head.update(Text(f"{prefix} {short}   cancelled", style="bold red"))
+            self._queue_pending_job_note(
+                f"Interactive command {job.task_id} was cancelled: {cmd[:500]}. "
+                f"Last screen:\n{terminal.snapshot()[-_BG_REPORT_MAX_CHARS:] or '(no output)'}"
+            )
+            raise
+        except Exception as exc:  # noqa: BLE001 — a reader failure is a task failure
+            shell_jobs.get_registry().append_log(job.id, f"Terminal read failed: {exc}\n")
+            await ShellMiddleware._terminate_tree(session, grace=0)
+            exit_code = 1
+        finally:
+            monitor.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await monitor
+            ProcessManager.get_instance().unregister_process(info.pid)
+            session.close()
+            terminal_state = "DONE" if exit_code == 0 else "FAILED"
+            update_hint(*terminal.view_position)
+
+        if job.kill.is_set():
+            shell_jobs.get_registry().mark_terminated(job.id, exit_code)
         else:
-            self._log(Text(f"❌ Command exited with code {exit_code}.", style="red"))
+            shell_jobs.get_registry().complete(job.id, exit_code)
+        state = (
+            "terminated" if job.kill.is_set() else
+            f"exit {exit_code}" if exit_code is not None else "finished"
+        )
+        head.update(Text(f"{prefix} {short}   {state}", style="green" if exit_code == 0 else "red"))
+        info.status = ProcessStatus.STOPPED if exit_code == 0 else ProcessStatus.FAILED
+        tail = job.output[-_BG_REPORT_MAX_CHARS:] or terminal.snapshot() or "(no output)"
+        self._queue_pending_job_note(
+            f"Interactive command {job.task_id} {state}: {cmd[:500]}. Output tail:\n{tail}"
+        )
+        self._journal(
+            {"k": "bash", "cmd": cmd, "lines": terminal.snapshot().splitlines(),
+             "exit": exit_code, "fg": True, "job": job_id}
+        )
 
     # -- background shell (ctrl+b) --------------------------------------------
 
@@ -9921,7 +10079,8 @@ class NovaApp(App):
                 stderr=asyncio.subprocess.STDOUT,
                 # No stdin: an inherited one lets the child read the keystrokes
                 # meant for the TUI, and a command that prompts would hang
-                # unseen. It gets EOF instead; `!!cmd` is the interactive path.
+                # unseen. Ctrl+B jobs and ! chat commands get EOF; interactive
+                # !! commands use the PTY worker above.
                 stdin=asyncio.subprocess.DEVNULL,
                 cwd=str(cwd),
                 env=os.environ.copy(),
@@ -9933,6 +10092,8 @@ class NovaApp(App):
                 f"[bold red]Failed to start: {ex}[/bold red]"
             )
             set_state("✖", "failed to start", bad=True)
+            if foreground:
+                self._queue_pending_job_note(f"Shell command failed to start: {cmd[:500]}. {ex}")
             return
 
         # Register with ProcessManager so `/kill bg-<n>` or `/kill <pid>` works.
@@ -9949,17 +10110,18 @@ class NovaApp(App):
         from novacode_cli.shell import jobs as shell_jobs
         from novacode_cli.shell.middleware import ShellMiddleware
 
-        control = shell_jobs.set_current(cmd) if foreground else None
+        control = None if foreground else shell_jobs.set_current(cmd)
 
         def background_command() -> None:
             nonlocal background_job
-            background_job = shell_jobs.get_registry().add(cmd, "shell", None)
+            background_job = shell_jobs.get_registry().add(
+                cmd, "tui-shell" if foreground else "shell", None
+            )
             shell_jobs.get_registry().attach_pid(background_job.id, process.pid)
             background_job.logs.extend(line + "\n" for line in captured)
-            if control is not None:
-                shell_jobs.clear_current(control)
             hint.display = False
-            set_state("●", f"background · {background_job.task_id}")
+            if not foreground:
+                set_state("●", f"background · {background_job.task_id}")
 
         async def monitor_controls() -> None:
             while process.returncode is None:
@@ -9972,8 +10134,13 @@ class NovaApp(App):
                     return
                 await asyncio.sleep(0.1)
 
-        if not foreground:
-            background_command()
+        background_command()
+        if foreground and background_job is not None:
+            self._queue_pending_job_note(
+                f"Shell command {background_job.task_id} started: {cmd[:500]}. "
+                f"Read live output with get_task_logs('{background_job.task_id}'); "
+                f"stop it with terminate_task('{background_job.task_id}')."
+            )
         monitor = asyncio.create_task(monitor_controls())
 
         # Batch ready output and yield between reads so input stays responsive.
@@ -9981,7 +10148,7 @@ class NovaApp(App):
         try:
             from novacode_cli.tui.shell_output import shell_output_batches
 
-            async for lines in shell_output_batches(process.stdout):
+            async for lines in shell_output_batches(process.stdout, flush_partial=foreground):
                 emit_batch(lines)
             await process.wait()
         except asyncio.CancelledError:
@@ -10009,6 +10176,12 @@ class NovaApp(App):
             ProcessManager.get_instance().unregister_process(info.pid)
             if background_job is not None:
                 shell_jobs.get_registry().mark_terminated(background_job.id, process.returncode)
+                if foreground:
+                    tail = "\n".join(background_job.output.splitlines()[-40:])
+                    self._queue_pending_job_note(
+                        f"Shell command {background_job.task_id} was cancelled: {cmd[:500]}. "
+                        f"Output tail:\n{tail[-_BG_REPORT_MAX_CHARS:] or '(no output)'}"
+                    )
             return
         finally:
             hint.display = False
@@ -10056,6 +10229,13 @@ class NovaApp(App):
                 "job": job_id,
             }
         )
+        if background_job is not None:
+            tail = "\n".join(background_job.output.splitlines()[-40:])[-_BG_REPORT_MAX_CHARS:]
+            self._queue_pending_job_note(
+                f"Shell command {background_job.task_id} finished "
+                f"with exit {exit_code}: {cmd[:500]}. "
+                f"Output tail:\n{tail or '(no output)'}"
+            )
 
     # -- background agent turn (ctrl+b, non-! input) --------------------------
 
@@ -10517,6 +10697,7 @@ class NovaApp(App):
         from novacode_cli.config.nova_config import NovaConfig
 
         config = NovaConfig()
+        self._ui_preferences_config = config
         self._submit_on_enter = config.get("submit_on_enter", True) is True
         self._autocomplete_enabled = config.get("autocomplete_enabled", True) is True
         self._low_resource_mode = config.get("low_resource_mode", False) is True
@@ -10556,6 +10737,21 @@ class NovaApp(App):
 
     async def _run_context(self, text: str = "/context") -> None:
         """Open the live context dashboard or retain imported-context controls."""
+        parts = text.split(maxsplit=2)
+        if len(parts) > 1 and parts[1] == "recovery":
+            from novacode_cli.context.archives import handle_recovery_command
+            agent, _ = self._active_agent()
+            try:
+                result, restored = await handle_recovery_command(
+                    parts[2] if len(parts) > 2 else "", agent=agent,
+                    thread=self.session_state.thread_id,
+                )
+                if restored:
+                    self.session_state.thread_id = restored
+                self._log(Text(result))
+            except (ValueError, OSError) as error:
+                self._log(Text(str(error), style="red"))
+            return
         if len(text.split()) > 1:
             await self._run_session_import(text)
             return
@@ -10748,7 +10944,8 @@ class NovaApp(App):
             slash = f"/{name}"
             if slash not in _TUI_SLASH_COMMANDS:
                 _TUI_SLASH_COMMANDS.append(slash)
-        self._schedule_remote_command_menu()
+        if getattr(self, "session_state", None) is not None:
+            self._schedule_remote_command_menu()
 
     def _discover_plugin_commands(self) -> dict[str, Any]:
         """Name → async handler for every enabled plugin's commands. Thread-safe.
@@ -12735,6 +12932,17 @@ class NovaApp(App):
         cfg = NovaConfig()
         current = cfg.get_learning_enabled()
 
+        if arg.split(maxsplit=1)[0:1] and arg.split(maxsplit=1)[0] in {"review", "approve", "reject", "rollback"}:
+            from novacode_cli.commands.learning_handler import handle_learning_review
+            from novacode_cli.hermes.memory_tiers import project_memory_key
+            from novacode_cli.config.config import settings
+            try:
+                result = await asyncio.to_thread(handle_learning_review, arg, agent_dir=settings.get_agent_dir(self.assistant_id), project=project_memory_key(Path.cwd()))
+                self._log(Text(result))
+            except (ValueError, OSError) as error:
+                self._log(Text(str(error), style="red"))
+            return
+
         if arg in ("", "status"):
             t = Text()
             t.append("Nova Learning (Hermes)\n", style="bold")
@@ -12744,10 +12952,10 @@ class NovaApp(App):
             )
             t.append(
                 "\nWhen on, Nova periodically self-reviews its tool usage, extracts\n"
-                "lessons to memory, and creates/refines skills as you work.\n",
+                "proposals for review. Approve a displayed revision to activate it.\n",
                 style="dim",
             )
-            t.append("Usage: /learning <on|off>\n", style="dim")
+            t.append("Usage: /learning on|off|status|review|approve|reject|rollback\n", style="dim")
             self._log(t)
             return
 

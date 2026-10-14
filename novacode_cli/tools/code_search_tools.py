@@ -150,9 +150,10 @@ def _source_snapshot(root: Path) -> tuple:
     """
     from semble.index.file_walker import walk_files
     from semble.index.files import get_extensions
+    from semble.types import ContentType
 
     entries = []
-    for path in walk_files(root, get_extensions(False, None)):
+    for path in walk_files(root, get_extensions((ContentType.CODE,))):
         stat = path.stat()
         digest = hashlib.blake2b(digest_size=16)
         with path.open("rb") as stream:

@@ -258,16 +258,14 @@ class PromptEvolutionEngine:
         candidate = d / "candidate.jinja"
         if not candidate.exists():
             return False
-        (d / "active.jinja").write_text(candidate.read_text(encoding="utf-8"), encoding="utf-8")
-        candidate.unlink()
-        manifest = self._load_manifest(name)
-        manifest["active_version"] = manifest.get("candidate_version")
-        manifest["candidate_version"] = None
-        self._save_manifest(name, manifest)
-        await self._store_pointer(name, manifest)
-        await self._clear_ab_log(name)
-        reset_ab_choices()
-        self._log_refinement("promote", name)
+        from novacode_cli.hermes.ledger import LearningLedger
+        from novacode_cli.hermes.activation import content_hash
+        LearningLedger(PROMPT_HISTORY_DIR.parent / "learning.sqlite3").propose(
+            content=candidate.read_text(encoding="utf-8"), kind="prompt", target=name,
+            scope="shared", origin="prompt_promotion",
+            source_hash=content_hash((self._prompts_dir / name).read_bytes()),
+            evidence=(str(candidate),),
+        )
         return True
 
     async def discard(self, name: str) -> bool:
@@ -287,20 +285,20 @@ class PromptEvolutionEngine:
 
     async def rollback(self, name: str) -> str:
         """Undo the most recent change: drop a candidate, else revert the active."""
+        from novacode_cli.hermes.ledger import LearningLedger
+        ledger = LearningLedger(PROMPT_HISTORY_DIR.parent / "learning.sqlite3")
+        applied = [record for record in ledger.list()
+                   if record.kind == "prompt" and record.target == name and record.status == "applied"]
+        if applied:
+            ledger.transition(applied[-1].reference, "rollback")
+            return "rollback pending at next turn boundary"
         d = self._dir(name)
         if (d / "candidate.jinja").exists():
             await self.discard(name)
             return "candidate discarded"
         active = d / "active.jinja"
         if active.exists():
-            active.unlink()
-            manifest = self._load_manifest(name)
-            manifest["active_version"] = None
-            self._save_manifest(name, manifest)
-            await self._store_pointer(name, manifest)
-            reset_ab_choices()
-            self._log_refinement("rollback", name)
-            return "reverted to packaged template"
+            return "manual or unverifiable override preserved; review its ownership first"
         return "nothing to roll back"
 
     def status(self) -> list[dict[str, Any]]:
@@ -365,6 +363,13 @@ class PromptEvolutionEngine:
         manifest = self._load_manifest(name)
         vid = f"v{len(manifest['versions']) + 1}"
         text = body.strip() + "\n"
+        from novacode_cli.hermes.ledger import LearningLedger
+        from novacode_cli.hermes.activation import content_hash
+        LearningLedger(PROMPT_HISTORY_DIR.parent / "learning.sqlite3").propose(
+            content=text, kind="prompt", target=name, scope="shared", origin="prompt_evolution",
+            source_hash=content_hash((self._prompts_dir / name).read_bytes()),
+            evidence=("generated override; requires review",),
+        )
         (d / f"{vid}.jinja").write_text(text, encoding="utf-8")
         (d / "candidate.jinja").write_text(text, encoding="utf-8")
         manifest["versions"].append({"id": vid, "created_at": time.time()})

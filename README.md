@@ -64,7 +64,7 @@ An open-source, terminal-based AI coding assistant built on LangGraph and the `d
 - **Project Graph**: Visualize and query your codebase architecture — 5000+ nodes, community detection, dependency analysis, blast radius tracking
 
 ### Extensibility
-- **MCP Support**: Extend capabilities with Model Context Protocol servers (11 curated presets, plus any custom server) — tools eagerly discovered with server-prefixed names to avoid collisions
+- **MCP Support**: Extend capabilities with Model Context Protocol servers (14 curated presets, plus any custom server) — tools eagerly discovered with server-prefixed names to avoid collisions
   Presets: Playwright, Serena, Context7, Apify, CUA Driver, Sequential Thinking, Chrome DevTools, Firecrawl, Tavily, Exa, and [Perplexity](https://github.com/perplexityai/modelcontextprotocol). Perplexity requires an API key; select it in `/mcp` to configure it.
 - **Skills System**: 50+ built-in skills with progressive disclosure — domain-specific workflows loaded on demand. Install skills from any public GitHub repo
 - **Plugin System**: Python entry-point based plugins that can register slash commands, add middleware at defined slots, and extend the agent
@@ -350,6 +350,10 @@ mypy novacode_cli/
 | `--include-partial-messages` | off | Add provisional text events to `stream-json` output |
 | `--trust-workspace` | off | Headless only: explicitly grant current-folder trust |
 | `--version` | — | Show version number and exit |
+
+### Shell commands in the TUI
+
+Enter `!command` to stream output in the chat. Nova records the output and reports the result to the agent. Enter `!!command` to open an interactive terminal view for prompts, menus, and other commands that need keyboard input. Press Ctrl+G or Shift+Tab to return to chat while the command keeps running; use `/tasks` to inspect or stop it.
 
 ### Interactive Slash Commands
 
@@ -702,6 +706,7 @@ Refresh with `/init` (full rebuild) or `/init --update` (incremental).
 **Project Configuration** (in your project root):
 ```
 my-project/
+├── AGENTS.md          # Optional concise instructions; Codex-compatible
 ├── .nova/
 │   ├── NOVA.md        # Project-specific context and conventions
 │   ├── config.json    # Project configuration
@@ -714,7 +719,9 @@ my-project/
 ### Agent Memory
 
 - **Global** (`~/.nova/agents/default/agent.md`): Your personality, style, and universal preferences
-- **Project** (`.nova/NOVA.md`): Project-specific context, conventions, and architecture
+- **Project** (`NOVA.md`, `.nova/NOVA.md`, `CLAUDE.md`, `.claude/CLAUDE.md`, or `AGENTS.md`): Project-specific instructions are combined when present. `/init` creates `.nova/NOVA.md`; project files never grant tool or path approvals.
+
+Keep the project guide short: what the project does, exact test/build commands, protected files, useful examples, and what counts as done. For a debugging request, give Nova the failing test or full error and the relevant file. For a style-sensitive change, point to an example file. For a decision, give the constraints and acceptance criteria. Nova should run the narrowest relevant check and report what it verified before calling the task complete.
 
 ### Skills
 
@@ -940,8 +947,9 @@ Extend the agent with Model Context Protocol servers:
 
 ```bash
 # Add from preset
-nova mcp add brave-search --preset brave-search
-nova mcp add postgres --preset postgres
+nova mcp add google-drive --preset google-drive
+nova mcp add gmail --preset gmail
+nova mcp add google-docs --preset google-docs
 nova mcp add playwright --preset playwright
 
 # Custom HTTP transport
@@ -951,7 +959,11 @@ nova mcp add my-server --transport http --url https://example.com/mcp
 nova mcp add my-server --transport stdio --command "python -m my_mcp_server"
 ```
 
-**Available Presets:** `brave-search`, `memory`, `postgres`, `google-drive`, `playwright`, `fetch`, `time`, `sqlite`, `stripe`, `everything`, `serena`, `context7`
+**Available Presets:** `google-drive`, `gmail`, `google-docs`, `playwright`, `serena`, `context7`, `apify`, `cua-driver`, `sequential-thinking`, `chrome-devtools`, `firecrawl`, `tavily`, `exa`, `perplexity`
+
+**Google MCP setup:** Open `/mcp`, select Google Drive, Gmail, or Google Docs, and install the preset. These use the community-maintained [Google Workspace MCP server](https://github.com/taylorwilsdon/google_workspace_mcp), launched through `uvx workspace-mcp` with only the selected service's core tools. `uv` must be installed.
+
+Create a Google Cloud OAuth client using the upstream [quick-start guide](https://workspacemcp.com/quick-start), enable the Drive, Gmail, and Docs APIs you intend to use, and download its client JSON. Register `http://localhost:8001/oauth2callback` for Drive, `http://localhost:8002/oauth2callback` for Gmail, and `http://localhost:8003/oauth2callback` for Docs. Supply the JSON file's full path when Nova prompts; the same file can serve all three presets. Google consent is completed through the server's authentication flow after restarting the session. Nova stores the file path in MCP configuration; the client secret remains in your JSON file. No Google account is connected merely by adding a catalog preset.
 
 **MCP Management:**
 ```bash

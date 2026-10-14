@@ -46,7 +46,7 @@ def store():
 
 @pytest.fixture
 def tracker(store):
-    return ToolUsageTracker(store, enabled=True)
+    return ToolUsageTracker(store, enabled=True, owner="test-session")
 
 
 # ── 1. Skill-effectiveness tracking ──────────────────────────────────────────
@@ -105,7 +105,7 @@ class TestSkillUsageAttribution:
     async def test_tool_stats_separate_from_skill_usage(self, tracker, store):
         # A non-builtin tool populates tool_stats, not skill_usage.
         await tracker.record_tool_usage("query_project_graph", True)
-        assert ("nova", "tool_stats") in store.data
+        assert ("nova", "test-session", "tool_stats") in store.data
         assert ("nova", "skill_usage") not in store.data
 
 
@@ -215,7 +215,7 @@ class TestCheckSkillEffectivenessNewSchema:
 
 
 def _make_review(store, threshold=4):
-    tracker = ToolUsageTracker(store, enabled=True)
+    tracker = ToolUsageTracker(store, enabled=True, owner="test-session")
     sm = SkillManager(store, enabled=True)
     # These classes pin the count-and-signal triggers, which are the "periodic"
     # mode. The default ("task_end") is covered in tests/test_review_task_end.py.
@@ -225,8 +225,8 @@ def _make_review(store, threshold=4):
 
 
 async def _seed_window(store, entries):
-    await store.aput(("nova", "tool_history"), "history", {"entries": entries})
-    await store.aput(("nova", "tool_counter"), "counter", {"count": len(entries)})
+    await store.aput(("nova", "test-session", "tool_history"), "history", {"entries": entries})
+    await store.aput(("nova", "test-session", "tool_counter"), "counter", {"count": len(entries)})
 
 
 class TestSignalBasedTriggers:
@@ -265,7 +265,7 @@ class TestSignalBasedTriggers:
         review = _make_review(store, threshold=4)
         window = [{"tool": "edit_file", "success": True}] * 4
         await _seed_window(store, window)
-        await store.aput(("nova", "meta"), "review_just_completed", {"value": True})
+        await store.aput(("nova", "test-session", "meta"), "review_just_completed", {"value": True})
         assert await review.should_review() is False  # skipped
         assert await review.should_review() is True  # flag cleared
 
@@ -339,8 +339,8 @@ class TestExecutionFailureDetection:
 
 class TestRecentLessons:
     async def test_digest_orders_newest_first(self, store):
-        await store.aput(("nova", "reviews"), "r1", {"timestamp": 1.0, "content": "older"})
-        await store.aput(("nova", "reviews"), "r2", {"timestamp": 2.0, "content": "newer"})
+        await store.aput(("nova", "test-session", "reviews"), "r1", {"timestamp": 1.0, "content": "older"})
+        await store.aput(("nova", "test-session", "reviews"), "r2", {"timestamp": 2.0, "content": "newer"})
         review = _make_review(store)
         digest = await review._recent_lessons()
         assert digest.index("newer") < digest.index("older")

@@ -42,9 +42,7 @@ REGISTRY_PATH = DAEMONS_DIR / "registry.json"
 
 _lock = threading.RLock()
 
-#: How long to wait for the cross-process lock before assuming its holder died.
-#: A daemon operation is a few milliseconds of file IO, so anything approaching
-#: this means the owner crashed mid-write rather than that it is merely slow.
+#: Maximum wait for an OS lock held by a live or stalled writer.
 _LOCK_TIMEOUT = 5.0
 
 #: Tolerance when matching a recorded creation time against the live process.
@@ -59,41 +57,38 @@ def _lock_path() -> Path:
 
 @contextlib.contextmanager
 def _file_lock() -> Iterator[None]:
-    """Cross-process advisory lock around a registry read-modify-write.
-
-    ``O_CREAT | O_EXCL`` rather than fcntl/msvcrt so one implementation covers
-    both platforms. A lock left behind by a killed process is stolen once it is
-    older than :data:`_LOCK_TIMEOUT` — a permanently wedged registry would be a
-    worse failure than the race this prevents.
-    """
+    """Use an OS lock that a dead process releases without unlink races."""
     path = _lock_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + _LOCK_TIMEOUT
-    fd = None
-    while True:
-        try:
-            fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            break
-        except FileExistsError:
-            if time.monotonic() >= deadline:
-                # Stale: the holder is gone. Take it over.
-                with contextlib.suppress(OSError):
-                    path.unlink()
-                deadline = time.monotonic() + _LOCK_TIMEOUT
-                continue
-            time.sleep(0.01)
-        except OSError:
-            # Can't lock (read-only home, exotic filesystem). Proceed unlocked
-            # rather than making the registry unusable.
-            yield
-            return
+    fd = os.open(str(path), os.O_CREAT | os.O_RDWR)
+    locked = False
     try:
+        while not locked:
+            try:
+                os.lseek(fd, 0, os.SEEK_SET)
+                if os.name == "nt":
+                    import msvcrt
+
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locked = True
+            except OSError as exc:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Daemon registry lock timed out") from exc
+                time.sleep(0.01)
         yield
     finally:
-        with contextlib.suppress(OSError):
-            os.close(fd)
-        with contextlib.suppress(OSError):
-            path.unlink()
+        if locked:
+            os.lseek(fd, 0, os.SEEK_SET)
+            if os.name == "nt":
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
 
 
 def safe_name(name: str) -> str:

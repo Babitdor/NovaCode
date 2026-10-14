@@ -1,0 +1,68 @@
+{
+  "source_tree_sha256": "fa526669d1571a2673bd7dd13e03c89cd93b47d4a97d089f6830250c1e769621",
+  "python": "3.11.13 (main, Sep 18 2025, 19:43:06) [MSC v.1944 64 bit (AMD64)]",
+  "live_evaluations": false,
+  "mutations": [
+    {
+      "command": [
+        "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.venv\\Scripts\\python.exe",
+        "-m",
+        "pytest",
+        "tests/test_context_learning_audit.py::test_compaction_preserves_middle_constraints_and_all_steering",
+        "-q",
+        "--timeout=120"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 7.324931199997081,
+      "output": "F                                                                        [100%]\n================================== FAILURES ===================================\n________ test_compaction_preserves_middle_constraints_and_all_steering ________\n\n    def test_compaction_preserves_middle_constraints_and_all_steering():\n        task = \"start \" * 1000 + \"NEVER delete the database\" + \" end\" * 1000\n        steering = [f\"constraint {i}\" for i in range(10)]\n>       assert user_messages([HumanMessage(task), *map(HumanMessage, steering)], 20) == [\n            task,\n            *steering,\n        ]\nE       AssertionError: assert ['start start... end end end'] == ['start start...raint 4', ...]\nE         \nE         Right contains 10 more items, first extra item: 'constraint 0'\nE         Use -v to get more diff\n\ntests\\test_context_learning_audit.py:88: AssertionError\n=========================== short test summary info ===========================\nFAILED tests/test_context_learning_audit.py::test_compaction_preserves_middle_constraints_and_all_steering\n1 failed in 4.57s\n",
+      "mutation": "novacode_cli/agents/context_compaction.py",
+      "killed": true
+    },
+    {
+      "command": [
+        "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.venv\\Scripts\\python.exe",
+        "-m",
+        "pytest",
+        "tests/test_context_learning_audit.py::test_independent_counters_do_not_share_state",
+        "-q",
+        "--timeout=120"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 8.433732100005727,
+      "output": "F                                                                        [100%]\n================================== FAILURES ===================================\n________________ test_independent_counters_do_not_share_state _________________\n\n    @pytest.mark.asyncio\n    async def test_independent_counters_do_not_share_state():\n        store = InMemoryStore()\n        first, second = AtomicCounter(store), AtomicCounter(store)\n        await first.increment()\n>       assert await second.get() == 0\nE       assert 1 == 0\n\ntests\\test_context_learning_audit.py:99: AssertionError\n=========================== short test summary info ===========================\nFAILED tests/test_context_learning_audit.py::test_independent_counters_do_not_share_state\n1 failed in 5.14s\n",
+      "mutation": "novacode_cli/hermes/tracker.py",
+      "killed": true
+    },
+    {
+      "command": [
+        "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.venv\\Scripts\\python.exe",
+        "-m",
+        "pytest",
+        "tests/test_learning_ledger.py::test_revision_approval_reject_rollback_and_project_isolation",
+        "-q",
+        "--timeout=120"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 8.897565999999642,
+      "output": "F                                                                        [100%]\n================================== FAILURES ===================================\n________ test_revision_approval_reject_rollback_and_project_isolation _________\n\ntmp_path = WindowsPath('C:/Users/Babit-PC/AppData/Local/Temp/pytest-of-Babit-PC/pytest-685/test_revision_approval_reject_0')\n\n    def test_revision_approval_reject_rollback_and_project_isolation(tmp_path):\n        ledger = LearningLedger(tmp_path / \"learning.sqlite3\")\n        first = ledger.propose(content=\"check migrations\", project=\"a\")\n        other = ledger.propose(content=\"other\", project=\"b\")\n        changed = ledger.revise(first.reference, \"check migrations before applying\")\n>       with pytest.raises(ValueError, match=\"changed\"):\nE       Failed: DID NOT RAISE ValueError\n\ntests\\test_learning_ledger.py:15: Failed\n=========================== short test summary info ===========================\nFAILED tests/test_learning_ledger.py::test_revision_approval_reject_rollback_and_project_isolation\n1 failed in 5.30s\n",
+      "mutation": "novacode_cli/hermes/ledger.py",
+      "killed": true
+    },
+    {
+      "command": [
+        "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.venv\\Scripts\\python.exe",
+        "-m",
+        "pytest",
+        "tests/test_context_learning_audit.py::test_memory_detects_restored_timestamp_and_deletion",
+        "-q",
+        "--timeout=120"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 5.556503399988287,
+      "output": "F                                                                        [100%]\n================================== FAILURES ===================================\n_____________ test_memory_detects_restored_timestamp_and_deletion _____________\n\ntmp_path = WindowsPath('C:/Users/Babit-PC/AppData/Local/Temp/pytest-of-Babit-PC/pytest-687/test_memory_detects_restored_t0')\n\n    def test_memory_detects_restored_timestamp_and_deletion(tmp_path):\n        path = tmp_path / \"AGENTS.md\"\n        path.write_text(\"first\", encoding=\"utf-8\")\n        memory = SimpleNamespace(\n            _last_mtimes={}, _get_file_mtime=lambda p: AgentMemoryMiddleware._get_file_mtime(None, p)\n        )\n        AgentMemoryMiddleware._record_mtimes(memory, [path])\n        stamp = path.stat().st_mtime_ns\n        path.write_text(\"other\", encoding=\"utf-8\")\n        os.utime(path, ns=(stamp, stamp))\n>       assert AgentMemoryMiddleware._files_changed(memory, [path])\nE       AssertionError: assert False\nE        +  where False = <function AgentMemoryMiddleware._files_changed at 0x000001AF7F361300>(namespace(_last_mtimes={'C:\\\\Users\\\\Babit-PC\\\\AppData\\\\Local\\\\Temp\\\\pytest-of-Babit-PC\\\\pytest-687\\\\test_memory_detect..._get_file_mtime=<function test_memory_detects_restored_timestamp_and_deletion.<locals>.<lambda> at 0x000001AF7F363100>), [WindowsPath('C:/Users/Babit-PC/AppData/Local/Temp/pytest-of-Babit-PC/pytest-687/test_memory_detects_restored_t0/AGENTS.md')])\nE        +    where <function AgentMemoryMiddleware._files_changed at 0x000001AF7F361300> = AgentMemoryMiddleware._files_changed\n\ntests\\test_context_learning_audit.py:122: AssertionError\n=========================== short test summary info ===========================\nFAILED tests/test_context_learning_audit.py::test_memory_detects_restored_timestamp_and_deletion\n1 failed in 2.97s\n",
+      "mutation": "novacode_cli/memory/agent_memory.py",
+      "killed": true
+    }
+  ],
+  "restored_source_tree_sha256": "fa526669d1571a2673bd7dd13e03c89cd93b47d4a97d089f6830250c1e769621"
+}

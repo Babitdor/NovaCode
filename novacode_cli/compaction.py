@@ -253,6 +253,33 @@ def _rehydration_note() -> str:
     )
 
 
+def _continuation_framing(*, tail_kept: bool) -> str:
+    """Mark compacted requests as history, with the current tail taking precedence."""
+    tail = (
+        "The verbatim tail after this summary is authoritative for current progress. "
+        if tail_kept
+        else "Use the latest recorded state to determine current progress. "
+    )
+    return (
+        "The earlier conversation was compacted into the summary below. "
+        + tail
+        + "Continue the work only if it is unfinished, from the last observed action. "
+        "Do not repeat completed steps or tool calls. Do not acknowledge or restate this summary."
+    )
+
+
+def _historical_user_requests(requests: list[str]) -> str:
+    """Preserve earlier user words without presenting completed requests as new turns."""
+    if not requests:
+        return ""
+    return (
+        "## Earlier user requests and constraints (historical context)\n\n"
+        "Keep applicable constraints, but do not assume these requests are still pending. "
+        "The summary and any verbatim tail record what was already completed.\n\n"
+        + "\n\n".join(f"{index}. {text}" for index, text in enumerate(requests, 1))
+    )
+
+
 def _archive_messages(thread_id: str, messages: list[BaseMessage]) -> Path | None:
     """Write the pre-compaction transcript to the session dir; return its path.
 
@@ -263,18 +290,10 @@ def _archive_messages(thread_id: str, messages: list[BaseMessage]) -> Path | Non
     transcript. Reaped with the session directory. Best-effort.
     """
     try:
-        from novacode_cli.config import config as _config
-
-        session_dir = _config.HOME_DIR / "sessions" / thread_id
-        session_dir.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-        path = session_dir / f"pre-compact-{stamp}.jsonl"
-        with path.open("w", encoding="utf-8") as fh:
-            for msg in messages:
-                fh.write(json.dumps(msg.model_dump(), ensure_ascii=False, default=str) + "\n")
-        return path
-    except Exception:  # noqa: BLE001 — an archive is never worth failing compaction
-        logger.debug("Could not archive pre-compaction messages", exc_info=True)
+        from novacode_cli.context.archives import default_recovery_store
+        return default_recovery_store().archive(thread_id, messages)
+    except Exception:
+        logger.debug("Could not publish recovery archive", exc_info=True)
         return None
 
 
@@ -554,8 +573,34 @@ async def _compact_conversation(
             )
 
         messages_before = len(messages)
+        from novacode_cli.agents.context_compaction import user_messages
+
+        protected_tokens = sum(max(1, len(text) // 3) for text in user_messages(messages, 0))
+        reservation = getattr(model, "max_tokens", None) or 0
+        if isinstance(reservation, int) and protected_tokens + reservation > _window_tokens(
+            model, context_window
+        ):
+            raise SummaryUnavailableError(
+                "Protected instructions exceed the usable context window. Select a larger model window or explicitly revise the task. Conversation history was kept."
+            )
         # A long transcript is tens of MB of JSON; write it off the UI's loop.
         archived = await asyncio.to_thread(_archive_messages, thread_id, messages)
+        if not archived:
+            raise SummaryUnavailableError(
+                "Compaction archive could not be saved. Conversation history was kept."
+            )
+        from novacode_cli.session.checkpoint_coordinator import CoordinatedGraph
+        if isinstance(agent, CoordinatedGraph):
+            from novacode_cli.context.archives import default_recovery_store
+            saver = agent.coordinator.saver
+            original = await saver.aget_tuple(state.config)
+            if original:
+                packed = {"checkpoint": saver.serde.dumps_typed(original.checkpoint),
+                          "pending": saver.serde.dumps_typed(original.pending_writes),
+                          "metadata": original.metadata}
+                archived = await asyncio.to_thread(
+                    default_recovery_store().archive, thread_id, messages, checkpoint=packed,
+                )
 
         # Count original tokens using the model's tokenizer when available,
         # falling back to the rough 4-chars-per-token approximation.
@@ -574,6 +619,13 @@ async def _compact_conversation(
             int(_window_tokens(model, context_window) * KEEP_TAIL_FRACTION),
         )
         cut = _split_tail(messages, keep_tokens)
+        from novacode_cli.agents.context_compaction import pending_tool_start
+
+        cut = min(cut, pending_tool_start(messages))
+        if cut == 0:
+            raise SummaryUnavailableError(
+                "Pending tool calls prevent compaction. Resolve the pending approval or tool call first. Conversation history was kept."
+            )
         head, tail = messages[:cut], messages[cut:]
 
         # Generate summary (budgeted to the model's context window)
@@ -590,20 +642,35 @@ async def _compact_conversation(
         # RemoveMessage per id would append it after) and the state never
         # passes through an invalid intermediate (ToolMessages with no
         # AIMessage), which crashes langchain's _fetch_last_ai_and_tool_messages.
-        framing = (
-            "The earlier part of this conversation was compacted into the summary "
-            "below"
-            + ("; the most recent messages follow it verbatim" if tail else "")
-            + ". Continue the work from where it stopped. Do not acknowledge or "
-            "restate this summary."
-        )
+        framing = _continuation_framing(tail_kept=bool(tail))
         archive_note = (
             f"The full pre-compaction transcript is at {archived} if an exact detail is needed."
             if archived
             else ""
         )
-        body = "\n\n".join(filter(None, [framing, summary, _rehydration_note(), archive_note]))
-        summary_message = HumanMessage(content=f"{COMPACTION_SUMMARY_MARKER}\n\n{body}")
+        from novacode_cli.agents.context_compaction import user_content_blocks, user_messages
+        from novacode_cli.context.task_progress import render_task_progress, task_progress
+
+        said = user_messages(head, 0)
+        progress = task_progress(head, state.values.get("todos"))
+        protected = _historical_user_requests(said)
+        body = "\n\n".join(
+            filter(None, [framing, protected, summary, render_task_progress(progress),
+                          _rehydration_note(), archive_note])
+        )
+        blocks = user_content_blocks(head)
+        content = f"{COMPACTION_SUMMARY_MARKER}\n\n{body}"
+        summary_message = HumanMessage(
+            content=[{"type": "text", "text": content}, *blocks] if blocks else content,
+            additional_kwargs={
+                "lc_source": "summarization",
+                "user_messages": said,
+                "nova_summary": summary,
+                "nova_task_progress": progress,
+                "history_files": [str(archived)] if archived else [],
+                "user_content_blocks": blocks,
+            },
+        )
         # Also clear any prior auto-summarization event.
         # ContextCompactionMiddleware reconstructs the effective message list from
         # `_summarization_event` (a cutoff index into the OLD message list); if we
@@ -617,8 +684,12 @@ async def _compact_conversation(
         }
         current = await agent.aget_state(config)
         _validate_generation(current, generation)
+        from novacode_cli.session.checkpoint_coordinator import CoordinatedGraph
+        commit_options = {}
+        if isinstance(agent, CoordinatedGraph):
+            commit_options["expected_revision"] = (state.config or {}).get("configurable", {}).get("checkpoint_id")
         try:
-            await agent.aupdate_state(config=config, values=update_values, as_node="model")
+            await agent.aupdate_state(config=config, values=update_values, as_node="model", **commit_options)
         except Exception:
             # Older graphs without the summarization state key reject the extra
             # field; retry with just the message rewrite.
@@ -628,6 +699,7 @@ async def _compact_conversation(
                 config=config,
                 values={"messages": new_messages},
                 as_node="model",
+                **commit_options,
             )
 
         # Count new tokens using the model's tokenizer when available.

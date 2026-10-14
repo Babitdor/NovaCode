@@ -837,6 +837,7 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
                 tool_call_id=tool_call_id,
                 name=self._tool_name,
                 status=status,
+                artifact={"execution_outcome": "success" if result.exit_code == 0 else "failure" if result.exit_code is not None else "unknown", "exit_code": result.exit_code},
             )
         except NotImplementedError as e:
             return ToolMessage(

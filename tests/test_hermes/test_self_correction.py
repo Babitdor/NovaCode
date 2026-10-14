@@ -112,7 +112,11 @@ class TestGroundedRefinement:
 
         assert ok is True
         content = (skills_dir / "flaky" / "SKILL.md").read_text(encoding="utf-8")
-        assert "uv run pytest" in content
+        assert "Run pytest -x" in content
+        from novacode_cli.hermes.ledger import LearningLedger
+        proposal = LearningLedger(tmp_path / "learning.sqlite3").list()[-1]
+        assert "uv run pytest" in proposal.content
+        assert proposal.status == "candidate"
         # The failure sample was injected into the refinement prompt.
         assert "command not found" in fake.last_prompt
 
@@ -125,7 +129,13 @@ class TestGroundedRefinement:
         )
         await refine_skill("flaky", skills_dir, "high_failure", failure_samples=[])
         reasons = [v["reason"] for v in versioning.list_versions(d)]
-        assert "refine:high_failure" in reasons
+        assert reasons == []
+        assert "original step" in (d / "SKILL.md").read_text(encoding="utf-8")
+        from novacode_cli.hermes.ledger import LearningLedger
+        proposal = LearningLedger(tmp_path / "learning.sqlite3").list()[-1]
+        assert "new step" in proposal.content
+        assert proposal.source_hash
+        assert proposal.status == "candidate"
 
     async def test_no_write_when_unchanged(self, tmp_path, monkeypatch):
         skills_dir = tmp_path / "skills"

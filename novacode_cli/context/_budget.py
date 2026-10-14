@@ -7,7 +7,10 @@ through ``ContextManager.budget``.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import threading
+from contextvars import ContextVar
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -75,7 +78,6 @@ class ContextBudget:
             return total
         return 0
 
-
     def reset(self) -> None:
         """Reset tracking for a new request."""
         self.middleware_usage.clear()
@@ -83,7 +85,9 @@ class ContextBudget:
 
 
 # Global context budget tracker
-_context_budget: ContextBudget | None = None
+_context_budget: ContextVar[tuple[object, ContextBudget] | None] = ContextVar(
+    "nova_context_budget", default=None
+)
 
 
 def get_context_budget(max_tokens: int = 50000) -> ContextBudget:
@@ -95,13 +99,18 @@ def get_context_budget(max_tokens: int = 50000) -> ContextBudget:
     Returns:
         Global ContextBudget instance.
     """
-    global _context_budget
-    if _context_budget is None:
-        _context_budget = ContextBudget(max_tokens)
-    return _context_budget
+    try:
+        owner = asyncio.current_task() or threading.current_thread()
+    except RuntimeError:
+        owner = threading.current_thread()
+    entry = _context_budget.get()
+    budget = entry[1] if entry and entry[0] is owner else None
+    if budget is None or budget.max_tokens != max_tokens:
+        budget = ContextBudget(max_tokens)
+        _context_budget.set((owner, budget))
+    return budget
 
 
 def reset_context_budget() -> None:
     """Reset the global context budget tracker."""
-    global _context_budget
-    _context_budget = None
+    _context_budget.set(None)

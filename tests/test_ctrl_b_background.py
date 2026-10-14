@@ -42,22 +42,15 @@ async def test_bang_command_background_handoff_keeps_process_and_finishes(tmp_pa
     async with app.run_test() as pilot:
         await app._run_bash(f'!"{sys.executable}" "{script}"')
         for _ in range(100):
-            if jobs.get_current() is not None:
-                break
-            await asyncio.sleep(0.01)
-        assert jobs.get_current() is not None
-        hint = app.query_one(".bash-inline .background-shell-hint", Static)
-        assert hint.display and "Ctrl+B" in str(hint.content)
-        await pilot.press("ctrl+b")
-        for _ in range(100):
-            if jobs.get_registry().active():
+            if any(job.command.endswith('"command.py"') for job in jobs.get_registry().active()):
                 break
             await asyncio.sleep(0.01)
         active = jobs.get_registry().active()
         assert len(active) == 1
         pid = active[0].pid
-        assert pid is not None and jobs.get_current() is None
-        assert not hint.display
+        assert pid is not None
+        await pilot.press("ctrl+b")
+        assert active[0].pid == pid
         await app.workers.wait_for_complete()
         assert active[0].pid == pid
         assert active[0].status == "done"
@@ -147,15 +140,10 @@ async def test_detached_inline_command_can_be_killed_from_registry(tmp_path):
     async with app.run_test() as pilot:
         await app._run_bash(f'!"{sys.executable}" "{script}"')
         for _ in range(100):
-            if jobs.get_current() is not None:
-                break
-            await asyncio.sleep(0.01)
-        assert jobs.get_current() is not None
-        await pilot.press("ctrl+b")
-        for _ in range(100):
             if jobs.get_registry().active():
                 break
             await asyncio.sleep(0.01)
+        assert jobs.get_registry().active()
         active = jobs.get_registry().active()
         assert len(active) == 1
         active[0].kill.set()

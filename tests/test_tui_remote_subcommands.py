@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from textual.pilot import OutOfBounds
 
 from novacode_cli.remote.bridge import BridgeConfig, RemoteBridgeManager, RemotePlatform
 from novacode_cli.tui.screens import RemoteScreen
@@ -60,18 +61,34 @@ async def test_remote_screen_authorize_and_revoke_user(monkeypatch, tmp_path, si
         # Let the newly mounted dialog lay out before computing a scroll target.
         await pilot.pause()
         screen.query_one("#remote-user-id").value = "6614002417"
-        screen.query_one("#remote-authorize").scroll_visible(animate=False)
-        await pilot.pause()
-        assert await pilot.click("#remote-authorize")
+        for _ in range(20):
+            screen.query_one("#remote-authorize").scroll_visible(animate=False, force=True, immediate=True)
+            await pilot.pause()
+            try:
+                clicked = await pilot.click("#remote-authorize")
+                break
+            except OutOfBounds:
+                continue
+        else:
+            pytest.fail("Authorize button never entered the visible screen")
+        assert clicked
         await pilot.pause()
         # UI idle does not mean the command's async configuration write finished.
         await app.workers.wait_for_complete([worker for worker in app.workers if worker.node is screen])
         await pilot.pause()
         assert config.allowed_user_ids == {"6614002417"}
         assert "6614002417" in str(screen.query_one("#remote-authorized-users").render())
-        screen.query_one("#remote-revoke").scroll_visible(animate=False)
-        await pilot.pause()
-        assert await pilot.click("#remote-revoke")
+        for _ in range(20):
+            screen.query_one("#remote-revoke").scroll_visible(animate=False, force=True, immediate=True)
+            await pilot.pause()
+            try:
+                clicked = await pilot.click("#remote-revoke")
+                break
+            except OutOfBounds:
+                continue
+        else:
+            pytest.fail("Revoke button never entered the visible screen")
+        assert clicked
         await pilot.pause()
         await app.workers.wait_for_complete([worker for worker in app.workers if worker.node is screen])
         await pilot.pause()

@@ -116,6 +116,9 @@ def test_compaction_keeps_the_last_turn_verbatim_after_the_summary(monkeypatch) 
     new = agent.updated["messages"]
     assert isinstance(new[0], RemoveMessage) and new[0].id == REMOVE_ALL_MESSAGES
     assert C.is_compaction_summary(new[1].content), "summary must come BEFORE the tail"
+    assert "historical context" in new[1].content
+    assert "Do not repeat completed steps" in new[1].content
+    assert "verbatim tail" in new[1].content
     assert new[2:] == history[4:], "the recent turns must survive verbatim"
     assert result.messages_after == 1 + len(history[4:])
     # The summarizer was only given what the tail does not already carry.
@@ -249,10 +252,14 @@ def test_compaction_archives_the_raw_transcript(monkeypatch, tmp_path) -> None:
 
     asyncio.run(C.compact_conversation(agent, _Model(), "thread-x", context_window=4_000))
 
-    dumps = list((tmp_path / "sessions" / "thread-x").glob("pre-compact-*.jsonl"))
+    from novacode_cli.context.archives import default_recovery_store
+    store = default_recovery_store()
+    dumps = list((store.root / "manifests").glob("*.json"))
     assert len(dumps) == 1
-    lines = dumps[0].read_text(encoding="utf-8").strip().splitlines()
-    assert len(lines) == len(_turn(1))
+    manifest, payload = store.inspect(dumps[0].stem)
+    from langchain_core.messages import messages_to_dict
+    assert manifest["thread"] == "thread-x"
+    assert payload["messages"] == messages_to_dict(_turn(1))
     assert str(dumps[0]) in agent.updated["messages"][1].content, "the summary must point at it"
 
 

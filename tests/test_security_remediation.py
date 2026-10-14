@@ -88,7 +88,42 @@ def test_unattended_delegate_refuses_write_and_allows_read(monkeypatch):
     assert calls == ["read_file"]
 
 
+def test_a_delegate_follows_the_parent_sessions_auto_approve(monkeypatch):
+    """Sync/dynamic agents read the turn's flag; async ones their run context."""
+    from novacode_cli.security.delegated_approval import DelegatedApprovalMiddleware
+    from novacode_cli.security.policy import ApprovalPolicy
+    from novacode_cli.tools.plan_mode_tools import _auto_approve_var
+
+    monkeypatch.setattr(
+        "novacode_cli.security.delegated_approval.get_policy",
+        lambda: ApprovalPolicy(
+            tool_tiers={"fetch_url": "ask"}, shell_allow=[], shell_deny=[], path_allow=[],
+            path_deny=[], domain_allow=[], domain_deny=["evil.example"],
+        ),
+    )
+    middleware = DelegatedApprovalMiddleware()
+
+    def ran(url, context=None):
+        request = SimpleNamespace(
+            tool_call={"name": "fetch_url", "id": "a", "args": {"url": url}},
+            runtime=SimpleNamespace(context=context),
+        )
+        return middleware.wrap_tool_call(request, lambda _: "ran") == "ran"
+
+    assert not ran("https://docs.python.org/3/")  # ask-tier, nobody to ask
+    token = _auto_approve_var.set(True)
+    try:
+        assert ran("https://docs.python.org/3/")
+        assert not ran("https://evil.example/x")  # a deny is never auto-approved
+    finally:
+        _auto_approve_var.reset(token)
+    assert ran("https://docs.python.org/3/", {"auto_approve": True})
+    assert not ran("https://docs.python.org/3/", {"auto_approve": False})
+
+
 def test_browser_origin_and_mutation_protection():
+    from http.client import HTTPConnection
+
     from novacode_cli.security.local_http import LocalRequestHandler
 
     class Handler(LocalRequestHandler):
@@ -114,6 +149,7 @@ def test_browser_origin_and_mutation_protection():
                 == 403
             )
             assert client.post(url).status_code == 403
+            assert client.post(url, headers={"X-Nova-Token": "dummy-token"}).status_code == 403
             assert (
                 client.post(
                     url, headers={"Host": "audit.invalid", "X-Nova-Request": "1"}
@@ -127,6 +163,21 @@ def test_browser_origin_and_mutation_protection():
                 ).status_code
                 == 204
             )
+        for length, expected in (("invalid", 400), ("2000001", 413)):
+            connection = HTTPConnection("127.0.0.1", server.server_port, timeout=2)
+            try:
+                connection.request(
+                    "POST",
+                    "/",
+                    headers={
+                        "X-Nova-Token": "dummy-token",
+                        "X-Nova-Request": "1",
+                        "Content-Length": length,
+                    },
+                )
+                assert connection.getresponse().status == expected
+            finally:
+                connection.close()
     finally:
         server.shutdown()
         server.server_close()
@@ -235,10 +286,22 @@ async def test_browser_servers_require_session_capability(kind, tmp_path, monkey
     backend = CreateServer() if kind == "create" else TrelloServer()
     await backend.start()
     try:
-        base = f"http://localhost:{backend.port}"
-        with httpx.Client(trust_env=False) as client:
-            assert client.get(base).status_code == 403
-            page = client.get(backend.url)
+        base = f"http://127.0.0.1:{backend.port}"
+        # The local stdlib server closes responses; avoid reusing a stale socket.
+        with httpx.Client(
+            trust_env=False, limits=httpx.Limits(max_keepalive_connections=0)
+        ) as client:
+
+            def request(method, url, **kwargs):
+                for attempt in range(5):
+                    try:
+                        return client.request(method, url, **kwargs)
+                    except httpx.TransportError:
+                        if attempt == 4:
+                            raise
+
+            assert request("GET", base).status_code == 403
+            page = request("GET", backend.url.replace("localhost", "127.0.0.1"))
             assert page.status_code == 200
             assert "no-referrer" in page.text
             assert "X-Nova-Token" in page.text
@@ -249,12 +312,13 @@ async def test_browser_servers_require_session_capability(kind, tmp_path, monkey
                 else {"name": "safe-skill", "content": "safe"}
             )
             assert (
-                client.post(
-                    base + endpoint, json=payload, headers={"X-Nova-Request": "1"}
+                request(
+                    "POST", base + endpoint, json=payload, headers={"X-Nova-Request": "1"}
                 ).status_code
                 == 403
             )
-            response = client.post(
+            response = request(
+                "POST",
                 base + endpoint,
                 json=payload,
                 headers={

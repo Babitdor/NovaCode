@@ -25,6 +25,8 @@ dependencies = [
     "jinja2>=3.1.0",
     "rich>=13.0.0",
     "textual>=1.0.0",
+    "pyte>=0.8.2,<0.9",
+    "pywinpty>=2.0.15,<3; sys_platform == 'win32'",
     # LangChain ecosystem (updated 2025-01)
     "langchain>=1.2.13",
     "langchain-core>=1.2.22",
@@ -244,6 +246,10 @@ markers = [
 
 [dependency-groups]
 dev = [
+    "hypothesis>=6.169.0",  # Compaction/recovery sequence invariants.
+    "coverage>=7.6",       # Enforce changed executable-line coverage.
+    "pytest-random-order>=1.1",  # Detect suite-order contamination.
+    "faster-whisper>=1.2",  # Existing offline voice fixtures use its audio decoder, no model.
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
     "pytest-timeout>=2.3",

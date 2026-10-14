@@ -166,6 +166,8 @@ def test_graph_readiness_waits_for_a_server_that_starts_late():
     try:
         asyncio.run(sl.wait_graph_ready(f"http://127.0.0.1:{port}", "g", timeout=6))
     finally:
+        server.shutdown()
+        thread.join(timeout=5)
         server.server_close()
 
 
@@ -316,7 +318,12 @@ def test_graphs_come_from_the_packaged_langgraph_json():
 
     assert "documentation-update-agent" in graphs
     assert "plan-scout-agent" in graphs
-    assert len(graphs) == 9
+    assert set(graphs) == {
+        "general-purpose-async", "documentation-update-agent", "code-review-agent",
+        "test-generation-agent", "dependency-audit-agent", "refactoring-agent",
+        "plan-scout-agent", "security-audit-agent", "test-runner-agent", "research-agent",
+        "bug-investigation-agent", "performance-audit-agent",
+    }
     assert sl._graph_names(config.parent / "nope.json") == []
 
 

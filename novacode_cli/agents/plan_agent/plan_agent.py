@@ -270,7 +270,6 @@ def create_plan_agent_with_config(
     # like /.nova/plans/plan-refactor.md. The FilesystemBackend maps these
     # to {workspace_root}/.nova/plans/ on disk.
     _plans_dir = workspace_root / ".nova" / "plans"
-    _plans_dir.mkdir(parents=True, exist_ok=True)
     _plans_backend = FilesystemBackend(
         root_dir=str(_plans_dir),
         virtual_mode=True,
@@ -281,7 +280,6 @@ def create_plan_agent_with_config(
     # This allows the plan agent to read project memory (NOVA.md, CLAUDE.md)
     # via virtual paths like /project-memory/NOVA.md.
     _project_nova_dir = workspace_root / ".nova"
-    _project_nova_dir.mkdir(parents=True, exist_ok=True)
     _project_memory_backend = FilesystemBackend(
         root_dir=str(_project_nova_dir),
         virtual_mode=True,
@@ -380,4 +378,10 @@ def create_plan_agent_with_config(
         middleware=plan_middleware,
     )
 
-    return agent, composite_backend
+    # Plan mode shares the session's checkpointer, which the core agent build
+    # made fenced: every write needs a lease, and only a CoordinatedGraph takes
+    # one. Unwrapped, plan mode's first checkpoint failed with "Checkpoint
+    # mutation requires coordinated ownership".
+    from novacode_cli.session.checkpoint_coordinator import CoordinatedGraph, coordinate_saver
+
+    return CoordinatedGraph(agent, coordinate_saver(plan_checkpointer)), composite_backend

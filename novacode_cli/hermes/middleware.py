@@ -35,6 +35,8 @@ import asyncio
 import logging
 import re
 import time
+import weakref
+from functools import wraps
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
@@ -61,9 +63,7 @@ logger = logging.getLogger("nova.hermes.middleware")
 
 # Tools whose textual output can reveal a *latent* failure: the call returned
 # status="success" (the tool ran) but the command it ran actually failed.
-_EXECUTE_TOOLS: frozenset[str] = frozenset(
-    {"execute", "run_tests", "shell", "bash", "run_command"}
-)
+_EXECUTE_TOOLS: frozenset[str] = frozenset({"execute", "run_tests", "shell", "bash", "run_command"})
 # High-precision failure markers in shell/test output. Kept conservative to
 # avoid false positives (e.g. we match "3 failed" but not "0 failed").
 _FAILURE_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -115,6 +115,7 @@ class NovaState(AgentState):
     """Extended agent state for tracking Nova learning cycle."""
 
     nova_review_triggered: NotRequired[bool]
+    nova_task_identity: NotRequired[str]
     """Whether a review prompt was injected into the current model call."""
     last_review_timestamp: NotRequired[float]
     """Unix timestamp of the most recent review."""
@@ -129,28 +130,60 @@ class NovaState(AgentState):
 # instances, but session-end consolidation has to call the same object that
 # holds this session's tracker and last request. Mirrors the
 # get_shared_mcp_middleware() pattern in novacode_cli/mcp/__init__.py.
-_active_middleware: "NovaLearningMiddleware | None" = None
 
 
 def get_active_learning_middleware() -> "NovaLearningMiddleware | None":
     """The learning middleware for the current agent, if one was built."""
-    return _active_middleware
+    owners = list(_owners.values())
+    return owners[0] if len(owners) == 1 else None
+
+
+def learning_middleware_for_agent(agent: Any, thread_id: str | None = None) -> "NovaLearningMiddleware | None":  # noqa: ANN401 - compiled graph API
+    """Resolve the instance owned by a compiled graph, never by build order."""
+    config = getattr(agent, "config", None) or {}
+    owner = config.get("metadata", {}).get("nova_learning_owner")
+    root = _owners.get(owner) if owner else None
+    identity = thread_id or getattr(agent, "config", {}).get("configurable", {}).get("thread_id")
+    if root and identity:
+        from novacode_cli.session.runtime_identity import RuntimeIdentity
+        runtime = RuntimeIdentity.from_config(root._project or "", {"configurable": {"thread_id": identity}}, "")
+        return root.for_session(runtime.session)
+    return root
 
 
 # Several agents can be alive in one process (a harness running trials side by
 # side), and "the active one" is then whichever was built last. Each registers
 # under its project key so its owner can reach that instance specifically.
-_by_project: "dict[str, NovaLearningMiddleware]" = {}
+_owners = weakref.WeakValueDictionary()
 
 
-def learning_middleware_for(project: str) -> "NovaLearningMiddleware | None":
+def _session_hook(method):
+    """Resolve a hook from invocation context rather than graph build order."""
+    @wraps(method)
+    async def scoped(self, *args, **kwargs):
+        from novacode_cli.session.runtime_identity import current_identity
+        identity = current_identity.get()
+        target = self.for_session(identity.session) if identity else self
+        return await method(target, *args, **kwargs)
+    return scoped
+
+
+def learning_middleware_for(
+    project: str, owner: str | None = None
+) -> "NovaLearningMiddleware | None":
     """The learning middleware built for ``project``, if it is still registered."""
-    return _by_project.get(project)
+    if owner:
+        instance = _owners.get(owner)
+        return instance if instance and instance._project == project else None
+    matches = [m for m in _owners.values() if m._project == project]
+    return matches[0] if len(matches) == 1 else None
 
 
-def forget_learning_middleware(project: str) -> None:
+def forget_learning_middleware(project: str, owner: str | None = None) -> None:
     """Drop a finished project's middleware from the registry."""
-    _by_project.pop(project, None)
+    for key, instance in list(_owners.items()):
+        if instance._project == project and (owner is None or owner == key):
+            _owners.pop(key, None)
 
 
 class NovaLearningMiddleware(AgentMiddleware[NovaState]):
@@ -175,6 +208,7 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
         enabled: bool = True,
         project: str | None = None,
         review_mode: str | None = None,
+        owner: str | None = None,
     ) -> None:
         """Initialize the Nova learning middleware.
 
@@ -187,13 +221,18 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
             project: Key of the codebase being worked in (see
                 ``memory_tiers.project_memory_key``). Lessons that only hold
                 there are kept apart from the ones worth carrying everywhere.
+            owner: Explicit session identity or a fresh isolated runtime owner.
+            review_mode: Task-end or periodic proposal preparation policy.
         """
         super().__init__()
         self._store = store
+        self._project = project
         self._review_threshold = review_threshold
         self._skills_dir = skills_dir
         self._agent_dir = agent_dir
         self._enabled = enabled
+        self._review_mode = review_mode
+        self._sessions = {}
 
         # Lazy-import the extracted modules to keep startup footprint small.
         from novacode_cli.hermes.evolution import EvolutionEngine
@@ -210,7 +249,10 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
         self._tracker = ToolUsageTracker(
             store,
             enabled=enabled,
+            owner=owner,
         )
+        self.owner = self._tracker.owner
+        _owners[self.owner] = self
         self._review = ReviewRunner(
             store,
             self._tracker,
@@ -240,10 +282,30 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
         # Publish for get_active_learning_middleware(). The graph owns the
         # instance once compiled, so /quit and /clear have no other way to
         # reach this session's tracker.
-        global _active_middleware
-        _active_middleware = self
-        if project:
-            _by_project[project] = self
+
+    def for_session(self, owner: str) -> "NovaLearningMiddleware":
+        """Stable session state survives graph reuse and thread resume."""
+        if owner == self.owner:
+            return self
+        if owner not in self._sessions:
+            self._sessions[owner] = type(self)(
+                self._store, review_threshold=self._review_threshold,
+                skills_dir=self._skills_dir, agent_dir=self._agent_dir,
+                enabled=self._enabled, project=self._project,
+                owner=owner, review_mode=self._review_mode,
+            )
+        return self._sessions[owner]
+
+    async def release_session(self, owner: str) -> None:
+        """Cancel auxiliary work and release request state on session closure."""
+        instance = self._sessions.pop(owner, None)
+        if instance:
+            tasks = list(instance._refinement_tasks)
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            instance._last_request = None
+            _owners.pop(owner, None)
 
     @property
     def _refinement_tasks(self) -> set[asyncio.Task]:
@@ -263,7 +325,7 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
 
     async def _set_tool_call_count(self, count: int) -> None:
         await self._store.aput(
-            ("nova", "tool_counter"),
+            self._tracker._counter.namespace,
             "counter",
             {"count": min(count, 1_000_000)},
         )
@@ -343,10 +405,16 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
     def before_agent(self, state: AgentState, runtime: Any = None) -> None:  # noqa: ARG002
         """Synchronous hook — mark task start (pass-through)."""
         self._task_start_ts = time.time()
+        self._tracker.start_task()
 
-    async def abefore_agent(self, state: AgentState, runtime: Any = None) -> None:  # noqa: ARG002
+    @_session_hook
+    async def abefore_agent(self, state: AgentState, runtime: Any = None) -> dict:  # noqa: ARG002
         """Mark the start of a task (used to slice its episodic window)."""
         self._task_start_ts = time.time()
+        from novacode_cli.session.runtime_identity import current_identity
+        identity = current_identity.get()
+        self._tracker.start_task(identity.task if identity else None)
+        return {"nova_task_identity": self._tracker.task}
 
     def after_agent(self, state: AgentState, runtime: Any = None) -> None:  # noqa: ARG002
         """Synchronous hook — pass-through (evolution runs async)."""
@@ -380,7 +448,7 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
 
         try:
             await asyncio.wait_for(
-                self._review.run_review(self._last_request), timeout=timeout
+                self._review.run_review_task(self._last_request), timeout=timeout
             )
         except (TimeoutError, asyncio.TimeoutError):
             logger.debug("session consolidation timed out after %.0fs", timeout)
@@ -395,6 +463,7 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
             pass
         return True
 
+    @_session_hook
     async def aafter_agent(self, state: AgentState, runtime: Any = None) -> None:  # noqa: ARG002
         """At task completion, maybe evolve a skill from a complex task.
 
@@ -403,10 +472,8 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
         """
         if not self._enabled:
             return
-        try:
-            await self._evolution.maybe_evolve(dict(state), self._task_start_ts)
-        except Exception:  # noqa: BLE001
-            logger.debug("aafter_agent evolution failed", exc_info=True)
+        # Generated skills and prompt changes are proposals, never automatic
+        # mutations. The review ledger owns their approval lifecycle.
         await self._review_finished_task(state)
 
     async def _review_finished_task(self, state: AgentState) -> None:
@@ -428,9 +495,7 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
                 else self._last_request
             )
             await self._tracker.reset_counter()
-            task = asyncio.create_task(self._review.run_review_task(request))
-            self._skill_manager._refinement_tasks.add(task)
-            task.add_done_callback(self._skill_manager._refinement_tasks.discard)
+            await self._queue_review(request)
         except Exception:  # noqa: BLE001
             logger.debug("end-of-task review failed to start", exc_info=True)
 
@@ -443,6 +508,21 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
             await asyncio.wait(tasks, timeout=timeout)
         except Exception:  # noqa: BLE001
             logger.debug("draining reviews failed", exc_info=True)
+
+    async def _queue_review(self, request: ModelRequest) -> None:
+        """One queued review per session, frozen before another turn can begin."""
+        import json
+        from copy import deepcopy
+        if self._refinement_tasks:
+            return
+        episodes = await self._tracker.get_tool_history(limit=2 * self._review_threshold)
+        snapshot = request.override(
+            messages=deepcopy(request.messages),
+            state={**(request.state or {}), "_nova_review_episodes": json.dumps(episodes)},
+        )
+        task = asyncio.create_task(self._review.run_review_task(snapshot))
+        self._refinement_tasks.add(task)
+        task.add_done_callback(self._refinement_tasks.discard)
 
     def wrap_tool_call(
         self,
@@ -460,6 +540,7 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
         """Synchronous wrapper — pass-through only."""
         return handler(request)
 
+    @_session_hook
     async def awrap_tool_call(
         self,
         request: ToolCallRequest,
@@ -474,31 +555,50 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
         try:
             response = await handler(request)
             tool_name = (
-                tool_call.get("name", "unknown")
-                if isinstance(tool_call, dict)
-                else "unknown"
+                tool_call.get("name", "unknown") if isinstance(tool_call, dict) else "unknown"
             )
-            status_ok = (
-                (getattr(response, "status", "success") != "error")
-                if response
-                else True
-            )
+            status_ok = (getattr(response, "status", "success") != "error") if response else True
             # A shell/test call can report status="success" yet have actually
             # failed (non-zero exit, traceback, N failed tests). Inspect output.
-            success = status_ok and not _execution_failed(tool_name, response)
+            artifact = getattr(response, "artifact", None)
+            structured = artifact.get("execution_outcome") if isinstance(artifact, dict) else None
+            outcome = (
+                structured if structured in {"success", "failure", "cancelled", "unknown"} else None
+            )
+            evidence_source = (
+                "structured"
+                if outcome
+                else "text_fallback"
+                if tool_name in _EXECUTE_TOOLS
+                else "tool_status"
+            )
+            success = (
+                outcome == "success"
+                if outcome
+                else status_ok and not _execution_failed(tool_name, response)
+            )
             await self._tracker.increment_counter()
             await self._tracker.record_tool_usage(
                 tool_name,
                 success,
                 skill_invoked=skill_invoked,
                 error_excerpt=None if success else _content_to_text(response)[:300],
+                outcome=outcome,
+                evidence_source=evidence_source,
             )
             return response
+        except asyncio.CancelledError:
+            name = tool_call.get("name", "unknown") if isinstance(tool_call, dict) else "unknown"
+            await self._tracker.record_tool_usage(
+                name,
+                False,
+                outcome="cancelled",
+                evidence_source="exception",  # noqa: FBT003 - a cancellation is unsuccessful
+            )
+            raise
         except Exception as exc:
             tool_name = (
-                tool_call.get("name", "unknown")
-                if isinstance(tool_call, dict)
-                else "unknown"
+                tool_call.get("name", "unknown") if isinstance(tool_call, dict) else "unknown"
             )
             await self._tracker.increment_counter()
             await self._tracker.record_tool_usage(
@@ -509,6 +609,7 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
             )
             raise
 
+    @_session_hook
     async def awrap_model_call(
         self,
         request: ModelRequest,
@@ -525,7 +626,8 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
             return await handler(request)
 
         # Retained for consolidate_session (session end has no live request).
-        self._last_request = request
+        from copy import deepcopy
+        self._last_request = request.override(messages=deepcopy(request.messages))
 
         should_review = await self._review.should_review()
         response = await handler(request)
@@ -540,8 +642,6 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
                 "nova_review_start",
                 "◐ Nova review cycle starting...",
             )
-            task = asyncio.create_task(self._review.run_review_task(request))
-            self._skill_manager._refinement_tasks.add(task)
-            task.add_done_callback(self._skill_manager._refinement_tasks.discard)
+            await self._queue_review(request)
 
         return response

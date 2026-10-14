@@ -114,6 +114,32 @@ async def run_headless(  # noqa: PLR0912, PLR0915 — single linear event loop
         include_partial_messages=getattr(session_state, "headless_include_partial_messages", False),
     )
 
+    if prompt == "/context recovery" or prompt.startswith("/context recovery "):
+        from novacode_cli.context.archives import handle_recovery_command
+
+        started = time.monotonic()
+        code = EXIT_OK
+        try:
+            result, restored = await handle_recovery_command(
+                prompt[len("/context recovery"):].strip(), agent=agent,
+                thread=session_state.thread_id,
+            )
+            if restored:
+                session_state.thread_id = restored
+        except (OSError, ValueError) as error:
+            result = str(error)
+            code = EXIT_ERROR
+        out.result(
+            subtype="success" if code == EXIT_OK else "error",
+            is_error=code != EXIT_OK,
+            result_text=result,
+            num_turns=0,
+            duration_ms=int((time.monotonic() - started) * 1000),
+            usage={},
+            exit_code=code,
+        )
+        return code
+
     started = time.monotonic()
     num_turns = 0
     in_tool_round = False
@@ -134,6 +160,7 @@ async def run_headless(  # noqa: PLR0912, PLR0915 — single linear event loop
         deadline = started + timeout
     completed = False
     needs_human = False
+    propagate_cancel = False
 
     # Artifacts persist per session (headless -c/--resume reuses the id).
     try:
@@ -215,7 +242,10 @@ async def run_headless(  # noqa: PLR0912, PLR0915 — single linear event loop
 
             if isinstance(event, ev.Cancelled):
                 is_error = True
-                if deadline is not None and time.monotonic() >= deadline:
+                outer_budget = getattr(session_state, "headless_bootstrap_budget", None)
+                if budget.expired() or (outer_budget and outer_budget.expired()) or (
+                    deadline is not None and time.monotonic() >= deadline
+                ):
                     subtype, exit_code = "error_timeout", EXIT_TIMEOUT
                 else:
                     subtype, exit_code = "error_cancelled", EXIT_CANCELLED
@@ -246,8 +276,12 @@ async def run_headless(  # noqa: PLR0912, PLR0915 — single linear event loop
             if not text_parts:
                 text_parts.append(f"TimeoutError: {error}")
     except asyncio.CancelledError:
+        propagate_cancel = getattr(session_state, "headless_bootstrap_active", False)
         is_error = True
-        if deadline is not None and time.monotonic() >= deadline:
+        outer_budget = getattr(session_state, "headless_bootstrap_budget", None)
+        if budget.expired() or (outer_budget and outer_budget.expired()) or (
+            deadline is not None and time.monotonic() >= deadline
+        ):
             subtype, exit_code = "error_timeout", EXIT_TIMEOUT
         else:
             subtype, exit_code = "error_cancelled", EXIT_CANCELLED
@@ -302,6 +336,11 @@ async def run_headless(  # noqa: PLR0912, PLR0915 — single linear event loop
             timeout=5,
         )
 
+    outer_budget = getattr(session_state, "headless_bootstrap_budget", None)
+    if propagate_cancel or (outer_budget and outer_budget.expired()):
+        # The outer deadline must stop initialization/cleanup too. Swallowing
+        # its cancellation here lets the caller continue after the deadline.
+        raise asyncio.CancelledError
     return exit_code
 
 
@@ -312,6 +351,8 @@ async def run_bootstrap(awaitable, session_state):
     if timeout is not None:
         session_state.headless_deadline = started + timeout
     budget = asyncio.timeout(timeout)
+    session_state.headless_bootstrap_active = True
+    session_state.headless_bootstrap_budget = budget
     try:
         async with budget:
             await awaitable
@@ -339,6 +380,9 @@ async def run_bootstrap(awaitable, session_state):
             "error_during_initialization",
             "Nova initialization ended without a result; see stderr",
         )
+    finally:
+        session_state.headless_bootstrap_active = False
+        session_state.headless_bootstrap_budget = None
     if getattr(session_state, "headless_result_emitted", False):
         # Once the terminal result is flushed, teardown cannot replace it with
         # another result or an inconsistent process exit code.

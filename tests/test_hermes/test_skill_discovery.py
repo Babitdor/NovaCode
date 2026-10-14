@@ -100,8 +100,12 @@ class TestWriteSkillFromSpec:
         name = await write_skill_from_spec(spec, tmp_path, store=None)
         assert name == "add-tui-command"
         skill_md = tmp_path / "add-tui-command" / "SKILL.md"
-        assert skill_md.exists()
-        content = skill_md.read_text(encoding="utf-8")
+        assert not skill_md.exists()
+        from novacode_cli.hermes.ledger import LearningLedger
+        record = LearningLedger(tmp_path.parent / "learning.sqlite3").list()[-1]
+        assert record.status == "candidate"
+        assert record.target == "add-tui-command"
+        content = record.content
         assert content.startswith("---\n")
         assert "name: add-tui-command" in content
         assert 'description: "Use when adding a /command"' in content

@@ -8,6 +8,9 @@ summarization later evicts), so <project_memory> showed "(No project ...)".
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from novacode_cli.config.config import _find_project_agent_md
 from novacode_cli.memory.agent_memory import AgentMemoryMiddleware
 
 
@@ -28,6 +31,7 @@ class _FakeSettings:
             self.project_root / "NOVA.md",
             self.project_root / ".nova" / "NOVA.md",
             self.project_root / "CLAUDE.md",
+            self.project_root / "AGENTS.md",
         ]
         return [p for p in candidates if p.exists()]
 
@@ -55,3 +59,16 @@ def test_skip_flag_still_skips(tmp_path):
     mw = _make(tmp_path, skip=True)
     update = mw.before_agent({})
     assert "project_memory" not in update
+
+
+def test_agents_md_is_loaded_with_existing_project_instructions(tmp_path: Path) -> None:
+    mw = _make(tmp_path, skip=False)
+    (tmp_path / "AGENTS.md").write_text("# Agent rules\nRun focused tests.\n", encoding="utf-8")
+
+    assert [path.name for path in _find_project_agent_md(tmp_path)] == [
+        "NOVA.md",
+        "AGENTS.md",
+    ]
+    update = mw.before_agent({})
+    assert "Use pytest." in update["project_memory"]
+    assert "Run focused tests." in update["project_memory"]

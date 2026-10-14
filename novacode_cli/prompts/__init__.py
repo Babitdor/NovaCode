@@ -106,10 +106,20 @@ def current_variant(name: str) -> str | None:
     Used by the evolution engine to attribute a turn's quality to the variant
     that produced this session's prompts.
     """
-    candidate = PROMPT_HISTORY_DIR / _stem(name) / "candidate.jinja"
-    if not candidate.exists() or not _is_fresh(candidate, name):
-        return None
-    return _choose_variant(name)
+    return None
+
+
+def generated_override(path: Path) -> bool:
+    """Recognize an unchanged engine-generated override without deleting it."""
+    import json
+    manifest = path.parent / "manifest.json"
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        version = data.get("active_version")
+        original = path.parent / f"{version}.jinja"
+        return bool(version and original.is_file() and original.read_bytes() == path.read_bytes())
+    except (OSError, ValueError):
+        return False
 
 
 def reset_ab_choices() -> None:
@@ -127,20 +137,19 @@ def render_template(name: str, **kwargs: Any) -> str:
     Returns:
         Rendered template string.
     """
+    from novacode_cli.hermes.activation import active_artifacts
+    for kind, target, body in active_artifacts.get():
+        if kind == "prompt" and target == name:
+            return _env.from_string(body).render(**kwargs)
     override_dir = PROMPT_HISTORY_DIR / _stem(name)
     # Fast path: no overrides for this template → packaged behaviour, one stat.
     if not override_dir.exists():
         return _env.get_template(name).render(**kwargs)
 
     stem = _stem(name)
-    candidate, active = override_dir / "candidate.jinja", override_dir / "active.jinja"
-    has_candidate = candidate.exists() and _is_fresh(candidate, name)
-    has_active = active.exists() and _is_fresh(active, name)
-
-    use_candidate = has_candidate and _choose_variant(name) == "candidate"
+    active = override_dir / "active.jinja"
+    has_active = active.exists() and _is_fresh(active, name) and not generated_override(active)
     try:
-        if use_candidate:
-            return _override_env.get_template(f"{stem}/candidate.jinja").render(**kwargs)
         if has_active:
             return _override_env.get_template(f"{stem}/active.jinja").render(**kwargs)
     except Exception:

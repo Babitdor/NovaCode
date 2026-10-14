@@ -1,0 +1,61 @@
+{
+  "source_tree_sha256": "fa526669d1571a2673bd7dd13e03c89cd93b47d4a97d089f6830250c1e769621",
+  "python": "3.11.13 (main, Sep 18 2025, 19:43:06) [MSC v.1944 64 bit (AMD64)]",
+  "live_evaluations": false,
+  "tests": {
+    "command": [
+      "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.venv\\Scripts\\python.exe",
+      "-m",
+      "pytest",
+      "tests/test_mcp_presets.py",
+      "tests/test_phase45.py",
+      "tests/test_subagent_resilience.py",
+      "tests/test_context_learning_replay.py",
+      "tests/test_context_learning_audit.py",
+      "tests/test_request_snapshot.py",
+      "tests/test_learning_ledger.py",
+      "tests/test_learning_review_safety.py",
+      "tests/test_context_compaction.py",
+      "tests/test_compaction.py",
+      "tests/test_hermes",
+      "tests/test_review_task_end.py",
+      "tests/test_context_snapshot.py",
+      "tests/test_memory_retrieval.py",
+      "tests/test_memory_prompt_cache_order.py",
+      "tests/test_learning_recall.py",
+      "tests/test_project_memory.py",
+      "tests/test_builtin_lessons.py",
+      "tests/test_good_habits_injection.py",
+      "tests/test_async_offload_fixes.py",
+      "tests/test_async_model_context.py",
+      "tests/test_async_mcp_tools.py",
+      "-q",
+      "--tb=short",
+      "--timeout=120",
+      "--junitxml=context-learning-tests.xml"
+    ],
+    "exit_code": 0,
+    "duration_seconds": 85.396736900002,
+    "output": "........................................................................ [ 14%]\n........................................................................ [ 29%]\n........................................................................ [ 44%]\n........................................................................ [ 59%]\n........................................................................ [ 74%]\n........................................................................ [ 89%]\n.....................................................                    [100%]\n485 passed in 78.76s (0:01:18)\n"
+  },
+  "lint_new_modules": {
+    "command": [
+      "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.venv\\Scripts\\ruff.exe",
+      "check",
+      "novacode_cli/context/snapshot.py",
+      "novacode_cli/hermes/ledger.py",
+      "novacode_cli/commands/learning_handler.py"
+    ],
+    "exit_code": 0,
+    "duration_seconds": 0.11584610000136308,
+    "output": "All checks passed!\n"
+  },
+  "measurements": {
+    "snapshot_mean_ms": 2.931156000122428,
+    "estimated_input_tokens": 18109,
+    "protected_tokens": 6,
+    "messages": 101,
+    "live_provider_calls": 0,
+    "coding_quality_improvement": "not measured"
+  }
+}

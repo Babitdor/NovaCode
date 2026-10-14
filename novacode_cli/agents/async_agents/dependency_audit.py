@@ -15,6 +15,7 @@ import subprocess
 from typing import Any
 
 from deepagents import create_deep_agent
+from novacode_cli.context.snapshot import background_context_middleware
 from deepagents.backends.filesystem import FilesystemBackend
 from langchain_core.tools import tool
 
@@ -139,7 +140,7 @@ def _build_agent() -> Any:
         backend=backend,
         # Let a dispatch name the model to run on (see novacode_cli.agents.async_context).
         # The environment still decides when a run arrives without a context.
-        middleware=[AsyncModelOverrideMiddleware(), DelegatedApprovalMiddleware(), background_library("dependency-audit-agent")],
+        middleware=[AsyncModelOverrideMiddleware(), DelegatedApprovalMiddleware(), background_library("dependency-audit-agent"), *background_context_middleware()],
         context_schema=NovaAsyncContext,
     )
 

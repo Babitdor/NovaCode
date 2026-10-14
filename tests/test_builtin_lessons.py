@@ -113,11 +113,11 @@ def test_a_recall_is_counted_once_per_moment(mw, tmp_path: Path) -> None:
     assert top["recalls"] == 1 and top["resolved"] == 0
 
 
-def test_a_failure_that_then_clears_is_credited_to_what_was_recalled(mw, tmp_path: Path) -> None:
+def test_a_later_success_does_not_establish_verified_usefulness(mw, tmp_path: Path) -> None:
     mw._relevant_memories(_facing("E: Unable to locate package nginx\napt-get install failed, exit code: 100"))
     mw._relevant_memories(_facing("Setting up nginx (1.24.0) ...\nProcessing triggers for libc-bin"))
     (top,) = [e for e in recall_stats.report(tmp_path) if "Unable to locate package" in e["text"]]
-    assert top["resolved"] == 1
+    assert top["recalls"] == 1 and top["resolved"] == 0
 
 
 def test_a_failure_that_persists_is_not(mw, tmp_path: Path) -> None:

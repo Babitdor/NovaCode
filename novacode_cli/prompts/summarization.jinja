@@ -28,6 +28,7 @@ When token-constrained, preserve in this order:
 - **Never include raw tool output** — capture user intent and decisions, not intermediate results.
 - **User messages** should be *condensed summaries* of each request, not verbatim text. Capture evolving intent across turns.
 - **No casual conversation** — only requests, corrections, decisions, and technical context.
+- **Separate completed from pending work.** Do not infer pending work from an earlier request alone; use the latest observed actions and replies. Never suggest repeating a completed step.
 </guardrails>
 
 <analysis>
@@ -63,13 +64,13 @@ Problems solved and ongoing troubleshooting efforts.
 Summarize each user request/feedback turn concisely. Capture the evolving intent flow across the session — not verbatim, not tool output. This is critical for reconstructing context.
 
 ### 7. Pending Tasks
-Outline any pending tasks explicitly asked for. Distinguish from implied next steps.
+Outline only work that was still unfinished at the end of the conversation below. Distinguish explicit requests from inferred next steps. Do not infer pending work from an earlier request alone.
 
 ### 8. Current Work
-Describe in detail what was being worked on immediately before this summary request. Pay special attention to the most recent messages.
+Describe what was being worked on at the end of the summarized prefix, including the last completed action. If a verbatim tail follows, it may supersede this section.
 
 ### 9. Optional Next Step
-The next step directly aligned with the user's most recent explicit requests.
+Only a step still required by the latest observed state. Write "None" if the work was completed; never restart an earlier task merely because it appears above.
 
 {% if focus_instructions %}
 {{ focus_instructions }}

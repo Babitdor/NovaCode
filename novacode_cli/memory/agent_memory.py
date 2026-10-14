@@ -4,7 +4,7 @@ import asyncio
 import logging
 import os
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
@@ -40,9 +40,7 @@ logger = logging.getLogger(__name__)
 # written newest-first — see novacode_cli/memory/limits.py for the invariant).
 _MEMORY_TRUNCATION_NOTICE = "\n\n... [memory truncated — use read_file for full content]"
 #: The index is a pointer list; the tail is reachable via ``memory_search``.
-_INDEX_TRUNCATION_NOTICE = (
-    "\n\n... [index truncated — `memory_search` finds the rest]"
-)
+_INDEX_TRUNCATION_NOTICE = "\n\n... [index truncated — `memory_search` finds the rest]"
 
 # Per-turn memory retrieval tunables.
 _MAX_RETRIEVED_MEMORIES = 3  # top-K topic bodies injected per turn
@@ -74,14 +72,74 @@ _MEANING_MARGIN = 0.12
 # signal — they cause unrelated queries to spuriously match a lesson.
 _STOPWORDS = frozenset(
     {
-        "about", "above", "after", "again", "against", "already", "also", "another",
-        "because", "been", "being", "could", "does", "doing", "done", "each", "else",
-        "even", "ever", "from", "have", "here", "into", "just", "like", "made", "make",
-        "many", "more", "most", "much", "need", "only", "other", "over", "please",
-        "question", "really", "should", "some", "such", "than", "that", "their", "them",
-        "then", "there", "these", "they", "thing", "things", "this", "those", "unrelated",
-        "very", "want", "well", "were", "what", "when", "where", "which", "while", "will",
-        "with", "would", "your", "yours",
+        "about",
+        "above",
+        "after",
+        "again",
+        "against",
+        "already",
+        "also",
+        "another",
+        "because",
+        "been",
+        "being",
+        "could",
+        "does",
+        "doing",
+        "done",
+        "each",
+        "else",
+        "even",
+        "ever",
+        "from",
+        "have",
+        "here",
+        "into",
+        "just",
+        "like",
+        "made",
+        "make",
+        "many",
+        "more",
+        "most",
+        "much",
+        "need",
+        "only",
+        "other",
+        "over",
+        "please",
+        "question",
+        "really",
+        "should",
+        "some",
+        "such",
+        "than",
+        "that",
+        "their",
+        "them",
+        "then",
+        "there",
+        "these",
+        "they",
+        "thing",
+        "things",
+        "this",
+        "those",
+        "unrelated",
+        "very",
+        "want",
+        "well",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "while",
+        "will",
+        "with",
+        "would",
+        "your",
+        "yours",
     }
 )
 
@@ -255,7 +313,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
         # them. These cache the scored topic corpus (keyed on the full file
         # signature) and the last query's retrieved block (so tool-loop
         # iterations don't re-scan).
-        self._corpus_cache: dict[str, tuple[frozenset[str], str, frozenset[str]]] | None = None
+        self._corpus_cache: Mapping[str, tuple[frozenset[str], str, frozenset[str]]] | None = None
         self._corpus_sig: tuple | None = None  # one (count, mtime) per lesson dir
         self._retrieval_cache: tuple[str, str] | None = None
 
@@ -275,29 +333,22 @@ class AgentMemoryMiddleware(AgentMiddleware):
             )
         ]
 
-    def _get_file_mtime(self, path: Path) -> float | None:
-        """Get modification time for a file, or None if it doesn't exist."""
+    def _get_file_mtime(self, path: Path) -> str | None:
+        """Compatibility name for current-content identity, including deletion."""
         try:
-            return path.stat().st_mtime
+            from novacode_cli.memory.parsed_cache import file_hash
+            return file_hash(path)
         except OSError:
             return None
 
     def _files_changed(self, paths: list[Path]) -> bool:
         """Check if any files have been modified since last load."""
-        for path in paths:
-            current_mtime = self._get_file_mtime(path)
-            if current_mtime is not None:
-                last_mtime = self._last_mtimes.get(str(path))
-                if last_mtime is None or current_mtime > last_mtime:
-                    return True
-        return False
+        current = {str(path): self._get_file_mtime(path) for path in paths}
+        return current != self._last_mtimes
 
     def _record_mtimes(self, paths: list[Path]) -> None:
         """Record modification times for all paths."""
-        for path in paths:
-            mtime = self._get_file_mtime(path)
-            if mtime is not None:
-                self._last_mtimes[str(path)] = mtime
+        self._last_mtimes = {str(path): self._get_file_mtime(path) for path in paths}
 
     def _cap(self, content: str) -> str:
         """Truncate an injected memory block to this model's per-block budget.
@@ -495,6 +546,21 @@ class AgentMemoryMiddleware(AgentMiddleware):
         # Check if any files have changed (hot-reload) - only for local filesystem
         # In sandbox mode, we always reload since we can't track mtimes
         needs_reload = self._files_changed(all_paths) if self._backend is None else True
+        result.update(
+            {
+                key: ""
+                for key in (
+                    "user_memory",
+                    "project_memory",
+                    "memory_index",
+                    "habits_memory",
+                    "learning_overview",
+                )
+                if needs_reload
+                and key in state
+                and (key != "project_memory" or not self.skip_project_memory)
+            }
+        )
 
         # Load user memory if not in state or if file changed
         # User memory is read through the backend when available (virtual path: /memories/agent.md),
@@ -502,7 +568,6 @@ class AgentMemoryMiddleware(AgentMiddleware):
         if needs_reload or "user_memory" not in state:
             content = self._read_file(user_path)
             if content is not None:
-                content = self._cap(content)
                 result["user_memory"] = content
 
         # Load the topic-memory index (memories/INDEX.md). It's a compact pointer
@@ -537,15 +602,13 @@ class AgentMemoryMiddleware(AgentMiddleware):
             for path in project_paths:
                 # Read project memory from sandbox if available, local otherwise
                 content = self._read_file_sandbox(path)
-                if content is not None:
-                    content = self._cap(content)
-                    if content.strip():
-                        # Add header showing the source file
-                        relative_path = (
-                            path.relative_to(self.project_root) if self.project_root else path.name
-                        )
-                        combined_memories.append(f"<!-- Source: {relative_path} -->\n{content}")
-                        self.loaded_project_memory_sources.append(str(relative_path))
+                if content is not None and content.strip():
+                    # Add header showing the source file
+                    relative_path = (
+                        path.relative_to(self.project_root) if self.project_root else path.name
+                    )
+                    combined_memories.append(f"<!-- Source: {relative_path} -->\n{content}")
+                    self.loaded_project_memory_sources.append(str(relative_path))
 
             if combined_memories:
                 result["project_memory"] = "\n\n---\n\n".join(combined_memories)
@@ -598,11 +661,25 @@ class AgentMemoryMiddleware(AgentMiddleware):
         )
         all_paths = [user_path, index_path, habits_path, *project_paths]
         needs_reload = self._files_changed(all_paths) if self._backend is None else True
+        result.update(
+            {
+                key: ""
+                for key in (
+                    "user_memory",
+                    "project_memory",
+                    "memory_index",
+                    "habits_memory",
+                    "learning_overview",
+                )
+                if needs_reload
+                and key in state
+                and (key != "project_memory" or not self.skip_project_memory)
+            }
+        )
 
         if needs_reload or "user_memory" not in state:
             content = await self._aread_file(user_path)
             if content is not None:
-                content = self._cap(content)
                 result["user_memory"] = content
 
         if needs_reload or "memory_index" not in state:
@@ -627,14 +704,12 @@ class AgentMemoryMiddleware(AgentMiddleware):
             self.loaded_project_memory_sources = []
             for path in project_paths:
                 content = await self._aread_file(path)
-                if content is not None:
-                    content = self._cap(content)
-                    if content.strip():
-                        relative_path = (
-                            path.relative_to(self.project_root) if self.project_root else path.name
-                        )
-                        combined_memories.append(f"<!-- Source: {relative_path} -->\n{content}")
-                        self.loaded_project_memory_sources.append(str(relative_path))
+                if content is not None and content.strip():
+                    relative_path = (
+                        path.relative_to(self.project_root) if self.project_root else path.name
+                    )
+                    combined_memories.append(f"<!-- Source: {relative_path} -->\n{content}")
+                    self.loaded_project_memory_sources.append(str(relative_path))
             if combined_memories:
                 result["project_memory"] = "\n\n---\n\n".join(combined_memories)
 
@@ -648,7 +723,9 @@ class AgentMemoryMiddleware(AgentMiddleware):
         """Text of the most recent user/human message in the request, or ''."""
         messages = getattr(request, "messages", None) or []
         for msg in reversed(messages):
-            role = getattr(msg, "type", None) or (msg.get("role") if isinstance(msg, dict) else None)
+            role = getattr(msg, "type", None) or (
+                msg.get("role") if isinstance(msg, dict) else None
+            )
             if role not in ("human", "user"):
                 continue
             content = getattr(msg, "content", None)
@@ -657,16 +734,14 @@ class AgentMemoryMiddleware(AgentMiddleware):
             if isinstance(content, str):
                 return content
             if isinstance(content, list):  # provider block format
-                parts = [
-                    b.get("text", "") for b in content if isinstance(b, dict)
-                ]
+                parts = [b.get("text", "") for b in content if isinstance(b, dict)]
                 return " ".join(p for p in parts if p)
             return ""
         return ""
 
     def _load_memory_corpus(
         self,
-    ) -> dict[str, tuple[frozenset[str], str, frozenset[str]]]:
+    ) -> Mapping[str, tuple[frozenset[str], str, frozenset[str]]]:
         """Load + tokenize the topic memory files (topic -> (title_toks, body, body_toks)).
 
         Cached in memory, refreshed only when the memories dir changes (reviews
@@ -680,6 +755,25 @@ class AgentMemoryMiddleware(AgentMiddleware):
         if project_key:
             dirs.append(mem_dir / "projects" / project_key)
         signatures = [self._corpus_signature(d) for d in dirs]
+        ledger_path = self.agent_dir / "learning.sqlite3"
+        records = []
+        imported = set()
+        if ledger_path.exists():
+            from novacode_cli.hermes.ledger import LearningLedger
+
+            ledger = LearningLedger(ledger_path)
+            records = ledger.list(project=project_key, active=True)
+            imported = {r.evidence[0] for r in ledger.list() if r.origin == "legacy" and r.evidence}
+        from novacode_cli.session.runtime_identity import current_identity
+        from novacode_cli.hermes.activation import active_artifacts
+        captured = active_artifacts.get() if current_identity.get() else None
+        if captured is not None:
+            records = []
+        signatures.append(tuple(r.reference for r in records))
+        signatures.append(tuple(sorted(imported)))
+        from novacode_cli.hermes.activation import content_hash
+        signatures.append(tuple((kind, target, content_hash(content.encode()))
+                                for kind, target, content in captured) if captured is not None else None)
         signature = tuple(signatures)
         # Compare the WHOLE signature. Comparing only the newest mtime (the old
         # ``signature[1]``) discarded the file count, so deleting a topic file
@@ -688,59 +782,57 @@ class AgentMemoryMiddleware(AgentMiddleware):
         if self._corpus_cache is not None and self._corpus_sig == signature:
             return self._corpus_cache
 
-        corpus: dict[str, tuple[frozenset[str], str, frozenset[str]]] = {}
+        from novacode_cli.memory.parsed_cache import MemoryCorpus, ParsedMemoryCache, file_hash
+        parsed = getattr(self, "_parsed_memory_cache", None)
+        if parsed is None:
+            parsed = self._parsed_memory_cache = ParsedMemoryCache()
+        corpus = MemoryCorpus(parsed, _tokens)
         for path in (p for d in dirs if d.is_dir() for p in d.glob("*.md")):
+            if str(path) in imported:
+                continue
             if path.name == "INDEX.md":
                 continue
             try:
-                body = path.read_text(encoding="utf-8")
+                digest = file_hash(path)
             except OSError:
                 continue
-            if not body.strip():
-                continue
             title_toks = _tokens(path.stem.replace("-", " ").replace("_", " "))
-            corpus[path.stem] = (title_toks, body, _tokens(body))
+            corpus.add(path.stem, title_toks, path, digest)
+        for record in records:
+            # Approved generated knowledge remains data, separate from standing
+            # instructions; stable IDs prevent topic collisions and overwrites.
+            title = record.applicability or record.kind
+            corpus.add(f"learning-{record.id}", _tokens(title), record.content,
+                       content_hash(record.content.encode()))
+        for index, (kind, target, content) in enumerate(captured or ()):
+            if kind in {"lesson", "habit"}:
+                corpus.add(f"activated-{index}", _tokens(target or kind), content,
+                           content_hash(content.encode()))
         # The lessons every installation starts with (see builtin_lessons).
         # Recalled like any other; a learned topic of the same name wins.
         from novacode_cli.memory import builtin_lessons
 
         if builtin_lessons.enabled() and builtin_lessons.TOPIC not in corpus:
             text = builtin_lessons.body()
-            corpus[builtin_lessons.TOPIC] = (frozenset(), text, _tokens(text))
+            corpus.add(builtin_lessons.TOPIC, frozenset(), text, content_hash(text.encode()))
         self._corpus_cache, self._corpus_sig = corpus, signature
-        return corpus
+        return self._corpus_cache
 
     @staticmethod
-    def _corpus_signature(mem_dir: Path) -> tuple[int, float] | None:
-        """Return ``(file_count, newest_file_mtime)`` for the topic dir, or None.
+    def _corpus_signature(mem_dir: Path) -> tuple | None:
+        """Current names and contents, including renames and restored timestamps."""
+        from novacode_cli.memory.parsed_cache import file_hash
 
-        Keyed on the newest *file* mtime, NOT the directory's own mtime: on NTFS
-        rewriting a file in place does not bump the parent directory's mtime
-        (only create/delete/rename do), and the review/dream passes rewrite topic
-        files in place — so a dir-mtime key served a stale corpus all session.
-
-        Uses ``os.scandir`` rather than ``Path.glob`` + ``stat``: this runs on
-        every turn (the corpus cache is keyed on it), and each ``Path.stat`` is a
-        separate syscall. On a large memory dir (18k+ topic files) that was ~600ms
-        of event-loop block *per turn*; ``scandir`` returns the same count and the
-        same newest mtime from the cached directory enumeration in ~40ms (14x).
-        The value is identical, so the delete/rewrite invalidation guarantees are
-        unchanged.
-        """
         try:
-            count = 0
-            newest = 0.0
             with os.scandir(mem_dir) as entries:
-                for entry in entries:
-                    if not entry.name.endswith(".md"):
-                        continue
-                    count += 1
-                    newest = max(newest, entry.stat().st_mtime)
+                names = sorted(entry.name for entry in entries if entry.name.endswith(".md"))
+            return tuple(
+                (name, file_hash(mem_dir / name)) for name in names
+            )
+        except FileNotFoundError:
+            return ()
         except OSError:
             return None
-        if count == 0:
-            return (0, 0.0)
-        return (count, newest)
 
     async def _relevant_memories_async(self, request: ModelRequest) -> str:
         """Async wrapper around :meth:`_relevant_memories`.
@@ -769,7 +861,8 @@ class AgentMemoryMiddleware(AgentMiddleware):
         situation = self._situation_text(request)
         if not query and not situation:
             return ""
-        key = f"{query}\x00{situation}"
+        corpus = self._load_memory_corpus()
+        key = f"{query}\x00{situation}\x00{self._corpus_sig}"
         if self._retrieval_cache is not None and self._retrieval_cache[0] == key:
             return self._retrieval_cache[1]
 
@@ -784,7 +877,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
             scored: list[tuple[int, str, str]] = []
             # (word score, topic, bullet, qualified by shared words)
             candidates: list[tuple[int, str, str, bool]] = []
-            for topic, (title_toks, body, body_toks) in self._load_memory_corpus().items():
+            for topic, (title_toks, body, body_toks) in corpus.items():
                 # The built-in lessons answer an error, never a request: a long
                 # task description shares a few words with all of them, which
                 # put every one in front of the model on nearly every turn.
@@ -795,12 +888,20 @@ class AgentMemoryMiddleware(AgentMiddleware):
                 topic_asked = not builtin and title_bonus + len(q & body_toks) >= _MIN_RELEVANCE
                 lines = [ln for ln in body.splitlines() if ln.lstrip().startswith(("-", "*", "•"))]
                 if not lines and topic_asked:  # a hand-written topic with no bullets
-                    scored.append((title_bonus + len(q & body_toks), topic, body.strip()[:_RETRIEVAL_PER_FILE_CAP]))
+                    scored.append(
+                        (
+                            title_bonus + len(q & body_toks),
+                            topic,
+                            body.strip()[:_RETRIEVAL_PER_FILE_CAP],
+                        )
+                    )
                 for line in lines:
                     words = _tokens(line)
                     asked, facing = (0 if builtin else len(q & words)), len(facing_words & words)
                     by_words = (topic_asked and asked > 0) or facing >= needed
-                    candidates.append((asked + title_bonus + 2 * facing, topic, line.strip(), by_words))
+                    candidates.append(
+                        (asked + title_bonus + 2 * facing, topic, line.strip(), by_words)
+                    )
             scored += self._by_meaning(candidates, query, situation)
             scored.sort(key=lambda t: t[0], reverse=True)
 
@@ -835,9 +936,8 @@ class AgentMemoryMiddleware(AgentMiddleware):
 
             lowered = situation.lower()
             failing = any(marker in lowered for marker in _FAILURE_MARKERS)
-            previous = getattr(self, "_last_recall", None)
-            if previous and previous[1] and situation and not failing:
-                recall_stats.note_resolved(self.agent_dir, previous[0])
+            # A later successful command is an observation, not causal evidence
+            # that a recalled lesson improved the result.
             keys = recall_stats.note_recalled(self.agent_dir, recalled)
             if recalled:
                 self._last_recall = (keys, failing)
@@ -895,7 +995,9 @@ class AgentMemoryMiddleware(AgentMiddleware):
         floor = max(semantic.RELEVANT, max(closeness) - _MEANING_MARGIN)
         return [
             (word_score + round(20 * close), topic, line)
-            for (word_score, topic, line, by_words), close in zip(candidates, closeness, strict=True)
+            for (word_score, topic, line, by_words), close in zip(
+                candidates, closeness, strict=True
+            )
             if by_words or close >= floor
         ]
 
@@ -947,8 +1049,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
             return f"No memory matches {query!r}. Proceed without it."
         scored.sort(key=lambda t: (-t[0], t[1]))
         lines = [
-            f"- **{topic}** `/memories/memories/{topic}.md`: "
-            f"{' '.join(body.strip().split())[:240]}"
+            f"- **{topic}** `/memories/memories/{topic}.md`: {' '.join(body.strip().split())[:240]}"
             for _score, topic, body in scored[: max(1, min(k, 20))]
         ]
         return "\n".join(lines)
@@ -1055,7 +1156,9 @@ class AgentMemoryMiddleware(AgentMiddleware):
                 sources_list = ", ".join(self.loaded_project_memory_sources)
                 project_memory_info = f"`{self.project_root}` (loaded: {sources_list})"
             elif self.project_root:
-                project_memory_info = f"`{self.project_root}` (no CLAUDE.md or NOVA.md found)"
+                project_memory_info = (
+                    f"`{self.project_root}` (no AGENTS.md, CLAUDE.md, or NOVA.md found)"
+                )
             else:
                 project_memory_info = "None (not in a git project)"
 
@@ -1066,7 +1169,9 @@ class AgentMemoryMiddleware(AgentMiddleware):
             memory_section = self.system_prompt_template.format(
                 user_memory=user_memory if user_memory else "(No user agent.md)",
                 project_memory=(
-                    project_memory if project_memory else "(No project CLAUDE.md or NOVA.md)"
+                    project_memory
+                    if project_memory
+                    else "(No project AGENTS.md, CLAUDE.md, or NOVA.md)"
                 ),
             )
 

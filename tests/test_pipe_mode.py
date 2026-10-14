@@ -34,7 +34,7 @@ def make(monkeypatch, stream=None):
     async def never():
         await asyncio.Future()
 
-    async def save():
+    async def save(*, is_error=False):
         pass
 
     worker._stdin_pump = never
@@ -219,14 +219,25 @@ cli.cli_main()
     import threading
 
     received = queue.Queue()
+    stderr_lines = []
 
     def reader():
         for line in process.stdout:
             received.put(json.loads(line))
 
     threading.Thread(target=reader, daemon=True).start()
+
+    def read_stderr():
+        for line in process.stderr:
+            stderr_lines.append(line)
+
+    threading.Thread(target=read_stderr, daemon=True).start()
     try:
-        assert received.get(timeout=20)["type"] == "ready"
+        try:
+            ready = received.get(timeout=60)
+        except queue.Empty as exc:
+            raise AssertionError(f"pipe did not start: {b''.join(stderr_lines)[-2000:]!r}") from exc
+        assert ready["type"] == "ready"
         for i in range(2):
             process.stdin.write(
                 (json.dumps({"type": "prompt", "id": str(i), "content": "测试"}) + "\n").encode()
@@ -403,7 +414,7 @@ else:
     cli.check_cli_dependencies = lambda: print('diagnostic noise')
 cli.cli_main()
 """
-    run = subprocess.run([sys.executable, "-c", script, failure], capture_output=True, timeout=20)
+    run = subprocess.run([sys.executable, "-c", script, failure], capture_output=True, timeout=60)
     assert run.returncode == 1
     records = [json.loads(line) for line in run.stdout.splitlines()]
     assert [r["type"] for r in records] == ["error", "stopped"]

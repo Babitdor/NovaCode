@@ -8,6 +8,7 @@ from typing import Any
 def build_graph() -> Any:
     """Build with the server's workspace, async model role and unattended policy."""
     from deepagents import create_deep_agent
+    from novacode_cli.context.snapshot import background_context_middleware
     from deepagents.backends.filesystem import FilesystemBackend
 
     from novacode_cli.agents.async_agents._specialist import BACKGROUND_NOTE
@@ -34,6 +35,7 @@ def build_graph() -> Any:
             DelegatedApprovalMiddleware(),
             ShellMiddleware(workspace_root=str(root)),
             background_library("general-purpose-async"),
+            *background_context_middleware(),
         ],
         context_schema=NovaAsyncContext,
     )

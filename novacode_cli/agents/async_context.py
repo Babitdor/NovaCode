@@ -54,6 +54,8 @@ class NovaAsyncContext:
 
     provider: str | None = None
     model: str | None = None
+    #: The dispatching session was in auto-approve; see ``DelegatedApprovalMiddleware``.
+    auto_approve: bool = False
 
 
 def _fields(context: Any) -> tuple[str, str]:
@@ -240,7 +242,14 @@ def _bind_context(client: Any) -> Any:
     def create(*args: Any, **kwargs: Any) -> Any:
         """Create the run, naming the async role's model unless one was given."""
         if kwargs.get("context") is None:
+            from dataclasses import replace
+
+            from novacode_cli.tools.plan_mode_tools import _auto_approve_var
+
             context = current_async_context()
+            # Fixed at launch: the run cannot see a later toggle in this session.
+            if _auto_approve_var.get():
+                context = replace(context or NovaAsyncContext(), auto_approve=True)
             if context is not None:
                 kwargs["context"] = context
         return original(*args, **kwargs)

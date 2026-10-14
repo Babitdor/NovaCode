@@ -49,6 +49,15 @@ async def test_long_lines_and_split_utf8_have_no_readline_limit_or_corruption():
     assert all(len(line) <= 32768 for line in lines)
 
 
+async def test_interactive_prompt_without_newline_is_displayed_before_exit():
+    stream = asyncio.StreamReader()
+    stream.feed_data(b"Proceed? ")
+    batches = shell_output_batches(stream, flush_partial=True)
+    assert await asyncio.wait_for(anext(batches), 1) == ["Proceed? "]
+    stream.feed_eof()
+    assert [line async for batch in batches for line in batch] == []
+
+
 def test_appending_and_evicting_output_only_wraps_new_lines(monkeypatch):
     from novacode_cli.tui import output_body
 
@@ -103,23 +112,24 @@ async def test_real_noisy_shell_batches_writes_and_prompt_remains_usable(tmp_pat
     app = _app()
     script = tmp_path / "noisy.py"
     script.write_text("import sys\nfor n in range(20000): print('row-' + str(n))\n")
-    writes = []
-    original = OutputLog.write
+    from novacode_cli.tui.terminal_view import InlineTerminal
 
-    def write(widget, content):
-        if widget.has_class("bash-inline-log"):
-            writes.append(1)
+    writes = []
+    original = InlineTerminal.feed
+
+    def feed(widget, content):
+        writes.append(1)
         return original(widget, content)
 
-    monkeypatch.setattr(OutputLog, "write", write)
+    monkeypatch.setattr(InlineTerminal, "feed", feed)
     async with app.run_test(size=(100, 35)) as pilot:
         await app._run_bash(f'!"{sys.executable}" "{script}"')
         await pilot.press("r", "e", "a", "d", "y")
         await app.workers.wait_for_complete()
         await pilot.pause(0.1)
-        output = app._transcript().query_one(".bash-inline-log", OutputLog)
-        assert "row-19999" in output.lines[-1].text
-        assert len(writes) < 200, "a command output burst must not write/scroll for every line"
+        output = app._transcript().query_one(".bash-terminal", InlineTerminal)
+        assert "row-19999" in output.snapshot()
+        assert len(writes) < 200, "a command output burst must be coalesced"
         header = app._transcript().query_one(".bash-inline-head", Static)
         assert "running" not in str(header.content)
         assert app.query_one("#prompt", PromptInput).value == "ready"
@@ -213,7 +223,7 @@ async def test_cancel_after_stdout_closes_terminates_and_unregisters_process(mon
     app = _app()
     async with app.run_test(size=(100, 35)) as pilot:
         monkeypatch.setattr(asyncio, "create_subprocess_shell", spawn)
-        await app._run_bash("!quiet-command")
+        app._bg_shell_worker("quiet-command", 1, foreground=True)
         await asyncio.wait_for(waiting.wait(), timeout=5)
         for worker in app.workers:
             if worker.name == "_bg_shell_worker":

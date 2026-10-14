@@ -171,13 +171,13 @@ def test_corpus_signature_scandir_is_used_and_value_is_unchanged(tmp_path: Path)
 
     sig = AgentMemoryMiddleware._corpus_signature(mem_dir)
     assert sig is not None
-    count, newest = sig
+    count = len(sig)
     # Every *.md counts, INDEX.md included — this matches the previous
     # glob("*.md") behaviour exactly (the signature is only a change detector;
     # counting INDEX.md is harmless and keeps parity with the old value).
     assert count == 3
     names = ("a-topic.md", "b-topic.md", "INDEX.md")
-    assert newest == max((mem_dir / f).stat().st_mtime for f in names)
+    assert set(dict(sig)) == set(names)
 
     # The mechanism: no Path.stat is called on the topic files during a scan.
     import novacode_cli.memory.agent_memory as am

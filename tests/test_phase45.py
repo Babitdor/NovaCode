@@ -205,7 +205,7 @@ async def test_superseded_compaction_preserves_history(monkeypatch, tmp_path):
         return "old summary"
 
     monkeypatch.setattr(c, "summarize_conversation", summary)
-    monkeypatch.setattr(c, "_archive_messages", lambda *args: None)
+    monkeypatch.setattr(c, "_archive_messages", lambda *args: "recoverable-transcript.md")
     result = await c.compact_conversation(Agent(), object(), "task", agent_dir=tmp_path)
     assert not result.success
     assert "changed" in result.error
@@ -231,7 +231,7 @@ async def test_cancelled_compaction_preserves_history(monkeypatch):
         raise asyncio.CancelledError
 
     monkeypatch.setattr(c, "summarize_conversation", summary)
-    monkeypatch.setattr(c, "_archive_messages", lambda *args: None)
+    monkeypatch.setattr(c, "_archive_messages", lambda *args: "recoverable-transcript.md")
     with pytest.raises(asyncio.CancelledError):
         await c.compact_conversation(Agent(), object(), "task")
     assert messages[0].content == "constraints"

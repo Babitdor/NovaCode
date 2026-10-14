@@ -19,7 +19,7 @@ def test_append_shell_rule_to_project_file(tmp_path):  # noqa: ANN001
     assert rule.value in data["shell"]["allow"]
 
     policy = load_policy(project_root=tmp_path)
-    assert policy.evaluate("shell", {"command": "npm run build --prod"}).tier == "allow"
+    assert policy.evaluate("shell", {"command": "npm run build --prod"}).tier == "ask"
 
 
 def test_append_is_idempotent(tmp_path):  # noqa: ANN001

@@ -100,13 +100,51 @@ def _text(msg: Any) -> str:
     return str(content)
 
 
-def _disk_get(_key: str) -> list | None:
-    """Legacy disk listings are untrusted; always parse current source."""
-    return None
+_DISK_CACHE_ENTRIES = 8
+_DISK_CACHE_MIN_SKILLS = 50
+_DISK_LOCK = threading.Lock()
+
+
+def _disk_cache_file() -> Path:
+    from novacode_cli.config import config
+    return config.HOME_DIR / "cache" / "skill-listings.json"
+
+
+def _disk_get(key: str) -> list | None:
+    """Read metadata only for the caller's current-content source signature."""
+    import json
+    try:
+        path = _disk_cache_file()
+        if path.stat().st_size > 16 * 1024 * 1024:
+            return None
+        value = json.loads(path.read_text(encoding="utf-8")).get(key)
+        if not isinstance(value, list) or not all(
+            isinstance(item, dict) and all(isinstance(item.get(field), str)
+                                          for field in ("name", "description", "path"))
+            for item in value
+        ):
+            return None
+    except (OSError, ValueError):
+        return None
+    return value
 
 
 def _disk_put(key: str, skills: list) -> None:
-    """Instruction-derived listings are no longer persisted."""
+    """Publish bounded metadata; actual skill bodies are read from current source."""
+    import json
+    from novacode_cli.hermes.activation import publish
+    if len(skills) < _DISK_CACHE_MIN_SKILLS:
+        return
+    with _DISK_LOCK:
+        path = _disk_cache_file()
+        try:
+            entries = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            entries.pop(key, None)
+            entries[key] = skills
+            entries = dict(list(entries.items())[-_DISK_CACHE_ENTRIES:])
+            publish(path, json.dumps(entries).encode())
+        except (OSError, ValueError):
+            logger.debug("Could not publish skill metadata cache", exc_info=True)
 
 
 class _SkillsSearchArgs(BaseModel):
@@ -223,6 +261,13 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
 
     def _skill_load(self, name: str, runtime: ToolRuntime) -> tuple[str, dict]:
         """Load one enabled skill without reading any supporting files."""
+        from novacode_cli.hermes.activation import active_artifacts
+        for kind, target, content in active_artifacts.get():
+            if kind == "skill" and target == name:
+                skill = {"name": name, "description": "Reviewed generated skill",
+                         "path": f"reviewed:{name}"}
+                body, snapshot = skill_snapshot(skill, content)
+                return f"Skill: {name}\n\n{body}", {"skill": snapshot}
         skill = next((s for s in self._skills if s["name"] == name), None)
         if skill is None:
             return f"Error: skill {name!r} is unknown or disabled.", {}
@@ -378,6 +423,15 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
             query: What you are trying to do, in plain words.
         """
         hits = get_index(self._skills).search(query, k=5) if self._skills else []
+        from novacode_cli.hermes.activation import active_artifacts
+        reviewed = [f"- **{name}** (reviewed generated skill; use skills_load): {first_sentence(body, 300)}"
+                    for kind, name, body in active_artifacts.get() if kind == "skill"
+                    and any(word.lower() in (name + " " + body).lower() for word in query.split())]
+        if reviewed:
+            return "\n".join(reviewed[:5] + [
+                f"- **{skill['name']}** `{skill['path']}`: {first_sentence(skill['description'], 300)}"
+                for skill, _, _ in hits
+            ])
         if not hits:
             return f"No skill matches {query!r}. Proceed without one."
         return "\n".join(
@@ -465,7 +519,7 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
             self._reload_generation = reload_generation()
             if self._all_skills is None or changed:
                 key = self._disk_key()
-                cached = _disk_get(key) if key and not changed else None
+                cached = _disk_get(key) if key and (not changed or self._all_skills is None) else None
                 if cached is not None:
                     self._all_skills = cached
                 else:
@@ -605,7 +659,7 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
                 for name in self._library_names:
                     skill_md = str(directory / name / "SKILL.md")
                     try:
-                        sig.add((skill_md, digest(Path(skill_md).read_bytes())))
+                        sig.add((skill_md, digest(Path(skill_md).read_bytes()) + str(Path(skill_md).stat().st_mtime_ns)))
                     except FileNotFoundError:
                         continue
                 continue
@@ -614,7 +668,7 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
                     for entry in entries:
                         skill_md = os.path.join(entry.path, "SKILL.md")
                         try:
-                            sig.add((skill_md, digest(Path(skill_md).read_bytes())))
+                            sig.add((skill_md, digest(Path(skill_md).read_bytes()) + str(Path(skill_md).stat().st_mtime_ns)))
                         except FileNotFoundError:
                             continue
             except OSError:

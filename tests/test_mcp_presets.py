@@ -28,9 +28,8 @@ def test_catalog_keeps_configured_servers_and_excludes_retired_presets():
     assert (
         not {
             "github",
-        "laya-browser",
+            "laya-browser",
             "brave-search",
-            "google-drive",
             "postgres",
             "sqlite",
             "fetch",
@@ -59,3 +58,30 @@ def test_cua_executable_path_with_spaces():
         )
     assert config.command == r"C:\Program Files\Cua\cua-driver.exe"
     assert config.args == ["mcp"]
+
+
+@pytest.mark.parametrize(
+    ("name", "service", "port"),
+    [("google-drive", "drive", 8001), ("gmail", "gmail", 8002), ("google-docs", "docs", 8003)],
+)
+def test_google_workspace_presets_scope_services_and_resolve_oauth_file(
+    name: str, service: str, port: int
+):
+    oauth_file = r"C:\My Google OAuth\client_secret.json"
+    with patch("novacode_cli.mcp.config.shutil.which", return_value="mock-binary"):
+        config = create_config_from_preset(name, {"google_client_secret_path": oauth_file})
+    assert config is not None
+    assert config.command == "uvx"
+    assert config.args == [
+        "workspace-mcp",
+        "--transport",
+        "stdio",
+        "--tools",
+        service,
+        "--tool-tier",
+        "core",
+    ]
+    assert config.env["GOOGLE_CLIENT_SECRET_PATH"] == oauth_file
+    assert config.env["WORKSPACE_MCP_PORT"] == str(port)
+    assert config.env["GOOGLE_OAUTH_REDIRECT_URI"] == f"http://localhost:{port}/oauth2callback"
+    assert config.env["MCP_ENABLE_OAUTH21"] == "false"

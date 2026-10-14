@@ -1,0 +1,47 @@
+{
+  "live_provider_calls": 0,
+  "recall": "observational; usefulness not demonstrated",
+  "small_corpus": {
+    "files": 32,
+    "approximate_file_bytes": 1024,
+    "cold_ms": 100.43210000731051,
+    "warm_discovery_ms": 3.660000002128072,
+    "cache_entries": 33,
+    "cache_resident_bytes": 97758,
+    "entry_limit": 512,
+    "byte_limit": 16777216
+  },
+  "large_corpus": {
+    "files": 2000,
+    "approximate_file_bytes": 8192,
+    "cold_ms": 4796.775800001342,
+    "warm_discovery_ms": 954.9982000025921,
+    "cache_entries": 512,
+    "cache_resident_bytes": 4956111,
+    "entry_limit": 512,
+    "byte_limit": 16777216
+  },
+  "concurrent_sessions": {
+    "sessions": 8,
+    "episodes_per_session": 100,
+    "counts": [
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100
+    ],
+    "duration_ms": 45.385899997199886
+  },
+  "context_overhead": {
+    "snapshot_mean_ms": 2.1366460001445375,
+    "estimated_input_tokens": 18109,
+    "protected_tokens": 6,
+    "messages": 101,
+    "live_provider_calls": 0,
+    "coding_quality_improvement": "not measured"
+  }
+}
