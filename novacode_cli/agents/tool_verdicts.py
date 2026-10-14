@@ -696,15 +696,10 @@ def create_system_one_client(config: NovaConfig) -> DecisionClient:
     from novacode_cli.config.nova_config import NovaConfig
 
     endpoint = config.get_tool_verdict_endpoint()
-    from novacode_cli.agents.openai_decisions import (
-        OPENAI_DECISIONS_ENDPOINT,
-        OpenAIDecisionsClient,
-    )
+    from novacode_cli.agents.openai_decisions import decisions_client, speaks_openai_decisions
 
-    if endpoint == OPENAI_DECISIONS_ENDPOINT:
-        return OpenAIDecisionsClient(
-            model=config.get_tool_verdict_model(), api_key=credential_value("OPENAI_API_KEY")
-        )
+    if speaks_openai_decisions(endpoint):
+        return decisions_client(endpoint, config.get_tool_verdict_model())
     if endpoint == NovaConfig.TOOL_VERDICT_JEV_ENDPOINT:
         api_key = credential_value("TYPESAFE_API_KEY")
     elif endpoint == NovaConfig.TOOL_VERDICT_OPENCODE_ENDPOINT:

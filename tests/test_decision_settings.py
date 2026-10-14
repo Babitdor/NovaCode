@@ -260,3 +260,20 @@ async def test_decision_save_rebuilds_agent_without_changing_chat_model(
     assert host.agent == "new-agent"
     assert host.backend == "new-backend"
     assert host.model_name == "chat-model"
+
+
+async def test_a_custom_decisions_compatible_endpoint_is_saved_and_reloaded():
+    app = App()
+    async with app.run_test(size=(100, 35)) as pilot:
+        screen, panel = await open_decisions(app, pilot)
+        panel.query_one("#decision-preset", Select).value = "openai_custom"
+        await pilot.pause()
+        endpoint = panel.query_one("#decision-endpoint", Input)
+        assert endpoint.value == ""  # the host is yours to name
+        endpoint.value = "https://gateway.example/v1/decisions"
+        panel.query_one("#decision-model", Input).value = "luna-mini"
+        await save_and_settle(screen, pilot)
+        assert NovaConfig().get_tool_verdict_endpoint() == "https://gateway.example/v1/decisions"
+
+        screen, panel = await open_decisions(app, pilot)
+        assert panel.query_one("#decision-preset", Select).value == "openai_custom"

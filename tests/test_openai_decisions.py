@@ -123,3 +123,42 @@ def test_redirect_is_rejected():
     client = OpenAIDecisionsClient(api_key="dummy", client=httpx.Client(transport=transport))
     with pytest.raises(ValueError, match="302"):
         client.ask({}, {"a": {"instructions": "Keep?"}})
+
+
+def test_a_custom_decisions_endpoint_gets_the_protocol_but_never_the_openai_key(monkeypatch):
+    """Any host whose path ends in /decisions; the OpenAI key stays with OpenAI."""
+    from novacode_cli.agents import openai_decisions as od
+    from novacode_cli.agents.tool_verdicts import SystemOneClient, create_system_one_client
+
+    keys = {"OPENAI_API_KEY": "sk-openai", "SYSTEM_ONE_API_KEY": "custom-key"}
+    monkeypatch.setattr(
+        "novacode_cli.config.credentials.credential_value", lambda name: keys.get(name, "")
+    )
+    gateway = "https://gateway.example/openai/v1/decisions/"
+    assert od.speaks_openai_decisions(gateway)
+    assert not od.speaks_openai_decisions("https://gateway.example/v1/systemone")
+    assert not od.speaks_openai_decisions("https://gateway.example/decisions-api/v1")
+
+    custom = od.decisions_client(gateway, "luna-mini")
+    assert (custom.endpoint, custom.api_key, custom.model) == (
+        gateway.strip(), "custom-key", "luna-mini"
+    )
+    assert od.decisions_client(od.OPENAI_DECISIONS_ENDPOINT, "m").api_key == "sk-openai"
+
+    calls = []
+    custom._client = httpx.Client(transport=httpx.MockTransport(
+        lambda request: calls.append(request) or httpx.Response(
+            200, json={"answers": [{"type": "predicate", "name": "k", "probability": 0.5}]}
+        )
+    ))
+    custom.ask({}, {"k": {"instructions": "Keep?"}})
+    assert str(calls[0].url) == gateway
+    assert calls[0].headers["Authorization"] == "Bearer custom-key"
+
+    class _Config:
+        get_tool_verdict_endpoint = staticmethod(lambda: gateway)
+        get_tool_verdict_model = staticmethod(lambda: "luna-mini")
+
+    assert isinstance(create_system_one_client(_Config()), od.OpenAIDecisionsClient)
+    _Config.get_tool_verdict_endpoint = staticmethod(lambda: "http://localhost:9/v1/systemone")
+    assert isinstance(create_system_one_client(_Config()), SystemOneClient)

@@ -127,7 +127,7 @@ SERVICE_DISPLAY_NAMES: dict[str, str] = {
     "deepgram": "Deepgram (speech to text)",
     "elevenlabs": "ElevenLabs (text to speech)",
     "jev": "Jev (System One compaction)",
-    "systemone": "Custom System One (optional API key)",
+    "systemone": "Custom decision endpoint (optional API key)",
 }
 """Capitalized names for the services in ``/auth``.
 

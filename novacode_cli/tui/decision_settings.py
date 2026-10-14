@@ -57,6 +57,7 @@ class DecisionSettings(VerticalScroll):
         yield Select(
             [
                 ("OpenAI · Decisions API", "openai"),
+                ("Custom · OpenAI Decisions-compatible", "openai_custom"),
                 ("Jev · TypeSafe API", "jev"),
                 ("Jev · OpenCode Zen", "opencode_zen"),
                 ("Jev Free · OpenCode Zen", "opencode_zen_free"),
@@ -71,7 +72,11 @@ class DecisionSettings(VerticalScroll):
         yield Static("Decision model")
         yield Input(id="decision-model", placeholder="jev-latest, tev1:4b, kev1, …", disabled=True)
         yield Static("Decision endpoint")
-        yield Input(id="decision-endpoint", placeholder="https://…/v1/systemone", disabled=True)
+        yield Input(
+            id="decision-endpoint",
+            placeholder="https://…/v1/systemone or https://…/v1/decisions",
+            disabled=True,
+        )
         yield Button("Manage API key", id="decision-auth")
         yield Static("Loading decision settings…", id="decision-status")
 
@@ -102,9 +107,13 @@ class DecisionSettings(VerticalScroll):
         self.query_one("#decision-enabled", Switch).value = enabled
         self.query_one("#decision-model", Input).value = model
         self.query_one("#decision-endpoint", Input).value = endpoint
+        from novacode_cli.agents.openai_decisions import speaks_openai_decisions
+
         preset = "custom"
         if endpoint == NovaConfig.TOOL_VERDICT_OPENAI_ENDPOINT:
             preset = "openai"
+        elif speaks_openai_decisions(endpoint):
+            preset = "openai_custom"
         elif endpoint == NovaConfig.TOOL_VERDICT_JEV_ENDPOINT:
             preset = "jev"
         elif endpoint == NovaConfig.TOOL_VERDICT_OPENCODE_ENDPOINT:
@@ -137,6 +146,16 @@ class DecisionSettings(VerticalScroll):
                 "#decision-endpoint", Input
             ).value = NovaConfig.TOOL_VERDICT_OPENAI_ENDPOINT
             self.query_one("#decision-model", Input).value = NovaConfig.TOOL_VERDICT_OPENAI_MODEL
+        elif event.value == "openai_custom":
+            # Your own host; the path must end in /decisions to use this protocol.
+            endpoint = self.query_one("#decision-endpoint", Input)
+            endpoint.value = ""
+            endpoint.placeholder = "https://your-gateway.example/v1/decisions"
+            endpoint.focus()
+            self._hint(
+                "Any host serving OpenAI's Decisions API; the URL must end in /decisions. "
+                "Its key is the custom endpoint credential in Manage API key or /auth."
+            )
         elif event.value == "jev":
             self.query_one("#decision-endpoint", Input).value = NovaConfig.TOOL_VERDICT_JEV_ENDPOINT
             self.query_one("#decision-model", Input).value = NovaConfig.TOOL_VERDICT_JEV_MODEL

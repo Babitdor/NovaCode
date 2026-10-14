@@ -64,8 +64,8 @@ def decide_tool_approval(  # noqa: PLR0911
     """Return a fail-closed decision with its source and user-facing reason."""
     try:
         from novacode_cli.agents.openai_decisions import (
-            OPENAI_DECISIONS_ENDPOINT,
-            OpenAIDecisionsClient,
+            decisions_client,
+            speaks_openai_decisions,
         )
         from novacode_cli.agents.tool_verdicts import SystemOneClient
         from novacode_cli.config.credentials import credential_value
@@ -115,10 +115,8 @@ def decide_tool_approval(  # noqa: PLR0911
                 "source": "safety_filter",
                 "reason": "action details exceeded the safety review limit",
             }
-        if endpoint == OPENAI_DECISIONS_ENDPOINT:
-            client = OpenAIDecisionsClient(
-                model=model, api_key=credential_value("OPENAI_API_KEY")
-            )
+        if speaks_openai_decisions(endpoint):
+            client = decisions_client(endpoint, model)
             answer = client.ask_choice(
                 {"action": state},
                 name="approval",

@@ -10,6 +10,39 @@ OPENAI_DECISIONS_ENDPOINT = "https://api.openai.com/v1/decisions"
 OPENAI_DECISIONS_MODEL = "gpt-6-luna"
 
 
+def speaks_openai_decisions(endpoint: str) -> bool:
+    """Whether *endpoint* takes OpenAI's Decisions protocol rather than System One.
+
+    Any host qualifies -- a proxy, a gateway, an Azure deployment -- as long as
+    the path names the resource the way OpenAI does.
+    """
+    # ponytail: decided by the path; store a protocol setting if a gateway ever
+    # serves Decisions under a path that does not end in /decisions.
+    from urllib.parse import urlsplit
+
+    try:
+        path = urlsplit(endpoint.strip()).path
+    except ValueError:
+        return False
+    return path.rstrip("/").endswith("/decisions")
+
+
+def decisions_client(endpoint: str, model: str) -> OpenAIDecisionsClient:
+    """A Decisions client for *endpoint*, with the key that endpoint may see.
+
+    The OpenAI key goes to OpenAI only. Any other host gets the custom-endpoint
+    credential, the same rule that keeps a TypeSafe key off custom servers; a
+    server that needs no key gets a placeholder, as custom System One does.
+    """
+    from novacode_cli.config.credentials import credential_value
+
+    if endpoint.strip() == OPENAI_DECISIONS_ENDPOINT:
+        api_key = credential_value("OPENAI_API_KEY")
+    else:
+        api_key = credential_value("SYSTEM_ONE_API_KEY") or "nova"
+    return OpenAIDecisionsClient(model=model, api_key=api_key, endpoint=endpoint.strip())
+
+
 def _probability(value: Any) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError("Decision probability must be numeric")
@@ -22,17 +55,23 @@ class OpenAIDecisionsClient:
     """Translate batched keep predicates and route choices without chat generation."""
 
     def __init__(
-        self, *, api_key: str, model: str = OPENAI_DECISIONS_MODEL, client: Any = None
+        self,
+        *,
+        api_key: str,
+        model: str = OPENAI_DECISIONS_MODEL,
+        client: Any = None,
+        endpoint: str = OPENAI_DECISIONS_ENDPOINT,
     ) -> None:
         self.api_key = api_key
         self.model = model
+        self.endpoint = endpoint
         self._client = client
 
     def _request(
         self, state: dict[str, Any], questions: list[dict[str, Any]]
     ) -> dict[str, dict[str, Any]]:
         if not self.api_key:
-            raise ValueError("OpenAI API key is missing; add it through /auth.")
+            raise ValueError(f"No API key for {self.endpoint}; add it through /auth.")
         import httpx
 
         # Scope owned clients to each bounded background request: no idle pool leak.
@@ -40,7 +79,7 @@ class OpenAIDecisionsClient:
         client = self._client or httpx.Client(timeout=15.0, follow_redirects=False)
         try:
             response = client.post(
-                OPENAI_DECISIONS_ENDPOINT,
+                self.endpoint,
                 json={
                     "model": self.model,
                     "input": json.dumps(state, ensure_ascii=False),
@@ -50,7 +89,7 @@ class OpenAIDecisionsClient:
                 follow_redirects=False,
             )
             if response.status_code != 200:
-                raise ValueError(f"OpenAI Decisions request failed ({response.status_code}).")
+                raise ValueError(f"Decisions request failed ({response.status_code}).")
             payload = response.json()
         finally:
             if owned:

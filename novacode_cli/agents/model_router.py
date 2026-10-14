@@ -153,17 +153,13 @@ class ModelRouter:
         """
         if self._client is None:
             from novacode_cli.agents.openai_decisions import (
-                OPENAI_DECISIONS_ENDPOINT,
-                OpenAIDecisionsClient,
+                decisions_client,
+                speaks_openai_decisions,
             )
 
-            if self._config.get_router_decision_endpoint() == OPENAI_DECISIONS_ENDPOINT:
-                from novacode_cli.config.credentials import credential_value
-
-                self._client = OpenAIDecisionsClient(
-                    model=self._config.get_router_decision_model(),
-                    api_key=credential_value("OPENAI_API_KEY"),
-                )
+            endpoint = self._config.get_router_decision_endpoint()
+            if speaks_openai_decisions(endpoint):
+                self._client = decisions_client(endpoint, self._config.get_router_decision_model())
                 return self._client
             from novacode_cli.agents.tool_verdicts import SystemOneClient
 
