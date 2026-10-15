@@ -266,7 +266,9 @@ async def remote_message_processor(
                     if edit_fn is not None:
                         from novacode_cli.remote.status import RemoteStatusLine
 
-                        status = RemoteStatusLine(edit_fn)
+                        status = RemoteStatusLine(
+                            edit_fn, send_fn=getattr(remote_msg, "reply_fn", None)
+                        )
                         status.start()
 
                     _prev_auto_approve = getattr(session_state, "auto_approve", False)

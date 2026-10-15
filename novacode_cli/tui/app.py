@@ -570,7 +570,7 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     ),
     "effort": SlashCommand("_run_effort", "set model reasoning effort"),
     "learning": SlashCommand(
-        "_run_learning", "toggle Nova's autonomous learning loop (/learning on|off|status)"
+        "_run_learning", "Nova's learning loop (/learning on|off|status|auto on|off|review)"
     ),
 }
 
@@ -1755,6 +1755,8 @@ class NovaApp(App):
         self._remote_activity: list[str] = []
         # The per-turn live status line (edits one compact message in place).
         self._remote_status: Any = None
+        # A mid-turn compaction already said so; the turn-end notice need not.
+        self._compaction_reported = False
         self._remote_answer: Any = None
         self._local_remote_streams: list[Any] = []
         self._remote_consumer_worker: Any = None
@@ -4460,7 +4462,9 @@ class NovaApp(App):
             prompt_id="remote-" + uuid.uuid4().hex,
         )
         if getattr(msg, "edit_fn", None) is not None:
-            turn.status = RemoteStatusLine(msg.edit_fn, label=self._remote_label(pane))
+            turn.status = RemoteStatusLine(
+                msg.edit_fn, label=self._remote_label(pane), send_fn=getattr(msg, "reply_fn", None)
+            )
         if getattr(msg, "answer_edit_fn", None) is not None:
             from novacode_cli.remote.streaming import RemoteAnswerStream
 
@@ -4686,7 +4690,9 @@ class NovaApp(App):
                 or pane.remote_snapshot is not snapshot
             ):
                 return
-            status = RemoteStatusLine(target.edit_fn, label=f"NOVA · {pane.title}")
+            status = RemoteStatusLine(
+                target.edit_fn, label=f"NOVA · {pane.title}", send_fn=target.reply_fn
+            )
             answer = RemoteAnswerStream(target.answer_edit_fn)
             if snapshot is not None:
                 answer.text = snapshot.text
@@ -6536,14 +6542,27 @@ class NovaApp(App):
             )
 
     def _start_compaction_indicator(self) -> None:
-        """Animate context compaction in the footer without exposing its draft."""
+        """Animate context compaction as a row in the chat, where it happens.
+
+        The row stays where it was mounted, between the steps before and after
+        the summary, and :meth:`_stop_compaction_indicator` turns it into the
+        outcome. The summary's own text is never shown.
+        """
         frames = ("◐", "◓", "◑", "◒")
         self._compaction_indicator_frame = 0
+        row = getattr(self, "_compaction_row", None)
+        if row is None or not row.is_mounted:
+            self._close_tool_group()  # keep transcript order, as other events do
+            row = Static(Text(""), classes="nova-event nova-compaction")
+            self._transcript().mount(row)
+            self._compaction_row = row
+            self._scroll_end()
 
         def animate() -> None:
             frame = frames[self._compaction_indicator_frame % len(frames)]
             self._compaction_indicator_frame += 1
-            self._set_nova_indicator(f"{frame} Context is compacting…", style="dim cyan")
+            with contextlib.suppress(Exception):  # the row may be pruned mid-animation
+                row.update(Text(f"{frame} Compacting context…", style="dim cyan"))
 
         animate()
         timer = getattr(self, "_compaction_indicator_timer", None)
@@ -6551,12 +6570,24 @@ class NovaApp(App):
             timer.stop()
         self._compaction_indicator_timer = self.set_interval(0.16, animate)
 
-    def _stop_compaction_indicator(self) -> None:
-        """Stop the compaction animation and release the footer status slot."""
+    def _stop_compaction_indicator(self, message: str = "", *, ok: bool = True) -> None:
+        """Stop the animation; the chat row shows ``message``, or goes if there is none.
+
+        No message means the turn ended (cancelled, errored) before compaction
+        said how it went, so a spinner left behind would claim it still runs.
+        """
         timer = getattr(self, "_compaction_indicator_timer", None)
         if timer is not None:
             timer.stop()
             self._compaction_indicator_timer = None
+        row = getattr(self, "_compaction_row", None)
+        self._compaction_row = None
+        if row is not None:
+            with contextlib.suppress(Exception):
+                if message:
+                    row.update(Text(f"⟳ {message}", style="green" if ok else "yellow"))
+                else:
+                    row.remove()
         if getattr(self, "_nova_status", None) and "Context is compacting" in self._nova_status:
             self._set_nova_indicator("")
 
@@ -9271,7 +9302,9 @@ class NovaApp(App):
                             from novacode_cli.remote.status import RemoteStatusLine
 
                             self._remote_status = RemoteStatusLine(
-                                msg.edit_fn, label=self._remote_label(None)
+                                msg.edit_fn,
+                                label=self._remote_label(None),
+                                send_fn=getattr(msg, "reply_fn", None),
                             )
                             self._remote_status.start()
                         if getattr(msg, "answer_edit_fn", None) is not None:
@@ -10649,7 +10682,9 @@ class NovaApp(App):
                 ):
                     continue
             status = RemoteStatusLine(
-                target.edit_fn, label=f"NOVA · {label} · " + " ".join(prompt.split())[:80]
+                target.edit_fn,
+                label=f"NOVA · {label} · " + " ".join(prompt.split())[:80],
+                send_fn=target.reply_fn,
             )
             answer = RemoteAnswerStream(target.answer_edit_fn)
             streams.append((target, status, answer))
@@ -12943,19 +12978,36 @@ class NovaApp(App):
                 self._log(Text(str(error), style="red"))
             return
 
+        if arg in ("auto on", "auto off"):
+            cfg.set_learning_auto_approve(arg == "auto on")
+            self._log(Text(
+                "● New lessons and skills will be approved automatically; prompt changes "
+                "still wait for /learning review."
+                if arg == "auto on"
+                else "● New lessons and skills will wait for /learning review.",
+                style="green",
+            ))
+            return
+
         if arg in ("", "status"):
+            auto = cfg.get_learning_auto_approve()
             t = Text()
             t.append("Nova Learning (Hermes)\n", style="bold")
             t.append("Status: ", style="dim")
             t.append(
                 "on\n" if current else "off\n", style="bold green" if current else "bold yellow"
             )
+            t.append("Auto-approve lessons and skills: ", style="dim")
+            t.append("on\n" if auto else "off\n", style="bold green" if auto else "bold yellow")
             t.append(
                 "\nWhen on, Nova periodically self-reviews its tool usage, extracts\n"
                 "proposals for review. Approve a displayed revision to activate it.\n",
                 style="dim",
             )
-            t.append("Usage: /learning on|off|status|review|approve|reject|rollback\n", style="dim")
+            t.append(
+                "Usage: /learning on|off|status|auto on|auto off|review|approve|reject|rollback\n",
+                style="dim",
+            )
             self._log(t)
             return
 
@@ -14838,7 +14890,9 @@ class NovaApp(App):
             self._scroll_end(force=False)
         elif isinstance(e, ev.CompactionNotice):
             self._stop_compaction_indicator()
-            self._log(Text("⟳ Context compacted", style="dim"))
+            if not getattr(self, "_compaction_reported", False):
+                self._log(Text("⟳ Context compacted", style="dim"))
+            self._compaction_reported = False
             # Context just shrank. The API-sourced current_context is the turn's
             # PEAK (pre-compaction) and would otherwise mask the reduction, so
             # reset() clears has_api_data and lets the recomputed, message-based
@@ -14855,8 +14909,12 @@ class NovaApp(App):
             if e.event_type == "nova_compaction_start":
                 self._start_compaction_indicator()
                 return
-            if e.event_type == "nova_compaction_end":
-                self._stop_compaction_indicator()
+            if e.event_type in ("nova_compaction_end", "nova_compaction_failed"):
+                # Said when it happens, not only when the turn ends; the end-of-
+                # turn CompactionNotice then does not say it again.
+                ok = e.event_type == "nova_compaction_end"
+                self._stop_compaction_indicator(e.message, ok=ok)
+                self._compaction_reported = self._compaction_reported or ok
                 return
             # Review-cycle start/complete are transient status, not log entries:
             # surface them on the live indicator above the input instead of

@@ -49,6 +49,25 @@ _PROSE_LIVE = 300
 #: Telegram message (4096) / stay readable on Discord.
 _REASONING_FINAL = 2000
 _DETAIL_MAX = 70
+#: Diff previews: one message per edited file, clipped to fit a Telegram
+#: message, and at most this many per turn so a sweeping refactor cannot flood
+#: the chat (Telegram already rate-limits the bridge's edits).
+_DIFF_CHARS = 3_000
+_DIFFS_PER_TURN = 10
+SendFn = Callable[[str], Awaitable[None]]
+
+
+def diff_message(path: str, diff: str, added: int = 0, removed: int = 0) -> str:
+    """One edit as chat markdown: the file, its counts, and the diff, clipped."""
+    body = diff.strip("\n")
+    if len(body) > _DIFF_CHARS:
+        cut = body.rfind("\n", 0, _DIFF_CHARS)
+        shown = body[: cut if cut > 0 else _DIFF_CHARS]
+        rest = body.count("\n") - shown.count("\n")
+        body = f"{shown}\n… {rest} more lines"
+    counts = " · ".join(filter(None, (f"+{added}" if added else "", f"−{removed}" if removed else "")))
+    head = f"✏️ `{path}`" + (f" · {counts}" if counts else "")
+    return f"{head}\n```diff\n{body}\n```"
 
 
 @dataclass
@@ -78,9 +97,20 @@ class RemoteStatusLine:
     """One edit-in-place status message: plan, reasoning, and a live tool log."""
 
     def __init__(
-        self, edit_fn: EditFn, *, interval: float = _PUMP_INTERVAL, label: str = ""
+        self,
+        edit_fn: EditFn,
+        *,
+        interval: float = _PUMP_INTERVAL,
+        label: str = "",
+        send_fn: SendFn | None = None,
     ) -> None:
         self._edit = edit_fn
+        # Posts a message of its own, for what does not fit the status line:
+        # each edit's diff. None where the platform cannot send one.
+        self._send = send_fn
+        self._sending: asyncio.Future | None = None
+        self._diffs = 0
+        self._compactions = 0
         self._label = label  # the session's name when several are open
         self._calls: list[_Call] = []
         self._todos: list[tuple[str, str]] = []  # (content, status)
@@ -112,6 +142,39 @@ class RemoteStatusLine:
         self._calls.append(_Call(str(name), shown, call_id))
         self._prose = ""  # prose before a tool call was narration, not the answer
         self._dirty = True
+
+    def note_diff(self, path: str, diff: str, added: int = 0, removed: int = 0) -> None:
+        """Post one edit's diff as its own message, in order, up to the turn's cap."""
+        if self._send is None or self._closed or not diff.strip():
+            return
+        self._diffs += 1
+        if self._diffs > _DIFFS_PER_TURN:
+            return
+        text = diff_message(path, diff, added, removed)
+        if self._diffs == _DIFFS_PER_TURN:
+            text += "\n_Further edits this turn are listed in the tool log only._"
+        previous, send = self._sending, self._send
+
+        async def post() -> None:
+            if previous is not None:
+                await asyncio.gather(previous, return_exceptions=True)
+            try:
+                await send(text)
+            except Exception:  # noqa: BLE001 - a preview is never worth a failed turn
+                logger.debug("diff preview failed", exc_info=True)
+
+        try:
+            self._sending = asyncio.ensure_future(post())
+        except RuntimeError:  # no running loop (a synchronous caller): skip the preview
+            self._sending = previous
+
+    def note_compaction(self, *, done: bool = False, ok: bool = True) -> None:
+        """Show context compaction as a line of the tool log: ⏳, then ✓ or ✗."""
+        if not done:
+            self._compactions += 1
+            self.note("compaction", "⟳ compacting context", f"nova-compaction-{self._compactions}")
+        else:
+            self.note_result(f"nova-compaction-{self._compactions}", error=not ok)
 
     def note_result(self, call_id: str | None, *, error: bool = False) -> None:
         """Mark a tool call finished (matched by id, else the oldest running one)."""
@@ -310,6 +373,24 @@ def feed(status: RemoteStatusLine, event: object) -> None:
         rec = event.record
         errored = bool(getattr(rec, "error", None)) or getattr(rec, "status", "") == "error"
         status.note_result(event.call_id, error=errored)
+        diff = getattr(rec, "diff", None)
+        if diff and not errored:
+            metrics = getattr(rec, "metrics", None)
+            status.note_diff(
+                str(getattr(rec, "display_path", "") or "file"),
+                diff,
+                getattr(metrics, "lines_added", 0) or 0,
+                getattr(metrics, "lines_removed", 0) or 0,
+            )
+    elif isinstance(event, ev.ContextMessage) and event.event_type in (
+        "nova_compaction_start",
+        "nova_compaction_end",
+        "nova_compaction_failed",
+    ):
+        if event.event_type == "nova_compaction_start":
+            status.note_compaction()
+        else:
+            status.note_compaction(done=True, ok=event.event_type == "nova_compaction_end")
     elif isinstance(event, ev.TodoUpdate):
         status.note_todos(event.todos)
     elif isinstance(event, ev.SubagentActivity):

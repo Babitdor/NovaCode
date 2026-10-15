@@ -338,6 +338,9 @@ class CoordinatedGraph:
             refusals = getattr(resource, "_refusals", None)
             if refusals is not None:
                 refusals.pop(identity.session, None)
+            accepted = getattr(resource, "_accepted", None)
+            if accepted is not None:
+                accepted.pop(identity.session, None)
 
     def _config(self, config: Any) -> Any:
         from langchain_core.runnables.config import merge_configs

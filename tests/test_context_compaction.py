@@ -211,8 +211,9 @@ def test_a_failing_summary_model_never_fails_the_turn(monkeypatch: pytest.Monkey
     out = agent.invoke({"messages": [("user", TASK)]}, CFG)
 
     assert out["messages"][-1].content == "all done"
-    # A failed summary still ends the "compacting" status.
-    assert announced.count("nova_compaction_start") == announced.count("nova_compaction_end") > 0
+    # A failed summary still ends the "compacting" status, and says it failed.
+    assert announced.count("nova_compaction_start") == announced.count("nova_compaction_failed") > 0
+    assert "nova_compaction_end" not in announced
     # It backs off between attempts rather than asking on every call...
     assert 3 <= len(model.summaries) < 15
     # ...and after three failures compacts without a model.
@@ -690,3 +691,27 @@ def test_after_a_summary_the_files_in_use_are_read_back_from_disk(tmp_path) -> N
     assert "# current a" in restored and "# current b" in restored
     assert "old text" not in restored and "missing" not in restored
     assert asyncio.run(middleware._restore_files(paths, 0)) == ""
+
+
+def test_an_overcounted_estimate_is_corrected_by_what_the_provider_counted() -> None:
+    """Schemas deferred behind search_tools were counted but never sent."""
+    middleware = ContextCompactionMiddleware(context_window=WINDOW)
+    reply = AIMessage(content="", usage_metadata={"input_tokens": 600, "output_tokens": 5, "total_tokens": 605})
+    for _ in range(6):
+        middleware._calibrate(reply, 1_000)
+
+    assert middleware._scale < 0.7, "the old 0.9 floor kept a third of the excess"
+
+
+def test_a_refusal_below_what_the_provider_already_took_is_not_the_window() -> None:
+    """A rate limit worded "too many tokens" once shrank the window for the session."""
+    middleware = ContextCompactionMiddleware(context_window=128_000)
+    full = middleware.limits(None)
+    took = AIMessage(content="", usage_metadata={"input_tokens": 80_000, "output_tokens": 5, "total_tokens": 80_005})
+    middleware._calibrate(took, 80_000)
+
+    middleware._learn_refusal(None, 78_000)
+    assert middleware.limits(None) == full, "80k was accepted, so 78k is not the limit"
+
+    middleware._learn_refusal(None, 120_000)
+    assert middleware.limits(None).window == 120_000, "a refusal above it still teaches the window"

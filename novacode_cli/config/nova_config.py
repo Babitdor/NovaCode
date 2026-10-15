@@ -416,6 +416,19 @@ class NovaConfig:
         self._config["learning_enabled"] = bool(enabled)
         self._save()
 
+    def get_learning_auto_approve(self) -> bool:
+        """Whether new lessons and skills are approved without /learning review.
+
+        Off by default. Prompt rewrites always wait for review: they change the
+        system prompt of every session. Parsed strictly, like the other switches.
+        """
+        return _config_bool(self._config.get("learning_auto_approve", False))
+
+    def set_learning_auto_approve(self, enabled: bool) -> None:
+        """Persist the automatic-approval toggle."""
+        self._config["learning_auto_approve"] = bool(enabled)
+        self._save()
+
     # ── Memory injection budget ─────────────────────────────────────────────
 
     def get_memory_block_chars(self) -> int:

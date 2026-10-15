@@ -157,7 +157,7 @@ async def write_skill_from_spec(
 
     content = normalize_skill_frontmatter(body, name, description)
 
-    from novacode_cli.hermes.ledger import LearningLedger
+    from novacode_cli.hermes.ledger import LearningLedger, auto_approve_enabled
     from novacode_cli.session.runtime_identity import current_identity
     identity = current_identity.get()
     ledger = LearningLedger(skills_dir.parent / "learning.sqlite3")
@@ -165,7 +165,8 @@ async def write_skill_from_spec(
                    project=identity.project if identity else "",
                    session=identity.session if identity else "",
                    task=identity.task if identity else "", scope="shared",
-                   origin="skill_discovery", evidence=("generated workflow; requires review",))
+                   origin="skill_discovery", evidence=("generated workflow; requires review",),
+                   auto_approve=auto_approve_enabled())
     return name
 
 def cleanup_legacy_pattern_skills(skills_dir: Path) -> list[str]:
@@ -427,13 +428,13 @@ async def refine_skill(
         if not new_md or new_md.strip() == current.strip():
             return False
 
-        from novacode_cli.hermes.ledger import LearningLedger
+        from novacode_cli.hermes.ledger import LearningLedger, auto_approve_enabled
         from novacode_cli.hermes.activation import content_hash
         LearningLedger(skills_dir.parent / "learning.sqlite3").propose(
             content=new_md.rstrip() + "\n", kind="skill", target=skill_name,
             source_hash=content_hash(current.encode()), scope="shared",
             origin="refinement", evidence=tuple(s.get("excerpt", "") for s in failure_samples or []),
-            applicability=issue,
+            applicability=issue, auto_approve=auto_approve_enabled(),
         )
         if store is not None:
             await _record_refinement(store, skill_name, issue)

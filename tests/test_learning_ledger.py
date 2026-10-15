@@ -140,3 +140,37 @@ def test_illegal_and_stale_state_transitions_cannot_mutate_ledger(tmp_path):
         with pytest.raises(ValueError, match="candidate"):
             ledger.transition(approved.reference, action)
     assert len(ledger.history(record.id)) == 2
+
+
+def test_an_auto_approved_proposal_is_an_ordinary_approval(tmp_path):
+    ledger = LearningLedger(tmp_path / "learning.sqlite3")
+    waiting = ledger.propose(content="by hand", project="a")
+    auto = ledger.propose(content="use cmd.exe syntax", project="a", auto_approve=True)
+
+    assert waiting.status == "candidate"
+    assert auto.status == "approved" and auto.approval_reference.endswith("@1")
+    ActivationManager(tmp_path, "a").apply_pending()
+    applied = ledger.list(project="a", active=True)
+    assert [r.content for r in applied] == ["use cmd.exe syntax"]
+    ledger.transition(applied[0].reference, "rollback")  # undone like any approval
+    ActivationManager(tmp_path, "a").apply_pending()
+    assert ledger.list(project="a", active=True) == []
+
+
+def test_reviews_auto_approve_lessons_but_never_prompt_suggestions(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from novacode_cli.hermes.review import ReviewRunner
+
+    monkeypatch.setattr("novacode_cli.hermes.ledger.auto_approve_enabled", lambda: True)
+    runner = SimpleNamespace(
+        _agent_dir=tmp_path, _project="p", _outcome=("success",),
+        _tracker=SimpleNamespace(owner="s1", task="t1"),
+    )
+    parsed = {"lessons": [{"bullets": ["- run tests with -q"], "topic": "testing"}]}
+    response = "<prompt_improvement>Always greet the user.</prompt_improvement>"
+
+    ReviewRunner._persist_review(runner, parsed, response)
+
+    status = {r.content: r.status for r in LearningLedger(tmp_path / "learning.sqlite3").list()}
+    assert status == {"- run tests with -q": "approved", "Always greet the user.": "candidate"}

@@ -19,6 +19,16 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 
+def auto_approve_enabled() -> bool:
+    """The user's /learning auto setting; off when it cannot be read."""
+    try:
+        from novacode_cli.config.nova_config import NovaConfig
+
+        return NovaConfig().get_learning_auto_approve()
+    except Exception:  # noqa: BLE001 - an unreadable setting must not approve anything
+        return False
+
+
 @dataclass(frozen=True)
 class LearningRecord:
     """One immutable revision of an evidence-bearing knowledge proposal."""
@@ -119,8 +129,14 @@ class LearningLedger:
         target: str = "",
         source_hash: str = "",
         required_variables: tuple[str, ...] = (),
-    ) -> LearningProposal:
-        """Store an unverified candidate without activating its content."""
+        auto_approve: bool = False,
+    ) -> LearningRecord:
+        """Store an unverified candidate without activating its content.
+
+        With ``auto_approve`` it is approved at once, exactly as ``/learning
+        approve`` would (an event is recorded, ``rollback`` undoes it), and is
+        applied at the next turn boundary.
+        """
         if scope not in {"project", "shared"}:
             msg = "Unknown learning scope"
             raise ValueError(msg)
@@ -142,6 +158,8 @@ class LearningLedger:
         )
         with self._connect() as db:
             self._insert(db, record)
+        if auto_approve:
+            return self.transition(record.reference, "approve")
         return record
 
     def list(self, *, project: str | None = None, active: bool = False) -> list[LearningRecord]:

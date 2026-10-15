@@ -95,12 +95,19 @@ async def test_console_learning_routes_settings_and_revision_decisions(tmp_path,
 
     class Config:
         enabled = False
+        auto = False
 
         def set_learning_enabled(self, enabled):
             self.enabled = enabled
 
         def get_learning_enabled(self):
             return self.enabled
+
+        def set_learning_auto_approve(self, enabled):
+            self.auto = enabled
+
+        def get_learning_auto_approve(self):
+            return self.auto
 
     settings = Config()
     print_result = Mock()
@@ -117,6 +124,10 @@ async def test_console_learning_routes_settings_and_revision_decisions(tmp_path,
     ctx.cmd_args = "status"
     await handle_learning_command(ctx)
     assert "Learning on" in print_result.call_args.args[0]
+    ctx.cmd_args = "auto on"
+    await handle_learning_command(ctx)
+    assert settings.auto is True
+    assert "prompt changes still require" in print_result.call_args.args[0]
     ctx.cmd_args = "off"
     ctx.session_state = None
     await handle_learning_command(ctx)

@@ -543,6 +543,9 @@ class ReviewRunner:
         session = self._tracker.owner
         task_id = str(parsed.get("_task_id") or self._tracker.task)
         evidence = tuple(parsed.get("_evidence") or ())
+        from novacode_cli.hermes.ledger import auto_approve_enabled
+
+        auto = auto_approve_enabled()  # lessons and skills; never prompt changes
         for lesson in parsed.get("lessons", []):
             bullets = lesson.get("bullets") or []
             content = "\n".join(bullets) if isinstance(bullets, list) else str(bullets)
@@ -555,6 +558,7 @@ class ReviewRunner:
                     applicability=str(lesson.get("topic") or ""),
                     evidence=evidence
                     or (f"review:{session}:outcome:{self._outcome[0]}:heuristic",),
+                    auto_approve=auto,
                 )
         for kind, value in (
             ("user_model", parsed.get("user_model")),
@@ -572,7 +576,7 @@ class ReviewRunner:
             content = normalize_skill_frontmatter(spec["body"], spec["name"], spec["description"])
             ledger.propose(
                 content=content, project=self._project or "", kind="skill", session=session,
-                target=spec["name"], evidence=evidence,
+                target=spec["name"], evidence=evidence, auto_approve=auto,
             )
         for block in re.findall(
             r"<prompt_improvement>(.*?)</prompt_improvement>", response_content, re.DOTALL

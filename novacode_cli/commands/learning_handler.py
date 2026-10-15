@@ -108,9 +108,16 @@ async def handle_learning_command(ctx: CommandContext) -> bool:
 
             await ctx.session_state.switch_model(create_model())
         console.print(f"Learning {args}; generated changes require review.")
+    elif args in {"auto on", "auto off"}:
+        cfg.set_learning_auto_approve(args == "auto on")
+        console.print(
+            f"Automatic approval of lessons and skills {args.split()[1]}; "
+            "prompt changes still require /learning review."
+        )
     elif args == "status":
         console.print(
-            f"Learning {'on' if cfg.get_learning_enabled() else 'off'}. "
+            f"Learning {'on' if cfg.get_learning_enabled() else 'off'}; automatic approval "
+            f"{'on' if cfg.get_learning_auto_approve() else 'off'}. "
             "/learning review lists proposals."
         )
     else:

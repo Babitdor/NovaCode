@@ -221,3 +221,64 @@ class TestActivityLog:
         s.note_text("Let me read the file", kind="text")
         s.note("read_file", "read_file(a.py)", "c1")
         assert "Let me read the file" not in s._content()
+
+
+class TestDiffsAndCompaction:
+    async def test_each_edit_is_posted_as_a_diff_preview_in_order(self):
+        from types import SimpleNamespace
+
+        from novacode_cli import ui_events as ev
+        from novacode_cli.remote.status import feed
+
+        sent: list[str] = []
+
+        async def send(text):
+            await asyncio.sleep(0.01 if not sent else 0)  # the first is slower: order must hold
+            sent.append(text)
+
+        s = RemoteStatusLine(_FakeEdit(), interval=0.02, send_fn=send)
+        for n, path in enumerate(["/src/app.rs", "/src/render.rs"]):
+            rec = SimpleNamespace(
+                display_path=path, diff=f"@@ -1 +1 @@\n-old {n}\n+new {n}", error=None,
+                status="success", metrics=SimpleNamespace(lines_added=1, lines_removed=1),
+            )
+            feed(s, ev.FileOp(record=rec, call_id=f"c{n}"))
+        feed(s, ev.FileOp(record=SimpleNamespace(display_path="/a.txt", diff=None, error=None,
+                                                 status="success", metrics=None)))
+        await asyncio.sleep(0.05)
+
+        assert len(sent) == 2, "a read (no diff) posts nothing"
+        assert sent[0].startswith("✏️ `/src/app.rs` · +1 · −1\n```diff\n")
+        assert "+new 0" in sent[0] and "/src/render.rs" in sent[1]
+
+    async def test_a_huge_diff_is_clipped_and_previews_are_capped(self):
+        from novacode_cli.remote import status as st
+
+        message = st.diff_message("/big.py", "\n".join(f"+line {i}" for i in range(2_000)), 2_000)
+        assert len(message) < 4_000 and "more lines" in message
+
+        sent: list[str] = []
+
+        async def send(text):
+            sent.append(text)
+
+        s = RemoteStatusLine(_FakeEdit(), send_fn=send)
+        for i in range(st._DIFFS_PER_TURN + 5):
+            s.note_diff(f"/f{i}.py", "+x")
+        await asyncio.sleep(0.05)
+        assert len(sent) == st._DIFFS_PER_TURN
+        assert "tool log only" in sent[-1]
+
+    async def test_compaction_shows_in_the_tool_log_and_settles(self):
+        from novacode_cli import ui_events as ev
+        from novacode_cli.remote.status import feed
+
+        edit = _FakeEdit()
+        s = RemoteStatusLine(edit, interval=0.02)
+        s.start()
+        feed(s, ev.ContextMessage(message="Context is compacting", event_type="nova_compaction_start"))
+        await asyncio.sleep(0.06)
+        assert "compacting context" in edit.working[-1]
+        feed(s, ev.ContextMessage(message="Context compacted", event_type="nova_compaction_end"))
+        await s.finalize()
+        assert "✓" in edit.final[-1] and "compacting context" in edit.final[-1]

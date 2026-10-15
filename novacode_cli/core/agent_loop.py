@@ -524,14 +524,20 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                         continue
                     # ...and after it, whether it worked or not, so the status
                     # ends with the summary rather than with the turn.
-                    if isinstance(data, dict) and data.get("type") == "nova_compaction_end":
+                    if isinstance(data, dict) and data.get("type") in (
+                        "nova_compaction_end",
+                        "nova_compaction_failed",
+                    ):
                         if compaction_status_started:
                             compaction_status_started = False
+                            ok = data["type"] == "nova_compaction_end"
                             yield ev.ContextMessage(
-                                message="Context compaction finished",
-                                event_type="nova_compaction_end",
+                                message="Context compacted"
+                                if ok
+                                else "Context summary failed; continuing with the full history",
+                                event_type=data["type"],
                                 icon="⟳",
-                                color="dim",
+                                color="dim" if ok else "yellow",
                             )
                         continue
                     # A fan-out's tasks, one event each as they start and finish.

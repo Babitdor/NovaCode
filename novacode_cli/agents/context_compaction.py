@@ -485,7 +485,8 @@ def _run_sync(coroutine: Awaitable[Any]) -> Any:  # noqa: ANN401
 
 
 def _announce(event: str = "nova_compaction_start") -> None:
-    """Tell the UI a summary is being written, or (``nova_compaction_end``) is done.
+    """Tell the UI a summary is being written, or is done (``nova_compaction_end``,
+    or ``nova_compaction_failed`` when the summary call failed).
 
     The summary call itself does not stream. Without the end event the UI's
     "compacting" status ran on until the whole turn ended.
@@ -564,6 +565,9 @@ class ContextCompactionMiddleware(AgentMiddleware):
         # Provider-reported input tokens over this middleware's own estimate.
         # ponytail: one running value per instance; per-model if models are mixed.
         self._scales = {}
+        # Per session: the largest input the provider has accepted. A "too
+        # long" refusal below it was not about size (see _learn_refusal).
+        self._accepted: dict[str, int] = {}
         self._scale = 1.0
         root = str(getattr(backend, "artifacts_root", "/") or "/").rstrip("/")
         self._history_dir = f"{root}/conversation_history"
@@ -596,6 +600,17 @@ class ContextCompactionMiddleware(AgentMiddleware):
         """
         believed = self._window or _model_window(model)
         previous = self._refused.get(believed)
+        # The provider already took a request this large or larger, so this was
+        # not the window (a rate limit worded "too many tokens", say). Learning
+        # it would compact the rest of the session against a window that small:
+        # summaries at ~60% of the real one, the next a few calls after the last.
+        if tokens <= self._accepted.get(self._session_key(), 0):
+            logger.warning(
+                "Ignored a 'too long' refusal at ~%d tokens: requests of %d were accepted",
+                tokens,
+                self._accepted.get(self._session_key(), 0),
+            )
+            return believed, previous
         self._refused[believed] = max(1_000, min(tokens, previous or believed))
         return believed, previous
 
@@ -631,6 +646,13 @@ class ContextCompactionMiddleware(AgentMiddleware):
             tokens += self._tool_tokens[key]
         return tokens
 
+    @staticmethod
+    def _session_key() -> str:
+        from novacode_cli.session.runtime_identity import current_identity
+
+        identity = current_identity.get()
+        return identity.session if identity else "unbound"
+
     @property
     def _refused(self) -> dict[int, int]:
         from novacode_cli.session.runtime_identity import current_identity
@@ -663,8 +685,15 @@ class ContextCompactionMiddleware(AgentMiddleware):
         )
         reply = next((m for m in reversed(results or []) if isinstance(m, AIMessage)), None)
         seen = ((getattr(reply, "usage_metadata", None) or {}).get("input_tokens")) or 0
+        if seen > 0:
+            key = self._session_key()
+            self._accepted[key] = max(self._accepted.get(key, 0), seen)
         if seen > 0 and raw_tokens > 0:
-            ratio = min(2.0, max(0.9, seen / raw_tokens))
+            # The estimate counts what this middleware sees, which can be more
+            # than is sent: tool schemas deferred behind search_tools, for one
+            # (~18k tokens on a full MCP setup). The floor was 0.9, so that
+            # excess was never corrected and summaries came early.
+            ratio = min(2.0, max(0.5, seen / raw_tokens))
             self._scale = (self._scale + ratio) / 2
 
     # ── planning: stages 1 and 2, and whether stage 3 is due ────────────
@@ -865,6 +894,18 @@ class ContextCompactionMiddleware(AgentMiddleware):
 
         summary = None
         if not waiting:
+            # Once per summary, at WARNING so it reaches nova.log: when one comes
+            # earlier than the context bar suggests, these are the numbers why.
+            logger.warning(
+                "Compacting: ~%d tokens (estimate %d x %.2f) against trigger %d of a "
+                "%d-token window%s",
+                int(plan.raw_tokens * self._scale),
+                plan.raw_tokens,
+                self._scale,
+                plan.limits.trigger,
+                plan.limits.window,
+                f"; learned limit {dict(self._refused)}" if self._refused else "",
+            )
             _announce()
             try:
                 summary = await self._summarize(
@@ -874,7 +915,7 @@ class ContextCompactionMiddleware(AgentMiddleware):
                 failures += 1
                 logger.warning("Context summary failed (attempt %d): %s", failures, error)
             finally:
-                _announce("nova_compaction_end")
+                _announce("nova_compaction_end" if summary is not None else "nova_compaction_failed")
         if summary is None:
             if not overflow and failures < FAILURES_BEFORE_DIGEST:
                 update = None
