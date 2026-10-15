@@ -1038,7 +1038,9 @@ async def main(
     if resume:
         from novacode_cli.session.session_restore import select_session_interactive
 
-        selected_id = await select_session_interactive(session_manager)
+        selected_id = await select_session_interactive(
+            session_manager, project_root=settings.get_workspace_root()
+        )
         if selected_id is None:
             # User cancelled or no sessions available
             return

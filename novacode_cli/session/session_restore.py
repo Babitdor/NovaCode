@@ -272,6 +272,7 @@ def _truncate(text: str | None, max_len: int = 50) -> str:
 
 async def select_session_interactive(
     session_manager: SessionManager | None = None,
+    project_root: Path | None = None,
 ) -> str | None:
     """Present an interactive session picker and return the selected session ID.
 
@@ -281,6 +282,9 @@ async def select_session_interactive(
 
     Args:
         session_manager: Optional SessionManager instance. If None, creates one.
+        project_root: Only list this project's sessions, as the in-app /resume
+            does. Another project's session stays reachable by id
+            (``nova --continue <id>``).
 
     Returns:
         Selected session_id string, or None if cancelled/no sessions.
@@ -295,13 +299,18 @@ async def select_session_interactive(
     # --continue auto-resume filter in get_latest_session().
     sessions = [
         s
-        for s in session_manager.list_sessions(limit=50)
+        for s in session_manager.list_sessions(limit=200)
         if not getattr(s, "cleared", False)
+        and (project_root is None or s.project_root == str(project_root))
     ][:20]
 
     if not sessions:
         console.print()
-        console.print("[yellow]No saved sessions found.[/yellow]")
+        console.print(
+            "[yellow]No saved sessions for this project.[/yellow]"
+            if project_root is not None
+            else "[yellow]No saved sessions found.[/yellow]"
+        )
         console.print("[dim]Sessions are saved automatically every 5 minutes or 5 messages.[/dim]")
         console.print("[dim]Use /save to manually save a session.[/dim]")
         console.print()

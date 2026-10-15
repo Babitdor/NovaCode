@@ -63,3 +63,27 @@ async def test_resume_picker_excludes_cleared(monkeypatch):
     assert "gone" not in captured["ids"]
     assert captured["ids"] == ["keep"]
     assert selected == "keep"
+
+
+async def test_resume_picker_lists_only_this_project(monkeypatch):
+    """`nova --resume` lists the sessions of the project it was started in."""
+    sm = SessionManager(sessions_dir=pathlib.Path(tempfile.mkdtemp()))
+    msgs = [HumanMessage(content="hi")]
+    here, there = pathlib.Path(tempfile.mkdtemp()), pathlib.Path(tempfile.mkdtemp())
+    sm.save_session(session_id="mine", thread_id="t1", messages=msgs, assistant_id="nova", project_root=here)
+    sm.save_session(session_id="other", thread_id="t2", messages=msgs, assistant_id="nova", project_root=there)
+
+    captured: dict = {}
+
+    async def fake_pick(sessions):
+        captured["ids"] = [s.session_id for s in sessions]
+        return None
+
+    monkeypatch.setattr("novacode_cli.tui.pickers.pick_session_tui", fake_pick, raising=True)
+    import sys
+
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True, raising=False)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True, raising=False)
+
+    await select_session_interactive(sm, project_root=here)
+    assert captured["ids"] == ["mine"]
