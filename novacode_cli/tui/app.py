@@ -890,7 +890,41 @@ _TOOL_ERROR_MAX_CHARS = 6_000
 #: How many lines of that output the group renders inline before summarising.
 _TOOL_ERROR_MAX_LINES = 12
 #: Saved messages drawn on resume (the agent still gets the full history).
-_REPLAY_MAX_MESSAGES = 150
+_REPLAY_MAX_MESSAGES = 150  # kept for callers; replay now fits by items (replay_window)
+
+
+def replay_window(messages: list, budget: int) -> list:
+    """The newest messages whose replay fits ``budget`` transcript items.
+
+    A message count was the wrong unit: in a tool-heavy session 150 messages
+    were three or four turns, while each turn's tool calls draw as one group.
+    This counts what is drawn -- a user message, an answer, a run of tool calls
+    -- and starts at a user turn, so the chat never opens mid-turn.
+    """
+    items = 0
+    start = len(messages)
+    in_tools = False
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        kind = getattr(message, "type", "")
+        content = getattr(message, "content", "")
+        has_text = bool(content.strip() if isinstance(content, str) else content)
+        if kind == "human":
+            items += 1
+            in_tools = False
+        elif kind == "ai":
+            if has_text:
+                items += 1
+                in_tools = False
+            if getattr(message, "tool_calls", None) and not in_tools:
+                items += 1
+                in_tools = True
+        if items > budget:
+            break
+        start = index
+    while start < len(messages) and getattr(messages[start], "type", "") != "human":
+        start += 1
+    return messages[start:] if start < len(messages) else messages[-1:] if messages else []
 
 
 def _display_tail(text: str) -> str:
@@ -4997,14 +5031,32 @@ class NovaApp(App):
         from novacode_cli.core.streaming import is_internal_context_text
         from novacode_cli.session import transcript_journal
 
-        # The whole saved history is restored into the agent, but only its tail
-        # is drawn: the transcript holds ~200 widgets and older ones would be
-        # mounted just to be pruned.
-        msgs = self._restored_messages[-_REPLAY_MAX_MESSAGES:]
-
         journal: list[dict[str, Any]] = []
         sessions_dir = getattr(self.session_manager, "sessions_dir", None)
         session_id = getattr(self.session_state, "session_id", None)
+
+        # What the session showed before its current conversation (a /resume or
+        # a plan run starts a new one, seeded with only a summary), then the
+        # current messages; a message both hold is drawn once.
+        earlier: list = []
+        if session_id and hasattr(self.session_manager, "load_history"):
+            with contextlib.suppress(Exception):
+                earlier = await asyncio.to_thread(
+                    self.session_manager.load_history, str(session_id)
+                )
+        seen_ids: set[str] = set()
+        combined: list = []
+        for message in [*earlier, *self._restored_messages]:
+            identity = getattr(message, "id", None)
+            if identity:
+                if identity in seen_ids:
+                    continue
+                seen_ids.add(identity)
+            combined.append(message)
+        # Everything the chat can hold, newest first: it keeps ~200 items, and
+        # older ones would be mounted just to be pruned.
+        msgs = replay_window(combined, _MAX_TRANSCRIPT_WIDGETS - 10)
+
         if sessions_dir and session_id:
             journal = await asyncio.to_thread(
                 transcript_journal.load, sessions_dir, str(session_id)

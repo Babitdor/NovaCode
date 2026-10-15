@@ -6,6 +6,7 @@ including conversation history, todos, and tool state.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -318,6 +319,18 @@ class SessionManager:
         meta_path = session_dir / "meta.json"
         existing_meta = self.load_session_meta(session_id)
         created_at = existing_meta.created_at if existing_meta else now
+
+        # A new conversation under the same session -- /resume, or an approved
+        # plan starting fresh -- is seeded with a summary, and this save is
+        # about to replace what the session showed with that seed. Keep the
+        # outgoing messages, so resuming can still show the whole conversation.
+        if (
+            not cleared
+            and existing_meta is not None
+            and existing_meta.thread_id
+            and existing_meta.thread_id != thread_id
+        ):
+            self._keep_history(session_id, session_dir)
 
         # Compute hashes
         repo_hash = self._compute_repo_hash(project_root) if project_root else None
@@ -679,6 +692,38 @@ class SessionManager:
                 except (TypeError, KeyError):
                     pass
             return None
+
+    def _keep_history(self, session_id: str, session_dir: Path) -> None:
+        """Append the saved messages to ``history.jsonl`` before they are replaced.
+
+        Display history only: the agent is seeded from the snapshot, never from
+        this file. Append-only, one serialized message per line, oldest first.
+        """
+        previous = self._read_snapshot(session_id) or {}
+        saved = previous.get("messages") or []
+        if not saved:
+            return
+        try:
+            with open(session_dir / "history.jsonl", "a", encoding="utf-8") as f:
+                f.writelines(json.dumps(message) + "\n" for message in saved)
+        except OSError:
+            logger.warning("Could not keep session %s history", session_id[:8], exc_info=True)
+
+    def load_history(self, session_id: str) -> list[BaseMessage]:
+        """Messages of this session's earlier conversations (see :meth:`_keep_history`)."""
+        path = self.sessions_dir / session_id / "history.jsonl"
+        messages: list[BaseMessage] = []
+        try:
+            with open(path, encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        with contextlib.suppress(ValueError, TypeError, KeyError):
+                            message = self._deserialize_message(json.loads(line))
+                            if message is not None:
+                                messages.append(message)
+        except OSError:
+            return []
+        return messages
 
     def _read_snapshot(self, session_id: str) -> dict | None:
         try:

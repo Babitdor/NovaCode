@@ -186,3 +186,6 @@ tmp/
 /.pytest-*/
 /.tmp-*
 /.uv-cache-pty/
+
+# Local runtime state of the ruflo Claude Code plugin
+/.claude-flow/
