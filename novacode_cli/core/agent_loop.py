@@ -522,6 +522,18 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                                 color="dim",
                             )
                         continue
+                    # ...and after it, whether it worked or not, so the status
+                    # ends with the summary rather than with the turn.
+                    if isinstance(data, dict) and data.get("type") == "nova_compaction_end":
+                        if compaction_status_started:
+                            compaction_status_started = False
+                            yield ev.ContextMessage(
+                                message="Context compaction finished",
+                                event_type="nova_compaction_end",
+                                icon="⟳",
+                                color="dim",
+                            )
+                        continue
                     # A fan-out's tasks, one event each as they start and finish.
                     # The mapper rejects every other custom payload, so middleware
                     # writing to this stream costs nothing here.

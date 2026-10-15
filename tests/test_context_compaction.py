@@ -167,6 +167,11 @@ def test_the_summary_never_streams_and_the_ui_is_told() -> None:
     assert model.summaries, "the run was meant to compact"
     assert not any("SUMMARY-" in text for text in streamed)
     assert {"type": "nova_compaction_start"} in custom
+    # ...and told when it is done, or its "compacting" status outlives the summary.
+    starts = [i for i, c in enumerate(custom) if c == {"type": "nova_compaction_start"}]
+    ends = [i for i, c in enumerate(custom) if c == {"type": "nova_compaction_end"}]
+    assert len(ends) == len(starts)
+    assert all(s < e for s, e in zip(starts, ends, strict=True))
 
 
 def test_the_replaced_messages_are_saved_and_the_summary_says_where(tmp_path) -> None:
@@ -198,9 +203,16 @@ def test_a_failing_summary_model_never_fails_the_turn(monkeypatch: pytest.Monkey
     model = Worker(fail_summaries=True)
     agent = _agent(model, ContextCompactionMiddleware(model, context_window=WINDOW))
 
+    announced: list[str] = []
+    monkeypatch.setattr(
+        "novacode_cli.agents.context_compaction._announce",
+        lambda event="nova_compaction_start": announced.append(event),
+    )
     out = agent.invoke({"messages": [("user", TASK)]}, CFG)
 
     assert out["messages"][-1].content == "all done"
+    # A failed summary still ends the "compacting" status.
+    assert announced.count("nova_compaction_start") == announced.count("nova_compaction_end") > 0
     # It backs off between attempts rather than asking on every call...
     assert 3 <= len(model.summaries) < 15
     # ...and after three failures compacts without a model.
@@ -543,6 +555,36 @@ def test_a_summary_on_schedule_that_is_still_too_long_is_clipped_and_retried() -
     assert len(sizes) == 2 and sizes[1] < 5_000 < sizes[0]
 
 
+def test_pruning_clears_only_the_oldest_results_it_needs_to(tmp_path) -> None:
+    """Clearing all but the last five made an agent re-read its working set forever.
+
+    Twelve reads just over the prune threshold: only the oldest few go, enough to
+    get under it, and the rest of the working set stays readable.
+    """
+    from novacode_cli.agents.context_compaction import _request_size_tokens
+    from novacode_cli.agents.core_agent import _tool_result_clearing
+
+    window = 20_000
+    middleware = ContextCompactionMiddleware(
+        context_window=window, prune_edit=_tool_result_clearing(window, tmp_path)
+    )
+    history = [HumanMessage(content=TASK, id="h0")]
+    for n in range(1, 13):
+        call = {"id": f"c{n}", "name": "read_file", "args": {"file_path": f"/src/f{n}.rs"}, "type": "tool_call"}
+        history.append(AIMessage(content="", id=f"a{n}", tool_calls=[call]))
+        history.append(ToolMessage(f"file {n} " + "x" * 3_600, tool_call_id=f"c{n}", name="read_file", id=f"t{n}"))
+    prune = middleware.limits(None).prune
+    assert _request_size_tokens(history) > prune
+
+    plan = middleware._plan(_request(history))
+    sent = _results(plan.messages)
+
+    cleared = [n for n in range(1, 13) if "/cleared/" in sent[f"c{n}"]]
+    assert cleared == list(range(1, len(cleared) + 1)), "oldest first"
+    assert 0 < len(cleared) < 7, "more than five recent reads survive"
+    assert _request_size_tokens(plan.messages) < prune
+
+
 def test_pruning_does_not_wait_for_a_trigger_sized_for_a_larger_window() -> None:
     from langchain.agents.middleware import ClearToolUsesEdit
 
@@ -606,3 +648,45 @@ def test_the_planning_pass_runs_off_the_event_loop() -> None:
 
     loop_thread = asyncio.run(run())
     assert ran_on and all(thread != loop_thread for thread in ran_on)
+
+
+def test_a_run_is_not_edited_between_compactions() -> None:
+    """Like Claude Code and Codex: past the old prune point, still sent as it is."""
+    middleware = ContextCompactionMiddleware(context_window=8_000)  # no opt-in pruning
+    history = _history(12)
+    limits = middleware.limits(None)
+    from novacode_cli.agents.context_compaction import _request_size_tokens
+
+    assert limits.prune <= _request_size_tokens(history) < limits.trigger
+
+    plan = middleware._plan(_request(history))
+
+    assert plan.cutoff == 0
+    assert plan.messages == history
+
+
+def test_after_a_summary_the_files_in_use_are_read_back_from_disk(tmp_path) -> None:
+    """As Codex does, so the agent does not open by re-reading its working set."""
+    from deepagents.backends import FilesystemBackend
+
+    from novacode_cli.agents.context_compaction import recent_files
+
+    for name in ("a", "b", "c", "d"):
+        (tmp_path / f"{name}.py").write_text(f"# current {name}\n", encoding="utf-8")
+
+    def read(path: str, n: int) -> list:
+        call = {"id": f"r{n}", "name": "read_file", "args": {"file_path": path}, "type": "tool_call"}
+        return [AIMessage(content="", tool_calls=[call]), ToolMessage("old text", tool_call_id=f"r{n}")]
+
+    head = [HumanMessage(TASK), *read("/a.py", 1), *read("/b.py", 2), *read("/a.py", 3), *read("/d.py", 4)]
+    tail = read("/d.py", 5)  # already on screen, verbatim
+    paths = recent_files(head, tail)
+    assert paths == ["/a.py", "/b.py"], "newest first, no repeats, none the tail shows"
+
+    middleware = ContextCompactionMiddleware(
+        backend=FilesystemBackend(root_dir=str(tmp_path), virtual_mode=True)
+    )
+    restored = asyncio.run(middleware._restore_files([*paths, "/missing.py"], 10_000))
+    assert "# current a" in restored and "# current b" in restored
+    assert "old text" not in restored and "missing" not in restored
+    assert asyncio.run(middleware._restore_files(paths, 0)) == ""

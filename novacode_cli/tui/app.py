@@ -14855,6 +14855,9 @@ class NovaApp(App):
             if e.event_type == "nova_compaction_start":
                 self._start_compaction_indicator()
                 return
+            if e.event_type == "nova_compaction_end":
+                self._stop_compaction_indicator()
+                return
             # Review-cycle start/complete are transient status, not log entries:
             # surface them on the live indicator above the input instead of
             # letting them scroll away in the transcript.

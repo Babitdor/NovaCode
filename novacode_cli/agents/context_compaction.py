@@ -1,20 +1,26 @@
 """Nova's context compaction: one middleware for everything that shrinks a turn.
 
-Before every model call the conversation goes through three stages, cheapest
-first, each only as far as the context pressure requires:
+A run is left as it is until it is compacted, as Claude Code and Codex do.
+Clearing old tool results on every call (the earlier design) stripped the
+agent's working set while it was still using it, and it re-read the same files
+for hundreds of calls. Now:
 
-1. **Prune old tool results.** Results older than the last few are moved out to
-   ``/cleared/`` and replaced by a line naming the file
-   (:mod:`novacode_cli.agents.tool_offload`). Which results go is age by
-   default; with tool verdicts enabled (``/decisions``), a System One model
-   scores each one and only those it calls stale are moved
-   (:mod:`novacode_cli.agents.tool_verdicts`).
-2. **Trim old tool-call arguments.** A 2 KB heredoc the agent wrote forty steps
-   ago is still in every request. Outside the recent tail, long string
-   arguments of *any* tool are cut to their first characters.
-3. **Summarize.** Everything before the recent tail is replaced by one message:
-   the user's own messages verbatim, a model-written summary of the rest, the
-   files touched, and the path of the saved transcript.
+1. **Summarize, once, near the limit.** Everything before the recent tail is
+   replaced by one message: the user's own messages verbatim, a model-written
+   summary of the rest, the task's progress, and the path of the saved
+   transcript.
+2. **Restore the files in use.** The files last read or changed before the
+   tail are read back from disk into that message (as Codex does: up to five,
+   clipped, within the tail's budget), so the agent continues instead of
+   starting with a round of re-reads.
+
+Clearing still happens in two cases. When the provider rejects a request as too
+long, old tool results are moved out to ``/cleared/`` and old tool-call
+arguments trimmed, as an emergency. And with decision-model pruning switched
+on (``/model`` -> Decisions), a System One model scores old results and those
+it calls stale are moved out once the context passes the prune threshold
+(:mod:`novacode_cli.agents.tool_verdicts`); even then only the oldest results
+needed to get back under it go.
 
 This replaces LangChain's ``ContextEditingMiddleware`` and deepagents'
 ``SummarizationMiddleware``. What is different, and why:
@@ -31,6 +37,8 @@ This replaces LangChain's ``ContextEditingMiddleware`` and deepagents'
   each ended) is used instead of a model.
 * **It does not thrash.** Nothing is summarized unless enough would be removed
   to be worth a model call.
+* **The UI is told when it starts and ends.** ``nova_compaction_start`` and
+  ``nova_compaction_end`` bracket the summary call, success or failure.
 * **Sizes are calibrated.** Characters/4 undercounts code and JSON, and this
   middleware runs before others add to the system prompt, so the estimate is
   scaled by what the provider actually reported for the previous request.
@@ -96,6 +104,20 @@ MAX_USER_MESSAGE_CHARS = 4_000
 
 #: Failed summary attempts before the mechanical digest is used instead.
 FAILURES_BEFORE_DIGEST = 3
+
+#: Pruning stops once the request is down to this share of the prune threshold:
+#: low enough that the next few calls do not prune again, while the newest
+#: results -- the files the agent is working from -- stay. Clearing all but a
+#: fixed handful sent an agent whose working set was larger than that around
+#: the same ten reads for hundreds of calls.
+PRUNE_TARGET = 0.8
+
+#: After a summary, the files the agent was working on are read back from disk
+#: into it (as Codex does: up to five, about 5k tokens each), so it does not
+#: start by re-reading them. The total also stays within the kept tail's budget.
+RESTORE_FILES = 5
+RESTORE_FILE_CHARS = 20_000
+_FILE_TOOLS = ("read_file", "edit_file", "write_file")
 
 #: How many calls the mechanical digest lists.
 DIGEST_LINES = 80
@@ -213,6 +235,50 @@ def _request_size_tokens(messages: Sequence[AnyMessage]) -> int:
     """Budget model tokens and encoded image transport size together."""
     image_chars = sum(_encoded_image_chars(message) for message in messages)
     return count_tokens_approximately(messages) + (image_chars + 3) // 4
+
+
+def prune_just_enough(edit: Any, messages: Sequence[AnyMessage], need: int) -> Any:  # noqa: ANN401
+    """``edit``, copied to clear only the oldest results that free ``need`` tokens.
+
+    The copy keeps every result after those, never fewer than ``edit.keep``. A
+    copy rather than a change to ``edit``: one instance serves every call.
+    """
+    from dataclasses import replace
+
+    results = [m for m in messages if isinstance(m, ToolMessage)]
+    freed = cleared = 0
+    for message in results:
+        if freed >= need:
+            break
+        freed += _request_size_tokens([message])
+        cleared += 1
+    return replace(edit, keep=max(edit.keep, len(results) - cleared))
+
+
+def recent_files(head: Sequence[AnyMessage], tail: Sequence[AnyMessage]) -> list[str]:
+    """The files last read or changed in ``head``, newest first.
+
+    Files the kept tail already shows are left out, as are Nova's own history
+    and cleared-result files.
+    """
+    def paths(messages: Sequence[AnyMessage]) -> list[str]:
+        found = []
+        for message in reversed(messages):
+            for call in reversed(getattr(message, "tool_calls", None) or []):
+                path = (call.get("args") or {}).get("file_path")
+                if call.get("name") in _FILE_TOOLS and isinstance(path, str) and path:
+                    found.append(path)
+        return found
+
+    shown = set(paths(tail))
+    picked: list[str] = []
+    for path in paths(head):
+        if path in shown or path in picked or "/conversation_history/" in path or "/cleared/" in path:
+            continue
+        picked.append(path)
+        if len(picked) == RESTORE_FILES:
+            break
+    return picked
 
 
 def effective_view(
@@ -418,12 +484,16 @@ def _run_sync(coroutine: Awaitable[Any]) -> Any:  # noqa: ANN401
         return pool.submit(asyncio.run, coroutine).result()  # type: ignore[arg-type]
 
 
-def _announce() -> None:
-    """Tell the UI a summary is being written; that call itself does not stream."""
+def _announce(event: str = "nova_compaction_start") -> None:
+    """Tell the UI a summary is being written, or (``nova_compaction_end``) is done.
+
+    The summary call itself does not stream. Without the end event the UI's
+    "compacting" status ran on until the whole turn ended.
+    """
     try:
         from langgraph.config import get_stream_writer
 
-        get_stream_writer()({"type": "nova_compaction_start"})
+        get_stream_writer()({"type": event})
     except Exception:  # noqa: BLE001 - outside a graph run there is no stream
         pass
 
@@ -629,13 +699,25 @@ class ContextCompactionMiddleware(AgentMiddleware):
                 logger.debug("Could not queue a scoring pass", exc_info=True)
 
         view = messages
-        if force or count(messages) >= limits.prune:
+        # A run is not edited call by call, as in Claude Code and Codex: the
+        # conversation changes when it is compacted, or when the provider
+        # refused it as too long. Clearing every call left the agent re-reading
+        # its own working set. The one exception is decision-model pruning,
+        # which the user switches on in /model and is the only prune edit wired.
+        if force or (self._prune_edit is not None and count(messages) >= limits.prune):
             if self._prune_edit is not None:
                 pruned = list(messages)
+                # On a refusal, clear all it may; otherwise only the oldest
+                # results that bring the request under the threshold.
+                edit = self._prune_edit if force else prune_just_enough(
+                    self._prune_edit,
+                    messages,
+                    raw(messages) - int(limits.prune * PRUNE_TARGET / self._scale),
+                )
                 try:
                     # Whether to prune is decided above; the edit's own trigger
                     # may be sized for a window larger than the one in force.
-                    self._prune_edit.apply(pruned, count_tokens=lambda _view: 10**12)
+                    edit.apply(pruned, count_tokens=lambda _view: 10**12)
                     view = pruned
                 except Exception:  # noqa: BLE001 - an unpruned turn beats a failed one
                     logger.warning(
@@ -694,9 +776,37 @@ class ContextCompactionMiddleware(AgentMiddleware):
             return None
         return path
 
+    async def _restore_files(self, paths: list[str], budget_chars: int) -> str:
+        """The current text of ``paths``, each clipped, in ``budget_chars`` total."""
+        reader = getattr(self._backend, "aread", None)
+        if reader is None or not paths:
+            return ""
+        sections = []
+        for path in paths:
+            if budget_chars <= 0:
+                break
+            try:
+                result = await reader(path, 0, 2_000)
+            except Exception:  # noqa: BLE001 - a missing file is simply not restored
+                continue
+            data = getattr(result, "file_data", None) or {}
+            text = data.get("content") if isinstance(data, dict) else None
+            if getattr(result, "error", None) or not isinstance(text, str) or data.get("encoding") not in (None, "utf-8"):
+                continue
+            limit = min(RESTORE_FILE_CHARS, budget_chars)
+            clipped = text if len(text) <= limit else text[:limit] + "\n… (clipped; read_file for the rest)"
+            budget_chars -= len(clipped)
+            sections.append(f"### {path}\n```\n{clipped}\n```")
+        if not sections:
+            return ""
+        return (
+            "Files you were working on, as they are on disk now (no need to read them "
+            "again unless you need more than is shown):\n\n" + "\n\n".join(sections)
+        )
+
     def _summary_message(
         self, head: list[AnyMessage], summary: str, path: str | None, limits: Limits,
-        todos: object = None,
+        todos: object = None, restored: str = "",
     ) -> HumanMessage:
         from novacode_cli.context.task_progress import render_task_progress, task_progress
 
@@ -707,6 +817,7 @@ class ContextCompactionMiddleware(AgentMiddleware):
             parts.append(_historical_user_requests(said))
         parts.append(summary)
         parts.append(render_task_progress(progress))
+        parts.append(restored)
         parts.append(_rehydration_note())
         files = [
             f
@@ -762,6 +873,8 @@ class ContextCompactionMiddleware(AgentMiddleware):
             except Exception as error:  # noqa: BLE001 - a failed summary never fails the turn
                 failures += 1
                 logger.warning("Context summary failed (attempt %d): %s", failures, error)
+            finally:
+                _announce("nova_compaction_end")
         if summary is None:
             if not overflow and failures < FAILURES_BEFORE_DIGEST:
                 update = None
@@ -779,7 +892,10 @@ class ContextCompactionMiddleware(AgentMiddleware):
         if ContextSnapshot.capture(request).generation != source_generation:
             logger.info("Discarded superseded automatic compaction")
             return list(request.messages), None
-        message = self._summary_message(head, summary, path, plan.limits, state.get("todos"))
+        restored = await self._restore_files(recent_files(head, tail), plan.limits.keep * 4)
+        message = self._summary_message(
+            head, summary, path, plan.limits, state.get("todos"), restored
+        )
         cutoff = plan.cutoff if plan.prior_cutoff is None else plan.prior_cutoff + plan.cutoff - 1
         logger.info(
             "Compacted %d messages into a summary (~%d tokens before)",

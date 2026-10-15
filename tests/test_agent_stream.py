@@ -903,6 +903,28 @@ def test_session_intent_heading_is_not_streamed_when_split_across_chunks():
     assert not any(isinstance(event, ev.AssistantMessage) for event in events)
 
 
+def test_compaction_status_ends_with_each_summary_not_with_the_turn():
+    class Agent:
+        async def aget_state(self, config):
+            return _State([])
+
+        async def astream(self, inp, **kw):
+            for kind in ("start", "end", "start", "end"):
+                yield ((), "custom", {"type": f"nova_compaction_{kind}"})
+
+        async def aupdate_state(self, **kw):
+            pass
+
+    kinds = [
+        event.event_type
+        for event in _collect(Agent())
+        if isinstance(event, ev.ContextMessage) and "compaction" in (event.event_type or "")
+    ]
+    assert kinds == [
+        "nova_compaction_start", "nova_compaction_end", "nova_compaction_start", "nova_compaction_end"
+    ]
+
+
 def test_ordinary_heading_releases_all_buffered_preview_text():
     class Agent:
         async def aget_state(self, config):

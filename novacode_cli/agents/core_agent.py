@@ -1689,12 +1689,17 @@ def _build_middleware_stack(
             compaction_model,
             backend=composite_backend,
             context_window=context_window,
+            # Only decision-model pruning (opt-in, /model -> Decisions) clears
+            # results during a run; otherwise the run is left as it is until
+            # it is compacted. See ContextCompactionMiddleware._plan.
             prune_edit=_tool_result_clearing(
                 context_window,
                 cleared_dir(agent_dir) if agent_dir else None,
                 _verdict_cache,
                 _verdict_scorer,
-            ),
+            )
+            if _verdict_cache is not None
+            else None,
             scorer=_verdict_scorer,
         )
     )
