@@ -5027,7 +5027,7 @@ class NovaApp(App):
     async def _replay_history_inner(self) -> None:
         from novacode_cli.session.imported_context import MESSAGE_ID, ImportedContext
         from novacode_cli.tui.session_transcript import show_imported_history
-        from novacode_cli.compaction import is_compaction_summary
+        from novacode_cli.compaction import COMPACTION_SUMMARY_MARKER, is_compaction_summary
         from novacode_cli.core.streaming import is_internal_context_text
         from novacode_cli.session import transcript_journal
 
@@ -5035,27 +5035,23 @@ class NovaApp(App):
         sessions_dir = getattr(self.session_manager, "sessions_dir", None)
         session_id = getattr(self.session_state, "session_id", None)
 
-        # What the session showed before its current conversation (a /resume or
-        # a plan run starts a new one, seeded with only a summary), then the
-        # current messages; a message both hold is drawn once.
-        earlier: list = []
-        if session_id and hasattr(self.session_manager, "load_history"):
-            with contextlib.suppress(Exception):
-                earlier = await asyncio.to_thread(
-                    self.session_manager.load_history, str(session_id)
-                )
-        seen_ids: set[str] = set()
-        combined: list = []
-        for message in [*earlier, *self._restored_messages]:
-            identity = getattr(message, "id", None)
-            if identity:
-                if identity in seen_ids:
-                    continue
-                seen_ids.add(identity)
-            combined.append(message)
-        # Everything the chat can hold, newest first: it keeps ~200 items, and
-        # older ones would be mounted just to be pruned.
-        msgs = replay_window(combined, _MAX_TRANSCRIPT_WIDGETS - 10)
+        # As in Claude Code, the chat opens at the last compaction: its summary,
+        # collapsed, in place of the messages it replaced. Those stay on disk
+        # (history.jsonl, conversation_history/), they are just not drawn.
+        restored = list(self._restored_messages)
+        last = max(
+            (
+                i
+                for i, m in enumerate(restored)
+                if getattr(m, "additional_kwargs", {}).get("lc_source") == "summarization"
+                or is_compaction_summary(self._message_text(m))
+            ),
+            default=-1,
+        )
+        summary = restored[last] if last >= 0 else None
+        # Everything after it the chat can hold, newest first: it keeps ~200
+        # items, and older ones would be mounted just to be pruned.
+        msgs = replay_window(restored[last + 1 :], _MAX_TRANSCRIPT_WIDGETS - 10)
 
         if sessions_dir and session_id:
             journal = await asyncio.to_thread(
@@ -5069,8 +5065,19 @@ class NovaApp(App):
                 imported = None
             if imported is not None:
                 await show_imported_history(self, imported.session)
-        if not msgs and not journal:
+        if not msgs and not journal and summary is None:
             return
+        if summary is not None:
+            text = summary.additional_kwargs.get("nova_summary") or self._message_text(
+                summary
+            ).replace(COMPACTION_SUMMARY_MARKER, "", 1)
+            card = Collapsible(
+                Static(Markdown(text.strip())),
+                title="⟳ Conversation compacted · expand for the summary",
+                collapsed=True,
+            )
+            card.add_class("tool")
+            await self._mount(card)
 
         def shown_text(m: Any) -> str:
             if getattr(m, "id", None) == MESSAGE_ID:
@@ -8675,7 +8682,10 @@ class NovaApp(App):
                 values = {"messages": previous.messages if previous else []}
             if thread_id != session_state.thread_id:
                 return
-            messages = list(values.get("messages", []))
+            from novacode_cli.context.history import effective_messages
+
+            # What the agent sees: after a compaction, its summary and the tail.
+            messages = effective_messages(values)
             if pending_prompt is not None:
                 from langchain_core.messages import HumanMessage
 

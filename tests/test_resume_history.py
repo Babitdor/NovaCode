@@ -1,4 +1,4 @@
-"""/resume shows the whole conversation, not only what its newest seed holds."""
+"""/resume opens at the last compaction, as Claude Code does; the rest stays on disk."""
 
 import pathlib
 import tempfile
@@ -57,16 +57,26 @@ def test_replay_fits_by_what_is_drawn_not_by_message_count():
     assert window[-1].id == "r29"
 
 
-async def test_resume_draws_the_earlier_conversation_in_the_chat():
+async def test_resume_opens_at_the_last_compaction():
     import pytest  # noqa: F401 - asyncio mode is configured for the suite
-    from textual.widgets import Static
+    from textual.widgets import Collapsible
 
     from tests.test_tui_compaction_row import _app
+    from novacode_cli.tui.widgets import ChatMessage
 
     sm = _sm()
     first = [HumanMessage("build the TUI with ratatui", id="h1"), AIMessage("Built it.", id="a1")]
     sm.save_session(session_id="s", thread_id="t1", messages=first, assistant_id="nova")
-    seed = [SystemMessage("sys", id="sys"), HumanMessage(f"{COMPACTION_SUMMARY_MARKER}\n...", id="sum")]
+    seed = [
+        SystemMessage("sys", id="sys"),
+        HumanMessage(
+            f"{COMPACTION_SUMMARY_MARKER}\n\nThe TUI was built.",
+            id="sum",
+            additional_kwargs={"lc_source": "summarization"},
+        ),
+        HumanMessage("now add tests", id="h2"),
+        AIMessage("Added them.", id="a2"),
+    ]
     sm.save_session(session_id="s", thread_id="t2", messages=seed, assistant_id="nova")
 
     app = _app()
@@ -78,11 +88,8 @@ async def test_resume_draws_the_earlier_conversation_in_the_chat():
         app._replay_history()
         for _ in range(20):
             await pilot.pause(0.05)
-        from novacode_cli.tui.widgets import ChatMessage
-
-        shown = " ".join(
-            [m.raw_text for m in app._transcript().query(ChatMessage)]
-            + [str(w.render()) for w in app._transcript().query(Static)]
-        )
-        assert "build the TUI with ratatui" in shown and "Built it." in shown
-        assert COMPACTION_SUMMARY_MARKER not in shown
+        said = " ".join(m.raw_text for m in app._transcript().query(ChatMessage))
+        assert "now add tests" in said and "Added them." in said
+        assert "build the TUI with ratatui" not in said, "what the summary replaced is not drawn"
+        card = app._transcript().query(Collapsible).first()
+        assert "compacted" in str(card.title) and card.collapsed
