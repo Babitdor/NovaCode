@@ -8614,7 +8614,7 @@ class NovaApp(App):
             config = {"configurable": {"thread_id": thread_id}}
             # Bound the checkpointer read so a slow/contended DB can't hang /quit.
             try:
-                state = await asyncio.wait_for(agent.aget_state(config), timeout=5.0)
+                state = await self._read_state(agent, config, timeout=5.0)
                 values = state.values or {}
             except Exception:
                 if pending_prompt is None:
@@ -8889,6 +8889,7 @@ class NovaApp(App):
         # Refresh the per-category context breakdown from agent state, then
         # proactively manage the context window once the turn has settled.
         await self._update_context_breakdown()
+        self._share_turn_end_reads(False)
         await self._check_context()
         # Run commands queued during the turn (as commands), then any deferred
         # prompts that weren't consumed as steers.
@@ -8912,7 +8913,7 @@ class NovaApp(App):
 
             ag, _ = self._active_agent()
             config = {"configurable": {"thread_id": self.session_state.thread_id}}
-            state = await ag.aget_state(config)
+            state = await self._read_state(ag, config)
             tracker.context_snapshot = (state.values if state else {}).get("_context_snapshot")
             self._refresh_router_model_from_state(state.values if state else {})
             msgs = effective_messages(state.values) if state else []
@@ -15052,6 +15053,7 @@ class NovaApp(App):
             if getattr(self, "_accumulated_reply", None):
                 self._speak_reply(self._accumulated_reply)
                 self._accumulated_reply = ""
+            self._share_turn_end_reads(True)
             await self._sync_async_task_watcher()
             # The turn is over, so the panel's rows are final: leave them readable
             # (folded to the header) until the next turn's first dispatch.
@@ -15134,6 +15136,51 @@ class NovaApp(App):
         await self._stream_prompt(prompt)
         await self._maybe_run_approved_plan()
 
+    #: How long a state read is shared (see :meth:`_read_state`).
+    _STATE_SHARE_SECONDS = 2.0
+
+    async def _read_state(self, agent: Any, config: dict, *, timeout: float | None = None) -> Any:
+        """``agent.aget_state(config)``, shared by the reads that follow one another.
+
+        A turn's end read the same state three times in a second (the async-task
+        watcher, the session save, the /context breakdown). Each read rebuilds
+        the message history from the checkpoint store on this loop -- 0.3 s on a
+        short conversation, 2 s and more on a long one (freeze.log) -- and the
+        state cannot change between them. So within that window, opened by the
+        turn's ``Done`` and closed when its wrap-up ends (see
+        :meth:`_share_turn_end_reads`), one read serves them all and callers
+        that overlap wait on the same one. Every other read is fresh: a
+        /compact or /clear just after a turn must see the state it changed.
+        """
+        thread = (config.get("configurable") or {}).get("thread_id")
+        key = (id(agent), thread)
+        now = time.monotonic()
+        cached = getattr(self, "_state_read", None)
+        if (
+            cached is not None
+            and cached[0] == key
+            and now - cached[1] < self._STATE_SHARE_SECONDS
+            and getattr(self, "_share_state_reads", False)
+        ):
+            pending = cached[2]
+        else:
+            pending = asyncio.ensure_future(agent.aget_state(config))
+            self._state_read = (key, now, pending)
+        # shield: one caller's timeout must not cancel the read the others share.
+        read = asyncio.shield(pending)
+        try:
+            return await (asyncio.wait_for(read, timeout) if timeout else read)
+        except BaseException:
+            if pending.done() and (pending.cancelled() or pending.exception() is not None):
+                self._state_read = None  # never share a failed read
+            raise
+
+    def _share_turn_end_reads(self, share: bool) -> None:
+        """Open (at ``Done``) or close (after the wrap-up) the shared-read window."""
+        self._share_state_reads = share
+        if share:
+            self._state_read = None  # nothing read mid-turn may be served after it
+
     async def _sync_async_task_watcher(self) -> None:
         """After a turn, watch any newly-launched async subagent so its completion
         surfaces as a notification. Async subagents are otherwise fire-and-forget
@@ -15143,7 +15190,7 @@ class NovaApp(App):
             return
         try:
             config = {"configurable": {"thread_id": self.session_state.thread_id}}
-            state = await asyncio.wait_for(self.agent.aget_state(config), timeout=5.0)
+            state = await self._read_state(self.agent, config, timeout=5.0)
             tasks = state.values.get("async_tasks") or {}
         except Exception:  # noqa: BLE001 — never let telemetry break a turn
             return

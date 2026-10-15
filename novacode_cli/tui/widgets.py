@@ -7,6 +7,7 @@ names for backward compatibility). This module must not import from app.py.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import random
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -944,6 +945,26 @@ class TranscriptScroll(VerticalScroll):
         """Build the scroll region and seed the at-the-bottom state."""
         super().__init__(*args, **kwargs)
         self._at_end: bool | None = None
+        self._styled_classes: frozenset[str] | None = None
+
+    def update_node_styles(self, animate: bool = True) -> None:
+        """Restyle this container alone when only its focus or hover changed.
+
+        Textual restyles a node *and every descendant* on any pseudo-class
+        change. For the transcript that is every widget of the chat, each time
+        the mouse crosses a gap between messages or the chat takes focus: 3-9 s
+        frozen on a long session (freeze.log, 2026-10-15), long enough to stall
+        the checkpoint-lease heartbeat. No rule styles a descendant by the
+        transcript's own focus or hover, so only a change of its classes (which
+        rules could key on) still restyles the whole subtree.
+        """
+        classes = frozenset(self.classes)
+        if classes != self._styled_classes:
+            self._styled_classes = classes
+            super().update_node_styles(animate)
+            return
+        with contextlib.suppress(Exception):  # no active app (tests, teardown)
+            self.app.stylesheet.update_nodes([self], animate=animate)
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         """Announce scroll changes so the jump-to-latest affordance can react."""
