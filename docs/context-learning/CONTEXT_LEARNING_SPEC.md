@@ -20,9 +20,11 @@ Failure model and falsification requirements, in phase order:
    project/session/namespace/thread/task identities. Resume of the same thread
    preserves session ownership; clear/new thread changes it. Counters, episodes,
    calibration, request snapshots, and review queues cannot cross sessions.
-2. Concurrent SQLite writers must contend on renewable thread leases. Expired or
-   superseded fencing tokens cannot write checkpoints or pending writes, even
-   between validation and commit. Validation and publication share a transaction.
+2. Concurrent SQLite writers must contend on renewable thread leases. Superseded
+   fencing tokens cannot write checkpoints or pending writes, even between
+   validation and commit; a lapsed lease nobody took over is extended instead
+   (2026-10-15: refusing it only lost saves when a frozen UI loop stalled the
+   heartbeat). Validation and publication share a transaction.
    Memory writers serialize in process. Unsupported remote backends fail explicitly.
 3. Manual compaction commits only while owning the thread and while its source
    checkpoint revision is current. Cancellation, failed archives, and stale

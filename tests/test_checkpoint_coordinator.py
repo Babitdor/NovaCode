@@ -411,11 +411,19 @@ async def test_renewal_and_delete_require_live_matching_ownership(tmp_path):
             await saver.renew(lease)
             await conn.execute("UPDATE nova_leases SET expires=0")
             await conn.commit()
-            with pytest.raises(CheckpointOwnershipError, match="expired"):
+            # Lapsed but unclaimed (a stalled heartbeat): still the newest fence,
+            # so the write goes through and the lease is extended.
+            await saver.aput(config, empty_checkpoint(), {}, {})
+            await saver.renew(lease)
+            await conn.execute("UPDATE nova_leases SET expires=0")
+            await conn.commit()
+            taken = await saver.acquire("thread")  # now someone takes it over
+            with pytest.raises(CheckpointOwnershipError, match="superseded"):
                 await saver.renew(lease)
-            with pytest.raises(CheckpointOwnershipError, match="expired"):
+            with pytest.raises(CheckpointOwnershipError, match="superseded"):
                 await saver.adelete_thread("thread")
             assert await saver.aget_tuple(config) is not None
+            await saver.release(taken)
         finally:
             current_lease.reset(token)
         async with CheckpointCoordinator(saver).mutation(config, ""):

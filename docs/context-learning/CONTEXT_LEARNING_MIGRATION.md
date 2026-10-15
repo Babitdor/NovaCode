@@ -65,9 +65,10 @@ text, JSON, or streaming JSON output format and reports failure through its
 exit code.
 
 SQLite writes require valid renewable ownership. A competing process receives
-an active-writer restriction; an expired or superseded writer cannot publish.
-After a crash the lease expires, and a fresh writer obtains a higher fencing
-token. Unknown persistence adapters are explicitly restricted from mutation
+an active-writer restriction; a superseded writer cannot publish. A writer
+whose lease lapsed without being taken over (a stalled heartbeat) still holds
+the newest fence, so its next write extends the lease. After a crash the lease
+expires, and a fresh writer obtains a higher fencing token. Unknown persistence adapters are explicitly restricted from mutation
 until equivalent coordination is implemented. The coordinated graph exposes
 asynchronous mutation methods; synchronous mutation methods report this
 restriction.

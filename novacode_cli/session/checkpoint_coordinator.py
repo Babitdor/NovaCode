@@ -86,18 +86,34 @@ class CoordinatedSqliteSaver(AsyncSqliteSaver):
         return Lease(thread, owner, fence)
 
     async def validate(self, thread: str) -> None:
-        """Reject an absent, expired, or superseded invocation lease."""
+        """Reject an absent or superseded lease; extend one that merely lapsed.
+
+        Expiry exists so another writer may take over from a stuck one. Until
+        one does, this lease's fence is still the newest, and validation and
+        ``acquire`` both run inside ``BEGIN IMMEDIATE``, so they cannot
+        interleave: either the takeover came first (the fence changed, and this
+        writer is refused) or this write comes first and extends the lease (and
+        the would-be taker sees an active writer). Refusing a lapsed but
+        unclaimed lease added no safety; it turned a stalled heartbeat -- the
+        UI loop frozen for ~23 s on a long transcript -- into a lost save.
+        Callers hold the transaction (see :meth:`transaction`).
+        """
         lease = current_lease.get()
         if lease is None or lease.thread != str(thread):
             message = "Checkpoint mutation requires coordinated ownership"
             raise CheckpointOwnershipError(message)
         async with self.conn.execute(
-            "SELECT 1 FROM nova_leases WHERE thread=? AND owner=? AND fence=? AND expires>?",
-            (lease.thread, lease.owner, lease.fence, time.time()),
+            "SELECT owner,fence,expires FROM nova_leases WHERE thread=?", (lease.thread,)
         ) as cursor:
-            if not await cursor.fetchone():
-                message = "Checkpoint lease expired or was superseded"
-                raise CheckpointOwnershipError(message)
+            row = await cursor.fetchone()
+        if not row or row[0] != lease.owner or row[1] != lease.fence:
+            message = "Checkpoint lease was superseded by another writer"
+            raise CheckpointOwnershipError(message)
+        if row[2] <= time.time():
+            await self.conn.execute(
+                "UPDATE nova_leases SET expires=? WHERE thread=? AND owner=? AND fence=?",
+                (time.time() + self.lease_seconds, lease.thread, lease.owner, lease.fence),
+            )
 
     async def renew(self, lease: Any) -> None:
         """Extend only the current live lease."""
