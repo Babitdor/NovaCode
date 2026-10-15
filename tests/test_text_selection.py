@@ -65,7 +65,7 @@ def test_part_of_a_markdown_reply_can_be_selected():
 
 
 def test_lines_of_command_output_can_be_selected():
-    from novacode_cli.tui.terminal_view import InlineTerminal
+    from novacode_cli.tui.widgets import OutputLog
 
     cmd = f'"{sys.executable}" -c "print(chr(10).join(\'row-%02d value\' % i for i in range(8)))"'
 
@@ -77,7 +77,7 @@ def test_lines_of_command_output_can_be_selected():
             await app.workers.wait_for_complete()
             for _ in range(6):
                 await pilot.pause()
-            terminal = app.query_one(".bash-inline").query_one(InlineTerminal)
-            return await _drag(pilot, terminal, (2, 2), (7, 3))
+            output = app.query_one(".bash-inline").query_one(OutputLog)
+            return await _drag(pilot, output._output_body, (5, 1), (11, 2))
 
-    assert asyncio.run(drive()) == "row-01 value\nrow-02"
+    assert asyncio.run(drive()) == "row-01 value\n     row-02 "

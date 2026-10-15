@@ -30,6 +30,8 @@ from textual.message import Message
 from textual.widgets import Input, Static, TextArea
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from novacode_cli.tui.app import NovaApp
 
 from novacode_cli.image_utils import ImageData
@@ -853,8 +855,14 @@ class OutputLog(VerticalScroll):
             # Bound decoding too: a multi-megabyte result must not be parsed in
             # full on the UI loop just to discard its beginning afterwards.
             content = content[-(self.max_chars - 1):]
+            if not self.markup and all(c not in content for c in ("\x1b", "\r", "\t")):
+                self._store_lines(Text(line) for line in content.split("\n"))
+                return self
             try:
-                text = Text.from_markup(content) if self.markup else Text.from_ansi(content)
+                if self.markup:
+                    text = Text.from_markup(content)
+                else:
+                    text = Text.from_ansi(content)
             except Exception:  # noqa: BLE001 — malformed output stays visible
                 text = Text(content)
         else:
@@ -866,14 +874,18 @@ class OutputLog(VerticalScroll):
         text = text[-(self.max_chars - 1):]
         text.expand_tabs()
         text = text[-(self.max_chars - 1):]
-        for line in text.split("\n"):
+        self._store_lines(text.split("\n"))
+        return self
+
+    def _store_lines(self, lines: Iterable[Text]) -> None:
+        """Retain bounded logical lines and schedule one coalesced repaint."""
+        for line in lines:
             self._output_lines.append(line)
             self._output_chars += len(line) + 1
         while len(self._output_lines) > self.max_lines or self._output_chars > self.max_chars:
             self._output_chars -= len(self._output_lines.popleft()) + 1
         if self.is_mounted and self._paint_timer is None:
             self._paint_timer = self.set_timer(0.05, self._flush_output)
-        return self
 
     def on_mount(self) -> None:
         self._flush_output()

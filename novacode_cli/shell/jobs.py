@@ -24,7 +24,7 @@ import asyncio
 import threading
 import time
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 
 # ---------------------------------------------------------------------------
@@ -95,7 +95,31 @@ def request_detach() -> bool:
 # Background jobs — the task manager
 # ---------------------------------------------------------------------------
 
-_LOG_MAXLEN = 1000  # bounded live-log buffer (~1000 chunks of <=1KB → ~1MB max)
+_LOG_MAXLEN = 1000
+_LOG_MAX_CHARS = 200_000
+
+
+class BoundedLog(deque[str]):
+    """Keep a job's recent output bounded by both chunks and characters."""
+
+    def __init__(self, chunks: Iterable[str] = ()) -> None:
+        """Load initial chunks through the same size limit as later writes."""
+        super().__init__()
+        self._chars = 0
+        self.extend(chunks)
+
+    def append(self, chunk: str) -> None:
+        """Retain the latest part of a large write without growing with its size."""
+        chunk = chunk[-_LOG_MAX_CHARS:]
+        super().append(chunk)
+        self._chars += len(chunk)
+        while len(self) > _LOG_MAXLEN or self._chars > _LOG_MAX_CHARS:
+            self._chars -= len(super().popleft())
+
+    def extend(self, chunks: Iterable[str]) -> None:
+        """Apply the same bound to bulk writes used when jobs detach."""
+        for chunk in chunks:
+            self.append(chunk)
 
 # Maximum number of completed (non-running) jobs retained in the registry.
 # Completed jobs are kept so ``/jobs`` can list and restart recent ones, but an
@@ -141,7 +165,7 @@ class BackgroundJob:
     silently until the user happens to type again — the monitor watches these
     and reports the result back into the conversation. A user-launched dev
     server, by contrast, is expected to just keep running."""
-    logs: deque = field(default_factory=lambda: deque(maxlen=_LOG_MAXLEN), repr=False)
+    logs: BoundedLog = field(default_factory=BoundedLog, repr=False)
     kill: threading.Event = field(default_factory=threading.Event, repr=False)
     _done: threading.Event = field(default_factory=threading.Event, repr=False)
 

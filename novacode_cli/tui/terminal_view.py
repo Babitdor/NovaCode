@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from itertools import islice
+from threading import Lock
 from typing import TYPE_CHECKING
 
 import pyte
@@ -88,6 +89,7 @@ class InlineTerminal(Static):
         self._screen = _TrackedHistoryScreen(columns, rows)
         self._stream = pyte.Stream(self._screen)
         self._scroll_offset = 0
+        self._screen_lock = Lock()
 
     def on_mount(self) -> None:
         """Draw after Textual has attached the widget to an app."""
@@ -95,24 +97,43 @@ class InlineTerminal(Static):
 
     def feed(self, output: str) -> None:
         """Apply terminal control sequences before repainting the visible screen."""
-        advances_before = self._screen.line_advances
-        self._stream.feed(output)
-        if self._scroll_offset:
-            added = self._screen.line_advances - advances_before
-            self._scroll_offset = min(len(self._screen.history.top), self._scroll_offset + added)
+        self.parse(output)
+        self.repaint()
+
+    def parse(self, output: str) -> None:
+        """Parse PTY output without calling Textual, safe to run off the UI loop."""
+        with self._screen_lock:
+            advances_before = self._screen.line_advances
+            self._stream.feed(output)
+            if self._scroll_offset:
+                added = self._screen.line_advances - advances_before
+                self._scroll_offset = min(
+                    len(self._screen.history.top), self._scroll_offset + added
+                )
+
+    def repaint(self) -> None:
+        """Publish the parsed terminal state on Textual's UI loop."""
         self._paint()
         self._notify_view_change()
 
     def snapshot(self) -> str:
         """Return the latest readable terminal state for the agent log."""
-        return "\n".join(row.rstrip() for row in self._screen.display).strip()
+        with self._screen_lock:
+            return "\n".join(row.rstrip() for row in self._screen.display).strip()
 
     @property
     def view_position(self) -> tuple[int, int]:
         """Return lines above live output and the available scrollback size."""
-        return self._scroll_offset, len(self._screen.history.top)
+        with self._screen_lock:
+            return self._scroll_offset, len(self._screen.history.top)
 
     def _paint(self) -> None:
+        with self._screen_lock:
+            visible = self._visible_lines()
+        self.update(Text("\n".join(visible)))
+
+    def _visible_lines(self) -> list[str]:
+        """Build the current viewport while holding the screen lock."""
         visible = [row.rstrip() for row in self._screen.display]
         if self._scroll_offset:
             history_size = len(self._screen.history.top)
@@ -128,7 +149,7 @@ class InlineTerminal(Static):
             ]
         while visible and not visible[-1]:
             visible.pop()
-        self.update(Text("\n".join(visible)))
+        return visible
 
     def _history_line(self, line: object) -> str:
         """Render pyte's saved cells with the same wide-character rules as its screen."""
@@ -144,26 +165,27 @@ class InlineTerminal(Static):
         return "".join(rendered).rstrip()
 
     def _scroll(self, amount: int) -> bool:
-        previous = self._scroll_offset
-        self._scroll_offset = max(0, min(len(self._screen.history.top), previous + amount))
-        if self._scroll_offset == previous:
-            return False
+        with self._screen_lock:
+            previous = self._scroll_offset
+            self._scroll_offset = max(0, min(len(self._screen.history.top), previous + amount))
+            if self._scroll_offset == previous:
+                return False
         self._paint()
         self._notify_view_change()
         return True
 
     def _notify_view_change(self) -> None:
         if self._on_view_change is not None:
-            self._on_view_change(self._scroll_offset, len(self._screen.history.top))
+            self._on_view_change(*self.view_position)
 
     def on_mouse_scroll_up(self, event: MouseScrollUp) -> None:
         """Scroll this terminal's history before the outer transcript."""
-        if self._scroll(_WHEEL_LINES) or self._screen.history.top:
+        if self._scroll(_WHEEL_LINES) or self.view_position[1]:
             event.stop()
 
     def on_mouse_scroll_down(self, event: MouseScrollDown) -> None:
         """Return toward the live command screen with the mouse wheel."""
-        if self._scroll(-_WHEEL_LINES) or self._screen.history.top:
+        if self._scroll(-_WHEEL_LINES) or self.view_position[1]:
             event.stop()
 
     def on_key(self, event: Key) -> None:

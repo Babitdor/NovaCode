@@ -32,6 +32,19 @@ def test_jobs_slot_lifecycle() -> None:
     assert jobs.get_current() is None
 
 
+def test_background_logs_are_bounded_by_size_as_well_as_chunk_count() -> None:
+    registry = jobs.JobRegistry()
+    job = registry.add("noisy", "shell")
+    for _ in range(1000):
+        registry.append_log(job.id, "x" * 16384)
+    assert len(job.logs) < 1000
+    assert len(job.output) <= jobs._LOG_MAX_CHARS
+
+    job.logs.extend(["old" * 100000, "latest"])
+    assert job.output.endswith("latest")
+    assert len(job.output) <= jobs._LOG_MAX_CHARS
+
+
 @pytest.mark.timeout(30)
 def test_kill_terminates_hung_command_promptly() -> None:
     """A 60s-hung command must die within a few seconds once kill is requested —

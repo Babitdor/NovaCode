@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from collections import deque
 import time
 
-from novacode_cli.shell.jobs import BackgroundJob
+from novacode_cli.shell.jobs import BackgroundJob, BoundedLog
 
 
 def job_snapshot(registry, *, include_logs=False):
@@ -36,7 +35,7 @@ class TabJobRegistry:
             data = dict(row)
             logs = data.pop("logs", [])
             job = BackgroundJob(**data)
-            job.logs = deque(logs, maxlen=1000)
+            job.logs = BoundedLog(logs)
             jobs[job.id] = job
         self._jobs = jobs
 

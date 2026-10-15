@@ -98,41 +98,75 @@ def test_large_ansi_string_is_bounded_before_decoding(monkeypatch):
 
     monkeypatch.setattr(Text, "from_ansi", parse)
     output = OutputLog(max_chars=1000)
-    output.write("discarded " * 100000 + "latest")
+    output.write("discarded " * 100000 + "\x1b[32mlatest")
     assert parsed == [999]
     assert output.lines[-1].text.endswith("latest")
+
+
+def test_plain_shell_output_skips_ansi_decoder(monkeypatch):
+    def unexpected(_content):
+        raise AssertionError("plain output should not use the ANSI parser")
+
+    monkeypatch.setattr(Text, "from_ansi", unexpected)
+    output = OutputLog(markup=False)
+    output.write("first\nsecond")
+    assert [line.text for line in output.lines] == ["first", "second"]
 
 
 async def test_real_noisy_shell_batches_writes_and_prompt_remains_usable(tmp_path, monkeypatch):
     from textual.widgets import Static
 
-    from novacode_cli.tui.widgets import PromptInput
+    from novacode_cli.tui.widgets import OutputLog, PromptInput
     from tests.test_tui_subagent_panel import _app
 
     app = _app()
     script = tmp_path / "noisy.py"
     script.write_text("import sys\nfor n in range(20000): print('row-' + str(n))\n")
-    from novacode_cli.tui.terminal_view import InlineTerminal
-
     writes = []
-    original = InlineTerminal.feed
+    original = OutputLog.write
 
     def feed(widget, content):
         writes.append(1)
         return original(widget, content)
 
-    monkeypatch.setattr(InlineTerminal, "feed", feed)
+    monkeypatch.setattr(OutputLog, "write", feed)
     async with app.run_test(size=(100, 35)) as pilot:
         await app._run_bash(f'!"{sys.executable}" "{script}"')
         await pilot.press("r", "e", "a", "d", "y")
         await app.workers.wait_for_complete()
         await pilot.pause(0.1)
-        output = app._transcript().query_one(".bash-terminal", InlineTerminal)
-        assert "row-19999" in output.snapshot()
+        output = app._transcript().query_one(".bash-inline-log", OutputLog)
+        assert "row-19999" in "\n".join(strip.text for strip in output.lines)
         assert len(writes) < 200, "a command output burst must be coalesced"
         header = app._transcript().query_one(".bash-inline-head", Static)
         assert "running" not in str(header.content)
         assert app.query_one("#prompt", PromptInput).value == "ready"
+
+
+async def test_noisy_interactive_terminal_parses_off_the_ui_loop(tmp_path, monkeypatch):
+    import threading
+
+    from novacode_cli.tui.terminal_view import InlineTerminal, TerminalCommandScreen
+    from tests.test_tui_subagent_panel import _app
+
+    script = tmp_path / "noisy_terminal.py"
+    script.write_text("for n in range(3000): print('row-' + str(n))\n")
+    ui_thread = threading.get_ident()
+    parse_threads = []
+    original = InlineTerminal.parse
+
+    def parse(widget, content):
+        parse_threads.append(threading.get_ident())
+        return original(widget, content)
+
+    monkeypatch.setattr(InlineTerminal, "parse", parse)
+    app = _app()
+    async with app.run_test(size=(100, 35)):
+        await app._run_bash(f'!!"{sys.executable}" "{script}"')
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, TerminalCommandScreen)
+        assert "row-2999" in app.screen.terminal.snapshot()
+        assert any(thread != ui_thread for thread in parse_threads)
 
 
 async def test_execute_capture_stays_bounded_while_all_live_output_streams(monkeypatch):

@@ -10003,7 +10003,13 @@ class NovaApp(App):
                     continue
                 if not chunk:
                     break
-                terminal.feed(chunk)
+                if len(chunk) > 2048:
+                    # pyte parses cell-by-cell in Python. Keep large bursts off
+                    # Textual's event loop so input and task controls still run.
+                    await asyncio.to_thread(terminal.parse, chunk)
+                    terminal.repaint()
+                else:
+                    terminal.feed(chunk)
                 screen = terminal.snapshot()
                 if screen and screen != last_screen:
                     # Screen snapshots preserve the choices shown by programs
