@@ -122,6 +122,17 @@ def _origin_model(message: AnyMessage) -> str | None:
     return metadata.get("model_name") or metadata.get("model")
 
 
+def _model_base(name: str) -> str:
+    """``ollama:deepseek-v4.1-flash:cloud`` -> ``deepseek-v4.1-flash``.
+
+    Providers report a model without the provider prefix or Ollama tag Nova
+    names it by. ponytail: sizes of one family (``qwen3:8b``/``qwen3:32b``)
+    compare equal; their reasoning is kept, which those providers accept.
+    """
+    parts = name.lower().rsplit("/", 1)[-1].split(":")
+    return max(parts, key=len)
+
+
 def _strip_foreign_reasoning(message: AnyMessage, current_model: str | None) -> AnyMessage:
     """Drop provider-specific reasoning produced by a *different* model.
 
@@ -136,7 +147,9 @@ def _strip_foreign_reasoning(message: AnyMessage, current_model: str | None) -> 
     if not current_model or not isinstance(message, AIMessage):
         return message
     origin = _origin_model(message)
-    if origin is None or origin == current_model:
+    # Stripping the model's own reasoning rewrote the whole history before
+    # every call (see RepairToolCallsEachStep.before_model).
+    if origin is None or _model_base(origin) == _model_base(current_model):
         return message
 
     updates: dict[str, Any] = {}

@@ -833,6 +833,27 @@ def test_auto_compaction_is_announced_not_silent():
     assert "compacting" in starts[0].message.lower()
 
 
+def test_a_summary_already_in_the_thread_is_not_a_compaction():
+    """A /resume seed comes back whenever a node rewrites the whole history."""
+
+    class Agent:
+        async def aget_state(self, config):
+            return _State([_SummarizedMsg()])
+
+        async def astream(self, inp, **kw):
+            yield ((), "updates", {"model": {"messages": [_SummarizedMsg()]}})
+            yield ((), "messages", (_Chunk("m1", [{"type": "text", "text": "Done."}]), {}))
+
+        async def aupdate_state(self, **kw):
+            pass
+
+    evts = _collect(Agent())
+    assert not any(
+        isinstance(e, ev.ContextMessage) and e.event_type == "nova_compaction_start"
+        for e in evts
+    )
+
+
 def test_normal_prose_after_summarization_is_kept_and_unannounced():
     """Only the summary block is suppressed — a real answer still commits.
 

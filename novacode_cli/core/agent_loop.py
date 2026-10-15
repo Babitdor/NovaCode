@@ -639,9 +639,12 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                                 except TypeError:
                                     _msgs = []
                             for _msg in _msgs:
+                                # A summary already in the thread (a /resume seed)
+                                # comes back whenever a node rewrites the history.
                                 if (
                                     getattr(_msg, "additional_kwargs", {}).get("lc_source")
                                     == "summarization"
+                                    and getattr(_msg, "id", None) not in seen_message_ids
                                 ):
                                     _post_summarization = True
                                     if not compaction_status_started:

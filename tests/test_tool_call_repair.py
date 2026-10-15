@@ -263,6 +263,21 @@ def test_reasoning_from_the_same_model_is_kept():
     assert out is same or out[0].additional_kwargs.get("reasoning_content") == "keep me"
 
 
+def test_an_ollama_tag_is_not_another_model():
+    """Ollama reports ``deepseek-v4.1-flash`` for Nova's ``deepseek-v4.1-flash:cloud``.
+
+    Read as a switch, the model's own reasoning was stripped before every call,
+    and each strip rewrote the whole history into the checkpoint.
+    """
+    same = AIMessage(
+        content="hi",
+        additional_kwargs={"reasoning": "keep me"},
+        response_metadata={"model_name": "deepseek-v4.1-flash"},
+    )
+    history = [same]
+    assert _sanitize(history, "deepseek-v4.1-flash:cloud") is history
+
+
 def test_foreign_thinking_content_blocks_are_stripped():
     """Anthropic's signed thinking blocks are not portable to another provider."""
     msg = AIMessage(
