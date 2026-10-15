@@ -328,7 +328,11 @@ class RemoteStatusLine:
             if call.state == "running":
                 call.state = "error" if outcome != "done" else "ok"
         try:
-            await asyncio.wait_for(self._edit(self._done_summary(), True), timeout=15)
+            from novacode_cli.remote.streaming import FINAL_DELIVERY_TIMEOUT
+
+            await asyncio.wait_for(
+                self._edit(self._done_summary(), True), timeout=FINAL_DELIVERY_TIMEOUT
+            )
         except Exception:  # noqa: BLE001
             logger.debug("status finalize failed", exc_info=True)
 

@@ -11,6 +11,10 @@ from novacode_cli import ui_events as ev
 
 logger = logging.getLogger(__name__)
 
+#: Seconds a turn's final answer may take to reach the chat. It has to outlast
+#: a rate-limit pause or two: at 15 s, a "retry after 25" lost the answer.
+FINAL_DELIVERY_TIMEOUT = 120
+
 
 def connected_editor(bridge, editor):
     """Stopping /remote prevents a captured local stream from reconnecting it."""
@@ -18,6 +22,11 @@ def connected_editor(bridge, editor):
     async def edit(text, final=False):
         if not bridge.is_connected:
             raise RuntimeError("Remote bridge has been stopped")
+        # A live edit during a 429 pause would only queue behind it, and the
+        # queue is what made a turn's final answer miss its deadline. Skipped,
+        # the pump retries with the latest text once the pause is over.
+        if not final and getattr(bridge, "cooling_down", False):
+            raise RuntimeError("Remote platform is rate-limiting; live edit skipped")
         await editor(text, final)
 
     return edit
@@ -144,7 +153,7 @@ class RemoteAnswerStream:
             final = f"⏹ **Task stopped**\n\n{final}".strip()
         final = final or "✅ Task completed."
         try:
-            await asyncio.wait_for(self.edit(final, True), timeout=15)
+            await asyncio.wait_for(self.edit(final, True), timeout=FINAL_DELIVERY_TIMEOUT)
             return True
         except Exception:
             logger.debug("Final remote answer edit failed", exc_info=True)

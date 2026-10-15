@@ -419,8 +419,8 @@ async def test_telegram_flood_control_delays_next_request_without_plain_fallback
     monkeypatch.setattr(bridge, "_ensure_session", lambda: SimpleNamespace(post=post))
     sleep = AsyncMock()
     monkeypatch.setattr("novacode_cli.remote.telegram_bridge.asyncio.sleep", sleep)
-    assert await bridge._send_html("sendMessage", {"chat_id": 123}, "<b>Hi</b>") is None
-    assert len(requests) == 1
+    # The refused send is resent after the named pause, not dropped (that lost
+    # whole responses), and never as a plain-text fallback.
     assert await bridge._send_html("sendMessage", {"chat_id": 123}, "<b>Hi</b>")
     assert sleep.await_args.args[0] > 119
     assert len(requests) == 2 and all(params["parse_mode"] == "HTML" for params in requests)
@@ -458,3 +458,28 @@ async def test_ctrl_b_agent_stream_is_isolated_from_foreground_and_finishes(monk
         assert "read_file(bg.py)" in status_edit.await_args.args[0]
         target.reply_fn.assert_not_awaited()
         assert app._local_remote_streams == []
+
+
+async def test_live_edits_give_way_while_rate_limited_but_the_final_one_waits():
+    from novacode_cli.remote.streaming import connected_editor
+
+    bridge = SimpleNamespace(is_connected=True, cooling_down=True)
+    editor = AsyncMock()
+    edit = connected_editor(bridge, editor)
+
+    with pytest.raises(RuntimeError, match="rate-limiting"):
+        await edit("partial answer", False)
+    await edit("final answer", True)
+    editor.assert_awaited_once_with("final answer", True)
+
+
+async def test_the_final_answer_outlasts_a_long_rate_limit_pause():
+    """At 15 s, a "retry after 25" cut the final edit off and the answer was lost."""
+    from novacode_cli.remote import streaming
+
+    assert streaming.FINAL_DELIVERY_TIMEOUT >= 60
+    edit = AsyncMock()
+    stream = RemoteAnswerStream(edit)
+    stream.feed(ev.TextDelta("the answer"))
+    assert await stream.finalize()
+    assert edit.await_args.args == ("the answer", True)

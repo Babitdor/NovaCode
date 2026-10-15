@@ -238,7 +238,42 @@ class TelegramBridge:
             self._session = aiohttp.ClientSession()
         return self._session
 
+    #: Attempts for a call Telegram refuses with 429. It names the wait, and a
+    #: refused call was not carried out, so resending cannot duplicate it.
+    _RATE_LIMIT_ATTEMPTS = 3
+
+    @property
+    def cooling_down(self) -> bool:
+        """Telegram asked for a pause (429) that has not elapsed yet."""
+        return self._retry_at > time.monotonic()
+
     async def _api_call(
+        self,
+        method: str,
+        payload: dict[str, Any],
+        *,
+        req_timeout: aiohttp.ClientTimeout | None = None,
+        return_errors: bool = False,
+    ) -> dict[str, Any] | None:
+        """:meth:`_api_call_once`, resending a call refused as rate-limited.
+
+        It used to return ``None`` for that call and move on: when the call was
+        a response's message or its final edit, the response never arrived.
+        """
+        attempts = 1 if method == "getUpdates" else self._RATE_LIMIT_ATTEMPTS
+        for attempt in range(attempts):
+            result = await self._api_call_once(
+                method, payload, req_timeout=req_timeout, return_errors=return_errors
+            )
+            limited = (self._last_api_error or "").lower().startswith("too many requests")
+            if result is not None and not (return_errors and limited):
+                return result
+            if not limited or attempt == attempts - 1:
+                return result
+            # _api_call_once waits out the named pause before the next attempt.
+        return None
+
+    async def _api_call_once(
         self,
         method: str,
         payload: dict[str, Any],

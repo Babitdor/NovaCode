@@ -10702,10 +10702,12 @@ class NovaApp(App):
                 outcome="failed" if answer.error else "stopped" if answer.cancelled else "done"
             )
             if not await answer.finalize():
+                from novacode_cli.remote.streaming import FINAL_DELIVERY_TIMEOUT
+
                 try:
                     await asyncio.wait_for(
                         target.reply_fn(answer.text or "Task finished; live delivery failed."),
-                        timeout=10,
+                        timeout=FINAL_DELIVERY_TIMEOUT,
                     )
                 except Exception:
                     self.notify(
