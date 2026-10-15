@@ -50,6 +50,8 @@ def build_continuation_prompt(
     system_prompt: str,
     NOVA_md_content: str | None = None,
     workspace_state: dict[str, Any] | None = None,
+    *,
+    keep_all: bool = False,
 ) -> list[BaseMessage]:
     """Build a complete continuation prompt in the correct order.
 
@@ -66,6 +68,9 @@ def build_continuation_prompt(
         system_prompt: Base system prompt (static instructions)
         NOVA_md_content: Content of NOVA.md (if available)
         workspace_state: Current workspace state from scan_workspace()
+        keep_all: Keep every message, not only the newest ~30k tokens: for a
+            resume that compacts the conversation right after (/compact
+            summarizes in parts, so it never overflows the window).
 
     Returns:
         List of messages ready to send to the agent
@@ -146,7 +151,7 @@ def build_continuation_prompt(
         # sent back to the provider too; an empty assistant .content is not free.
         text = _message_text(msg) + _tool_call_text(msg) + _reasoning_text(msg)
         est = max(1, (len(text) + 2) // 3)
-        if token_count + est > MAX_RECENT_TOKENS:
+        if token_count + est > MAX_RECENT_TOKENS and not keep_all:
             break
         budget_messages.insert(0, msg)
         token_count += est

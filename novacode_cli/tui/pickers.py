@@ -20,94 +20,59 @@ from textual.widgets.option_list import Option
 
 
 
-class SessionPickerApp(App[str | None]):
-    """Pick a saved session to resume. Returns the chosen ``session_id`` or None."""
+class SessionPickerApp(App[tuple[str, bool] | None]):
+    """``nova --resume``: the chat's /resume screens, before the chat exists.
 
-    CSS = """
-    Screen { align: center middle; background: $surface; }
-    #box {
-        width: 90%; max-width: 120; height: auto; max-height: 90%;
-        border: thick $accent; background: $panel; padding: 1 4;
-    }
-    #title { text-style: bold; color: $accent; margin-bottom: 1; }
-    #sessions { height: auto; max-height: 70%; }
-    #hint { color: $text-muted; margin-top: 1; }
-    #buttons { height: auto; align: center middle; margin-top: 1; }
-    #buttons Button { margin: 0 1; }
+    The same two questions as /resume in the chat, drawn by the same screens
+    and stylesheet in the user's theme: which session, then whether to compact
+    it first. Returns ``(session_id, compact)``, or None on cancel.
     """
 
-    BINDINGS = [
-        Binding("escape", "cancel", "Cancel"),
-        Binding("q", "cancel", "Cancel"),
-        Binding("enter", "resume", "Resume", show=False),
-    ]
+    TITLE = "NovaCode"
 
     def __init__(self, sessions: list[Any]) -> None:
+        from novacode_cli.tui.app import NovaApp
+
+        # The chat's stylesheet, so the screens look as they do in the chat.
+        type(self).CSS = NovaApp.CSS
         super().__init__()
         self._sessions = sessions
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="box"):
-            yield Static(Text("Resume a session"), id="title")
-            yield OptionList(id="sessions")
-            yield Static(
-                Text("↑/↓ select · Enter resume · Esc cancel", style="dim"), id="hint"
-            )
-        yield Footer()
+        self._session_id: str | None = None
 
     def on_mount(self) -> None:
-        ol = self.query_one("#sessions", OptionList)
-        for meta in self._sessions:
-            ol.add_option(Option(self._fmt(meta)))
-        if self._sessions:
-            ol.highlighted = 0
-        ol.focus()
+        from novacode_cli.session.session_restore import resume_option_label
+        from novacode_cli.tui.app import NovaApp
+        from novacode_cli.tui.screens import PickScreen
 
-    @staticmethod
-    def _fmt(meta: Any) -> Text:
-        from pathlib import Path
-
-        from novacode_cli.session.session_restore import (
-            _truncate,
-            format_session_age,
+        NovaApp._apply_saved_theme(self)  # type: ignore[arg-type]
+        self.push_screen(
+            PickScreen(
+                "Resume a session (this path)",
+                [resume_option_label(s) for s in self._sessions],
+                hint="↑/↓ select · Enter resume · Esc cancel",
+            ),
+            self._picked,
         )
 
-        age = format_session_age(meta.last_active)
-        project = Path(meta.project_root).name if meta.project_root else "(no project)"
-        model = meta.model_name or "unknown"
-        # Legacy sessions (no recorded provider) cannot have their model rebuilt
-        # on resume — mark them so the label never promises a restore.
-        if meta.model_name and not getattr(meta, "model_provider", None):
-            model = f"{model} (not restored)"
-        task = _truncate(getattr(meta, "current_task", None), 40) or "—"
-        t = Text()
-        t.append(f"{meta.session_id[:8]}  ", style="bold cyan")
-        t.append(f"{project} ", style="white")
-        t.append(f"({model})  ·  ", style="dim")
-        t.append(f"{meta.message_count} msgs  ·  {age}", style="dim")
-        # Plain-text status (the rich-markup helper returns markup, not for OptionList).
-        t.append(f"  ·  {task}", style="dim")
-        return t
+    def _picked(self, idx: int | None) -> None:
+        from novacode_cli.session.session_restore import RESUME_CHOICE_TITLE, RESUME_CHOICES
+        from novacode_cli.tui.screens import PickScreen
 
-    def on_option_list_option_selected(
-        self, event: OptionList.OptionSelected
-    ) -> None:
-        idx = event.option_index
-        if 0 <= idx < len(self._sessions):
-            self.exit(self._sessions[idx].session_id)
+        if idx is None or not 0 <= idx < len(self._sessions):
+            self.exit(None)
+            return
+        self._session_id = self._sessions[idx].session_id
+        self.push_screen(
+            PickScreen(RESUME_CHOICE_TITLE, RESUME_CHOICES, hint="Enter choose · Esc cancel"),
+            self._chosen,
+        )
 
-    def action_resume(self) -> None:
-        ol = self.query_one("#sessions", OptionList)
-        idx = ol.highlighted
-        if idx is not None and 0 <= idx < len(self._sessions):
-            self.exit(self._sessions[idx].session_id)
-
-    def action_cancel(self) -> None:
-        self.exit(None)
+    def _chosen(self, choice: int | None) -> None:
+        self.exit((self._session_id, choice == 0) if choice in (0, 1) else None)
 
 
-async def pick_session_tui(sessions: list[Any]) -> str | None:
-    """Run the session picker as a standalone Textual app; return the choice."""
+async def pick_session_tui(sessions: list[Any]) -> tuple[str, bool] | None:
+    """Run the --resume picker; ``(session_id, compact)`` or None."""
     return await SessionPickerApp(sessions).run_async()
 
 

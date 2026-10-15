@@ -88,6 +88,7 @@ async def test_restored_metrics_count_continuation_and_injected_baseline():
         session_state=SimpleNamespace(thread_id="restored", _tools=[]),
         _active_agent=lambda: (agent, None), _refresh_router_model_from_state=lambda values: None,
         _routed_model_name=None, model_name="gpt-4o", _maybe_warn_ollama_offload=AsyncMock(),
+        _read_state=lambda agent, config, timeout=None: agent.aget_state(config),
     )
     tracker.reset()
     await NovaApp._update_context_breakdown(app)

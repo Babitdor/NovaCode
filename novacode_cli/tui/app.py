@@ -2271,6 +2271,10 @@ class NovaApp(App):
         await self._eager_voice_warmup()
         # Replay prior conversation when resuming a session.
         self._replay_history()
+        # `nova --resume` asked to resume from a summary.
+        if getattr(self.session_state, "compact_on_resume", False):
+            self.session_state.compact_on_resume = False
+            self.run_worker(self._run_compact(""), exclusive=False)
         # ...and measure what that history costs, so a continued session opens
         # with a real ctx% instead of the empty-window baseline. No-ops when
         # there is no history. on_mount is sync, so this runs as a worker.
@@ -11710,12 +11714,9 @@ class NovaApp(App):
                     )
                 )
                 return
-            options = [
-                f"{s.session_id[:8]}  ({s.model_name or 'unknown'}) · "
-                f"{s.message_count} msgs · {format_session_age(s.last_active)} · "
-                f"{_truncate(getattr(s, 'current_task', None), 40) or '—'}"
-                for s in sessions
-            ]
+            from novacode_cli.session.session_restore import resume_option_label
+
+            options = [resume_option_label(s) for s in sessions]
             idx = await self.push_screen_wait(
                 PickScreen(
                     "Resume a session (this path)",
@@ -11726,6 +11727,15 @@ class NovaApp(App):
             if not (0 <= idx < len(sessions)):
                 return
             target_id = sessions[idx].session_id
+
+        from novacode_cli.session.session_restore import RESUME_CHOICE_TITLE, RESUME_CHOICES
+
+        choice = await self.push_screen_wait(
+            PickScreen(RESUME_CHOICE_TITLE, RESUME_CHOICES, hint="Enter choose · Esc cancel")
+        )
+        if choice not in (0, 1):
+            return
+        compact = choice == 0
 
         # Load the session and build the continuation prompt off the event loop
         # (mirrors the --continue startup path in main.py).
@@ -11746,6 +11756,7 @@ class NovaApp(App):
             system_prompt=get_default_coding_instructions(),
             NOVA_md_content=nova_md,
             workspace_state=current_workspace,
+            keep_all=compact,
         )
 
         # Auto-save the CURRENT conversation before replacing it, then take a
@@ -11872,6 +11883,8 @@ class NovaApp(App):
         await self._transcript().remove_children()
         self._restored_messages = list(session_data.messages or recent_messages or [])
         self._replay_history()
+        if compact:
+            self.run_worker(self._run_compact(""), exclusive=False)
         # Paint the resumed checklist. Previously the restored todos only
         # reached session_state and nothing rendered them, so a resumed
         # session showed no todos until the agent next emitted an update.

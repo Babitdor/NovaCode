@@ -7,6 +7,7 @@ sessions for resumption.
 
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from novacode_cli.config.config import console
 from novacode_cli.session.session_persistence import (
@@ -270,10 +271,27 @@ def _truncate(text: str | None, max_len: int = 50) -> str:
     return text[: max_len - 3] + "..."
 
 
+#: Asked after a session is picked; index 0 compacts it before it continues.
+RESUME_CHOICES = [
+    "Resume from a summary  (compacts the whole conversation first)",
+    "Resume the conversation as is  (its newest messages)",
+]
+RESUME_CHOICE_TITLE = "How should this session resume?"
+
+
+def resume_option_label(meta: Any) -> str:
+    """One session in the resume pickers, in the chat and before it."""
+    return (
+        f"{meta.session_id[:8]}  ({meta.model_name or 'unknown'}) · "
+        f"{meta.message_count} msgs · {format_session_age(meta.last_active)} · "
+        f"{_truncate(getattr(meta, 'current_task', None), 40) or '—'}"
+    )
+
+
 async def select_session_interactive(
     session_manager: SessionManager | None = None,
     project_root: Path | None = None,
-) -> str | None:
+) -> tuple[str, bool] | None:
     """Present an interactive session picker and return the selected session ID.
 
     Displays a Rich table of available sessions and prompts the user to
@@ -287,7 +305,8 @@ async def select_session_interactive(
             (``nova --continue <id>``).
 
     Returns:
-        Selected session_id string, or None if cancelled/no sessions.
+        ``(session_id, compact)`` -- compact when the user chose to resume from
+        a summary -- or None if cancelled/no sessions.
     """
 
     if session_manager is None:

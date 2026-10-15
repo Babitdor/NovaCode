@@ -36,32 +36,35 @@ def _sessions():
     ]
 
 
-async def _drive_pick(select_index, key):
+async def _drive_pick(select_index, *keys):
+    """The chat's /resume screens: the session list, then how to resume."""
     from novacode_cli.tui.pickers import SessionPickerApp
 
     sessions = _sessions()
     app = SessionPickerApp(sessions)
     async with app.run_test() as pilot:
-        ol = app.query_one("#sessions")
+        await pilot.pause()
+        ol = app.screen.query_one("#pick-list")
         assert ol.option_count == len(sessions), ol.option_count
-        ol.focus()
         ol.highlighted = select_index
-        await pilot.press(key)
+        for key in keys:
+            await pilot.press(key)
+            await pilot.pause()
     return app.return_value
 
 
-def test_picker_returns_selected_session():
+def test_picker_returns_selected_session_and_how_to_resume():
     if not _HAS_TEXTUAL:
         return
-    res = asyncio.run(_drive_pick(1, "enter"))
-    assert res == "99887766aa", res
+    assert asyncio.run(_drive_pick(1, "enter", "enter")) == ("99887766aa", True)
+    assert asyncio.run(_drive_pick(0, "enter", "down", "enter")) == ("abcd1234ef", False)
 
 
 def test_picker_cancel_returns_none():
     if not _HAS_TEXTUAL:
         return
-    res = asyncio.run(_drive_pick(0, "escape"))
-    assert res is None, res
+    assert asyncio.run(_drive_pick(0, "escape")) is None
+    assert asyncio.run(_drive_pick(0, "enter", "escape")) is None, "cancel at the second question"
 
 
 async def _drive_onboarding(check, *, provider="anthropic", value="sk-test-123", then_save_anyway=False):

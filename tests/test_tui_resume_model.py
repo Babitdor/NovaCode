@@ -176,6 +176,11 @@ async def _drive(
 ) -> tuple[Any, _Restored, list]:
     restored = _patch_restore(monkeypatch, meta, result)
     app = _build_app(ss)
+
+    async def resume_as_is(screen):  # the "compact first?" question
+        return 1
+
+    monkeypatch.setattr(app, "push_screen_wait", resume_as_is)
     logged: list = []
     # Capture what the user is actually told. The resume reports failures by
     # logging them, so this is the only honest way to assert on surfacing.
@@ -272,3 +277,35 @@ def test_switch_failure_does_not_abort_the_resume(monkeypatch: pytest.MonkeyPatc
     assert app.model_name == LIVE_MODEL
     # And the user is told why, instead of silently getting the wrong model.
     assert any("Model restore failed" in line for line in logged)
+
+
+def test_resume_from_a_summary_seeds_everything_and_compacts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The first answer to \"How should this session resume?\" compacts it."""
+    _patch_restore(monkeypatch, _Meta(None, None), (None, None))
+    seeded: dict = {}
+
+    def builder(**kw):
+        seeded.update(kw)
+        return []
+
+    monkeypatch.setattr("novacode_cli.session.session_prompt_builder.build_continuation_prompt", builder)
+    app = _build_app(_SS())
+    compacted: list = []
+
+    async def summary_first(screen):
+        return 0
+
+    async def fake_compact(text):
+        compacted.append(text)
+
+    monkeypatch.setattr(app, "push_screen_wait", summary_first)
+    monkeypatch.setattr(app, "_run_compact", fake_compact)
+
+    async def run() -> None:
+        async with app.run_test() as pilot:
+            await app._run_resume("/resume resumed-session")
+            await pilot.pause()
+
+    asyncio.run(run())
+    assert seeded.get("keep_all") is True
+    assert compacted == [""]

@@ -1038,12 +1038,15 @@ async def main(
     if resume:
         from novacode_cli.session.session_restore import select_session_interactive
 
-        selected_id = await select_session_interactive(
+        picked = await select_session_interactive(
             session_manager, project_root=settings.get_workspace_root()
         )
-        if selected_id is None:
+        if picked is None:
             # User cancelled or no sessions available
             return
+        selected_id, compact_on_resume = picked
+        # Read by the chat app once it is up (it runs /compact).
+        session_state.compact_on_resume = compact_on_resume
         # Convert resume selection into a continue_session with the selected ID
         continue_session = selected_id
 
@@ -1163,6 +1166,7 @@ async def main(
                 system_prompt=base_system_prompt,
                 NOVA_md_content=nova_md_content,
                 workspace_state=current_workspace,
+                keep_all=getattr(session_state, "compact_on_resume", False),
             )
 
             # Narrow to the recent window for the on-resume transcript replay so

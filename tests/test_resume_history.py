@@ -93,3 +93,17 @@ async def test_resume_opens_at_the_last_compaction():
         assert "build the TUI with ratatui" not in said, "what the summary replaced is not drawn"
         card = app._transcript().query(Collapsible).first()
         assert "compacted" in str(card.title) and card.collapsed
+
+
+def test_a_resume_that_compacts_seeds_the_whole_conversation():
+    """Its newest ~30k tokens are not what a summary of the session needs."""
+    from types import SimpleNamespace
+
+    from novacode_cli.session.session_prompt_builder import build_continuation_prompt
+
+    old = [HumanMessage("x" * 9_000, id=f"h{i}") for i in range(40)]  # ~120k tokens
+    data = SimpleNamespace(memory=None, messages=old, meta=SimpleNamespace(current_task=None, task_status=None, blocked_reason=None, next_step_hint=None), todos=[])
+    trimmed = build_continuation_prompt(data, "sys")
+    whole = build_continuation_prompt(data, "sys", keep_all=True)
+    assert len(trimmed) < 41
+    assert [m.id for m in whole[1:]] == [m.id for m in old]

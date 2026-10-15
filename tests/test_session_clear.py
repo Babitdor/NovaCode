@@ -48,7 +48,7 @@ async def test_resume_picker_excludes_cleared(monkeypatch):
 
     async def fake_pick(sessions):
         captured["ids"] = [s.session_id for s in sessions]
-        return sessions[0].session_id if sessions else None
+        return (sessions[0].session_id, False) if sessions else None
 
     # Force the native picker path and capture what it's handed.
     monkeypatch.setattr(
@@ -62,7 +62,7 @@ async def test_resume_picker_excludes_cleared(monkeypatch):
     selected = await select_session_interactive(sm)
     assert "gone" not in captured["ids"]
     assert captured["ids"] == ["keep"]
-    assert selected == "keep"
+    assert selected == ("keep", False)
 
 
 async def test_resume_picker_lists_only_this_project(monkeypatch):
