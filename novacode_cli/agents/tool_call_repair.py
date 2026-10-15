@@ -34,6 +34,7 @@ so it holds at the point that actually matters: what is about to be sent.
 from __future__ import annotations
 
 import json
+import re
 from typing import TYPE_CHECKING, Any
 
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
@@ -130,7 +131,8 @@ def _model_base(name: str) -> str:
     compare equal; their reasoning is kept, which those providers accept.
     """
     parts = name.lower().rsplit("/", 1)[-1].split(":")
-    return max(parts, key=len)
+    # gpt-4o-2024-08-06 / claude-sonnet-4-5-20250929: a dated snapshot of gpt-4o.
+    return re.sub(r"-\d{4}-?\d{2}-?\d{2}$", "", max(parts, key=len))
 
 
 def _strip_foreign_reasoning(message: AnyMessage, current_model: str | None) -> AnyMessage:
@@ -215,6 +217,12 @@ class RepairToolCallsEachStep(PatchToolCallsMiddleware):
     handling of ``invalid_tool_calls``) stays exactly upstream's, and inherits
     any fix to it. The distinct class name also keeps it from colliding with the
     instance deepagents already installs.
+
+    Pairing repairs are written back to the thread (once; they then hold).
+    Another model's reasoning is only dropped from the request: written back,
+    any mismatch between Nova's model name and the provider's re-stripped every
+    new reply, and each strip rewrote the whole history into the checkpoint --
+    quadratic disk writes over a long task, which froze the machine.
     """
 
     def __init__(self, *, current_model: str | None = None) -> None:
@@ -229,7 +237,7 @@ class RepairToolCallsEachStep(PatchToolCallsMiddleware):
         patched = self.before_agent(state, runtime)
         messages = patched["messages"][1:] if patched else list(state["messages"])
         filled = [_fill_empty_result(m) for m in messages]
-        sanitized = sanitize_history(filled, self._current_model)
+        sanitized = sanitize_history(filled)
         if patched is None and len(sanitized) == len(messages) and all(
             a is b for a, b in zip(sanitized, messages)
         ):
@@ -240,6 +248,22 @@ class RepairToolCallsEachStep(PatchToolCallsMiddleware):
         self, state: AgentState, runtime: Runtime[Any]
     ) -> dict[str, Any] | None:
         return self.before_model(state, runtime)
+
+    def _for_request(self, request: Any) -> Any:  # noqa: ANN401 - a ModelRequest
+        """``request`` without another model's reasoning; itself when there is none."""
+        if not self._current_model:
+            return request
+        messages = list(request.messages)
+        stripped = [_strip_foreign_reasoning(m, self._current_model) for m in messages]
+        if all(a is b for a, b in zip(stripped, messages)):
+            return request
+        return request.override(messages=stripped)
+
+    def wrap_model_call(self, request: Any, handler: Any) -> Any:  # noqa: ANN401
+        return handler(self._for_request(request))
+
+    async def awrap_model_call(self, request: Any, handler: Any) -> Any:  # noqa: ANN401
+        return await handler(self._for_request(request))
 
 
 # DeepSeek rejects an empty tool result outright:

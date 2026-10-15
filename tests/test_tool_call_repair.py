@@ -314,3 +314,36 @@ def test_a_real_switch_no_longer_sends_the_orphan():
     out = _patched(RepairToolCallsEachStep().before_model(state, None))
     assert [m.type for m in out] == ["human", "ai"]
 
+
+
+def test_other_models_reasoning_is_dropped_from_the_request_not_the_thread():
+    """A history rewrite per step was quadratic disk writes over a long task."""
+    from types import SimpleNamespace
+
+    from novacode_cli.agents.tool_call_repair import RepairToolCallsEachStep
+
+    reply = AIMessage(
+        content="hi",
+        additional_kwargs={"reasoning_content": "old thoughts"},
+        response_metadata={"model_name": "old-model"},
+    )
+    state = {"messages": [HumanMessage("go"), reply]}
+    middleware = RepairToolCallsEachStep(current_model="new-model")
+    assert middleware.before_model(state, None) is None, "the thread is not rewritten"
+
+    class Request(SimpleNamespace):
+        def override(self, **kw):
+            return Request(**{**vars(self), **kw})
+
+    sent = []
+    middleware.wrap_model_call(Request(messages=state["messages"]), sent.append)
+    assert "reasoning_content" not in sent[0].messages[1].additional_kwargs
+    assert "reasoning_content" in reply.additional_kwargs, "the stored reply keeps it"
+
+
+def test_a_dated_snapshot_is_the_same_model():
+    from novacode_cli.agents.tool_call_repair import _model_base
+
+    assert _model_base("gpt-4o") == _model_base("gpt-4o-2024-08-06")
+    assert _model_base("claude-sonnet-4-5") == _model_base("claude-sonnet-4-5-20250929")
+    assert _model_base("gpt-4o") != _model_base("gpt-4o-mini")
