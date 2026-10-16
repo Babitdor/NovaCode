@@ -483,3 +483,49 @@ async def test_the_final_answer_outlasts_a_long_rate_limit_pause():
     stream.feed(ev.TextDelta("the answer"))
     assert await stream.finalize()
     assert edit.await_args.args == ("the answer", True)
+
+
+async def test_narration_is_taken_back_so_the_answer_comes_after_the_diffs():
+    """A turn's chat reads: status, diff previews, then the answer -- last."""
+    import asyncio
+
+    from novacode_cli import ui_events as ev
+    from novacode_cli.remote.streaming import RemoteAnswerStream
+
+    calls: list[str] = []
+
+    async def edit(text, final=False):
+        calls.append(text)
+
+    answer = RemoteAnswerStream(edit, interval=0.02)
+    answer.start()
+    answer.feed(ev.TextDelta("Let me look at the parser."))
+    await asyncio.sleep(0.1)
+    assert calls == ["Let me look at the parser."], "narration streams live at first"
+    answer.feed(ev.ToolCall(name="edit_file", display_str="edit_file(a.py)", icon="", call_id="c1"))
+    await asyncio.sleep(0.1)
+    assert calls[-1] == "", "then it is deleted once a tool call shows it was narration"
+    answer.feed(ev.TextDelta("Fixed it."))
+    assert await answer.finalize()
+    assert calls[-1] == "Fixed it."
+
+
+async def test_an_empty_edit_deletes_every_page():
+    from novacode_cli.remote.streaming import PagedEditor
+
+    sent, deleted = [], []
+
+    async def send(body):
+        sent.append(body)
+        return len(sent)
+
+    async def noop(*a):
+        return None
+
+    async def delete(message):
+        deleted.append(message)
+
+    editor = PagedEditor(lambda text: [text[:5], text[5:]], send, noop, delete)
+    await editor("hello world")
+    await editor("")
+    assert deleted == [2, 1] and editor.pages == []

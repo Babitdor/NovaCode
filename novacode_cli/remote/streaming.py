@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import random
 from collections.abc import Callable
@@ -33,7 +34,11 @@ def connected_editor(bridge, editor):
 
 
 class PagedEditor:
-    """Reconcile the entire rendered message, including shrinking/replaced text."""
+    """Reconcile the entire rendered message, including shrinking/replaced text.
+
+    Empty text deletes the message: the answer stream uses it to take back
+    narration that turned out not to be the answer.
+    """
 
     def __init__(self, render: Callable, send: Callable, edit: Callable, delete: Callable):
         self.render, self.send, self.edit, self.delete = render, send, edit, delete
@@ -42,7 +47,7 @@ class PagedEditor:
 
     async def __call__(self, text: str, final: bool = False) -> None:
         async with self.lock:
-            desired = await asyncio.to_thread(self.render, text or "…")
+            desired = await asyncio.to_thread(self.render, text) if text else []
             for index, body in enumerate(desired):
                 if index >= len(self.pages):
                     message = await self.send(body)
@@ -59,7 +64,13 @@ class PagedEditor:
 
 
 class RemoteAnswerStream:
-    """Network work runs in one background pump, never in the token renderer."""
+    """Network work runs in one background pump, never in the token renderer.
+
+    Prose followed by a tool call was narration ("Let me look at…"), not the
+    answer. If it was already shown, its message is deleted, so the answer
+    starts a fresh message at the bottom -- after the turn's diff previews,
+    rather than above them in a message the narration opened.
+    """
 
     def __init__(self, edit: Callable, *, interval: float = 1.3):
         self.edit = edit
@@ -73,6 +84,8 @@ class RemoteAnswerStream:
         self.error: str | None = None
         self.cancelled = False
         self.truncated = False
+        self._shown = False  # a message with streamed text exists in the chat
+        self._retract = False  # that text was narration: delete the message
 
     @property
     def text(self) -> str:
@@ -109,6 +122,7 @@ class RemoteAnswerStream:
             self.text = ""
             self.truncated = False
             self.dirty = False
+            self._retract = self._retract or self._shown
         elif isinstance(event, (ev.Error, ev.ContextOverflow)):
             self.error = event.message
         elif isinstance(event, ev.Cancelled):
@@ -120,10 +134,17 @@ class RemoteAnswerStream:
             while True:
                 await asyncio.sleep(0 if immediate else retry_delay)
                 immediate = False
+                if self._retract:
+                    try:
+                        await self._take_back()
+                    except Exception:
+                        logger.debug("Remote narration delete failed; retrying", exc_info=True)
+                        continue
                 if self.dirty and self.text.strip():
                     self.dirty = False
                     try:
                         await asyncio.wait_for(self.edit(self.text, False), timeout=15)
+                        self._shown = True
                         retry_delay = self.interval
                     except Exception:
                         self.dirty = True
@@ -135,6 +156,10 @@ class RemoteAnswerStream:
         except asyncio.CancelledError:
             return
 
+    async def _take_back(self) -> None:
+        await asyncio.wait_for(self.edit("", False), timeout=15)
+        self._shown = self._retract = False
+
     async def finalize(self, text: str | None = None) -> bool:
         self.closed = True
         if self.task is not None:
@@ -144,6 +169,9 @@ class RemoteAnswerStream:
             except asyncio.CancelledError:
                 pass
             self.task = None
+        if self._retract:  # the answer goes below what came after the narration
+            with contextlib.suppress(Exception):
+                await self._take_back()
         final = text if text is not None else self.text
         if text is None and self.truncated:
             final += "\n\n… (streamed output exceeded the 256,000-character buffer)."

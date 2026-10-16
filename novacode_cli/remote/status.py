@@ -259,13 +259,12 @@ class RemoteStatusLine:
         return "\n\n".join(block for block in _blocks(lines))
 
     def _done_summary(self) -> str:
-        """The settled message: header, plan, then reasoning and tools folded."""
+        """The settled message: header, plan, then the tool log folded.
+
+        The reasoning is shown live only: once the answer is in, the model's
+        working notes are noise beside it.
+        """
         sections = ["\n".join([self._header(done=True), *self._todo_lines()])]
-        if self._reasoning.strip():
-            reasoning = self._reasoning.strip()
-            if len(reasoning) > _REASONING_FINAL:
-                reasoning = "…" + reasoning[-_REASONING_FINAL:]
-            sections.append(_quote(f"**💭 Reasoning**\n{reasoning}"))
         if self._calls:
             log = [self._call_line(c) for c in self._calls[:_LOG_MAX]]
             if len(self._calls) > _LOG_MAX:

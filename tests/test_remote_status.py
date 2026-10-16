@@ -206,14 +206,16 @@ class TestActivityLog:
         s.note("task", "🤖 reviewer", "c1")
         assert s._content().count("reviewer") == 1 and "task(...)" not in s._content()
 
-    async def test_reasoning_is_folded_into_the_final_message_and_prose_is_not(self):
+    async def test_the_settled_message_keeps_neither_reasoning_nor_prose(self):
+        """Live only: once the answer is in, the working notes are noise beside it."""
         edit = _FakeEdit()
         s = RemoteStatusLine(edit, interval=1)
         s.note_text("the loop drops the last row", kind="reasoning")
+        assert "the loop drops the last row" in s._content(), "shown while working"
         s.note_text("Fixed it.", kind="text")
         await s.finalize()
         final = edit.final[-1]
-        assert "**💭 Reasoning**" in final and "the loop drops the last row" in final
+        assert "the loop drops the last row" not in final and "Reasoning" not in final
         assert "Fixed it." not in final, "the answer is its own message"
 
     async def test_prose_before_a_tool_call_is_narration(self):
