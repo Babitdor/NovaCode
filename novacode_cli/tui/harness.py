@@ -73,7 +73,7 @@ class HarnessDock(VerticalScroll):
     DEFAULT_CSS = """
     HarnessDock {
         display: none; height: 1fr; max-width: 40%;
-        border-left: solid $accent; padding: 0 1;
+        border-left: none; padding: 0 1;
     }
     HarnessDock > VerticalScroll { height: auto; }
     .harness-panel { border: round $accent; margin-bottom: 1; padding: 0 1; }

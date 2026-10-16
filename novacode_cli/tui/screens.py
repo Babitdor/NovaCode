@@ -2332,6 +2332,7 @@ class SettingsScreen(ModalScreen[None]):
     """
 
     _PREFERENCES = {
+        "home_dashboard_enabled": True,
         "matrix_rain_enabled": False,
         "submit_on_enter": True,
         "autocomplete_enabled": True,
@@ -2363,6 +2364,16 @@ class SettingsScreen(ModalScreen[None]):
             yield Static(Text("Settings", style="bold"), id="modal-title")
             with VerticalScroll(id="settings-content"):
                 yield Static("APPEARANCE", classes="settings-section")
+                with Horizontal(classes="settings-row"):
+                    yield Switch(
+                        value=self._preference("home_dashboard_enabled"),
+                        id="home-dashboard-toggle",
+                    )
+                    yield Static("Redesigned home screen", classes="settings-label")
+                yield Static(
+                    "Turn off for the classic banner and chat layout. Applies immediately.",
+                    classes="settings-description",
+                )
                 with Horizontal(classes="settings-row"):
                     yield Switch(value=self._preference("matrix_rain_enabled"), id="matrix-rain-toggle")
                     yield Static("Matrix Rain animation", classes="settings-label")
@@ -2434,6 +2445,7 @@ class SettingsScreen(ModalScreen[None]):
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
         key_by_id = {
+            "home-dashboard-toggle": "home_dashboard_enabled",
             "matrix-rain-toggle": "matrix_rain_enabled",
             "submit-enter-toggle": "submit_on_enter",
             "autocomplete-toggle": "autocomplete_enabled",
@@ -2444,7 +2456,9 @@ class SettingsScreen(ModalScreen[None]):
         if key is None:
             return
         self._save_preference(key, event.value)
-        if key == "matrix_rain_enabled":
+        if key == "home_dashboard_enabled":
+            self.app._set_home_dashboard_enabled(enabled=event.value)
+        elif key == "matrix_rain_enabled":
             self.app._set_matrix_rain_enabled(event.value)
         elif key == "submit_on_enter":
             self.app._submit_on_enter = event.value
@@ -2573,7 +2587,7 @@ class ContextScreen(ModalScreen[None]):
     ContextScreen #context-breakdown, ContextScreen #context-metrics,
     ContextScreen #context-explainer { height: auto; margin-bottom: 1; }
     ContextScreen #context-explainer {
-        padding: 1 2; border-left: thick $primary; color: $text-muted;
+        padding: 1 2; border-left: none; color: $text-muted;
     }
     """
 
@@ -5281,16 +5295,16 @@ class RalphScreen(ModalScreen[None]):
     }
     RalphScreen .ralph-iter-card {
         height: auto; padding: 0 1; margin: 0 0;
-        border-left: thick $accent;
+        border-left: none;
     }
     RalphScreen .ralph-iter-card.done {
-        border-left: thick $success;
+        border-left: none;
     }
     RalphScreen .ralph-iter-card.failed {
-        border-left: thick $error;
+        border-left: none;
     }
     RalphScreen .ralph-iter-card.running {
-        border-left: thick $warning;
+        border-left: none;
     }
     RalphScreen #ralph-summary {
         margin-top: 1; padding: 0 0;
@@ -5755,7 +5769,7 @@ class SubagentPreviewScreen(ModalScreen[None]):
 
     BINDINGS = [("escape", "close", "Close")]
     # A page, not a dialog: it fills the screen and is laid out like the main
-    # transcript (#transcript's padding, ChatMessage.user's bar for the task).
+    # transcript (matching its padding and task-message styling).
     # Its ids are its own so the app's #modal-box rules, which outrank any
     # DEFAULT_CSS, cannot shrink it back into a box.
     DEFAULT_CSS = """
@@ -5764,7 +5778,7 @@ class SubagentPreviewScreen(ModalScreen[None]):
     SubagentPreviewScreen #preview-scroll { height: 1fr; padding: 1 2; }
     SubagentPreviewScreen #preview-task {
         height: auto; margin: 1 0; padding: 1 2;
-        border-left: thick $primary; background: $panel; color: $foreground;
+        border-left: none; background: $panel; color: $foreground;
     }
     SubagentPreviewScreen #preview-body { height: auto; }
     SubagentPreviewScreen #preview-hint { height: auto; padding: 0 2; color: $text-muted; }

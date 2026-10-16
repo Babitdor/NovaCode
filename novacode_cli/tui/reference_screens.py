@@ -143,7 +143,7 @@ class ReferenceScreen(ModalScreen[None]):
     ReferenceScreen #reference-list { height: 1fr; min-height: 3; border: none; background: $background; }
     ReferenceScreen .reference-details {
         height: auto; max-height: 6; min-height: 2; padding: 0 1;
-        border-left: thick $accent; background: $panel; margin-top: 1;
+        border-left: none; background: $panel; margin-top: 1;
     }
     ReferenceScreen #reference-detail { height: auto; }
     ReferenceScreen #reference-actions { height: 3; align-horizontal: right; margin-top: 1; }

@@ -21,7 +21,7 @@ class EmbeddedTerminal(Widget):
     EmbeddedTerminal {
         height: 22;
         margin: 1 0;
-        border-left: thick $accent;
+        border-left: none;
         background: $surface;
         padding: 1 4;
         display: block;

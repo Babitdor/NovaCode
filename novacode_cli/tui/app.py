@@ -624,6 +624,7 @@ _TUI_SLASH_COMMANDS = [f"/{name}" for name in TUI_COMMANDS]
 _HOME_RIGHT_MIN_WIDTH = 120
 _HOME_LEFT_MIN_WIDTH = 76
 _HOME_BANNER_MIN_HEIGHT = 48
+_CLASSIC_BANNER_MIN_HEIGHT = 32
 
 
 def _read_tail(path: str, lines: int = 40) -> str:
@@ -1032,6 +1033,11 @@ class NovaApp(App):
         border: solid $accent 65%; background: $background;
     }
     Screen.home #home-header { display: block; }
+    Screen.classic-home #home-header {
+        display: block; border: none; padding: 1 2; background: transparent;
+    }
+    Screen.classic-home #home-banner-caption { display: none; }
+    Screen.classic-home.classic-low #home-header { display: none; }
     #home-banner-slot { height: auto; }
     #home-banner-caption { height: 1; color: $accent; text-align: center; text-style: bold; }
     #home-left, #home-right {
@@ -1119,40 +1125,38 @@ class NovaApp(App):
         height: auto; padding: 0 2;
         background: $surface; margin: 1 0;
     }
-    /* --- /ralph native cards (accent-bar style, like .initlog) --- */
+    /* --- /ralph native cards --- */
     #transcript > .ralph-run {
-        height: auto; border-left: thick $primary;
+        height: auto; border-left: none;
         padding: 0 2; margin: 1 0; background: $surface;
     }
     #transcript > .ralph-iter {
-        height: auto; border-left: thick $accent;
+        height: auto; border-left: none;
         padding: 0 2; margin: 1 0; background: $surface;
     }
-    #transcript > .ralph-iter.done { border-left: thick $success; }
-    #transcript > .ralph-iter.failed { border-left: thick $error; }
+    #transcript > .ralph-iter.done { border-left: none; }
+    #transcript > .ralph-iter.failed { border-left: none; }
     #transcript > .ralph-summary {
-        height: auto; border-left: thick $success;
+        height: auto; border-left: none;
         padding: 0 2; margin: 1 0; background: $surface;
     }
     #transcript > .ralph-status {
-        height: auto; border-left: thick $secondary;
+        height: auto; border-left: none;
         padding: 0 2; margin: 1 0; background: $surface;
     }
     #transcript > .nova-event {
         height: auto; padding: 0 2;
         background: $surface; margin: 1 0;
-        border-left: thick $accent;
+        border-left: none;
     }
-    /* Theme variables, not hardcoded hex: these bars must recolor with /theme
-       like every other accent bar. */
     #transcript > .nova-event.nova-review-start {
-        border-left: thick $primary;
+        border-left: none;
     }
     #transcript > .nova-event.nova-review-complete {
-        border-left: thick $success;
+        border-left: none;
     }
     #transcript > .nova-event.nova-skill-refinement {
-        border-left: thick $warning;
+        border-left: none;
     }
     #cmdpalette {
         width: 100%;
@@ -1602,18 +1606,18 @@ class NovaApp(App):
         background: $background;
         color: $warning;
     }
-    .btw-card { margin: 1 0; border-left: thick $accent-muted; }
+    .btw-card { margin: 1 0; border-left: none; }
     .btw-card > .collapsible--title { color: $accent-muted; background: $surface; }
     .btw-body { padding: 0 2; color: $text-muted; }
     /* Compaction is housekeeping, not conversation: a quiet one-line card that
        expands for the stats and summary. Muted so it recedes in the transcript. */
-    .compact-card { margin: 1 0; border-left: thick $success-muted; }
+    .compact-card { margin: 1 0; border-left: none; }
     .compact-card > .collapsible--title {
         color: $success-muted;
         background: $surface;
     }
     .compact-body { padding: 0 2; color: $text-muted; }
-    .bgshell-card { margin: 1 0; border-left: thick $warning-muted; }
+    .bgshell-card { margin: 1 0; border-left: none; }
     .bgshell-card > .collapsible--title { color: $warning; background: $surface; }
     /* Sized to its output, like the agent card: a command that prints nothing
        (`code .`) used to reserve 30vh for an empty log, inside a body that
@@ -1648,7 +1652,7 @@ class NovaApp(App):
        long run cannot swallow the transcript. */
     .bgagent-card {
         margin: 1 0;
-        border-left: thick $success-muted;
+        border-left: none;
         background: $surface;
     }
     .bgagent-card > .collapsible--title {
@@ -1743,6 +1747,7 @@ class NovaApp(App):
 
         self._animation_fps = DEFAULT_ANIMATION_FPS
         self._animate_matrix_rain = False
+        self._home_dashboard_enabled = True
         self.session_state = session_state
         self.backend = backend
         self.token_tracker = token_tracker
@@ -6336,14 +6341,6 @@ class NovaApp(App):
             body.scroll_end(animate=False)
         else:
             body.update(Text(out, style=body_style))
-        # Animate border to settled state. Theme-derived, not the tokyo-night
-        # hexes this used to hardcode — those survived /theme.
-        final_color = pal.tool_fail if is_error else pal.tool_ok
-        try:
-            comp.styles.animate("border_left", f"thick {final_color}", duration=0.35)
-        except Exception:  # noqa: BLE001
-            pass
-
     async def _handle_subagent(self, e: ev.SubagentActivity) -> None:
         """Render subagent dispatch and completion with collapsible widgets."""
         import time
@@ -9137,8 +9134,7 @@ class NovaApp(App):
         # the startup baseline (prompt only, no tool schemas) while the footer,
         # which is on a refresh timer, showed the full count beside it.
         with suppress(Exception):  # not mounted yet, or mid-teardown
-            self._status_tail = None
-            self._refresh_status()
+            self._refresh_usage_metrics()
 
         await self._maybe_warn_ollama_offload(tracker.model_name)
 
@@ -10944,6 +10940,10 @@ class NovaApp(App):
 
         config = NovaConfig()
         self._ui_preferences_config = config
+        saved_dashboard = config.get("home_dashboard_enabled", True)
+        self._home_dashboard_enabled = (
+            saved_dashboard if isinstance(saved_dashboard, bool) else True
+        )
         self._submit_on_enter = config.get("submit_on_enter", True) is True
         self._autocomplete_enabled = config.get("autocomplete_enabled", True) is True
         self._low_resource_mode = config.get("low_resource_mode", False) is True
@@ -10956,6 +10956,12 @@ class NovaApp(App):
             if isinstance(saved_rain, bool)
             else os.environ.get("NOVA_ANIMATIONS", "").strip().lower() in {"1", "true", "yes"}
         )
+
+    def _set_home_dashboard_enabled(self, *, enabled: bool) -> None:
+        """Switch the empty-chat layout without replacing conversation widgets."""
+        self._home_dashboard_enabled = enabled
+        if self._home_visible:
+            self._show_home_banner()
 
     def _matrix_rain_enabled(self) -> bool:
         """Return the loaded Matrix Rain preference."""
@@ -12684,7 +12690,7 @@ class NovaApp(App):
             return
         self._log(
             Text(
-                "▌ Plan mode is Active",
+                "Plan mode is Active",
                 style="cyan",
             )
         )
@@ -13060,19 +13066,20 @@ class NovaApp(App):
 
         await self._transcript().remove_children()
 
-        # Refresh the home screen: re-show the ASCII-art banner so /clear looks
-        # like a fresh launch, not just an empty transcript.
-        self._show_home_banner()
-
         # Re-baseline context/token accounting for the fresh chat.
         if self.token_tracker is not None:
             try:
                 self.token_tracker.reset(reset_session=True)
             except Exception:  # noqa: BLE001
                 pass
+        # Tools still ship with an empty conversation. Rebuild the same full
+        # estimate as /context instead of displaying the prompt-only baseline.
+        await self._update_context_breakdown()
+        # Paint the home panels after resetting the old conversation's usage.
+        self._show_home_banner()
         # Plan/steer were cleared above — refresh the input badge to match.
         self._update_mode_badge()
-        self._refresh_status()
+        self._refresh_usage_metrics()
 
         self._log(
             Text(
@@ -13082,7 +13089,7 @@ class NovaApp(App):
         )
 
     def _show_home_banner(self) -> None:
-        """Show the compact Matrix lockup above the home conversation."""
+        """Show the Matrix lockup in the chosen home layout."""
         try:
             from novacode_cli.config.config import get_responsive_ascii
 
@@ -13093,13 +13100,13 @@ class NovaApp(App):
             art = get_responsive_ascii(width=width)
             rain = self._home_banner
             if isinstance(rain, MatrixRain) and rain.is_mounted:
-                rain.reflow(art, width)
+                rain.reflow(art, width, compact=self._home_dashboard_enabled)
                 self._set_home_visible(visible=True)
                 return
             rain = MatrixRain(
                 art=art,
                 width=width,
-                compact=True,
+                compact=self._home_dashboard_enabled,
                 animate=self._matrix_rain_enabled(),
                 fps=min(15, self._animation_fps)
                 if self._low_resource_mode
@@ -13114,7 +13121,9 @@ class NovaApp(App):
     def _set_home_visible(self, *, visible: bool) -> None:
         """Keep the dashboard tied to the empty-chat state."""
         self._home_visible = visible
-        self.screen.set_class(visible, "home")
+        root = self._root_screen or self.screen
+        root.set_class(visible and self._home_dashboard_enabled, "home")
+        root.set_class(visible and not self._home_dashboard_enabled, "classic-home")
         rain = self._home_banner
         if isinstance(rain, MatrixRain):
             rain.set_animation_enabled(visible and self._matrix_rain_enabled())
@@ -13124,7 +13133,7 @@ class NovaApp(App):
 
     def _refresh_home_dashboard(self) -> None:
         """Refresh session facts and schedule one local resource sample."""
-        if not self._home_visible:
+        if not self._home_visible or not self._home_dashboard_enabled:
             return
         from novacode_cli._version import __version__
         from novacode_cli.config.config import settings
@@ -13171,11 +13180,13 @@ class NovaApp(App):
             self.call_from_thread(self._show_home_system, snapshot)
 
     def _show_home_system(self, snapshot: SystemSnapshot | None) -> None:
-        if self._home_visible:
+        if self._home_visible and self._home_dashboard_enabled:
             pal = self._palette
-            self.query_one("#home-system", Static).update(
-                system_text(snapshot, accent=pal.accent, muted=pal.muted)
-            )
+            # A resource sample can arrive after shutdown has removed the panel.
+            with suppress(NoMatches):
+                self.query_one("#home-system", Static).update(
+                    system_text(snapshot, accent=pal.accent, muted=pal.muted)
+                )
 
     @on(HomeNavItem.Activated)
     def _open_home_navigation(self, event: HomeNavItem.Activated) -> None:
@@ -13273,6 +13284,7 @@ class NovaApp(App):
                     target.set_class(width < _HOME_RIGHT_MIN_WIDTH, "dashboard-narrow")
                     target.set_class(width < _HOME_LEFT_MIN_WIDTH, "dashboard-compact")
                     target.set_class(height < _HOME_BANNER_MIN_HEIGHT, "dashboard-low")
+                    target.set_class(height < _CLASSIC_BANNER_MIN_HEIGHT, "classic-low")
         if not changed:
             return
         # Status line's right-side counts are baked into a Text (not a widget),
@@ -15334,7 +15346,6 @@ class NovaApp(App):
             output.write(Text(e.text, style=self._palette.tool_fail))
             card = Collapsible(output, title=_esc(title), collapsed=True)
             card.add_class("tool", "error-output")
-            card.styles.border_left = ("thick", self._palette.tool_fail)
             self._close_tool_group()
             await self._mount(card)
             self._scroll_end(force=False)

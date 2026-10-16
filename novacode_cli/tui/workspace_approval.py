@@ -33,7 +33,7 @@ class WorkspaceApprovalApp(App[str | None]):
     }
     #workspace-title { height: auto; text-style: bold; margin-bottom: 1; }
     #workspace-path {
-        height: auto; padding: 1 2; border-left: thick $primary;
+        height: auto; padding: 1 2; border-left: none;
         background: $boost; margin-bottom: 1;
     }
     #workspace-description, .scope-description {

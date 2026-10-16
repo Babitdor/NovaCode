@@ -58,7 +58,7 @@ class UpdateNotice(Vertical):
     """A persistent update notice with a preview and View more action."""
 
     DEFAULT_CSS = """
-    UpdateNotice { height: auto; margin: 1 0; padding: 1 2; border-left: thick $warning; }
+    UpdateNotice { height: auto; margin: 1 0; padding: 1 2; border-left: none; }
     UpdateNotice Static { height: auto; }
     UpdateNotice Button { margin-top: 1; }
     """

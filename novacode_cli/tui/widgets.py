@@ -188,10 +188,12 @@ class MatrixRain(Static):
         self._art_w = art_w  # the art's bounding box, measured with cell_len
         self._width = width
 
-    def reflow(self, art: str, width: int | None) -> None:
-        """Re-grid for a new terminal width (called on resize). No-op if same."""
-        if width == self._width:
+    def reflow(self, art: str, width: int | None, *, compact: bool | None = None) -> None:
+        """Re-grid when the terminal width or banner layout changes."""
+        if width == self._width and (compact is None or compact == self._compact):
             return
+        if compact is not None:
+            self._compact = compact
         self._configure(art, width)
         if self.is_mounted:
             self._init_columns()  # rebuild rain columns for the new width
@@ -993,15 +995,14 @@ class TranscriptScroll(VerticalScroll):
 
 
 class ChatMessage(Vertical):
-    """A single transcript entry: a left accent bar, a role header, and a body.
+    """A single transcript entry with a role header and a body.
 
-    role_class selects the accent color (user / nova / reason). The body is set
+    role_class selects the message styling (user / nova / reason). The body is set
     via :meth:`update_body` with any rich renderable (plain Text while streaming,
     Markdown once committed)."""
 
     DEFAULT_CSS = """
-    /* Even, consistent cards: a colored left accent bar + padding. Only the
-       accent color and header differ between roles (minimal accent-bar style).
+    /* Even, consistent cards use padding and role headers.
        The base background matches the app's own, so the agent's replies read as
        plain transcript rather than a raised card. */
     ChatMessage {
@@ -1016,15 +1017,15 @@ class ChatMessage(Vertical):
     ChatMessage.user:hover { background: $boost; }
     ChatMessage > .role { text-style: bold; }
     ChatMessage > .body { height: auto; }
-    ChatMessage.user { border-left: thick $primary; }
-    ChatMessage.reason { border-left: thick $panel; color: $text-muted; }
+    ChatMessage.user { border-left: none; }
+    ChatMessage.reason { border-left: none; color: $text-muted; }
     /* Collapsed reasoning: only the header row remains, so a long thinking
        trace stays in the transcript as a one-line affordance. */
     ChatMessage.collapsed > .body { display: none; }
     ChatMessage.collapsed { height: auto; }
     /* User turns stand out from the agent's: a raised panel behind the text and
        full-brightness foreground, so what YOU typed is easy to find when
-       scrolling back through a long transcript. The accent bar stays $primary. */
+       scrolling back through a long transcript. */
     ChatMessage.user { background: $panel; color: $foreground; }
     ChatMessage.user > .role { color: $primary; }
     """
@@ -1046,7 +1047,7 @@ class ChatMessage(Vertical):
         # transcript without dominating it.
         self._collapsible = collapsible
         self._collapsed = False
-        # Parse and store custom border color if specified
+        # Store the header's identity color for theme changes.
         self._custom_color = None
         if header.style:
             from rich.style import Style
@@ -1072,12 +1073,6 @@ class ChatMessage(Vertical):
             yield SelectableStatic(self._pending_body or "", classes="body")
 
     def on_mount(self) -> None:
-        # Apply custom border color if set. Only user turns carry an accent bar
-        # (see DEFAULT_CSS) — the agent's replies are unbarred, so a header color
-        # must not re-introduce one.
-        if self._custom_color and self.has_class("user"):
-            self.styles.border_left = ("thick", self._custom_color)
-
         # If update_body ran before the `.body` child existed, apply the stashed
         # renderable now that the children are mounted.
         if self._pending_body is not None:
@@ -1128,7 +1123,7 @@ class ChatMessage(Vertical):
         except Exception:
             pass
 
-        # Parse and store custom border color if specified
+        # Store the header's identity color for theme changes.
         self._custom_color = None
         if header.style:
             from rich.style import Style
@@ -1144,9 +1139,6 @@ class ChatMessage(Vertical):
                     self._custom_color = m.group(0)
                 elif "green" in style_str:
                     self._custom_color = "#10b981"
-
-        if self._custom_color and self.has_class("user"):
-            self.styles.border_left = ("thick", self._custom_color)
 
     def update_body(self, renderable: Any) -> None:
         if self._closing or self._pruning:
