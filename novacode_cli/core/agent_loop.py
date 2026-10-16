@@ -921,6 +921,7 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
             if interrupt_occurred:
                 any_rejected = False
                 plan_approved = False
+                plan_handoff_required = False
                 # (plan text, approved by Nova itself?) for the approved plan.
                 approved_plan: tuple[str, bool] | None = None
                 # When the turn auto-approves (e.g. a /remote turn sets
@@ -958,12 +959,11 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                             hasattr(session_state, "plan_agent")
                             and session_state.plan_agent is not None
                         )
-                        if using_separate_plan_agent:
-                            # Try to extract the plan content from the payload
-                            inline_plan = (payload or {}).get("plan")
-                            if inline_plan:
-                                session_state.set_approved_plan(inline_plan)
-                            session_state.clear_plan_agent()
+                        plan_handoff_required = using_separate_plan_agent or bool(
+                            getattr(session_state, "plan_execution_handoff", False)
+                        )
+                        # Keep the planner/backend alive until the shared handoff
+                        # resolves plans that were written to .nova/plans/.
                         session_state.plan_content = None
 
                         yield ev.ContextMessage(
@@ -1119,6 +1119,10 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                             plan_approved = True
                             _inline = payload.get("plan") if isinstance(payload, dict) else ""
                             approved_plan = (_inline or "", False)
+                            plan_handoff_required = (
+                                getattr(session_state, "plan_agent", None) is not None
+                                or bool(getattr(session_state, "plan_execution_handoff", False))
+                            )
 
                 if any_rejected:
                     yield ev.ErrorOutput("Command rejected. Tell the agent what to do differently.")
@@ -1138,19 +1142,48 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                 else:
                     auto_reject_streak = 0
 
-                # A separate plan agent (/plan) must not be resumed after approval:
-                # it carries the unconditional PlanModeMiddleware, so resuming runs
-                # the read-only planner straight into the plan-mode write block and
-                # it loops. End the turn instead — the caller hands off to the main
-                # execution agent (_maybe_run_approved_plan). Main-agent self-planning
-                # has no separate plan_agent and falls through to resume in-context.
-                if plan_approved and getattr(session_state, "plan_agent", None) is not None:
-                    # exit_plan_mode saves the plan AFTER its interrupt() returns —
-                    # which, since this planner is never resumed, is never. Every
-                    # /plan approval used to leave nothing on disk. Save it here.
-                    _saved = _save_unresumed_plan(approved_plan, session_state)
-                    if _saved:
-                        yield ev.ContextMessage(f"Plan saved to {_saved}", icon="✓", color="green")
+                # The TUI and separate plan agent always hand off through a clean
+                # execution thread. Other non-interactive self-planning callers keep
+                # their legacy in-context behavior.
+                if plan_approved and plan_handoff_required:
+                    approved_text, auto_approved = approved_plan or ("", False)
+                    try:
+                        from novacode_cli.ui.interrupt_handlers import resolve_plan_content
+
+                        resolved, plan_file = resolve_plan_content(
+                            getattr(session_state, "todos", None),
+                            session_state,
+                            backend=getattr(session_state, "plan_backend", None) or backend,
+                            inline_plan=(
+                                approved_text
+                                or getattr(session_state, "approved_plan_content", None)
+                            ),
+                        )
+                    except Exception:  # noqa: BLE001 — approval must not crash on plan lookup
+                        resolved, plan_file = approved_text or None, None
+                    if not resolved or not resolved.strip():
+                        yield ev.Error(
+                            "The plan was approved, but Nova could not load its full text; "
+                            "execution was not started."
+                        )
+                        break
+
+                    if approved_text or auto_approved:
+                        saved = _save_unresumed_plan((resolved, auto_approved), session_state)
+                        if saved:
+                            yield ev.ContextMessage(f"Plan saved to {saved}", icon="✓", color="green")
+                    try:
+                        session_state.set_approved_plan(resolved)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    try:
+                        session_state.clear_plan_agent()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    if plan_file is not None and not approved_text and not auto_approved:
+                        yield ev.ContextMessage(
+                            f"Using the approved plan from {plan_file}", icon="✓", color="green"
+                        )
                     break
 
                 stream_input = Command(

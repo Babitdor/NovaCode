@@ -1482,6 +1482,7 @@ def _build_middleware_stack(
     # Lazy imports for middleware (speeds up startup)
     from novacode_cli.agents.model_retry import NovaModelRetryMiddleware as ModelRetryMiddleware
 
+    from novacode_cli.agents.plan_execution import PlanTodoGuardMiddleware
     from novacode_cli.agents.task_discipline import TaskDisciplineMiddleware
     from novacode_cli.errors import is_retryable_model_error
     from novacode_cli.bootstrap import (
@@ -1657,6 +1658,7 @@ def _build_middleware_stack(
         # Last, so its todo recitation is appended to the FINAL system message
         # (AgentMemoryMiddleware rebuilds it) and sits after the cache breakpoint.
         TaskDisciplineMiddleware(verify_after_edit=os.environ.get("NOVA_VERIFY_AFTER_EDIT") == "1"),
+        PlanTodoGuardMiddleware(),
     ]
 
     # deepagents 0.7 dropped its built-in todo list (0.6 installed one inside

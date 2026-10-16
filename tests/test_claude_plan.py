@@ -80,7 +80,11 @@ async def test_the_command_asks_then_hands_the_approved_plan_to_nova(monkeypatch
     turns = iter([
         PlanTurn(session_id="s-1", text="Which database?"),
         PlanTurn(session_id="s-1", text="Revised.", plan="# v1"),
-        PlanTurn(session_id="s-1", text="Final.", plan="# v2"),
+        PlanTurn(
+            session_id="s-1",
+            text="Final.",
+            plan="# v2\n\n## Steps\n### 1. Add the migration",
+        ),
     ])
     prompts: list[tuple[str, str | None]] = []
 
@@ -104,20 +108,32 @@ async def test_the_command_asks_then_hands_the_approved_plan_to_nova(monkeypatch
     stored: list[str] = []
     app.session_state.set_approved_plan = stored.append  # the real SessionState API
 
-    async def run_approved():
-        ran.append(stored[-1])
+    app.session_state.consume_approved_plan = lambda: stored.pop() if stored else None
+    app.session_state.clear_plan_agent = lambda: None
+    seeded: list[tuple[dict, dict]] = []
+
+    async def update_state(*, config, values, as_node=None):
+        seeded.append((config, values))
+
+    async def stream_prompt(prompt):
+        ran.append(prompt)
+
+    app.agent.aupdate_state = update_state
+    app._stream_prompt = stream_prompt
+    app._paint_todos = lambda _todos: None
 
     async with app.run_test(size=(120, 40)) as pilot:
         monkeypatch.setattr(app, "_show_question_dock", dock)
         monkeypatch.setattr(app, "push_screen_wait", approve)
-        monkeypatch.setattr(app, "_maybe_run_approved_plan", run_approved)
         await app._run_claude_plan("/claude-plan add auth")
         await pilot.pause()
 
     assert prompts[0][1] is None and "add auth" in prompts[0][0]
     assert prompts[1] == ("Postgres", "s-1"), "the answer resumes the same Claude session"
     assert "Add a migration step" in prompts[2][0] and prompts[2][1] == "s-1", "refine resumes too"
-    assert ran == ["# v2"], "only the approved plan reaches Nova"
+    assert len(ran) == 1 and "# v2\n\n## Steps\n### 1. Add the migration" in ran[0]
+    assert len(seeded) == 1 and seeded[0][1]["todos"][0]["content"] == "Add the migration"
+    assert seeded[0][0]["configurable"]["thread_id"] == app.session_state.thread_id
 
 
 @pytest.mark.asyncio

@@ -43,12 +43,14 @@ class _SessionState:
     thread_id = "t1"
 
 
-def _collect(agent, user_input="hi", on_interrupt=None):
+def _collect(agent, user_input="hi", on_interrupt=None, session_state=None):
     """Drive iterate_agent_events to completion, resolving interrupts via on_interrupt."""
 
     async def _run():
         out = []
-        async for e in iterate_agent_events(user_input, agent, "nova-agent", _SessionState()):
+        async for e in iterate_agent_events(
+            user_input, agent, "nova-agent", session_state or _SessionState()
+        ):
             out.append(e)
             if isinstance(e, ev.InterruptRequest):
                 resp = on_interrupt(e) if on_interrupt else None
@@ -694,6 +696,73 @@ def test_plan_auto_approve_completes_turn():
     assert any(isinstance(e, ev.ContextMessage) and "switching to execution mode" in e.message for e in evts), kinds
     assert not session.plan_mode_enabled
     assert session.approved_plan_content == "Mock Plan content"
+
+
+def test_tui_self_plan_handoff_does_not_resume_planning_thread(monkeypatch):
+    from novacode_cli.core import agent_loop
+
+    monkeypatch.setattr(agent_loop, "_save_unresumed_plan", lambda *_args: None)
+
+    class MockInterrupt:
+        def __init__(self, id, value):
+            self.id = id
+            self.value = value
+
+    class Agent:
+        def __init__(self):
+            self.calls = 0
+
+        async def aget_state(self, _config):
+            return _State([])
+
+        async def astream(self, _inp, **_kw):
+            self.calls += 1
+            yield (
+                (),
+                "updates",
+                {
+                    "__interrupt__": [
+                        MockInterrupt(
+                            "plan-int",
+                            {"type": "plan_approval", "plan": "# Approved\n\n## Steps\n1. Do work"},
+                        )
+                    ]
+                },
+            )
+
+        async def aupdate_state(self, **_kw):
+            pass
+
+    class Session:
+        thread_id = "planning-thread"
+        auto_approve = False
+        plan_mode_enabled = True
+        plan_execution_handoff = True
+        plan_agent = None
+        todos = None
+        approved_plan_content = None
+
+        def set_approved_plan(self, plan):
+            self.approved_plan_content = plan
+
+        def clear_plan_agent(self):
+            self.plan_mode_enabled = False
+
+    agent = Agent()
+    session = Session()
+    events = _collect(
+        agent,
+        on_interrupt=lambda _event: {
+            "response": {"approved": True, "mode": "manual"},
+            "state_update": {"plan_mode_enabled": False},
+        },
+        session_state=session,
+    )
+
+    assert agent.calls == 1, "the planning thread must end instead of resuming"
+    assert session.approved_plan_content.startswith("# Approved")
+    assert not session.plan_mode_enabled
+    assert any(isinstance(event, ev.Done) for event in events)
 
 
 def test_policy_denied_retry_loop_is_bounded():

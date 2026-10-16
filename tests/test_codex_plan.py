@@ -88,7 +88,11 @@ async def test_a_failed_turn_is_reported(monkeypatch):
 async def test_the_command_hands_codexs_approved_plan_to_nova(monkeypatch):
     from tests.test_tui_compaction_row import _app
 
-    turns = iter([PlanTurn(session_id="t-1", text="Which database?"), PlanTurn(session_id="t-1", text="ok", plan="# v1")])
+    plan = "# v1\n\n## Steps\n### 1. Add auth"
+    turns = iter([
+        PlanTurn(session_id="t-1", text="Which database?"),
+        PlanTurn(session_id="t-1", text="ok", plan=plan),
+    ])
     prompts: list[tuple[str, str | None]] = []
 
     async def fake_turn(prompt, cwd, *, session_id=None, on_step=None):
@@ -109,18 +113,31 @@ async def test_the_command_hands_codexs_approved_plan_to_nova(monkeypatch):
     async def approve(screen):
         return "auto"
 
-    async def run_approved():
-        ran.append(stored[-1])
+    app.session_state.consume_approved_plan = lambda: stored.pop() if stored else None
+    app.session_state.clear_plan_agent = lambda: None
+    seeded: list[tuple[dict, dict]] = []
+
+    async def update_state(*, config, values, as_node=None):
+        seeded.append((config, values))
+
+    async def stream_prompt(prompt):
+        ran.append(prompt)
+
+    app.agent.aupdate_state = update_state
+    app._stream_prompt = stream_prompt
+    app._paint_todos = lambda _todos: None
 
     async with app.run_test(size=(120, 40)):
         app.session_state.auto_approve = False
         monkeypatch.setattr(app, "_show_question_dock", dock)
         monkeypatch.setattr(app, "push_screen_wait", approve)
-        monkeypatch.setattr(app, "_maybe_run_approved_plan", run_approved)
         await app._run_codex_plan("/codex-plan add auth")
 
     assert prompts[1] == ("Postgres", "t-1")
-    assert ran == ["# v1"] and app._plan_scoped_auto_approve, "auto-approve is scoped to the run"
+    assert len(ran) == 1 and plan in ran[0]
+    assert seeded[0][1]["todos"] == [{"content": "Add auth", "status": "in_progress"}]
+    assert seeded[0][0]["configurable"]["thread_id"] == app.session_state.thread_id
+    assert not app.session_state.auto_approve and not app._plan_scoped_auto_approve
 
 
 @pytest.mark.asyncio

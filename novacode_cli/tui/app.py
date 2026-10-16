@@ -1954,6 +1954,9 @@ class NovaApp(App):
         self._home_dashboard_enabled = True
         self._home_style = "dashboard"
         self.session_state = session_state
+        # Self-planning approvals use the same clean-thread handoff as `/plan`.
+        # Headless and remote runners keep their existing caller-specific flow.
+        self.session_state.plan_execution_handoff = True
         self.backend = backend
         self.token_tracker = token_tracker
         self.image_tracker = image_tracker
@@ -12955,28 +12958,59 @@ class NovaApp(App):
                 self._show_home_banner()
                 self._log(Text("● Plan approved — starting fresh execution…", style="cyan"))
                 _tid = getattr(self.session_state, "thread_id", "?")
-                self._log(
-                    Text(
-                        f"[plan-debug] executing on thread {str(_tid)[:8]}, plan {len(approved)} chars",
-                        style="dim",
-                    )
+                from novacode_cli.agents.plan_execution import (
+                    activate_plan_todo_guard,
+                    build_plan_todos,
                 )
-                await self._stream_prompt(
-                    "The user has approved the following plan. Execute it step by step, "
-                    "marking each step complete as you go:\n\n" + approved
-                )
+
+                todos = build_plan_todos(approved)
+                self.session_state.todos = todos
+                self._paint_todos(todos)
                 try:
-                    _st = await self.agent.aget_state({"configurable": {"thread_id": _tid}})
-                    _msgs = _st.values.get("messages", []) if _st else []
-                    _kinds = [type(m).__name__ for m in _msgs][-6:]
+                    await self.agent.aupdate_state(
+                        config={"configurable": {"thread_id": _tid}},
+                        values={"todos": todos},
+                        as_node="model",
+                    )
+                except Exception as ex:  # noqa: BLE001 — don't execute without a seeded checklist
                     self._log(
                         Text(
-                            f"[plan-debug] after execution: {len(_msgs)} msgs, last={_kinds}",
-                            style="dim",
+                            f"Could not initialize the approved plan checklist: {type(ex).__name__}",
+                            style="red",
                         )
                     )
-                except Exception as _ex:  # noqa: BLE001
-                    self._log(Text(f"[plan-debug] state read failed: {_ex}", style="dim red"))
+                    return
+
+                prompt = (
+                    "The user approved this plan. The current todo list was imported "
+                    "from its implementation steps and verification checks. Read the "
+                    "complete plan below, work through every imported item in order, "
+                    "and keep every imported item verbatim in `write_todos` while "
+                    "updating its status. Do not mark an item complete until its work "
+                    "and relevant verification are done. If blocked, leave it open and "
+                    "explain the blocker. If the imported todo is the generic fallback, "
+                    "first add concrete substeps from the plan and keep that fallback "
+                    "item open until all substeps and verification checks are done.\n\n"
+                    f"<approved_plan>\n{approved}\n</approved_plan>"
+                )
+                with activate_plan_todo_guard([todo["content"] for todo in todos]):
+                    await self._stream_prompt(prompt)
+                try:
+                    _st = await self.agent.aget_state({"configurable": {"thread_id": _tid}})
+                    remaining = [
+                        item
+                        for item in (_st.values.get("todos", []) if _st else [])
+                        if item.get("status") != "completed"
+                    ]
+                    if remaining:
+                        self._log(
+                            Text(
+                                f"Plan execution ended with {len(remaining)} open item(s).",
+                                style="yellow",
+                            )
+                        )
+                except Exception:  # noqa: BLE001 — a state read must not replace the turn result
+                    pass
         finally:
             # "Auto-approve edits" was scoped to this plan run — restore, so
             # the NEXT plan prompts for approval again instead of silently
@@ -16504,16 +16538,9 @@ class NovaApp(App):
                     if not getattr(self.session_state, "auto_approve", False):
                         self._plan_scoped_auto_approve = True
                     self.session_state.auto_approve = True
-                # Store the plan for hand-off ONLY when a separate plan agent
-                # (/plan) produced it. That agent never executes — agent_loop
-                # breaks the turn on approval — so _maybe_run_approved_plan runs
-                # the plan on the main agent.
-                #
-                # For main-agent self-planning (plan_agent is None), the agent
-                # RESUMES in-context after approval and executes the plan inline.
-                # Stashing it here would make _maybe_run_approved_plan fire a
-                # SECOND time — clearing the session and re-executing finished
-                # work. This mirrors agent_loop's `using_separate_plan_agent` gate.
+                # A separate plan agent never executes, so retain its resolved
+                # text for the main-agent handoff. Self-planning is captured by
+                # the canonical loop and handed off there after approval.
                 if content and getattr(self.session_state, "plan_agent", None) is not None:
                     try:
                         self.session_state.set_approved_plan(content)
