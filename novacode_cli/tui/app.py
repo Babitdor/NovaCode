@@ -2946,7 +2946,7 @@ class NovaApp(App):
                     with self.batch_update():
                         self._replaying_history = True
                         try:
-                            for _ in range(4):
+                            for _ in range(2):
                                 if not pane.buffer:
                                     break
                                 if isinstance(pane.buffer[0], ev.InterruptRequest):
