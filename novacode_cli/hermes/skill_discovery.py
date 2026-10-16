@@ -333,9 +333,10 @@ async def refine_skill(
     Unlike the old blind regenerate, this reads the current ``SKILL.md`` and
     the captured ``failure_samples`` (tool + error excerpt) and asks the model
     for a *targeted* improvement that addresses those specific failures. The
-    prior version is snapshotted first, so a bad refinement can be rolled back.
+    improved version is staged in the learning ledger. The installed skill stays
+    unchanged until the proposal is approved and activated between turns.
 
-    On a successful write, ``_record_refinement`` stamps a cooldown record and
+    On a successful proposal, ``_record_refinement`` stamps a cooldown record and
     resets the skill's outcome counters (when *store* is provided) so the same
     skill isn't re-flagged and re-refined on every cycle.
 
@@ -347,7 +348,7 @@ async def refine_skill(
         store: Durable store, for the cooldown record + counter reset.
 
     Returns:
-        True if a refinement was written, False otherwise.
+        True if a refinement was proposed, False otherwise.
     """
     skill_dir = skills_dir / skill_name
     skill_path = skill_dir / "SKILL.md"
@@ -437,7 +438,7 @@ async def refine_skill(
             await _record_refinement(store, skill_name, issue)
         _emit_tui_event(
             "nova_skill_refined",
-            f"Nova refined skill: {skill_name} ({issue}) — previous version saved",
+            f"Nova proposed skill refinement: {skill_name} ({issue}) — /learning review",
         )
         return True
     except Exception as exc:  # noqa: BLE001

@@ -13,10 +13,23 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import pytest
+
 from novacode_cli.hermes import memory_tiers as mt
 from novacode_cli.hermes.skill_manager import SkillManager, _similar_skill
 
 BULLET = "- `apt-get install` needs `apt-get update` first in a fresh container"
+
+
+@pytest.fixture(autouse=True)
+def isolated_skill_proposals(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Send review-created skill proposals to this test's temporary ledger."""
+    from novacode_cli.hermes.ledger import LearningLedger
+
+    monkeypatch.setattr(
+        "novacode_cli.hermes.skill_proposals.main_agent_learning_ledger",
+        lambda: LearningLedger(tmp_path / "learning.sqlite3"),
+    )
 
 
 def _topics(directory: Path) -> list[str]:

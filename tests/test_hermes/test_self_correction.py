@@ -1,19 +1,23 @@
 """Tests for Phase 2 — failure-grounded self-correction.
 
-Covers per-skill failure-sample capture and the rewritten ``refine_skill``
-that consumes those samples and snapshots before overwriting.
+Covers per-skill failure-sample capture and refinement proposals grounded in
+those samples.
 """
 
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 import pytest
 
 import novacode_cli.config.model_create as model_create_mod
-from novacode_cli.hermes.tracker import ToolUsageTracker
 from novacode_cli.hermes.skill_discovery import refine_skill
+from novacode_cli.hermes.tracker import ToolUsageTracker
 from novacode_cli.skills import versioning
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class FakeStore:
@@ -35,6 +39,17 @@ class FakeStore:
 @pytest.fixture
 def tracker():
     return ToolUsageTracker(FakeStore(), enabled=True)
+
+
+@pytest.fixture(autouse=True)
+def isolated_learning_ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep refinement proposals in the ledger asserted by these tests."""
+    from novacode_cli.hermes.ledger import LearningLedger
+
+    monkeypatch.setattr(
+        "novacode_cli.hermes.skill_proposals.main_agent_learning_ledger",
+        lambda: LearningLedger(tmp_path / "learning.sqlite3"),
+    )
 
 
 # ── failure-sample capture ───────────────────────────────────────────────────
@@ -100,7 +115,7 @@ def _make_skill(skills_dir, name, body):
 
 
 class TestGroundedRefinement:
-    async def test_refine_uses_failure_samples_and_writes(self, tmp_path, monkeypatch):
+    async def test_refine_uses_failure_samples_and_proposes(self, tmp_path, monkeypatch):
         skills_dir = tmp_path / "skills"
         _make_skill(skills_dir, "flaky", "Run pytest -x")
         improved = '---\nname: flaky\ndescription: "fixed"\n---\n\n# flaky\n\nRun uv run pytest\n'
@@ -120,7 +135,7 @@ class TestGroundedRefinement:
         # The failure sample was injected into the refinement prompt.
         assert "command not found" in fake.last_prompt
 
-    async def test_refine_snapshots_before_overwrite(self, tmp_path, monkeypatch):
+    async def test_refine_preserves_source_until_approval(self, tmp_path, monkeypatch):
         skills_dir = tmp_path / "skills"
         d = _make_skill(skills_dir, "flaky", "original step")
         improved = '---\nname: flaky\ndescription: "x"\n---\n\nnew step\n'

@@ -2,9 +2,8 @@
 
 Runs periodically (piggybacked on the review cycle) and does three things:
 
-1. **Archive unused** — skills that have never been invoked and are older than a
-   threshold are soft-moved to the archive (recoverable via the same mechanism
-   as a soft-delete). Keeps the library lean without losing anything.
+1. **Propose archival** — old agent-created skills that were never invoked get
+   a recoverable archive proposal. Approval moves them between turns.
 2. **Flag overlaps** — near-duplicate skills (by name + description similarity)
    are reported via an event so you can decide whether to merge. The curator
    never merges automatically (deliberate: a wrong merge is destructive).
@@ -111,10 +110,9 @@ async def run_curation(
     overlap_threshold: float = _DEFAULT_OVERLAP_THRESHOLD,
     now: float | None = None,
 ) -> dict[str, list]:
-    """Run one curation pass. Returns ``{"archived": [...], "overlaps": [...]}``.
+    """Run one curation pass; ``archived`` names pending archive proposals.
 
-    Only archives skills the agent created (tracked in ``created_skills``) so a
-    user's hand-written skill is never auto-archived for being unused.
+    Only agent-created skills (tracked in ``created_skills``) are eligible.
     """
     from novacode_cli.hermes.skill_proposals import propose_skill
 

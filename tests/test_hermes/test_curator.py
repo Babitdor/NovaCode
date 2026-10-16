@@ -45,8 +45,28 @@ def _make_skill(skills_dir: Path, name: str, description: str) -> Path:
 
 
 @pytest.fixture
-def env(tmp_path):
-    return tmp_path / "skills", FakeStore()
+def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, FakeStore]:
+    from novacode_cli.config import config as config_module
+
+    skills_dir = tmp_path / "skills"
+    agent_dir = tmp_path / "agent"
+
+    class Settings:
+        @classmethod
+        def from_environment(cls) -> Settings:
+            return cls()
+
+        def ensure_user_skills_dir(self) -> Path:
+            return skills_dir
+
+        def get_project_skills_dirs(self) -> list[Path]:
+            return []
+
+        def get_agent_dir(self, _agent_name: str) -> Path:
+            return agent_dir
+
+    monkeypatch.setattr(config_module, "Settings", Settings)
+    return skills_dir, FakeStore()
 
 
 async def _seed_created(store, name, ts):
@@ -59,12 +79,25 @@ async def _seed_usage(store, name, invocations):
 
 class TestArchiveUnused:
     async def test_archives_old_unused_created(self, env):
+        from novacode_cli.hermes.activation import ActivationManager
+        from novacode_cli.hermes.ledger import LearningLedger
+        from novacode_cli.hermes.memory_tiers import project_memory_key
+
         skills_dir, store = env
         _make_skill(skills_dir, "stale", "does a thing")
         now = time.time()
         await _seed_created(store, "stale", now - 30 * _DAY)
         result = await run_curation(store, skills_dir, now=now)
         assert "stale" in result["archived"]
+        assert (skills_dir / "stale").exists()
+        agent_dir = skills_dir.parent / "agent"
+        ledger = LearningLedger(agent_dir / "learning.sqlite3")
+        proposal = ledger.list()[-1]
+        assert proposal.kind == "skill_archive"
+        assert proposal.status == "candidate"
+        ledger.transition(proposal.reference, "approve")
+        assert (skills_dir / "stale").exists()
+        ActivationManager(agent_dir, project_memory_key(Path.cwd())).apply_pending()
         assert not (skills_dir / "stale").exists()
         assert (skills_dir.parent / "skills-archive").exists()
 

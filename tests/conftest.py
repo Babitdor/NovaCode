@@ -35,6 +35,16 @@ _CREDENTIAL_ENV_VARS = (
 
 
 @pytest.fixture(autouse=True)
+def _isolate_learning_auto_approval(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep generated proposals pending regardless of the developer's config."""
+    from novacode_cli.hermes import ledger, skill_proposals
+
+    monkeypatch.setattr(ledger, "auto_approve_enabled", lambda: False)
+    # This module imports the helper by name, so patch its bound reference too.
+    monkeypatch.setattr(skill_proposals, "auto_approve_enabled", lambda: False)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_recovery_archives(tmp_path, monkeypatch):
     """Test compaction never publishes archives into the user's recovery store."""
     from novacode_cli.context import archives
