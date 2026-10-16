@@ -1176,6 +1176,124 @@ def test_tui_home_banner():
     asyncio.run(_drive_home_banner())
 
 
+def test_tui_home_dashboard_layout_and_actions(monkeypatch: pytest.MonkeyPatch):
+    """The wide dashboard has live panels and yields the space to a chat."""
+    from types import SimpleNamespace
+
+    from novacode_cli.tui.app import NovaApp
+    from novacode_cli.tui.home import SystemSampler
+    from novacode_cli.tui.widgets import PromptInput
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    monkeypatch.setattr(SystemSampler, "sample", lambda _sampler: None)
+    app = NovaApp(
+        agent=_FakeAgent(), assistant_id="nova-agent", session_state=_SS(),
+        backend=None, token_tracker=TokenTracker(), image_tracker=None, model_name="test-model",
+    )
+
+    async def drive() -> None:
+        async with app.run_test(size=(170, 50)) as pilot:
+            await pilot.pause()
+            assert app.screen.has_class("home")
+            assert app.query_one("#home-header").size.height > 0
+            assert app.query_one("#home-left").size.width > 0
+            assert app.query_one("#home-right").size.width > 0
+            assert app.query_one("#conversation-column").size.width > 0
+            composer_dock = app.query_one("#prompt-dock")
+            assert composer_dock.region.x == 0
+            assert composer_dock.size.width == app.size.width
+            assert app.query_one("#home-nav-codebase").styles.text_align == "left"
+
+            await pilot.click("#home-action-debug")
+            prompt = app.query_one("#prompt", PromptInput)
+            assert prompt.value == "Investigate and fix this issue: "
+            assert prompt.has_focus
+            app._set_home_visible(visible=False)
+            await pilot.pause()
+            assert app.query_one("#home-header").size.height == 0
+            assert app.query_one("#home-left").size.width == 0
+            assert app.query_one("#home-right").size.width == 0
+            app._show_home_banner()
+            await pilot.pause()
+            assert app.screen.has_class("home")
+
+            app.on_resize(SimpleNamespace(size=SimpleNamespace(width=100, height=30)))
+            await pilot.pause()
+            assert app.screen.has_class("dashboard-narrow")
+            assert app.screen.has_class("dashboard-low")
+            assert app.query_one("#home-right").size.width == 0
+            assert app.query_one("#home-header").size.height == 0
+
+            commands = []
+            monkeypatch.setattr(app, "_dispatch", commands.append)
+            app.query_one("#home-nav-codebase").focus()
+            await pilot.press("enter")
+            await pilot.pause()
+            assert commands == ["/files"]
+            assert not app.screen.has_class("home")
+
+    asyncio.run(drive())
+
+
+async def test_tui_home_dashboard_matches_theme(monkeypatch: pytest.MonkeyPatch):
+    from novacode_cli.tui.app import NovaApp
+    from novacode_cli.tui.home import SystemSampler, SystemSnapshot
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    monkeypatch.setattr(SystemSampler, "sample", lambda _sampler: None)
+    app = NovaApp(
+        agent=_FakeAgent(), assistant_id="nova-agent", session_state=_SS(),
+        backend=None, token_tracker=TokenTracker(), image_tracker=None, model_name="test-model",
+    )
+    async with app.run_test(size=(170, 50)) as pilot:
+        for theme in ("flexoki", "matrix"):
+            app.theme = theme
+            await pilot.pause()
+            app._refresh_home_dashboard()
+            app._show_home_system(SystemSnapshot(12, 67, 22000, 100000))
+            accent = app.get_theme(theme).accent.lower()
+            for selector in ("#home-system", "#home-model", "#home-tasks", "#home-context"):
+                rendered = app.query_one(selector).render()
+                styles = {str(span.style).lower() for span in rendered.spans}
+                assert any(accent in style for style in styles), (theme, selector, styles)
+
+
+async def test_goal_commands_keep_status_and_resume_in_tui(monkeypatch: pytest.MonkeyPatch):
+    """The TUI must route goal lifecycle controls through the shared handler."""
+    from novacode_cli.tui.app import NovaApp
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    session = _SS()
+    app = NovaApp(
+        agent=_FakeAgent(), assistant_id="nova-agent", session_state=session,
+        backend=None, token_tracker=TokenTracker(), image_tracker=None, model_name="m",
+    )
+    kickoff: list[str] = []
+
+    async def capture(prompt: str) -> None:
+        kickoff.append(prompt)
+
+    monkeypatch.setattr(app, "_stream_prompt", capture)
+    async with app.run_test() as pilot:
+        await app._run_goal("/goal Fix parser with tests")
+        assert session.goal_status == "active"
+        app._turn_active = True
+        prompt = app.query_one("#prompt")
+        prompt.value = "/goal pause"
+        prompt.focus()
+        await pilot.press("enter")
+        assert await _wait_until(pilot, lambda: session.goal_status == "paused")
+        assert app._deferred_commands == []
+        app._turn_active = False
+        assert session.goal_status == "paused"
+        await app._run_goal("/goal")
+        await app._run_goal("/goal resume")
+        assert session.goal_status == "active"
+        assert len(kickoff) == 2
+        await app._run_goal("/goal clear")
+        assert session.active_goal is None
+
+
 async def _drive_user_input_sanitization():
     """Hidden Unicode in user input is stripped (warn + sanitize) before dispatch."""
     from novacode_cli.tui.app import NovaApp, NovaStatusBar

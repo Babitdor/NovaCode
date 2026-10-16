@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "novacode-cli"
-version = "1.0.38"
+version = "1.0.39"
 description = "Agentic Coding Tool that runs in your terminal"
 authors = [{ name = "Babitdor", email = "babitdorbryan14@gmail.com" }]
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -25,6 +25,7 @@ dependencies = [
     "jinja2>=3.1.0",
     "rich>=13.0.0",
     "textual>=1.0.0",
+    "psutil>=5.9",
     "pyte>=0.8.2,<0.9",
     "pywinpty>=2.0.15,<3; sys_platform == 'win32'",
     # LangChain ecosystem (updated 2025-01)

@@ -602,8 +602,8 @@ def test_stateful_attrs_has_no_duplicates():
 # ── layout: the pane wrapper must not shrink the transcript ──────────────────
 
 
-async def _drive_banner_fits_its_container(term_width: int = 120, *, _height: int = 40):
-    """The Matrix-rain banner must span the transcript's real content width.
+async def _drive_banner_fits_its_container(term_width: int = 120, *, _height: int = 50):
+    """The Matrix-rain banner must span the home header's real content width.
 
     Regression: wrapping the transcript in a ContentSwitcher for session panes
     left it unstyled, so the transcript stopped filling the screen and its
@@ -635,11 +635,11 @@ async def _drive_banner_fits_its_container(term_width: int = 120, *, _height: in
         rain.pause()
         await pilot.pause()
 
-        avail = app._transcript().content_size.width
+        avail = app.query_one("#home-banner-slot").content_size.width
         assert avail > 0
 
         assert rain._col_count == max(avail, rain._art_w), (
-            f"rain grid {rain._col_count} against transcript content {avail} at "
+            f"rain grid {rain._col_count} against header content {avail} at "
             f"{term_width} columns — a narrower grid leaves a blank band, a wider one "
             "wraps every row"
         )
@@ -648,7 +648,7 @@ async def _drive_banner_fits_its_container(term_width: int = 120, *, _height: in
 
 
 @pytest.mark.parametrize("term_width", [260, 120, 50])
-def test_home_banner_fits_the_transcript_width(term_width: int):
+def test_home_banner_fits_the_header_width(term_width: int):
     asyncio.run(_drive_banner_fits_its_container(term_width))
 
 
@@ -656,6 +656,8 @@ async def _drive_transcript_fills_screen():
     """The pane wrapper must be layout-transparent."""
     app = _app()
     async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app._set_home_visible(visible=False)
         await pilot.pause()
         transcript = app._transcript()
         panes = app.query_one("#panes")
@@ -686,6 +688,8 @@ async def _drive_tab_bar_does_not_eat_the_panes():
 
     app = _app()
     async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app._set_home_visible(visible=False)
         await pilot.pause()
         pane = await _add_pane(app)
         app._refresh_tabs()  # tab bar becomes visible (2 sessions)

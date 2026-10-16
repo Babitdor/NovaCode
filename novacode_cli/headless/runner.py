@@ -431,6 +431,8 @@ async def _autosave(
         if not messages:
             return
         todos = state.values.get("todos") or getattr(session_state, "todos", None)
+        from novacode_cli.commands.side_commands import goal_state_payload
+
         await asyncio.to_thread(
             session_manager.save_session,
             session_id=session_state.session_id,
@@ -442,6 +444,7 @@ async def _autosave(
             model_provider=getattr(session_state, "session_model_provider", None) or get_current_provider(),
             project_root=settings.project_root or Path.cwd(),
             task_status="failed" if is_error else "completed",
+            goal=goal_state_payload(session_state),
         )
     except Exception as exc:  # noqa: BLE001 — never fail the run on save
         _diagnostic(f"Headless session save skipped: {exc}")

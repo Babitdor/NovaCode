@@ -20,12 +20,14 @@ UI events, so it never delays or alters the turn.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from novacode_cli import ui_events as ev
 from novacode_cli.core.autonomous_loop import run_with_goal
 from novacode_cli.sessions.lease import lease_holder, lease_session
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Callable
 
 # Hold references to in-flight grade tasks so they aren't GC'd mid-run.
 _verification_tasks: set[asyncio.Task] = set()
@@ -119,6 +121,7 @@ async def run_agent_stream(
     image_tracker=None,
     seen_message_ids: set[str] | None = None,
     skip_file_mentions: bool = False,
+    can_continue: Callable[[], bool] | None = None,
 ) -> AsyncIterator[Any]:
     """Run the agent and yield UI events.
 
@@ -157,6 +160,7 @@ async def run_agent_stream(
             image_tracker=image_tracker,
             seen_message_ids=seen_message_ids,
             skip_file_mentions=skip_file_mentions,
+            can_continue=can_continue,
         ):
             if verifier is not None:
                 if isinstance(event, ev.AssistantMessage):

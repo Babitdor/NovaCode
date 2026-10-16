@@ -7,11 +7,13 @@ from langchain.agents import create_agent
 from langchain.agents.middleware.types import ModelRequest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
+from langgraph.graph import END, START, StateGraph
 
 from novacode_cli.context.snapshot import (
     ContextSnapshot,
     ContextSnapshotMiddleware,
     ProtectedContextOverflowError,
+    SnapshotState,
 )
 
 
@@ -58,3 +60,30 @@ def test_real_graph_persists_only_content_free_final_request_accounting():
     assert diagnostics["protected_tokens"] > 0
     assert "private task" not in str(diagnostics)
     assert "secret standing policy" not in str(diagnostics)
+
+
+def test_parallel_snapshot_updates_keep_one_complete_diagnostic():
+    """Parallel graph nodes may return accounting in the same graph step."""
+    first = {"generation": "first", "estimated_input_tokens": 100, "old_only": True}
+    second = {"generation": "second", "estimated_input_tokens": 200}
+    graph = StateGraph(SnapshotState)
+    graph.add_node("first", lambda _state: {"_context_snapshot": first})
+    graph.add_node("second", lambda _state: {"_context_snapshot": second})
+    for branch in ("first", "second"):
+        graph.add_edge(START, branch)
+        graph.add_edge(branch, END)
+    result = graph.compile().invoke({"messages": [HumanMessage("task")]})
+    assert result["_context_snapshot"] in (first, second)
+
+
+def test_later_snapshot_replaces_diagnostics_instead_of_merging_fields():
+    graph = StateGraph(SnapshotState)
+    graph.add_node(
+        "first", lambda _state: {"_context_snapshot": {"generation": "first", "old_only": True}}
+    )
+    graph.add_node("second", lambda _state: {"_context_snapshot": {"generation": "second"}})
+    graph.add_edge(START, "first")
+    graph.add_edge("first", "second")
+    graph.add_edge("second", END)
+    result = graph.compile().invoke({"messages": [HumanMessage("task")]})
+    assert result["_context_snapshot"] == {"generation": "second"}

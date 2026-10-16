@@ -50,6 +50,15 @@ if TYPE_CHECKING:
 
 from textual.binding import Binding
 from novacode_cli.tui.harness import HarnessDock, UIHarness, UIHarnessRequest
+from novacode_cli.tui.home import (
+    HomeActions,
+    HomeNavItem,
+    HomeRightRail,
+    HomeSidebar,
+    SystemSampler,
+    SystemSnapshot,
+    system_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -496,7 +505,7 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     ),
     "agents": SlashCommand("_run_agents", "list subagents", wants_text=False),
     "plan": SlashCommand("_run_plan", "plan mode (status / off)"),
-    "goal": SlashCommand("_run_goal", "set a persistent goal (status / clear)"),
+    "goal": SlashCommand("_run_goal", "manage a goal (pause / resume / budget / clear)"),
     "btw": SlashCommand("_run_btw", "ask a side question without touching the main conversation"),
     "remote": SlashCommand("_run_remote", "manage Discord/Telegram bridges and response streaming"),
     "compact": SlashCommand("_run_compact", "summarize conversation to free context"),
@@ -611,6 +620,10 @@ _LIVE_UI_COMMANDS = frozenset(
 
 # Autocomplete entries — derived; plugin commands append at registration time.
 _TUI_SLASH_COMMANDS = [f"/{name}" for name in TUI_COMMANDS]
+
+_HOME_RIGHT_MIN_WIDTH = 120
+_HOME_LEFT_MIN_WIDTH = 76
+_HOME_BANNER_MIN_HEIGHT = 48
 
 
 def _read_tail(path: str, lines: int = 40) -> str:
@@ -1013,6 +1026,60 @@ class NovaApp(App):
        back up as the rain shifted. Panes are styled as a group so a spawned
        session's transcript looks identical to the root one. */
     #workspace-layout { height: 1fr; width: 100%; }
+    #home-header {
+        display: none; height: auto; width: 100%;
+        padding: 0 1;
+        border: solid $accent 65%; background: $background;
+    }
+    Screen.home #home-header { display: block; }
+    #home-banner-slot { height: auto; }
+    #home-banner-caption { height: 1; color: $accent; text-align: center; text-style: bold; }
+    #home-left, #home-right {
+        display: none; height: 1fr; margin: 0 1;
+        border: solid $accent 50%; background: $surface;
+        scrollbar-gutter: auto;
+    }
+    Screen.home #home-left { display: block; width: 23; padding: 0 1; }
+    Screen.home #home-right { display: block; width: 36; padding: 0 1; }
+    #conversation-column { width: 1fr; height: 1fr; min-width: 0; }
+    #home-tab, #home-intro, #home-actions { display: none; }
+    Screen.home #home-tab {
+        display: block; height: 2; margin: 0 1; padding: 0 1;
+        border-bottom: solid $accent; color: $accent; text-style: bold;
+    }
+    Screen.home #home-intro {
+        display: block; height: 4; margin: 0 2; padding: 0 1;
+        color: $text; background: $surface;
+    }
+    #home-activity { display: none; }
+    Screen.home #home-activity {
+        display: block; height: 3; margin: 0 2; padding: 0 1;
+        border: solid $accent 45%; color: $success;
+    }
+    Screen.home #home-actions { display: block; height: 4; margin: 0 2; }
+    Screen.home #conversation-column { border: solid $accent 45%; }
+    .home-card { height: auto; margin: 0 0 1 0; padding: 0 1;
+        border: solid $accent 55%; background: $background; color: $text; }
+    .home-card-title { color: $accent; text-style: bold; height: 1; }
+    .home-section { margin-top: 1; border-top: solid $accent 40%; height: 2; }
+    .home-side-detail { height: 1; color: $text-muted;
+        overflow-x: hidden; text-overflow: ellipsis; }
+    .home-nav { width: 100%; height: 2; min-height: 2; min-width: 0;
+        padding: 0 1; margin: 0; border: none; background: transparent;
+        color: $text; content-align: left middle; text-align: left; text-style: none; }
+    .home-nav:hover, .home-nav:focus { background: $accent 20%; color: $accent; }
+    #home-nav-chat { background: $accent 12%; color: $accent; text-style: bold; }
+    .home-action { width: 1fr; height: 3; min-height: 3; min-width: 0;
+        margin: 0 1 0 0; border: solid $accent 50%;
+        background: $surface; color: $text; }
+    .home-action:hover, .home-action:focus { background: $accent 20%; color: $accent; }
+    Screen.home #prompt-dock { margin-left: 0; margin-right: 0; }
+    Screen.home.dashboard-narrow #home-right { display: none; }
+    Screen.home.dashboard-compact #home-left { display: none; }
+    Screen.home.short #home-header { display: none; }
+    Screen.home.short #home-actions { display: none; }
+    Screen.home.dashboard-low #home-header,
+    Screen.home.dashboard-low #home-actions { display: none; }
     #panes { height: 1fr; width: 1fr; }
     #panes > VerticalScroll { height: 1fr; width: 100%; padding: 1 2; }
     /* Hidden until a second session exists; _refresh_tabs() toggles it.
@@ -1801,6 +1868,8 @@ class NovaApp(App):
         self._remote_consumer_worker: Any = None
         # The MatrixRain animation widget, tracked so it can be removed on clear.
         self._home_banner: Static | None = None
+        self._home_visible = False
+        self._system_sampler = SystemSampler()
         # name → async (args) -> str  for slash commands contributed by plugins.
         self._plugin_commands: dict[str, Any] = {}
         # Strong refs to fire-and-forget background sends so the event loop
@@ -1953,9 +2022,21 @@ class NovaApp(App):
             Static("", id="subagents-body"),
             id="subagents-dock",
         )
+        with Vertical(id="home-header"):
+            yield Vertical(id="home-banner-slot")
+            yield Static(
+                "IDEAS INTO REALITY   •   BUILD  THINK  REFINE  TOGETHER", id="home-banner-caption"
+            )
         with Horizontal(id="workspace-layout"):
-            with ContentSwitcher(initial="transcript", id="panes"):
-                yield TranscriptScroll(id="transcript")
+            yield HomeSidebar(id="home-left")
+            with Vertical(id="conversation-column"):
+                yield Static("◉  CONVERSATION", id="home-tab")
+                yield Static("", id="home-intro")
+                yield Static("●  Ready for a new chat", id="home-activity")
+                with ContentSwitcher(initial="transcript", id="panes"):
+                    yield TranscriptScroll(id="transcript")
+                yield HomeActions(id="home-actions")
+            yield HomeRightRail(id="home-right")
             yield HarnessDock(id="ui-harness-dock")
         yield OptionList(id="cmdpalette")
         with Vertical(id="prompt-dock"):
@@ -2266,6 +2347,8 @@ class NovaApp(App):
         # outside any single command (e.g. the agent runs `git checkout`), so
         # refresh on a slow timer (branch git runs off-thread, so it's cheap).
         self.set_interval(3.0, self._refresh_info_bar)
+        self.set_interval(2.0, self._refresh_home_dashboard)
+        self.theme_changed_signal.subscribe(self, lambda _theme: self._refresh_home_dashboard())
         # Load slash commands contributed by enabled plugins (TUI dispatch).
         self._load_plugin_commands()
         # Poll slowly while idle; animate focused active turns at 10 Hz.
@@ -2585,6 +2668,8 @@ class NovaApp(App):
             pane.load_into(self)
 
         self._active_pane = pane
+        if pane is not getattr(self, "_root_pane", None) and self._home_visible:
+            self._set_home_visible(visible=False)
         self._refresh_terminal_title()
         try:
             self.query_one("#panes", ContentSwitcher).current = pane.scroll.id
@@ -3556,7 +3641,7 @@ class NovaApp(App):
                     )
 
         elif kind == "turn_done":
-            pane.status = "idle"
+            pane.status = "running" if msg.get("running") else "idle"
             if communication is not None:
                 communication.child_done(sid, msg.get("id", ""), bool(msg.get("ok")))
             if not pane.remote_turns or getattr(pane.remote_turns[0], "prompt_id", msg.get("id")) == msg.get("id"):
@@ -5077,6 +5162,7 @@ class NovaApp(App):
                 await show_imported_history(self, imported.session)
         if not msgs and not journal and summary is None:
             return
+        self._set_home_visible(visible=False)
         if summary is not None:
             text = summary.additional_kwargs.get("nova_summary") or self._message_text(
                 summary
@@ -6956,6 +7042,9 @@ class NovaApp(App):
         self.call_from_thread(
             self._set_info, "#info-branch", Text(branch, style=f"bold {pal.accent}")
         )
+        self.call_from_thread(
+            self._set_info, "#home-branch", Text(branch, style=f"bold {pal.accent}")
+        )
 
     @staticmethod
     def _fmt_tokens(n: int) -> str:
@@ -7097,7 +7186,11 @@ class NovaApp(App):
         """
         plan = getattr(self.session_state, "plan_mode_enabled", False)
         bash = input_value.startswith("!")
-        goal = getattr(self.session_state, "active_goal", None)
+        goal = (
+            getattr(self.session_state, "active_goal", None)
+            if getattr(self.session_state, "goal_status", "active") == "active"
+            else None
+        )
         # Skip the badge/class/pulse work entirely when the mode is unchanged —
         # this runs on every keystroke, so the common case (mode didn't change)
         # must be a cheap no-op.
@@ -7567,7 +7660,7 @@ class NovaApp(App):
         """The prompt (a TextArea) posts its own Submitted on enter."""
         self.on_input_submitted(event)
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
+    def on_input_submitted(self, event: Input.Submitted) -> None:  # noqa: PLR0915
         # Only react to the main prompt (modals have their own inputs).
         if event.input.id != "prompt":
             return
@@ -7587,6 +7680,7 @@ class NovaApp(App):
         text = self._sanitize_user_text(text)
         if not text:
             return
+        self._set_home_visible(visible=False)
         event.input.value = ""
         self._hide_palette()
         # Submitting is an explicit act: resume following the tail so the user
@@ -7629,6 +7723,14 @@ class NovaApp(App):
                 # immediately after that tool returns.
                 self.run_worker(self._run_steer(text), group="live_steer_command", exclusive=False)
                 return
+            if command == "/goal":
+                from novacode_cli.commands.side_commands import is_goal_control
+
+                if is_goal_control(text):
+                    # Lifecycle controls must reach the running goal before its
+                    # next continuation, rather than queueing behind the run.
+                    self.run_worker(self._run_goal(text), group="goal_control", exclusive=False)
+                    return
             command_name = command[1:] if command.startswith("/") else ""
             command_name = _TUI_COMMAND_ALIASES.get(command_name, command_name)
             if command_name == "context" and len(stripped.split()) > 2:
@@ -8705,6 +8807,8 @@ class NovaApp(App):
             from novacode_cli.config.config import settings
 
             todos = values.get("todos") or getattr(session_state, "todos", None)
+            from novacode_cli.commands.side_commands import goal_state_payload
+
             # save_session does several synchronous file writes — run it off the
             # event loop so /save, /clear, and quit don't freeze the UI.
             await asyncio.to_thread(
@@ -8721,6 +8825,7 @@ class NovaApp(App):
                 sandbox_type=self._sandbox_type,
                 cleared=cleared,
                 task_status=task_status,
+                goal=goal_state_payload(session_state),
             )
         except Exception:  # noqa: BLE001
             logger.warning("Session recovery save failed", exc_info=True)
@@ -8874,6 +8979,7 @@ class NovaApp(App):
         Serialized on the shared remote lock so local and remote turns never
         interleave on the same checkpointer thread.
         """
+        self._set_home_visible(visible=False)
         # Remembered so a ContextOverflow can compact and re-send this exact
         # prompt rather than losing the user's message.
         self._last_user_prompt = text
@@ -8952,6 +9058,7 @@ class NovaApp(App):
             await self._save_session(pane=turn_pane)
             self._stop_foreground_subagents()
             self._detach_cancelling = False
+            self._update_mode_badge()
             self._set_status("ready")
             self._clear_live_steers()
             # Safety net: clear the Nova review indicator if it's still showing
@@ -9213,6 +9320,13 @@ class NovaApp(App):
                 )
         ag, backend = self._active_agent()
         aid = assistant_id or self.assistant_id
+        commands, prompts, steers = (
+            self._deferred_commands, self._deferred_prompts, self._live_steers,
+        )
+
+        def can_continue_goal() -> bool:
+            return not commands and not prompts and all(steer.consumed for steer in steers)
+
         async for e in session_events(run_agent_stream(
             text,
             ag,
@@ -9221,6 +9335,7 @@ class NovaApp(App):
             backend=backend,
             image_tracker=self.image_tracker,
             seen_message_ids=self._seen,
+            can_continue=can_continue_goal,
         ), self._session_messaging().gateway("root")):
             # Through _deliver, not _render directly: if the user switches tabs
             # mid-turn, this turn's events must keep going to the ROOT pane
@@ -9880,6 +9995,7 @@ class NovaApp(App):
         cmd = text[2 if terminal_view else 1:].strip()
         if not cmd:
             return
+        self._set_home_visible(visible=False)
         self._bg_job_count += 1
         if terminal_view:
             self._pty_shell_worker(cmd, self._bg_job_count)
@@ -10391,13 +10507,15 @@ class NovaApp(App):
         # either. Only ask_user_question (kind="question") can still interrupt; we
         # resolve those below with a canned answer.
         class _BgSession:
-            def __init__(self_inner, real_ss: Any) -> None:  # noqa: N805
+            def __init__(self_inner) -> None:  # noqa: N805
                 self_inner.thread_id = thread_id
                 self_inner.auto_approve = True
                 self_inner.plan_mode_enabled = False
                 self_inner.plan_agent = None
                 self_inner.plan_content: Any = None
-                self_inner.active_goal: str | None = getattr(real_ss, "active_goal", None)
+                # Background jobs use a new thread and must not inherit the
+                # interactive thread's completion contract.
+                self_inner.active_goal: str | None = None
 
             def add_notification(self_inner, **_kw: Any) -> None:  # noqa: N805
                 return None
@@ -10414,7 +10532,7 @@ class NovaApp(App):
             def clear_plan_agent(self_inner) -> None:  # noqa: N805
                 pass
 
-        bg_session = _BgSession(self.session_state)
+        bg_session = _BgSession()
         ag, backend = self._active_agent()
 
         log_widget = OutputLog(
@@ -11881,6 +11999,11 @@ class NovaApp(App):
             self._log(Text(f"Resume failed while seeding state: {exc}", style="red"))
             return
 
+        from novacode_cli.commands.side_commands import restore_goal_state
+
+        restore_goal_state(self.session_state, getattr(session_data.meta, "goal", None))
+        self._update_mode_badge()
+
         # Reset per-conversation UI/tracking and re-baseline token accounting.
         self._reset_streaming()
         self._clear_live_steers()
@@ -12558,11 +12681,13 @@ class NovaApp(App):
             await self._maybe_run_approved_plan()
 
     async def _run_goal(self, text: str) -> None:
-        """Set, show, or clear the active goal for autonomous goal-mode execution.
+        """Manage the thread's goal and its autonomous execution.
 
         Usage:
           /goal <description>   — set the goal and kick off the agent
-          /goal status          — show the current goal
+          /goal                 — show the current goal
+          /goal pause|resume    — control continuation
+          /goal budget <turns>  — set the turn budget
           /goal clear           — remove the active goal
         """
         from novacode_cli.commands.side_commands import handle_goal_command
@@ -12573,29 +12698,30 @@ class NovaApp(App):
         # Shared parse + state mutation (kept identical across TUI / REPL / remote).
         result = handle_goal_command(self.session_state, args)
 
-        if result.action == "status":
-            if result.goal:
-                t = Text()
-                t.append("🎯 Active goal\n", style="bold #e0af68")
-                t.append(result.goal, style="italic")
-                self._log(t)
-            else:
-                self._log(Text(result.message, style="dim"))
+        if result.action in {"status", "pause", "budget", "rubric-clear", "rubric-set"}:
+            self._update_mode_badge()
+            self._log(Text(result.message, style="dim"))
+            if result.action != "status":
+                await self._save_session()
             return
 
         if result.action == "clear":
             self._update_mode_badge()
             self._log(Text("Goal cleared.", style="yellow"))
+            await self._save_session()
             return
 
         if result.action == "usage":
             self._log(Text(result.message, style="dim"))
             return
 
-        # action == "set"
+        # Setting or resuming a goal starts its next agent turn.
         self._update_mode_badge()
         t = Text()
-        t.append("🎯 Goal set\n", style="bold #e0af68")
+        t.append(
+            "🎯 Goal resumed\n" if result.action == "resume" else "🎯 Goal set\n",
+            style=f"bold {self._palette.accent}",
+        )
         t.append(result.goal or "", style="italic")
         self._log(t)
 
@@ -12944,13 +13070,7 @@ class NovaApp(App):
         )
 
     def _show_home_banner(self) -> None:
-        """Render the home banner: the NOVA ASCII logo composited over the rain.
-
-        The ASCII art (from ``config.get_responsive_ascii``, sized to the live
-        terminal width) is stamped on top of the Matrix rain inside a single
-        :class:`MatrixRain` widget, so the rain falls *behind* the logo and the
-        logo is tinted with the active TUI theme color.
-        """
+        """Show the compact Matrix lockup above the home conversation."""
         try:
             from novacode_cli.config.config import get_responsive_ascii
 
@@ -12959,20 +13079,126 @@ class NovaApp(App):
             except Exception:  # noqa: BLE001
                 width = None
             art = get_responsive_ascii(width=width)
-
+            rain = self._home_banner
+            if isinstance(rain, MatrixRain) and rain.is_mounted:
+                rain.reflow(art, width)
+                self._set_home_visible(visible=True)
+                return
             rain = MatrixRain(
                 art=art,
                 width=width,
+                compact=True,
                 animate=self._matrix_rain_enabled(),
                 fps=min(15, self._animation_fps)
                 if self._low_resource_mode
                 else self._animation_fps,
             )
             self._home_banner = rain
-            self._transcript().mount(rain)
-            self._prune_transcript()
+            self.query_one("#home-banner-slot", Vertical).mount(rain)
+            self._set_home_visible(visible=True)
         except Exception:  # noqa: BLE001
             self._home_banner = None
+
+    def _set_home_visible(self, *, visible: bool) -> None:
+        """Keep the dashboard tied to the empty-chat state."""
+        self._home_visible = visible
+        self.screen.set_class(visible, "home")
+        rain = self._home_banner
+        if isinstance(rain, MatrixRain):
+            rain.set_animation_enabled(visible and self._matrix_rain_enabled())
+        if visible:
+            self._apply_responsive_layout()
+            self._refresh_home_dashboard()
+
+    def _refresh_home_dashboard(self) -> None:
+        """Refresh session facts and schedule one local resource sample."""
+        if not self._home_visible:
+            return
+        from novacode_cli._version import __version__
+        from novacode_cli.config.config import settings
+
+        intro = (
+            f"\n  Nova  v{__version__}\n"
+            "  Your AI pair programmer. Build. Think. Refine. Together."
+        )
+        self.query_one("#home-intro", Static).update(Text(intro))
+        pal = self._palette
+        self.query_one("#home-workspace", Static).update(
+            Text(str(settings.get_workspace_root()), style=f"bold {pal.success}",
+                 no_wrap=True, overflow="ellipsis")
+        )
+        model = Text("◇  MODEL\n", style=f"bold {pal.accent}", no_wrap=True,
+                     overflow="ellipsis")
+        model.append(self.model_name or "unknown")
+        if self._model_provider:
+            model.append(f"\n{self._model_provider}", style=pal.muted)
+        self.query_one("#home-model", Static).update(model)
+        registry = getattr(self, "_task_registry", None)
+        active = registry.active_count() if registry is not None else 0
+        tasks = Text("☷  TASK QUEUE\n", style=f"bold {pal.accent}")
+        tasks.append(f"{active} background job{'s' if active != 1 else ''} running\n")
+        tasks.append("Ctrl+B to inspect", style=pal.muted)
+        self.query_one("#home-tasks", Static).update(tasks)
+        context = Text("▤  MEMORY / CONTEXT\n", style=f"bold {pal.accent}")
+        try:
+            breakdown = self.token_tracker.get_breakdown() if self.token_tracker else None
+            if breakdown is not None and breakdown.context_window_size:
+                context.append(f"{breakdown.usage_percentage:.0f}% of context window")
+            else:
+                context.append("No usage yet", style=pal.muted)
+        except Exception:  # noqa: BLE001
+            context.append("Usage unavailable", style=pal.muted)
+        self.query_one("#home-context", Static).update(context)
+        self._sample_home_system()
+
+    @work(thread=True, exclusive=True, group="home-system")
+    def _sample_home_system(self) -> None:
+        """Read host counters away from the event loop."""
+        snapshot = self._system_sampler.sample()
+        with suppress(RuntimeError):
+            self.call_from_thread(self._show_home_system, snapshot)
+
+    def _show_home_system(self, snapshot: SystemSnapshot | None) -> None:
+        if self._home_visible:
+            pal = self._palette
+            self.query_one("#home-system", Static).update(
+                system_text(snapshot, accent=pal.accent, muted=pal.muted)
+            )
+
+    @on(HomeNavItem.Activated)
+    def _open_home_navigation(self, event: HomeNavItem.Activated) -> None:
+        """Route dashboard links through the same commands as the composer."""
+        destination = (event.item.id or "").removeprefix("home-nav-")
+        if destination == "chat":
+            self.query_one("#prompt", PromptInput).focus()
+            return
+        command = {
+            "codebase": "/files",
+            "run": "/tests",
+            "tools": "/mcp",
+            "agents": "/agents",
+            "artifacts": "/artifacts",
+            "settings": "/settings",
+        }.get(destination)
+        if command:
+            self._set_home_visible(visible=False)
+            self._dispatch(command)
+
+    @on(Button.Pressed, ".home-action")
+    def _prepare_home_prompt(self, event: Button.Pressed) -> None:
+        """Put a suggested task in the composer for the user to edit and send."""
+        action = (event.button.id or "").removeprefix("home-action-")
+        draft = {
+            "explain": "Explain how this codebase works.",
+            "refactor": "Refactor this code for clarity and performance: ",
+            "build": "Build this feature: ",
+            "debug": "Investigate and fix this issue: ",
+        }.get(action)
+        if draft:
+            prompt = self.query_one("#prompt", PromptInput)
+            prompt.value = draft
+            prompt.move_cursor(prompt.document.end)
+            prompt.focus()
 
     def on_resize(self, event: events.Resize) -> None:
         """Reflow the home banner and apply responsive breakpoints on resize.
@@ -13031,6 +13257,10 @@ class NovaApp(App):
                 target.set_class(compact, "compact")
                 target.set_class(short, "short")
                 target.set_class(tiny, "tiny")
+                if getattr(self, "_home_visible", False):
+                    target.set_class(width < _HOME_RIGHT_MIN_WIDTH, "dashboard-narrow")
+                    target.set_class(width < _HOME_LEFT_MIN_WIDTH, "dashboard-compact")
+                    target.set_class(height < _HOME_BANNER_MIN_HEIGHT, "dashboard-low")
         if not changed:
             return
         # Status line's right-side counts are baked into a Text (not a widget),

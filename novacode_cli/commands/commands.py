@@ -76,6 +76,13 @@ async def handle_command(
     cmd = cmd_parts[0].lower()
     cmd_args = cmd_parts[1] if len(cmd_parts) > 1 else None
 
+    if cmd == "goal":
+        from novacode_cli.commands.side_commands import handle_goal_command
+
+        result = handle_goal_command(session_state, cmd_args or "")
+        console.print(result.message, markup=False)
+        return result.kickoff or True
+
     # /skill:<name> syntax — extract skill name and route to skill invocation
     if cmd.startswith("skill:"):
         _skill_name = cmd[len("skill:"):]

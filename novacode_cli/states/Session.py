@@ -125,6 +125,11 @@ class SessionState:
         self.verify_enabled: bool = False  # ui/execution.py
         self.active_goal: str | None = None  # commands/side_commands.py, core/agent_loop.py, tui/app.py
         self.active_rubric: str | None = None  # commands/side_commands.py, core/agent_loop.py
+        self.goal_status: str | None = None
+        self.goal_turns_used: int = 0
+        self.goal_max_turns: int = 5
+        self.goal_thread_id: str | None = None
+        self.goal_revision: str | None = None
         self.browser_use_tasks: dict = {}  # commands/browser_use_handler.py
         self.create_server: Any = None  # commands/create_handler.py, tui/app.py
         self._cron_scheduler: Any = None  # commands/cron_handler.py, main.py
@@ -471,6 +476,8 @@ class SessionState:
         "headless_timeout", "headless_deadline", "headless_include_partial_messages",
         "headless_trust_workspace", "headless_result_emitted",
         "workspace_root", "verify_enabled", "active_goal", "active_rubric",
+        "goal_status", "goal_turns_used", "goal_max_turns", "goal_thread_id",
+        "goal_revision",
         "browser_use_tasks", "create_server",
         "_cron_scheduler", "_webhook_server",
         "_ralph_stop_requested", "_ralph_checkpoint_requested",
@@ -617,6 +624,12 @@ class SessionState:
         """
         self.thread_id = str(uuid.uuid4())
         self.session_id = str(uuid.uuid4())
+        self.active_goal = None
+        self.active_rubric = None
+        self.goal_status = None
+        self.goal_turns_used = 0
+        self.goal_thread_id = None
+        self.goal_revision = None
         self.is_continued = False
         self.todos = None
         # Clear in place — the agent's SteeringMiddleware holds a reference to

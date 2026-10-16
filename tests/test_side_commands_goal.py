@@ -11,9 +11,9 @@ from novacode_cli.commands.side_commands import (
 
 class TestGoalAchieved:
     def test_detects_marker_case_insensitively(self):
-        assert goal_achieved("Done. **GOAL ACHIEVED** summary here.")
-        assert goal_achieved("goal achieved")
-        assert goal_achieved("Goal Achieved!")
+        assert goal_achieved("**GOAL ACHIEVED**\nEvidence: tests passed")
+        assert goal_achieved("goal achieved\nevidence: tests passed")
+        assert goal_achieved("Goal Achieved\nEvidence: diff reviewed")
 
     def test_returns_false_without_marker(self):
         assert not goal_achieved("Still working on it.")

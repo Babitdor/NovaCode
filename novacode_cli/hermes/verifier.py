@@ -35,6 +35,8 @@ if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
     from langgraph.store.base import BaseStore
 
+    from novacode_cli.memory.store import DualModeStore
+
 logger = logging.getLogger("nova.hermes.verifier")
 
 _PASSED_RE = re.compile(r"<passed>\s*(true|false)\s*</passed>", re.IGNORECASE)
@@ -68,7 +70,7 @@ class InlineVerifier:
 
     def __init__(
         self,
-        store: BaseStore | None = None,
+        store: BaseStore | DualModeStore | None = None,
         *,
         model: BaseChatModel | None = None,
         max_retries: int = config.INLINE_VERIFIER_MAX_RETRIES,

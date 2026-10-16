@@ -86,6 +86,7 @@ class SessionMeta:
         next_step_hint: Optional hint for what to do next
         sandbox_id: ID of the sandbox/container used this session (for reconnect)
         sandbox_type: Sandbox provider used ("docker", "modal", ...) or None
+        goal: Conversation goal objective, lifecycle, and accumulated budget usage.
     """
 
     session_id: str
@@ -110,6 +111,7 @@ class SessionMeta:
     # excluded from --continue auto-resume so a cleared conversation doesn't
     # come back. They remain on disk (and in the session picker) for recovery.
     cleared: bool = False
+    goal: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -132,6 +134,7 @@ class SessionMeta:
             # cannot rebuild this session's exact model" — resume falls back to
             # the global config silently rather than warning.
             "model_provider": None,
+            "goal": None,
         }
         # Merge defaults with provided data (data takes precedence)
         merged = {**defaults, **data}
@@ -284,6 +287,7 @@ class SessionManager:
         sandbox_id: str | None = None,
         sandbox_type: str | None = None,
         cleared: bool = False,
+        goal: dict[str, Any] | None = None,
     ) -> Path:
         """Save a session to disk.
 
@@ -299,6 +303,7 @@ class SessionManager:
                 resume can rebuild the exact model instead of falling back to
                 the global config.
             project_root: Path to project root (for repo hash)
+            goal: Optional conversation goal and its lifecycle/budget state.
 
         Returns:
             Path to the session directory
@@ -356,6 +361,7 @@ class SessionManager:
             sandbox_id=sandbox_id,
             sandbox_type=sandbox_type,
             cleared=cleared,
+            goal=goal,
         )
 
         self._save_snapshot(

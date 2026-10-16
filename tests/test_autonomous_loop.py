@@ -7,8 +7,11 @@ clear / error-passthrough behaviour over a faked ``iterate_agent_events``.
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
+
+import pytest
 
 import novacode_cli.core.autonomous_loop as al
 from novacode_cli import ui_events as ev
@@ -20,8 +23,6 @@ from novacode_cli.commands.side_commands import (
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
-
-    import pytest
 
 
 def _msg(text: str) -> ev.AssistantMessage:
@@ -65,7 +66,14 @@ def _fake_iterate(
 def _session(
     goal: str | None = "do the thing", max_turns: int = DEFAULT_GOAL_MAX_TURNS
 ) -> SimpleNamespace:
-    return SimpleNamespace(thread_id="t1", active_goal=goal, goal_max_turns=max_turns)
+    return SimpleNamespace(
+        thread_id="t1",
+        active_goal=goal,
+        goal_status="active" if goal else None,
+        goal_thread_id="t1" if goal else None,
+        goal_turns_used=0,
+        goal_max_turns=max_turns,
+    )
 
 
 async def _collect(gen: Any) -> list:  # noqa: ANN401 — async generator stand-in
@@ -77,20 +85,25 @@ async def _collect(gen: Any) -> list:  # noqa: ANN401 — async generator stand-
 
 class TestGoalAchieved:
     def test_marker_present(self):
-        assert goal_achieved("**GOAL ACHIEVED** — here is what I did.")
+        assert goal_achieved("**GOAL ACHIEVED**\nEvidence: tests passed.")
 
     def test_marker_absent(self):
         assert not goal_achieved("Still working on it.")
 
     def test_case_insensitive(self):
-        assert goal_achieved("goal achieved")
-        assert goal_achieved("Goal Achieved")
+        assert goal_achieved("goal achieved\nevidence: tests passed")
+        assert goal_achieved("Goal Achieved\nEvidence: artifact exists")
 
     def test_marker_in_multiline_text(self):
-        assert goal_achieved("step 1 done\nstep 2 done\nGOAL ACHIEVED\nsummary")
+        assert goal_achieved("step 1 done\nGOAL ACHIEVED\nEvidence: step 2 test passed")
+        assert not goal_achieved("Quoted: GOAL ACHIEVED\nEvidence: none")
+        assert not goal_achieved("GOAL ACHIEVED\nsummary without evidence")
 
     def test_empty_text(self):
         assert not goal_achieved("")
+
+    def test_completion_example_inside_code_fence_is_not_completion(self):
+        assert not goal_achieved("Example:\n```text\nGOAL ACHIEVED\nEvidence: example\n```")
 
 
 # ── continuation prompt ──────────────────────────────────────────────────────
@@ -129,7 +142,7 @@ class TestRunWithGoal:
 
     async def test_achieved_on_first_turn_single_done(self, monkeypatch: pytest.MonkeyPatch):
         factory, calls = _fake_iterate(
-            [[_msg("done **GOAL ACHIEVED**"), ev.Done(had_response=True)]]
+            [[_msg("**GOAL ACHIEVED**\nEvidence: tests passed"), ev.Done(had_response=True)]]
         )
         monkeypatch.setattr(al, "iterate_agent_events", factory)
         out = await _collect(al.run_with_goal("kickoff", None, None, _session()))
@@ -144,7 +157,7 @@ class TestRunWithGoal:
         factory, calls = _fake_iterate(
             [
                 [_msg("progress so far"), ev.Done(had_response=True)],
-                [_msg("done **GOAL ACHIEVED**"), ev.Done(had_response=True)],
+                [_msg("**GOAL ACHIEVED**\nEvidence: tests passed"), ev.Done(had_response=True)],
             ]
         )
         monkeypatch.setattr(al, "iterate_agent_events", factory)
@@ -165,7 +178,11 @@ class TestRunWithGoal:
         factory, calls = _fake_iterate(
             [
                 [_msg("turn 1"), ev.Done(had_response=True)],
-                [_msg("turn 2"), ev.Done(had_response=True)],
+                [
+                    ev.ToolCall(name="test", display_str="test", icon="•"),
+                    _msg("turn 2"),
+                    ev.Done(had_response=True),
+                ],
                 [_msg("turn 3"), ev.Done(had_response=True)],
             ]
         )
@@ -174,7 +191,7 @@ class TestRunWithGoal:
         assert calls["n"] == 3
         fin = [e for e in out if getattr(e, "event_type", "") == "nova_goal_finish"]
         assert len(fin) == 1
-        assert "stopped after 3/3 turn(s)" in fin[0].message
+        assert "budget reached after 3/3 turn(s)" in fin[0].message
         assert sum(isinstance(e, ev.Done) for e in out) == 1
 
     async def test_goal_cleared_mid_run_stops(self, monkeypatch: pytest.MonkeyPatch):
@@ -220,3 +237,124 @@ class TestRunWithGoal:
         assert any(isinstance(e, ev.Cancelled) for e in out)
         assert not any(isinstance(e, ev.Done) for e in out)
         assert calls["n"] == 1
+
+    async def test_pause_between_turns_and_resumption_keeps_budget(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        ss = _session(max_turns=3)
+
+        def pause(_input: str, session_state: Any) -> None:  # noqa: ANN401
+            session_state.goal_status = "paused"
+
+        factory, calls = _fake_iterate([[_msg("progress"), ev.Done()]], side_effect=pause)
+        monkeypatch.setattr(al, "iterate_agent_events", factory)
+        await _collect(al.run_with_goal("kickoff", None, None, ss))
+        assert calls["n"] == 1
+        assert ss.goal_status == "paused"
+        assert ss.goal_turns_used == 1
+
+        ss.goal_status = "active"
+        factory, calls = _fake_iterate([[_msg("GOAL ACHIEVED\nEvidence: test passed"), ev.Done()]])
+        monkeypatch.setattr(al, "iterate_agent_events", factory)
+        await _collect(al.run_with_goal("resume", None, None, ss))
+        assert calls["n"] == 1
+        assert ss.goal_turns_used == 2
+        assert ss.goal_status == "complete"
+
+    async def test_goal_does_not_run_in_another_thread(self, monkeypatch: pytest.MonkeyPatch):
+        ss = _session()
+        ss.goal_thread_id = "original"
+        factory, calls = _fake_iterate([[_msg("ordinary reply"), ev.Done()]])
+        monkeypatch.setattr(al, "iterate_agent_events", factory)
+        await _collect(al.run_with_goal("hello", None, None, ss))
+        assert calls["inputs"] == ["hello"]
+        assert ss.active_goal == "do the thing"
+
+    async def test_tool_free_continuation_does_not_spin(self, monkeypatch: pytest.MonkeyPatch):
+        factory, calls = _fake_iterate(
+            [[_msg("first"), ev.Done()], [_msg("second"), ev.Done()], [_msg("third"), ev.Done()]]
+        )
+        monkeypatch.setattr(al, "iterate_agent_events", factory)
+        ss = _session(max_turns=8)
+        out = await _collect(al.run_with_goal("kickoff", None, None, ss))
+        assert calls["n"] == 2
+        assert ss.goal_status == "active"
+        assert ss.goal_turns_used == 2
+        assert any(
+            "without tool work" in e.message for e in out if isinstance(e, ev.ContextMessage)
+        )
+
+    async def test_plan_mode_runs_once_without_spending_goal_budget(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        ss = _session()
+        ss.plan_mode_enabled = True
+        factory, calls = _fake_iterate([[_msg("Here is the plan"), ev.Done()]])
+        monkeypatch.setattr(al, "iterate_agent_events", factory)
+        await _collect(al.run_with_goal("plan first", None, None, ss))
+        assert calls["n"] == 1
+        assert ss.goal_turns_used == 0
+
+    async def test_exhausted_budget_still_emits_done(self, monkeypatch: pytest.MonkeyPatch):
+        ss = _session(max_turns=2)
+        ss.goal_turns_used = 2
+        factory, calls = _fake_iterate([])
+        monkeypatch.setattr(al, "iterate_agent_events", factory)
+        out = await _collect(al.run_with_goal("continue", None, None, ss))
+        assert calls["n"] == 0
+        assert ss.goal_status == "budget_limited"
+        assert isinstance(out[-1], ev.Done)
+
+    async def test_task_cancellation_pauses_goal(self, monkeypatch: pytest.MonkeyPatch):
+        ss = _session()
+
+        async def cancelled(*_args: object, **_kwargs: object) -> AsyncIterator[Any]:
+            yield _msg("working")
+            raise asyncio.CancelledError
+
+        monkeypatch.setattr(al, "iterate_agent_events", cancelled)
+        with pytest.raises(asyncio.CancelledError):
+            await _collect(al.run_with_goal("start", None, None, ss))
+        assert ss.goal_status == "paused"
+
+    async def test_queued_input_runs_before_next_goal_continuation(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        ss = _session()
+        factory, calls = _fake_iterate(
+            [[_msg("GOAL ACHIEVED\nEvidence: old requirements passed"), ev.Done()]]
+        )
+        monkeypatch.setattr(al, "iterate_agent_events", factory)
+        out = await _collect(al.run_with_goal("start", None, None, ss, can_continue=lambda: False))
+        assert calls["n"] == 1
+        assert ss.goal_status == "active"
+        assert isinstance(out[-1], ev.Done)
+
+    async def test_replacing_goal_does_not_accept_old_completion(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        from novacode_cli.commands.side_commands import handle_goal_command
+
+        ss = _session()
+        replacements = []
+
+        def replace_once(_input: str, state: SimpleNamespace) -> None:
+            if not replacements:
+                handle_goal_command(state, "new objective")
+                state.goal_max_turns = 1
+                replacements.append(True)
+
+        factory, calls = _fake_iterate(
+            [
+                [_msg("GOAL ACHIEVED\nEvidence: old test passed"), ev.Done()],
+                [_msg("new work still needed"), ev.Done()],
+            ],
+            side_effect=replace_once,
+        )
+        monkeypatch.setattr(al, "iterate_agent_events", factory)
+        await _collect(al.run_with_goal("start old objective", None, None, ss))
+        assert calls["n"] == 2
+        assert "new objective" in calls["inputs"][1]
+        assert ss.active_goal == "new objective"
+        assert ss.goal_status == "budget_limited"
+        assert ss.goal_turns_used == 1

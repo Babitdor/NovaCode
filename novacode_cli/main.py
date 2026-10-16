@@ -709,9 +709,12 @@ async def _run_agent_session(
     if initial_messages:
         from novacode_cli.session.context_restore import seed_restored_context
 
+        previous_thread = session_state.thread_id
         session_state.thread_id = await seed_restored_context(
             agent, initial_messages, as_node="model",
         )
+        if getattr(session_state, "goal_thread_id", None) == previous_thread:
+            session_state.goal_thread_id = session_state.thread_id
         boot_status(f"session: {len(initial_messages)} messages restored")
 
     # Calculate baseline token count for accurate token tracking
@@ -842,6 +845,8 @@ async def _run_agent_session(
                     or getattr(model, "model", None)
                     or model_name
                 )
+                from novacode_cli.commands.side_commands import goal_state_payload
+
                 _crash_dir = session_manager.save_session(
                     session_id=session_state.session_id,
                     thread_id=session_state.thread_id,
@@ -853,6 +858,7 @@ async def _run_agent_session(
                     task_status="crashed",
                     sandbox_id=(getattr(sandbox_backend, "id", None) if sandbox_backend else None),
                     sandbox_type=sandbox_type,
+                    goal=goal_state_payload(session_state),
                 )
                 console.print(f"[dim]Session saved → {_crash_dir}[/dim]")
             except Exception as _save_err:
@@ -1178,6 +1184,9 @@ async def main(
             session_state.session_id = session_data.meta.session_id
             session_state.thread_id = session_data.meta.thread_id
             session_state.is_continued = True
+            from novacode_cli.commands.side_commands import restore_goal_state
+
+            restore_goal_state(session_state, getattr(session_data.meta, "goal", None))
 
             # Recover the sandbox used last time so we can reconnect to its
             # container (preserving installed deps / in-container state).

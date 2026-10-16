@@ -998,11 +998,15 @@ def _counting_agent(reply: str):
     class Agent:
         turns = 0
 
+        def __init__(self) -> None:
+            self.inputs = []
+
         async def aget_state(self, config):
             return _State([])
 
         async def astream(self, inp, **kw):
             Agent.turns += 1
+            self.inputs.append(inp)
             yield ((), "messages", (_Chunk(f"m{Agent.turns}", [{"type": "text", "text": reply}]), {}))
 
         async def aupdate_state(self, **kw):
@@ -1056,11 +1060,25 @@ def test_goal_achieved_stops_the_loop():
         active_goal = "build a CSV parser"
         auto_approve = True
 
-    agent = _counting_agent("All done. GOAL ACHIEVED")
+    agent = _counting_agent("GOAL ACHIEVED\nEvidence: tests passed")
     _drive_stream(agent, _GoalState())
     assert type(agent).turns == 1, (
         f"GOAL ACHIEVED should end the run, but it ran {type(agent).turns} turns"
     )
+
+
+def test_paused_goal_does_not_load_objective_or_retained_rubric():
+    class PausedState(_SessionState):
+        active_goal = "fix parser"
+        active_rubric = "parser tests pass"
+        goal_status = "paused"
+
+    agent = _counting_agent("ordinary answer")
+    _drive_stream(agent, PausedState())
+    assert type(agent).turns == 1
+    request = agent.inputs[0]
+    assert "[GOAL]" not in str(request["messages"])
+    assert request["rubric"] == ""
 
 
 def test_no_goal_runs_exactly_one_turn():

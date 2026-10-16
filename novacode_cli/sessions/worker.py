@@ -213,7 +213,7 @@ class SessionWorker:
                     result if result is not None else default_interrupt_response(event.kind)
                 )
 
-    async def _run_turn(self, prompt_id: str, text: str, images=None, auto_approve=None) -> None:
+    async def _run_turn(self, prompt_id: str, text: str, images=None, auto_approve=None) -> None:  # noqa: PLR0912
         """Stream one prompt, emitting every event to the parent."""
         ok = True
         if auto_approve is not None:
@@ -229,7 +229,14 @@ class SessionWorker:
                 text = await self._resolve_slash(text, prompt_id=prompt_id)
                 if text is None:
                     return
-            source = iterate_agent_events(
+            stream = iterate_agent_events
+            goal_options: dict[str, Any] = {}
+            if getattr(self.session_state, "active_goal", None):
+                from novacode_cli.core.autonomous_loop import run_with_goal
+
+                stream = run_with_goal
+                goal_options["can_continue"] = lambda: not self._queued
+            source = stream(
                 text,
                 self.agent,
                 self.assistant_id,
@@ -237,6 +244,7 @@ class SessionWorker:
                 backend=self.backend,
                 seen_message_ids=self._seen,
                 image_tracker=self.image_tracker,
+                **goal_options,
             )
             async for event in source:
                 if isinstance(event, ev.InterruptRequest):
@@ -284,7 +292,7 @@ class SessionWorker:
         if _get_registry().get(cmd) is None and _get_registry().get(kebab) is not None:
             cmd = kebab
         args = parts[1] if len(parts) > 1 else None
-        if cmd.startswith("skill:") or _get_registry().get(cmd) is None:
+        if cmd != "goal" and (cmd.startswith("skill:") or _get_registry().get(cmd) is None):
             name = cmd.removeprefix("skill:")
             skill = await _try_skill_invocation(name, args, self.session_state, self.assistant_id)
             if skill is not None:
@@ -335,8 +343,9 @@ class SessionWorker:
     # ── main loop ────────────────────────────────────────────────────────
 
     async def run(self) -> int:
-        from novacode_cli.shell.jobs import get_registry
+        from novacode_cli.commands.side_commands import is_goal_control
         from novacode_cli.sessions.tasks import job_snapshot
+        from novacode_cli.shell.jobs import get_registry
 
         registry = get_registry()
         def jobs_changed(event, job):
@@ -419,6 +428,9 @@ class SessionWorker:
                         text = "Please describe this image."
                     if not text.strip():
                         self._emit({"t": "turn_done", "id": pid, "ok": True})
+                    elif self._turn_running() and not images and is_goal_control(text):
+                        await self._resolve_slash(text, prompt_id=pid)
+                        self._emit({"t": "turn_done", "id": pid, "ok": True, "running": True})
                     elif self._turn_running() and len(self._queued) >= MAX_QUEUED_PROMPTS:
                         self._emit({"t": "error", "message": "Prompt queue is full."})
                         self._emit({"t": "turn_done", "id": pid, "ok": False})

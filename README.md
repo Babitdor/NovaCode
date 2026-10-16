@@ -32,7 +32,7 @@ An open-source, terminal-based AI coding assistant built on LangGraph and the `d
 - **Webhook Ingress Server**: Let external systems (GitHub, Linear, or any signed sender) trigger a Nova run without a human relaying through Discord/Telegram. Per-source HMAC-SHA256 secrets, timing-safe verification, binds to `127.0.0.1` by default. Manage with `/webhook`
 - **Reasoning Effort Control**: Dynamically adjust LLM reasoning effort (`/effort low|medium|high|off`) — hot-swaps the model without restarting. Supports OpenAI o-series, Gemini 2.5/3, and Claude 3.7 Sonnet
 - **Self-Evolution Log**: Track the agent's own growth over time (`/evolution`) — skills unlocked and levelled up at the completion of complex tasks, persisted in durable store
-- **Autonomous Goal Mode**: Set a persistent goal (`/goal <text>`) that is injected into every turn, with an optional acceptance rubric (`/goal rubric <criteria>`) graded by deepagents' `RubricMiddleware`. The agent runs autonomously toward the goal (capped at 5 turns by default) and stops when it declares `GOAL ACHIEVED`
+- **Autonomous Goal Mode**: Start a goal with `/goal <objective>` and inspect it with `/goal`. Goals stay with the conversation across session saves, with pause, resume, clear, and an optional acceptance rubric (`/goal rubric <criteria>`). The default budget is 5 agent turns per goal; `/goal budget <turns>` changes it. Completion requires an explicit evidence declaration. Interruptions pause the goal, and planning or queued input takes priority over automatic continuation.
 - **Side Questions**: Ask a question on an ephemeral thread without touching the main conversation (`/btw <question>`)
 - **Refinement Loop**: `/refine` runs a refinement audit trail over the session's work, with `history` and `rollback <id>` subcommands
 - **Headless Mode**: Run a single prompt non-interactively and exit (`nova -p "..."`, or pipe the prompt on stdin) with `text`, `json`, or `stream-json` output — built for scripting and CI. `--max-turns` caps the run; `--deny-tools` auto-rejects tool approvals (fail-closed)
@@ -367,7 +367,7 @@ Enter `!command` to stream output in the chat. Nova records the output and repor
 | `/cost` | Show session token spend |
 | `/verbose` | Toggle verbose mode (show internal agent context) |
 | `/steer` | Set persistent steering instructions for the agent |
-| `/goal` | Set a persistent goal injected into every turn (`/goal rubric <criteria>` for an acceptance rubric; `status` / `clear`) |
+| `/goal` | Show the conversation's goal; `/goal <objective>` starts it. Controls: `pause`, `resume`, `clear`, `budget <turns>`, `rubric <criteria>` |
 | `/btw` | Ask a side question on an ephemeral thread without touching the main conversation |
 | `/save` | Save current session |
 | `/compact` | Compact conversation history with optional focus |

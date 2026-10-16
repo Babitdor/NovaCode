@@ -20,12 +20,16 @@ Runnable directly (``python tests/test_session_worker.py``) or via pytest.
 from __future__ import annotations
 
 import asyncio
+from typing import TYPE_CHECKING
 
 import pytest
 
 from novacode_cli import ui_events as ev
 from novacode_cli.sessions import protocol
 from novacode_cli.sessions.worker import SessionWorker
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 
 class _SS:
@@ -110,6 +114,57 @@ async def test_child_command_output_is_returned_without_a_model_call(monkeypatch
     assert handler.call_args.args[0] == "/plan status"
     assert any(frame.get("t") == "ev" for frame in sent)
     assert sent[-1]["ok"]
+
+
+async def test_child_goal_uses_shared_lifecycle_and_continuation(monkeypatch: pytest.MonkeyPatch):
+    calls = []
+
+    async def stream(text: str, *_args: object, **_kwargs: object) -> AsyncIterator[object]:
+        calls.append(text)
+        if len(calls) == 1:
+            yield ev.AssistantMessage("progress", "Nova", "cyan")
+        else:
+            yield ev.AssistantMessage("GOAL ACHIEVED\nEvidence: parser test passed", "Nova", "cyan")
+        yield ev.Done()
+
+    monkeypatch.setattr("novacode_cli.core.autonomous_loop.iterate_agent_events", stream)
+    worker, sent = _make(monkeypatch, stream)
+    await worker._run_turn("goal", "/goal Fix parser")
+    assert len(calls) == 2
+    assert worker.session_state.goal_status == "complete"
+    assert worker.session_state.goal_turns_used == 2
+    assert sent[-1]["ok"]
+
+
+async def test_child_goal_pause_is_handled_before_active_turn_ends(monkeypatch: pytest.MonkeyPatch):
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    calls = []
+
+    async def stream(text: str, *_args: object, **_kwargs: object) -> AsyncIterator[object]:
+        calls.append(text)
+        entered.set()
+        await release.wait()
+        yield ev.Done()
+
+    monkeypatch.setattr("novacode_cli.core.autonomous_loop.iterate_agent_events", stream)
+    worker, sent = _make(monkeypatch, stream)
+    running = asyncio.create_task(worker.run())
+    try:
+        await worker.inbox.put({"t": "prompt", "id": "goal", "text": "/goal Fix parser"})
+        await asyncio.wait_for(entered.wait(), 5)
+        await worker.inbox.put({"t": "prompt", "id": "pause", "text": "/goal pause"})
+        assert await _wait_for(lambda: any(f["id"] == "pause" for f in _frames(sent, "turn_done")))
+        assert worker.session_state.goal_status == "paused"
+        assert worker._turn_running()
+        assert _frames(sent, "turn_done")[-1]["running"]
+        release.set()
+        assert await _wait_for(lambda: any(f["id"] == "goal" for f in _frames(sent, "turn_done")))
+        assert len(calls) == 1
+    finally:
+        release.set()
+        await worker.inbox.put({"t": "shutdown"})
+        await asyncio.wait_for(running, 10)
 
 
 @pytest.mark.asyncio

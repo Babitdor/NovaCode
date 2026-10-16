@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NotRequired
+from typing import TYPE_CHECKING, Annotated, NotRequired
 
 from langchain.agents.middleware.types import (
     AgentMiddleware,
@@ -167,10 +167,22 @@ class ContextSnapshot:
             raise ProtectedContextOverflowError(message)
 
 
+def _replace_snapshot(
+    _previous: dict[str, object], current: dict[str, object]
+) -> dict[str, object]:
+    """Keep one complete request diagnostic when parallel nodes update state.
+
+    Accounting describes a single request, so merging fields from different
+    requests would produce an invalid snapshot. LangGraph applies updates in
+    graph order; the last diagnostic replaces the previous one.
+    """
+    return current
+
+
 class SnapshotState(AgentState):
     """Persist only content-free request diagnostics."""
 
-    _context_snapshot: NotRequired[dict]
+    _context_snapshot: NotRequired[Annotated[dict[str, object], _replace_snapshot]]
 
 
 class ContextSnapshotMiddleware(AgentMiddleware[SnapshotState]):

@@ -3749,7 +3749,7 @@ wheels = [
 
 [[package]]
 name = "novacode-cli"
-version = "1.0.38"
+version = "1.0.39"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -3784,6 +3784,7 @@ dependencies = [
     { name = "mcp" },
     { name = "modal" },
     { name = "pillow" },
+    { name = "psutil" },
     { name = "pydantic" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "pymupdf" },
@@ -3888,6 +3889,7 @@ requires-dist = [
     { name = "piper-tts", marker = "extra == 'voice'", specifier = ">=1.2.0" },
     { name = "playwright", marker = "extra == 'browser'", specifier = ">=1.40.0" },
     { name = "pocket-tts", marker = "extra == 'voice-pocket'", specifier = ">=0.1.0" },
+    { name = "psutil", specifier = ">=5.9" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10" },
     { name = "pymupdf", specifier = ">=1.24" },

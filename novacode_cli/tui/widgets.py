@@ -109,10 +109,12 @@ class MatrixRain(Static):
     KATAKANA = "ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜｦﾝｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅ"
 
     def __init__(
-        self, art: str = "", width: int | None = None, *, animate: bool | None = None, fps: int = 30
+        self, art: str = "", width: int | None = None, *, animate: bool | None = None,
+        fps: int = 30, compact: bool = False,
     ) -> None:
         super().__init__("", id="matrix-rain")
         self._animation_enabled = animate
+        self._compact = compact
         from novacode_cli.tui.animation_rate import animation_fps
 
         self._animation_fps = animation_fps(fps)
@@ -180,9 +182,9 @@ class MatrixRain(Static):
         # guards art handed in from elsewhere.)
         usable = (width or 80) - 4
         self._col_count = max(usable, art_w)
-        self._row_count = max(art_h + 6, 18)
+        self._row_count = max(art_h + 2, 10) if self._compact else max(art_h + 6, 18)
         self._art_left = max(0, (self._col_count - art_w) // 2)
-        self._art_top = 2  # a couple rows of rain above the lockup
+        self._art_top = 1 if self._compact else 2
         self._art_w = art_w  # the art's bounding box, measured with cell_len
         self._width = width
 

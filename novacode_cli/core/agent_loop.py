@@ -257,8 +257,14 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
             user_input = directive + user_input
 
     active_goal = getattr(session_state, "active_goal", None)
+    goal_in_scope = (
+        bool(active_goal)
+        and getattr(session_state, "goal_status", "active") == "active"
+        and getattr(session_state, "goal_thread_id", session_state.thread_id)
+        == session_state.thread_id
+    )
     if (
-        active_goal
+        goal_in_scope
         and not user_input.startswith("[GOAL]")
         and not user_input.startswith("[System Directive:")
     ):
@@ -438,9 +444,15 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     # Pair the active rubric (set via `/goal rubric <criteria>`) with the run so
     # RubricMiddleware's grader holds the output to those criteria. Absent ⇒ the
     # middleware is a no-op, so this adds nothing when no rubric is set.
-    _active_rubric = getattr(session_state, "active_rubric", None)
-    if _active_rubric:
-        stream_input["rubric"] = _active_rubric
+    _active_rubric = (
+        getattr(session_state, "active_rubric", None)
+        if (not active_goal or goal_in_scope)
+        and not getattr(session_state, "plan_mode_enabled", False)
+        else None
+    )
+    # The checkpointer retains omitted fields; explicitly clear a rubric when
+    # the goal pauses, completes, or is cleared so old criteria cannot leak.
+    stream_input["rubric"] = _active_rubric or ""
     _current_stream_gen: Any = None
 
     from novacode_cli.tools.plan_mode_tools import _auto_approve_var
