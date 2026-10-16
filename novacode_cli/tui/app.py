@@ -1135,7 +1135,7 @@ class NovaApp(App):
         padding: 0 2;
         /* Grows with the text (multi-line composing, wrapped long lines)
            and stops before it eats the transcript. */
-        height: auto; min-height: 3; max-height: 15;
+        height: auto; min-height: 1; max-height: 15;
         border: none;
         /* Smooth fade when switching into/out of a mode. */
         transition: background 300ms in_out_cubic;
@@ -1146,7 +1146,7 @@ class NovaApp(App):
     /* The > chevron prefix for the input. */
     #prompt-prefix {
         width: 3;
-        height: 3;
+        height: 1;
         padding: 0 0 0 1;
         background: $panel;
         color: $accent;
@@ -1996,6 +1996,7 @@ class NovaApp(App):
                 yield PromptInput(
                     placeholder="Type your message or @path/to/file  (shift+enter for a new line)",
                     id="prompt",
+                    soft_wrap=True,
                     paste_tracker=self.paste_tracker,
                     on_large_paste=self._on_large_paste,
                     on_clipboard_image=self._on_clipboard_image,

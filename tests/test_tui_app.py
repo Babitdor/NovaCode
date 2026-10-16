@@ -2890,6 +2890,52 @@ async def _drive_prompt_grows_and_takes_newlines():
         assert p.text == "abc\n", repr(p.text)
 
 
+async def _drive_prompt_edits_and_wraps():
+    """The composer edits at the cursor and wraps without changing the draft."""
+    from novacode_cli.tui.app import NovaApp
+    from novacode_cli.tui.widgets import PromptInput
+    from novacode_cli.ui.ui_elements import TokenTracker
+
+    app = NovaApp(
+        agent=_FakeAgent(),
+        assistant_id="nova-agent",
+        session_state=_SS(),
+        backend=None,
+        token_tracker=TokenTracker(),
+        image_tracker=None,
+        model_name="m",
+    )
+    async with app.run_test(size=(80, 30)) as pilot:
+        p = app.query_one("#prompt", PromptInput)
+        p.focus()
+        await pilot.pause()
+        initial_height = p.size.height
+
+        p.text = "first\nsecond"
+        await pilot.pause()
+        assert p.size.height > initial_height
+        p.move_cursor((1, 3))
+        await pilot.press("left", "backspace", "X", "up", "home", "right", "Y")
+        assert p.text == "fYirst\nsXcond"
+        assert p.cursor_location[0] == 0
+
+        p.text = "abc\ndef"
+        p.move_cursor((0, 1))
+        await pilot.press("down", "right", "delete")
+        assert p.text == "abc\nde"
+
+        p.text = "a" * 300
+        await pilot.pause()
+        await pilot.pause()
+        assert p.soft_wrap
+        assert p.text == "a" * 300
+        assert p.size.height > initial_height
+        p.text = "short"
+        await pilot.pause()
+        await pilot.pause()
+        assert p.size.height == initial_height
+
+
 async def _drive_prompt_enter_still_submits():
     """enter must still send — TextArea would otherwise insert a newline."""
     from novacode_cli.tui.app import NovaApp
@@ -2923,6 +2969,10 @@ def test_tui_prompt_grows_and_takes_newlines():
     if not _HAS_TEXTUAL:
         return
     asyncio.run(_drive_prompt_grows_and_takes_newlines())
+
+
+def test_tui_prompt_edits_and_wraps():
+    asyncio.run(_drive_prompt_edits_and_wraps())
 
 
 def test_tui_prompt_enter_still_submits():
