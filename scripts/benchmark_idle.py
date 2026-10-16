@@ -7,7 +7,7 @@ Each session is a separate process; the parent prints JSON measurements.
 from __future__ import annotations
 
 # Standalone JSON-reporting measurement command.
-# ruff: noqa: INP001, T201
+# ruff: noqa: T201
 import argparse
 import asyncio
 import ctypes
@@ -88,6 +88,7 @@ def working_set() -> int | None:
 
 async def measure(seconds: float) -> dict[str, object]:
     """Measure idle CPU and loop scheduling in a mounted Nova TUI."""
+    from novacode_cli.config.nova_config import NovaConfig
     from novacode_cli.tui.app import NovaApp
     from novacode_cli.tui.widgets import MatrixRain
 
@@ -105,11 +106,20 @@ async def measure(seconds: float) -> dict[str, object]:
     async def no_voice(_app: NovaApp) -> None:
         pass
 
+    def configure(config: NovaConfig) -> None:
+        config.config_dir = Path(directory)
+        config.config_path = Path(directory) / "Nova.config.json"
+        config._config = {}
+        config._loaded = {}
+
     os.environ["NOVA_DISABLE_UPDATE_CHECK"] = "1"
     os.environ.pop("NO_COLOR", None)
     # Measure the TUI, not network, audio downloads or a user's saved layout.
     with (
         tempfile.TemporaryDirectory() as directory,
+        patch.object(NovaConfig, "__init__", configure),
+        patch("novacode_cli.config.config.HOME_DIR", Path(directory)),
+        patch.object(NovaApp, "_refresh_branch_worker", lambda _: None),
         patch.object(NovaApp, "_eager_voice_warmup", no_voice),
         patch.object(NovaApp, "_tick", status),
         patch.object(MatrixRain, "_tick", rain),
