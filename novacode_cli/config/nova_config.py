@@ -405,11 +405,13 @@ class NovaConfig:
     #: The periodic review + skill-creation loop fires out-of-band LLM calls
     #: (every N tool calls). It is OFF by default to keep per-turn LLM cost and
     #: latency minimal; users who want self-improvement opt in explicitly.
-    LEARNING_ENABLED_DEFAULT: bool = False
+    LEARNING_ENABLED_DEFAULT: bool = True
 
     def get_learning_enabled(self) -> bool:
-        """Whether the Hermes learning/review loop is enabled (default: off)."""
-        return bool(self._config.get("learning_enabled", self.LEARNING_ENABLED_DEFAULT))
+        """Whether the Hermes learning/review loop is enabled (default: on)."""
+        return _config_bool(
+            self._config.get("learning_enabled"), default=self.LEARNING_ENABLED_DEFAULT
+        )
 
     def set_learning_enabled(self, enabled: bool) -> None:
         """Persist the learning-loop toggle."""

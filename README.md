@@ -376,6 +376,7 @@ Enter `!command` to stream output in the chat. Nova records the output and repor
 | `/tabs` | Session tabs: `launch` opens the approved project picker; `resume` picks a saved session to reopen as a tab; `resume <id>` accepts an exact ID or unique prefix. `list` / `close` manage tabs (`ctrl+n`, `alt+<n>`) |
 | `/resume` | Resume a saved session for this path (`/resume <id>`) |
 | `/restore` | Restore a previous file version from snapshots |
+| `/rewind` | Go back to before an earlier message: the conversation, the files the agent changed since, or both |
 | `/files` | Show file operation summary for the session |
 | `/images` | Manage tracked image references |
 | `/artifacts` | Open the artifacts list |
@@ -426,7 +427,8 @@ Enter `!command` to stream output in the chat. Nova records the output and repor
 | `/effort` | Set reasoning effort level — `low`, `medium`, `high`, or `off` (hot-swaps model) |
 | `/vision` | Configure image handling — status, set the auxiliary vision model, or force the main model multimodal/text-only |
 | `/evolution` | View the self-evolution log — skills unlocked (🧬) and levelled up (⬆️) |
-| `/learning` | Toggle Nova's autonomous learning loop (`/learning on\|off\|status`) |
+| `/learning` | Control learning and review proposals (`/learning review` opens the TUI reviewer; approve, reject, and rollback are also available by revision) |
+| `/learn <source or workflow>` | Inspect a source or workflow with the agent and propose a reusable skill |
 | `/ingest` | Ingest captured sources (Obsidian Web Clipper) into synthesized wiki pages |
 | `/ask` | Ask a question informed by wiki context — searches wiki and answers with relevant knowledge |
 | `/file` | File recent conversation knowledge as a wiki page under a topic path |
@@ -955,9 +957,15 @@ nova mcp add playwright --preset playwright
 # Custom HTTP transport
 nova mcp add my-server --transport http --url https://example.com/mcp
 
+# Private HTTP server; header value is saved in Nova's secret store
+nova mcp add --transport http private-api https://api.company.com/mcp \
+  --header "X-API-Key: your-key-here"
+
 # Custom stdio transport
 nova mcp add my-server --transport stdio --command "python -m my_mcp_server"
 ```
+
+For an OAuth-protected HTTP server, open `/mcp`, select the server, and choose **Authenticate**. Follow the browser sign-in prompt. Nova stores the registration and tokens in its secret store; the MCP client refreshes tokens when needed. The CLI also accepts `--oauth` when adding an HTTP server.
 
 **Available Presets:** `google-drive`, `gmail`, `google-docs`, `playwright`, `serena`, `context7`, `apify`, `cua-driver`, `sequential-thinking`, `chrome-devtools`, `firecrawl`, `tavily`, `exa`, `perplexity`
 

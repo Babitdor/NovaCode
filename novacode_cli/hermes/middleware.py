@@ -36,8 +36,8 @@ import logging
 import re
 import time
 import weakref
-from functools import wraps
 from collections.abc import Awaitable, Callable
+from functools import wraps
 from typing import TYPE_CHECKING, Any
 
 from langchain.agents.middleware.types import (
@@ -278,6 +278,7 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
         # run a review without a live turn to hang off (see
         # consolidate_session). run_review only needs .messages and .model.
         self._last_request: Any = None
+        self._reviewed_task: str | None = None
 
         # Publish for get_active_learning_middleware(). The graph owns the
         # instance once compiled, so /quit and /clear have no other way to
@@ -414,6 +415,7 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
         from novacode_cli.session.runtime_identity import current_identity
         identity = current_identity.get()
         self._tracker.start_task(identity.task if identity else None)
+        self._last_request = None
         return {"nova_task_identity": self._tracker.task}
 
     def after_agent(self, state: AgentState, runtime: Any = None) -> None:  # noqa: ARG002
@@ -436,10 +438,16 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
         Returns:
             True if a consolidation review actually ran.
         """
-        if not self._enabled or self._last_request is None:
+        if (not self._enabled or self._last_request is None
+                or self._reviewed_task == self._tracker.task or self._refinement_tasks):
             return False
 
         try:
+            history = await self._tracker.get_tool_history(
+                limit=await self._tracker.get_call_count()
+            )
+            if any(h.get("outcome") == "cancelled" for h in history):
+                return False
             if not await self._review.should_consolidate():
                 return False
         except Exception:  # noqa: BLE001 - never block exit on the check
@@ -483,19 +491,27 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
         including how it turned out, and it happens once. It runs as a
         background task so the user's turn ends when the agent's answer does.
         """
-        if getattr(self._review, "_mode", "") != "task_end" or self._last_request is None:
+        if (getattr(self._review, "_mode", "") != "task_end"
+                or self._last_request is None
+                or self._reviewed_task == self._tracker.task):
             return
         try:
+            history = await self._tracker.get_tool_history(
+                limit=await self._tracker.get_call_count()
+            )
+            if any(h.get("outcome") == "cancelled" for h in history):
+                return
             if not await self._review.should_consolidate():
                 return
             messages = dict(state).get("messages") if state is not None else None
             request = (
                 self._last_request.override(messages=list(messages))
-                if messages
+                if isinstance(messages, (list, tuple)) and messages
                 else self._last_request
             )
-            await self._tracker.reset_counter()
             await self._queue_review(request)
+            self._reviewed_task = self._tracker.task
+            await self._tracker.reset_counter()
         except Exception:  # noqa: BLE001
             logger.debug("end-of-task review failed to start", exc_info=True)
 
@@ -513,14 +529,18 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
         """One queued review per session, frozen before another turn can begin."""
         import json
         from copy import deepcopy
-        if self._refinement_tasks:
-            return
+        prior = tuple(self._refinement_tasks)
         episodes = await self._tracker.get_tool_history(limit=2 * self._review_threshold)
         snapshot = request.override(
             messages=deepcopy(request.messages),
             state={**(request.state or {}), "_nova_review_episodes": json.dumps(episodes)},
         )
-        task = asyncio.create_task(self._review.run_review_task(snapshot))
+        async def _after_prior() -> None:
+            if prior:
+                await asyncio.gather(*prior, return_exceptions=True)
+            await self._review.run_review_task(snapshot)
+
+        task = asyncio.create_task(_after_prior())
         self._refinement_tasks.add(task)
         task.add_done_callback(self._refinement_tasks.discard)
 

@@ -76,8 +76,7 @@ async def _run_loop(store: object, console: Console) -> bool:
     summary = await run_refine(store, ToolUsageTracker(store))
     console.print(
         f"[cyan]/refine[/cyan] planned [bold]{summary.get('planned', 0)}[/bold], "
-        f"applied [bold]{summary.get('applied', 0)}[/bold], "
-        f"accepted [bold]{summary.get('accepted', 0)}[/bold], "
+        f"proposed [bold]{summary.get('accepted', 0)}[/bold], "
         f"rolled back [bold]{summary.get('rolled_back', 0)}[/bold]."
     )
     for item in summary.get("items", []):

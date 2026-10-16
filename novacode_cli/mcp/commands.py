@@ -27,6 +27,8 @@ def _add(
     args: list[str] | None = None,
     env: dict[str, str] | None = None,
     description: str | None = None,
+    headers: list[str] | None = None,
+    oauth: bool = False,
 ) -> None:
     """Add or update an MCP server configuration.
 
@@ -40,12 +42,26 @@ def _add(
         description: Server description (optional)
     """
     try:
+        if (headers or oauth) and transport != "http":
+            raise ValueError("OAuth and HTTP headers require --transport http")
+        parsed_headers: dict[str, str] = {}
+        for item in headers or []:
+            header_name, separator, value = item.partition(":")
+            if not separator or not header_name.strip() or not value.strip():
+                raise ValueError("Use --header 'Name: value'")
+            parsed_headers[header_name.strip()] = value.strip()
+
+        from novacode_cli.mcp.auth import store_header
+
+        secret_refs = {name: store_header(value) for name, value in parsed_headers.items()}
         config = MCPServerConfig(
             transport=transport,  # type: ignore[arg-type]
             url=url,
             command=command,
             args=args or [],
             env=env or {},
+            header_secrets=secret_refs,
+            oauth=oauth,
             description=description,
         )
 
@@ -68,7 +84,7 @@ def _add(
             style=COLORS["dim"],
         )
 
-    except ValueError as e:
+    except (ValueError, RuntimeError) as e:
         console.print(f"[bold red]Error:[/bold red] Invalid configuration: {e}")
         sys.exit(1)
 
@@ -225,6 +241,13 @@ def _list() -> None:
 
         if config.transport == "http" and config.url:
             console.print(f"    URL: {config.url}", style=COLORS["dim"])
+            if config.oauth:
+                console.print("    OAuth: enabled", style=COLORS["dim"])
+            if config.header_secrets:
+                console.print(
+                    f"    Secret headers: {', '.join(config.header_secrets)}",
+                    style=COLORS["dim"],
+                )
         elif config.transport == "stdio" and config.command:
             console.print(f"    Command: {config.command}", style=COLORS["dim"])
             if config.args:
@@ -812,11 +835,13 @@ def execute_mcp_command(args: argparse.Namespace) -> None:
         _add(
             name=args.name,
             transport=args.transport,
-            url=args.url,
+            url=args.url or args.endpoint,
             command=args.command,
             args=args.args,
             env=env,
             description=args.description,
+            headers=args.header,
+            oauth=args.oauth,
         )
 
     elif args.mcp_command == "remove":
@@ -854,6 +879,10 @@ def execute_mcp_command(args: argparse.Namespace) -> None:
         )
         console.print(
             "  Nova mcp add filesystem --transport stdio --command 'python -m mcp_server_filesystem'",
+        )
+        console.print(
+            "  Nova mcp add --transport http private-api https://api.company.com/mcp "
+            "--header 'X-API-Key: your-key-here'",
         )
         console.print("  Nova mcp list")
         console.print("  Nova mcp remove docs-langchain")

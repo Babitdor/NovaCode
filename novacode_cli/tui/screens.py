@@ -1217,6 +1217,7 @@ class McpScreen(ModalScreen[None]):
             with Horizontal(id="modal-buttons"):
                 yield Button("Install", id="install", variant="primary")
                 yield Button("Add Custom", id="add-custom")
+                yield Button("Authenticate", id="authenticate")
                 yield Button("Toggle Active", id="toggle-enable")
                 yield Button("Remove", id="remove", variant="error")
                 yield Button("Close", id="close")
@@ -1295,6 +1296,8 @@ class McpScreen(ModalScreen[None]):
                         (f"{status_mark}  {name}  \u00b7  ", status_style),
                         (f"{transport}  \u00b7  {loc}", "dim"),
                     )
+                if sc.oauth:
+                    label.append("  · OAuth", style="cyan")
                 configured.add_option(Option(label))
 
             # Show active tool count
@@ -1363,7 +1366,7 @@ class McpScreen(ModalScreen[None]):
             Text(
                 f"{len(self._presets)} presets \u00b7 "
                 "\U0001f511 = needs API key \u00b7 [\u2713] = already configured \u00b7 "
-                "restart session after installing",
+                "select a remote server to authenticate in your browser",
                 style="dim",
             )
         )
@@ -1377,6 +1380,8 @@ class McpScreen(ModalScreen[None]):
             self._install_highlighted()
         elif event.button.id == "add-custom":
             self._add_custom()
+        elif event.button.id == "authenticate":
+            self._authenticate_highlighted()
         elif event.button.id == "toggle-enable":
             self._toggle_highlighted()
 
@@ -1390,6 +1395,7 @@ class McpScreen(ModalScreen[None]):
             if idx is None or not (0 <= idx < len(self._config_names)):
                 btn.label = "Toggle Active"
                 btn.disabled = True
+                self.query_one("#authenticate", Button).disabled = True
                 return
 
             btn.disabled = False
@@ -1397,12 +1403,59 @@ class McpScreen(ModalScreen[None]):
             from novacode_cli.mcp.config import MCPConfig
 
             sc = MCPConfig().get_server(name)
+            self.query_one("#authenticate", Button).disabled = sc is None or sc.transport != "http"
             if sc and getattr(sc, "disabled", False):
                 btn.label = "Activate"
             else:
                 btn.label = "Deactivate"
         except Exception:
             pass
+
+    @work
+    async def _authenticate_highlighted(self) -> None:
+        """Complete remote MCP OAuth in the browser, then reload its tools."""
+        index = self.query_one("#mcp-configured", OptionList).highlighted
+        if index is None or not 0 <= index < len(self._config_names):
+            return
+        name = self._config_names[index]
+        from novacode_cli.mcp.client import check_server_connection
+        from novacode_cli.mcp.config import MCPConfig
+
+        manager = MCPConfig()
+        config = manager.get_server(name)
+        if config is None or config.transport != "http":
+            return
+        button = self.query_one("#authenticate", Button)
+        button.disabled = True
+        self.query_one("#mcp-hint", Static).update(
+            Text("Opening browser. Follow the sign-in prompt, then return to Nova…", style="cyan")
+        )
+        status = Text("Authentication failed. Check the server URL and browser sign-in.", style="red")
+        try:
+            candidate = config.model_copy(update={"oauth": True})
+            connected, _ = await check_server_connection(name, candidate)
+            if not connected:
+                raise RuntimeError("MCP OAuth sign-in or connection failed")
+            await manager.add_server_async(name, candidate)
+            status = Text(f"{name} authenticated. Tokens refresh automatically.", style="green")
+            if hasattr(self.app, "session_state") and hasattr(
+                self.app.session_state, "reload_mcp_servers"
+            ):
+                try:
+                    self.app.agent, self.app.backend = (
+                        await self.app.session_state.reload_mcp_servers()
+                    )
+                except Exception:  # noqa: BLE001 - sign-in succeeded; reload can retry next session
+                    status = Text(
+                        f"{name} authenticated. Restart the session to load its tools.",
+                        style="yellow",
+                    )
+        except Exception:  # noqa: BLE001 - OAuth errors may contain secrets or callback codes
+            pass
+        finally:
+            self._reload()
+            self.query_one("#mcp-hint", Static).update(status)
+            button.disabled = False
 
     @work
     async def _toggle_highlighted(self) -> None:
@@ -1541,9 +1594,17 @@ class McpScreen(ModalScreen[None]):
 
                 name = result["name"]
                 if result["transport"] == "http":
+                    from novacode_cli.mcp.auth import store_header
+
+                    secret_headers = {}
+                    if result.get("header_name"):
+                        secret_headers[result["header_name"]] = store_header(
+                            result["header_value"]
+                        )
                     config = MCPServerConfig(
                         transport="http",
                         url=result["url"],
+                        header_secrets=secret_headers,
                         description=result.get("description") or None,
                     )
                 else:
@@ -1666,6 +1727,11 @@ class McpCustomModal(ModalScreen[dict | None]):
                 id="mcp-conn",
             )
             yield Input(placeholder="Description (optional)", id="mcp-desc")
+            yield Input(placeholder="HTTP header name (optional, e.g. X-API-Key)", id="mcp-header-name")
+            yield Input(
+                placeholder="HTTP header value (stored securely)",
+                id="mcp-header-value", password=True,
+            )
             yield Static("", id="mcp-custom-hint")
             with Horizontal(id="modal-buttons"):
                 yield Button("Add", id="do-add", variant="primary")
@@ -1714,6 +1780,14 @@ class McpCustomModal(ModalScreen[dict | None]):
 
         if str(transport) == "http":
             result: dict = {"name": name, "transport": "http", "url": conn}
+            header_name = self.query_one("#mcp-header-name", Input).value.strip()
+            header_value = self.query_one("#mcp-header-value", Input).value.strip()
+            if bool(header_name) != bool(header_value):
+                hint.update(Text("Enter both a header name and value", style="red"))
+                return
+            if header_name:
+                result["header_name"] = header_name
+                result["header_value"] = header_value
         else:
             # stdio: split command into executable + args
             parts = conn.split()
@@ -3528,6 +3602,168 @@ class _ArchivePickerModal(ModalScreen["Path | None"]):
         self.dismiss(self._archived[index]["path"])
 
     def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class LearningScreen(ModalScreen[None]):
+    """Browse exact learning revisions and decide on pending candidates."""
+
+    DEFAULT_CSS = """
+    LearningScreen #modal-box { width: 92%; max-width: 112; height: 90%; }
+    LearningScreen #learning-list { height: 1fr; min-height: 5; }
+    LearningScreen #learning-detail-scroll { height: 2fr; min-height: 8; }
+    LearningScreen #learning-detail { height: auto; }
+    LearningScreen #learning-message { height: auto; min-height: 1; }
+    LearningScreen #modal-buttons { height: auto; }
+    LearningScreen #modal-buttons Button { min-width: 10; }
+    """
+
+    BINDINGS = [
+        ("escape", "close", "Close"),
+        ("a", "approve", "Approve"),
+        ("r", "reject", "Reject"),
+        ("b", "rollback", "Rollback"),
+    ]
+
+    def __init__(self, agent_dir: Path, project: str) -> None:
+        super().__init__()
+        self._agent_dir = agent_dir
+        self._project = project
+        self._records: list[Any] = []
+        self._busy = False
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="modal-box"):
+            yield Static(Text("Learning proposals", style="bold"), id="modal-title")
+            yield Static(
+                "Select a revision to inspect it. Approval activates it on the next turn.",
+                id="learning-intro",
+            )
+            yield OptionList(id="learning-list")
+            with VerticalScroll(id="learning-detail-scroll"):
+                yield Static("", id="learning-detail")
+            yield Static("", id="learning-message")
+            with Horizontal(id="modal-buttons"):
+                yield Button("Approve (a)", id="learning-approve", variant="success")
+                yield Button("Reject (r)", id="learning-reject", variant="error")
+                yield Button("Rollback (b)", id="learning-rollback")
+                yield Button("Refresh", id="learning-refresh")
+                yield Button("Close", id="learning-close")
+
+    async def on_mount(self) -> None:
+        animate_modal_screen(self)
+        await self._reload()
+
+    async def _reload(self, *, keep_reference: str = "") -> None:
+        from novacode_cli.commands.learning_handler import handle_learning_review
+        from novacode_cli.hermes.ledger import LearningLedger
+
+        try:
+            # Import generated legacy artifacts through the same path as the
+            # console command, then read structured revisions for this screen.
+            await asyncio.to_thread(
+                handle_learning_review, "review",
+                agent_dir=self._agent_dir, project=self._project,
+            )
+            ledger = LearningLedger(self._agent_dir / "learning.sqlite3")
+            self._records = await asyncio.to_thread(ledger.list, project=self._project)
+        except (OSError, ValueError) as error:
+            self._records = []
+            self.query_one("#learning-message", Static).update(Text(str(error), style="red"))
+        options = self.query_one("#learning-list", OptionList)
+        options.clear_options()
+        selected = 0
+        for index, record in enumerate(self._records):
+            subject = record.target or record.applicability or "lesson"
+            label = (
+                f"{record.status.upper():<16} {record.kind:<14} "
+                f"{subject}  ·  {record.reference}"
+            )
+            options.add_option(Option(label))
+            if record.reference == keep_reference:
+                selected = index
+        if self._records:
+            options.highlighted = selected
+            options.focus()
+        else:
+            options.add_option(Option("No learning proposals yet"))
+        self._show_selected()
+
+    def _selected(self) -> Any | None:
+        index = self.query_one("#learning-list", OptionList).highlighted
+        if index is not None and 0 <= index < len(self._records):
+            return self._records[index]
+        return None
+
+    def _show_selected(self) -> None:
+        record = self._selected()
+        detail = self.query_one("#learning-detail", Static)
+        if record is None:
+            detail.update(Text(
+                "Completed coding tasks can propose lessons and skills here.", style="dim"
+            ))
+        else:
+            body = Text()
+            body.append(f"{record.reference}  ·  {record.status}\n", style="bold cyan")
+            body.append(f"{record.kind}  ·  {record.scope}  ·  {record.origin}\n")
+            body.append(f"Target: {record.target or record.applicability or 'general'}\n")
+            if record.source_hash:
+                body.append(f"Source hash: {record.source_hash}\n", style="dim")
+            body.append("\nEvidence\n", style="bold")
+            body.append("\n".join(record.evidence) or "No evidence supplied", style="dim")
+            body.append("\n\nProposed change\n", style="bold")
+            body.append(record.content)
+            detail.update(body)
+        status = record.status if record is not None else ""
+        self.query_one("#learning-approve", Button).disabled = status != "candidate" or self._busy
+        self.query_one("#learning-reject", Button).disabled = status != "candidate" or self._busy
+        self.query_one("#learning-rollback", Button).disabled = (
+            status not in {"approved", "applied"} or self._busy
+        )
+
+    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        if event.option_list.id == "learning-list":
+            self._show_selected()
+
+    async def _decide(self, action: str) -> None:
+        from novacode_cli.commands.learning_handler import handle_learning_review
+
+        record = self._selected()
+        if record is None or self._busy:
+            return
+        self._busy = True
+        self._show_selected()
+        try:
+            message = await asyncio.to_thread(
+                handle_learning_review, f"{action} {record.reference}",
+                agent_dir=self._agent_dir, project=self._project,
+            )
+            self.query_one("#learning-message", Static).update(Text(message, style="green"))
+        except (OSError, ValueError) as error:
+            self.query_one("#learning-message", Static).update(Text(str(error), style="red"))
+        finally:
+            self._busy = False
+            await self._reload()
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        action = event.button.id
+        if action == "learning-close":
+            self.dismiss(None)
+        elif action == "learning-refresh":
+            await self._reload()
+        elif action in {"learning-approve", "learning-reject", "learning-rollback"}:
+            await self._decide(action.removeprefix("learning-"))
+
+    async def action_approve(self) -> None:
+        await self._decide("approve")
+
+    async def action_reject(self) -> None:
+        await self._decide("reject")
+
+    async def action_rollback(self) -> None:
+        await self._decide("rollback")
+
+    def action_close(self) -> None:
         self.dismiss(None)
 
 

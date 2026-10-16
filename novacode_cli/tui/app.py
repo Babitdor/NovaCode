@@ -113,6 +113,7 @@ from novacode_cli.tui.screens import (
     HookCreateModal,
     HooksScreen,
     InfoListScreen,
+    LearningScreen,
     McpCustomModal,
     McpInstallModal,
     McpScreen,
@@ -537,6 +538,9 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "servers": SlashCommand("_run_servers", "manage dev servers", wants_text=False),
     "kill": SlashCommand("_run_kill", "kill processes"),
     "restore": SlashCommand("_run_restore", "restore a file from the snapshot trash"),
+    "rewind": SlashCommand(
+        "_run_rewind", "go back to before an earlier message: conversation, code, or both"
+    ),
     "hooks": SlashCommand("_run_hooks", "list/enable/disable/remove hooks"),
     "browser-use": SlashCommand(
         "_run_browser_use", "AI browser automation, results analyzed by the agent"
@@ -572,6 +576,7 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "learning": SlashCommand(
         "_run_learning", "Nova's learning loop (/learning on|off|status|auto on|off|review)"
     ),
+    "learn": SlashCommand("_passthrough_command", "learn a source or workflow as a skill proposal"),
 }
 
 _TUI_COMMAND_ALIASES: dict[str, str] = {
@@ -13039,9 +13044,8 @@ class NovaApp(App):
     async def _run_learning(self, text: str) -> None:
         """Handle /learning natively: toggle the Hermes autonomous-learning loop.
 
-        The loop is off by default and its middleware's ``enabled`` flag is baked
-        at agent-build time, so turning it on/off rebuilds the agent (same model)
-        to apply the change to the running session — mirroring /effort.
+        The middleware's ``enabled`` flag is baked at agent-build time, so
+        changing it rebuilds the agent for the running session.
         """
         from novacode_cli.config.model_create import create_model
         from novacode_cli.config.nova_config import NovaConfig
@@ -13051,7 +13055,16 @@ class NovaApp(App):
         cfg = NovaConfig()
         current = cfg.get_learning_enabled()
 
-        if arg.split(maxsplit=1)[0:1] and arg.split(maxsplit=1)[0] in {"review", "approve", "reject", "rollback"}:
+        if arg == "review":
+            from novacode_cli.hermes.memory_tiers import project_memory_key
+            from novacode_cli.config.config import settings
+
+            await self.push_screen_wait(LearningScreen(
+                settings.get_agent_dir(self.assistant_id), project_memory_key(Path.cwd()),
+            ))
+            return
+
+        if arg.split(maxsplit=1)[0:1] and arg.split(maxsplit=1)[0] in {"approve", "reject", "rollback"}:
             from novacode_cli.commands.learning_handler import handle_learning_review
             from novacode_cli.hermes.memory_tiers import project_memory_key
             from novacode_cli.config.config import settings
@@ -13084,7 +13097,7 @@ class NovaApp(App):
             t.append("Auto-approve lessons and skills: ", style="dim")
             t.append("on\n" if auto else "off\n", style="bold green" if auto else "bold yellow")
             t.append(
-                "\nWhen on, Nova periodically self-reviews its tool usage, extracts\n"
+                "\nWhen on, Nova reviews completed coding tasks and extracts\n"
                 "proposals for review. Approve a displayed revision to activate it.\n",
                 style="dim",
             )
@@ -13857,6 +13870,116 @@ class NovaApp(App):
                     style="green" if ok else "red",
                 )
             )
+
+    async def _run_rewind(self, text: str) -> None:
+        """Go back to before an earlier message, as Claude Code's /rewind does.
+
+        Pick one of your messages; the conversation is cut back to just before
+        it (its text returns to the prompt to edit and resend), and/or each file
+        the agent's file tools changed since is put back as it was then
+        (``novacode_cli.rewind``).
+        """
+        from langchain_core.messages import RemoveMessage
+        from langgraph.graph.message import REMOVE_ALL_MESSAGES
+
+        from novacode_cli import rewind
+
+        if self._turn_active:
+            self._log(Text("Stop the running turn first (Esc), then /rewind.", style="yellow"))
+            return
+        agent, _ = self._active_agent()
+        thread_id = self.session_state.thread_id
+        config = {"configurable": {"thread_id": thread_id}}
+        try:
+            state = await self._read_state(agent, config, timeout=15.0)
+        except Exception as exc:  # noqa: BLE001
+            self._log(Text(f"/rewind could not read the conversation: {exc}", style="red"))
+            return
+        messages = list((state.values or {}).get("messages", []))
+        turns = rewind.user_turns(messages)[-20:][::-1]  # newest first
+        if not turns:
+            self._log(Text("Nothing to rewind to yet.", style="yellow"))
+            return
+
+        changed = [
+            await asyncio.to_thread(
+                rewind.changes_after, thread_id, rewind.call_ids(messages[index:])
+            )
+            for index, _ in turns
+        ]
+
+        def label(text: str, files: dict) -> str:
+            line = " ".join(text.split())
+            line = line if len(line) <= 70 else line[:69] + "…"
+            return f"{line}   · {len(files)} file(s) changed since" if files else line
+
+        pick = await self.push_screen_wait(
+            PickScreen(
+                "Rewind to before which message?",
+                [label(text, files) for (_, text), files in zip(turns, changed)],
+                hint="↑/↓ select · Enter choose · Esc cancel",
+            )
+        )
+        if not (0 <= pick < len(turns)):
+            return
+        index, said = turns[pick]
+        files = changed[pick]
+
+        conversation, code = True, False
+        if files:
+            mode = await self.push_screen_wait(
+                PickScreen(
+                    "Restore what?",
+                    [
+                        "Conversation and code",
+                        "Conversation only  (files stay as they are)",
+                        f"Code only  ({len(files)} file(s); the conversation stays)",
+                    ],
+                    hint="Enter choose · Esc cancel",
+                )
+            )
+            if mode not in (0, 1, 2):
+                return
+            conversation, code = mode in (0, 1), mode in (0, 2)
+
+        if conversation:
+            kept = messages[:index]
+            values: dict[str, Any] = {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES), *kept]}
+            event = (state.values or {}).get("_summarization_event")
+            # A summary that covers messages past the rewind point is dropped.
+            if isinstance(event, dict) and (event.get("cutoff_index") or 0) > index:
+                values["_summarization_event"] = None
+            from novacode_cli.session.checkpoint_coordinator import CoordinatedGraph
+
+            options = {}
+            if isinstance(agent, CoordinatedGraph):
+                options["expected_revision"] = (state.config or {}).get(
+                    "configurable", {}
+                ).get("checkpoint_id")
+            try:
+                await agent.aupdate_state(config=config, values=values, as_node="model", **options)
+            except Exception as exc:  # noqa: BLE001
+                self._log(Text(f"/rewind failed; nothing was changed: {exc}", style="red"))
+                return
+        restored = await asyncio.to_thread(rewind.restore, thread_id, files) if code else []
+
+        if conversation:
+            self._reset_streaming()
+            self._seen.clear()
+            await self._transcript().remove_children()
+            self._restored_messages = kept
+            self._replay_history()
+            composer = self.query_one("#prompt", PromptInput)
+            composer.text = said
+            composer.focus()
+            self.run_worker(self._update_context_breakdown(), exclusive=False)
+            await self._save_session()
+        parts = []
+        if conversation:
+            parts.append("conversation rewound; your message is back in the prompt")
+        if code:
+            parts.append(f"{len(restored)} file(s) restored")
+        self._log(Text(f"⟲ Rewound to before “{label(said, {})}”: " + ", ".join(parts), style="green"))
 
     async def _run_restore(self, text: str) -> None:
         """Native /restore: restore a file snapshot by arg or via a picker."""

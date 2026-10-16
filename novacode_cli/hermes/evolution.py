@@ -310,13 +310,11 @@ class EvolutionEngine:
         if not new_md or new_md == current.strip():
             return False
         try:
-            from novacode_cli.hermes.ledger import LearningLedger, auto_approve_enabled
-            from novacode_cli.hermes.activation import content_hash
-            LearningLedger(skill_dir.parent.parent / "learning.sqlite3").propose(
-                content=new_md.rstrip() + "\n", kind="skill", target=skill_dir.name,
-                source_hash=content_hash(current.encode()), scope="shared", origin="evolution",
-                evidence=(f"session:{self._tracker.owner}",),
-                auto_approve=auto_approve_enabled(),
+            from novacode_cli.hermes.skill_proposals import propose_skill
+
+            propose_skill(
+                skill_dir.name, new_md.rstrip() + "\n", source=skill_path,
+                origin="evolution", evidence=(f"session:{self._tracker.owner}",),
             )
         except OSError:
             logger.exception("Failed to write levelled-up skill '%s'", skill_dir.name)

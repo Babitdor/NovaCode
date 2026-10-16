@@ -29,6 +29,14 @@ def auto_approve_enabled() -> bool:
         return False
 
 
+def main_agent_learning_ledger() -> LearningLedger:
+    """Open the ledger read by the main agent's between-turn activation."""
+    from novacode_cli.config.config import MAIN_AGENT_ID, Settings
+
+    agent_dir = Settings.from_environment().get_agent_dir(MAIN_AGENT_ID)
+    return LearningLedger(agent_dir / "learning.sqlite3")
+
+
 @dataclass(frozen=True)
 class LearningRecord:
     """One immutable revision of an evidence-bearing knowledge proposal."""
@@ -49,6 +57,7 @@ class LearningRecord:
     version: int = 1
     target: str = ""
     source_hash: str = ""
+    source_path: str = ""
     required_variables: tuple[str, ...] = ()
     approval_reference: str | None = None
 
@@ -128,6 +137,7 @@ class LearningLedger:
         applicability: str = "",
         target: str = "",
         source_hash: str = "",
+        source_path: str = "",
         required_variables: tuple[str, ...] = (),
         auto_approve: bool = False,
     ) -> LearningRecord:
@@ -154,6 +164,7 @@ class LearningLedger:
             evidence,
             target=target,
             source_hash=source_hash,
+            source_path=source_path,
             required_variables=required_variables,
         )
         with self._connect() as db:
@@ -316,7 +327,10 @@ class LearningLedger:
         # cannot overwrite a newer decision with an older snapshot.
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            records = self.list(project=project, active=True)
+            records = [
+                record for record in self.list(project=project, active=True)
+                if record.kind != "skill_archive"
+            ]
             text = "# Approved generated knowledge\n\n" + "\n\n".join(
                 f"## {r.reference} ({r.scope})\n\n{r.content}" for r in records
             )

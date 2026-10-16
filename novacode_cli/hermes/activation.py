@@ -69,10 +69,10 @@ class ActivationManager:
         return f"{scope}/{record.kind}/{record.target or record.id}"
 
     def _validate(self, record: Any) -> None:
-        if record.kind not in {"lesson", "habit", "skill", "prompt", "user_model"}:
+        if record.kind not in {"lesson", "habit", "skill", "skill_archive", "prompt", "user_model"}:
             message = "Unsupported generated artifact kind"
             raise ValueError(message)
-        if record.kind in {"skill", "prompt"} and not re.fullmatch(
+        if record.kind in {"skill", "skill_archive", "prompt"} and not re.fullmatch(
             r"[a-zA-Z0-9_-]+(?:\.jinja)?", record.target
         ):
             message = "Unsafe or missing artifact target"
@@ -98,6 +98,8 @@ class ActivationManager:
                 raise ValueError(message)
         if record.kind == "skill":
             self._validate_skill(record)
+        if record.kind == "skill_archive":
+            self._validate_skill_source(record)
         if not record.approval_reference:
             message = "Artifact lacks revision-specific approval"
             raise ValueError(message)
@@ -124,7 +126,7 @@ class ActivationManager:
         if parsed is None or parsed["name"] != record.target:
             message = "Generated skill frontmatter is invalid or names another target"
             raise ValueError(message)
-        source = self.root.parent / "skills" / record.target / "SKILL.md"
+        source = self._skill_source(record)
         if record.source_hash:
             if not source.is_file() or content_hash(source.read_bytes()) != record.source_hash:
                 message = "Skill target hash changed; review a new proposal"
@@ -133,7 +135,45 @@ class ActivationManager:
             message = "Skill target already exists; its content hash requires review"
             raise ValueError(message)
 
+    def _skill_source(self, record: Any) -> Path:
+        """Resolve a proposal's original skill within a configured skills root."""
+        from novacode_cli.config.config import Settings
+
+        settings = Settings.from_environment()
+        roots = [settings.ensure_user_skills_dir(), *settings.get_project_skills_dirs(),
+                 self.root.parent / "skills"]
+        legacy = roots[-1] / record.target / "SKILL.md"
+        source = (Path(record.source_path) if record.source_path else
+                  legacy if legacy.exists() else roots[0] / record.target / "SKILL.md")
+        source = source.resolve()
+        if source.name != "SKILL.md" or source.parent.name != record.target or not any(
+            source.parent.parent == root.resolve() for root in roots
+        ):
+            raise ValueError("Skill source is outside configured skills roots")
+        return source
+
+    def _validate_skill_source(self, record: Any) -> None:
+        source = self._skill_source(record)
+        if (
+            not record.source_hash or not source.is_file()
+            or content_hash(source.read_bytes()) != record.source_hash
+        ):
+            raise ValueError("Skill target hash changed; review a new proposal")
+
     def apply_pending(self) -> Any:
+        """Activate approved revisions and undo file moves if publication fails."""
+        self._moved_skills: list[tuple[Path, Path]] = []
+        self._manifest_published = False
+        try:
+            return self._apply_pending_impl()
+        except Exception:
+            if not self._manifest_published:
+                for current, original in reversed(self._moved_skills):
+                    if current.exists() and not original.exists():
+                        current.replace(original)
+            raise
+
+    def _apply_pending_impl(self) -> Any:
         """Called once between turns; writer lock serializes all manifests."""
         # Serialize publication with ledger mutations across processes. A separate
         # connection is used for transitions only after this transaction ends.
@@ -156,6 +196,13 @@ class ActivationManager:
                 prior = manifest["entries"].get(key)
                 if record.status == "rollback_pending":
                     if prior and prior["id"] == record.id:
+                        if prior["kind"] == "skill_archive":
+                            archived = Path(prior["archive_path"])
+                            source = self._skill_source(record).parent
+                            if source.exists() or not archived.is_dir():
+                                raise ValueError("Archived skill rollback conflict")
+                            archived.replace(source)
+                            self._moved_skills.append((source, archived))
                         artifact = Path(prior["path"])
                         if (
                             not artifact.is_file()
@@ -173,6 +220,16 @@ class ActivationManager:
                     except (ValueError, OSError, TemplateError):
                         transitions.append((record.reference, "fail"))
                         continue
+                    if record.kind == "skill_archive":
+                        from novacode_cli.skills.versioning import archive_skill
+
+                        archive_destination = archive_skill(self._skill_source(record).parent)
+                        if archive_destination is None:
+                            transitions.append((record.reference, "fail"))
+                            continue
+                        self._moved_skills.append((
+                            archive_destination, self._skill_source(record).parent,
+                        ))
                     encoded = record.content.encode()
                     digest = content_hash(encoded)
                     suffix = "SKILL.md" if record.kind == "skill" else "content"
@@ -194,10 +251,13 @@ class ActivationManager:
                         "source_hash": record.source_hash,
                         "previous": prior,
                     }
+                    if record.kind == "skill_archive":
+                        manifest["entries"][key]["archive_path"] = str(archive_destination)
                     action = "apply"
                 manifest["operations"].append(record.reference)
                 transitions.append((record.reference, action))
             publish(self.path, json.dumps(manifest, sort_keys=True).encode())
+            self._manifest_published = True
             for reference, action in transitions:
                 self.ledger.transition(reference, action, _db=db)
         return self.capture()
@@ -213,7 +273,10 @@ class ActivationManager:
     def capture(self) -> Any:
         """Freeze applicable artifact contents for one turn."""
         captured = []
-        for entry in self.manifest()["entries"].values():
+        entries = list(self.manifest()["entries"].values())
+        archived = {entry["target"] for entry in entries if entry["kind"] == "skill_archive"
+                    and (entry["scope"] == "shared" or entry["project"] == self.project)}
+        for entry in entries:
             if entry["scope"] != "shared" and entry["project"] != self.project:
                 continue
             content = Path(entry["path"]).read_bytes()
@@ -227,5 +290,8 @@ class ActivationManager:
                 if content_hash(source.read_bytes()) != entry.get("source_hash"):
                     message = "Activated prompt target changed; review a new revision"
                     raise ValueError(message)
-            captured.append((entry["kind"], entry["target"], content.decode("utf-8")))
+            if entry["kind"] != "skill_archive" and not (
+                entry["kind"] == "skill" and entry["target"] in archived
+            ):
+                captured.append((entry["kind"], entry["target"], content.decode("utf-8")))
         return tuple(captured)

@@ -1,12 +1,10 @@
-"""The ``/refine`` self-refinement loop — plan → apply → review → rollback.
+"""The ``/refine`` self-refinement loop — plan → review → propose.
 
 Inspired by Prime Agent's ``/refine`` (see ``docs/PRIME-AGENT-LEARNING-ANALYSIS.md``
 and ``docs/REFINE-COMMAND-DESIGN.md``). Where the automatic Hermes paths refine
 skills on a single trigger (``high_failure``), this is the **explicit, on-demand**
-loop: it reads the agent's recent trajectory + current learning state, proposes
-the *smallest* evidence-backed changes across the harness domains, applies them
-through the existing versioned write paths, runs a review gate on each, and rolls
-back anything that fails.
+loop: it reads the agent's recent trajectory and learning state, reviews proposed
+changes, then stages approved candidates in the learning ledger.
 
 Domains supported today:
     - ``skill``  → ``skill_discovery.refine_skill`` (snapshot + cooldown + audit)
@@ -572,6 +570,16 @@ async def run_refine(store: BaseStore, tracker: ToolUsageTracker) -> dict[str, o
 
     evidence = await _gather_evidence(store, tracker)
 
+    from pathlib import Path
+
+    from novacode_cli.hermes.activation import content_hash
+    from novacode_cli.hermes.ledger import LearningLedger
+    from novacode_cli.hermes.memory_tiers import project_memory_key
+    from novacode_cli.hermes.skill_proposals import propose_skill
+    from novacode_cli.prompts import TEMPLATES_DIR
+    from novacode_cli.skills.schema import normalize_skill_frontmatter
+
+    ledger = LearningLedger(_agent_dir() / "learning.sqlite3")
     for item in plan:
         domain = item["domain"]
         target = item["target"]
@@ -580,50 +588,46 @@ async def run_refine(store: BaseStore, tracker: ToolUsageTracker) -> dict[str, o
         before = _read_current(item)
         after = item.get("change", "")
 
-        if domain in _REVIEW_FIRST_DOMAINS:
-            # Append-only domain (memory): review BEFORE applying — there is no
-            # rollback, so a rejected edit must never reach the file.
+        if domain in {"skill", "memory", "prompt"}:
+            # Review every domain before staging a revision.
             accepted, reason = await _review(item, evidence)
             if not accepted:
                 outcome = "rejected"
                 _log_event(domain, action, target, "rejected", reason or item.get("reason", ""))
             else:
-                applied = await _apply(item, store)
-                if applied:
-                    outcome = "applied"
-                    summary["applied"] += 1
+                try:
+                    if domain == "skill":
+                        source = _user_skills_dir() / target / "SKILL.md"
+                        if not source.is_file():
+                            raise ValueError("Skill target is missing")
+                        reference = propose_skill(
+                            target, normalize_skill_frontmatter(after, target),
+                            source=source, origin="refine",
+                            evidence=(item.get("reason", ""),),
+                        )
+                    elif domain == "prompt":
+                        source = TEMPLATES_DIR / target
+                        if not source.is_file():
+                            raise ValueError("Prompt target is missing")
+                        reference = ledger.propose(
+                            content=after, kind="prompt", scope="shared", target=target,
+                            source_hash=content_hash(source.read_bytes()), origin="refine",
+                            evidence=(item.get("reason", ""),),
+                        ).reference
+                    else:
+                        reference = ledger.propose(
+                            content=after, kind="lesson", origin="refine", target=target,
+                            project=project_memory_key(Path.cwd()), applicability=target,
+                            evidence=(item.get("reason", ""),),
+                        ).reference
+                    outcome = "proposed"
                     summary["accepted"] += 1
-                    _log_event(
-                        domain, action, target, "applied", item.get("reason", ""),
-                        before=before, after=after,
-                    )
-                else:
-                    outcome = "skipped"
-                    _log_event(domain, action, target, "skipped", item.get("reason", ""))
+                    _log_event(domain, action, target, "proposed", reference,
+                               before=before, after=after)
+                except (OSError, ValueError) as exc:
+                    _log_event(domain, action, target, "skipped", str(exc))
         else:
-            applied = await _apply(item, store)
-            if not applied:
-                outcome = "skipped"
-                _log_event(domain, action, target, "skipped", item.get("reason", ""))
-            else:
-                summary["applied"] += 1
-                accepted, reason = await _review(item, evidence)
-                if accepted:
-                    outcome = "applied"
-                    summary["accepted"] += 1
-                    _log_event(
-                        domain, action, target, "applied", item.get("reason", ""),
-                        before=before, after=after,
-                    )
-                else:
-                    outcome = "rolled_back"
-                    summary["rolled_back"] += 1
-                    await _rollback(item)
-                    _log_event(
-                        domain, action, target, "rolled_back",
-                        reason or item.get("reason", ""),
-                        before=before, after=after,
-                    )
+            _log_event(domain, action, target, "skipped", "unsupported refinement domain")
 
         summary["items"].append(
             {
@@ -637,7 +641,6 @@ async def run_refine(store: BaseStore, tracker: ToolUsageTracker) -> dict[str, o
 
     _emit_tui_event(
         "nova_review_complete",
-        f"✦ /refine: {summary['accepted']} applied, "
-        f"{summary['rolled_back']} rolled back, {summary['planned']} proposed",
+        f"✦ /refine: {summary['accepted']} proposed, {summary['planned']} planned",
     )
     return summary

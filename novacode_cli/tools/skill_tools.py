@@ -110,10 +110,9 @@ async def skill_manage(
     real files, commands, conventions, and pitfalls — never invented steps.
 
     Actions:
-      - ``create``: Author a new skill. Provide ``name`` (kebab-case) and a
-        ``description`` that states *when to use it* (the trigger). The body is
-        written for you by the skill-creation sub-agent from your description, so
-        make the description rich and specific.
+      - ``create``: Stage a skill proposal. Provide a complete ``body`` (a full
+        SKILL.md or markdown steps) and ``description``. With description alone,
+        the skill-creation agent authors a draft for review.
       - ``patch``: Surgically fix an existing skill. Provide ``name``, ``old``
         (exact text to find — must appear exactly once), and ``new``. Preferred
         for small updates; preserves the rest of the skill.
@@ -142,6 +141,7 @@ async def skill_manage(
         _emit_tui_event,
         _slugify_skill_name,
     )
+    from novacode_cli.hermes.skill_proposals import propose_skill
     from novacode_cli.skills import versioning
 
     action = (action or "").strip().lower()
@@ -154,21 +154,26 @@ async def skill_manage(
             skills_dir = _user_skills_dir()
             if (skills_dir / name / "SKILL.md").exists():
                 return f"skill_manage: skill '{name}' already exists — use action='patch' or 'edit' to update it."
-            if not description:
-                return "skill_manage: 'description' is required for create (it becomes the trigger and guides authoring)."
+            if not description and not body:
+                return "skill_manage: 'description' or a complete 'body' is required for create."
 
-            from novacode_cli.skills.skill_creation import _generate_skill
+            result: str | None
+            if body:
+                result = body
+            else:
+                from tempfile import TemporaryDirectory
 
-            result = await _generate_skill(name, skills_dir, description)
+                from novacode_cli.skills.skill_creation import _generate_skill
+
+                with TemporaryDirectory(prefix="nova-skill-draft-") as draft_dir:
+                    result = await _generate_skill(name, Path(draft_dir), description)
             if result:
-                # Baseline v1 snapshot so even the first version is rollback-able.
-                versioning.snapshot(skills_dir / name, reason="create", source="agent")
-                skill_md_path = skills_dir / name / "SKILL.md"
-                _emit_tui_event(
-                    "nova_skill_created",
-                    f"Agent created skill: {name}\n   {description}\n   {skills_dir / name}",
-                )
-                return f"Created skill '{name}' at {skill_md_path}."
+                from novacode_cli.skills.schema import normalize_skill_frontmatter
+
+                content = normalize_skill_frontmatter(result, name, description)
+                reference = propose_skill(name, content, evidence=("agent-authored skill",))
+                _emit_tui_event("nova_skill_created", f"Skill proposed: {name} ({reference})")
+                return f"Proposed skill '{name}' as {reference}; review with /learning review."
             _emit_tui_event(
                 "nova_skill_error", f"Agent skill creation failed for '{name}'"
             )
@@ -190,10 +195,9 @@ async def skill_manage(
                 return f"skill_manage: 'old' text not found in '{name}'/SKILL.md — patch aborted."
             if count > 1:
                 return f"skill_manage: 'old' text appears {count} times in '{name}' — make it unique, patch aborted."
-            versioning.snapshot(skill_dir, reason="patch", source="agent")
-            skill_md.write_text(content.replace(old, new, 1), encoding="utf-8")
-            _emit_tui_event("nova_skill_refined", f"Agent patched skill: {name}")
-            return f"Patched skill '{name}' (previous version saved — rollback available)."
+            reference = propose_skill(name, content.replace(old, new, 1), source=skill_md)
+            _emit_tui_event("nova_skill_refined", f"Skill patch proposed: {name} ({reference})")
+            return f"Proposed patch for '{name}' as {reference}."
 
         if action == "edit":
             resolved = _resolve_existing_skill(name)
@@ -213,10 +217,9 @@ async def skill_manage(
                 frontmatter = f"---\nname: {name}\ndescription: {yaml_str(description)}\n---\n"
             elif not frontmatter:
                 frontmatter = f'---\nname: {name}\ndescription: "Reusable workflow: {name}"\n---\n'
-            versioning.snapshot(skill_dir, reason="edit", source="agent")
-            skill_md.write_text(f"{frontmatter}\n{body.strip()}\n", encoding="utf-8")
-            _emit_tui_event("nova_skill_refined", f"Agent rewrote skill: {name}")
-            return f"Rewrote skill '{name}' (previous version saved — rollback available)."
+            reference = propose_skill(name, f"{frontmatter}\n{body.strip()}\n", source=skill_md)
+            _emit_tui_event("nova_skill_refined", f"Skill edit proposed: {name} ({reference})")
+            return f"Proposed edit for '{name}' as {reference}."
 
         if action == "delete":
             resolved = _resolve_existing_skill(name)
@@ -225,19 +228,11 @@ async def skill_manage(
             skill_dir, source = resolved
             if source == "claude":
                 return f"skill_manage: '{name}' is a bundled skill and cannot be deleted."
-            # Soft-delete: move to the archive so it can be recovered.
-            dest = versioning.archive_skill(skill_dir)
-            # Best-effort: drop any install-lock entry for this skill.
-            try:
-                from novacode_cli.skills.skill_lock import SkillLock
-
-                SkillLock.for_skills_dir(skill_dir.parent).remove(name)
-            except Exception:  # noqa: BLE001
-                pass
-            _emit_tui_event("nova_skill_refined", f"Agent archived skill: {name}")
-            if dest is None:
-                return f"skill_manage: could not archive '{name}'."
-            return f"Archived skill '{name}' (recoverable at {dest})."
+            skill_md = skill_dir / "SKILL.md"
+            reference = propose_skill(name, skill_md.read_text(encoding="utf-8"),
+                                      source=skill_md, archive=True)
+            _emit_tui_event("nova_skill_refined", f"Skill archive proposed: {name} ({reference})")
+            return f"Proposed recoverable archive for '{name}' as {reference}."
 
         if action == "history":
             resolved = _resolve_existing_skill(name)
@@ -259,11 +254,17 @@ async def skill_manage(
             skill_dir, source = resolved
             if source == "claude":
                 return f"skill_manage: '{name}' is a bundled skill and cannot be rolled back."
-            ok, msg = versioning.restore(skill_dir, old or None)
-            if ok:
-                _emit_tui_event("nova_skill_refined", f"Rolled back skill: {name}")
-                return f"Rolled back '{name}': {msg}."
-            return f"skill_manage: rollback of '{name}' failed — {msg}."
+            versions = versioning.list_versions(skill_dir)
+            selected = (
+                next((v for v in versions if v["id"] == old), None)
+                if old else (versions[-1] if versions else None)
+            )
+            if selected is None:
+                return f"skill_manage: no matching saved version for '{name}'."
+            snapshot = skill_dir / ".history" / selected["file"]
+            reference = propose_skill(name, snapshot.read_text(encoding="utf-8"),
+                                      source=skill_dir / "SKILL.md")
+            return f"Proposed rollback of '{name}' as {reference}."
 
         return (
             f"skill_manage: unknown action '{action}'. "

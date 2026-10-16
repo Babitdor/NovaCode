@@ -64,11 +64,11 @@ def test_a_long_run_of_work_does_not_trigger_a_review_mid_task() -> None:
     assert asyncio.run(go()) is False, "the default mode must not review on tool-call count"
 
 
-def test_working_through_an_error_does_trigger_one() -> None:
+def test_working_through_an_error_waits_for_task_end() -> None:
     async def go() -> bool:
         return await (await _runner(_calls(False, False, False, True))).should_review()
 
-    assert asyncio.run(go()) is True
+    assert asyncio.run(go()) is False
 
 
 def test_failures_that_are_not_yet_resolved_do_not() -> None:

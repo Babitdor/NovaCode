@@ -258,9 +258,9 @@ class PromptEvolutionEngine:
         candidate = d / "candidate.jinja"
         if not candidate.exists():
             return False
-        from novacode_cli.hermes.ledger import LearningLedger
+        from novacode_cli.hermes.ledger import main_agent_learning_ledger
         from novacode_cli.hermes.activation import content_hash
-        LearningLedger(PROMPT_HISTORY_DIR.parent / "learning.sqlite3").propose(
+        main_agent_learning_ledger().propose(
             content=candidate.read_text(encoding="utf-8"), kind="prompt", target=name,
             scope="shared", origin="prompt_promotion",
             source_hash=content_hash((self._prompts_dir / name).read_bytes()),
@@ -285,8 +285,8 @@ class PromptEvolutionEngine:
 
     async def rollback(self, name: str) -> str:
         """Undo the most recent change: drop a candidate, else revert the active."""
-        from novacode_cli.hermes.ledger import LearningLedger
-        ledger = LearningLedger(PROMPT_HISTORY_DIR.parent / "learning.sqlite3")
+        from novacode_cli.hermes.ledger import main_agent_learning_ledger
+        ledger = main_agent_learning_ledger()
         applied = [record for record in ledger.list()
                    if record.kind == "prompt" and record.target == name and record.status == "applied"]
         if applied:
@@ -363,9 +363,9 @@ class PromptEvolutionEngine:
         manifest = self._load_manifest(name)
         vid = f"v{len(manifest['versions']) + 1}"
         text = body.strip() + "\n"
-        from novacode_cli.hermes.ledger import LearningLedger
+        from novacode_cli.hermes.ledger import main_agent_learning_ledger
         from novacode_cli.hermes.activation import content_hash
-        LearningLedger(PROMPT_HISTORY_DIR.parent / "learning.sqlite3").propose(
+        main_agent_learning_ledger().propose(
             content=text, kind="prompt", target=name, scope="shared", origin="prompt_evolution",
             source_hash=content_hash((self._prompts_dir / name).read_bytes()),
             evidence=("generated override; requires review",),

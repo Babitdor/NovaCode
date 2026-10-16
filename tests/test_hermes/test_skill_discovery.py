@@ -89,8 +89,14 @@ class TestParseSkillSpec:
 class TestWriteSkillFromSpec:
     """Writing an episode skill to disk with real frontmatter."""
 
-    async def test_writes_skill_md_with_frontmatter(self, tmp_path):
+    async def test_writes_skill_md_with_frontmatter(self, tmp_path, monkeypatch):
         from novacode_cli.hermes.skill_discovery import write_skill_from_spec
+        from novacode_cli.hermes.ledger import LearningLedger
+
+        monkeypatch.setattr(
+            "novacode_cli.hermes.skill_proposals.main_agent_learning_ledger",
+            lambda: LearningLedger(tmp_path.parent / "learning.sqlite3"),
+        )
 
         spec = {
             "name": "add-tui-command",
@@ -122,16 +128,24 @@ class TestWriteSkillFromSpec:
 class TestCleanupLegacySkills:
     """Removing the old opaque nova-<hash> auto-skills, sparing real ones."""
 
-    def test_removes_only_legacy(self, tmp_path):
+    def test_proposes_only_legacy_archives(self, tmp_path, monkeypatch):
         from novacode_cli.hermes.skill_discovery import cleanup_legacy_pattern_skills
+        from novacode_cli.hermes import skill_proposals
+
+        proposed = []
+        monkeypatch.setattr(skill_proposals, "propose_skill",
+                            lambda name, content, **kwargs: proposed.append((name, kwargs)))
 
         for name in ("nova-exec-b2c94a", "nova-edit-test-5628de", "add-tui-command", "my-skill"):
             (tmp_path / name).mkdir()
+            (tmp_path / name / "SKILL.md").write_text(name, encoding="utf-8")
 
         removed = cleanup_legacy_pattern_skills(tmp_path)
 
         assert set(removed) == {"nova-exec-b2c94a", "nova-edit-test-5628de"}
-        assert not (tmp_path / "nova-exec-b2c94a").exists()
+        assert {name for name, _ in proposed} == set(removed)
+        assert all(options["archive"] for _, options in proposed)
+        assert (tmp_path / "nova-exec-b2c94a").exists()
         assert (tmp_path / "add-tui-command").exists()  # real skill spared
         assert (tmp_path / "my-skill").exists()
 

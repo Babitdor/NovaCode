@@ -137,3 +137,24 @@ async def handle_learning_command(ctx: CommandContext) -> bool:
 def register_commands(registry: CommandRegistry) -> None:
     """Register the shared console learning command."""
     registry.register("learning", handle_learning_command)
+    registry.register("learn", handle_learn_command)
+
+
+async def handle_learn_command(ctx: CommandContext) -> str | bool:
+    """Send a source or workflow through the normal agent and reading tools."""
+    source = (ctx.cmd_args or "").strip()
+    if not source:
+        from novacode_cli.config.config import console
+
+        console.print("Usage: /learn <source or workflow>")
+        return True
+    return (
+        f"Learn the reusable workflow or source described here: {source}\n\n"
+        "Use your normal reading tools to inspect the source and verify concrete steps. "
+        "Follow the Agent Skills SKILL.md standard: YAML frontmatter with a concise "
+        "kebab-case name and a description stating when to use the skill, followed "
+        "by actionable markdown instructions. Separate verified facts from assumptions. "
+        "When the complete SKILL.md is ready, call skill_manage with action='create', "
+        "name, description, and the complete authored body. This stages a proposal "
+        "for /learning review; report its proposal reference."
+    )

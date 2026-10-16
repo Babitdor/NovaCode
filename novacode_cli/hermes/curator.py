@@ -116,7 +116,7 @@ async def run_curation(
     Only archives skills the agent created (tracked in ``created_skills``) so a
     user's hand-written skill is never auto-archived for being unused.
     """
-    from novacode_cli.skills import versioning
+    from novacode_cli.hermes.skill_proposals import propose_skill
 
     now = now if now is not None else time.time()
     skills = _scan_skills(skills_dir)
@@ -140,13 +140,17 @@ async def run_curation(
         age_days = (now - created_ts) / 86400.0
         if age_days < unused_age_days:
             continue
-        if versioning.archive_skill(skill_dir) is not None:
+        skill_md = skill_dir / "SKILL.md"
+        if skill_md.is_file():
+            propose_skill(name, skill_md.read_text(encoding="utf-8"),
+                          source=skill_md, archive=True, origin="curator",
+                          evidence=(f"unused for {age_days:.0f} days",))
             archived.append(name)
             skills.pop(name, None)
             _emit(
                 "nova_skill_archived",
-                f"▤ Curator archived unused skill '{name}' "
-                f"(0 invocations, {age_days:.0f}d old) — recoverable",
+                f"▤ Curator proposed archive of unused skill '{name}' "
+                f"(0 invocations, {age_days:.0f}d old) — /learning review",
             )
 
     # Overlap detection (flag only — never auto-merge).

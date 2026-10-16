@@ -20,6 +20,16 @@ import pytest
 from novacode_cli.hermes import refine_loop
 
 
+@pytest.fixture(autouse=True)
+def isolate_prompt_learning_ledger(tmp_path, monkeypatch):
+    from novacode_cli.hermes.ledger import LearningLedger
+
+    monkeypatch.setattr(
+        "novacode_cli.hermes.ledger.main_agent_learning_ledger",
+        lambda: LearningLedger(tmp_path / "learning.sqlite3"),
+    )
+
+
 @pytest.fixture
 def skills_dir(tmp_path: Path) -> Path:
     """A temporary skills root with one existing skill."""

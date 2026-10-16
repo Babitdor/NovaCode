@@ -1496,7 +1496,7 @@ def _build_middleware_stack(
     from novacode_cli.tracking.file_tracker import FileTrackerMiddleware
     from novacode_cli.tracking.loop_guard import LoopGuardMiddleware
     # Hermes learning loop is opt-in (persisted config). Off by default so the
-    # periodic review + skill-creation LLM calls don't run unless the user asks.
+    # Task-end review is enabled unless the user explicitly turns learning off.
     from novacode_cli.config.nova_config import NovaConfig
 
     _learning_enabled = NovaConfig().get_learning_enabled()
@@ -1584,11 +1584,8 @@ def _build_middleware_stack(
         # inflate the counter, but before other middleware so learning data
         # is collected for all downstream operations.
         #
-        # The Hermes learning loop (periodic review + skill creation) fires
-        # out-of-band LLM calls every N tool calls. It is OFF by default to keep
-        # per-turn LLM cost and latency minimal; users opt in via the persisted
-        # `learning_enabled` config (NovaConfig). When disabled, the middleware
-        # is a no-op tracker (no LLM calls).
+        # The learning loop reviews completed coding tasks out of band. An
+        # explicit `learning_enabled: false` disables model review calls.
         NovaLearningMiddleware(
             store=store,  # type: ignore
             skills_dir=skills_dir,

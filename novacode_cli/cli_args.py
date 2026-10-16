@@ -239,6 +239,7 @@ def setup_mcp_parser(subparsers: Any) -> argparse.ArgumentParser:  # noqa: ANN40
         description="Add or update an MCP server configuration",
     )
     add_parser.add_argument("name", help="Server name/identifier")
+    add_parser.add_argument("endpoint", nargs="?", help="HTTP MCP URL (alternative to --url)")
     add_parser.add_argument(
         "--transport",
         required=True,
@@ -247,7 +248,7 @@ def setup_mcp_parser(subparsers: Any) -> argparse.ArgumentParser:  # noqa: ANN40
     )
     add_parser.add_argument(
         "--url",
-        help="Server URL (required for HTTP transport)",
+        help="HTTP server URL (alternative to positional endpoint)",
     )
     add_parser.add_argument(
         "--command",
@@ -262,6 +263,13 @@ def setup_mcp_parser(subparsers: Any) -> argparse.ArgumentParser:  # noqa: ANN40
         "--env",
         action="append",
         help="Environment variables in KEY=VALUE format (can be specified multiple times)",
+    )
+    add_parser.add_argument(
+        "--header", action="append", metavar="NAME: VALUE",
+        help="HTTP auth header; stored in Nova's secret store (repeatable)",
+    )
+    add_parser.add_argument(
+        "--oauth", action="store_true", help="Enable browser OAuth for an HTTP server",
     )
     add_parser.add_argument(
         "--description",

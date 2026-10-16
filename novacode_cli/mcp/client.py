@@ -18,7 +18,9 @@ import shutil
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
+
+import httpx
 
 if TYPE_CHECKING:
     from langchain_core.tools import BaseTool
@@ -130,11 +132,26 @@ def build_mcp_server_config(
             if not headers:
                 headers = None
 
+        if config.header_secrets:
+            from novacode_cli.mcp.auth import resolve_header
+
+            headers = headers or {}
+            for name, reference in config.header_secrets.items():
+                headers[name] = resolve_header(reference)
+
+        auth = None
+        if config.oauth:
+            from novacode_cli.mcp.auth import oauth_provider
+
+            auth = oauth_provider(config.url or "")
+
         connection = StreamableHttpConnection(
             transport="streamable_http",
             url=config.url or "",
             headers=headers,
         )
+        if auth is not None:
+            connection["auth"] = cast("httpx.Auth", auth)
     elif config.transport == "sse":
         # SSE transport
         _protected_headers = {"content-length", "transfer-encoding", "host", "connection"}

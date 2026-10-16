@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import logging
 import re
-import shutil
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -157,20 +156,14 @@ async def write_skill_from_spec(
 
     content = normalize_skill_frontmatter(body, name, description)
 
-    from novacode_cli.hermes.ledger import LearningLedger, auto_approve_enabled
-    from novacode_cli.session.runtime_identity import current_identity
-    identity = current_identity.get()
-    ledger = LearningLedger(skills_dir.parent / "learning.sqlite3")
-    ledger.propose(content=content, kind="skill", target=name,
-                   project=identity.project if identity else "",
-                   session=identity.session if identity else "",
-                   task=identity.task if identity else "", scope="shared",
-                   origin="skill_discovery", evidence=("generated workflow; requires review",),
-                   auto_approve=auto_approve_enabled())
+    from novacode_cli.hermes.skill_proposals import propose_skill
+
+    propose_skill(name, content, origin="skill_discovery",
+                  evidence=("generated workflow; requires review",))
     return name
 
 def cleanup_legacy_pattern_skills(skills_dir: Path) -> list[str]:
-    """Delete the old n-gram auto-skills (``nova-<hint>-<hash>``) from disk.
+    """Propose recoverable archival of old n-gram auto-skills.
 
     These were generated from tool-name sequences with opaque names and generic
     bodies the agent never invokes. Only directories matching the exact legacy
@@ -186,7 +179,13 @@ def cleanup_legacy_pattern_skills(skills_dir: Path) -> list[str]:
         for child in skills_dir.iterdir():
             if child.is_dir() and _LEGACY_SKILL_RE.match(child.name):
                 try:
-                    shutil.rmtree(child)
+                    from novacode_cli.hermes.skill_proposals import propose_skill
+
+                    source = child / "SKILL.md"
+                    if not source.is_file():
+                        continue
+                    propose_skill(child.name, source.read_text(encoding="utf-8"),
+                                  source=source, archive=True, origin="legacy_cleanup")
                     removed.append(child.name)
                 except OSError:
                     logger.debug("Could not remove legacy skill %s", child.name)
@@ -428,13 +427,11 @@ async def refine_skill(
         if not new_md or new_md.strip() == current.strip():
             return False
 
-        from novacode_cli.hermes.ledger import LearningLedger, auto_approve_enabled
-        from novacode_cli.hermes.activation import content_hash
-        LearningLedger(skills_dir.parent / "learning.sqlite3").propose(
-            content=new_md.rstrip() + "\n", kind="skill", target=skill_name,
-            source_hash=content_hash(current.encode()), scope="shared",
-            origin="refinement", evidence=tuple(s.get("excerpt", "") for s in failure_samples or []),
-            applicability=issue, auto_approve=auto_approve_enabled(),
+        from novacode_cli.hermes.skill_proposals import propose_skill
+
+        propose_skill(
+            skill_name, new_md.rstrip() + "\n", source=skill_path, origin="refinement",
+            evidence=tuple(s.get("excerpt", "") for s in failure_samples or []),
         )
         if store is not None:
             await _record_refinement(store, skill_name, issue)

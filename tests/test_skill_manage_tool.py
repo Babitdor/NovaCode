@@ -15,6 +15,7 @@ import pytest
 import novacode_cli.config.config as config_mod
 import novacode_cli.skills.skill_creation as skill_creation_mod
 from novacode_cli.tools.skill_tools import skill_manage
+from novacode_cli.hermes.ledger import LearningLedger
 
 
 def _run(action: str, **kwargs) -> str:
@@ -39,6 +40,11 @@ class _FakeSettings:
 
     def get_project_skills_dirs(self):
         return [p for p in self._project if p.exists()]
+
+    def get_agent_dir(self, _agent=None):
+        path = self._user.parent / "agents" / "nova-agent"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
     @staticmethod
     def get_global_claude_skills_dir():
@@ -84,13 +90,19 @@ def _write_skill(base: Path, name: str, body: str = "Original step.") -> Path:
     return md
 
 
+def _proposal() -> object:
+    agent_dir = _FakeSettings().get_agent_dir()
+    return LearningLedger(agent_dir / "learning.sqlite3").list()[-1]
+
+
 # ── create ──────────────────────────────────────────────────────────────────
 
 
-def test_create_writes_skill(skill_env):
+def test_create_stages_skill(skill_env):
     result = _run("create", name="add-tui-command", description="Use when adding a /command.")
-    assert "Created skill" in result
-    assert (skill_env["user"] / "add-tui-command" / "SKILL.md").exists()
+    assert "Proposed skill" in result
+    assert not (skill_env["user"] / "add-tui-command" / "SKILL.md").exists()
+    assert _proposal().target == "add-tui-command"
 
 
 def test_create_requires_description(skill_env):
@@ -107,7 +119,7 @@ def test_create_dedup(skill_env):
 
 def test_create_slugifies_name(skill_env):
     _run("create", name="My Cool Skill!", description="trigger")
-    assert (skill_env["user"] / "my-cool-skill" / "SKILL.md").exists()
+    assert _proposal().target == "my-cool-skill"
 
 
 # ── patch ───────────────────────────────────────────────────────────────────
@@ -116,9 +128,10 @@ def test_create_slugifies_name(skill_env):
 def test_patch_unique_replacement(skill_env):
     _write_skill(skill_env["user"], "patch-me", body="findme here")
     result = _run("patch", name="patch-me", old="findme", new="replaced")
-    assert "Patched" in result
+    assert "Proposed patch" in result
     content = (skill_env["user"] / "patch-me" / "SKILL.md").read_text(encoding="utf-8")
-    assert "replaced here" in content
+    assert "findme here" in content
+    assert "replaced here" in _proposal().content
 
 
 def test_patch_missing_text(skill_env):
@@ -144,17 +157,17 @@ def test_patch_nonexistent(skill_env):
 def test_edit_rewrites_body_preserving_frontmatter(skill_env):
     _write_skill(skill_env["user"], "edit-me")
     result = _run("edit", name="edit-me", body="# New\n\nBrand new body.")
-    assert "Rewrote" in result
+    assert "Proposed edit" in result
     content = (skill_env["user"] / "edit-me" / "SKILL.md").read_text(encoding="utf-8")
     assert content.startswith("---")
-    assert "Brand new body." in content
-    assert "Original step." not in content
+    assert "Original step." in content
+    assert "Brand new body." in _proposal().content
 
 
 def test_edit_updates_description(skill_env):
     _write_skill(skill_env["user"], "edit-me")
     _run("edit", name="edit-me", body="body", description="brand new trigger")
-    content = (skill_env["user"] / "edit-me" / "SKILL.md").read_text(encoding="utf-8")
+    content = _proposal().content
     assert "brand new trigger" in content
 
 
@@ -171,15 +184,16 @@ def test_delete_user_skill(skill_env):
     _write_skill(skill_env["user"], "delete-me")
     result = _run("delete", name="delete-me")
     # Delete is now a soft-delete (archived, recoverable).
-    assert "Archived" in result
-    assert not (skill_env["user"] / "delete-me").exists()
+    assert "Proposed recoverable archive" in result
+    assert (skill_env["user"] / "delete-me").exists()
+    assert _proposal().kind == "skill_archive"
 
 
 def test_delete_project_skill(skill_env):
     _write_skill(skill_env["project"], "proj-skill")
     result = _run("delete", name="proj-skill")
-    assert "Archived" in result
-    assert not (skill_env["project"] / "proj-skill").exists()
+    assert "Proposed recoverable archive" in result
+    assert (skill_env["project"] / "proj-skill").exists()
 
 
 def test_delete_nonexistent(skill_env):

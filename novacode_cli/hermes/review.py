@@ -254,11 +254,8 @@ class ReviewRunner:
         clean_win = bool(window) and substantive and failures == 0 and count >= min_floor
 
         if self._mode == "task_end":
-            # Mid-task, the only thing worth an extra model call is an error the
-            # agent has just worked through: that is fresh, specific, and already
-            # has its outcome. Everything else waits for the end of the task.
-            if not (failure_burst and _window_recovered(window)):
-                return False
+            # The completed task is the sole automatic review boundary.
+            return False
         elif not (hard_cap or failure_burst or (reached and substantive) or clean_win):
             return False
 
@@ -381,6 +378,8 @@ class ReviewRunner:
             from novacode_cli.tracking.request_metrics import dispatch
 
             if count_tokens_approximately(messages) > REVIEW_INPUT_CAP or not recent:
+                logger.info("Learning review skipped: empty evidence or input budget exceeded")
+                await self._record_skip("empty evidence or input budget exceeded")
                 return
             # bind caps the auxiliary request independently of the coding turn.
             model = request.model
@@ -389,6 +388,7 @@ class ReviewRunner:
             if not module.startswith(("langchain_openai.", "langchain_anthropic.",
                                       "langchain_core.language_models.fake")) and not isinstance(model, FakeListChatModel):
                 logger.info("Learning review skipped: adapter retry/output caps unavailable")
+                await self._record_skip("adapter caps unavailable")
                 return
             if "max_retries" in getattr(type(model), "model_fields", {}):
                 model = model.model_copy(update={"max_retries": 1})
@@ -423,20 +423,10 @@ class ReviewRunner:
                 logger.warning("Nova review skipped: %s", notice.splitlines()[0])
             else:
                 logger.exception("Nova out-of-band review failed")
+            await self._record_skip("review call failed")
 
     async def should_consolidate(self) -> bool:
-        """Is there un-reviewed substantive work worth distilling before exit?
-
-        The periodic trigger fires on tool-call *count* (``should_review``), so a
-        session that does real work and ends below the threshold — six edits and
-        quit — never reviews, and everything it learned is lost. This is the
-        session-end catch: it asks only whether the current window contains real
-        work that has not been reviewed yet, with no threshold at all.
-
-        Deliberately narrower than ``should_review``: no failure-burst or
-        hard-cap paths (those already fired mid-session if they applied), and a
-        review that just completed means there is nothing left to distill.
-        """
+        """Review a completed task only when its evidence shows substantive work."""
         if not self._enabled:
             return False
 
@@ -449,17 +439,17 @@ class ReviewRunner:
         except Exception:  # noqa: BLE001
             window = []
 
-        # Same definition of "real work" the periodic trigger uses. An unknown
-        # window (history unavailable) counts as substantive, matching
-        # should_review's bias toward reviewing rather than silently skipping.
-        substantive = (not window) or any(
+        # An unavailable history is insufficient evidence for an automatic review.
+        substantive = bool(window) and any(
             (h.get("tool") in _SUBSTANTIVE_TOOLS) or (h.get("tool") not in _TRIVIAL_BUILTINS)
             for h in window
         )
         if not substantive:
             return False
 
-        return not await self._get_review_just_completed()
+        # Task-end review is deduplicated by the middleware's task identity.
+        # The legacy flag may still be set by a review of the previous task.
+        return self._mode == "task_end" or not await self._get_review_just_completed()
 
     async def run_review_task(self, request: ModelRequest) -> None:
         """Background wrapper around :meth:`run_review`.
@@ -480,11 +470,25 @@ class ReviewRunner:
                 await self._prepare_review(snapshot)
         except TimeoutError:
             logger.info("Learning review skipped: 60-second deadline")
+            await self._record_skip("60-second deadline")
+        except Exception:  # noqa: BLE001 - never fail the coding turn
+            logger.exception("Learning review skipped after background failure")
+            await self._record_skip("background failure")
         finally:
             if acquired:
                 _REVIEW_SLOTS.release()
             self._running = False
             _emit_event("nova_review_complete", "✓ Nova review cycle complete")
+
+    async def _record_skip(self, reason: str) -> None:
+        """Keep a bounded diagnostic without changing active learning."""
+        try:
+            await self._store.aput(
+                self._namespace("review_skips"), str(time.time_ns()),
+                {"reason": reason, "task": self._tracker.task, "timestamp": time.time()},
+            )
+        except Exception:  # noqa: BLE001 - a diagnostic cannot fail the turn
+            logger.debug("Could not record learning review skip", exc_info=True)
 
     def _existing_topics(self) -> str:
         """Topic names already on file, for the reviewer to reuse. Best-effort."""
@@ -570,13 +574,21 @@ class ReviewRunner:
                 )
         from novacode_cli.hermes.skill_discovery import parse_skill_spec
 
-        spec = parse_skill_spec(response_content)
+        spec = parse_skill_spec(response_content) if self._outcome[0] != "failed" else None
         if spec:
+            from novacode_cli.config.config import Settings
+            from novacode_cli.hermes.activation import content_hash
             from novacode_cli.skills.schema import normalize_skill_frontmatter
             content = normalize_skill_frontmatter(spec["body"], spec["name"], spec["description"])
+            source = (
+                Settings.from_environment().ensure_user_skills_dir()
+                / spec["name"] / "SKILL.md"
+            )
             ledger.propose(
                 content=content, project=self._project or "", kind="skill", session=session,
                 target=spec["name"], evidence=evidence, auto_approve=auto,
+                source_hash=content_hash(source.read_bytes()) if source.is_file() else "",
+                source_path=str(source.resolve()) if source.is_file() else "",
             )
         for block in re.findall(
             r"<prompt_improvement>(.*?)</prompt_improvement>", response_content, re.DOTALL

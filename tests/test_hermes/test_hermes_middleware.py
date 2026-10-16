@@ -400,8 +400,8 @@ class TestSessionConsolidation:
         # No review model call was issued.
         mw._last_request.model.ainvoke.assert_not_awaited()
 
-    async def test_skips_after_just_completed_review(self):
-        """A review that just ran means there is nothing left to distill."""
+    async def test_skips_after_this_task_was_reviewed(self):
+        """Exit consolidation must not review the completed task twice."""
         state = {
             ("nova", "test-session", "tool_counter"): {"counter": {"count": 2}},
             ("nova", "test-session", "tool_history"): {
@@ -417,6 +417,7 @@ class TestSessionConsolidation:
         store = self._stateful_store(state)
         mw = NovaLearningMiddleware(store=store, owner="test-session", enabled=True)
         mw._last_request = self._request()
+        mw._reviewed_task = mw._tracker.task
 
         assert await mw.consolidate_session() is False
         mw._last_request.model.ainvoke.assert_not_awaited()

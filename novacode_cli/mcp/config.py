@@ -114,6 +114,8 @@ class MCPServerConfig(BaseModel):
     command: str | None = None
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
+    header_secrets: dict[str, str] = Field(default_factory=dict)
+    oauth: bool = False
     description: str | None = None
     disabled: bool = False
 
@@ -159,6 +161,21 @@ class MCPServerConfig(BaseModel):
                 raise ValueError(msg)
         return v
 
+    @field_validator("header_secrets")
+    @classmethod
+    def validate_header_secrets(cls, value: dict[str, str]) -> dict[str, str]:
+        """Keep only safe HTTP names and opaque secret references in config."""
+        import re
+
+        for name, reference in value.items():
+            if not re.fullmatch(r"[A-Za-z0-9!#$%&'*+.^_`|~-]+", name):
+                raise ValueError("Invalid HTTP header name")
+            if name.lower() in {"content-length", "transfer-encoding", "host", "connection"}:
+                raise ValueError("Protected HTTP header cannot be configured")
+            if not re.fullmatch(r"mcp-header-[0-9a-f]{32}", reference):
+                raise ValueError("Invalid MCP header secret reference")
+        return value
+
     @model_validator(mode="after")
     def validate_transport_requirements(self) -> "MCPServerConfig":
         """Validate that transport-specific requirements are met."""
@@ -167,6 +184,9 @@ class MCPServerConfig(BaseModel):
             raise ValueError(msg)
         if self.transport == "stdio" and not self.command:
             msg = "stdio transport requires a command"
+            raise ValueError(msg)
+        if self.transport != "http" and (self.oauth or self.header_secrets):
+            msg = "OAuth and HTTP headers require HTTP transport"
             raise ValueError(msg)
         return self
 

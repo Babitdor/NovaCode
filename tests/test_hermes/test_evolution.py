@@ -59,6 +59,16 @@ def store():
     return FakeStore()
 
 
+@pytest.fixture(autouse=True)
+def isolated_learning_ledger(tmp_path, monkeypatch):
+    from novacode_cli.hermes.ledger import LearningLedger
+
+    monkeypatch.setattr(
+        "novacode_cli.hermes.skill_proposals.main_agent_learning_ledger",
+        lambda: LearningLedger(tmp_path / "learning.sqlite3"),
+    )
+
+
 def _engine(store, skills_dir):
     tracker = ToolUsageTracker(store, enabled=True)
     sm = SkillManager(store, skills_dir=skills_dir, enabled=True)
@@ -142,7 +152,7 @@ class TestRunEvolutionCreate:
 
         assert not (tmp_path / "add-tui-command" / "SKILL.md").exists()
         from novacode_cli.hermes.ledger import LearningLedger
-        proposal = LearningLedger(tmp_path.parent / "learning.sqlite3").list()[-1]
+        proposal = LearningLedger(tmp_path / "learning.sqlite3").list()[-1]
         assert proposal.status == "candidate"
         assert proposal.target == "add-tui-command"
         assert "edit app.py" in proposal.content
@@ -175,7 +185,7 @@ class TestRunEvolutionLevelUp:
         content = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
         assert "old steps" in content
         from novacode_cli.hermes.ledger import LearningLedger
-        proposal = LearningLedger(tmp_path.parent / "learning.sqlite3").list()[-1]
+        proposal = LearningLedger(tmp_path / "learning.sqlite3").list()[-1]
         assert proposal.status == "candidate"
         assert "improved steps" in proposal.content
         assert proposal.source_hash

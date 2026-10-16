@@ -52,6 +52,10 @@ def engine(tmp_path, monkeypatch):
     monkeypatch.setattr(P, "PROMPT_HISTORY_DIR", history)
     monkeypatch.setattr(P, "TEMPLATES_DIR", prompts_dir)
     monkeypatch.setattr("novacode_cli.hermes.prompt_evolution.PROMPT_HISTORY_DIR", history)
+    monkeypatch.setattr(
+        "novacode_cli.hermes.ledger.main_agent_learning_ledger",
+        lambda: LearningLedger(tmp_path / "learning.sqlite3"),
+    )
     P.reset_ab_choices()
     return PromptEvolutionEngine(FakeStore(), prompts_dir=prompts_dir), history
 
