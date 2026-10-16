@@ -95,6 +95,12 @@ def _condense_response(raw: str) -> str:
     return result.strip()
 
 
+def is_stop_command(text: str) -> bool:
+    """``/stop`` (or ``/cancel``, ``/stop@NovaBot``): stop the running task, like Esc."""
+    words = (text or "").strip().lower().split()
+    return bool(words) and words[0].split("@", 1)[0] in {"/stop", "/cancel"}
+
+
 async def remote_message_processor(
     queue: asyncio.Queue,
     agent: Any,
@@ -372,6 +378,20 @@ async def remote_message_processor(
         try:
             remote_msg = await queue.get()
             await _debug_log(f"DEQUEUED from queue {id(queue)}: {remote_msg.text[:80]}")
+
+            if is_stop_command(remote_msg.text):
+                running = [t for t in active_tasks if not t.done()]
+                from novacode_cli.shell.jobs import request_kill
+
+                request_kill()  # a shell command runs where task cancellation can't reach
+                for t in running:
+                    t.cancel()
+                try:
+                    await remote_msg.reply_fn("⏹ Stopped." if running else "Nothing is running.")
+                except Exception:
+                    pass
+                queue.task_done()
+                continue
 
             # Check if there is an active turn (lock is locked)
             if lock.locked() and not getattr(remote_msg, "images", None):

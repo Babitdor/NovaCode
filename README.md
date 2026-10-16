@@ -376,6 +376,7 @@ Enter `!command` to stream output in the chat. Nova records the output and repor
 | `/tabs` | Session tabs: `launch` opens the approved project picker; `resume` picks a saved session to reopen as a tab; `resume <id>` accepts an exact ID or unique prefix. `list` / `close` manage tabs (`ctrl+n`, `alt+<n>`) |
 | `/resume` | Resume a saved session for this path (`/resume <id>`) |
 | `/restore` | Restore a previous file version from snapshots |
+| `/stop` | Stop the running task (same as Esc); works from Telegram/Discord mid-task |
 | `/rewind` | Go back to before an earlier message: the conversation, the files the agent changed since, or both |
 | `/files` | Show file operation summary for the session |
 | `/images` | Manage tracked image references |

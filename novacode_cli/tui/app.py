@@ -468,6 +468,8 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
         "_run_ui", "inspect / patch / preview / commit / rollback / reset UI panels"
     ),
     "help": SlashCommand("_run_help", "show this help", wants_text=False, aliases=("?",)),
+    # Early in the table: Telegram's command menu keeps the first 100 entries.
+    "stop": SlashCommand("_run_stop", "stop the running task (Esc), from here or Telegram/Discord"),
     "init": SlashCommand("_run_init", "generate NOVA.md from the codebase"),
     "model": SlashCommand(
         "_run_model", "configure chat, subagent, and decision models", wants_text=False
@@ -8049,6 +8051,25 @@ class NovaApp(App):
             )
         )
 
+    def _turn_running(self) -> bool:
+        remote_turn = getattr(self, "_remote_turn_task", None)
+        return bool(self._turn_active or (remote_turn is not None and not remote_turn.done()))
+
+    async def _stop_main_turn(self) -> bool:
+        """Stop the main session's running turn as Esc does; False when nothing ran."""
+        if not self._turn_running():
+            return False
+        root = getattr(self, "_root_pane", None)
+        if root is not None and getattr(self, "_active_pane", root) is not root:
+            await self._switch_to(root)  # Esc cancels the visible session
+        self.action_cancel_turn()
+        return True
+
+    async def _run_stop(self, text: str) -> None:
+        """/stop: stop the running task, as Esc does. Mainly for remote chats."""
+        if not await self._stop_main_turn():
+            self._log(Text("Nothing is running.", style="dim"))
+
     def action_cancel_turn(self) -> None:
         communication = getattr(self, "_session_communication", None)
         if communication is not None:
@@ -9588,7 +9609,7 @@ class NovaApp(App):
         lock (shared with local input)."""
         import asyncio
 
-        from novacode_cli.remote.processor import _extract_response
+        from novacode_cli.remote.processor import _extract_response, is_stop_command
 
         queue = self._remote_owner_state()._remote_message_queue
         while True:
@@ -9637,6 +9658,13 @@ class NovaApp(App):
 
                         text = (getattr(msg, "text", "") or "").strip()
                         low = text.lower()
+                        if is_stop_command(text):
+                            stopped = await self._stop_main_turn()
+                            reply_fn = getattr(msg, "reply_fn", None)
+                            if reply_fn is not None:
+                                with suppress(Exception):
+                                    await reply_fn("⏹ Stopped." if stopped else "Nothing is running.")
+                            continue
                         if low.startswith("/steer"):
                             text = text[len("/steer") :].strip()
                         elif text.startswith("/"):
@@ -9877,6 +9905,8 @@ class NovaApp(App):
 
         if cmd in ("help", "?", "commands"):
             return self._remote_help_text(), None
+        if cmd in ("stop", "cancel"):
+            return "Nothing is running.", None
         if cmd in ("tokens", "context", "cost") and not arg:
             try:
                 return self._token_text().plain, None
