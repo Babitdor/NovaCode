@@ -1011,10 +1011,6 @@ class ChatMessage(Vertical):
         padding: 1 2;
         background: $background;
     }
-    /* Hover cue that a message is clickable (click = copy it). User turns only:
-       the agent's replies are plain reading surface and must not shift color
-       under the cursor. */
-    ChatMessage.user:hover { background: $boost; }
     ChatMessage > .role { text-style: bold; }
     ChatMessage > .body { height: auto; }
     ChatMessage.user { border-left: none; }

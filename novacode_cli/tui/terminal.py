@@ -101,7 +101,7 @@ class EmbeddedTerminal(Widget):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="term-header"):
-            yield Static("🖥️ Embedded Terminal", id="term-title")
+            yield Static("Embedded Terminal", id="term-title")
             with Horizontal(id="term-buttons"):
                 yield Button("Kill", id="btn-kill", variant="error")
                 yield Button("Clear", id="btn-clear")
@@ -130,8 +130,10 @@ class EmbeddedTerminal(Widget):
             else:
                 path_str = self.cwd.as_posix()
                 
-        self.query_one("#term-prompt", Static).update(f"[bold #bb9af7]{self.cwd.name}[/bold #bb9af7] $ ")
-        self.query_one("#term-title", Static).update(f"🖥️ Embedded Terminal ([dim]{path_str}[/dim])")
+        self.query_one("#term-prompt", Static).update(Text(f"{self.cwd.name} $ ", style="bold"))
+        title = Text("Embedded Terminal · ", style="bold")
+        title.append(path_str, style="dim")
+        self.query_one("#term-title", Static).update(title)
 
     async def run_initial_cmd(self) -> None:
         # Give textual a frame to mount elements
@@ -140,8 +142,8 @@ class EmbeddedTerminal(Widget):
         
         prompt_text = f"{self.cwd.name} $ "
         log.write(Text.assemble(
-            Text(prompt_text, style="bold #bb9af7"),
-            Text(self.initial_cmd, style="bold white")
+            Text(prompt_text, style="bold"),
+            Text(self.initial_cmd, style="bold")
         ))
 
         # Check special commands
@@ -195,8 +197,8 @@ class EmbeddedTerminal(Widget):
         # Show the command being executed
         prompt_text = f"{self.cwd.name} $ "
         log.write(Text.assemble(
-            Text(prompt_text, style="bold #bb9af7"),
-            Text(cmd, style="bold white")
+            Text(prompt_text, style="bold"),
+            Text(cmd, style="bold")
         ))
 
         # Check special commands

@@ -17,7 +17,91 @@ if TYPE_CHECKING:
     from textual.app import ComposeResult
     from textual.binding import BindingType
 
+    from novacode_cli.tui.palette import FooterPalette
+
 _KIB = 1024
+_WORDMARK_MIN_WIDTH = 50
+_BANNER_DOUBLE_WIDTH = 100
+
+HOME_STYLES = (
+    ("Dashboard · navigation and system panels", "dashboard"),
+    ("Classic · Matrix banner and chat", "classic"),
+    ("Centered · wordmark and focused composer", "centered"),
+    ("Banner · bold wordmark and open conversation", "banner"),
+    ("Minimal · compact conversation and controls", "minimal"),
+)
+
+
+def home_style(value: object, *, legacy_dashboard: object = True) -> str:
+    """Resolve a saved style, retaining the previous Dashboard/Classic choice."""
+    if isinstance(value, str) and value in {key for _, key in HOME_STYLES}:
+        return value
+    return "classic" if legacy_dashboard is False else "dashboard"
+
+
+@dataclass(frozen=True)
+class HomeIdentity:
+    """Actual session facts displayed by the alternative home layouts."""
+
+    version: str
+    model: str
+    provider: str
+    workspace: str
+    session_id: str
+    context_percent: float | None
+
+
+@dataclass(frozen=True)
+class HomePresentation:
+    """The themed text shared by the home layout widgets."""
+
+    art: Text
+    details: Text
+    tip: Text
+    metadata: Text
+
+
+def home_presentation(
+    style: str,
+    width: int,
+    identity: HomeIdentity,
+    palette: FooterPalette,
+) -> HomePresentation:
+    """Apply Nova's branding to each layout without inventing session metrics."""
+    from novacode_cli.brand import WORDMARK_LINES, compact_mark, wordmark
+
+    logo = wordmark() if width >= _WORDMARK_MIN_WIDTH else compact_mark()
+    details = f"Nova Code  v{identity.version}"
+    if style == "banner" and width >= _BANNER_DOUBLE_WIDTH:
+        logo = "\n".join("".join(char * 2 for char in line) for line in WORDMARK_LINES)
+    art = Text(logo, style=f"bold {palette.text if style == 'centered' else palette.accent}")
+    if style == "minimal":
+        facts = [details, f"model  {identity.model}", f"cwd    {identity.workspace}"]
+        art = Text(no_wrap=True, overflow="ellipsis")
+        for index, line in enumerate(WORDMARK_LINES):
+            art.append(line[:10] + "   ", style=palette.text)
+            art.append((facts[index] if index < len(facts) else "") + "\n", style=palette.muted)
+        details = (
+            f"Started session {identity.session_id[:12]}" if identity.session_id else "New session"
+        )
+    tip = (
+        "Build. Think. Refine. Together."
+        if style == "centered"
+        else (
+            "Tip  /context shows what occupies the context window.\n"
+            "Type to begin   / commands   @ files   /help"
+        )
+    )
+    metadata = Text("Nova", style=palette.accent)
+    metadata.append(f"  ·  {identity.provider}  ·  {identity.model}", style=palette.text)
+    if identity.context_percent is not None:
+        metadata.append(f"  ·  ctx {identity.context_percent:.0f}%", style=palette.muted)
+    return HomePresentation(
+        art,
+        Text(details, style=palette.muted),
+        Text(tip, style=palette.muted),
+        metadata,
+    )
 
 
 @dataclass(frozen=True)

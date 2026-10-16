@@ -2332,7 +2332,6 @@ class SettingsScreen(ModalScreen[None]):
     """
 
     _PREFERENCES = {
-        "home_dashboard_enabled": True,
         "matrix_rain_enabled": False,
         "submit_on_enter": True,
         "autocomplete_enabled": True,
@@ -2364,20 +2363,29 @@ class SettingsScreen(ModalScreen[None]):
             yield Static(Text("Settings", style="bold"), id="modal-title")
             with VerticalScroll(id="settings-content"):
                 yield Static("APPEARANCE", classes="settings-section")
-                with Horizontal(classes="settings-row"):
-                    yield Switch(
-                        value=self._preference("home_dashboard_enabled"),
-                        id="home-dashboard-toggle",
-                    )
-                    yield Static("Redesigned home screen", classes="settings-label")
+                from novacode_cli.tui.home import HOME_STYLES, home_style
+
+                yield Static("Interface style", classes="settings-label")
+                yield Select(
+                    HOME_STYLES,
+                    value=home_style(
+                        self._config.get("home_style"),
+                        legacy_dashboard=self._config.get("home_dashboard_enabled", True),
+                    ),
+                    allow_blank=False,
+                    id="home-style-select",
+                )
                 yield Static(
-                    "Turn off for the classic banner and chat layout. Applies immediately.",
+                    "Banner and Minimal also style conversations, tools, and controls. "
+                    "Applies immediately; your conversation and draft stay in place.",
                     classes="settings-description",
                 )
                 with Horizontal(classes="settings-row"):
                     yield Switch(value=self._preference("matrix_rain_enabled"), id="matrix-rain-toggle")
                     yield Static("Matrix Rain animation", classes="settings-label")
-                yield Static("Animate the home banner.", classes="settings-description")
+                yield Static(
+                    "Animate the Dashboard and Classic banners.", classes="settings-description"
+                )
                 with Horizontal(classes="settings-row"):
                     yield Button("Change theme…", id="settings-theme")
                     yield Static("Choose Nova's color theme.", classes="settings-description")
@@ -2434,7 +2442,7 @@ class SettingsScreen(ModalScreen[None]):
             with Horizontal(id="modal-buttons"):
                 yield Button("Close", id="close")
 
-    def _save_preference(self, key: str, value: bool | int) -> None:
+    def _save_preference(self, key: str, *, value: bool | int | str) -> None:
         try:
             self._config.set(key, value)
         except Exception as exc:  # noqa: BLE001
@@ -2445,7 +2453,6 @@ class SettingsScreen(ModalScreen[None]):
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
         key_by_id = {
-            "home-dashboard-toggle": "home_dashboard_enabled",
             "matrix-rain-toggle": "matrix_rain_enabled",
             "submit-enter-toggle": "submit_on_enter",
             "autocomplete-toggle": "autocomplete_enabled",
@@ -2455,10 +2462,8 @@ class SettingsScreen(ModalScreen[None]):
         key = key_by_id.get(event.switch.id)
         if key is None:
             return
-        self._save_preference(key, event.value)
-        if key == "home_dashboard_enabled":
-            self.app._set_home_dashboard_enabled(enabled=event.value)
-        elif key == "matrix_rain_enabled":
+        self._save_preference(key, value=event.value)
+        if key == "matrix_rain_enabled":
             self.app._set_matrix_rain_enabled(event.value)
         elif key == "submit_on_enter":
             self.app._submit_on_enter = event.value
@@ -2471,13 +2476,23 @@ class SettingsScreen(ModalScreen[None]):
             self.app._set_animation_fps(self.app._animation_fps)
 
     def on_select_changed(self, event: Select.Changed) -> None:
+        if event.value is Select.BLANK:
+            return
+        if event.select.id == "home-style-select":
+            from novacode_cli.tui.home import home_style
+
+            style = home_style(event.value)
+            if self._config.get("home_style") != style:
+                self._save_preference("home_style", value=style)
+            self.app._set_home_style(style)
+            return
         if event.select.id != "animation-fps" or event.value is Select.BLANK:
             return
         from novacode_cli.tui.animation_rate import animation_fps
 
         fps = animation_fps(event.value)
         if self._config.get("animation_fps") != fps:
-            self._save_preference("animation_fps", fps)
+            self._save_preference("animation_fps", value=fps)
         self.app._set_animation_fps(fps)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

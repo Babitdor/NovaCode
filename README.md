@@ -390,6 +390,7 @@ Enter `!command` to stream output in the chat. Nova records the output and repor
 | `/reindex` | Rebuild semantic code search index |
 | `/copy` | Copy the last response (or the whole chat) |
 | `/theme` | Switch color theme |
+| `/settings` | Set input and display preferences; Appearance → Interface style offers Dashboard, Classic, Centered, Banner, and Minimal (Banner and Minimal also style the conversation) |
 
 | Command | Description |
 |---------|-------------|
