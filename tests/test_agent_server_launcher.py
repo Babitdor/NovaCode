@@ -43,6 +43,10 @@ def test_the_command_is_the_dev_server_this_interpreter_runs():
         # os.access" and takes the server down: spawning a stdio MCP server
         # resolves the command with shutil.which, which blockbuster rejects.
         "--allow-blocking",
+        # Without this the dev server runs one run at a time: async subagents
+        # launched together would run one after another.
+        "--n-jobs-per-worker",
+        str(sl.ASYNC_RUNS_AT_ONCE),
         "--host",
         "127.0.0.1",
         "--port",

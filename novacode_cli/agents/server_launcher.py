@@ -133,6 +133,11 @@ def find_free_port(host: str = DEFAULT_HOST) -> int:
         return int(probe.getsockname()[1])
 
 
+#: Async subagent runs the local server executes at once; the rest queue.
+#: ponytail: fixed; make it a setting if a machine needs fewer.
+ASYNC_RUNS_AT_ONCE = 10
+
+
 def build_command(*, host: str, port: int, config_path: Path) -> list[str]:
     """The argv for the in-memory dev server, run by this interpreter.
 
@@ -151,6 +156,11 @@ def build_command(*, host: str, port: int, config_path: Path) -> list[str]:
     It must be the flag, not ``LANGGRAPH_ALLOW_BLOCKING``: ``langgraph_cli``
     writes that variable into the child environment from this flag with
     ``default=False``, so setting it ourselves is overwritten.
+
+    ``--n-jobs-per-worker``: without it ``langgraph dev`` runs ONE run at a
+    time (it sets ``N_JOBS_PER_WORKER=1``, though its help says 10), so async
+    subagents launched together ran one after another. Same flag-not-variable
+    reason as above.
     """
     return [
         sys.executable,
@@ -158,6 +168,8 @@ def build_command(*, host: str, port: int, config_path: Path) -> list[str]:
         "langgraph_cli",
         "dev",
         "--allow-blocking",
+        "--n-jobs-per-worker",
+        str(ASYNC_RUNS_AT_ONCE),
         "--host",
         host,
         "--port",
