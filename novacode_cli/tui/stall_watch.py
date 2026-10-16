@@ -29,6 +29,8 @@ _SAMPLE_EVERY = 1.0
 _MAX_STALLS = 32
 _MAX_SAMPLES = 4
 _MAX_SAMPLE_CHARS = 16_384
+#: A thread whose innermost frame is one of these is waiting, not working.
+_IDLE_FRAMES = frozenset({"wait", "_wait_for_tstate_lock", "get", "select", "_worker", "accept", "recv", "read", "readline", "sleep", "run_forever"})
 
 
 class StallWatch:
@@ -61,15 +63,44 @@ class StallWatch:
         self._stop.set()
 
     def _sample(self) -> str:
-        frame = sys._current_frames().get(self._loop_thread)
+        frames = sys._current_frames()
+        frame = frames.get(self._loop_thread)
         if frame is None:
             return "(loop thread gone)"
-        return "".join(traceback.format_stack(frame))  # whole stack: the caller matters
+        stack = "".join(traceback.format_stack(frame))  # whole stack: the caller matters
+        # The loop may only be where it was when another thread took the GIL
+        # (a C extension holds it until done): show what the others are doing.
+        names = {t.ident: t.name for t in threading.enumerate()}
+        busy = []
+        for ident, other in frames.items():
+            if ident in (self._loop_thread, threading.get_ident()):
+                continue
+            top = traceback.extract_stack(other)[-4:]
+            if top and top[-1].name in _IDLE_FRAMES:
+                continue
+            where = " < ".join(f"{Path(f.filename).name}:{f.lineno} {f.name}" for f in reversed(top))
+            busy.append(f"  [{names.get(ident, ident)}] {where}\n")
+        return stack + ("--- other threads ---\n" + "".join(busy) if busy else "")
+
+    @staticmethod
+    def _resources() -> tuple[float, str]:
+        """This process's CPU seconds so far (all threads), and memory now."""
+        times = os.times()
+        cpu = times.user + times.system
+        try:
+            import psutil
+
+            rss = psutil.Process().memory_info().rss / 2**20
+            free = psutil.virtual_memory().available / 2**30
+            return cpu, f"rss {rss:.0f} MB, system free {free:.1f} GB"
+        except Exception:  # noqa: BLE001 - diagnostics only
+            return cpu, ""
 
     def _run(self) -> None:
         while not self._stop.is_set():
             answered = threading.Event()
             started = time.monotonic()
+            cpu_before, _ = self._resources()
             try:
                 self._loop.call_soon_threadsafe(answered.set)
             except RuntimeError:  # loop closed: the app is gone
@@ -78,15 +109,22 @@ class StallWatch:
                 self._stop.wait(_PING_EVERY)
                 continue
             samples: list[str] = []
+            memory = ""
             while not answered.wait(0 if not samples else _SAMPLE_EVERY):
                 stack = self._sample()
+                if not samples:
+                    memory = self._resources()[1]
                 if len(samples) < _MAX_SAMPLES and stack not in samples:
                     samples.append(stack[-_MAX_SAMPLE_CHARS:])
                 if self._stop.is_set():
                     return
-            self._record(time.monotonic() - started, samples)
+            seconds = time.monotonic() - started
+            cpu = self._resources()[0] - cpu_before
+            # CPU ~ wall time: Nova was busy (see the threads). CPU ~ 0: Nova
+            # was not running at all -- paging, disk, antivirus, the OS.
+            self._record(seconds, samples, f"cpu {cpu:.1f}s" + (f", {memory}" if memory else ""))
 
-    def _record(self, seconds: float, samples: list[str]) -> None:
+    def _record(self, seconds: float, samples: list[str], resources: str = "") -> None:
         samples = [sample[-_MAX_SAMPLE_CHARS:] for sample in samples[-_MAX_SAMPLES:]]
         self.stalls.append((seconds, samples))
         try:
@@ -97,6 +135,7 @@ class StallWatch:
                 fh.write(
                     f"\n=== {datetime.now():%Y-%m-%d %H:%M:%S} UI loop frozen "
                     f"{seconds:.1f}s ({len(samples)} distinct stack(s)) ===\n"
+                    + (f"--- {resources} ---\n" if resources else "")
                 )
                 for i, stack in enumerate(samples, 1):
                     fh.write(f"--- sample {i} ---\n{stack}")
@@ -113,13 +152,23 @@ if __name__ == "__main__":
         watch = StallWatch(asyncio.get_running_loop(), threshold=0.5, log_path=log)
         watch.start()
         await asyncio.sleep(0.6)
+        busy = threading.Event()
+
+        def spin() -> None:
+            while not busy.is_set():
+                sum(range(10_000))
+
+        threading.Thread(target=spin, name="busy-worker", daemon=True).start()
         time.sleep(1.5)  # the freeze
+        busy.set()
         await asyncio.sleep(0.5)
         watch.stop()
         assert watch.stalls, "stall not detected"
         seconds, samples = watch.stalls[0]
         assert seconds >= 1.0 and any("time.sleep(1.5)" in s for s in samples), samples
-        assert "UI loop frozen" in log.read_text(encoding="utf-8")
+        text = log.read_text(encoding="utf-8")
+        assert "UI loop frozen" in text and "--- cpu " in text, text[:400]
+        assert "[busy-worker]" in text, "the other working thread is named"
         print(f"stall_watch self-check ok: caught {seconds:.1f}s stall")
 
     asyncio.run(main())
