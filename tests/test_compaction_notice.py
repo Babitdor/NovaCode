@@ -41,7 +41,7 @@ class _SessionState:
     thread_id = "t-compaction"
 
 
-def _agent(pre_values, post_values):
+def _agent(pre_values, post_values, *, compaction_before_usage: bool | None = None):
     """Agent whose state differs before and after the stream."""
 
     class Agent:
@@ -53,7 +53,13 @@ def _agent(pre_values, post_values):
             return _State(pre_values if self.calls == 1 else post_values)
 
         async def astream(self, inp, **kw):
+            if compaction_before_usage is True:
+                yield ((), "custom", {"type": "nova_compaction_start"})
+                yield ((), "custom", {"type": "nova_compaction_end"})
             yield ((), "messages", (_Chunk("m1", [{"type": "text", "text": "ok"}]), {}))
+            if compaction_before_usage is False:
+                yield ((), "custom", {"type": "nova_compaction_start"})
+                yield ((), "custom", {"type": "nova_compaction_end"})
 
         async def aupdate_state(self, **kw):
             pass
@@ -117,6 +123,16 @@ def test_usage_precedes_compaction_reset():
     events = _run(_agent({"messages": _msgs(40)}, {"messages": _msgs(1)}))
     kinds = [type(e) for e in events]
     assert kinds.index(ev.UsageUpdate) < kinds.index(ev.CompactionNotice)
+
+
+def test_only_post_compaction_provider_usage_is_preserved():
+    for before_usage in (False, True):
+        events = _run(_agent(
+            {"messages": _msgs(40)}, {"messages": _msgs(1)},
+            compaction_before_usage=before_usage,
+        ))
+        notice = next(e for e in events if isinstance(e, ev.CompactionNotice))
+        assert notice.preserve_api_context is before_usage
 
 
 def test_a_later_summarization_event_is_detected():

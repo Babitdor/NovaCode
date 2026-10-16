@@ -436,6 +436,43 @@ async def test_agent_exception_is_reported_not_fatal(monkeypatch):
 
 
 @pytest.mark.timeout(30)
+async def test_prompt_releases_background_task_wait(monkeypatch):
+    from types import SimpleNamespace
+
+    from novacode_cli.shell import jobs
+    from novacode_cli.tools import waiter_tools
+
+    registry = jobs.JobRegistry()
+    monkeypatch.setattr(jobs, "get_registry", lambda: registry)
+    job = registry.add("long build", "shell")
+    seen = []
+
+    async def source(text, *args, **kwargs):
+        seen.append(text)
+        if text == "first":
+            runtime = SimpleNamespace(
+                state={}, tool_call_id="child-wait",
+                config={"configurable": {"thread_id": worker.session_state.thread_id}},
+            )
+            result = await waiter_tools.wait_for_task.coroutine(job.task_id, runtime, 60)
+            assert "user input" in result.lower()
+        yield ev.Done()
+
+    worker, sent = _make(monkeypatch, source)
+    running = asyncio.create_task(worker.run())
+    try:
+        worker.inbox.put_nowait({"t": "prompt", "id": "p1", "text": "first"})
+        assert await _wait_for(lambda: bool(waiter_tools.active_waiters()))
+        worker.inbox.put_nowait({"t": "prompt", "id": "p2", "text": "second"})
+        assert await _wait_for(lambda: seen == ["first", "second"], timeout=2)
+        assert job.status == "running"
+        assert not _frames(sent, "error")
+    finally:
+        worker.inbox.put_nowait({"t": "shutdown"})
+        await asyncio.wait_for(running, timeout=10)
+
+
+@pytest.mark.timeout(30)
 async def test_prompt_during_turn_is_queued_then_run(monkeypatch):
     seen: list[str] = []
     gate = asyncio.Event()

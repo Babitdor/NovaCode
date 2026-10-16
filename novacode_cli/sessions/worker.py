@@ -436,6 +436,9 @@ class SessionWorker:
                         self._emit({"t": "turn_done", "id": pid, "ok": False})
                     elif self._turn_running():
                         self._queued.append((pid, text, images, auto_approve))
+                        from novacode_cli.tools.waiter_tools import interrupt_task_waits
+
+                        interrupt_task_waits(self.session_state.thread_id)
                     else:
                         self._start_turn(pid, text, images, auto_approve)
 

@@ -1095,7 +1095,7 @@ async def execute_task(  # type: ignore
 
 
             elif isinstance(event, ev.CompactionNotice):
-                context_compacted = True
+                context_compacted = not event.preserve_api_context
 
                 console.print()
 
@@ -1132,25 +1132,30 @@ async def execute_task(  # type: ignore
 
 
             elif isinstance(event, ev.UsageUpdate):
-                captured_session_tokens = event.session_tokens
-
-                captured_session_input_tokens = event.session_input_tokens
-
-                captured_input_tokens = max(captured_input_tokens, event.input_tokens)
-
-                captured_output_tokens = max(captured_output_tokens, event.output_tokens)
-
-                captured_cache_read_tokens = max(
-
-                    captured_cache_read_tokens, event.cache_read_tokens
-
+                captured_session_tokens = (captured_session_tokens or 0) + (
+                    event.session_tokens
+                    if event.session_tokens is not None
+                    else event.input_tokens + event.output_tokens
                 )
 
-                captured_cache_creation_tokens = max(
-
-                    captured_cache_creation_tokens, event.cache_creation_tokens
-
+                captured_session_input_tokens = (captured_session_input_tokens or 0) + (
+                    event.session_input_tokens
+                    if event.session_input_tokens is not None
+                    else event.input_tokens
                 )
+
+                # Goals produce one update per agent turn. The context belongs
+                # to the latest request; spend includes all completed turns.
+                captured_input_tokens = event.input_tokens
+
+                captured_output_tokens = event.output_tokens
+
+                captured_cache_read_tokens += event.cache_read_tokens
+
+                captured_cache_creation_tokens += event.cache_creation_tokens
+
+                if event.input_tokens > 0:
+                    context_compacted = False
 
 
 

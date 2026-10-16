@@ -11,9 +11,13 @@ from __future__ import annotations
 
 import asyncio
 import types
+from typing import TYPE_CHECKING
 
 import novacode_cli.ui_events as ev
 from novacode_cli.core.agent_loop import iterate_agent_events
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 
 class _Chunk:
@@ -77,6 +81,35 @@ def test_usage_sums_calls_but_context_uses_latest_call():
     assert updates[0].output_tokens == 40
     assert updates[0].cache_read_tokens == 100
     assert updates[0].session_tokens == 2570
+
+
+def test_summary_request_cannot_overwrite_main_context_or_usage():
+    class Agent:
+        async def aget_state(self, _config: object) -> _State:
+            return _State([])
+
+        async def astream(self, _inp: object, **_kw: object) -> AsyncIterator[object]:
+            yield (
+                (), "messages",
+                (_Chunk("main-1", [], usage={"input_tokens": 2000, "output_tokens": 20}), {}),
+            )
+            yield (
+                (), "messages",
+                (
+                    _Chunk("summary", [], usage={"input_tokens": 90000, "output_tokens": 500}),
+                    {"lc_source": "summarization", "tags": ["nostream"]},
+                ),
+            )
+            yield (
+                (), "messages",
+                (_Chunk("main-2", [], usage={"input_tokens": 1200, "output_tokens": 30}), {}),
+            )
+
+    events = _collect(Agent())
+    assert [e.input_tokens for e in events if isinstance(e, ev.ContextUsage)] == [2000, 1200]
+    usage = next(e for e in events if isinstance(e, ev.UsageUpdate))
+    assert usage.input_tokens == 1200
+    assert usage.session_tokens == 3250
 
 
 def test_happy_path_text_tool_todo():

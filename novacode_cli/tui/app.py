@@ -7055,6 +7055,12 @@ class NovaApp(App):
             return f"{n / 1_000:.0f}k"
         return str(n)
 
+    def _refresh_usage_metrics(self) -> None:
+        """Paint both context indicators from the same new usage reading."""
+        self._status_tail = None
+        self._refresh_status()
+        self._refresh_quota()
+
     def _refresh_quota(self) -> None:
         """Context + session-usage refresh (called from _tick during active turns).
 
@@ -7703,6 +7709,9 @@ class NovaApp(App):
         # (injected for its next step) instead of cancelling it or starting a new
         # turn. Esc still cancels. Empty turns route normally.
         if self._turn_active:
+            from novacode_cli.tools.waiter_tools import interrupt_task_waits
+
+            interrupt_task_waits(self.session_state.thread_id)
             # Exit is a control command, not a prompt: honour it immediately
             # rather than queueing behind a turn that may run for minutes. This
             # handler is sync, so the async quit runs as a worker. A separate
@@ -7804,6 +7813,9 @@ class NovaApp(App):
         si = SteeringInstruction(label="steer", instruction=text)
         self.session_state.steering_instructions.append(si)
         self._live_steers.append(si)
+        from novacode_cli.tools.waiter_tools import interrupt_task_waits
+
+        interrupt_task_waits(self.session_state.thread_id)
         self._log(
             Text(
                 f"↗ Steering (applies on the next step): {text}",
@@ -15331,18 +15343,16 @@ class NovaApp(App):
             if not getattr(self, "_compaction_reported", False):
                 self._log(Text("⟳ Context compacted", style="dim"))
             self._compaction_reported = False
-            # Context just shrank. The API-sourced current_context is the turn's
-            # PEAK (pre-compaction) and would otherwise mask the reduction, so
-            # reset() clears has_api_data and lets the recomputed, message-based
-            # breakdown show the real post-compaction size. Then refresh the
-            # status line so ctx% reflects it immediately.
+            # A provider report from after compaction is newer than our estimate.
+            # Only invalidate usage if the last report predates compaction.
             if self.token_tracker is not None:
                 try:
-                    self.token_tracker.reset()
+                    if not e.preserve_api_context:
+                        self.token_tracker.reset()
                     await self._update_context_breakdown()
                 except Exception:  # noqa: BLE001
                     pass
-                self._refresh_status()
+                self._refresh_usage_metrics()
         elif isinstance(e, ev.ContextMessage):
             if e.event_type == "nova_compaction_start":
                 self._start_compaction_indicator()
@@ -15410,10 +15420,12 @@ class NovaApp(App):
                     )
                 except Exception:  # noqa: BLE001
                     pass
+                self._refresh_usage_metrics()
         elif isinstance(e, ev.ContextUsage):
             if self.token_tracker is not None and e.input_tokens > 0:
                 self.token_tracker.current_context = e.input_tokens
                 self.token_tracker.has_api_data = True
+                self._refresh_usage_metrics()
         elif isinstance(e, ev.InterruptRequest):
             if getattr(self, "_accumulated_reply", None):
                 self._speak_reply(self._accumulated_reply)

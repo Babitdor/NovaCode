@@ -11,6 +11,36 @@ from novacode_cli.shell import jobs
 from novacode_cli.tools import waiter_tools
 
 
+async def test_user_input_releases_only_its_session_wait(monkeypatch: pytest.MonkeyPatch):
+    registry = jobs.JobRegistry()
+    monkeypatch.setattr(jobs, "get_registry", lambda: registry)
+    job = registry.add("long build", "shell")
+    runtime = SimpleNamespace(
+        state={}, tool_call_id="wait-input", config={"configurable": {"thread_id": "chat-1"}},
+    )
+    waiting = asyncio.create_task(
+        waiter_tools.wait_for_task.coroutine(job.task_id, runtime, timeout_seconds=60)
+    )
+    try:
+        for _ in range(20):
+            if waiter_tools.active_waiters():
+                break
+            await asyncio.sleep(0)
+        waiter_tools.interrupt_task_waits("other-chat")
+        await asyncio.sleep(0)
+        assert not waiting.done()
+        waiter_tools.interrupt_task_waits("chat-1")
+        result = await asyncio.wait_for(waiting, 1)
+        assert "user input" in result.lower()
+        assert job.status == "running"
+        assert not job.kill.is_set()
+        assert waiter_tools.active_waiters() == []
+        assert registry._observers == []
+    finally:
+        waiting.cancel()
+        await asyncio.gather(waiting, return_exceptions=True)
+
+
 async def test_shell_wait_returns_completion_and_shows_target(monkeypatch: pytest.MonkeyPatch):
     registry = jobs.JobRegistry()
     monkeypatch.setattr(jobs, "get_registry", lambda: registry)
@@ -31,6 +61,83 @@ async def test_shell_wait_returns_completion_and_shows_target(monkeypatch: pytes
     assert "exit 0" in result
     assert "build passed" in result
     assert waiter_tools.active_waiters() == []
+
+
+async def test_tui_prompt_releases_wait_and_delivers_guidance(monkeypatch: pytest.MonkeyPatch):
+    from tests.test_tui_sessions import _app, isolated_session_config  # noqa: F401
+
+    registry = jobs.JobRegistry()
+    monkeypatch.setattr(jobs, "get_registry", lambda: registry)
+    job = registry.add("long build", "shell")
+    app = _app()
+    app.session_state.steering_instructions = []
+    runtime = SimpleNamespace(
+        state={}, tool_call_id="tui-wait",
+        config={"configurable": {"thread_id": app.session_state.thread_id}},
+    )
+    async with app.run_test() as pilot:
+        app._turn_active = True
+        waiting = asyncio.create_task(
+            waiter_tools.wait_for_task.coroutine(job.task_id, runtime, timeout_seconds=60)
+        )
+        try:
+            await pilot.pause()
+            assert waiter_tools.active_waiters()
+            app.on_input_submitted(SimpleNamespace(
+                input=app.query_one("#prompt"), value="Explain what the build is doing",
+            ))
+            result = await asyncio.wait_for(waiting, 1)
+            assert "user input" in result.lower()
+            assert app._live_steers[-1].instruction == "Explain what the build is doing"
+            assert job.status == "running"
+            assert waiter_tools.active_waiters() == []
+        finally:
+            app._turn_active = False
+            waiting.cancel()
+            await asyncio.gather(waiting, return_exceptions=True)
+
+
+async def test_new_input_cancels_remote_observation_without_stopping_run(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from novacode_cli.agents.default_subagents import async_subagents
+
+    monkeypatch.setattr(
+        async_subagents, "retrieve_async_subagents", lambda: [{"name": "reviewer", "url": "local"}],
+    )
+    checking = asyncio.Event()
+    released = asyncio.Event()
+
+    class Runs:
+        async def get(self, **_kwargs: object) -> dict[str, str]:
+            checking.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                released.set()
+            return {"status": "running"}
+
+    monkeypatch.setattr(waiter_tools, "_remote_client", lambda _spec: SimpleNamespace(runs=Runs()))
+    task = {
+        "task_id": "remote-id", "thread_id": "remote-id", "run_id": "run-id",
+        "agent_name": "reviewer", "status": "running",
+    }
+    runtime = SimpleNamespace(
+        state={"async_tasks": {"remote-id": task}}, tool_call_id="remote-wait",
+        config={"configurable": {"thread_id": "chat-remote"}},
+    )
+    waiting = asyncio.create_task(waiter_tools.wait_for_task.coroutine("remote-id", runtime))
+    try:
+        await asyncio.wait_for(checking.wait(), 1)
+        waiter_tools.interrupt_task_waits("chat-remote")
+        result = await asyncio.wait_for(waiting, 1)
+        assert result.update["async_tasks"]["remote-id"]["status"] == "running"
+        assert '"wait_interrupted": true' in result.update["messages"][0].content
+        assert released.is_set()
+        assert waiter_tools.active_waiters() == []
+    finally:
+        waiting.cancel()
+        await asyncio.gather(waiting, return_exceptions=True)
 
 
 async def test_shell_wait_times_out_without_stopping_job(monkeypatch: pytest.MonkeyPatch):
@@ -228,7 +335,10 @@ async def test_scripted_agent_can_call_waiter_with_injected_runtime(
     )
     graph = create_agent(model, tools=[waiter_tools.wait_for_task])
 
-    result = await graph.ainvoke({"messages": [HumanMessage(content="Wait for the command")]})
+    result = await graph.ainvoke(
+        {"messages": [HumanMessage(content="Wait for the command")]},
+        config={"configurable": {"thread_id": "scripted-wait"}},
+    )
     contents = [str(message.content) for message in result["messages"]]
     assert any("done" in content and "passed" in content for content in contents)
     assert contents[-1] == "The command passed."

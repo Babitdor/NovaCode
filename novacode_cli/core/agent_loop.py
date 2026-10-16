@@ -310,6 +310,8 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     context_shown = 0  # last request size sent to the UI as ContextUsage
     usage_calls: dict[object, tuple[int, int, int, int]] = {}
     compacted = False
+    compaction_finished = False
+    usage_after_compaction = False
 
     # Drain any Nova events queued by the middleware (review cycles, skill
     # activity) into proper ContextMessage events for both UIs.
@@ -525,6 +527,8 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                     # summary: that call does not stream, so without this the UI
                     # would sit silent for as long as the summary takes.
                     if isinstance(data, dict) and data.get("type") == "nova_compaction_start":
+                        compaction_finished = False
+                        usage_after_compaction = False
                         if not compaction_status_started:
                             compaction_status_started = True
                             yield ev.ContextMessage(
@@ -540,6 +544,8 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                         "nova_compaction_end",
                         "nova_compaction_failed",
                     ):
+                        compaction_finished = True
+                        usage_after_compaction = False
                         if compaction_status_started:
                             compaction_status_started = False
                             ok = data["type"] == "nova_compaction_end"
@@ -692,8 +698,11 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                     # (e.g. a regenerated SKILL.md) would otherwise surface here as
                     # a "Nova" assistant message. They're tagged nova_oob — drop
                     # them; their user-facing notices come via nova_event_log.
+                    # Summary requests must not replace main-model context usage.
                     if isinstance(_metadata, dict) and (
-                        _metadata.get("nova_oob") or "hermes" in (_metadata.get("tags") or [])
+                        _metadata.get("nova_oob")
+                        or _metadata.get("lc_source") == "summarization"
+                        or "hermes" in (_metadata.get("tags") or [])
                     ):
                         continue
 
@@ -788,6 +797,8 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                                 )
                                 call_usage = usage_calls[call_id]
                                 captured.input_tokens, captured.output_tokens = call_usage[:2]
+                                if compaction_finished and captured.input_tokens > 0:
+                                    usage_after_compaction = True
                                 captured.cache_read_tokens = sum(u[2] for u in usage_calls.values())
                                 captured.cache_creation_tokens = sum(
                                     u[3] for u in usage_calls.values()
@@ -1258,7 +1269,7 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     if captured.input_tokens or captured.output_tokens:
         yield captured
     if compacted:
-        yield ev.CompactionNotice()
+        yield ev.CompactionNotice(preserve_api_context=usage_after_compaction)
     for _ctx in _drain_nova_events():
         yield _ctx
     yield ev.Done(had_response=has_responded)

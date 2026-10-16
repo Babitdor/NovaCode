@@ -410,6 +410,9 @@ async def remote_message_processor(
                         session_state.steering_instructions = []
                     si = SteeringInstruction(label="steer", instruction=text)
                     session_state.steering_instructions.append(si)
+                    from novacode_cli.tools.waiter_tools import interrupt_task_waits
+
+                    interrupt_task_waits(session_state.thread_id)
 
                     console.print(
                         f"  [cyan]↗ Steering injected from Remote ({remote_msg.platform.value}): {text}[/]"

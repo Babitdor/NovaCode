@@ -82,6 +82,7 @@ def _sample(name: str):
             input_tokens=10, output_tokens=2, cache_read_tokens=1, cache_creation_tokens=4
         ),
         "Done": lambda: ev.Done(had_response=True),
+        "CompactionNotice": lambda: ev.CompactionNotice(preserve_api_context=True),
         "ContextMessage": lambda: ev.ContextMessage(
             message="review done", event_type="nova_review_complete", icon="✓", color="green"
         ),
@@ -90,7 +91,7 @@ def _sample(name: str):
     }
     if name in special:
         return special[name]()
-    return cls()  # no-field markers: TextDiscard, CompactionNotice, Cancelled
+    return cls()  # no-field markers: TextDiscard, Cancelled
 
 
 def _record():

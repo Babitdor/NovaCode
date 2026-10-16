@@ -11,14 +11,14 @@ import time
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 from langchain.tools import ToolRuntime, tool
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Awaitable, Callable, Iterator
 
     from deepagents.middleware.async_subagents import AsyncSubAgent
     from langgraph_sdk.client import LangGraphClient
@@ -46,6 +46,54 @@ _waiters: dict[int, Waiter] = {}
 _waiters_lock = threading.Lock()
 _waiter_ids = itertools.count(1)
 _observers: list[Callable[[], None]] = []
+_interrupts: dict[int, tuple[str, Callable[[], None]]] = {}
+_WaitResult = TypeVar("_WaitResult")
+
+
+def interrupt_task_waits(thread_id: str) -> None:
+    """Release this conversation's waits when the user supplies new input."""
+    if not thread_id:
+        return
+    with _waiters_lock:
+        callbacks = [callback for owner, callback in _interrupts.values() if owner == thread_id]
+    for callback in callbacks:
+        callback()
+
+
+async def _interruptible_wait(
+    operation: Awaitable[_WaitResult],
+    thread_id: str,
+) -> _WaitResult | None:
+    """Cancel only the tool's observation, never the background task itself."""
+    if not thread_id:
+        return await operation
+    loop = asyncio.get_running_loop()
+    interrupted = loop.create_future()
+
+    def wake() -> None:
+        if not interrupted.done():
+            interrupted.set_result(None)
+
+    def notify() -> None:
+        with suppress(RuntimeError):  # the owning session may have closed
+            loop.call_soon_threadsafe(wake)
+
+    waiter_id = next(_waiter_ids)
+    with _waiters_lock:
+        _interrupts[waiter_id] = (thread_id, notify)
+    task = asyncio.ensure_future(operation)
+    try:
+        done, _ = await asyncio.wait((task, interrupted), return_when=asyncio.FIRST_COMPLETED)
+        if task in done:
+            return task.result()
+        return None
+    finally:
+        with _waiters_lock:
+            _interrupts.pop(waiter_id, None)
+        interrupted.cancel()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 def active_waiters() -> list[Waiter]:
@@ -215,6 +263,8 @@ async def wait_for_task(
     """Wait up to 60 seconds for a shell job or background subagent to finish.
 
     Returns its current status and result/output, even when the wait times out.
+    New user input releases the wait so you can respond while the task continues.
+    Address that input before waiting again.
     Call again to keep waiting. Foreground commands already wait automatically.
 
     Args:
@@ -223,14 +273,28 @@ async def wait_for_task(
         timeout_seconds: Maximum wait for this call, from 1 to 60 seconds.
     """
     seconds = _bounded_timeout(timeout_seconds)
+    configurable = (getattr(runtime, "config", None) or {}).get("configurable", {})
+    thread_id = str(configurable.get("thread_id") or "")
     from novacode_cli.shell.jobs import get_registry
 
     if get_registry().resolve(task_id) is not None or task_id.strip().lower().startswith("task_"):
-        return await _wait_shell(task_id, seconds)
+        shell_result = await _interruptible_wait(_wait_shell(task_id, seconds), thread_id)
+        if shell_result is None:
+            job = get_registry().resolve(task_id)
+            status = _shell_result(job) if job is not None else f"Task {task_id}"
+            return f"{status}\nWait released for new user input. The task was not stopped."
+        return shell_result
     task = (runtime.state.get("async_tasks") or {}).get(task_id.strip())
     if task is None:
         return f"No tracked task '{task_id}'. Use list_async_tasks or list_background_tasks."
-    result = await _wait_remote(task, seconds)
+    result = await _interruptible_wait(_wait_remote(task, seconds), thread_id)
+    if result is None:
+        result = {
+            "status": task.get("status", "running"),
+            "thread_id": task["thread_id"],
+            "wait_interrupted": True,
+            "message": "Wait released for new user input. The task was not stopped.",
+        }
     if result["status"] == "unavailable":
         return result["error"]
     return _remote_result(task, result, runtime)
@@ -254,6 +318,7 @@ def list_waiters() -> str:
 __all__ = [
     "active_waiters",
     "add_waiter_observer",
+    "interrupt_task_waits",
     "list_waiters",
     "remove_waiter_observer",
     "wait_for_task",

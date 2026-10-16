@@ -124,6 +124,9 @@ class ErrorOutput:
 class CompactionNotice:
     """Context was auto-compacted during the turn."""
 
+    preserve_api_context: bool = False
+    """A newer main-model request already reported its post-compaction usage."""
+
 
 @dataclass
 class SubagentActivity:
