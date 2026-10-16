@@ -341,3 +341,53 @@ async def test_planner_questions_are_asked_like_ask_user_question(monkeypatch):
 async def test_a_remote_session_answers_them_in_the_chat(monkeypatch):
     asked, expected, _ = await _ask_through(monkeypatch, remote=True)
     assert asked[0] == expected, "the remote question flow gets the same request"
+
+
+@pytest.mark.asyncio
+async def test_each_planning_turn_is_one_collapsed_card(monkeypatch):
+    import novacode_cli.commands.claude_plan as module
+    from textual.widgets import Collapsible
+
+    from novacode_cli.config.config import settings
+    from tests.test_tui_compaction_row import _app
+
+    root = settings.get_workspace_root()
+    turns = iter([
+        PlanTurn(session_id="s", text="Which database?"),
+        PlanTurn(session_id="s", text="ok", plan="# p"),
+    ])
+
+    async def fake_turn(prompt, cwd, *, session_id=None, on_step=None):
+        for name in ("Cargo.toml", "src\lib.rs", "src\main.rs"):
+            on_step(f"Read {root}\{name}")
+        return next(turns)
+
+    monkeypatch.setattr(module, "run_turn", fake_turn)
+    monkeypatch.setattr(module, "executable", lambda: "claude")
+    app = _app()
+    app.session_state.set_approved_plan = lambda plan: None
+
+    async def dock(payload):
+        return {"response": {"answer": "Postgres", "selected_index": None}}
+
+    async def approve(screen):
+        return "manual"
+
+    async def run_approved():
+        return None
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        monkeypatch.setattr(app, "_show_question_dock", dock)
+        monkeypatch.setattr(app, "push_screen_wait", approve)
+        monkeypatch.setattr(app, "_maybe_run_approved_plan", run_approved)
+        await app._run_claude_plan("/claude-plan add a store")
+        await pilot.pause()
+        cards = [c for c in app._transcript().query(Collapsible) if "Claude Code" in str(c.title)]
+        assert [str(c.title) for c in cards] == [
+            "◆ Claude Code has questions · 3 steps",
+            "◆ Claude Code planned · 3 steps",
+        ]
+        assert all(c.collapsed for c in cards)
+        body = str(cards[0].query_one(".planner-steps").render())
+        assert "◦ Read Cargo.toml" in body and "◦ Read src\lib.rs" in body
+        assert str(root) not in body, "paths are shown relative to the project"

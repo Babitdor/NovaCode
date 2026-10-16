@@ -13067,6 +13067,37 @@ class NovaApp(App):
         self._log(Text(f"● {planner.NAME} installed. {planner.LOGIN_HINT}", style="green"))
         return False
 
+    async def _planner_card(self, planner: Any, cwd: Any) -> tuple[Any, Any]:  # noqa: ANN401
+        """A collapsed card for one planning turn's steps, like a tool-call group.
+
+        Returns ``(on_step, settle)``: ``on_step(line)`` adds a step (paths shown
+        relative to the project), ``settle(state)`` sets the final title. One
+        Static holds every line, so a long exploration adds one widget, not one
+        per step.
+        """
+        steps: list[str] = []
+        body = Static("", classes="planner-steps")
+        card = Collapsible(body, title=f"◆ {planner.NAME} is planning…", collapsed=True)
+        card.add_class("tool")
+        await self._mount(card)
+        root = str(cwd).rstrip("\\/")
+
+        def title(state: str) -> str:
+            count = f"{len(steps)} step{'' if len(steps) == 1 else 's'}"
+            return f"◆ {planner.NAME} {state} · {count}"
+
+        def on_step(step: str) -> None:
+            for prefix in (root + "\\", root + "/"):
+                step = step.replace(prefix, "")
+            steps.append(step)
+            body.update(Text("\n".join(f"◦ {s}" for s in steps), style="dim"))
+            _retitle(card, title("is planning…"))
+
+        def settle(state: str) -> None:
+            _retitle(card, title(state))
+
+        return on_step, settle
+
     async def _run_claude_plan(self, text: str) -> None:
         """/claude-plan <task>: Claude Code plans in its plan mode (``commands/claude_plan``)."""
         from novacode_cli.commands import claude_plan
@@ -13102,19 +13133,20 @@ class NovaApp(App):
         prompt = f"Plan this task for the repository in the current directory:\n\n{task}"
         session: str | None = None
         while True:
-            self._log(Text(f"◆ {name} is planning…", style=f"bold {planner.COLOR}"))
+            on_step, settle = await self._planner_card(planner, cwd)
             self._turn_active = True
             self._set_status(f"{name} is planning…")
+            turn = None
             try:
-                turn = await planner.run_turn(
-                    prompt,
-                    cwd,
-                    session_id=session,
-                    on_step=lambda step: self._log(Text(f"  ◦ {step}", style="dim")),
-                )
+                turn = await planner.run_turn(prompt, cwd, session_id=session, on_step=on_step)
             finally:
                 self._turn_active = False
                 self._set_status("ready")
+                settle(
+                    "stopped" if turn is None or turn.error
+                    else "planned" if turn.plan is not None
+                    else "has questions"
+                )
             if turn.error:
                 self._log(Text(f"{planner.COMMAND} stopped: {turn.error}", style="red"))
                 return
