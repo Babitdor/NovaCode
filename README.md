@@ -405,6 +405,8 @@ Enter `!command` to stream output in the chat. Nova records the output and repor
 | `/middleware` | List active middleware (`/reload-plugins` to reload) |
 | `/reload-plugins` | Reload plugin registrations |
 | `/plan` | Invoke plan-mode agent for investigation & approval (approved plans are saved to `.nova/plans/`) |
+| `/claude-plan <task>` | Claude Code plans headless (needs `claude` installed); answer its questions in Nova, approve with Nova's plan approval, and Nova implements |
+| `/codex-plan <task>` | Same with OpenAI Codex (`codex exec`, read-only sandbox; needs `codex` installed) |
 | `/agent-server` | Control the local LangGraph server for async agents — `status`, `start`, `stop`, `restart`, `logs` |
 | `/trace` | LangSmith tracing management (status, enable, projects) |
 | `/ralph` | Autonomous looping mode (background task execution) |

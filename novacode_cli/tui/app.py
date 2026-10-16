@@ -511,6 +511,12 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     ),
     "agents": SlashCommand("_run_agents", "list subagents", wants_text=False),
     "plan": SlashCommand("_run_plan", "plan mode (status / off)"),
+    "claude-plan": SlashCommand(
+        "_run_claude_plan", "Claude Code plans (asks, then you approve); Nova implements"
+    ),
+    "codex-plan": SlashCommand(
+        "_run_codex_plan", "Codex plans (asks, then you approve); Nova implements"
+    ),
     "goal": SlashCommand("_run_goal", "manage a goal (pause / resume / budget / clear)"),
     "btw": SlashCommand("_run_btw", "ask a side question without touching the main conversation"),
     "remote": SlashCommand("_run_remote", "manage Discord/Telegram bridges and response streaming"),
@@ -2701,6 +2707,43 @@ class NovaApp(App):
             return self.query_one("#matrix-rain", MatrixRain)
         except NoMatches:
             return None
+
+    def _set_mouse_over(self, widget: Any, hover_widget: Any) -> None:  # noqa: ANN401
+        """Textual's hover bookkeeping, restyling only the widgets whose hover changed.
+
+        Textual restyles each widget whose ``:hover`` changes together with its
+        whole subtree, so that a rule like ``Card:hover Label`` can apply. Nova
+        has no such rule (every hover selector styles the hovered widget itself),
+        so a mouse move across the chat restyled card subtrees for nothing:
+        freeze.log showed 1-7 s per move. If a descendant hover rule is ever
+        loaded, Textual's full restyle is used again.
+        """
+        self._hover_restyle = not self._has_descendant_hover_rule()
+        try:
+            super()._set_mouse_over(widget, hover_widget)
+        finally:
+            self._hover_restyle = False
+
+    def update_styles(self, node: Any, animate: bool = True) -> None:  # noqa: ANN401
+        """See :meth:`_set_mouse_over`: a hover change restyles the node alone."""
+        if getattr(self, "_hover_restyle", False) and node is not self:
+            self.stylesheet.update_nodes([node], animate=animate)
+            return
+        super().update_styles(node, animate=animate)
+
+    def _has_descendant_hover_rule(self) -> bool:
+        """Whether any loaded rule styles a widget's descendants on ``:hover``."""
+        rules = self.stylesheet.rules
+        key = (id(rules), len(rules))
+        if getattr(self, "_hover_rules_key", None) != key:
+            self._hover_rules_key = key
+            self._descendant_hover = any(
+                "hover" in selector.pseudo_classes and index < len(chain.selectors) - 1
+                for rule in rules
+                for chain in rule.selector_set
+                for index, selector in enumerate(chain.selectors)
+            )
+        return self._descendant_hover
 
     def _watch_app_focus(self, focus: bool) -> None:
         """Textual's focus bookkeeping, minus its whole-screen restyle.
@@ -12941,6 +12984,167 @@ class NovaApp(App):
             if getattr(self, "_plan_scoped_auto_approve", False):
                 self._plan_scoped_auto_approve = False
                 self.session_state.auto_approve = False
+
+    async def _answer_question(self, request: dict) -> str | None:
+        """Ask the way the ask_user_question tool's interrupt is asked; None when dismissed.
+
+        Same surfaces as that tool: the question dock here, or the remote chat
+        while a Telegram/Discord message is driving the session.
+        """
+        if self._remote_msg is not None:
+            result = await self._ask_remote_question(request)
+        else:
+            result = await self._show_question_dock(request)
+        answer = str(((result or {}).get("response") or {}).get("answer") or "").strip()
+        return answer or None
+
+    async def _ask_planner(self, planner: Any, question: str) -> str | None:
+        """One free-text question for the planner (no options); None when dismissed."""
+        return await self._answer_question(
+            {"question": question, "options": [], "context": f"{planner.NAME} · planning"}
+        )
+
+    async def _ask_planner_questions(self, planner: Any, turn: Any) -> str | None:
+        """The planner's questions, asked as Nova's ask_user_question tool asks them.
+
+        Each ``nova-questions`` entry becomes that tool's request (options,
+        descriptions, context; free text is always offered). The answers go
+        back as one reply. A reply with no such block is asked as free text.
+        None when the user dismisses a question.
+        """
+        from novacode_cli.tools.plan_mode_tools import question_request
+
+        if not turn.questions:
+            return await self._ask_planner(planner, turn.text or f"{planner.NAME} needs more information.")
+        replies = []
+        for entry in turn.questions:
+            request, value_map = question_request(
+                entry["question"], entry["options"], entry.get("context") or f"{planner.NAME} · planning"
+            )
+            answer = await self._answer_question(request)
+            if answer is None:
+                return None
+            replies.append(f"Q: {entry['question']}\nA: {value_map.get(answer, answer)}")
+        return "My answers:\n\n" + "\n\n".join(replies)
+
+    async def _offer_planner_install(self, planner: Any, task: str) -> bool:
+        """The planner's CLI is missing: install it, plan with Nova instead, or stop.
+
+        Always False today: a fresh install is not logged in yet, so planning
+        would only fail on auth -- the user is told how to log in instead.
+        """
+        choice = await self.push_screen_wait(
+            PickScreen(
+                f"{planner.NAME} is not installed",
+                [
+                    f"Install {planner.NAME} now  ({planner.INSTALL_LABEL}, then log in once)",
+                    "Plan with Nova instead  (/plan)",
+                    "Cancel",
+                ],
+                hint=f"{planner.COMMAND} runs the {planner.NAME} CLI · Enter choose · Esc cancel",
+            )
+        )
+        if choice == 1:
+            await self._run_plan(f"/plan {task}")
+            return False
+        if choice != 0:
+            return False
+        self._log(Text(f"Installing {planner.NAME}: {' '.join(planner.install_command())}", style="cyan"))
+        self._set_status(f"installing {planner.NAME}…")
+        try:
+            installed = await planner.install(lambda line: self._log(Text(f"  {line}", style="dim")))
+        finally:
+            self._set_status("ready")
+        if not installed:
+            self._log(
+                Text(
+                    f"{planner.NAME} was not found after the installer ran. Install it by hand "
+                    f"({planner.DOCS_URL}), then retry {planner.COMMAND}.",
+                    style="red",
+                )
+            )
+            return False
+        self._log(Text(f"● {planner.NAME} installed. {planner.LOGIN_HINT}", style="green"))
+        return False
+
+    async def _run_claude_plan(self, text: str) -> None:
+        """/claude-plan <task>: Claude Code plans in its plan mode (``commands/claude_plan``)."""
+        from novacode_cli.commands import claude_plan
+
+        await self._run_external_plan(claude_plan, text)
+
+    async def _run_codex_plan(self, text: str) -> None:
+        """/codex-plan <task>: Codex plans in a read-only sandbox (``commands/codex_plan``)."""
+        from novacode_cli.commands import codex_plan
+
+        await self._run_external_plan(codex_plan, text)
+
+    async def _run_external_plan(self, planner: Any, text: str) -> None:
+        """Another agent's CLI plans headless; Nova approves and implements.
+
+        ``planner`` is a module such as ``commands.claude_plan``. Its questions
+        are answered in Nova's question dock and resume the same session. The
+        finished plan goes through Nova's plan approval, and an approved plan
+        is executed by Nova exactly as /plan's is (``_maybe_run_approved_plan``).
+        Esc stops the planner; Esc in the dock ends the planning.
+        """
+        from novacode_cli.config.config import settings
+
+        name, label = planner.NAME, Text(planner.NAME, style=f"bold {planner.COLOR}")
+        parts = text.split(maxsplit=1)
+        task = parts[1].strip() if len(parts) > 1 else ""
+        if not task:
+            self._log(Text(f"Usage: {planner.COMMAND} <what to build or change>", style="yellow"))
+            return
+        if planner.executable() is None and not await self._offer_planner_install(planner, task):
+            return
+        cwd = settings.get_workspace_root()
+        prompt = f"Plan this task for the repository in the current directory:\n\n{task}"
+        session: str | None = None
+        while True:
+            self._log(Text(f"◆ {name} is planning…", style=f"bold {planner.COLOR}"))
+            self._turn_active = True
+            self._set_status(f"{name} is planning…")
+            try:
+                turn = await planner.run_turn(
+                    prompt,
+                    cwd,
+                    session_id=session,
+                    on_step=lambda step: self._log(Text(f"  ◦ {step}", style="dim")),
+                )
+            finally:
+                self._turn_active = False
+                self._set_status("ready")
+            if turn.error:
+                self._log(Text(f"{planner.COMMAND} stopped: {turn.error}", style="red"))
+                return
+            session = turn.session_id
+            if turn.text:
+                await self._add_message(label, "nova", Markdown(turn.text))
+            if turn.plan is None:  # the planner asked something
+                answers = await self._ask_planner_questions(planner, turn)
+                if answers is None:
+                    self._log(Text("Planning ended; nothing was changed.", style="yellow"))
+                    return
+                prompt = answers
+                continue
+            choice = await self.push_screen_wait(
+                PlanApprovalModal(f"{name}'s plan requires approval", Markdown(turn.plan))
+            )
+            if choice in ("auto", "manual"):
+                if choice == "auto":
+                    # Scoped to this plan's run, as in the /plan approval handler.
+                    if not getattr(self.session_state, "auto_approve", False):
+                        self._plan_scoped_auto_approve = True
+                    self.session_state.auto_approve = True
+                self.session_state.set_approved_plan(turn.plan)
+                await self._maybe_run_approved_plan()
+                return
+            feedback = await self._ask_planner(planner, f"What should {name} change in the plan?")
+            if feedback is None:
+                self._log(Text("Planning ended; nothing was changed.", style="yellow"))
+                return
+            prompt = f"Revise the plan as follows, then give it again and end with PLAN_READY:\n\n{feedback}"
 
     async def _run_plan(self, text: str) -> None:
         """Native /plan: status / off / enable (+ optional prompt)."""

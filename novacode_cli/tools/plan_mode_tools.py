@@ -69,6 +69,28 @@ def _normalize_options(
     return display_options, value_map
 
 
+def question_request(
+    question: str,
+    options: list[str | dict[str, Any]],
+    context: str | None = None,
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """``ask_user_question``'s request, and the map from a shown answer to its value.
+
+    Shared with /claude-plan and /codex-plan, whose planners' questions go
+    through the same question flow (dock, remote chats) as this tool's.
+    """
+    display_options, value_map = _normalize_options(options)
+    request: dict[str, Any] = {
+        "question": question,
+        "options": display_options,
+        "choices": _structured_choices(options),
+        "question_type": "structured",
+    }
+    if context:
+        request["context"] = context
+    return request, value_map
+
+
 def _structured_choices(raw: list[str | dict[str, Any]]) -> list[dict[str, str]]:
     """Structured option rows for a UI that lays the description out separately.
 
@@ -115,17 +137,7 @@ def ask_user_question(
     if not options or len(options) < 2:
         return "Error: At least 2 options are required for ask_user_question."
 
-    display_options, value_map = _normalize_options(options)
-
-    request: dict[str, Any] = {
-        "question": question,
-        "options": display_options,
-        "choices": _structured_choices(options),
-        "question_type": "structured",
-    }
-    if context:
-        request["context"] = context
-
+    request, value_map = question_request(question, options, context)
     response = interrupt({"type": "question", "request": request})
 
     raw_answer = (
