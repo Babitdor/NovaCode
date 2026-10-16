@@ -7,7 +7,9 @@ This middleware provides:
 4. Smart tool result truncation to prevent context overflow
 """
 
+import asyncio
 import hashlib
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -23,6 +25,8 @@ from langchain.tools import BaseTool
 from langchain.tools.tool_node import ToolCallRequest
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
+
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # Data Structures
@@ -638,6 +642,27 @@ class FileTrackerMiddleware(AgentMiddleware):
 
         return result
 
+    @staticmethod
+    def _checkpoint(request: ToolCallRequest) -> None:
+        """Keep the file a write/edit is about to change, for /rewind."""
+        tool_call = request.tool_call
+        if tool_call.get("name") not in {"write_file", "edit_file"}:
+            return
+        try:
+            from novacode_cli import rewind
+            from novacode_cli.config.config import settings
+            from novacode_cli.session.runtime_identity import current_identity
+
+            identity = current_identity.get()
+            args = tool_call.get("args") or {}
+            path = rewind.physical_path(
+                str(args.get("file_path") or args.get("path") or ""), settings.get_workspace_root()
+            )
+            if identity is not None and path is not None:
+                rewind.record(identity.thread, str(tool_call.get("id") or ""), path)
+        except Exception:  # noqa: BLE001 - a checkpoint never blocks an edit
+            logger.debug("Could not checkpoint a file for /rewind", exc_info=True)
+
     def wrap_tool_call(
         self,
         request: ToolCallRequest,
@@ -648,6 +673,7 @@ class FileTrackerMiddleware(AgentMiddleware):
         rejection = self._check_edit_allowed(request)
         if rejection is not None:
             return rejection
+        self._checkpoint(request)
 
         # Execute the tool
         result = handler(request)
@@ -665,6 +691,7 @@ class FileTrackerMiddleware(AgentMiddleware):
         rejection = self._check_edit_allowed(request)
         if rejection is not None:
             return rejection
+        await asyncio.to_thread(self._checkpoint, request)  # file I/O, off the loop
 
         # Execute the tool
         result = await handler(request)
