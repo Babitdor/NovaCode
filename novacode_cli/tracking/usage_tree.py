@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import contextvars
 import logging
+import re
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -51,7 +52,7 @@ logger = logging.getLogger("nova.tracking.usage_tree")
 _USAGE_NS = ("nova", "usage_trees")
 
 #: Per-1M-token USD prices (input, output) for known models — most-specific
-#: substring match wins; unknown/local models cost $0 (tokens still shown).
+#: catalog match wins; unlisted variants have unavailable prices (tokens still shown).
 _PRICE_PER_M: dict[str, tuple[float, float]] = {
     "claude-opus-4": (15.0, 75.0),
     "claude-sonnet-4-5": (3.0, 15.0),
@@ -80,11 +81,18 @@ class UsageNode:
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
     calls: int = 0
+    unavailable_calls: int = 0
+    model_usage: dict[str, dict[str, int]] = field(default_factory=dict)
     children: list[UsageNode] = field(default_factory=list)
     parent: UsageNode | None = field(default=None, repr=False, compare=False)
 
     def add(self, model: str, usage: dict[str, int]) -> None:
         """Accumulate one model call's usage into this node."""
+        if self.calls and not self.model_usage:
+            self.model_usage[self.model] = {
+                "input_tokens": self.input_tokens,
+                "output_tokens": self.output_tokens,
+            }
         if model:
             self.model = model
         self.input_tokens += int(usage.get("input_tokens", 0))
@@ -92,6 +100,39 @@ class UsageNode:
         self.cache_read_tokens += int(usage.get("cache_read_tokens", 0))
         self.cache_creation_tokens += int(usage.get("cache_creation_tokens", 0))
         self.calls += 1
+        if not usage:
+            self.unavailable_calls += 1
+        totals = self.model_usage.setdefault(model, {"input_tokens": 0, "output_tokens": 0})
+        totals["input_tokens"] += int(usage.get("input_tokens", 0))
+        totals["output_tokens"] += int(usage.get("output_tokens", 0))
+
+    def cost(self, *, recursive: bool = False) -> float | None:
+        """Estimate using each observed model; missing usage or prices stay unknown."""
+        if self.unavailable_calls:
+            return None
+        cost = 0.0
+        models = self.model_usage or (
+            {
+                self.model: {
+                    "input_tokens": self.input_tokens,
+                    "output_tokens": self.output_tokens,
+                }
+            }
+            if self.calls or self.input_tokens or self.output_tokens
+            else {}
+        )
+        for model, usage in models.items():
+            value = estimate_cost(usage["input_tokens"], usage["output_tokens"], model)
+            if value is None:
+                return None
+            cost += value
+        if recursive:
+            for child in self.children:
+                value = child.cost(recursive=True)
+                if value is None:
+                    return None
+                cost += value
+        return cost
 
     def totals(self) -> dict[str, int]:
         """Recursive totals (own + all descendants)."""
@@ -119,6 +160,8 @@ class UsageNode:
             "cache_creation_tokens": self.cache_creation_tokens,
             "calls": self.calls,
             "children": [c.to_dict() for c in self.children],
+            "unavailable_calls": self.unavailable_calls,
+            "model_usage": {model: dict(usage) for model, usage in self.model_usage.items()},
         }
 
     @classmethod
@@ -132,6 +175,8 @@ class UsageNode:
             cache_read_tokens=data.get("cache_read_tokens", 0),
             cache_creation_tokens=data.get("cache_creation_tokens", 0),
             calls=data.get("calls", 0),
+            unavailable_calls=data.get("unavailable_calls", 0),
+            model_usage={key: dict(value) for key, value in data.get("model_usage", {}).items()},
         )
         for child in data.get("children", []):
             node.children.append(cls.from_dict(child))
@@ -201,23 +246,25 @@ class UsageTree:
         )
 
         def _walk(node: UsageNode, depth: int) -> None:
-            cost = estimate_cost(node.input_tokens, node.output_tokens, node.model)
+            cost = node.cost()
+            cost_text = "unknown" if cost is None else f"${cost:,.2f}"
             indent = "  " * depth
             lines.append(
                 f"{indent}{node.scope:<14} "
                 f"{node.input_tokens:>9,} in  {node.output_tokens:>7,} out  "
-                f"{node.calls:>3} calls  ${cost:,.2f}"
+                f"{node.calls:>3} calls  {cost_text}"
             )
             for child in node.children:
                 _walk(child, depth + 1)
 
         for child in self.root.children:
             _walk(child, 1)
-        cost = estimate_cost(total["input_tokens"], total["output_tokens"])
+        cost = self.root.cost(recursive=True)
+        cost_text = "unknown" if cost is None else f"${cost:,.2f}"
         lines.append(
             f"{'total':<14} "
             f"{total['input_tokens']:>9,} in  {total['output_tokens']:>7,} out  "
-            f"{total['calls']:>3} calls  ${cost:,.2f}"
+            f"{total['calls']:>3} calls  {cost_text}"
         )
         return "\n".join(lines)
 
@@ -311,8 +358,13 @@ def _extract_usage(response: Any) -> dict[str, int]:  # noqa: ANN401 — framewo
         return {}
     details = usage.get("prompt_tokens_details") or {}
     cache_read = details.get("cached_tokens") or usage.get("cache_read_input_tokens") or 0
+    input_tokens = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
+    # Raw Anthropic input excludes cache subsets; LangChain-normalized metadata
+    # above and OpenAI prompt_tokens already include them.
+    if "cache_read_input_tokens" in usage or "cache_creation_input_tokens" in usage:
+        input_tokens += int(cache_read) + int(usage.get("cache_creation_input_tokens") or 0)
     return {
-        "input_tokens": int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0),
+        "input_tokens": input_tokens,
         "output_tokens": int(usage.get("output_tokens") or usage.get("completion_tokens") or 0),
         "cache_read_tokens": int(cache_read),
         "cache_creation_tokens": int(usage.get("cache_creation_input_tokens") or 0),
@@ -360,17 +412,24 @@ class UsageCallbackHandler(BaseCallbackHandler):
         if tree is None:
             return
         usage = _extract_usage(response)
-        if not usage:
-            return
         if not model:
             llm_output = getattr(response, "llm_output", None) or {}
             model = str(llm_output.get("model_name") or "")
         path = _scope_stack.get() or ("turn",)
         tree.record(path, model, usage)
 
-    def on_llm_error(self, error: Any, *, run_id: Any, **kwargs: Any) -> None:
+    def on_llm_error(
+        self,
+        error: Any,  # noqa: ANN401, ARG002 - framework callback
+        *,
+        run_id: Any,  # noqa: ANN401
+        **kwargs: Any,  # noqa: ARG002
+    ) -> None:
         """Release request metadata on failed or cancelled calls."""
         self._model_names.pop(run_id, None)
+        tree = _current_tree.get()
+        if tree is not None:
+            tree.record(_scope_stack.get() or ("turn",), "", {})
 
 
 _HANDLER = UsageCallbackHandler()
@@ -388,18 +447,27 @@ def attach_usage_callback(model: BaseChatModel) -> None:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def estimate_cost(input_tokens: int, output_tokens: int, model: str = "") -> float:
-    """Estimated USD cost; most-specific price-table match, unknown → $0."""
+def estimate_cost(input_tokens: int, output_tokens: int, model: str = "") -> float | None:
+    """Estimated USD cost using the bundled table; unknown prices return None.
+
+    These are uncached list-price estimates, not a billing ledger. Provider
+    discounts, cache prices and unobserved SDK retry usage are unavailable.
+    """
     if not model:
-        return 0.0
+        return None
+    name = model.casefold().rsplit("/", 1)[-1]
     best_key = ""
     best_price: tuple[float, float] | None = None
     for key, price in _PRICE_PER_M.items():
-        if key in model and len(key) > len(best_key):
+        # A family substring is not a price for every variant (e.g. Flash vs
+        # Pro). Accept only catalog names and their dated snapshot aliases.
+        if re.fullmatch(re.escape(key) + r"(?:-\d{4}-?\d{2}-?\d{2})?", name) and len(key) > len(
+            best_key
+        ):
             best_key = key
             best_price = price
     if best_price is None:
-        return 0.0
+        return None
     return (input_tokens / 1_000_000) * best_price[0] + (output_tokens / 1_000_000) * best_price[1]
 
 

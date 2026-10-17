@@ -18,6 +18,9 @@ from langchain_core.messages.utils import count_tokens_approximately
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from langgraph.types import Command
 
+from novacode_cli.context.estimates import estimate_content
+from novacode_cli.context.observations import compact_observations
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
@@ -46,6 +49,10 @@ class ContextSnapshot:
     output_reservation: int
     confidence: str = "approximate"
     provider_prepared: tuple[str, ...] = ()
+    estimated_text_tokens: int = 0
+    estimated_schema_tokens: int = 0
+    estimated_multimodal_tokens: int = 0
+    image_transport_chars: int = 0
 
     @classmethod
     def capture(cls, request: ModelRequest) -> ContextSnapshot:
@@ -69,10 +76,10 @@ class ContextSnapshot:
             for m in request.messages[pending_tool_start(request.messages) :]
             if isinstance(m, (AIMessage, ToolMessage))
         ]
-        pending_tokens = count_tokens_approximately(pending)
+        pending_tokens = estimate_content(pending).total
         protected += tuple(m.model_dump_json() for m in pending)
         system_tokens = (
-            count_tokens_approximately([request.system_message]) if request.system_message else 0
+            estimate_content([request.system_message]).total if request.system_message else 0
         )
         # Use the same estimator for both pressure and reporting.
         tool_tokens = (
@@ -107,7 +114,7 @@ class ContextSnapshot:
             # tool list is assembled. Include those in the shared pressure and
             # reporting estimate; provider usage remains separately reported.
             response_schema = payload.get("response_format")
-            extra_tools = payload.get("tools", [])[len(schemas):]
+            extra_tools = payload.get("tools", [])[len(schemas) :]
             if response_schema:
                 structured_tokens += max(1, len(json.dumps(response_schema)) // 4)
             if extra_tools:
@@ -115,6 +122,7 @@ class ContextSnapshot:
             source_identity += "".join(prepared)
         if effective_reservation is not None:
             reserve = effective_reservation
+        content_estimate = estimate_content(messages)
         return cls(
             identity,
             task_correlation.get() or "",
@@ -128,7 +136,7 @@ class ContextSnapshot:
             schemas,
             protected,
             recovery,
-            count_tokens_approximately(messages) + tool_tokens + structured_tokens,
+            content_estimate.total + tool_tokens + structured_tokens,
             system_tokens
             + tool_tokens
             + structured_tokens
@@ -137,14 +145,27 @@ class ContextSnapshot:
             int(reserve),
             "provider_prepared_estimate" if prepared else "approximate",
             prepared,
+            content_estimate.text_tokens,
+            tool_tokens + structured_tokens,
+            content_estimate.image_tokens,
+            content_estimate.image_transport_chars,
         )
 
     def diagnostics(self) -> dict[str, object]:
         """Return estimates and identifiers, without message or schema content."""
+        from novacode_cli.tracking.request_metrics import request_purpose
+
         return {
             "generation": self.generation,
             "model": self.model,
             "estimated_input_tokens": self.estimated_input_tokens,
+            "estimated_text_tokens": self.estimated_text_tokens,
+            "estimated_schema_tokens": self.estimated_schema_tokens,
+            "estimated_multimodal_tokens": self.estimated_multimodal_tokens,
+            "multimodal_estimate_method": "fixed_85_per_image; dimensions_unobserved",
+            "image_transport_chars": self.image_transport_chars,
+            "purpose": request_purpose.get(),
+            "retry_usage": "unavailable",
             "protected_tokens": self.protected_tokens,
             "output_reservation": self.output_reservation,
             "confidence": self.confidence,
@@ -201,6 +222,7 @@ class ContextSnapshotMiddleware(AgentMiddleware[SnapshotState]):
         self, request: ModelRequest, handler: Callable[[ModelRequest], Awaitable[ModelResponse]]
     ) -> ExtendedModelResponse:
         """Capture the asynchronous dispatch and its observed usage."""
+        request = request.override(messages=compact_observations(request.messages))
         snapshot = self._capture(request)
         from novacode_cli.context.provider_accounting import (
             AttemptCounter,
@@ -220,6 +242,7 @@ class ContextSnapshotMiddleware(AgentMiddleware[SnapshotState]):
         self, request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]
     ) -> ExtendedModelResponse:
         """Capture the synchronous dispatch and its observed usage."""
+        request = request.override(messages=compact_observations(request.messages))
         snapshot = self._capture(request)
         return self._result(handler(request), snapshot)
 

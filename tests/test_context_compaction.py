@@ -299,7 +299,8 @@ def test_encoded_image_payloads_trigger_compaction_before_provider_refusal() -> 
 
     assert count_tokens_approximately(history) < WINDOW
     plan = ContextCompactionMiddleware(context_window=WINDOW)._plan(_request(history))
-    assert plan.raw_tokens > WINDOW
+    assert plan.raw_tokens < WINDOW  # Transport bytes are not model tokens.
+    assert plan.image_transport_chars == 36_000
     assert plan.cutoff > 0
     _well_formed(plan.messages[plan.cutoff :])
 

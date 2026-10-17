@@ -194,7 +194,7 @@ class TestUsageCallback:
                 handler.on_llm_start({}, [], run_id=2)
                 handler.on_llm_end(resp, run_id=2)
             node = tree.node_for(("hermes",))
-            assert node.input_tokens == 7
+            assert node.input_tokens == 10  # Raw Anthropic input excludes the cache subsets.
             assert node.output_tokens == 3
             assert node.cache_read_tokens == 2
         finally:
@@ -224,9 +224,9 @@ class TestEstimateCost:
         # "gpt-5-mini" must match the mini price, not the gpt-5 price.
         assert ut.estimate_cost(1_000_000, 0, "gpt-5-mini") == pytest.approx(0.25)
 
-    def test_unknown_or_local_is_free(self) -> None:
-        assert ut.estimate_cost(1_000_000, 1_000_000, "qwen3-coder:480b-cloud") == 0.0
-        assert ut.estimate_cost(1_000_000, 1_000_000, "") == 0.0
+    def test_unknown_or_local_price_is_unavailable(self) -> None:
+        assert ut.estimate_cost(1_000_000, 1_000_000, "qwen3-coder:480b-cloud") is None
+        assert ut.estimate_cost(1_000_000, 1_000_000, "") is None
 
 
 # ── Persistence + report ──────────────────────────────────────────────────

@@ -1,0 +1,27 @@
+[
+  {
+    "path": "novacode_cli/context/estimates.py",
+    "sha256": "b644c760694582e570a3676e33b7a441e07aff59d9bc937af718be3a2bc1fea4",
+    "frozen_matches": true
+  },
+  {
+    "path": "novacode_cli/context/observations.py",
+    "sha256": "c39de1b0b1e9b74486d825c37d89b1aaad927454a966dbe864a2f5ceecc6c681",
+    "frozen_matches": true
+  },
+  {
+    "path": "novacode_cli/context/snapshot.py",
+    "sha256": "a845ba3bf0e2e1d1fcc6ee35f76fac2455d725ea2058f151a9a8e80a2b4cc6f5",
+    "frozen_matches": true
+  },
+  {
+    "path": "novacode_cli/tracking/usage_tree.py",
+    "sha256": "371088b3532b25cc5e4373352ae6a737631ea933f7a0836b7cbc33e805fcfecb",
+    "frozen_matches": true
+  },
+  {
+    "path": "novacode_cli/agents/context_compaction.py",
+    "sha256": "a07efe85c985ddad132a17483569b544f0528ab22d6baefbad387df96e34056d",
+    "frozen_matches": true
+  }
+]

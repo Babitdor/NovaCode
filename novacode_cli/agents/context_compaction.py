@@ -88,6 +88,8 @@ from novacode_cli.compaction import (
     _window_tokens,
     summarize_conversation,
 )
+from novacode_cli.context.estimates import estimate_content
+from novacode_cli.context.observations import compact_observations
 from novacode_cli.core.streaming import is_internal_context_text
 
 logger = logging.getLogger(__name__)
@@ -121,6 +123,7 @@ _FILE_TOOLS = ("read_file", "edit_file", "write_file")
 
 #: How many calls the mechanical digest lists.
 DIGEST_LINES = 80
+MIN_SUMMARY_MESSAGES = 2
 
 #: A tool result in the kept tail is clipped to this when the provider has
 #: rejected the request as too long.
@@ -162,6 +165,8 @@ class _Plan:
     limits: Limits
     #: Unscaled size estimate of ``messages`` plus system prompt and tools.
     raw_tokens: int
+    #: Inline image transport is a separate guard, never a token estimate.
+    image_transport_chars: int = 0
 
 
 def limits_for(window: int, *, prune: int | None = None) -> Limits:
@@ -232,9 +237,8 @@ def _encoded_image_chars(message: AnyMessage) -> int:
 
 
 def _request_size_tokens(messages: Sequence[AnyMessage]) -> int:
-    """Budget model tokens and encoded image transport size together."""
-    image_chars = sum(_encoded_image_chars(message) for message in messages)
-    return count_tokens_approximately(messages) + (image_chars + 3) // 4
+    """Estimate model input, independent of base64 transport length."""
+    return estimate_content(messages).total
 
 
 def prune_just_enough(edit: Any, messages: Sequence[AnyMessage], need: int) -> Any:  # noqa: ANN401
@@ -297,7 +301,12 @@ def effective_view(
     return [summary, *messages[cutoff:]], cutoff
 
 
-def tail_start(messages: Sequence[AnyMessage], keep_tokens: int) -> int:
+def tail_start(
+    messages: Sequence[AnyMessage],
+    keep_tokens: int,
+    *,
+    keep_transport_chars: int | None = None,
+) -> int:
     """Index where the verbatim tail begins.
 
     The tail never starts on a tool result (its call would be summarized away
@@ -307,9 +316,17 @@ def tail_start(messages: Sequence[AnyMessage], keep_tokens: int) -> int:
     """
     start = len(messages)
     size = 0
+    image_chars = 0
     for index in range(len(messages) - 1, 0, -1):
-        size += _request_size_tokens([messages[index]])
-        if size > keep_tokens and start < len(messages):
+        estimate = estimate_content([messages[index]])
+        size += estimate.total
+        image_chars += estimate.image_transport_chars
+        over_transport = (
+            keep_transport_chars is not None
+            and image_chars > 0
+            and image_chars + size * 4 > keep_transport_chars
+        )
+        if (size > keep_tokens or over_transport) and start < len(messages):
             break
         if not isinstance(messages[index], ToolMessage):
             start = index
@@ -716,7 +733,7 @@ class ContextCompactionMiddleware(AgentMiddleware):
         overhead = self._overhead(request)
 
         def raw(view: Sequence[AnyMessage]) -> int:
-            return _request_size_tokens(view) + overhead
+            return _request_size_tokens(compact_observations(list(view))) + overhead
 
         def count(view: Sequence[AnyMessage]) -> int:
             return int(raw(view) * self._scale)
@@ -755,17 +772,28 @@ class ContextCompactionMiddleware(AgentMiddleware):
             view = trim_old_arguments(view, tail_start(view, limits.keep))
 
         raw_tokens = raw(view)
+        image_chars = estimate_content(view).image_transport_chars
+        # Retain the combined text/image body guard. Convert the non-base64
+        # estimate to transport units; encoded characters never become tokens.
+        transport_pressure = image_chars > 0 and image_chars + raw_tokens * 4 >= limits.trigger * 4
         cutoff = 0
-        if force or int(raw_tokens * self._scale) >= limits.trigger:
-            cutoff = tail_start(view, limits.keep)
+        if force or transport_pressure or int(raw_tokens * self._scale) >= limits.trigger:
+            cutoff = tail_start(view, limits.keep, keep_transport_chars=limits.keep * 4)
             body = view[1:cutoff] if prior is not None else view[:cutoff]
-            # Not worth a model call unless it removes a real share of the context.
-            worthwhile = len(body) >= 2 and count(body) - int(overhead * self._scale) >= max(
-                1_000, limits.trigger // 10
+            # Measure the actual dispatched-view difference: removing the first
+            # full read just makes a repeated read in the tail become full.
+            # Carry the prior summary for sizing, since it will be replaced.
+            kept = ([view[0]] if prior is not None else []) + view[cutoff:]
+            freed = max(0, raw_tokens - raw(kept))
+            minimum = max(1_000, limits.trigger // 10)
+            freed_transport = estimate_content(body).image_transport_chars + freed * 4
+            worthwhile = len(body) >= MIN_SUMMARY_MESSAGES and (
+                int(freed * self._scale) >= minimum
+                or (transport_pressure and freed_transport >= minimum * 4)
             )
             if not body or not (force or worthwhile):
                 cutoff = 0
-        return _Plan(view, prior, cutoff, limits, raw_tokens)
+        return _Plan(view, prior, cutoff, limits, raw_tokens, image_chars)
 
     # ── stage 3 ─────────────────────────────────────────────────────────
     async def _summarize(self, model: Any, head: list[AnyMessage], window: int) -> str:  # noqa: ANN401
