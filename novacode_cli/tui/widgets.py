@@ -1293,7 +1293,79 @@ class PromptInput(TextArea):
         col = offset - (before.rfind("\n") + 1)
         self.move_cursor((row, col))
 
+    #: Earlier inputs kept for Up/Down (see :meth:`remember`).
+    HISTORY_MAX = 500
+
+    def remember(self, text: str) -> None:
+        """Add a sent input to the Up/Down history (a repeat of the last is skipped)."""
+        text = text.strip()
+        history = self.__dict__.setdefault("_history", [])
+        if text and (not history or history[-1] != text):
+            history.append(text)
+            del history[: -self.HISTORY_MAX]
+        self._history_pos = None
+
+    def load_history(self, entries: list[str]) -> None:
+        """Seed the history with earlier sessions' inputs, oldest first."""
+        self._history = [e for e in entries if e.strip()][-self.HISTORY_MAX :]
+        self._history_pos = None
+
+    def _show(self, text: str) -> None:
+        self.text = text
+        self.move_cursor(self.document.end)
+
+    def _recall(self, step: int) -> bool:
+        """Up (-1) / Down (+1): a queued message first, then earlier inputs.
+
+        Up in an empty box while the agent works takes back the newest message
+        it has not picked up yet (the app decides; Claude Code does the same).
+        Otherwise Up steps back through earlier inputs, and Down steps forward to
+        the text that was being typed. True when the key was used.
+        """
+        history = self.__dict__.setdefault("_history", [])
+        position = getattr(self, "_history_pos", None)
+        if step < 0:
+            if position is None and not self.text.strip():
+                pull = getattr(self.app, "_pull_queued_message", None)
+                queued = pull() if pull is not None else None
+                if queued:
+                    self._show(queued)
+                    return True
+            if not history:
+                return False
+            if position is None:
+                self._history_draft = self.text
+                position = len(history)
+            position = max(0, position - 1)
+        else:
+            if position is None:
+                return False
+            position += 1
+            if position >= len(history):
+                self._history_pos = None
+                self._show(getattr(self, "_history_draft", ""))
+                return True
+        self._history_pos = position
+        self._show(history[position])
+        return True
+
+    def _palette_open(self) -> bool:
+        try:
+            return bool(self.app.query_one("#cmdpalette").display)
+        except Exception:  # noqa: BLE001 - no palette: no conflict
+            return False
+
     async def _on_key(self, event: events.Key) -> None:
+        # Up on the first line / Down on the last: input history (and queued
+        # messages). Inside multi-line text the arrows still move the cursor,
+        # and the command palette keeps them while it is open.
+        if event.key in ("up", "down") and not self._palette_open():
+            row = self.cursor_location[0]
+            edge = row == 0 if event.key == "up" else row == self.document.line_count - 1
+            if edge and self._recall(-1 if event.key == "up" else 1):
+                event.prevent_default()
+                event.stop()
+                return
         # Enter sends by default; the app preference can switch to multiline
         # Enter with Ctrl+Enter to send. Shift+Enter always inserts a newline.
         submit_on_enter = getattr(self.app, "_submit_on_enter", True)

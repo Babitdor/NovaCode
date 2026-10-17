@@ -136,7 +136,7 @@ def default_interrupt_response(kind: str) -> Any:
 
 
 #: Written into the conversation when the user cancels a turn.
-_CANCEL_NOTICE = "[The previous request was cancelled by the system]"
+_CANCEL_NOTICE = "[The previous request was interrupted before it finished]"
 
 
 async def _record_cancellation(agent: Any, config: Any) -> None:

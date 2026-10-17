@@ -80,16 +80,32 @@ class SteeringInstruction:
             exactly once (stable across GC, unlike ``id()``).
     """
 
-    __slots__ = ("label", "instruction", "uid", "consumed")
+    __slots__ = ("label", "instruction", "uid", "consumed", "live")
 
-    def __init__(self, label: str, instruction: str) -> None:
+    def __init__(self, label: str, instruction: str, *, live: bool = False) -> None:
         self.label = label
         self.instruction = instruction
         self.uid = next(_uid_counter)
         self.consumed = False
+        #: A message typed while the agent worked (a queued message), not a
+        #: standing /steer rule: it joins the conversation at the next step.
+        self.live = live
 
     def __repr__(self) -> str:
         return f"SteeringInstruction({self.label!r}, {self.instruction!r})"
+
+
+#: Marks a queued message in the conversation (``additional_kwargs``).
+QUEUED_SOURCE = "queued_message"
+
+
+def queued_message(text: str) -> HumanMessage:
+    """A message typed while the agent worked, as it joins the conversation."""
+    return HumanMessage(
+        "[Sent by the user while you were working: incorporate it into the "
+        f"current task now]\n{text}",
+        additional_kwargs={"lc_source": QUEUED_SOURCE, "queued_text": text},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -233,7 +249,8 @@ class SteeringMiddleware(AgentMiddleware):
         if not self._enabled:
             return request
 
-        instructions = self._instructions
+        # Queued messages are in the conversation already (before_model).
+        instructions = [si for si in self._instructions if not si.live]
         if not instructions:
             return request
 
@@ -275,6 +292,27 @@ class SteeringMiddleware(AgentMiddleware):
             return request
         return request.override(**overrides)
 
+    def before_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:  # noqa: ANN401
+        """Record messages typed while the agent worked, at its next step.
+
+        A queued message becomes a user message in the conversation (as in
+        Claude Code), not just text in one request: later turns, compaction
+        summaries and /resume then all know the user said it.
+        """
+        if not self._enabled:
+            return None
+        new = [si for si in self._instructions if si.live and si.uid not in self._delivered]
+        if not new:
+            return None
+        for si in new:
+            self._delivered.add(si.uid)
+            si.consumed = True
+            _announce_pickup(si.instruction)
+        return {"messages": [queued_message(si.instruction) for si in new]}
+
+    async def abefore_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:  # noqa: ANN401
+        return self.before_model(state, runtime)
+
     def wrap_model_call(
         self,
         request: ModelRequest,
@@ -295,6 +333,18 @@ class SteeringMiddleware(AgentMiddleware):
 # ---------------------------------------------------------------------------
 # Formatting helpers (used by /steer command)
 # ---------------------------------------------------------------------------
+
+
+def _announce_pickup(text: str) -> None:
+    """Tell the UI a queued message reached the agent (best effort)."""
+    try:
+        from novacode_cli.events import nova_event_log
+
+        short = " ".join(text.split())
+        short = short if len(short) <= 80 else short[:79] + "…"
+        nova_event_log.append(("queued_pickup", "✓", "dim", f"Picked up: {short}"))
+    except Exception:  # noqa: BLE001 - a notice is never worth a failed step
+        logger.debug("queued-message notice failed", exc_info=True)
 
 
 def format_steering_status(instructions: list[SteeringInstruction]) -> str:

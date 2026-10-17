@@ -26,6 +26,7 @@ import asyncio
 import contextlib
 import logging
 import json
+import os
 import re
 import threading
 import time
@@ -470,6 +471,9 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "help": SlashCommand("_run_help", "show this help", wants_text=False, aliases=("?",)),
     # Early in the table: Telegram's command menu keeps the first 100 entries.
     "stop": SlashCommand("_run_stop", "stop the running task (Esc), from here or Telegram/Discord"),
+    "redirect": SlashCommand(
+        "_run_redirect", "stop the running task and do this instead (Esc with text in the box)"
+    ),
     "init": SlashCommand("_run_init", "generate NOVA.md from the codebase"),
     "model": SlashCommand(
         "_run_model", "configure chat, subagent, and decision models", wants_text=False
@@ -2579,6 +2583,7 @@ class NovaApp(App):
         # Poll slowly while idle; animate focused active turns at 10 Hz.
         self._schedule_status_tick()
         self.query_one("#prompt", PromptInput).focus()
+        self.run_worker(self._load_input_history(), group="input_history", exclusive=True)
         # Show ASCII art banner on home screen
         self._show_home_banner()
         # Initialize explicitly enabled voice; native models remain lazy.
@@ -5437,10 +5442,13 @@ class NovaApp(App):
             card.add_class("tool")
             await self._mount(card)
 
+        from novacode_cli.bootstrap.steering import QUEUED_SOURCE
+
         def shown_text(m: Any) -> str:
             if getattr(m, "id", None) == MESSAGE_ID:
                 return ""
-            if getattr(m, "additional_kwargs", {}).get("lc_source") == "pinned_skill":
+            # A queued message arrived mid-turn: drawn inline below, not a turn.
+            if getattr(m, "additional_kwargs", {}).get("lc_source") in ("pinned_skill", QUEUED_SOURCE):
                 return ""
             text = self._message_text(m).strip()
             if text and (is_compaction_summary(text) or is_internal_context_text(text)):
@@ -5475,6 +5483,14 @@ class NovaApp(App):
                     "system",
                     Text(f"Pinned: {snapshot.get('name', 'skill')}", style="dim cyan"),
                 )
+                continue
+            if getattr(m, "additional_kwargs", {}).get("lc_source") == QUEUED_SOURCE:
+                await self._add_message(
+                    Text("↗ you, while it worked", style="bold #7aa2f7"),
+                    "user",
+                    Markdown(str(m.additional_kwargs.get("queued_text") or "")),
+                )
+                shown += 1
                 continue
             text = self._message_text(m).strip()
             # /compact rewrites history into a single synthetic HumanMessage
@@ -7960,6 +7976,7 @@ class NovaApp(App):
         text = self._sanitize_user_text(text)
         if not text:
             return
+        self._remember_input(event.input, text)
         self._set_home_visible(visible=False)
         event.input.value = ""
         self._hide_palette()
@@ -7999,6 +8016,10 @@ class NovaApp(App):
             # with its literal text.
             stripped = text.lstrip()
             command = stripped.split(maxsplit=1)[0].lower() if stripped else ""
+            if command == "/redirect":
+                # Interrupt-and-redirect must act now, not after the turn it stops.
+                self.run_worker(self._run_redirect(text), group="live_steer_command", exclusive=False)
+                return
             if command == "/steer":
                 # Steering is the exception: it updates the shared instruction
                 # list the active agent reads before its next model call. Running
@@ -8043,6 +8064,70 @@ class NovaApp(App):
             return
         self._dispatch(text)
 
+    def _input_history_path(self) -> Any:  # noqa: ANN401 - a Path, or None
+        """Where Up/Down history is kept; None in tests that do not set one."""
+        from pathlib import Path
+
+        from novacode_cli.config.config import settings
+
+        if os.environ.get("NOVA_INPUT_HISTORY"):
+            return Path(os.environ["NOVA_INPUT_HISTORY"])
+        if os.environ.get("PYTEST_CURRENT_TEST"):  # never the user's own file
+            return None
+        return settings.nova_dir / "input_history.jsonl"
+
+    def _remember_input(self, box: Any, text: str) -> None:  # noqa: ANN401
+        """Keep a sent input for Up/Down, here and in later sessions of this project."""
+        remember = getattr(box, "remember", None)
+        if remember is None:
+            return
+        remember(text)
+        import json
+
+        from novacode_cli.config.config import settings
+
+        line = json.dumps({"project": str(settings.get_workspace_root()), "text": text}) + "\n"
+        path = self._input_history_path()
+        if path is None:
+            return
+
+        def append() -> None:
+            with suppress(OSError):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with open(path, "a", encoding="utf-8") as f:
+                    f.write(line)
+
+        asyncio.get_running_loop().run_in_executor(None, append)
+
+    async def _load_input_history(self) -> None:
+        """Seed Up/Down with this project's earlier inputs (newest 500)."""
+        import json
+
+        from novacode_cli.config.config import settings
+
+        project = str(settings.get_workspace_root())
+        path = self._input_history_path()
+        if path is None:
+            return
+
+        def read() -> list[str]:
+            entries: list[str] = []
+            try:
+                lines = path.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                return entries
+            for raw in lines[-5000:]:
+                with suppress(ValueError, AttributeError):
+                    item = json.loads(raw)
+                    if item.get("project") == project:
+                        entries.append(str(item.get("text") or ""))
+            return entries
+
+        entries = await asyncio.to_thread(read)
+        with suppress(NoMatches):
+            box = self.query_one("#prompt", PromptInput)
+            box.load_history([*entries, *getattr(box, "_history", [])])
+
     def _sanitize_user_text(self, text: str) -> str:
         """Strip deceptive/invisible Unicode from user input (warn + sanitize).
 
@@ -8084,7 +8169,7 @@ class NovaApp(App):
 
         if getattr(self.session_state, "steering_instructions", None) is None:
             self.session_state.steering_instructions = []
-        si = SteeringInstruction(label="steer", instruction=text)
+        si = SteeringInstruction(label="steer", instruction=text, live=True)
         self.session_state.steering_instructions.append(si)
         self._live_steers.append(si)
         from novacode_cli.tools.waiter_tools import interrupt_task_waits
@@ -8092,7 +8177,8 @@ class NovaApp(App):
         interrupt_task_waits(self.session_state.thread_id)
         self._log(
             Text(
-                f"↗ Steering (applies on the next step): {text}",
+                f"↗ Queued, the agent picks it up at its next step: {text}"
+                "  (Esc with text in the box: interrupt and send it now)",
                 style="italic #7aa2f7",
             )
         )
@@ -8111,10 +8197,78 @@ class NovaApp(App):
         self.action_cancel_turn()
         return True
 
+    async def _run_redirect(self, text: str) -> None:
+        """/redirect <message>: interrupt the running task and send the message next."""
+        from novacode_cli.remote.processor import redirect_text
+
+        message = (redirect_text(text) or "").strip()
+        if not message:
+            self._log(Text("Usage: /redirect <what to do instead>", style="yellow"))
+            return
+        if self._turn_running():
+            self._redirect_prompt = message
+            await self._stop_main_turn()
+        else:
+            await self._add_message(self._user_label(), "user", Text(message))
+            await self._stream_prompt(message)
+
     async def _run_stop(self, text: str) -> None:
         """/stop: stop the running task, as Esc does. Mainly for remote chats."""
         if not await self._stop_main_turn():
             self._log(Text("Nothing is running.", style="dim"))
+
+    def _pull_queued_message(self) -> str | None:
+        """Up arrow in an empty box while the agent works: take back a queued message.
+
+        The newest message the agent has not picked up yet leaves the queue and
+        returns to the box, to edit and send again, or to clear (as in Claude
+        Code). None when there is none.
+        """
+        if not self._turn_running():
+            return None
+        instructions = getattr(self.session_state, "steering_instructions", None) or []
+        for si in reversed(self._live_steers):
+            if not si.consumed:
+                self._live_steers.remove(si)
+                with suppress(ValueError):
+                    instructions.remove(si)
+                self._log(Text("↩ Took back the queued message; edit and send it again, or clear it.", style="dim"))
+                return si.instruction
+        return None
+
+    def _take_redirect(self) -> str:
+        """The prompt box's message when Esc interrupts a running turn, and clear it.
+
+        Interrupt-and-redirect: Esc with a message typed stops the current
+        step and sends that message next (after the interruption is recorded),
+        rather than queueing it behind work the user wants stopped. Commands
+        (``/``, ``!``) are left in the box; an empty box is a plain cancel.
+        """
+        if not self._turn_running():
+            return ""
+        try:
+            box = self.query_one("#prompt", PromptInput)
+        except NoMatches:
+            return ""
+        text = resolve_paste_placeholders(box.text, self.paste_tracker).strip()
+        if not text or text.startswith(("/", "!")):
+            return ""
+        box.text = ""
+        return self._sanitize_user_text(text)
+
+    def _redirect_after_turn(self) -> None:
+        """Fold an Esc redirect and the turn's unread messages into one next prompt.
+
+        Unread queued messages would otherwise each run as a turn before the
+        redirect; the user's latest instruction goes last, so it wins.
+        """
+        redirect = getattr(self, "_redirect_prompt", None)
+        if not redirect:
+            return
+        self._redirect_prompt = None
+        pending = [*self._deferred_prompts, redirect]
+        self._deferred_prompts.clear()
+        self._deferred_prompts.append("\n\n".join(pending))
 
     def action_cancel_turn(self) -> None:
         communication = getattr(self, "_session_communication", None)
@@ -8125,6 +8279,10 @@ class NovaApp(App):
             self.run_worker(self._supervisor().cancel(pane.sid))
             self._set_status("cancelling…")
             return
+        redirect = self._take_redirect()
+        if redirect:
+            self._redirect_prompt = redirect
+            self._log(Text(f"↪ Interrupting, then continuing with: {redirect}", style="italic #7aa2f7"))
         # Kill any in-flight foreground shell/execute subprocess FIRST. It runs in
         # a detached thread+loop that worker cancellation can't reach, so without
         # this a hung command keeps running (and freezes/crashes the UI) until its
@@ -9376,7 +9534,8 @@ class NovaApp(App):
         self._share_turn_end_reads(False)
         await self._check_context()
         # Run commands queued during the turn (as commands), then any deferred
-        # prompts that weren't consumed as steers.
+        # prompts that weren't consumed as steers (and an Esc redirect, last).
+        self._redirect_after_turn()
         await self._drain_deferred_commands()
         await self._drain_deferred_prompts()
         self._schedule_pending_async_report()
@@ -9655,7 +9814,7 @@ class NovaApp(App):
         lock (shared with local input)."""
         import asyncio
 
-        from novacode_cli.remote.processor import _extract_response, is_stop_command
+        from novacode_cli.remote.processor import _extract_response, is_stop_command, redirect_text
 
         queue = self._remote_owner_state()._remote_message_queue
         while True:
@@ -9704,6 +9863,21 @@ class NovaApp(App):
 
                         text = (getattr(msg, "text", "") or "").strip()
                         low = text.lower()
+                        redirect = redirect_text(text)
+                        if redirect is not None:
+                            reply_fn = getattr(msg, "reply_fn", None)
+                            if not redirect:
+                                if reply_fn is not None:
+                                    with suppress(Exception):
+                                        await reply_fn("Usage: /redirect <what to do instead>")
+                                continue
+                            # As Esc with text in the box: the message runs next.
+                            self._redirect_prompt = redirect
+                            await self._stop_main_turn()
+                            if reply_fn is not None:
+                                with suppress(Exception):
+                                    await reply_fn(f"↪ Stopping the current task; next: {redirect}")
+                            continue
                         if is_stop_command(text):
                             stopped = await self._stop_main_turn()
                             reply_fn = getattr(msg, "reply_fn", None)
@@ -9953,6 +10127,8 @@ class NovaApp(App):
             return self._remote_help_text(), None
         if cmd in ("stop", "cancel"):
             return "Nothing is running.", None
+        if cmd == "redirect":  # nothing to interrupt: just the message
+            return ("Usage: /redirect <what to do instead>", None) if not arg else (None, arg)
         if cmd in ("tokens", "context", "cost") and not arg:
             try:
                 return self._token_text().plain, None

@@ -1672,8 +1672,9 @@ async def _drive_live_steering():
         instrs = ss.steering_instructions
         assert any(si.instruction == "focus on error handling" for si in instrs), instrs
         assert len(app._live_steers) == 1
+        assert app._live_steers[0].live, "a queued message, recorded in the chat when picked up"
         txt = " ".join(str(w.render()) for w in app.query("#transcript .logline").results(Static))
-        assert "Steering" in txt, txt
+        assert "Queued" in txt, txt
         # Turn-end cleanup removes the transient steer (one-turn lifetime).
         app._turn_active = False
         app._clear_live_steers()

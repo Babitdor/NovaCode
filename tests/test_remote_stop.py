@@ -85,3 +85,38 @@ async def test_chat_app_stops_a_telegram_turn_mid_run_instead_of_queueing_it():
         app._turn_active = False
         reply, _ = await app._remote_slash("/stop")
         assert reply == "Nothing is running."
+
+
+@pytest.mark.asyncio
+async def test_headless_redirect_stops_the_turn_and_runs_the_new_message():
+    prompts: list[str] = []
+    started = asyncio.Event()
+
+    async def turn(text, *args, **kwargs):
+        prompts.append(text)
+        started.set()
+        if text == "build it":
+            await asyncio.sleep(3600)
+
+    class Agent:
+        async def aget_state(self, config):
+            return SimpleNamespace(values={"messages": []})
+
+    session = SimpleNamespace(thread_id="t", auto_approve=False, session_id="s")
+    queue: asyncio.Queue = asyncio.Queue()
+    console = SimpleNamespace(print=lambda *a, **k: None)
+    processor = asyncio.create_task(remote_message_processor(
+        queue, Agent(), "nova", session, console, None, None, None, set(), execute_fn=turn,
+    ))
+    try:
+        await queue.put(_message("build it"))
+        await asyncio.wait_for(started.wait(), 5)
+        await queue.put(_message("/redirect use Postgres instead"))
+        for _ in range(100):
+            if prompts[-1:] == ["use Postgres instead"]:
+                break
+            await asyncio.sleep(0.05)
+        assert prompts == ["build it", "use Postgres instead"]
+    finally:
+        processor.cancel()
+        await asyncio.gather(processor, return_exceptions=True)

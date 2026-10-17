@@ -11,6 +11,7 @@ local messages do not interleave mid-stream.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import logging
 import os
@@ -99,6 +100,19 @@ def is_stop_command(text: str) -> bool:
     """``/stop`` (or ``/cancel``, ``/stop@NovaBot``): stop the running task, like Esc."""
     words = (text or "").strip().lower().split()
     return bool(words) and words[0].split("@", 1)[0] in {"/stop", "/cancel"}
+
+
+def redirect_text(text: str) -> str | None:
+    """``/redirect <message>``: the message, or None when this is not a redirect.
+
+    Interrupt-and-redirect from a chat: stop the running task and send the
+    message next, in one step (locally, Esc with text in the box does this).
+    """
+    stripped = (text or "").strip()
+    head, _, rest = stripped.partition(" ")
+    if head.lower().split("@", 1)[0] != "/redirect":
+        return None
+    return rest.strip()
 
 
 async def remote_message_processor(
@@ -379,6 +393,28 @@ async def remote_message_processor(
             remote_msg = await queue.get()
             await _debug_log(f"DEQUEUED from queue {id(queue)}: {remote_msg.text[:80]}")
 
+            redirect = redirect_text(remote_msg.text)
+            if redirect == "":
+                with contextlib.suppress(Exception):
+                    await remote_msg.reply_fn("Usage: /redirect <what to do instead>")
+                queue.task_done()
+                continue
+            if redirect is not None:
+                running = [t for t in active_tasks if not t.done()]
+                from novacode_cli.shell.jobs import request_kill
+
+                if running:
+                    request_kill()
+                    for t in running:
+                        t.cancel()
+                    await asyncio.gather(*running, return_exceptions=True)
+                remote_msg.text = redirect  # then run it as the next turn
+                await queue.put(remote_msg)
+                queue.task_done()
+                if running:
+                    with contextlib.suppress(Exception):
+                        await remote_msg.reply_fn(f"↪ Stopped the current task; now: {redirect}")
+                continue
             if is_stop_command(remote_msg.text):
                 running = [t for t in active_tasks if not t.done()]
                 from novacode_cli.shell.jobs import request_kill
@@ -428,7 +464,7 @@ async def remote_message_processor(
 
                     if getattr(session_state, "steering_instructions", None) is None:
                         session_state.steering_instructions = []
-                    si = SteeringInstruction(label="steer", instruction=text)
+                    si = SteeringInstruction(label="steer", instruction=text, live=True)
                     session_state.steering_instructions.append(si)
                     from novacode_cli.tools.waiter_tools import interrupt_task_waits
 
