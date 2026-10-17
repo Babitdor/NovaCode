@@ -2329,6 +2329,7 @@ class SettingsScreen(ModalScreen[None]):
         height: auto; align-vertical: middle; margin-bottom: 1;
     }
     SettingsScreen .settings-description { color: $text-muted; margin-left: 2; }
+    SettingsScreen #planner-usage { height: auto; margin: 0 2 1 2; }
     """
 
     _PREFERENCES = {
@@ -2439,6 +2440,16 @@ class SettingsScreen(ModalScreen[None]):
                     "Policy denials stay blocked; configure the model in /model → Decisions.",
                     classes="settings-description",
                 )
+
+                yield Static("PLANNER USAGE", classes="settings-section")
+                yield Static("Reading usage…", id="planner-usage")
+                with Horizontal(classes="settings-row"):
+                    yield Button("Check Claude now", id="planner-usage-check")
+                    yield Static(
+                        "Claude Code reports its limits only during a call: this makes one "
+                        "tiny call. Codex's come from its last session.",
+                        classes="settings-description",
+                    )
             with Horizontal(id="modal-buttons"):
                 yield Button("Close", id="close")
 
@@ -2450,6 +2461,26 @@ class SettingsScreen(ModalScreen[None]):
 
     def on_mount(self) -> None:
         animate_modal_screen(self)
+        self.show_planner_usage()
+
+    @work(exclusive=True, group="planner-usage")
+    async def show_planner_usage(self, check_claude: bool = False) -> None:
+        """/claude-plan and /codex-plan usage, read off the UI loop."""
+        from novacode_cli.commands import planner_usage as pu
+
+        label = self.query_one("#planner-usage", Static)
+        button = self.query_one("#planner-usage-check", Button)
+        if check_claude:
+            button.disabled = True
+            label.update("Asking Claude Code…")
+        try:
+            claude = await pu.check_claude_now() if check_claude else await asyncio.to_thread(pu.claude_usage)
+            codex = await asyncio.to_thread(pu.codex_usage)
+            label.update(Text("\n\n").join([pu.usage_text(claude), pu.usage_text(codex)]))
+        except Exception as exc:  # noqa: BLE001
+            label.update(f"Could not read planner usage: {exc}")
+        finally:
+            button.disabled = False
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
         key_by_id = {
@@ -2500,6 +2531,8 @@ class SettingsScreen(ModalScreen[None]):
             self.dismiss(None)
         elif event.button.id == "settings-theme":
             self.app.push_screen(ThemeScreen())
+        elif event.button.id == "planner-usage-check":
+            self.show_planner_usage(check_claude=True)
 
     def action_close(self) -> None:
         self.dismiss(None)

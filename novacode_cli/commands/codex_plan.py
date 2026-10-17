@@ -20,6 +20,7 @@ from pathlib import Path
 from novacode_cli.commands.claude_plan import (
     PLAN_READY,
     QUESTIONS_PROTOCOL,
+    REVIEW_INSTRUCTIONS,
     PlanTurn,
     cli_env,
     needs_login,
@@ -47,6 +48,9 @@ The user answers only between your turns.
 
 Task:
 """
+REVIEW_COMMAND = "/codex-review"
+#: The read-only sandbox already keeps the reviewer from editing.
+REVIEW_ARGS = {"instructions": REVIEW_INSTRUCTIONS + "\nWhat to review:\n"}
 
 
 def executable() -> str | None:
@@ -104,6 +108,8 @@ async def run_turn(
     *,
     session_id: str | None = None,
     on_step: Callable[[str], None] | None = None,
+    on_session: Callable[[str], None] | None = None,
+    instructions: str = INSTRUCTIONS,
 ) -> PlanTurn:
     """Run one headless planning turn; ``on_step`` receives each command Codex runs.
 
@@ -111,10 +117,11 @@ async def run_turn(
     has an OpenAI key, is the turn retried with that key.
     """
     env, has_key = cli_env(OPENAI_VARS)
-    turn = await _run(prompt, cwd, session_id=session_id, on_step=on_step, env=env)
+    extra = {"on_session": on_session, "instructions": instructions}
+    turn = await _run(prompt, cwd, session_id=session_id, on_step=on_step, env=env, **extra)
     if turn.error and has_key and needs_login(turn.error):
         turn = await _run(
-            prompt, cwd, session_id=session_id, on_step=on_step,
+            prompt, cwd, session_id=session_id, on_step=on_step, **extra,
             env=cli_env(OPENAI_VARS, keep=True)[0],
         )
     if turn.error and needs_login(turn.error):
@@ -129,6 +136,8 @@ async def _run(
     session_id: str | None,
     on_step: Callable[[str], None] | None,
     env: dict[str, str],
+    on_session: Callable[[str], None] | None = None,
+    instructions: str = INSTRUCTIONS,
 ) -> PlanTurn:
     exe = executable()
     if exe is None:
@@ -137,7 +146,7 @@ async def _run(
     if session_id:
         command = [exe, "exec", "resume", session_id, *common, prompt]
     else:
-        command = [exe, "exec", *common, INSTRUCTIONS + prompt]
+        command = [exe, "exec", *common, instructions + prompt]
     process = await asyncio.create_subprocess_exec(
         *command,
         cwd=str(cwd),
@@ -159,6 +168,8 @@ async def _run(
             item = event.get("item") or {}
             if kind == "thread.started":
                 turn.session_id = event.get("thread_id") or turn.session_id
+                if turn.session_id and on_session is not None:
+                    on_session(turn.session_id)  # known now, so an interrupted run can resume
             elif kind == "item.started" and item.get("type") == "command_execution":
                 if on_step is not None:
                     on_step(_brief(str(item.get("command") or "")))

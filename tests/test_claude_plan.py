@@ -88,7 +88,7 @@ async def test_the_command_asks_then_hands_the_approved_plan_to_nova(monkeypatch
     ])
     prompts: list[tuple[str, str | None]] = []
 
-    async def fake_turn(prompt, cwd, *, session_id=None, on_step=None):
+    async def fake_turn(prompt, cwd, *, session_id=None, on_step=None, **_):
         prompts.append((prompt, session_id))
         return next(turns)
 
@@ -141,7 +141,7 @@ async def test_escape_in_the_dock_ends_planning(monkeypatch):
     import novacode_cli.commands.claude_plan as module
     from tests.test_tui_compaction_row import _app
 
-    async def fake_turn(prompt, cwd, *, session_id=None, on_step=None):
+    async def fake_turn(prompt, cwd, *, session_id=None, on_step=None, **_):
         return PlanTurn(session_id="s-1", text="Which database?")
 
     monkeypatch.setattr(module, "run_turn", fake_turn)
@@ -243,7 +243,7 @@ async def test_novas_api_key_does_not_override_the_claude_login(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://proxy.example")
     envs: list[dict] = []
 
-    async def fake_run(prompt, cwd, *, session_id, on_step, env):
+    async def fake_run(prompt, cwd, *, session_id, on_step, env, **_):
         envs.append(env)
         return PlanTurn(session_id="s", text="ok")
 
@@ -259,7 +259,7 @@ async def test_without_a_claude_login_novas_key_is_tried_once(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-nova")
     envs: list[dict] = []
 
-    async def fake_run(prompt, cwd, *, session_id, on_step, env):
+    async def fake_run(prompt, cwd, *, session_id, on_step, env, **_):
         envs.append(env)
         if "ANTHROPIC_API_KEY" not in env:
             return PlanTurn(error="Not logged in · Please run /login")
@@ -272,7 +272,7 @@ async def test_without_a_claude_login_novas_key_is_tried_once(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_an_empty_credit_balance_is_explained(monkeypatch):
-    async def fake_run(prompt, cwd, *, session_id, on_step, env):
+    async def fake_run(prompt, cwd, *, session_id, on_step, env, **_):
         return PlanTurn(error="Credit balance is too low")
 
     monkeypatch.setattr(claude_plan, "_run", fake_run)
@@ -311,7 +311,7 @@ async def _ask_through(monkeypatch, *, remote: bool):
     turns = iter([PlanTurn(session_id="s", text=text, questions=questions), PlanTurn(session_id="s", text="ok", plan="# p")])
     prompts: list[str] = []
 
-    async def fake_turn(prompt, cwd, *, session_id=None, on_step=None):
+    async def fake_turn(prompt, cwd, *, session_id=None, on_step=None, **_):
         prompts.append(prompt)
         return next(turns)
 
@@ -373,7 +373,7 @@ async def test_each_planning_turn_is_one_collapsed_card(monkeypatch):
         PlanTurn(session_id="s", text="ok", plan="# p"),
     ])
 
-    async def fake_turn(prompt, cwd, *, session_id=None, on_step=None):
+    async def fake_turn(prompt, cwd, *, session_id=None, on_step=None, **_):
         for name in ("Cargo.toml", "src\lib.rs", "src\main.rs"):
             on_step(f"Read {root}\{name}")
         return next(turns)

@@ -21,6 +21,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from novacode_cli.commands import planner_usage
+
 PLAN_READY = "PLAN_READY"
 QUESTIONS_TAG = "nova-questions"
 #: How the planners ask: the shape of Nova's ask_user_question tool.
@@ -49,6 +51,36 @@ You run headless: no interactive tools, the user answers only between your turns
   the concrete steps with the files to change, and how to verify. Then end your
   turn with a one-paragraph summary followed by a line containing only {PLAN_READY}.
 """
+#: Plan mode: read-only exploration; questions come back as text, not the tool.
+PLAN_TOOLS = ["--permission-mode", "plan", "--disallowedTools", "AskUserQuestion"]
+
+#: /claude-review and /codex-review: what the reviewer is told (both CLIs).
+REVIEW_INSTRUCTIONS = """\
+You are reviewing code for another coding agent (Nova), which will report your
+findings to the user and apply the fixes they accept. You run headless; nobody
+answers questions. Do not modify any files.
+- Find what to review: by default the uncommitted changes (`git status`,
+  `git diff HEAD`, and any untracked files); if there are none, the last commit
+  (`git show HEAD`). Read the surrounding code to judge them.
+- Look for bugs, regressions, security problems, missing error handling and
+  tests, and needless complexity. Report only real problems, no style nits.
+- Reply with a markdown report:
+  ## Scope - what you reviewed, one line.
+  ## Findings - each one as: **[high|medium|low]** `path:line` - the problem,
+     why it matters, and the fix (a short diff when it helps). Most severe first.
+  ## Verdict - one or two sentences: ready to ship or not.
+  If you found nothing, say so under Findings.
+"""
+#: Review without edits: read, search and git's read-only commands only. In
+#: -p mode a tool that is not allowed is denied, not prompted.
+REVIEW_TOOLS = [
+    "--permission-mode", "default",
+    "--allowedTools",
+    "Read,Grep,Glob,Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*)",
+    "--disallowedTools", "AskUserQuestion,Write,Edit,MultiEdit,NotebookEdit",
+]
+REVIEW_COMMAND = "/claude-review"
+REVIEW_ARGS = {"instructions": REVIEW_INSTRUCTIONS, "tool_args": REVIEW_TOOLS}
 
 
 @dataclass
@@ -189,6 +221,9 @@ async def run_turn(
     *,
     session_id: str | None = None,
     on_step: Callable[[str], None] | None = None,
+    on_session: Callable[[str], None] | None = None,
+    instructions: str = INSTRUCTIONS,
+    tool_args: list[str] = PLAN_TOOLS,
 ) -> PlanTurn:
     """Run one headless planning turn; ``on_step`` receives each tool call's line.
 
@@ -196,10 +231,11 @@ async def run_turn(
     has an Anthropic key, is the turn retried with that key.
     """
     env, has_key = cli_env(ANTHROPIC_VARS)
-    turn = await _run(prompt, cwd, session_id=session_id, on_step=on_step, env=env)
+    extra = {"on_session": on_session, "instructions": instructions, "tool_args": tool_args}
+    turn = await _run(prompt, cwd, session_id=session_id, on_step=on_step, env=env, **extra)
     if turn.error and has_key and needs_login(turn.error):
         turn = await _run(
-            prompt, cwd, session_id=session_id, on_step=on_step,
+            prompt, cwd, session_id=session_id, on_step=on_step, **extra,
             env=cli_env(ANTHROPIC_VARS, keep=True)[0],
         )
     if turn.error and "credit balance" in turn.error.lower():
@@ -219,16 +255,18 @@ async def _run(
     session_id: str | None,
     on_step: Callable[[str], None] | None,
     env: dict[str, str],
+    on_session: Callable[[str], None] | None = None,
+    instructions: str = INSTRUCTIONS,
+    tool_args: list[str] = PLAN_TOOLS,
 ) -> PlanTurn:
     exe = executable()
     if exe is None:
         return PlanTurn(error="Claude Code is not installed (no `claude` found).")
     command = [
         exe, "-p", prompt,
-        "--permission-mode", "plan",
+        *tool_args,
         "--output-format", "stream-json", "--verbose",
-        "--append-system-prompt", INSTRUCTIONS,
-        "--disallowedTools", "AskUserQuestion",
+        "--append-system-prompt", instructions,
         # Your MCP servers are not needed to plan, and a slow one delays every turn.
         "--strict-mcp-config",
     ]
@@ -255,6 +293,8 @@ async def _run(
             kind = event.get("type")
             if kind == "system" and event.get("subtype") == "init":
                 turn.session_id = event.get("session_id") or turn.session_id
+                if turn.session_id and on_session is not None:
+                    on_session(turn.session_id)  # known now, so an interrupted run can resume
             elif kind == "assistant":
                 for block in (event.get("message") or {}).get("content") or []:
                     if block.get("type") != "tool_use":
@@ -265,6 +305,8 @@ async def _run(
                         plan_path = path
                     elif on_step is not None:
                         on_step(_brief(str(block.get("name")), args))
+            elif kind == "rate_limit_event":
+                planner_usage.record_claude(event.get("rate_limit_info") or {})
             elif kind == "result":
                 turn.session_id = event.get("session_id") or turn.session_id
                 turn.text = str(event.get("result") or "")

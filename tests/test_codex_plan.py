@@ -95,7 +95,7 @@ async def test_the_command_hands_codexs_approved_plan_to_nova(monkeypatch):
     ])
     prompts: list[tuple[str, str | None]] = []
 
-    async def fake_turn(prompt, cwd, *, session_id=None, on_step=None):
+    async def fake_turn(prompt, cwd, *, session_id=None, on_step=None, **_):
         prompts.append((prompt, session_id))
         return next(turns)
 
@@ -173,7 +173,7 @@ async def test_novas_openai_settings_do_not_reach_codex(monkeypatch):
     monkeypatch.setenv("OPENAI_BASE_URL", "http://127.0.0.1:9931/v1")
     envs: list[dict] = []
 
-    async def fake_run(prompt, cwd, *, session_id, on_step, env):
+    async def fake_run(prompt, cwd, *, session_id, on_step, env, **_):
         envs.append(env)
         return PlanTurn(session_id="t", text="ok")
 

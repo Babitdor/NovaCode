@@ -521,6 +521,12 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "codex-plan": SlashCommand(
         "_run_codex_plan", "Codex plans (asks, then you approve); Nova implements"
     ),
+    "claude-review": SlashCommand(
+        "_run_claude_review", "Claude Code reviews the changes [focus / resume]; Nova reports"
+    ),
+    "codex-review": SlashCommand(
+        "_run_codex_review", "Codex reviews the changes [focus / resume]; Nova reports"
+    ),
     "goal": SlashCommand("_run_goal", "manage a goal (pause / resume / budget / clear)"),
     "btw": SlashCommand("_run_btw", "ask a side question without touching the main conversation"),
     "remote": SlashCommand("_run_remote", "manage Discord/Telegram bridges and response streaming"),
@@ -13285,7 +13291,9 @@ class NovaApp(App):
         self._log(Text(f"● {planner.NAME} installed. {planner.LOGIN_HINT}", style="green"))
         return False
 
-    async def _planner_card(self, planner: Any, cwd: Any) -> tuple[Any, Any]:  # noqa: ANN401
+    async def _planner_card(
+        self, planner: Any, cwd: Any, verb: str = "is planning…"  # noqa: ANN401
+    ) -> tuple[Any, Any]:
         """A collapsed card for one planning turn's steps, like a tool-call group.
 
         Returns ``(on_step, settle)``: ``on_step(line)`` adds a step (paths shown
@@ -13295,7 +13303,7 @@ class NovaApp(App):
         """
         steps: list[str] = []
         body = Static("", classes="planner-steps")
-        card = Collapsible(body, title=f"◆ {planner.NAME} is planning…", collapsed=True)
+        card = Collapsible(body, title=f"◆ {planner.NAME} {verb}", collapsed=True)
         card.add_class("tool")
         await self._mount(card)
         root = str(cwd).rstrip("\\/")
@@ -13309,12 +13317,107 @@ class NovaApp(App):
                 step = step.replace(prefix, "")
             steps.append(step)
             body.update(Text("\n".join(f"◦ {s}" for s in steps), style="dim"))
-            _retitle(card, title("is planning…"))
+            _retitle(card, title(verb))
 
         def settle(state: str) -> None:
             _retitle(card, title(state))
 
         return on_step, settle
+
+    async def _run_claude_review(self, text: str) -> None:
+        """/claude-review [focus]: Claude Code reviews headless; Nova reports."""
+        from novacode_cli.commands import claude_plan
+
+        await self._run_external_review(claude_plan, text)
+
+    async def _run_codex_review(self, text: str) -> None:
+        """/codex-review [focus]: Codex reviews in a read-only sandbox; Nova reports."""
+        from novacode_cli.commands import codex_plan
+
+        await self._run_external_review(codex_plan, text)
+
+    async def _run_external_review(self, reviewer: Any, text: str) -> None:  # noqa: ANN401
+        """Another agent's CLI reviews the code read-only, then Nova reports.
+
+        The reviewer's report (findings with fixes) is shown as a collapsed card
+        and handed to Nova, which checks each finding against the code and tells
+        the user what holds up. Nothing is changed until the user asks.
+        """
+        from novacode_cli.commands import planner_usage
+        from novacode_cli.config.config import settings
+
+        name, command = reviewer.NAME, reviewer.REVIEW_COMMAND
+        parts = text.split(maxsplit=1)
+        focus = parts[1].strip() if len(parts) > 1 else ""
+        if reviewer.executable() is None:
+            self._log(
+                Text(
+                    f"{name} is not installed. Run {reviewer.COMMAND} once to install it, "
+                    f"or see {reviewer.DOCS_URL}.",
+                    style="yellow",
+                )
+            )
+            return
+        cwd = settings.get_workspace_root()
+        root = str(cwd)
+        prompt = focus or "The current changes (uncommitted, else the last commit)."
+        session: str | None = None
+        ask = prompt
+        if focus.lower() == "resume":
+            saved = planner_usage.interrupted(command, root)
+            if not saved:
+                self._log(Text(f"No interrupted {name} review to resume here.", style="yellow"))
+                return
+            session, prompt = saved["session"], saved["task"]
+            ask = (
+                "You were interrupted. Continue the review where you left off and reply "
+                f"with the full report, in the same format.\n\nWhat to review: {prompt}"
+            )
+            self._log(Text(f"Resuming {name}'s review: {prompt[:120]}", style="dim"))
+
+        def on_session(session_id: str) -> None:
+            planner_usage.remember_session(command, root, session_id, prompt)
+
+        resume_hint = f"{command} resume continues this review."
+        on_step, settle = await self._planner_card(reviewer, cwd, verb="is reviewing…")
+        # Telegram/Discord: a review takes minutes; say so (no-op locally).
+        self._remote_send(f"◆ {name} is reviewing ({prompt[:200]}). This can take a few minutes.")
+        self._turn_active = True
+        self._set_status(f"{name} is reviewing…")
+        turn = None
+        try:
+            turn = await reviewer.run_turn(
+                ask, cwd, session_id=session, on_step=on_step, on_session=on_session,
+                **reviewer.REVIEW_ARGS,
+            )
+        except asyncio.CancelledError:
+            if planner_usage.interrupted(command, root):
+                self._log(Text(f"{name} stopped. {resume_hint}", style="yellow"))
+                self._remote_send(f"◆ {name} stopped. {resume_hint}")
+            raise
+        finally:
+            self._turn_active = False
+            self._set_status("ready")
+            settle("stopped" if turn is None or turn.error else "reviewed")
+        if turn.error:
+            hint = f"\n{resume_hint}" if planner_usage.interrupted(command, root) else ""
+            self._log(Text(f"{command} stopped: {turn.error}{hint}", style="red"))
+            return
+        planner_usage.forget_session(command, root)
+        self._remote_send(f"◆ {name} finished its review. Nova is checking the findings…")
+        report = turn.text.strip() or "(the reviewer returned an empty report)"
+        card = Collapsible(Static(Markdown(report)), title=f"◆ {name}'s review report", collapsed=True)
+        card.add_class("tool")
+        await self._mount(card)
+        await self._stream_prompt(
+            f"{name} just reviewed this repository ({prompt}) and submitted the report "
+            "below. Verify each finding against the code: reviewers can be wrong. Then "
+            "report to the user: what was reviewed, the findings that hold up (most "
+            "severe first, each with its file:line and fix), any you rejected and why, "
+            f"and {name}'s verdict. Do not change any files unless the user asks; offer "
+            "to apply the fixes.\n\n"
+            f"<review_report reviewer=\"{name}\">\n{report}\n</review_report>"
+        )
 
     async def _run_claude_plan(self, text: str) -> None:
         """/claude-plan <task>: Claude Code plans in its plan mode (``commands/claude_plan``)."""
@@ -13337,26 +13440,58 @@ class NovaApp(App):
         is executed by Nova exactly as /plan's is (``_maybe_run_approved_plan``).
         Esc stops the planner; Esc in the dock ends the planning.
         """
+        from novacode_cli.commands import planner_usage
         from novacode_cli.config.config import settings
 
         name, label = planner.NAME, Text(planner.NAME, style=f"bold {planner.COLOR}")
         parts = text.split(maxsplit=1)
         task = parts[1].strip() if len(parts) > 1 else ""
+        cwd = settings.get_workspace_root()
+        root = str(cwd)
         if not task:
-            self._log(Text(f"Usage: {planner.COMMAND} <what to build or change>", style="yellow"))
+            self._log(
+                Text(
+                    f"Usage: {planner.COMMAND} <what to build or change>, or "
+                    f"{planner.COMMAND} resume to continue an interrupted planning",
+                    style="yellow",
+                )
+            )
             return
+        session: str | None = None
+        prompt = f"Plan this task for the repository in the current directory:\n\n{task}"
+        if task.lower() == "resume":
+            saved = planner_usage.interrupted(planner.COMMAND, root)
+            if not saved:
+                self._log(Text(f"No interrupted {name} planning to resume here.", style="yellow"))
+                return
+            session, task = saved["session"], saved["task"]
+            prompt = (
+                "You were interrupted. Continue planning the task where you left off, "
+                "following the same rules (ask with the questions block, or end with "
+                f"PLAN_READY once the plan is written).\n\nThe task: {task}"
+            )
+            self._log(Text(f"Resuming {name}'s planning: {task[:120]}", style="dim"))
         if planner.executable() is None and not await self._offer_planner_install(planner, task):
             return
-        cwd = settings.get_workspace_root()
-        prompt = f"Plan this task for the repository in the current directory:\n\n{task}"
-        session: str | None = None
+
+        def on_session(session_id: str) -> None:
+            planner_usage.remember_session(planner.COMMAND, root, session_id, task)
+
+        resume_hint = f"{planner.COMMAND} resume continues this planning."
         while True:
             on_step, settle = await self._planner_card(planner, cwd)
             self._turn_active = True
             self._set_status(f"{name} is planning…")
             turn = None
             try:
-                turn = await planner.run_turn(prompt, cwd, session_id=session, on_step=on_step)
+                turn = await planner.run_turn(
+                    prompt, cwd, session_id=session, on_step=on_step, on_session=on_session
+                )
+            except asyncio.CancelledError:
+                if planner_usage.interrupted(planner.COMMAND, root):
+                    self._log(Text(f"{name} stopped. {resume_hint}", style="yellow"))
+                    self._remote_send(f"◆ {name} stopped. {resume_hint}")
+                raise
             finally:
                 self._turn_active = False
                 self._set_status("ready")
@@ -13366,7 +13501,8 @@ class NovaApp(App):
                     else "has questions"
                 )
             if turn.error:
-                self._log(Text(f"{planner.COMMAND} stopped: {turn.error}", style="red"))
+                hint = f"\n{resume_hint}" if planner_usage.interrupted(planner.COMMAND, root) else ""
+                self._log(Text(f"{planner.COMMAND} stopped: {turn.error}{hint}", style="red"))
                 return
             session = turn.session_id
             if turn.text:
@@ -13374,6 +13510,7 @@ class NovaApp(App):
             if turn.plan is None:  # the planner asked something
                 answers = await self._ask_planner_questions(planner, turn)
                 if answers is None:
+                    planner_usage.forget_session(planner.COMMAND, root)
                     self._log(Text("Planning ended; nothing was changed.", style="yellow"))
                     return
                 prompt = answers
@@ -13382,6 +13519,7 @@ class NovaApp(App):
                 PlanApprovalModal(f"{name}'s plan requires approval", Markdown(turn.plan))
             )
             if choice in ("auto", "manual"):
+                planner_usage.forget_session(planner.COMMAND, root)
                 if choice == "auto":
                     # Scoped to this plan's run, as in the /plan approval handler.
                     if not getattr(self.session_state, "auto_approve", False):
@@ -13392,6 +13530,7 @@ class NovaApp(App):
                 return
             feedback = await self._ask_planner(planner, f"What should {name} change in the plan?")
             if feedback is None:
+                planner_usage.forget_session(planner.COMMAND, root)
                 self._log(Text("Planning ended; nothing was changed.", style="yellow"))
                 return
             prompt = f"Revise the plan as follows, then give it again and end with PLAN_READY:\n\n{feedback}"
