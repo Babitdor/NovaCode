@@ -242,3 +242,14 @@ def test_no_declared_total_steps_parameter():
         params = inspect.signature(fn.__wrapped__).parameters
         assert "total_steps" not in params
     assert not hasattr(BootAnimation, "_total_steps")
+
+
+def test_a_short_window_gets_the_wordmark_instead_of_the_tall_art():
+    """The lockup and the portrait need rows a short window lacks; NOVA does not."""
+    tall = brand.art_for(200, "9.9.9", height=brand.TALL_MIN_HEIGHT)
+    short = brand.art_for(200, "9.9.9", height=brand.TALL_MIN_HEIGHT - 1)
+    assert tall == brand.art_for(200, "9.9.9"), "height is ignored when there is room"
+    assert "\u2588\u2557" in short and "v9.9.9" in short
+    assert not any("\u2800" <= ch <= "\u28ff" for ch in short), "no portrait"
+    assert len(short.strip("\n").splitlines()) <= 8
+    assert brand.art_for(40, height=10) == f"\n{brand.compact_mark()}\n", "narrow and short"

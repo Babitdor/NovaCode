@@ -119,6 +119,9 @@ async def test_switch_during_chat_keeps_home_hidden_until_new_chat() -> None:
         assert root.has_class("classic-home")
         await pilot.resize_terminal(70, 20)
         await pilot.pause()
+        assert app.query_one("#home-header").size.height > 0, "a short window keeps NOVA"
+        await pilot.resize_terminal(70, 16)
+        await pilot.pause()
         assert app.query_one("#home-header").size.height == 0
         assert app.query_one("#prompt").size.height > 0
 

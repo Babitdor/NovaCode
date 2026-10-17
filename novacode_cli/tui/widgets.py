@@ -140,6 +140,7 @@ class MatrixRain(Static):
 
     def _configure(self, art: str, width: int | None) -> None:
         """(Re)compute the grid + logo placement for the given art and width."""
+        self._art_source = art
         # Trim blank top/bottom lines so the logo sits tightly in the rain.
         art_lines = art.splitlines() if art else []
         while art_lines and not art_lines[0].strip():
@@ -190,8 +191,13 @@ class MatrixRain(Static):
 
     def reflow(self, art: str, width: int | None, *, compact: bool | None = None) -> None:
         """Re-grid when the terminal width or banner layout changes."""
-        if width == self._width and (compact is None or compact == self._compact):
+        if (
+            width == self._width
+            and (compact is None or compact == self._compact)
+            and art == getattr(self, "_art_source", art)
+        ):
             return
+        self._art_source = art
         if compact is not None:
             self._compact = compact
         self._configure(art, width)

@@ -646,7 +646,9 @@ _TUI_SLASH_COMMANDS = [f"/{name}" for name in TUI_COMMANDS]
 _HOME_RIGHT_MIN_WIDTH = 120
 _HOME_LEFT_MIN_WIDTH = 76
 _HOME_BANNER_MIN_HEIGHT = 48
-_CLASSIC_BANNER_MIN_HEIGHT = 32
+# Below brand.TALL_MIN_HEIGHT the classic banner is the wordmark in a tight
+# rain box (12 rows with its padding); below this it is hidden.
+_CLASSIC_BANNER_MIN_HEIGHT = 17
 
 
 def _read_tail(path: str, lines: int = 40) -> str:
@@ -13960,6 +13962,12 @@ class NovaApp(App):
             )
         )
 
+    def _banner_compact(self, height: int | None) -> bool:
+        """A tight rain box: the dashboard's, or a window too short for the full one."""
+        from novacode_cli.brand import TALL_MIN_HEIGHT
+
+        return bool(self._home_dashboard_enabled) or (height is not None and height < TALL_MIN_HEIGHT)
+
     def _show_home_banner(self) -> None:
         """Show the Matrix lockup in the chosen home layout."""
         if self._home_style not in {"dashboard", "classic"}:
@@ -13969,19 +13977,20 @@ class NovaApp(App):
             from novacode_cli.config.config import get_responsive_ascii
 
             try:
-                width = self.size.width or None
+                width, height = self.size.width or None, self.size.height or None
             except Exception:  # noqa: BLE001
-                width = None
-            art = get_responsive_ascii(width=width)
+                width = height = None
+            art = get_responsive_ascii(width=width, height=height)
+            compact = self._banner_compact(height)
             rain = self._home_banner
             if isinstance(rain, MatrixRain) and rain.is_mounted:
-                rain.reflow(art, width, compact=self._home_dashboard_enabled)
+                rain.reflow(art, width, compact=compact)
                 self._set_home_visible(visible=True)
                 return
             rain = MatrixRain(
                 art=art,
                 width=width,
-                compact=self._home_dashboard_enabled,
+                compact=compact,
                 animate=self._matrix_rain_enabled(),
                 fps=min(15, self._animation_fps)
                 if self._low_resource_mode
@@ -14179,9 +14188,13 @@ class NovaApp(App):
         try:
             from novacode_cli.config.config import get_responsive_ascii
 
-            size = getattr(event, "size", None)
-            width = (size.width if size else self.size.width) or None
-            rain.reflow(get_responsive_ascii(width=width), width)
+            size = getattr(event, "size", None) or self.size
+            width, height = size.width or None, size.height or None
+            rain.reflow(
+                get_responsive_ascii(width=width, height=height),
+                width,
+                compact=self._banner_compact(height),
+            )
         except Exception:  # noqa: BLE001
             pass
 

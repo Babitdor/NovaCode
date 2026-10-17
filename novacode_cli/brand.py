@@ -245,7 +245,14 @@ def compact_art() -> tuple[str, ...]:
     return tuple(rows)
 
 
-def art_for(width: int | None = None, version: str | None = None) -> str:
+#: The shortest terminal (rows) whose home screen fits the lockup or the
+#: portrait; a shorter one gets the 6-row wordmark instead.
+TALL_MIN_HEIGHT = 30
+
+
+def art_for(
+    width: int | None = None, version: str | None = None, height: int | None = None
+) -> str:
     """Responsive startup art for *width* terminal columns.
 
     Args:
@@ -265,7 +272,8 @@ def art_for(width: int | None = None, version: str | None = None) -> str:
     """
     columns = width or 80
     usable = columns - _TRANSCRIPT_INSET
-    if usable >= LOCKUP_WIDTH:
+    short = height is not None and height < TALL_MIN_HEIGHT
+    if usable >= LOCKUP_WIDTH and not short:
         return "\n" + "\n".join(_lockup_rows(version)) + "\n"
     if usable >= WORDMARK_WIDTH:
         # A window that is not full screen: NOVA itself, the portrait dropped.
@@ -273,7 +281,7 @@ def art_for(width: int | None = None, version: str | None = None) -> str:
         if version:
             rows += [" " * WORDMARK_WIDTH, _pad(version_line(version).center(WORDMARK_WIDTH), WORDMARK_WIDTH)]
         return "\n" + "\n".join(rows) + "\n"
-    if usable >= PORTRAIT_WIDTH:
+    if usable >= PORTRAIT_WIDTH and not short:
         rows = list(compact_art())
         if version:
             caption = version_line(version)

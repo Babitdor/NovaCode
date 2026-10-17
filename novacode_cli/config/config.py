@@ -179,7 +179,7 @@ def parse_agent_color(agent_md_path: Path) -> str | None:
 
 
 def get_responsive_ascii(
-    console: Console | None = None, width: int | None = None
+    console: Console | None = None, width: int | None = None, height: int | None = None
 ) -> str:
     """Responsive startup ASCII art, sized to the terminal width.
 
@@ -203,7 +203,7 @@ def get_responsive_ascii(
             terminal_width = console.width if console is not None else 80
         except Exception:
             terminal_width = 80
-    return art_for(terminal_width, settings.version)
+    return art_for(terminal_width, settings.version, height)
 
 
 # Legacy static ASCII art. Kept as the name earlier code imported; the art

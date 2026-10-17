@@ -1111,7 +1111,7 @@ async def _drive_home_banner():
         image_tracker=None,
         model_name="m",
     )
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(80, 40)) as pilot:  # tall enough for the lockup
         await pilot.pause()
         rain = app._home_banner
         # The single rain widget IS the banner — logo is composited into it.
