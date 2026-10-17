@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from difflib import get_close_matches
 from fnmatch import fnmatchcase
 from typing import TYPE_CHECKING, Any
@@ -42,7 +43,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("nova.tool_search")
 
-#: Always bound: the tools a coding turn cannot do without.
+#: Always bound: the tools a coding turn cannot do without. Chosen from real
+#: use (2026-10 audit: 5,089 calls over 40 threads, 93% of them shell,
+#: read_file, edit_file and grep); a tool called a few times a month is cheaper
+#: as one search_tools round-trip than as a schema resent on every call.
+#: `think`, `code_search`, `web_search`, `eval`, `execute` (locally the same
+#: shell as `shell`), `skills_read_resource`, the rarer async and artifact
+#: tools and `list_waiters` are found by search.
 CORE_TOOLS = frozenset(
     {
         "ls",
@@ -52,50 +59,53 @@ CORE_TOOLS = frozenset(
         "glob",
         "grep",
         "shell",
-        "execute",
         "bash",
-        "eval",
         "write_todos",
         "task",
-        "think",
         "ask_user_question",
         "enter_plan_mode",
         "exit_plan_mode",
-        "web_search",
         "fetch_url",
-        "code_search",
         "skills_search",
         "skills_load",
-        "skills_read_resource",
         "search_tools",
         "memory_search",
-        # The system prompt delegates background work proactively. Keep the
-        # entire available async lifecycle visible without a search round-trip.
+        # The prompt delegates background work proactively and collects it with
+        # one short wait, so starting, checking and waiting stay bound.
         "start_async_task",
         "check_async_task",
-        "update_async_task",
-        "cancel_async_task",
-        "list_async_tasks",
         "wait_for_task",
-        "list_waiters",
-        # Artifacts: the prompt tells the agent to create these proactively, so
-        # the schemas must be bound without a search_tools round-trip — otherwise
-        # the instruction names tools the model cannot see.
+        # The prompt asks for artifacts proactively.
         "create_artifact",
-        "update_artifact",
-        "list_artifacts",
-        # Desktop power. Same rule as the artifacts above: the prompt tells the
-        # agent to end an overnight session by suspending the machine, so the tool
-        # has to be bound without a `search_tools` round-trip.
+        # The prompt ends an overnight session by suspending the machine.
         "sleep_desktop",
     }
 )
+#: Never bound by use alone: `execute` duplicates `shell` locally (both run
+#: through Nova's shell), so a model that used it is better steered to `shell`.
+NEVER_FREQUENT = frozenset({"execute"})
 #: Also bound: up to this many of the user's most-used other tools...
 FREQUENT_TOOLS = 10
-#: ...that have been called at least this often.
+#: ...called at least this often in the last FREQUENT_DAYS days. All-time counts
+#: kept tools from a month-old workflow (Serena, Playwright) on every call.
 FREQUENT_MIN_USES = 20
+FREQUENT_DAYS = 30
+
+#: Shorter descriptions for third-party tools whose defaults are long (the
+#: rules live in the system prompt). ``write_todos``: deepagents' 3.9k-char
+#: text, which also contradicts Nova's one-item-in-progress rule.
+DESCRIPTIONS = {
+    "write_todos": (
+        "Create or replace the task list for multi-step work: a list of todos, each "
+        "with `content` and a `status` of pending, in_progress or completed. Follow "
+        "the rules in <todo_management>. Never call it twice in parallel."
+    ),
+}
 
 LOADED_MARKER = "Loaded tools:"
+#: Tools whose result can load others with a LOADED_MARKER line: the search,
+#: and create_artifact, whose natural next step is update_artifact.
+LOADING_TOOLS = frozenset({"search_tools", "tool_search", "create_artifact"})
 MAX_SEARCH_LIMIT = 50
 
 
@@ -117,7 +127,7 @@ def loaded_names(messages: list[Any]) -> set[str]:
     for msg in messages:
         if isinstance(msg, AIMessage):
             names.update(tc["name"] for tc in msg.tool_calls or [])
-        elif isinstance(msg, ToolMessage) and msg.name in ("search_tools", "tool_search"):
+        elif isinstance(msg, ToolMessage) and msg.name in LOADING_TOOLS:
             texts = (
                 [msg.content]
                 if isinstance(msg.content, str)
@@ -277,19 +287,33 @@ class ToolSearchMiddleware(AgentMiddleware):
     # ── binding ────────────────────────────────────────────────────────────
 
     async def _read_frequent(self, request: ModelRequest) -> None:
+        """Rank tools by recent use: Hermes's per-session ``tool_history``."""
         if self._frequent is not None:
             return
         self._frequent = set()
         store = getattr(request.runtime, "store", None)
         if store is None:
             return
+        since = time.time() - FREQUENT_DAYS * 86400
+        uses: dict[str, int] = {}
         try:
-            items = await store.asearch(("nova", "tool_stats"), limit=1000)
+            spaces = await store.alist_namespaces(
+                prefix=("nova",), suffix=("tool_history",), limit=1000
+            )
+            # Filtered here too: Nova's stdlib fallback store ignores prefix/suffix.
+            for space in (s for s in spaces if s[:1] == ("nova",) and s[-1:] == ("tool_history",)):
+                item = await store.aget(space, "history")
+                for entry in ((item.value or {}).get("entries") or []) if item else []:
+                    name = entry.get("tool")
+                    if name and float(entry.get("timestamp") or 0) >= since:
+                        uses[name] = uses.get(name, 0) + 1
         except Exception:  # noqa: BLE001 — ranking is a nicety, never break a turn
-            logger.debug("tool_stats unavailable", exc_info=True)
+            logger.debug("tool_history unavailable", exc_info=True)
             return
-        uses = {i.key: int((i.value or {}).get("uses", 0)) for i in items}
-        ranked = sorted((n for n in uses if n not in CORE_TOOLS), key=lambda n: -uses[n])
+        ranked = sorted(
+            (n for n in uses if n not in CORE_TOOLS and n not in NEVER_FREQUENT),
+            key=lambda n: -uses[n],
+        )
         self._frequent = {n for n in ranked[:FREQUENT_TOOLS] if uses[n] >= FREQUENT_MIN_USES}
 
     def _trim_task(self, tool: Any, hidden: list[str]) -> Any:
@@ -313,6 +337,44 @@ class ToolSearchMiddleware(AgentMiddleware):
             "`search_tools` finds them by what they do."
         )
         return tool.model_copy(update={"description": text})
+
+    def _compact_async_roster(self, tool: Any) -> Any:
+        """One line per agent in ``start_async_task``'s roster (a request-local copy).
+
+        deepagents lists each async agent with its whole description, "Use this
+        agent when:" bullets included (~6.5k chars for 13 agents). The names and
+        first sentences keep proactive delegation possible; ``search_tools``
+        returns any agent's full description.
+        """
+        lines, in_roster = [], False
+        for line in _description(tool).splitlines():
+            if line.startswith("Available async agent types"):
+                in_roster = True
+                lines.append(line)
+                continue
+            if in_roster and line.startswith("#"):
+                in_roster = False
+                lines.append("")
+            if not in_roster:
+                lines.append(line)
+                continue
+            match = re.match(r"^- ([^:\s]+): (.*)", line)
+            if match and match.group(1) in self._async_subagents:
+                lines.append(f"- {match.group(1)}: {first_sentence(match.group(2), 160)}")
+        return tool.model_copy(update={"description": "\n".join(lines)})
+
+    def _shorten(self, tool: Any, hidden: list[str]) -> Any:
+        """The request-local copy of a bound tool with its description trimmed."""
+        if isinstance(tool, dict):
+            return tool
+        name = _name(tool)
+        if name == "task" and hidden:
+            return self._trim_task(tool, hidden)
+        if name == "start_async_task" and self._async_subagents:
+            return self._compact_async_roster(tool)
+        if name in DESCRIPTIONS:
+            return tool.model_copy(update={"description": DESCRIPTIONS[name]})
+        return tool
 
     def _apply(self, request: ModelRequest) -> ModelRequest:
         # Discovery covers the full available inventory, regardless of which
@@ -351,13 +413,9 @@ class ToolSearchMiddleware(AgentMiddleware):
         for tool in request.tools:
             (bound if _name(tool) in keep else deferred).append(tool)
         hidden = [n for n in self._deferred_subagents if n not in loaded]
-        if hidden:
-            bound = [
-                self._trim_task(t, hidden) if _name(t) == "task" and not isinstance(t, dict) else t
-                for t in bound
-            ]
+        bound = [self._shorten(t, hidden) for t in bound]
         if not deferred and not hidden:
-            return request
+            return request.override(tools=bound)
 
         if self._note is None:  # changes only when available inventory changes
             optional_names = [

@@ -15,41 +15,23 @@ _TYPES = "html, markdown, or dashboard"
 
 @tool
 def create_artifact(title: str, type: str = "markdown", content: str = "") -> str:
-    """Create a live, shareable web artifact from a session output.
+    """Create a live, shareable web page from a session output.
 
-    Use when a result is clearer as a visual page (a PR walkthrough, a code
-    analysis, an architecture dashboard) or when the user asks to "create an
-    artifact". A persistent `◈ Artifacts` component in the TUI updates and the
-    user can open it in the browser.
-
-    DESIGN FIRST (html/dashboard): before writing the HTML, read the
-    `frontend-design` skill and follow it. An artifact is a *designed page*, not
-    a dump of default-styled tags — unstyled output is the most common failure
-    of this tool. Commit to a deliberate direction: a real type scale and font
-    pairing, CSS custom properties for the palette, intentional spacing and
-    layout, and restraint. Read `create-html-artifact` too if present; it covers
-    this viewer specifically.
-
-    Write a complete standalone document: `<style>` in the `<head>`, semantic
-    markup in the `<body>`. Everything must be inline — the page is rendered from
-    a `srcdoc` iframe, so relative URLs and local files do not resolve. Web fonts
-    from a CDN (e.g. Google Fonts) do load, so use them rather than settling for
-    system defaults. Set an explicit background on `body`: the viewer's iframe
-    is white, so a page that assumes a dark canvas will look broken without one.
+    For results clearer as a visual page (a walkthrough, an analysis, a
+    dashboard) or when the user asks for an artifact. DESIGN FIRST: for
+    html/dashboard read the `frontend-design` skill, then write a designed
+    page, not default-styled tags.
+    Write one standalone document with everything inline (it renders in a
+    srcdoc iframe; CDN web fonts load) and an explicit `body` background.
 
     Args:
-        title: Human-readable name shown in the TUI list and the page header.
-        type: One of html, markdown, or dashboard. `html`/`dashboard` render as a
-            full HTML page inside a sandboxed iframe (safe to include CSS/JS);
-            `markdown` renders as formatted prose with raw HTML disabled, so it
-            cannot be styled — choose `html` whenever presentation matters.
-            Defaults to markdown.
-        content: The artifact body — a full HTML document for html/dashboard,
-            Markdown text for markdown. Never has access to the host,
-            filesystem, or secrets.
+        title: Name shown in the TUI list and the page header.
+        type: html, dashboard (full HTML page, CSS/JS allowed) or markdown
+            (prose, cannot be styled). Use html when presentation matters.
+        content: The full HTML document, or the Markdown text.
 
     Returns:
-        The artifact id and its shareable URL.
+        The artifact id and URL; refine it with update_artifact, not a new one.
     """
     from novacode_cli.artifacts.registry import get_registry
     from novacode_cli.artifacts.server import artifact_url
@@ -60,7 +42,8 @@ def create_artifact(title: str, type: str = "markdown", content: str = "") -> st
         f"Artifact created: '{art.title}' ({art.type}).\n"
         f"id: {art.id}\nURL: {url}\n"
         f"Update it in place with update_artifact(id='{art.id}', content='...') "
-        f"instead of creating a duplicate."
+        f"instead of creating a duplicate.\n"
+        "Loaded tools: update_artifact"  # tool_search.LOADED_MARKER: bound from the next step
     )
 
 

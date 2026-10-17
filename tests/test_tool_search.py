@@ -95,21 +95,20 @@ def test_frequent_tools_stay_bound() -> None:
     assert "playwright_browser_click" in _names(mw._apply(_request([HumanMessage("hi")])))
 
 
-def test_available_async_lifecycle_tools_are_bound_without_search() -> None:
-    names = {
-        "start_async_task",
-        "check_async_task",
-        "update_async_task",
-        "cancel_async_task",
-        "list_async_tasks",
-    }
+def test_async_start_check_and_wait_are_bound_and_the_rest_are_found() -> None:
+    """Starting, checking and waiting are bound; the rarely used rest is searchable."""
+    core = {"start_async_task", "check_async_task"}
+    rare = {"update_async_task", "cancel_async_task", "list_async_tasks"}
     req = _request([HumanMessage("review this change in the background")])
-    req = req.override(tools=[*TOOLS, *[_mcp(name, "Async subagent tool") for name in names]])
-    bound = _names(_mw()._apply(req))
-    assert names <= bound
+    req = req.override(tools=[*TOOLS, *[_mcp(name, "Async subagent tool") for name in core | rare]])
+    mw = _mw()
+    bound = _names(mw._apply(req))
+    assert core <= bound and not rare & bound
     assert "playwright_browser_navigate" not in bound
+    found = mw._tool_search("list_async_tasks, cancel_async_task")
+    assert "Loaded tools:" in found and "list_async_tasks" in found and "cancel_async_task" in found
     # A session without an async server must not acquire nonexistent tools.
-    assert not names & _names(_mw()._apply(_request([HumanMessage("hi")])))
+    assert not core & _names(_mw()._apply(_request([HumanMessage("hi")])))
 
 
 def test_hidden_subagents_leave_the_task_description() -> None:
@@ -120,20 +119,27 @@ def test_hidden_subagents_leave_the_task_description() -> None:
     assert "rust-reviewer" in task.description, "the shared tool itself is untouched"
 
 
-def test_artifact_tools_are_core_not_deferred() -> None:
-    """Artifact tools must be bound without a search_tools round-trip.
+def test_create_artifact_is_bound_and_its_result_loads_update_artifact() -> None:
+    """The prompt asks for artifacts proactively, so create_artifact is bound;
+    update_artifact, its natural next step, is loaded by create_artifact's result."""
+    from langchain_core.messages import AIMessage, ToolMessage
 
-    The prompt tells the agent to create artifacts proactively; if these drop
-    out of CORE_TOOLS the instruction names tools the model cannot see.
-    """
-    assert {"create_artifact", "update_artifact", "list_artifacts"} <= CORE_TOOLS
-
-    # End-to-end: a request carrying the artifact tools keeps them bound.
+    assert "create_artifact" in CORE_TOOLS
+    assert not {"update_artifact", "list_artifacts"} & CORE_TOOLS
     arts = [_mcp(n, "d") for n in ("create_artifact", "update_artifact", "list_artifacts")]
-    req = _request([HumanMessage("hi")])
-    req = req.override(tools=[*TOOLS, *arts])
+    req = _request([HumanMessage("hi")]).override(tools=[*TOOLS, *arts])
     bound = _names(_mw()._apply(req))
-    assert {"create_artifact", "update_artifact", "list_artifacts"} <= bound
+    assert "create_artifact" in bound and "update_artifact" not in bound
+
+    created = [
+        HumanMessage("make a dashboard"),
+        AIMessage("", tool_calls=[{"name": "create_artifact", "args": {}, "id": "c1"}]),
+        ToolMessage(
+            "Artifact created.\nLoaded tools: update_artifact", tool_call_id="c1", name="create_artifact"
+        ),
+    ]
+    req = _request(created).override(tools=[*TOOLS, *arts])
+    assert "update_artifact" in _names(_mw()._apply(req))
 
 
 def test_search_tools_loads_by_description_and_by_exact_name() -> None:
@@ -380,3 +386,43 @@ def test_the_whole_subagent_roster_is_deferred() -> None:
     assert 's["name"] not in LISTED_SUBAGENTS' in source, (
         "the full subagent roster is still billed in the task description"
     )
+
+
+def test_start_async_task_lists_each_agent_in_one_line() -> None:
+    """deepagents' roster repeats every agent's whole description; one line each remains."""
+    from langchain_core.tools import StructuredTool
+
+    roster = (
+        "Start an async subagent.\n\nAvailable async agent types:\n"
+        "- general-purpose-async: Does anything. In the background.\n"
+        "- reviewer-async: Reviews code. Thoroughly.\n\nUse this agent when:\n"
+        "- You changed code\n- A PR needs review\n\n"
+        "## Usage notes:\n1. Returns a task ID."
+    )
+    start = StructuredTool.from_function(lambda description: "", name="start_async_task", description=roster)
+    mw = ToolSearchMiddleware(async_subagents={"general-purpose-async", "reviewer-async"})
+    desc = mw._compact_async_roster(start).description
+    assert "- general-purpose-async: Does anything." in desc and "- reviewer-async: Reviews code." in desc
+    assert "A PR needs review" not in desc and "Use this agent when" not in desc
+    assert desc.endswith("## Usage notes:\n1. Returns a task ID.")
+
+
+async def test_frequent_tools_come_from_recent_history_not_all_time_counts() -> None:
+    import time
+    from types import SimpleNamespace
+
+    now = time.time()
+    entries = [{"tool": "serena_read_file", "timestamp": now - 90 * 86400}] * 500  # old habit
+    entries += [{"tool": "get_task_logs", "timestamp": now}] * 25
+    entries += [{"tool": "execute", "timestamp": now}] * 50  # a duplicate of shell
+
+    class Store:
+        async def alist_namespaces(self, **_kw):
+            return [("nova", "s1", "tool_history"), ("nova", "s1", "tool_stats")]
+
+        async def aget(self, space, key):
+            return SimpleNamespace(value={"entries": entries}) if space[-1] == "tool_history" else None
+
+    mw = ToolSearchMiddleware()
+    await mw._read_frequent(SimpleNamespace(runtime=SimpleNamespace(store=Store())))
+    assert mw._frequent == {"get_task_logs"}

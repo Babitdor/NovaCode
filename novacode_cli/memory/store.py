@@ -225,6 +225,10 @@ class DualModeStore:
         with self._lock:
             self._store.delete(namespace, key, **kwargs)
 
+    def list_namespaces(self, **kwargs: Any) -> "list[tuple[str, ...]]":
+        with self._lock:
+            return self._store.list_namespaces(**kwargs)
+
     # ── Async methods (run the sync store in a thread; lock serializes) ─────
 
     async def aput(
@@ -244,6 +248,9 @@ class DualModeStore:
 
     async def adelete(self, namespace: tuple[str, ...], key: str, /, **kwargs: Any) -> None:
         await asyncio.to_thread(self.delete, namespace, key, **kwargs)
+
+    async def alist_namespaces(self, **kwargs: Any) -> "list[tuple[str, ...]]":
+        return await asyncio.to_thread(self.list_namespaces, **kwargs)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

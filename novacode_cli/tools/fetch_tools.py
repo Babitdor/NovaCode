@@ -211,54 +211,13 @@ def fetch_url(
     summarize_max_length: int = 8000,
     focus_query: str | None = None,
 ) -> dict[str, Any]:
-    """Make HTTP requests with retry logic and content conversion.
+    """HTTP request with retries. HTML pages come back as markdown, JSON parsed.
 
-    For GET requests to HTML pages, content is converted to clean markdown.
-    For other methods or JSON responses, content is returned as parsed JSON or
-    raw text with appropriate formatting.
-
-    GitHub URL Support (GET only):
-    - Automatically converts GitHub blob URLs to raw content URLs
-    - Handles tree URLs via GitHub API for directory listings
-    - Handles repo root URLs via GitHub API for repository info
-
-    Args:
-        url: The URL to fetch (must be a valid HTTP/HTTPS URL)
-        method: HTTP method - GET, POST, PUT, DELETE, PATCH, etc. (default: GET)
-        timeout: Request timeout in seconds (default: 30)
-        max_retries: Maximum number of retry attempts (default: 3)
-        headers: Additional HTTP headers to include
-        data: Request body — a dict is sent as JSON, a string is sent as-is
-        params: URL query parameters as a dict
-        auth: Tuple of (username, password) for basic authentication
-        cookies: Dict of cookies to send with the request
-        follow_redirects: Whether to follow HTTP redirects (default: True)
-        max_content_size: Maximum content size in bytes (default: 10MB)
-        verify_ssl: Whether to verify SSL certificates (default: True)
-        user_agent: "browser" for real browser UA, "bot" for bot UA, or custom string
-        summarize: Whether to summarize large content (default: False, GET only)
-        summarize_max_length: Max length for summarized content (default: 8000 chars)
-        focus_query: Optional query to focus summarization on relevant sections
-
-    Returns:
-        Dictionary containing:
-        - success: Whether the request succeeded
-        - url: The final URL after redirects
-        - status_code: HTTP status code
-        - content: Page content (markdown for HTML, parsed JSON for JSON, text otherwise)
-        - content_type: MIME type of the response
-        - content_length: Length of the content in characters
-        - attempts: Number of attempts made
-
-    IMPORTANT: After using this tool:
-    1. Read through the content and extract relevant information
-    2. Synthesize this into a clear, natural language response
-    3. NEVER show raw JSON or markdown to the user unless specifically requested
-
-    Example:
-        fetch_url("https://example.com")  # GET, HTML -> markdown
-        fetch_url("https://api.example.com/data", params={"q": "test"})  # GET, JSON -> parsed
-        fetch_url("https://api.example.com/users", method="POST", data={"name": "John"})
+    GitHub blob URLs are fetched raw; tree and repo URLs return the listing or
+    repo info. `data`: a dict is sent as JSON, a string as-is. `user_agent`:
+    "browser", "bot" or a custom string. `summarize` (GET) shortens a large
+    page, focused by `focus_query`. Returns success, url, status_code, content,
+    content_type. Summarize what you fetched; do not paste raw JSON or markdown.
     """
     method = method.upper()
     timeout = max(1, min(int(timeout), 120))

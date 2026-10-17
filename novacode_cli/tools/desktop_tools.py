@@ -127,27 +127,11 @@ def sleep_desktop(
     force: bool = False,
     delay_seconds: int = DEFAULT_DELAY_SECONDS,
 ) -> str:
-    """Put this desktop to sleep (suspend to RAM, not hibernate and not shutdown).
+    """Suspend this desktop (sleep, not shutdown) to end an overnight session.
 
-    This is how an overnight session ends: the user works late with Nova and wants
-    the machine parked rather than left running until morning. Call it as the last
-    thing you do, and say in your reply that you are doing it, because the screen
-    goes dark a few seconds later. Pass a ``reason`` so the transcript records why.
-
-    Outside the overnight window (23:00-07:00 local) it refuses unless ``force`` is
-    set, so nothing can park a desktop somebody is using in the middle of the day.
-    Set ``force=True`` only when the user asked for it in so many words.
-
-    Args:
-        reason: One short line saying why, e.g. "wrapping up an overnight session".
-        force: Allow a suspend outside the overnight window.
-        delay_seconds: Grace period before the machine sleeps, so the reply that
-            announced it is readable. 0 suspends immediately.
-
-    Returns:
-        What was scheduled, phrased for the transcript. The suspend runs in a
-        detached child, so a refusal can only be reported later, in the log named
-        in the result.
+    Call it last and say so in your reply: the screen goes dark after
+    `delay_seconds`. Outside 23:00-07:00 local it refuses unless `force=True`,
+    which only an explicit user request justifies. `reason`: one short line.
     """
     # Local wall clock, made timezone-aware: the window is about the hour the user
     # sees on their own clock, not UTC.
