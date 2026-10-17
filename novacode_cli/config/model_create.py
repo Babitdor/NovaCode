@@ -1,4 +1,5 @@
 import os
+import re
 
 from langchain_core.language_models import BaseChatModel
 
@@ -131,6 +132,91 @@ def opencode_session_id() -> str:
     return _OPENCODE_SESSION_ID
 
 
+#: Claude model IDs: family, major, minor (``claude-sonnet-5-5``, ``claude-opus-4-8``).
+#: A dated suffix (``claude-sonnet-4-20250514``) is not a minor version.
+_CLAUDE_VERSION = re.compile(r"claude-(opus|sonnet|haiku|fable|mythos)-(\d+)(?:-(\d{1,2}))?(?=-|@|$)")
+
+
+def _claude_takes_adaptive_thinking(model_name: str) -> bool:
+    """Claude 4.6+ and Fable/Mythos think adaptively; ``budget_tokens`` is a 400
+    on Sonnet 5.5, Sonnet 5, Opus 4.7+, Fable and Haiku 5.5. Older IDs
+    (Haiku 4.5, Sonnet 4.5, ``claude-3-*``) still use a token budget."""
+    match = _CLAUDE_VERSION.search(model_name.lower())
+    if match is None:
+        return False
+    family, major, minor = match.group(1), int(match.group(2)), int(match.group(3) or 0)
+    return family in ("fable", "mythos") or (major, minor) >= (4, 6)
+
+
+def anthropic_thinking_kwargs(model_name: str, effort: str | None, budget: int = 0) -> dict:
+    """ChatAnthropic thinking settings for Nova's ``/effort`` (off/low/medium/high).
+
+    Adaptive models get ``effort`` (``output_config.effort``) with adaptive
+    thinking shown as a summary, so Nova's reasoning stream has text. "off" is
+    the lowest effort rather than disabled thinking, which Opus 5.5, Sonnet 5.5
+    and Fable reject. Older models keep ``budget_tokens``, from the configured
+    ``thinking_budget`` or a per-effort default.
+    """
+    level = effort if effort in ("low", "medium", "high") else None
+    if _claude_takes_adaptive_thinking(model_name):
+        if effort == "off":
+            return {"effort": "low"}
+        if level is None:  # "default": the model's own defaults
+            return {}
+        # Opus/Sonnet 4.6 summarize by default; `display` arrived with 4.7.
+        display = {} if re.search(r"-4-6(?!\d)", model_name) else {"display": "summarized"}
+        return {"effort": level, "thinking": {"type": "adaptive", **display}}
+    if not budget and effort and effort != "off":
+        budget = {"low": 2048, "medium": 4096, "high": 16384}.get(effort, 4096)
+    if budget > 0:
+        return {"thinking": {"type": "enabled", "budget_tokens": budget}}
+    return {}
+
+
+def openai_reasoning_kwargs(model_name: str, effort: str | None) -> dict:
+    """``reasoning_effort`` for OpenAI reasoning models (o-series, GPT-5 and later).
+
+    langchain-openai sends it as ``reasoning.effort`` on the Responses API.
+    Models without reasoning (gpt-4o, gpt-4.1, ``*-chat``) and o1-mini/o1-preview
+    reject it. "none" and "minimal" are not accepted everywhere (GPT-6 Astra,
+    GPT-6.1 Sol), so "off" is "low", which every reasoning model takes.
+    """
+    name = model_name.lower().rsplit("/", 1)[-1]
+    reasoning = re.match(r"(o\d|gpt-([5-9]|\d{2}))", name) and "chat" not in name
+    if not reasoning or name.startswith(("o1-mini", "o1-preview")):
+        return {}
+    if effort == "off":
+        return {"reasoning_effort": "low"}
+    return {"reasoning_effort": effort} if effort in ("low", "medium", "high") else {}
+
+
+def google_thinking_kwargs(model_name: str, effort: str | None) -> dict:
+    """Gemini thinking: ``thinking_level`` on 3.x and later, ``thinking_budget`` on 2.5.
+
+    Sending the other one is an error, and 2.0 has no thinking. Gemini 3 Pro
+    takes only low/high; "off" is "low" on 3.x (3 Pro and 3.1 Pro cannot turn
+    thinking off), a budget of 0 on 2.5 Flash and the 128 minimum on 2.5 Pro.
+    2.5 budgets top out at 24,576 (Flash) and 32,768 (Pro).
+    """
+    name = model_name.lower().rsplit("/", 1)[-1]
+    match = re.search(r"gemini-(\d+)(?:\.(\d+))?", name)
+    if match is None or effort not in ("off", "low", "medium", "high"):
+        return {}
+    version = (int(match.group(1)), int(match.group(2) or 0))
+    if version >= (3, 0):
+        level = "low" if effort == "off" else effort
+        if level == "medium" and "gemini-3-pro" in name:
+            level = "high"
+        return {"thinking_level": level, "include_thoughts": True}
+    if version == (2, 5):
+        pro = "pro" in name
+        if effort == "off":
+            return {"thinking_budget": 128 if pro else 0}
+        budget = {"low": 1024, "medium": 8192, "high": 32768 if pro else 24576}[effort]
+        return {"thinking_budget": budget, "include_thoughts": True}
+    return {}
+
+
 def build_chat_model(provider: str, model_name: str) -> BaseChatModel:
     """Build a provider model, attaching local diagnostics only when requested."""
     model = _build_chat_model(provider, model_name)
@@ -237,9 +323,7 @@ def _build_chat_model(provider: str, model_name: str) -> BaseChatModel:
         # that actually carry the field.
         apply_openai_reasoning_content_patch()
 
-        openai_kwargs: dict = {}
-        if effort and effort != "off" and ("o1" in model_name or "o3" in model_name):
-            openai_kwargs["reasoning_effort"] = effort
+        openai_kwargs: dict = openai_reasoning_kwargs(model_name, effort)
         if provider == "openrouter":
             # OpenRouter is OpenAI-compatible: same client, custom base URL + key.
             from novacode_cli.config.model_manager import OPENROUTER_BASE_URL
@@ -403,19 +487,10 @@ def _build_chat_model(provider: str, model_name: str) -> BaseChatModel:
     if provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
 
-        thinking_kwargs: dict = {}
         thinking_budget = nova_config.get("thinking_budget", 0) or int(
             os.environ.get("Nova_THINKING_BUDGET", "0")
         )
-        if not thinking_budget and effort and effort != "off":
-            budget_map = {"low": 2048, "medium": 4096, "high": 16384}
-            thinking_budget = budget_map.get(effort, 4096)
-
-        if thinking_budget and thinking_budget > 0:
-            thinking_kwargs["thinking"] = {
-                "type": "enabled",
-                "budget_tokens": int(thinking_budget),
-            }
+        thinking_kwargs = anthropic_thinking_kwargs(model_name, effort, int(thinking_budget or 0))
 
         return ChatAnthropic(
             model_name=model_name,
@@ -448,13 +523,7 @@ def _build_chat_model(provider: str, model_name: str) -> BaseChatModel:
                 vertexai=False,
                 base_url="https://generativelanguage.googleapis.com/",
             )
-        if effort and effort != "off":
-            if "gemini-2.5" in model_name or "gemini-2.0" in model_name:
-                budget_map = {"low": 2048, "medium": 8192, "high": 32768}
-                google_kwargs["thinking_budget"] = budget_map.get(effort, 8192)
-            else:
-                google_kwargs["thinking_level"] = effort
-            google_kwargs["include_thoughts"] = True
+        google_kwargs.update(google_thinking_kwargs(model_name, effort))
 
         model = ChatGoogleGenerativeAI(
             model=model_name,
