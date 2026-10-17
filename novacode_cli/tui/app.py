@@ -5393,6 +5393,14 @@ class NovaApp(App):
             await self._replay_history_inner()
         finally:
             self._replaying = False
+        # Restarted by /update's "Update now" in the middle of a turn: pick it up.
+        from novacode_cli.updates import CONTINUE_ENV
+
+        if os.environ.pop(CONTINUE_ENV, None):
+            self._dispatch(
+                "Nova was restarted to install an update while you were working. "
+                "Continue the task where you left off."
+            )
 
     async def _replay_history_inner(self) -> None:
         from novacode_cli.session.imported_context import MESSAGE_ID, ImportedContext
@@ -13760,6 +13768,40 @@ class NovaApp(App):
         from novacode_cli.tui.screens import UpdateScreen
 
         self.push_screen(UpdateScreen())
+
+    async def _update_and_restart(self) -> None:
+        """/update's "Update now": save, close the TUI, then update and come back.
+
+        The install itself runs after Nova exits (``updates.restart_after_update``,
+        called from ``main``), in this terminal with ``nova update``'s progress,
+        and Nova restarts into this session. A running turn is stopped first and
+        continued after the restart.
+        """
+        from novacode_cli import updates
+
+        running = self._turn_running()
+        if running:
+            choice = await self.push_screen_wait(
+                PickScreen(
+                    "Nova is working on a turn",
+                    ["Stop it, update, and continue it after the restart", "Cancel"],
+                    hint="The session is saved first · Enter choose · Esc cancel",
+                )
+            )
+            if choice != 0:
+                return
+            await self._stop_main_turn()
+            for _ in range(100):  # the cancel lands within a step
+                if not self._turn_running():
+                    break
+                await asyncio.sleep(0.05)
+        self._set_status("saving the session before the update…")
+        await self._save_session(pane=getattr(self, "_root_pane", None))
+        session_id = getattr(self.session_state, "session_id", None)
+        manager = self.session_manager
+        saved = bool(session_id and manager and manager.load_session_meta(session_id))
+        updates.restart_request = {"session": session_id if saved else None, "continue": running}
+        self.exit()
 
     async def _run_compact(self, text: str) -> None:
         """Compact the conversation natively (spinner + result component)."""

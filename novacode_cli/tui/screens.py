@@ -2558,6 +2558,7 @@ class UpdateScreen(ModalScreen[None]):
                 yield Static("Contacting the update source", id="update-detail")
                 yield Static("", id="update-command")
             with Horizontal(id="modal-buttons"):
+                yield Button("Update now", id="update-install", variant="success", disabled=True)
                 yield Button("Check again", id="update-retry", disabled=True)
                 yield Button("View more", id="update-changelog", disabled=True)
                 yield Button("Close", id="close", variant="primary")
@@ -2589,9 +2590,13 @@ class UpdateScreen(ModalScreen[None]):
                 detail = Text(f"Installed  {status.current[:12] or 'Unknown'}\nLatest     {status.latest[:12]}")
                 if status.release_version:
                     detail.append(f"\nRelease    {status.release_version}")
-                command = "Exit Nova, then run in your terminal:\n\nnova update"
+                command = (
+                    "Update now installs it in this terminal, restarts Nova and "
+                    "reopens this session.\n\nOr exit Nova and run: nova update"
+                )
                 self.app._notified_nova_update = status.latest
                 self.query_one("#update-changelog", Button).disabled = False
+                self.query_one("#update-install", Button).disabled = False
             else:
                 title, color = "NovaCode is up to date.", "green"
                 detail = Text(f"Installed  {status.current[:12] or 'Current release'}")
@@ -2606,7 +2611,10 @@ class UpdateScreen(ModalScreen[None]):
             retry.disabled = False
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "update-retry":
+        if event.button.id == "update-install":
+            self.dismiss(None)
+            self.app.run_worker(self.app._update_and_restart(), group="update-restart", exclusive=True)
+        elif event.button.id == "update-retry":
             self.check_update()
         elif event.button.id == "update-changelog":
             from novacode_cli.tui.update_notice import ChangelogScreen

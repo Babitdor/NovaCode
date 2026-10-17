@@ -351,6 +351,13 @@ def _pip_command() -> list[str]:
     _fail("Install pip in this environment or install uv to update Nova.")
 
 
+#: Set by the TUI's "Update now": once Nova has exited, update in this terminal
+#: and start Nova again in this session (``restart_after_update``).
+restart_request: dict | None = None
+#: Tells the restarted TUI to continue the turn the update interrupted.
+CONTINUE_ENV = "NOVA_CONTINUE_AFTER_UPDATE"
+
+
 def update_main(arguments: list[str]) -> int:
     """Handle nova update independently of onboarding and model credentials."""
     parser = argparse.ArgumentParser(
@@ -358,40 +365,46 @@ def update_main(arguments: list[str]) -> int:
     )
     parser.add_argument("--check", action="store_true", help="Check without installing")
     args = parser.parse_args(arguments)
+    if not args.check:
+        return _update_with_progress()
+    status = check_for_update(force=True)
+    if status.error:
+        print(f"Could not check for updates: {status.error}", file=sys.stderr)
+        return 1
+    print(
+        f"Update available: {status.current[:12]} → {status.latest[:12]}. Run nova update."
+        if status.available
+        else "NovaCode is up to date."
+    )
+    return 0
+
+
+def _update_with_progress(*, restarting: bool = False) -> int:
+    """Check, install and show the result in the terminal; return an exit code."""
+    hint = "Restarting Nova…" if restarting else "Run nova to start the new version."
     try:
-        if args.check:
+        old = detect_installation().version
+        with Progress() as progress:
+            progress.stage("Checking for updates")
             status = check_for_update(force=True)
-            if status.error:
-                print(f"Could not check for updates: {status.error}", file=sys.stderr)
-                return 1
-            print(
-                f"Update available: {status.current[:12]} → {status.latest[:12]}. Run nova update."
-                if status.available
-                else "NovaCode is up to date."
+            if not status.error and not status.available:
+                progress.done("already on the latest")
+                print("\n  NovaCode is up to date.\n")
+                return 0
+            progress.done(
+                "could not check, updating anyway" if status.error
+                else f"{status.current[:12]} → {status.latest[:12]}"
+            )
+            changed = install_update(progress)
+        if changed:
+            from novacode_cli.brand import wordmark
+
+            show_success(
+                old, installed_version(sys.executable), wordmark(),
+                note=status.release_title, hint=hint,
             )
         else:
-            old = detect_installation().version
-            with Progress() as progress:
-                progress.stage("Checking for updates")
-                status = check_for_update(force=True)
-                if not status.error and not status.available:
-                    progress.done("already on the latest")
-                    print("\n  NovaCode is up to date.\n")
-                    return 0
-                progress.done(
-                    "could not check, updating anyway" if status.error
-                    else f"{status.current[:12]} → {status.latest[:12]}"
-                )
-                changed = install_update(progress)
-            if changed:
-                from novacode_cli.brand import wordmark
-
-                show_success(
-                    old, installed_version(sys.executable), wordmark(),
-                    note=status.release_title,
-                )
-            else:
-                print("\n  NovaCode is up to date.\n")
+            print("\n  NovaCode is up to date.\n")
         return 0  # noqa: TRY300
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         log = getattr(error, "output", None)
@@ -403,3 +416,45 @@ def update_main(arguments: list[str]) -> int:
         return 1
     except KeyboardInterrupt:
         return 130
+
+
+def restart_after_update() -> int:
+    """After the TUI's "Update now": update here, then start Nova in the same session.
+
+    Runs once Nova has exited, in the same terminal. A failed update still
+    restarts (the current version) so the user is never left at a bare prompt.
+    """
+    request = restart_request or {}
+    code = _update_with_progress(restarting=True)
+    if code == 130:
+        return code
+    if code:
+        print("\nRestarting the current version…", file=sys.stderr)
+    return _relaunch(request.get("session"), continue_turn=bool(request.get("continue")))
+
+
+def _relaunch(session_id: str | None, *, continue_turn: bool) -> int:
+    """Start Nova again: ``python -m novacode_cli --continue <session>``.
+
+    The same interpreter, so the same environment and its freshly installed
+    code, with no launcher path to find. POSIX replaces this process; Windows
+    cannot without returning the console to the shell (exec there is spawn and
+    exit), so this process waits for the new one and passes on its exit code.
+    """
+    command = [sys.executable, "-m", "novacode_cli"]
+    if session_id:
+        command += ["--continue", session_id]
+    env = dict(os.environ)
+    if continue_turn:
+        env[CONTINUE_ENV] = "1"
+    for stream in (sys.stdout, sys.stderr):
+        with suppress(OSError, ValueError):
+            stream.flush()
+    if os.name != "nt":
+        os.execve(sys.executable, command, env)
+    process = subprocess.Popen(command, env=env)
+    while True:
+        try:
+            return process.wait()
+        except KeyboardInterrupt:  # Ctrl+C reaches both; the new Nova handles it
+            continue

@@ -194,7 +194,13 @@ def installed_version(python: str | None = None) -> str:
 
 
 def show_success(
-    old: str, new: str, logo: str = "NOVA", *, note: str = "", stream: TextIO | None = None
+    old: str,
+    new: str,
+    logo: str = "NOVA",
+    *,
+    note: str = "",
+    hint: str = "Run nova to start the new version.",
+    stream: TextIO | None = None,
 ) -> None:
     """The finish screen: the logo sweeps in, then what changed and what to do next.
 
@@ -210,7 +216,7 @@ def show_success(
     lines = [
         ("check", f"NovaCode updated   {change}"),
         ("note", note),
-        ("hint", "Run nova to start the new version."),
+        ("hint", hint),
     ]
     print(file=out)
     for row in rows:

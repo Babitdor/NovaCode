@@ -1995,6 +1995,12 @@ def cli_main() -> None:
                     _std.flush()
                 except (ValueError, OSError):
                     pass
+            # /update's "Update now": Nova has shut down cleanly; update in this
+            # terminal and start again in the same session.
+            from novacode_cli import updates
+
+            if updates.restart_request is not None:
+                os._exit(updates.restart_after_update())
             os._exit(getattr(session_state, "headless_exit_code", 0))
     except KeyboardInterrupt:
         # Clean exit on Ctrl+C - suppress ugly traceback
