@@ -27,6 +27,11 @@ if TYPE_CHECKING:
 
 
 MAX_WAIT_SECONDS = 60
+#: Steps that may wait since the user's last message (each at most 60 s). The
+#: prompts once allowed five minutes of waits, during which the user heard
+#: nothing; finished work resumes the agent anyway (_continue_after_task,
+#: _auto_report_async_done), so beyond this the agent reports and ends its turn.
+MAX_WAIT_STEPS = 2
 POLL_SECONDS = 0.5
 MAX_OUTPUT_CHARS = 6000
 logger = logging.getLogger(__name__)
@@ -47,7 +52,29 @@ _waiters_lock = threading.Lock()
 _waiter_ids = itertools.count(1)
 _observers: list[Callable[[], None]] = []
 _interrupts: dict[int, tuple[str, Callable[[], None]]] = {}
+#: Conversations whose wait the user's input released: the next wait call is
+#: refused until the agent has replied (the docstring alone was ignored).
+_released: set[str] = set()
 _WaitResult = TypeVar("_WaitResult")
+
+_STOP_WAITING = (
+    "Do not wait again now. Tell the user the current status and the task ID, then "
+    "end your turn: you are resumed automatically when the task finishes."
+)
+
+
+def _waiting_steps(messages: list) -> int:
+    """Assistant steps that called wait_for_task since the user's last message."""
+    steps = 0
+    for message in reversed(messages or []):
+        kind = getattr(message, "type", "")
+        if kind == "human":
+            break
+        if kind == "ai" and any(
+            call.get("name") == "wait_for_task" for call in getattr(message, "tool_calls", None) or []
+        ):
+            steps += 1
+    return steps
 
 
 def interrupt_task_waits(thread_id: str) -> None:
@@ -86,6 +113,7 @@ async def _interruptible_wait(
         done, _ = await asyncio.wait((task, interrupted), return_when=asyncio.FIRST_COMPLETED)
         if task in done:
             return task.result()
+        _released.add(thread_id)
         return None
     finally:
         with _waiters_lock:
@@ -250,7 +278,9 @@ def _remote_result(task: dict, result: dict, runtime: ToolRuntime) -> Command:
         updated["last_updated_at"] = now
     return Command(
         update={
-            "messages": [ToolMessage(json.dumps(result), tool_call_id=runtime.tool_call_id)],
+            "messages": [
+                ToolMessage(json.dumps(result), tool_call_id=runtime.tool_call_id, name="wait_for_task")
+            ],
             "async_tasks": {task["task_id"]: updated},
         }
     )
@@ -263,9 +293,10 @@ async def wait_for_task(
     """Wait up to 60 seconds for a shell job or background subagent to finish.
 
     Returns its current status and result/output, even when the wait times out.
-    New user input releases the wait so you can respond while the task continues.
-    Address that input before waiting again.
-    Call again to keep waiting. Foreground commands already wait automatically.
+    At most two steps may wait per user message; after that, and after new user
+    input releases a wait, the call returns at once: tell the user the status
+    and end your turn. Finished tasks resume you automatically.
+    Foreground commands already wait automatically.
 
     Args:
         task_id: Shell task ID (task_42 or 42) or exact background subagent ID.
@@ -276,6 +307,23 @@ async def wait_for_task(
     configurable = (getattr(runtime, "config", None) or {}).get("configurable", {})
     thread_id = str(configurable.get("thread_id") or "")
     from novacode_cli.shell.jobs import get_registry
+
+    state = getattr(runtime, "state", None) or {}
+    refusal = None
+    if thread_id in _released:
+        _released.discard(thread_id)
+        refusal = "The user sent a message while you were waiting: reply to it first."
+    elif _waiting_steps(state.get("messages") or []) > MAX_WAIT_STEPS:
+        refusal = f"You have waited {MAX_WAIT_STEPS} times since the user's last message."
+    if refusal is not None:
+        job = get_registry().resolve(task_id)
+        task = (state.get("async_tasks") or {}).get(task_id.strip())
+        status = (
+            _shell_result(job) if job is not None
+            else f"{task_id}: {task.get('status', 'running')}" if task
+            else f"{task_id}: unknown task"
+        )
+        return f"{status}\n{refusal} {_STOP_WAITING}"
 
     if get_registry().resolve(task_id) is not None or task_id.strip().lower().startswith("task_"):
         shell_result = await _interruptible_wait(_wait_shell(task_id, seconds), thread_id)

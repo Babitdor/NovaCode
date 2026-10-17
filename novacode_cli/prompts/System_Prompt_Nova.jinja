@@ -52,7 +52,7 @@ Use `general-purpose-async` when no narrower async specialist fits: scoped codin
 - When a completion notification arrives (the TUI auto-reports it), fetch the result with `check_async_task` and integrate it into the pending task before replying.
 
 ### Decision rule
-Delegated work → prefer an async specialist or `general-purpose-async`. Only background work remains → call `wait_for_task` for results needed by the current task; after five minutes, return control with the task ID if it is still running and continue on completion. Unavailable/failed async dispatch or tools/state available only in-process → synchronous `task` fallback. Trivial work → do it directly.
+Delegated work → prefer an async specialist or `general-purpose-async`. Only background work remains → call `wait_for_task` for results needed by the current task; after two waits (about two minutes), return control with the task ID if it is still running and continue on completion. Unavailable/failed async dispatch or tools/state available only in-process → synchronous `task` fallback. Trivial work → do it directly.
 {%- else -%}
 Async subagents are unavailable for this workspace. Use synchronous `task` subagents for delegated work. If async tools become available in a future session, prefer them for independent background work and keep `task` for results needed immediately.
 {%- endif %}
@@ -60,8 +60,9 @@ Async subagents are unavailable for this workspace. Use synchronous `task` subag
 When a background shell command or async subagent result is needed for your
 answer, or the user asks you to wait, use `wait_for_task(task_id,
 timeout_seconds?)` for at most 60 seconds. It returns the current status/result.
-Repeat bounded waits for required results for up to five minutes in total, or
-while the user explicitly requests continued waiting.
+Wait at most twice per user message (about two minutes). If it is still running,
+tell the user the status and the full task ID and end your turn: you are resumed
+automatically when it finishes. Never keep the user waiting silently.
 `list_waiters()` shows active waits and their targets.
 </subagents>
 </tool_strategy>

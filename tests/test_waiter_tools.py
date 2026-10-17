@@ -11,6 +11,13 @@ from novacode_cli.shell import jobs
 from novacode_cli.tools import waiter_tools
 
 
+@pytest.fixture(autouse=True)
+def _no_released_waits():
+    waiter_tools._released.clear()
+    yield
+    waiter_tools._released.clear()
+
+
 async def test_user_input_releases_only_its_session_wait(monkeypatch: pytest.MonkeyPatch):
     registry = jobs.JobRegistry()
     monkeypatch.setattr(jobs, "get_registry", lambda: registry)
@@ -342,3 +349,75 @@ async def test_scripted_agent_can_call_waiter_with_injected_runtime(
     contents = [str(message.content) for message in result["messages"]]
     assert any("done" in content and "passed" in content for content in contents)
     assert contents[-1] == "The command passed."
+
+
+# -- the agent answers the user instead of waiting on and on -------------------
+
+
+def _waits(n: int) -> list:
+    """The user's message, then n steps that each called wait_for_task."""
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    history = [HumanMessage("run the build in the background")]
+    for i in range(n):
+        call = {"id": f"w{i}", "name": "wait_for_task", "args": {}, "type": "tool_call"}
+        history += [AIMessage("", tool_calls=[call]), ToolMessage("running", tool_call_id=f"w{i}")]
+    return history
+
+
+def _runtime(messages: list, thread: str = "c") -> SimpleNamespace:
+    return SimpleNamespace(
+        state={"messages": messages}, tool_call_id="w", config={"configurable": {"thread_id": thread}}
+    )
+
+
+async def test_a_third_waiting_step_is_refused_with_the_status(monkeypatch: pytest.MonkeyPatch):
+    registry = jobs.JobRegistry()
+    monkeypatch.setattr(jobs, "get_registry", lambda: registry)
+    job = registry.add("cargo build", "shell")
+    result = await asyncio.wait_for(
+        waiter_tools.wait_for_task.coroutine(job.task_id, _runtime(_waits(3)), timeout_seconds=60), 2
+    )
+    assert job.task_id in result and "running" in result
+    assert "end your turn" in result and "resumed automatically" in result
+    assert job.status == "running" and not job.kill.is_set(), "the task itself keeps going"
+
+
+async def test_two_waits_are_still_allowed(monkeypatch: pytest.MonkeyPatch):
+    registry = jobs.JobRegistry()
+    monkeypatch.setattr(jobs, "get_registry", lambda: registry)
+    job = registry.add("cargo build", "shell")
+    waiting = asyncio.create_task(
+        waiter_tools.wait_for_task.coroutine(job.task_id, _runtime(_waits(2)), timeout_seconds=5)
+    )
+    await asyncio.sleep(0.05)
+    registry.complete(job.id, 0, "ok\n")
+    assert "exit 0" in await asyncio.wait_for(waiting, 2)
+
+
+async def test_after_the_user_releases_a_wait_the_agent_must_reply_first(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    registry = jobs.JobRegistry()
+    monkeypatch.setattr(jobs, "get_registry", lambda: registry)
+    job = registry.add("cargo build", "shell")
+    runtime = _runtime(_waits(1), thread="chat-9")
+    waiting = asyncio.create_task(
+        waiter_tools.wait_for_task.coroutine(job.task_id, runtime, timeout_seconds=60)
+    )
+    for _ in range(20):
+        if waiter_tools.active_waiters():
+            break
+        await asyncio.sleep(0)
+    waiter_tools.interrupt_task_waits("chat-9")
+    assert "user input" in (await asyncio.wait_for(waiting, 1)).lower()
+    again = await asyncio.wait_for(
+        waiter_tools.wait_for_task.coroutine(job.task_id, runtime, timeout_seconds=60), 1
+    )
+    assert "reply to it first" in again, "refused at once instead of waiting another minute"
+    waiting = asyncio.create_task(
+        waiter_tools.wait_for_task.coroutine(job.task_id, runtime, timeout_seconds=5)
+    )
+    await asyncio.sleep(0.05)
+    registry.complete(job.id, 0, "ok\n")
+    assert "exit 0" in await asyncio.wait_for(waiting, 2), "after replying, waiting works again"
