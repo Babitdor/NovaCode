@@ -26,12 +26,14 @@ if TYPE_CHECKING:
     from novacode_cli.shell.jobs import BackgroundJob
 
 
-MAX_WAIT_SECONDS = 60
-#: Steps that may wait since the user's last message (each at most 60 s). The
-#: prompts once allowed five minutes of waits, during which the user heard
-#: nothing; finished work resumes the agent anyway (_continue_after_task,
-#: _auto_report_async_done), so beyond this the agent reports and ends its turn.
-MAX_WAIT_STEPS = 2
+#: A wait is a short look, not a way to spend the turn: finished work resumes
+#: the agent on its own (_continue_after_task, _auto_report_async_done), as in
+#: Claude Code, so the agent reports and ends its turn instead of sitting in a
+#: wait the user cannot talk through. 60 s waits, twice, still left the user
+#: watching "running wait_for_task" for minutes.
+MAX_WAIT_SECONDS = 10
+#: Steps that may wait since the user's last message.
+MAX_WAIT_STEPS = 1
 POLL_SECONDS = 0.5
 MAX_OUTPUT_CHARS = 6000
 logger = logging.getLogger(__name__)
@@ -290,18 +292,18 @@ def _remote_result(task: dict, result: dict, runtime: ToolRuntime) -> Command:
 async def wait_for_task(
     task_id: str, runtime: ToolRuntime, timeout_seconds: int = 30
 ) -> str | Command:
-    """Wait up to 60 seconds for a shell job or background subagent to finish.
+    """Wait up to 10 seconds for a shell job or background subagent to finish.
 
     Returns its current status and result/output, even when the wait times out.
-    At most two steps may wait per user message; after that, and after new user
-    input releases a wait, the call returns at once: tell the user the status
-    and end your turn. Finished tasks resume you automatically.
+    One wait per user message: if the task is still running, tell the user its
+    status and task ID and end your turn. You are resumed automatically, with
+    its result, when it finishes. New user input also ends a wait.
     Foreground commands already wait automatically.
 
     Args:
         task_id: Shell task ID (task_42 or 42) or exact background subagent ID.
         runtime: Injected tool runtime containing tracked background subagents.
-        timeout_seconds: Maximum wait for this call, from 1 to 60 seconds.
+        timeout_seconds: Maximum wait for this call, from 1 to 10 seconds.
     """
     seconds = _bounded_timeout(timeout_seconds)
     configurable = (getattr(runtime, "config", None) or {}).get("configurable", {})
@@ -314,7 +316,7 @@ async def wait_for_task(
         _released.discard(thread_id)
         refusal = "The user sent a message while you were waiting: reply to it first."
     elif _waiting_steps(state.get("messages") or []) > MAX_WAIT_STEPS:
-        refusal = f"You have waited {MAX_WAIT_STEPS} times since the user's last message."
+        refusal = "You already waited since the user's last message."
     if refusal is not None:
         job = get_registry().resolve(task_id)
         task = (state.get("async_tasks") or {}).get(task_id.strip())

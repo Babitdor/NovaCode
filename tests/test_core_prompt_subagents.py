@@ -42,5 +42,5 @@ def test_core_prompt_has_artifacts_block():
 def test_async_prompt_collects_required_results_before_completion():
     out = render_template("core_agent_system.jinja", has_async_agents=True)
     assert "wait_for_task(task_id)" in out
-    assert "two waits per user message" in out and "end your turn" in out
+    assert "short look" in out and "end your" in out
     assert "claim its work is finished" in out

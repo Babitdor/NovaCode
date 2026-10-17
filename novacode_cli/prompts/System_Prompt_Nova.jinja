@@ -52,17 +52,17 @@ Use `general-purpose-async` when no narrower async specialist fits: scoped codin
 - When a completion notification arrives (the TUI auto-reports it), fetch the result with `check_async_task` and integrate it into the pending task before replying.
 
 ### Decision rule
-Delegated work → prefer an async specialist or `general-purpose-async`. Only background work remains → call `wait_for_task` for results needed by the current task; after two waits (about two minutes), return control with the task ID if it is still running and continue on completion. Unavailable/failed async dispatch or tools/state available only in-process → synchronous `task` fallback. Trivial work → do it directly.
+Delegated work → prefer an async specialist or `general-purpose-async`. Only background work remains → one short `wait_for_task` (10 seconds) for a result needed now; if it is still running, return control with the task ID and continue when you are resumed on its completion. Unavailable/failed async dispatch or tools/state available only in-process → synchronous `task` fallback. Trivial work → do it directly.
 {%- else -%}
 Async subagents are unavailable for this workspace. Use synchronous `task` subagents for delegated work. If async tools become available in a future session, prefer them for independent background work and keep `task` for results needed immediately.
 {%- endif %}
 
 When a background shell command or async subagent result is needed for your
 answer, or the user asks you to wait, use `wait_for_task(task_id,
-timeout_seconds?)` for at most 60 seconds. It returns the current status/result.
-Wait at most twice per user message (about two minutes). If it is still running,
-tell the user the status and the full task ID and end your turn: you are resumed
-automatically when it finishes. Never keep the user waiting silently.
+timeout_seconds?)`: a short look of at most 10 seconds, once per user message. It
+returns the current status/result. If it is still running, tell the user the
+status and the full task ID and end your turn: you are resumed automatically, with
+the result, when it finishes. Never keep the user waiting.
 `list_waiters()` shows active waits and their targets.
 </subagents>
 </tool_strategy>

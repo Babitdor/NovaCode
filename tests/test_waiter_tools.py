@@ -303,7 +303,9 @@ async def test_tui_indicator_shows_waiter_count_and_target():
         bar = app.query_one("#tasks-bar", Static)
         with waiter_tools._tracking("task_42", "shell command"):
             assert "active" in bar.classes
-            assert "1 waiting: task_42" in bar.render().plain
+            shown = bar.render().plain
+            assert "waiting for task_42 0s of 10s" in shown, "the wait's own clock"
+            assert "type to interrupt" in shown, "and the way out"
             assert "shell command: task_42" in str(bar.tooltip)
         assert "active" not in bar.classes
 
@@ -371,24 +373,28 @@ def _runtime(messages: list, thread: str = "c") -> SimpleNamespace:
     )
 
 
-async def test_a_third_waiting_step_is_refused_with_the_status(monkeypatch: pytest.MonkeyPatch):
+async def test_a_second_waiting_step_is_refused_with_the_status(monkeypatch: pytest.MonkeyPatch):
     registry = jobs.JobRegistry()
     monkeypatch.setattr(jobs, "get_registry", lambda: registry)
     job = registry.add("cargo build", "shell")
     result = await asyncio.wait_for(
-        waiter_tools.wait_for_task.coroutine(job.task_id, _runtime(_waits(3)), timeout_seconds=60), 2
+        waiter_tools.wait_for_task.coroutine(job.task_id, _runtime(_waits(2)), timeout_seconds=60), 2
     )
     assert job.task_id in result and "running" in result
     assert "end your turn" in result and "resumed automatically" in result
     assert job.status == "running" and not job.kill.is_set(), "the task itself keeps going"
 
 
-async def test_two_waits_are_still_allowed(monkeypatch: pytest.MonkeyPatch):
+def test_a_wait_is_a_short_look():
+    assert waiter_tools._bounded_timeout(60) == 10 and waiter_tools._bounded_timeout(0) == 1
+
+
+async def test_one_wait_is_allowed(monkeypatch: pytest.MonkeyPatch):
     registry = jobs.JobRegistry()
     monkeypatch.setattr(jobs, "get_registry", lambda: registry)
     job = registry.add("cargo build", "shell")
     waiting = asyncio.create_task(
-        waiter_tools.wait_for_task.coroutine(job.task_id, _runtime(_waits(2)), timeout_seconds=5)
+        waiter_tools.wait_for_task.coroutine(job.task_id, _runtime(_waits(1)), timeout_seconds=5)
     )
     await asyncio.sleep(0.05)
     registry.complete(job.id, 0, "ok\n")

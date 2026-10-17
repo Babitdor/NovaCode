@@ -8761,10 +8761,18 @@ class NovaApp(App):
             if total > shown:
                 t.append(f"  +{total - shown} more", style=pal.dim)
         if waiters:
-            targets = ", ".join(item.target for item in waiters[:2])
+            from novacode_cli.tools.waiter_tools import MAX_WAIT_SECONDS
+
+            # The wait's own clock, not the turn's: "556.5s" next to "running
+            # wait_for_task" read as a nine-minute wait. And the way out.
+            now = time.monotonic()
+            targets = ", ".join(
+                f"{item.target} {int(now - item.started_at)}s of {MAX_WAIT_SECONDS}s"
+                for item in waiters[:2]
+            )
             if len(waiters) > 2:
                 targets += f" +{len(waiters) - 2} more"
-            t.append(f"  ⏳ {len(waiters)} waiting: {targets[:70]}", style=pal.accent)
+            t.append(f"  ⏳ waiting for {targets[:70]} · type to interrupt", style=pal.accent)
             bar.tooltip = "Active waiters:\n" + "\n".join(
                 f"{item.kind}: {item.target}" for item in waiters
             )
