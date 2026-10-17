@@ -267,6 +267,12 @@ def art_for(width: int | None = None, version: str | None = None) -> str:
     usable = columns - _TRANSCRIPT_INSET
     if usable >= LOCKUP_WIDTH:
         return "\n" + "\n".join(_lockup_rows(version)) + "\n"
+    if usable >= WORDMARK_WIDTH:
+        # A window that is not full screen: NOVA itself, the portrait dropped.
+        rows = list(WORDMARK_LINES)
+        if version:
+            rows += [" " * WORDMARK_WIDTH, _pad(version_line(version).center(WORDMARK_WIDTH), WORDMARK_WIDTH)]
+        return "\n" + "\n".join(rows) + "\n"
     if usable >= PORTRAIT_WIDTH:
         rows = list(compact_art())
         if version:

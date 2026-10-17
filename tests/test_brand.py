@@ -62,11 +62,14 @@ def test_wide_art_is_the_lockup_and_narrow_art_uses_the_compact_mark():
         portrait_end = max(i for i, ch in enumerate(row) if "\u2800" <= ch <= "\u28ff")
         assert any(ch in box for ch in row[portrait_end:]), "wordmark missing"
 
-    # Below the lockup's width the portrait survives; the one-line mark is last.
+    # Below the lockup's width (a window that is not full screen) the NOVA
+    # wordmark stays and the portrait goes; then the portrait; the mark is last.
     assert brand.compact_mark() not in brand.art_for(200)
     assert brand.compact_mark() in brand.art_for(20)
     narrow = brand.art_for(50)
-    assert any("\u2800" <= ch <= "\u28ff" for ch in narrow), "portrait dropped at 50 cols"
+    assert "\u2588\u2557" in narrow, "the NOVA wordmark dropped at 50 cols"
+    assert not any("\u2800" <= ch <= "\u28ff" for ch in narrow)
+    assert any("\u2800" <= ch <= "\u28ff" for ch in brand.art_for(40)), "portrait at 40 cols"
 
 
 def test_the_lockup_does_not_repeat_the_name_it_draws():
@@ -82,9 +85,10 @@ def test_the_lockup_does_not_repeat_the_name_it_draws():
     assert "NOVA" not in wide, "the lockup repeats its own name in text"
     assert "v9.9.9" in wide
 
-    # The narrow tiers still spell the name in text -- they have no wordmark.
+    # The tiers without a wordmark spell the name in text; the wordmark tier does not.
     assert "NOVA" in brand.art_for(20)
-    assert "NOVA" in brand.art_for(50)
+    assert "NOVA" in brand.art_for(40)
+    assert "NOVA" not in brand.art_for(50, "9.9.9") and "v9.9.9" in brand.art_for(50, "9.9.9")
 
 
 def test_version_line_is_just_the_version():

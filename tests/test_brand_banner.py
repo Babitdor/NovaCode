@@ -133,14 +133,15 @@ def test_a_versionless_lockup_is_the_same_shape_as_a_versioned_one() -> None:
     assert "9.9.9" not in brand.art_for(200)
 
 
-def test_narrow_tiers_keep_the_portrait_and_fit() -> None:
-    """Below the lockup's width the wordmark goes, but not the portrait."""
-    art = get_responsive_ascii(width=59)
-    rows = _rows(art)
-    assert any(any("\u2800" <= ch <= "\u28ff" for ch in row) for row in rows), (
-        "the portrait was dropped from the narrow tier"
-    )
+def test_narrow_tiers_keep_the_name_then_the_portrait_and_fit() -> None:
+    """A window that is not full screen keeps the NOVA wordmark (the portrait
+    goes); narrower still, the portrait; every tier fits its width."""
+    rows = _rows(get_responsive_ascii(width=59))
+    assert any("\u2588\u2557" in row for row in rows), "the NOVA wordmark was dropped"
     assert max(cell_len(row) for row in rows) <= 59 - 4
+    rows = _rows(get_responsive_ascii(width=40))
+    assert any(any("\u2800" <= ch <= "\u28ff" for ch in row) for row in rows)
+    assert max(cell_len(row) for row in rows) <= 40 - 4
 
 
 def test_too_narrow_for_anything_yields_the_compact_mark() -> None:

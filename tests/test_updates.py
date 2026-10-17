@@ -125,7 +125,7 @@ def test_update_uses_original_manager(
     monkeypatch.setattr(U, "detect_installation", lambda: U.Installation("1.0", kind))
     monkeypatch.setattr(U.shutil, "which", lambda _name: "uv")
     monkeypatch.setattr(U, "_pip_command", lambda: ["python", "-m", "pip", "install"])
-    run = Mock()
+    run = Mock(return_value="")
     monkeypatch.setattr(U, "_run", run)
     U.install_update()
     arguments = run.call_args.args[0]
@@ -200,125 +200,6 @@ def test_source_detection_does_not_depend_on_cwd(
     assert all(call.args[0] == tmp_path for call in git.call_args_list)
 
 
-def test_windows_update_hands_off_without_touching_launcher(
-    update_env: Mock,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setattr(U.sys, "platform", "win32")
-    monkeypatch.setattr(U, "detect_installation", lambda: U.Installation("1.0", "uv-tool"))
-    monkeypatch.setattr(U.shutil, "which", lambda _name: "uv")
-    spawn = Mock()
-    run = Mock()
-    monkeypatch.setattr(U, "_start_windows_update", spawn)
-    monkeypatch.setattr(U, "_run", run)
-    assert U.install_update() is True
-    run.assert_not_called()
-    spawn.assert_called_once_with(
-        ["uv", "tool", "upgrade", "novacode-cli", "--reinstall-package", "novacode-cli"]
-    )
-
-
-def test_windows_update_uses_independent_interpreter_and_waits_for_caller(
-    update_env: Mock,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    import json
-
-    monkeypatch.setattr(U.sys, "_base_executable", "base-python.exe")
-    process = Mock()
-    monkeypatch.setattr(U.subprocess, "Popen", process)
-    U._start_windows_update(["uv", "tool", "upgrade", "novacode-cli"])
-    args = process.call_args.args[0]
-    assert args[:2] == ["base-python.exe", "-I"]
-    payload = json.loads(args[-1])
-    assert payload["caller_pid"] == U.os.getpid()
-    assert payload["parent_pid"] == U.os.getppid()
-    assert process.call_args.kwargs["creationflags"] == 0
-    assert process.call_args.kwargs.get("stdout") is None
-    assert process.call_args.kwargs.get("stderr") is None
-    assert not list(tmp_path.glob("*.log"))
-
-
-def test_queued_update_is_not_reported_as_completed(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture,
-) -> None:
-    monkeypatch.setattr(
-        U,
-        "check_for_update",
-        lambda **_kw: U.UpdateStatus(available=True, current="old", latest="new"),
-    )
-    monkeypatch.setattr(U, "install_update", lambda: True)
-    assert U.update_main([]) == 0
-    output = capsys.readouterr().out
-    assert "log" not in output
-    assert "Nova updated" not in output
-
-
-@pytest.mark.parametrize("fails", [False, True])
-def test_external_updater_waits_before_installing_and_records_result(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture,
-    *,
-    fails: bool,
-) -> None:
-    import subprocess
-
-    from novacode_cli import _windows_update as helper
-
-    order = []
-    monkeypatch.setattr(helper, "wait_for_exit", lambda pid, **_kw: order.append(pid))
-    cache = tmp_path / "cache.json"
-    cache.write_text("stale", encoding="utf-8")
-
-    def install(arguments: list[str]) -> bool:
-        assert order == [123, 456]
-        assert arguments == ["uv", "tool", "upgrade", "novacode-cli"]
-        if fails:
-            raise subprocess.CalledProcessError(1, "uv")
-        return True
-
-    monkeypatch.setattr(helper, "run_installer", install)
-    result = helper.main(
-        {
-            "caller_pid": 123,
-            "parent_pid": 456,
-            "command": ["uv", "tool", "upgrade", "novacode-cli"],
-            "cache": str(cache),
-        }
-    )
-    assert result == int(fails)
-    assert cache.exists() == fails
-    assert ("Update failed" if fails else "Update successful.") in capsys.readouterr().out
-
-
-def test_external_updater_never_installs_if_launcher_has_not_exited(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    from novacode_cli import _windows_update as helper
-
-    monkeypatch.setattr(helper, "wait_for_exit", Mock(side_effect=TimeoutError("still running")))
-    installer = Mock()
-    monkeypatch.setattr(helper, "run_installer", installer)
-    assert (
-        helper.main(
-            {
-                "caller_pid": 123,
-                "parent_pid": 456,
-                "command": ["uv"],
-                "cache": str(tmp_path / "cache.json"),
-            }
-        )
-        == 1
-    )
-    installer.assert_not_called()
-
-
 def test_up_to_date_displays_message_without_starting_installer(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture,
@@ -331,53 +212,80 @@ def test_up_to_date_displays_message_without_starting_installer(
     installer = Mock()
     monkeypatch.setattr(U, "install_update", installer)
     assert U.update_main([]) == 0
-    assert capsys.readouterr().out.strip() == "NovaCode is up to date."
+    assert "NovaCode is up to date." in capsys.readouterr().out
     installer.assert_not_called()
 
 
-def test_noop_external_update_displays_up_to_date(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture,
-) -> None:
-    from novacode_cli import _windows_update as helper
+def _windows_tool(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, uv_output: str, *, rewrites: bool):
+    """A uv-tool install on Windows whose launchers live in tmp_path."""
+    scripts, bin_dir = tmp_path / "venv" / "Scripts", tmp_path / "bin"
+    for folder in (scripts, bin_dir):
+        folder.mkdir(parents=True)
+        (folder / "nova.exe").write_bytes(b"old")
+        (folder / "nova.exe.old-1").write_bytes(b"stale")  # from an earlier update
+    monkeypatch.setattr(U.sys, "platform", "win32")
+    monkeypatch.setattr(U.sys, "prefix", str(tmp_path / "venv"))
+    monkeypatch.setattr(U, "detect_installation", lambda: U.Installation("1.0", "uv-tool"))
+    monkeypatch.setattr(U, "_cache_path", lambda: tmp_path / "cache.json")
+    monkeypatch.setattr(U.shutil, "which", lambda _name: "uv")
+    monkeypatch.setattr(U.subprocess, "check_output", lambda *_a, **_kw: f"{bin_dir}\n")
+    entry = Mock(group="console_scripts")
+    entry.name = "nova"
+    monkeypatch.setattr(U.importlib.metadata, "distribution", lambda _name: Mock(entry_points=[entry]))
+    seen = []
 
-    monkeypatch.setattr(helper, "wait_for_exit", Mock())
-    monkeypatch.setattr(helper, "run_installer", lambda _command: False)
-    assert (
-        helper.main(
-            {"caller_pid": 1, "parent_pid": 2, "command": ["uv"], "cache": str(tmp_path / "cache")}
-        )
-        == 0
+    def run(arguments, **_kw):
+        # While uv runs, the running launchers are out of its way.
+        seen.append(sorted(p.name for p in (*scripts.iterdir(), *bin_dir.iterdir())))
+        if rewrites:
+            for folder in (scripts, bin_dir):
+                (folder / "nova.exe").write_bytes(b"new")
+        return uv_output
+
+    monkeypatch.setattr(U, "_run", run)
+    return scripts, bin_dir, seen
+
+
+def test_windows_update_runs_in_the_foreground_with_launchers_moved_aside(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    scripts, bin_dir, seen = _windows_tool(
+        monkeypatch, tmp_path, "Updated novacode-cli v1.0 -> v1.1", rewrites=True
     )
-    output = capsys.readouterr().out
-    assert "NovaCode is up to date." in output
-    assert "Restart Nova" not in output
+    assert U.install_update() is True
+    assert "nova.exe" not in seen[0] and "nova.exe.old-1" not in seen[0], "stale ones removed"
+    for folder in (scripts, bin_dir):
+        assert (folder / "nova.exe").read_bytes() == b"new"
 
 
-@pytest.mark.parametrize(
-    ("output", "exit_code", "changed"),
-    [
-        ("Nothing to upgrade", 0, False),
-        ("Updated novacode-cli", 0, True),
-        ("Nothing to upgrade", 1, False),
-    ],
-)
-def test_installer_output_reports_no_upgrade_only_on_success(
-    output: str, exit_code: int, capsys: pytest.CaptureFixture, *, changed: bool
+def test_windows_launchers_come_back_when_uv_writes_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from novacode_cli import _windows_update as helper
+    scripts, bin_dir, _seen = _windows_tool(monkeypatch, tmp_path, "Nothing to upgrade", rewrites=False)
+    assert U.install_update() is False, "nothing to upgrade is not a change"
+    for folder in (scripts, bin_dir):
+        assert (folder / "nova.exe").read_bytes() == b"old"
+        assert [p.name for p in folder.iterdir()] == ["nova.exe"]
 
-    command = [
-        sys.executable,
-        "-c",
-        "import sys; print(sys.argv[1]); sys.exit(int(sys.argv[2]))",
-        output,
-        str(exit_code),
-    ]
-    if exit_code:
-        with pytest.raises(subprocess.CalledProcessError):
-            helper.run_installer(command)
-    else:
-        assert helper.run_installer(command) is changed
-    assert output in capsys.readouterr().out
+
+def test_windows_launchers_come_back_when_uv_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    scripts, bin_dir, _seen = _windows_tool(monkeypatch, tmp_path, "", rewrites=False)
+    monkeypatch.setattr(U, "_run", Mock(side_effect=subprocess.CalledProcessError(2, "uv")))
+    with pytest.raises(subprocess.CalledProcessError):
+        U.install_update()
+    assert (scripts / "nova.exe").read_bytes() == (bin_dir / "nova.exe").read_bytes() == b"old"
+
+
+def test_a_failed_step_prints_its_output_then_the_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    monkeypatch.setattr(
+        U, "check_for_update", lambda **_kw: U.UpdateStatus(available=True, current="a", latest="b")
+    )
+    command = [sys.executable, "-c", "print('resolving'); print('error: no network'); raise SystemExit(3)"]
+    monkeypatch.setattr(U, "install_update", lambda progress: U._run(command, progress=progress))
+    assert U.update_main([]) == 1
+    err = capsys.readouterr().err
+    assert "error: no network" in err and err.index("no network") < err.index("Update failed")

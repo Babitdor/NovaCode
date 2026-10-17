@@ -1,4 +1,4 @@
-"""Successful updates clear interactive progress and show the installed release."""
+"""nova update's progress and finish screen: animated on a terminal, plain when piped."""
 
 import io
 import subprocess
@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from novacode_cli import _windows_update as display
+from novacode_cli import update_ui as display
 from novacode_cli import updates
 from novacode_cli.brand import wordmark
 
@@ -16,25 +16,48 @@ class Terminal(io.StringIO):
         return True
 
 
-@pytest.mark.parametrize("interactive", [True, False])
-def test_success_screen_clears_only_interactive_output(monkeypatch, interactive):
-    output = Terminal() if interactive else io.StringIO()
-    monkeypatch.setattr(display.sys, "stdout", output)
+@pytest.fixture(autouse=True)
+def fast(monkeypatch):
+    monkeypatch.setattr(display.time, "sleep", lambda _s: None)
     monkeypatch.setattr(display.sys, "platform", "linux")
-    print("Installing packages…")
-    display.show_update_success("2.4.6", wordmark())
+
+
+@pytest.mark.parametrize("interactive", [True, False])
+def test_success_keeps_the_terminal_history_and_says_what_changed(interactive):
+    output = Terminal() if interactive else io.StringIO()
+    output.write("Installing packages…\n")
+    display.show_success("2.4.5", "2.4.6", wordmark(), note="Faster updates", stream=output)
+    rendered = output.getvalue()
+    assert "\x1b[2J" not in rendered, "never clears the screen"
+    assert "Installing packages" in rendered
+    assert ("\x1b[38;2;" in rendered) is interactive, "the gradient logo only on a terminal"
+    plain = rendered.replace("\x1b[1m", "").replace("\x1b[0m", "")
+    assert "v2.4.5 → v2.4.6" in plain and "Faster updates" in plain
+    assert plain.index("NovaCode updated") < plain.index("Run nova")
+
+
+@pytest.mark.parametrize("interactive", [True, False])
+def test_progress_marks_each_stage(interactive):
+    output = Terminal() if interactive else io.StringIO()
+    with display.Progress(output) as progress:
+        progress.stage("Checking for updates")
+        progress.line("resolving   packages")
+        progress.done("a → b")
+        progress.stage("Installing")
     rendered = output.getvalue()
     if interactive:
-        assert "\x1b[2J\x1b[H" in rendered
-        rendered = rendered.split("\x1b[2J\x1b[H", 1)[1]
-        assert "Installing packages" not in rendered
+        assert "✓\x1b[0m Checking for updates" in rendered and rendered.endswith("\x1b[?25h")
     else:
-        assert "\x1b" not in rendered
-        assert "Installing packages" in rendered
-    assert "███" in rendered
-    assert "v2.4.6" in rendered
-    assert "Update successful." in rendered
-    assert rendered.index("Update successful.") < rendered.index("Restart Nova")
+        assert "done: Checking for updates (a → b)" in rendered and "\x1b" not in rendered
+    assert "Installing" in rendered
+
+
+def test_an_interrupted_stage_is_marked_failed():
+    output = io.StringIO()
+    with pytest.raises(KeyboardInterrupt), display.Progress(output) as progress:
+        progress.stage("Installing")
+        raise KeyboardInterrupt
+    assert "failed: Installing" in output.getvalue()
 
 
 def test_cli_success_reads_updated_version_after_install(monkeypatch, capsys):
@@ -42,21 +65,21 @@ def test_cli_success_reads_updated_version_after_install(monkeypatch, capsys):
     monkeypatch.setattr(
         updates, "check_for_update", lambda **kwargs: updates.UpdateStatus(True, "old", "new")
     )
+    monkeypatch.setattr(updates, "detect_installation", lambda: updates.Installation("9.8.6", "uv-tool"))
 
-    def install():
+    def install(progress):
         nonlocal installed
         installed = True
-        print("Installer progress")
-        return False
+        return True
 
     def version(python):
         assert installed
         return "9.8.7"
 
     monkeypatch.setattr(updates, "install_update", install)
-    monkeypatch.setattr(display, "installed_version", version)
+    monkeypatch.setattr(updates, "installed_version", version)
     assert updates.update_main([]) == 0
-    assert "v9.8.7" in capsys.readouterr().out
+    assert "v9.8.6 → v9.8.7" in capsys.readouterr().out
 
 
 def test_failed_update_keeps_progress_and_does_not_show_success(monkeypatch, capsys):
@@ -64,7 +87,7 @@ def test_failed_update_keeps_progress_and_does_not_show_success(monkeypatch, cap
         updates, "check_for_update", lambda **kwargs: updates.UpdateStatus(True, "old", "new")
     )
 
-    def install():
+    def install(progress):
         print("Installer diagnostics")
         raise subprocess.CalledProcessError(1, "installer")
 
@@ -73,7 +96,7 @@ def test_failed_update_keeps_progress_and_does_not_show_success(monkeypatch, cap
     captured = capsys.readouterr()
     assert "Installer diagnostics" in captured.out
     assert "Update failed" in captured.err
-    assert "Update successful" not in captured.out and "\x1b[2J" not in captured.out
+    assert "NovaCode updated" not in captured.out
 
 
 def test_installed_version_uses_target_interpreter(monkeypatch):
@@ -85,17 +108,6 @@ def test_installed_version_uses_target_interpreter(monkeypatch):
 
 def test_version_fallback_reads_new_file_without_importing_old_version(monkeypatch, tmp_path):
     monkeypatch.setattr(display.subprocess, "check_output", Mock(side_effect=OSError("missing")))
-    monkeypatch.setattr(display, "__file__", str(tmp_path / "_windows_update.py"))
+    monkeypatch.setattr(display, "__file__", str(tmp_path / "update_ui.py"))
     (tmp_path / "_version.py").write_text('__version__ = "7.8.9"\n', encoding="utf-8")
     assert display.installed_version("gone-python.exe") == "7.8.9"
-
-
-def test_windows_handoff_passes_logo_and_version_interpreter(monkeypatch):
-    import json
-
-    process = Mock()
-    monkeypatch.setattr(updates.subprocess, "Popen", process)
-    updates._start_windows_update(["uv", "tool", "upgrade", "novacode-cli"])
-    payload = json.loads(process.call_args.args[0][-1])
-    assert payload["logo"] == wordmark()
-    assert payload["version_python"] == updates.sys.executable

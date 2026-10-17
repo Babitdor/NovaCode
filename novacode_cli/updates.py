@@ -23,6 +23,8 @@ from typing import NoReturn
 from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
 
+from novacode_cli.update_ui import Progress, installed_version, run_command, show_success
+
 REPOSITORY = "Babitdor/NovaCode"
 REPO_URL = f"https://github.com/{REPOSITORY}.git"
 CHECK_INTERVAL = 3600
@@ -230,35 +232,56 @@ def check_for_update(*, force: bool = False) -> UpdateStatus:
         return UpdateStatus(available=False, current="", latest="", error=str(error))
 
 
-def _run(arguments: list[str], *, cwd: Path | None = None) -> None:
-    subprocess.run(arguments, cwd=cwd, check=True)
+def _run(arguments: list[str], *, cwd: Path | None = None, progress: Progress | None = None) -> str:
+    """Run one step; its output drives the progress line and is returned."""
+    return run_command(arguments, progress or Progress(), cwd=cwd)
 
 
-def _start_windows_update(arguments: list[str]) -> None:
-    """Release the launcher while keeping updater output in the same terminal."""
-    from novacode_cli.brand import wordmark
+def _move_launchers_aside(uv: str) -> list[tuple[Path, Path]]:
+    """Windows cannot overwrite a running ``nova.exe`` but can rename it.
 
-    payload = {
-        "command": arguments,
-        "caller_pid": os.getpid(),
-        "parent_pid": os.getppid(),
-        "cache": str(_cache_path()),
-        "version_python": sys.executable,
-        "logo": wordmark(),
-    }
-    interpreter = getattr(sys, "_base_executable", sys.executable)
-    helper = Path(__file__).with_name("_windows_update.py")
-    subprocess.Popen(
-        [interpreter, "-I", "-X", "utf8", str(helper), json.dumps(payload)],
-        stdin=subprocess.DEVNULL,
-        # Inherit the console and output handles so progress remains visible
-        # after nova.exe exits and releases the launcher for replacement.
-        creationflags=0,
-    )
+    Moving Nova's launchers aside lets uv write new ones while this process
+    waits, so the update runs in the foreground and the shell gets its prompt
+    back when it is done. Launchers set aside by an earlier update go first.
+    """
+    names = [
+        entry.name
+        for entry in importlib.metadata.distribution("novacode-cli").entry_points
+        if entry.group == "console_scripts"
+    ] or ["nova"]
+    folders = [Path(sys.prefix) / "Scripts"]
+    with suppress(OSError, subprocess.SubprocessError):
+        output = subprocess.check_output(
+            [uv, "tool", "dir", "--bin"], text=True, stderr=subprocess.DEVNULL, timeout=15
+        )
+        folders.append(Path(output.strip()))
+    moved = []
+    for folder in folders:
+        for name in names:
+            for stale in folder.glob(f"{name}.exe.old-*"):
+                with suppress(OSError):
+                    stale.unlink()
+            launcher = folder / f"{name}.exe"
+            aside = launcher.with_name(f"{launcher.name}.old-{os.getpid()}")
+            with suppress(OSError):
+                launcher.rename(aside)
+                moved.append((launcher, aside))
+    return moved
 
 
-def install_update() -> bool:
-    """Update with the original manager; return whether a helper finishes it."""
+def _restore_launchers(moved: list[tuple[Path, Path]]) -> None:
+    """Put back each launcher uv did not rewrite (nothing changed, or it failed)."""
+    for launcher, aside in moved:
+        with suppress(OSError):
+            if launcher.exists():
+                aside.unlink()  # still running until Nova exits: the next update removes it
+            else:
+                aside.rename(launcher)
+
+
+def install_update(progress: Progress | None = None) -> bool:
+    """Update with the original manager; return whether anything changed."""
+    progress = progress or Progress()
     installation = detect_installation()
     if installation.kind == "source":
         root = installation.root
@@ -277,42 +300,46 @@ def install_update() -> bool:
         )
         if not use_uv and not importlib.util.find_spec("pip") and uv is None:
             _fail("Install uv or pip in this environment before updating.")
-        _run(["git", "-C", str(root), "fetch", "origin", installation.branch])
-        _run(["git", "-C", str(root), "merge", "--ff-only", upstream])
+        progress.stage("Fetching the latest code")
+        _run(["git", "-C", str(root), "fetch", "origin", installation.branch], progress=progress)
+        progress.stage("Applying it")
+        _run(["git", "-C", str(root), "merge", "--ff-only", upstream], progress=progress)
+        progress.stage("Syncing dependencies")
         if use_uv:
-            _run(
-                [
-                    uv,
-                    "sync",
-                    "--inexact",
-                ],
-                cwd=root,
-            )
+            _run([uv, "sync", "--inexact"], cwd=root, progress=progress)
         else:
-            target = str(root)
-            _run([*_pip_command(), "--upgrade", "-e", target])
+            _run([*_pip_command(), "--upgrade", "-e", str(root)], progress=progress)
+        changed = True
     elif installation.kind == "uv-tool":
         uv = shutil.which("uv")
         if uv is None:
             _fail("This installation is managed by uv; install uv to update it.")
         arguments = [uv, "tool", "upgrade", "novacode-cli"]
+        moved: list[tuple[Path, Path]] = []
         if sys.platform == "win32":
             # Reinstall just Nova so uv repairs a launcher even when an earlier
             # failed update already advanced the installed package's version.
             arguments.extend(["--reinstall-package", "novacode-cli"])
-            _start_windows_update(arguments)
-            return True
-        _run(arguments)
+            moved = _move_launchers_aside(uv)
+        progress.stage("Downloading and installing")
+        try:
+            output = _run(arguments, progress=progress)
+        finally:
+            _restore_launchers(moved)
+        changed = "nothing to upgrade" not in output.casefold()
     else:
         target = "novacode-cli"
         arguments = ["--upgrade"]
         if installation.kind == "git":
             target += f" @ git+{REPO_URL}@main"
             arguments.append("--force-reinstall")
-        _run([*_pip_command(), *arguments, target])
+        progress.stage("Downloading and installing")
+        _run([*_pip_command(), *arguments, target], progress=progress)
+        changed = True
+    progress.done()
     with suppress(OSError):
         _cache_path().unlink(missing_ok=True)
-    return False
+    return changed
 
 
 def _pip_command() -> list[str]:
@@ -343,18 +370,36 @@ def update_main(arguments: list[str]) -> int:
                 else "NovaCode is up to date."
             )
         else:
-            status = check_for_update(force=True)
-            if not status.error and not status.available:
-                print("NovaCode is up to date.")
-                return 0
-            if not install_update():
-                from novacode_cli._windows_update import installed_version, show_update_success
+            old = detect_installation().version
+            with Progress() as progress:
+                progress.stage("Checking for updates")
+                status = check_for_update(force=True)
+                if not status.error and not status.available:
+                    progress.done("already on the latest")
+                    print("\n  NovaCode is up to date.\n")
+                    return 0
+                progress.done(
+                    "could not check, updating anyway" if status.error
+                    else f"{status.current[:12]} → {status.latest[:12]}"
+                )
+                changed = install_update(progress)
+            if changed:
                 from novacode_cli.brand import wordmark
 
-                show_update_success(installed_version(sys.executable), wordmark())
+                show_success(
+                    old, installed_version(sys.executable), wordmark(),
+                    note=status.release_title,
+                )
+            else:
+                print("\n  NovaCode is up to date.\n")
         return 0  # noqa: TRY300
     except (OSError, ValueError, subprocess.SubprocessError) as error:
-        print(f"Update failed: {error}", file=sys.stderr)
+        log = getattr(error, "output", None)
+        if isinstance(log, str) and log.strip():
+            print("\n".join(log.strip().splitlines()[-30:]), file=sys.stderr)
+        print(f"\nUpdate failed: {error}", file=sys.stderr)
+        if sys.platform == "win32":
+            print("If a file was in use, close other Nova windows and run nova update again.", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
         return 130
