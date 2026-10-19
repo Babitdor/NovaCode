@@ -128,7 +128,7 @@ two widths the site is checked at:
 | Display L (section h2) | `clamp(2rem, 3.4vw, 3.4rem)`, lh .98, tracking -.02em | 49.0 / 48.0 | 32.0 / 31.4 |
 | Display M (statement) | `clamp(1.45rem, 2.1vw, 2rem)`, lh 1.18 | 30.2 / 35.7 | 23.2 / 27.4 |
 | Lede | `clamp(1.05rem, 1.15vw, 1.25rem)`, lh 1.5, max 46ch | 16.8 / 25.2 | 16.8 / 25.2 |
-| Body | `1rem`, lh 1.62, max 62ch | 16.0 / 25.9 | 16.0 / 25.9 |
+| Body | `1rem`, lh 1.62, max 56ch | 16.0 / 25.9 | 16.0 / 25.9 |
 | Small | `.875rem`, lh 1.55 | 14.0 / 21.7 | 14.0 / 21.7 |
 | Mono label | `.75rem`, tracking .12em, uppercase | 12.0 / 14.4 | 12.0 / 14.4 |
 | Mono data | `.8125rem`, tracking .01em | 13.0 / 21.1 | 13.0 / 21.1 |

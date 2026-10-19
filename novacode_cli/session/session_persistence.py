@@ -30,6 +30,8 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
+from novacode_cli.session.history_tree import HistoryTree
+
 logger = logging.getLogger(__name__)
 SaveArgs = ParamSpec("SaveArgs")
 SaveResult = TypeVar("SaveResult")
@@ -182,6 +184,20 @@ class SessionManager:
         self.sessions_dir = sessions_dir or Path.home() / ".nova" / "sessions"
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
         self._save_lock = threading.RLock()
+        self._trees: dict[str, HistoryTree] = {}
+
+    def history_tree(self, session_id: str) -> HistoryTree:
+        """The session's message tree (``tree.jsonl``), cached per session."""
+        with self._save_lock:
+            tree = self._trees.get(session_id)
+            if tree is None:
+                tree = self._trees[session_id] = HistoryTree(self.sessions_dir / session_id)
+            return tree
+
+    def label_history(self, session_id: str, node_id: str, label: str) -> None:
+        """Bookmark a message in the session tree (empty label removes it)."""
+        with self._save_lock:
+            self.history_tree(session_id).set_label(node_id, label)
 
     def cleanup_old_sessions(
         self,
@@ -288,6 +304,7 @@ class SessionManager:
         sandbox_type: str | None = None,
         cleared: bool = False,
         goal: dict[str, Any] | None = None,
+        history: list[BaseMessage] | None = None,
     ) -> Path:
         """Save a session to disk.
 
@@ -304,6 +321,8 @@ class SessionManager:
                 the global config.
             project_root: Path to project root (for repo hash)
             goal: Optional conversation goal and its lifecycle/budget state.
+            history: The full message list for the session tree, when
+                ``messages`` is a compacted view of it. Defaults to ``messages``.
 
         Returns:
             Path to the session directory
@@ -377,6 +396,13 @@ class SessionManager:
             },
         )
         atomic_write(meta_path, json.dumps(meta.to_dict(), indent=2))
+
+        try:
+            self.history_tree(session_id).sync(
+                [self._serialize_message(m) for m in (messages if history is None else history)]
+            )
+        except OSError:
+            logger.warning("Session tree not updated for %s", session_id[:8], exc_info=True)
 
         # Split messages into recent and archive
         recent_messages, archive_messages = self._split_messages(messages, recent_limit=20)

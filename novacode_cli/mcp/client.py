@@ -312,7 +312,13 @@ async def check_server_connection(name: str, config: MCPServerConfig) -> tuple[b
         return True, f"Connected successfully. Found {len(tools)} tools."
 
     except Exception as e:
-        return False, f"Connection failed: {e}"
+        # The MCP client runs in task groups, so the real cause (an OAuth
+        # registration refusal, a 401) arrives wrapped in an ExceptionGroup
+        # whose own text only says "unhandled errors in a TaskGroup".
+        cause: BaseException = e
+        while isinstance(cause, BaseExceptionGroup) and cause.exceptions:
+            cause = cause.exceptions[0]
+        return False, f"Connection failed: {cause}"
 
 
 def discover_mcp_configs() -> list[Path]:

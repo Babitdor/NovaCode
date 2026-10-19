@@ -95,6 +95,11 @@ def get_provider_models(provider: str, *, refresh: bool = False) -> list[str]:
     try:
         if provider in PROVIDERS_WITH_LIVE_LISTS:
             discovered = _live_models(provider)
+        elif preset.get("models_dev"):
+            skip = tuple(preset.get("models_dev_skip", ()))
+            discovered = [
+                m for m in _models_dev_models(preset["models_dev"]) if not m.startswith(skip)
+            ]
         else:
             discovered = _profile_models(provider)
     except Exception:  # noqa: BLE001 — one bad provider must not empty the picker
@@ -145,6 +150,24 @@ def _live_models(provider: str) -> list[str]:
     if provider in ("opencode_zen", "commandcode"):
         return list(get_opencode_models(provider))
     return list(get_opencode_models())
+
+
+def _models_dev_models(models_dev_id: str) -> list[str]:
+    """Tool-capable models of one models.dev provider, newest first.
+
+    For providers with no LangChain profile package and no clean ``/models``
+    list. Uses the same weekly-cached catalog as the context-window lookup, so
+    it works offline once fetched; with no catalog at all the curated ids remain.
+    """
+    from novacode_cli.context._models_dev import _load_catalog
+
+    models = (_load_catalog().get(models_dev_id) or {}).get("models") or {}
+    usable = [
+        (str(info.get("release_date") or ""), model_id)
+        for model_id, info in models.items()
+        if isinstance(info, dict) and info.get("tool_call")
+    ]
+    return [model_id for _, model_id in sorted(usable, reverse=True)]
 
 
 def _profile_models(provider: str) -> list[str]:

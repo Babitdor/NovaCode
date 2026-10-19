@@ -359,13 +359,12 @@ class CredentialStore:
 
 #: Endpoint env var per credential env var, for providers that accept one.
 #:
-#: Only OpenAI honours a custom endpoint in Nova (see
+#: Only OpenAI and Azure take an endpoint in Nova (see
 #: :data:`novacode_cli.config.model_manager.ENDPOINT_PROVIDERS`); the gateways
-#: pin their own base URL and Anthropic/Google/Ollama take none at all. Kept as
-#: a mapping rather than a literal so a second endpoint-capable provider is a
-#: one-line addition here and in the provider preset.
+#: pin their own base URL and Anthropic/Google/Ollama take none at all.
 _BASE_URL_ENV_VARS: dict[str, str] = {
     "OPENAI_API_KEY": "OPENAI_BASE_URL",
+    "AZURE_OPENAI_API_KEY": "AZURE_OPENAI_ENDPOINT",
 }
 
 

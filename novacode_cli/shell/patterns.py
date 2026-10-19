@@ -236,6 +236,15 @@ _DANGEROUS_ENV_VARS: frozenset[str] = frozenset(
         "E2B_API_KEY",
         "GROQ_API_KEY",
         "NVIDIA_API_KEY",
+        "AZURE_OPENAI_API_KEY",
+        "AZURE_API_KEY",
+        "AWS_BEARER_TOKEN_BEDROCK",
+        "MISTRAL_API_KEY",
+        "CEREBRAS_API_KEY",
+        "XAI_API_KEY",
+        "HF_TOKEN",
+        "KIMI_API_KEY",
+        "MINIMAX_API_KEY",
         "LANGSMITH_API_KEY",
     }
 )

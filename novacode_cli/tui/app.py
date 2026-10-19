@@ -20,6 +20,7 @@ from __future__ import annotations
 from novacode_cli.core import subagent_tasks
 from novacode_cli.prompts import render_template
 from novacode_cli.ui import status_phrases
+from novacode_cli.tui.avatar import NovaAvatar
 from novacode_cli.tui.output_buffer import MAX_PENDING_CALLS, OutputTail
 
 import asyncio
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
     # Annotation-only: the clipboard image is passed straight to the tracker, so
     # the module is never imported at runtime on this path.
     from novacode_cli.image_utils import ImageData
+    from novacode_cli.session.history_tree import HistoryTree
     from novacode_cli.sessions.supervisor import SessionSupervisor
 
     # Also annotation-only: the palette module is imported lazily at call sites
@@ -613,6 +615,17 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "servers": SlashCommand("_run_servers", "manage dev servers", wants_text=False),
     "kill": SlashCommand("_run_kill", "kill processes"),
     "restore": SlashCommand("_run_restore", "restore a file from the snapshot trash"),
+    "tree": SlashCommand(
+        "_run_tree",
+        "browse every branch of this session and continue from any point",
+        wants_text=False,
+    ),
+    "export": SlashCommand("_run_export", "export the session tree to HTML (/export [file])"),
+    "share": SlashCommand(
+        "_run_share",
+        "upload the session as a secret GitHub gist and get a link",
+        wants_text=False,
+    ),
     "rewind": SlashCommand(
         "_run_rewind", "go back to before an earlier message: conversation, code, or both"
     ),
@@ -638,6 +651,9 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
         "_run_theme", "switch color theme", wants_text=False, aliases=("themes",)
     ),
     "settings": SlashCommand("_run_settings", "open app settings", wants_text=False),
+    "nova": SlashCommand(
+        "_run_nova", "show / hide Nova's animated avatar by the prompt", wants_text=False
+    ),
     "quit": SlashCommand("action_quit", "exit the TUI", wants_text=False),
     "exit": SlashCommand("action_quit", "exit the TUI", wants_text=False),
     # Wiki commands
@@ -673,6 +689,7 @@ _LIVE_UI_COMMANDS = frozenset(
         "auth",
         "theme",
         "settings",
+        "nova",
         "remote",
         "artifacts",
         "tasks",
@@ -694,6 +711,9 @@ _LIVE_UI_COMMANDS = frozenset(
 _TUI_SLASH_COMMANDS = [f"/{name}" for name in TUI_COMMANDS]
 
 _HOME_RIGHT_MIN_WIDTH = 120
+# /nova's avatar hides below this terminal size (columns, rows).
+_AVATAR_MIN_WIDTH = 100
+_AVATAR_MIN_HEIGHT = 32
 _HOME_LEFT_MIN_WIDTH = 76
 _HOME_BANNER_MIN_HEIGHT = 40
 # Below brand.TALL_MIN_HEIGHT the classic banner is the wordmark in a tight
@@ -2315,6 +2335,13 @@ class NovaApp(App):
         # Live status state (animated spinner + elapsed while a turn runs).
         self._activity = "ready"
         self._turn_active = False
+        # /nova toggles the pixel avatar; the choice is remembered.
+        try:
+            from novacode_cli.config.nova_config import NovaConfig
+
+            self._avatar_on = bool(NovaConfig().get("nova_avatar"))
+        except Exception:  # noqa: BLE001
+            self._avatar_on = False
         # The in-flight remote-bridge turn, if any. Held so escape can cancel
         # that turn without cancelling the consumer loop that received it.
         self._remote_turn_task: asyncio.Task | None = None
@@ -2433,6 +2460,7 @@ class NovaApp(App):
                     yield TranscriptScroll(id="transcript")
             yield HomeRightRail(id="home-right")
             yield HarnessDock(id="ui-harness-dock")
+        yield NovaAvatar(id="nova-avatar")
         yield OptionList(id="cmdpalette")
         with Vertical(id="prompt-dock"):
             # Todos live INSIDE the prompt dock, not as a second
@@ -7719,6 +7747,7 @@ class NovaApp(App):
             pass
 
     def _tick(self) -> None:
+        self._paint_avatar()
         refresh = False
         tail_dirty = False
         if self._turn_active and self._os_focused:
@@ -9622,10 +9651,13 @@ class NovaApp(App):
             thread_id = session_state.thread_id
             session_id = session_state.session_id
             config = {"configurable": {"thread_id": thread_id}}
+            # The full history (not the compacted view) feeds the session tree.
+            history = None
             # Bound the checkpointer read so a slow/contended DB can't hang /quit.
             try:
                 state = await self._read_state(agent, config, timeout=5.0)
                 values = state.values or {}
+                history = list(values.get("messages", []))
             except Exception:
                 if pending_prompt is None:
                     raise
@@ -9665,6 +9697,7 @@ class NovaApp(App):
                 cleared=cleared,
                 task_status=task_status,
                 goal=goal_state_payload(session_state),
+                history=history,
             )
         except Exception:  # noqa: BLE001
             logger.warning("Session recovery save failed", exc_info=True)
@@ -9859,6 +9892,7 @@ class NovaApp(App):
             else:
                 await self._save_session(pending_prompt=text, task_status="interrupted")
                 await self._do_stream(text, assistant_id)
+            self._avatar_react("happy")
         except asyncio.CancelledError:
             self._reset_streaming()
             mirrors = list(turn_pane.remote_mirrors.values()) if turn_pane is not None else []
@@ -9869,6 +9903,7 @@ class NovaApp(App):
             if not getattr(self, "_detach_cancelling", False):
                 self._log(Text("Cancelled.", style="yellow"))
         except Exception as ex:  # noqa: BLE001
+            self._avatar_react("confused")
             msg = str(ex).lower()
             mirrors = list(turn_pane.remote_mirrors.values()) if turn_pane is not None else []
             for _target, _status, answer in self._local_remote_streams + mirrors:
@@ -11908,6 +11943,64 @@ class NovaApp(App):
             return
         await self._update_context_breakdown()
         self.push_screen(ContextScreen(self.token_tracker, self.model_name))
+
+    def _paint_avatar(self) -> None:
+        """Show /nova's avatar when the terminal has room, and step its animation."""
+        from textual.geometry import Offset
+
+        from novacode_cli.tui.avatar import HEIGHT, WIDTH
+
+        try:
+            avatar = self._w("#nova-avatar", NovaAvatar)
+            prompt = self._w("#prompt-dock", Vertical)
+        except NoMatches:
+            return
+        right = min(prompt.region.right - 1, self.size.width - 1)
+        bottom = prompt.region.y - 1
+        show = (
+            self._avatar_on
+            and bool(self.screen_stack)
+            and self.screen is self._root_screen
+            and not self._w("#cmdpalette", OptionList).display
+            and self.size.width >= _AVATAR_MIN_WIDTH
+            and self.size.height >= _AVATAR_MIN_HEIGHT
+            and right >= WIDTH
+            and bottom >= HEIGHT
+        )
+        if avatar.display != show:
+            avatar.display = show
+        if show:
+            position = Offset(right - WIDTH, bottom - HEIGHT)
+            if avatar.absolute_offset != position:
+                avatar.absolute_offset = position
+                avatar.refresh(layout=True)
+            avatar.animate_to(
+                busy=self._turn_active, talking=self._stream_msg is not None,
+                working=bool(self._tool_group_running or self._tool_components),
+            )
+
+    def _avatar_react(self, mood: str) -> None:
+        with suppress(NoMatches):
+            self._w("#nova-avatar", NovaAvatar).react(mood)
+
+    def _run_nova(self) -> None:
+        from novacode_cli.config.nova_config import NovaConfig
+
+        self._avatar_on = not self._avatar_on
+        NovaConfig().set("nova_avatar", self._avatar_on)
+        if self._avatar_on:
+            self._avatar_react("happy")
+        self._paint_avatar()
+        if self._avatar_on and (
+            self.size.width < _AVATAR_MIN_WIDTH or self.size.height < _AVATAR_MIN_HEIGHT
+        ):
+            self._log(
+                Text(
+                    f"Nova appears once the terminal is at least "
+                    f"{_AVATAR_MIN_WIDTH} columns by {_AVATAR_MIN_HEIGHT} rows.",
+                    style="dim",
+                )
+            )
 
     def _run_verbose(self) -> None:
         new = self.session_state.toggle_verbose()
@@ -14616,6 +14709,8 @@ class NovaApp(App):
         """
         self._apply_responsive_layout(event)
         self.call_after_refresh(self._position_palette)
+        self.call_after_refresh(self._paint_avatar)
+        self._avatar_react("window")
         if self._home_visible:
             self._refresh_home_style()
         rain = self._home_banner
@@ -14947,9 +15042,7 @@ class NovaApp(App):
                 new_model = await asyncio.to_thread(
                     build_chat_model, self._model_provider, model_name
                 )
-                new_agent, new_backend = await self.session_state.switch_model(
-                    new_model, steering_instructions=self.session_state.steering_instructions
-                )
+                new_agent, new_backend = await self.session_state.switch_model(new_model)
                 self.agent = new_agent
                 self.backend = new_backend
                 self.model_name = getattr(new_model, "model_name", None) or getattr(
@@ -15655,9 +15748,6 @@ class NovaApp(App):
         the agent's file tools changed since is put back as it was then
         (``novacode_cli.rewind``).
         """
-        from langchain_core.messages import RemoveMessage
-        from langgraph.graph.message import REMOVE_ALL_MESSAGES
-
         from novacode_cli import rewind
 
         if self._turn_active:
@@ -15719,43 +15809,210 @@ class NovaApp(App):
             conversation, code = mode in (0, 1), mode in (0, 2)
 
         if conversation:
-            kept = messages[:index]
-            values: dict[str, Any] = {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES), *kept]}
-            event = (state.values or {}).get("_summarization_event")
-            # A summary that covers messages past the rewind point is dropped.
-            if isinstance(event, dict) and (event.get("cutoff_index") or 0) > index:
-                values["_summarization_event"] = None
-            from novacode_cli.session.checkpoint_coordinator import CoordinatedGraph
-
-            options = {}
-            if isinstance(agent, CoordinatedGraph):
-                options["expected_revision"] = (state.config or {}).get(
-                    "configurable", {}
-                ).get("checkpoint_id")
             try:
-                await agent.aupdate_state(config=config, values=values, as_node="model", **options)
+                await self._set_conversation(agent, config, state, messages[:index])
             except Exception as exc:  # noqa: BLE001
                 self._log(Text(f"/rewind failed; nothing was changed: {exc}", style="red"))
                 return
         restored = await asyncio.to_thread(rewind.restore, thread_id, files) if code else []
 
         if conversation:
-            self._reset_streaming()
-            self._seen.clear()
-            await self._transcript().remove_children()
-            self._restored_messages = kept
-            self._replay_history()
-            composer = self.query_one("#prompt", PromptInput)
-            composer.text = said
-            composer.focus()
-            self.run_worker(self._update_context_breakdown(), exclusive=False)
-            await self._save_session()
+            await self._show_conversation(messages[:index], said)
         parts = []
         if conversation:
             parts.append("conversation rewound; your message is back in the prompt")
         if code:
             parts.append(f"{len(restored)} file(s) restored")
         self._log(Text(f"⟲ Rewound to before “{label(said, {})}”: " + ", ".join(parts), style="green"))
+
+    async def _set_conversation(
+        self,
+        agent: Any,  # noqa: ANN401 — any compiled graph
+        config: dict,
+        state: Any,  # noqa: ANN401 — a LangGraph StateSnapshot
+        kept: list,
+    ) -> None:
+        """Replace the thread's messages with ``kept`` (raises if the write fails)."""
+        from langchain_core.messages import RemoveMessage
+        from langgraph.graph.message import REMOVE_ALL_MESSAGES
+
+        from novacode_cli.session.checkpoint_coordinator import CoordinatedGraph
+
+        current = list((state.values or {}).get("messages", []))
+        values: dict[str, Any] = {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES), *kept]}
+        event = (state.values or {}).get("_summarization_event")
+        cutoff = (event.get("cutoff_index") or 0) if isinstance(event, dict) else 0
+        # A summary stays only if it covers messages the new history still has.
+        if cutoff and [m.id for m in current[:cutoff]] != [m.id for m in kept[:cutoff]]:
+            values["_summarization_event"] = None
+        options = {}
+        if isinstance(agent, CoordinatedGraph):
+            options["expected_revision"] = (
+                (state.config or {}).get("configurable", {}).get("checkpoint_id")
+            )
+        await agent.aupdate_state(config=config, values=values, as_node="model", **options)
+
+    async def _show_conversation(self, kept: list, prompt_text: str) -> None:
+        """Redraw the transcript for ``kept`` and put ``prompt_text`` in the composer."""
+        self._reset_streaming()
+        self._seen.clear()
+        await self._transcript().remove_children()
+        self._restored_messages = kept
+        self._replay_history()  # a @work method: starts the replay worker
+        composer = self.query_one("#prompt", PromptInput)
+        composer.text = prompt_text
+        composer.focus()
+        self.run_worker(self._update_context_breakdown(), exclusive=False)
+        await self._save_session()
+
+    async def _history_tree(self) -> HistoryTree | None:
+        """This session's tree, synced with the conversation as it is right now."""
+        if self.session_manager is None:
+            self._log(Text("Session history is off for this run.", style="yellow"))
+            return None
+        await self._save_session()
+        sid = self.session_state.session_id
+        tree = await asyncio.to_thread(self.session_manager.history_tree, sid)
+        if not tree.nodes:
+            self._log(Text("Nothing in this session's history yet.", style="yellow"))
+            return None
+        return tree
+
+    async def _run_tree(self) -> None:
+        """Browse the session tree and continue from any earlier point.
+
+        Every message ever in the session is kept: continuing from an earlier
+        point starts a new branch and leaves the old one in place. Files are not
+        touched (``/rewind`` restores code).
+        """
+        from novacode_cli.tui.history_tree_screen import HistoryTreeScreen
+
+        if self._turn_active:
+            self._log(Text("Stop the running turn first (Esc), then /tree.", style="yellow"))
+            return
+        tree = await self._history_tree()
+        if tree is None:
+            return
+        sid = self.session_state.session_id
+        pick = await self.push_screen_wait(
+            HistoryTreeScreen(
+                tree, lambda nid, label: self.session_manager.label_history(sid, nid, label)
+            )
+        )
+        if not pick:
+            return
+        path, prompt_text = tree.continue_point(pick)
+        load = self.session_manager._deserialize_message
+        kept = [m for n in path if (m := load(n.msg)) is not None]
+        agent, _ = self._active_agent()
+        config = {"configurable": {"thread_id": self.session_state.thread_id}}
+        try:
+            state = await self._read_state(agent, config, timeout=15.0)
+            await self._set_conversation(agent, config, state, kept)
+        except Exception as exc:  # noqa: BLE001
+            self._log(Text(f"/tree failed; nothing was changed: {exc}", style="red"))
+            return
+        await self._show_conversation(kept, prompt_text)
+        where = "your message is back in the prompt" if prompt_text else "continue from here"
+        self._log(
+            Text(f"⑂ Moved to an earlier point ({len(kept)} messages kept); {where}.", "green")
+        )
+
+    def _export_page(self, tree: HistoryTree) -> str:
+        from novacode_cli.session.history_export import export_html
+
+        branches = sum(max(0, len(n.children) - 1) for n in tree.nodes.values())
+        branches += max(0, len(tree.roots) - 1)
+        first = next((n.text for n in tree.nodes.values() if n.kind == "user"), "")
+        title = " ".join(first.split())[:80] or "Nova session"
+        subtitle = (
+            f"Nova session {self.session_state.session_id[:8]} · {self.model_name or 'model'}"
+            f" · {len(tree.nodes)} messages · {branches + 1} branch(es)"
+        )
+        return export_html(tree, title=title, subtitle=subtitle)
+
+    async def _run_export(self, text: str) -> None:
+        """Write the session tree to a self-contained HTML file."""
+        from novacode_cli.config import config as nova_config
+
+        tree = await self._history_tree()
+        if tree is None:
+            return
+        parts = text.split(maxsplit=1)
+        name = f"nova-session-{self.session_state.session_id[:8]}.html"
+        page = self._export_page(tree)
+
+        def write() -> Path:
+            if len(parts) > 1:
+                target = Path(parts[1].strip().strip('"')).expanduser()
+            else:
+                target = Path(nova_config.HOME_DIR) / "exports" / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(page, encoding="utf-8")
+            return target.resolve()
+
+        try:
+            target = await asyncio.to_thread(write)
+        except OSError as exc:
+            self._log(Text(f"/export failed: {exc}", style="red"))
+            return
+        uri = target.as_uri()
+        self._log(Text.assemble(("● Exported to ", "green"), (str(target), f"link {uri}")))
+
+    async def _run_share(self) -> None:
+        """Upload the HTML export as a secret gist and print a link that renders it."""
+        import shutil
+        import tempfile
+
+        gh = shutil.which("gh")
+        if gh is None:
+            self._log(
+                Text(
+                    "/share needs the GitHub CLI: install it (https://cli.github.com) "
+                    "and run `gh auth login`.",
+                    style="yellow",
+                )
+            )
+            return
+        tree = await self._history_tree()
+        if tree is None:
+            return
+        choice = await self.push_screen_wait(
+            PickScreen(
+                "Upload this session to a secret GitHub gist? Anyone with the link can read "
+                "it. Common token formats are masked, but check for other private data.",
+                ["Upload", "Cancel"],
+                hint="Enter choose · Esc cancel",
+            )
+        )
+        if choice != 0:
+            return
+        page = self._export_page(tree)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "nova-session.html"
+            await asyncio.to_thread(path.write_text, page, encoding="utf-8")
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    gh, "gist", "create", str(path), "--desc", "Nova session",
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                )
+                out, err = await asyncio.wait_for(proc.communicate(), timeout=60)
+            except (OSError, TimeoutError) as exc:
+                self._log(Text(f"/share failed: {exc}", style="red"))
+                return
+        url = out.decode(errors="replace").strip().splitlines()[-1:] or [""]
+        if proc.returncode != 0 or not url[0].startswith("https://"):
+            detail = err.decode(errors="replace").strip() or "no gist URL returned"
+            self._log(Text(f"/share failed: {detail}", style="red"))
+            return
+        gist = url[0]
+        view = f"https://gistpreview.github.io/?{gist.rstrip('/').rsplit('/', 1)[-1]}"
+        self._log(
+            Text.assemble(
+                ("● Shared: ", "green"), (view, f"link {view}"), ("\n  gist: ", "dim"),
+                (gist, f"dim link {gist}"),
+            )
+        )
 
     async def _run_restore(self, text: str) -> None:
         """Native /restore: restore a file snapshot by arg or via a picker."""

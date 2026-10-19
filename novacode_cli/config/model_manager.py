@@ -31,8 +31,15 @@ COMMANDCODE_BASE_URL = "https://api.commandcode.ai/provider/v1"
 # Type for supported providers
 ProviderType = Literal[
     "openai", "anthropic", "ollama", "google", "openrouter", "opencode", "opencode_zen",
-    "commandcode", "nvidia",
+    "commandcode", "nvidia", "azure", "bedrock", "mistral", "groq", "cerebras", "xai",
+    "huggingface", "kimi_coding", "minimax",
 ]
+
+#: Providers that speak OpenAI Chat Completions at a fixed URL (``base_url`` in
+#: their preset, overridable through ``base_url_env``). One client covers them all.
+OPENAI_COMPATIBLE_PROVIDERS: frozenset[str] = frozenset(
+    {"mistral", "groq", "cerebras", "xai", "huggingface", "kimi_coding"}
+)
 
 #: Providers that accept a custom OpenAI-compatible endpoint. OpenRouter and
 #: OpenCode are also OpenAI-compatible but pin their own base URL, so offering
@@ -41,7 +48,7 @@ ProviderType = Literal[
 #:
 #: Shared by `/auth` (which owns the field) and `/model` (which applies the
 #: stored value), so the two can never disagree about who accepts one.
-ENDPOINT_PROVIDERS: frozenset[str] = frozenset({"openai"})
+ENDPOINT_PROVIDERS: frozenset[str] = frozenset({"openai", "azure"})
 
 
 # Model provider presets
@@ -212,7 +219,151 @@ MODEL_PRESETS: dict[str, dict[str, Any]] = {
             "openai/gpt-oss-120b",
         ],
     },
+    # The providers below list their tool-capable models from models.dev
+    # ("models_dev" is its provider id), newest first, after these curated ids.
+    # "key_aliases" are other variable names the same credential is read from.
+    "azure": {
+        "name": "Azure OpenAI",
+        "description": "Your Azure OpenAI / AI Foundry deployments (v1 API)",
+        "default_model": "gpt-6.1-sol",
+        "env_var": "AZURE_OPENAI_MODEL",
+        "api_key_var": "AZURE_OPENAI_API_KEY",
+        "key_aliases": ("AZURE_API_KEY",),
+        "requires_api_key": True,
+        "models_dev": "azure",
+        # Claude on Azure speaks the Anthropic API, not this provider's OpenAI v1 route.
+        "models_dev_skip": ("claude-",),
+        # Deployment names, which default to the model name in Azure.
+        "models": ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol"],
+    },
+    "bedrock": {
+        "name": "Amazon Bedrock",
+        "description": "Claude, GPT and open models on AWS (Bedrock API key or AWS credentials)",
+        "default_model": "global.anthropic.claude-sonnet-5-5",
+        "env_var": "BEDROCK_MODEL",
+        "api_key_var": "AWS_BEARER_TOKEN_BEDROCK",
+        # Any standard AWS credential works too; boto3 finds it itself.
+        "key_aliases": ("AWS_ACCESS_KEY_ID", "AWS_PROFILE"),
+        "requires_api_key": True,
+        "models_dev": "amazon-bedrock",
+        "models": [
+            "global.anthropic.claude-sonnet-5-5",
+            "us.anthropic.claude-opus-5-5",
+            "global.anthropic.claude-haiku-5-5",
+            "global.openai.gpt-6.1-sol",
+        ],
+    },
+    "mistral": {
+        "name": "Mistral",
+        "description": "Mistral AI models (Devstral, Mistral Large/Medium/Small)",
+        "default_model": "devstral-latest",
+        "env_var": "MISTRAL_MODEL",
+        "api_key_var": "MISTRAL_API_KEY",
+        "requires_api_key": True,
+        "base_url": "https://api.mistral.ai/v1",
+        "models_dev": "mistral",
+        "models": [
+            "devstral-latest",
+            "mistral-large-4",
+            "mistral-medium-latest",
+            "mistral-small-latest",
+        ],
+    },
+    "groq": {
+        "name": "Groq",
+        "description": "Fast inference on Groq LPUs (GPT-OSS, Qwen, Llama)",
+        "default_model": "openai/gpt-oss-120b",
+        "env_var": "GROQ_MODEL",
+        "api_key_var": "GROQ_API_KEY",
+        "requires_api_key": True,
+        "base_url": "https://api.groq.com/openai/v1",
+        "models_dev": "groq",
+        "models": ["openai/gpt-oss-120b", "qwen/qwen3.8-27b", "llama-3.3-70b-versatile"],
+    },
+    "cerebras": {
+        "name": "Cerebras",
+        "description": "Fast inference on Cerebras (GPT-OSS, Qwen)",
+        "default_model": "gpt-oss-120b",
+        "env_var": "CEREBRAS_MODEL",
+        "api_key_var": "CEREBRAS_API_KEY",
+        "requires_api_key": True,
+        "base_url": "https://api.cerebras.ai/v1",
+        "models_dev": "cerebras",
+        "models": ["gpt-oss-120b", "qwen-3.8-27b"],
+    },
+    "xai": {
+        "name": "xAI",
+        "description": "xAI Grok models",
+        "default_model": "grok-4.7",
+        "env_var": "XAI_MODEL",
+        "api_key_var": "XAI_API_KEY",
+        "requires_api_key": True,
+        "base_url": "https://api.x.ai/v1",
+        "models_dev": "xai",
+        "models": ["grok-4.7", "grok-4.6", "grok-build-0.1", "grok-4.3"],
+    },
+    "huggingface": {
+        "name": "Hugging Face",
+        "description": "Hugging Face Inference Providers (DeepSeek, GLM, Kimi, Qwen...)",
+        "default_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "env_var": "HF_MODEL",
+        "api_key_var": "HF_TOKEN",
+        "requires_api_key": True,
+        "base_url": "https://router.huggingface.co/v1",
+        "models_dev": "huggingface",
+        "models": [
+            "deepseek-ai/DeepSeek-V4.1-Flash",
+            "zai-org/GLM-5.3",
+            "moonshotai/Kimi-K3",
+            "Qwen/Qwen3.8-27B",
+        ],
+    },
+    "kimi_coding": {
+        "name": "Kimi For Coding",
+        # kimi.ai accounts: KIMI_BASE_URL=https://api.kimi.ai/coding/v1
+        "description": "Kimi Code plan subscription (kimi.com / kimi.ai)",
+        "default_model": "kimi-for-coding",
+        "env_var": "KIMI_MODEL",
+        "api_key_var": "KIMI_API_KEY",
+        "requires_api_key": True,
+        "base_url": "https://api.kimi.com/coding/v1",
+        "base_url_env": "KIMI_BASE_URL",
+        "models_dev": "kimi-code-plan-cn",
+        "models": ["kimi-for-coding", "kimi-for-coding-highspeed", "k3"],
+    },
+    "minimax": {
+        "name": "MiniMax",
+        "description": "MiniMax models, pay-as-you-go or Token Plan (Anthropic-compatible API)",
+        "default_model": "MiniMax-M3",
+        "env_var": "MINIMAX_MODEL",
+        "api_key_var": "MINIMAX_API_KEY",
+        "requires_api_key": True,
+        # The Anthropic SDK appends /v1/messages. MINIMAX_BASE_URL switches region
+        # (https://api.minimax.cn/anthropic for minimax.cn accounts).
+        "base_url": "https://api.minimax.io/anthropic",
+        "base_url_env": "MINIMAX_BASE_URL",
+        "models_dev": "minimax-coding-plan",
+        "models": ["MiniMax-M3", "MiniMax-M3.1-Flash", "MiniMax-M2.7"],
+    },
 }
+
+
+def provider_base_url(provider: str) -> str:
+    """The provider's endpoint: its ``base_url_env`` override, else the preset's."""
+    preset = MODEL_PRESETS[provider]
+    override = os.environ.get(preset.get("base_url_env") or "", "").strip()
+    return (override or preset["base_url"]).rstrip("/")
+
+
+def provider_api_key(provider: str) -> str | None:
+    """The provider's key: keychain, then environment, over every name it is read as."""
+    from novacode_cli.config.credentials import get_stored_key
+
+    preset = MODEL_PRESETS[provider]
+    for var in (preset["api_key_var"], *preset.get("key_aliases", ())):
+        if key := get_stored_key(var) or os.environ.get(var):
+            return key
+    return None
 
 
 def get_ollama_models() -> list[str]:

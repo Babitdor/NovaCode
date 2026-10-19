@@ -27,6 +27,20 @@ def store_header(value: str) -> str:
     return reference
 
 
+def registration_refused_hint(name: str, server_url: str) -> str:
+    """Explain a 403 at OAuth client registration: the server only admits approved apps."""
+    if urlsplit(server_url).hostname == "mcp.figma.com":
+        return (
+            "Figma only lets approved apps use its hosted MCP server, and Nova is not on "
+            "its list yet, so it refused the sign-in (403). Use the figma-desktop preset "
+            "instead: in the Figma desktop app, open Dev Mode and enable the MCP server."
+        )
+    return (
+        f"{name} refused to register Nova for sign-in (403). The server may only accept "
+        "approved apps; check its documentation for supported clients."
+    )
+
+
 def resolve_header(reference: str) -> str:
     """Read a configured header without exposing its value in config or logs."""
     value = SecretManager().get_secret(reference)

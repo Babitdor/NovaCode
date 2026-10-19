@@ -1418,6 +1418,7 @@ class McpScreen(ModalScreen[None]):
         if index is None or not 0 <= index < len(self._config_names):
             return
         name = self._config_names[index]
+        from novacode_cli.mcp.auth import registration_refused_hint
         from novacode_cli.mcp.client import check_server_connection
         from novacode_cli.mcp.config import MCPConfig
 
@@ -1433,8 +1434,12 @@ class McpScreen(ModalScreen[None]):
         status = Text("Authentication failed. Check the server URL and browser sign-in.", style="red")
         try:
             candidate = config.model_copy(update={"oauth": True})
-            connected, _ = await check_server_connection(name, candidate)
+            connected, detail = await check_server_connection(name, candidate)
             if not connected:
+                # Only this known case is spelled out; raw OAuth errors can hold
+                # callback codes, so anything else keeps the generic message.
+                if "Registration failed: 403" in detail:
+                    status = Text(registration_refused_hint(name, config.url or ""), style="red")
                 raise RuntimeError("MCP OAuth sign-in or connection failed")
             await manager.add_server_async(name, candidate)
             status = Text(f"{name} authenticated. Tokens refresh automatically.", style="green")

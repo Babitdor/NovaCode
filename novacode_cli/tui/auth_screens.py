@@ -606,7 +606,8 @@ class AuthPromptScreen(ModalScreen[str | None]):
         super().__init__()
         self._name = name
         self._existing = existing
-        self._advanced = False
+        # Azure has no default endpoint, so its field starts open.
+        self._advanced = name == "azure"
         self._warnings: list[str] = []
 
     @property
@@ -655,15 +656,27 @@ class AuthPromptScreen(ModalScreen[str | None]):
             )
             yield Static("", id="auth-error")
             yield Static(
-                Text("Endpoint URL (blank = provider default)", style="bold"),
+                Text(
+                    "Endpoint URL (your Azure resource)"
+                    if self._name == "azure"
+                    else "Endpoint URL (blank = provider default)",
+                    style="bold",
+                ),
                 id="auth-endpoint-label",
             )
-            yield Input(placeholder="https://…", id="auth-endpoint")
+            yield Input(
+                placeholder=(
+                    "https://<resource>.openai.azure.com" if self._name == "azure" else "https://…"
+                ),
+                id="auth-endpoint",
+            )
 
     def on_mount(self) -> None:
         """Hide the advanced panel and focus the key field."""
         animate_modal_screen(self)
         self._apply_advanced_visibility()
+        if self._advanced and self._existing is not None and self._existing.base_url:
+            self.query_one("#auth-endpoint", Input).value = self._existing.base_url
         self.query_one("#auth-key", Input).focus()
 
     def _apply_advanced_visibility(self) -> None:

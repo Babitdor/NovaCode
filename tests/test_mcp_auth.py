@@ -178,3 +178,72 @@ async def test_mcp_menu_offers_authentication_for_http_server(
         screen.query_one("#authenticate", Button).press()
         await pilot.pause()
         assert servers["remote"].oauth is True
+
+
+@pytest.mark.asyncio
+async def test_connection_check_reports_the_cause_inside_task_groups(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mcp.client.auth.exceptions import OAuthRegistrationError
+
+    from novacode_cli.mcp import client as client_module
+
+    class Client:
+        def __init__(self, servers: object) -> None:
+            pass
+
+        async def get_tools(self) -> list:
+            refused = OAuthRegistrationError("Registration failed: 403 Forbidden")
+            raise ExceptionGroup("unhandled errors in a TaskGroup", [refused])
+
+    async def reachable(name: str, config: MCPServerConfig) -> None:
+        return None
+
+    monkeypatch.setattr(client_module, "MultiServerMCPClient", Client)
+    monkeypatch.setattr(client_module, "_check_remote_server", reachable)
+    monkeypatch.setattr(client_module, "build_mcp_server_config", lambda config: {})
+    ok, detail = await client_module.check_server_connection(
+        "figma", MCPServerConfig(transport="http", url="https://mcp.figma.com/mcp", oauth=True)
+    )
+    assert not ok
+    assert "Registration failed: 403" in detail
+
+
+@pytest.mark.asyncio
+async def test_figma_refusal_explains_the_allowlist_and_desktop_option(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from textual.widgets import Static
+
+    from novacode_cli.mcp import client as client_module
+    from novacode_cli.mcp import config as config_module
+
+    servers = {"figma": MCPServerConfig(transport="http", url="https://mcp.figma.com/mcp")}
+
+    class Config:
+        def list_servers(self) -> dict[str, MCPServerConfig]:
+            return servers
+
+        def get_server(self, name: str) -> MCPServerConfig:
+            return servers[name]
+
+    async def refused(name: str, config: MCPServerConfig) -> tuple[bool, str]:
+        return False, "Connection failed: Registration failed: 403 Forbidden"
+
+    monkeypatch.setattr(config_module, "MCPConfig", Config)
+    monkeypatch.setattr(client_module, "check_server_connection", refused)
+
+    class ScreenApp(App[None]):
+        async def on_mount(self) -> None:
+            await self.push_screen(McpScreen())
+
+    async with ScreenApp().run_test() as pilot:
+        screen = pilot.app.screen
+        screen.query_one("#mcp-configured", OptionList).highlighted = 0
+        await pilot.pause()
+        screen.query_one("#authenticate", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        hint = str(screen.query_one("#mcp-hint", Static).render())
+        assert "approved apps" in hint
+        assert "figma-desktop" in hint

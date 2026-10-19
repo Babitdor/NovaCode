@@ -125,6 +125,11 @@ voice-parakeet = [
 voice-pocket = [
     "pocket-tts>=0.1.0",
 ]
+# Amazon Bedrock provider (boto3 + the Converse API client). Opt-in: most
+# sessions never use Bedrock, and boto3 is large.
+bedrock = [
+    "langchain-aws>=1.0.0",
+]
 server = [
     "fastapi>=0.115.0",
     "uvicorn>=0.34.0",
@@ -162,7 +167,7 @@ llama-cpp-python = { index = "llama-cpp-cpu" }
 
 [tool.setuptools.package-data]
 "*" = ["*.jinja", "langgraph.json"]
-novacode_cli = ["assets/Nova.png"]
+novacode_cli = ["assets/Nova.png", "assets/nova-avatar.png"]
 
 [tool.ruff]
 line-length = 100

@@ -42,6 +42,14 @@ API_KEY_NAMES = {
     "commandcode": "commandcode_api_key",
     "nvidia": "nvidia_api_key",
     "groq": "groq_api_key",
+    "azure": "azure_openai_api_key",
+    "bedrock": "aws_bearer_token_bedrock",
+    "mistral": "mistral_api_key",
+    "cerebras": "cerebras_api_key",
+    "xai": "xai_api_key",
+    "huggingface": "hf_token",
+    "kimi_coding": "kimi_api_key",
+    "minimax": "minimax_api_key",
     # Cloud voice providers. Listed here, not just in the audio registry, so the
     # startup hydration pass exports a keychain-stored voice key too — the STT and
     # TTS backends read the environment.
@@ -118,6 +126,9 @@ def load_secrets_into_env() -> None:
     switching via ``/model``. Env var name is derived as ``<KEY>.upper()``
     (e.g. ``openrouter_api_key`` -> ``OPENROUTER_API_KEY``).
     """
+    # Azure's key also goes by AZURE_API_KEY; Nova reads AZURE_OPENAI_API_KEY.
+    if os.environ.get("AZURE_API_KEY"):
+        os.environ.setdefault("AZURE_OPENAI_API_KEY", os.environ["AZURE_API_KEY"])
     try:
         secret_manager = SecretManager()
     except Exception:  # noqa: BLE001

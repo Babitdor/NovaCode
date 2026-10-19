@@ -158,14 +158,17 @@ async def test_effort_rebuild_keeps_the_active_provider_model_and_shared_steerin
     from types import SimpleNamespace
 
     from novacode_cli.config import model_create
+    from novacode_cli.states.Session import SessionState
 
     app = _app()
+    app.session_state = SessionState(no_splash=True)
     app._model_provider = "commandcode"
     app.model_name = "deepseek/deepseek-v4-flash"
     live_model = SimpleNamespace(model_name=app.model_name)
     app.session_state._model = live_model
     app.session_state.steering_instructions = []
-    app.session_state.switch_model = AsyncMock(return_value=(app.agent, app.backend))
+    runtime_switch = AsyncMock(return_value=(app.agent, app.backend))
+    monkeypatch.setattr(app.session_state._agent_runtime, "switch_model", runtime_switch)
     builds = []
 
     def build(provider: str, name: str) -> SimpleNamespace:
@@ -176,8 +179,9 @@ async def test_effort_rebuild_keeps_the_active_provider_model_and_shared_steerin
     async with app.run_test():
         await app._run_effort("/effort high")
         assert builds == [("commandcode", "deepseek/deepseek-v4-flash")]
-        app.session_state.switch_model.assert_awaited_once_with(
+        runtime_switch.assert_awaited_once_with(
             live_model,
             steering_instructions=app.session_state.steering_instructions,
+            session_id=app.session_state.session_id,
         )
         assert app._reasoning_effort == "high"

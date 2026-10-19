@@ -314,14 +314,16 @@ def get_provider_auth_status(
             detail="stored",
         )
 
-    if _env_value(env_var) or (name == "google" and _env_value("GEMINI_API_KEY")):
-        return ProviderAuthStatus(
-            name=name,
-            state=ProviderAuthState.CONFIGURED,
-            source=ProviderAuthSource.ENV,
-            env_var=env_var,
-            detail=f"set in environment: {env_var}",
-        )
+    aliases = tuple(preset.get("key_aliases", ())) if preset else ()  # type: ignore[arg-type]
+    for var in (env_var, *aliases, *(("GEMINI_API_KEY",) if name == "google" else ())):
+        if _env_value(var):
+            return ProviderAuthStatus(
+                name=name,
+                state=ProviderAuthState.CONFIGURED,
+                source=ProviderAuthSource.ENV,
+                env_var=env_var,
+                detail=f"set in environment: {var}",
+            )
 
     if name == "google" and google_mode == "auto":
         from novacode_cli.config.google_oauth_auth import has_credentials

@@ -15,7 +15,38 @@ PROVIDER_KEY_ENV: dict[str, str] = {
     "opencode_zen": "OPENCODE_ZEN_API_KEY",
     "commandcode": "COMMANDCODE_API_KEY",
     "nvidia": "NVIDIA_API_KEY",
+    "azure": "AZURE_OPENAI_API_KEY",
+    "mistral": "MISTRAL_API_KEY",
+    "groq": "GROQ_API_KEY",
+    "cerebras": "CEREBRAS_API_KEY",
+    "xai": "XAI_API_KEY",
+    "huggingface": "HF_TOKEN",
+    "kimi_coding": "KIMI_API_KEY",
+    "minimax": "MINIMAX_API_KEY",
+    # Bedrock is absent on purpose: an AWS profile or role authenticates it with
+    # no key in the environment, so a key gate would wrongly turn it away.
 }
+
+
+def azure_base_url() -> str:
+    """The Azure v1 OpenAI-compatible URL for the configured resource.
+
+    From ``AZURE_OPENAI_ENDPOINT``, the endpoint saved with the key in /auth, or
+    ``AZURE_RESOURCE_NAME``. Accepts the endpoint with or without ``/openai/v1``.
+    """
+    from novacode_cli.config.credentials import credential_meta
+
+    meta = credential_meta("AZURE_OPENAI_API_KEY")
+    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT") or (meta.base_url if meta else None)
+    if not endpoint and (resource := os.environ.get("AZURE_RESOURCE_NAME")):
+        endpoint = f"https://{resource}.openai.azure.com"
+    if not endpoint:
+        raise ValueError(
+            "Azure needs your resource endpoint: add it with the key in /auth, or set "
+            "AZURE_OPENAI_ENDPOINT (https://<resource>.openai.azure.com) or AZURE_RESOURCE_NAME."
+        )
+    endpoint = endpoint.strip().rstrip("/").removesuffix("/v1").removesuffix("/openai")
+    return f"{endpoint}/openai/v1"
 
 
 def _has_openai_chatgpt_auth() -> bool:
@@ -414,6 +445,68 @@ def _build_chat_model(provider: str, model_name: str) -> BaseChatModel:
             max_retries=5,
             stream_usage=True,
             **gateway_reasoning_kwargs(provider, model_name, effort),
+        )
+
+    from novacode_cli.config.model_manager import OPENAI_COMPATIBLE_PROVIDERS
+
+    if provider in OPENAI_COMPATIBLE_PROVIDERS or provider == "azure":
+        # Mistral, Groq, Cerebras, xAI, Hugging Face, Kimi For Coding and Azure's
+        # v1 API all take OpenAI Chat Completions at their own URL. `name` on a
+        # message is dropped, as for the gateways: Groq and Hugging Face's
+        # upstreams refuse it, and it is metadata the model never needs.
+        from novacode_cli.config.model_manager import provider_api_key, provider_base_url
+        from novacode_cli.utils.backend_patches import apply_openai_reasoning_content_patch
+
+        apply_openai_reasoning_content_patch()
+        if provider == "azure":
+            base_url = azure_base_url()
+            reasoning = openai_reasoning_kwargs(model_name, effort)
+        else:
+            base_url = provider_base_url(provider)
+            reasoning = {}
+        return _opencode_chat_class()(
+            model=model_name,
+            api_key=provider_api_key(provider),
+            base_url=base_url,
+            max_retries=5,
+            stream_usage=True,
+            **reasoning,
+        )
+
+    if provider == "minimax":
+        # MiniMax serves its models on an Anthropic-compatible Messages API.
+        from langchain_anthropic import ChatAnthropic
+
+        from novacode_cli.config.model_manager import provider_api_key, provider_base_url
+
+        return ChatAnthropic(
+            model_name=model_name,
+            api_key=provider_api_key(provider),
+            base_url=provider_base_url(provider),
+            max_tokens=20_000,  # type: ignore[arg-type]
+            max_retries=5,
+        )
+
+    if provider == "bedrock":
+        # Credentials come from boto3's usual chain: AWS_BEARER_TOKEN_BEDROCK (a
+        # Bedrock API key, which /auth stores), AWS_ACCESS_KEY_ID, a profile or a role.
+        try:
+            from langchain_aws import ChatBedrockConverse
+        except ImportError as exc:  # pragma: no cover - install-time path
+            from novacode_cli.install_commands import install_command
+
+            command = install_command(["langchain-aws"], "bedrock")
+            raise RuntimeError(
+                "The Bedrock provider needs the langchain-aws package, which is not "
+                f"installed in this environment. Install it with:\n\n    {command}\n\n"
+                "then restart Nova and run /model again."
+            ) from exc
+
+        region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
+        return ChatBedrockConverse(
+            model=model_name,
+            region_name=region,
+            max_tokens=nova_config.get("max_tokens", 16384),
         )
 
     if provider in ("openai", "openrouter", "opencode", "opencode_zen"):
@@ -842,6 +935,17 @@ def create_model() -> BaseChatModel:
         if available:
             model_name = os.environ.get(model_env, default_model)
             console.print(f"[dim]Using {label} model: {model_name}[/dim]")
+            return build_chat_model(provider, model_name)
+
+    # Then the providers that only need a key. Azure also needs an endpoint and
+    # Bedrock may have no key at all, so both wait for an explicit /model pick.
+    from novacode_cli.config.model_manager import MODEL_PRESETS, OPENAI_COMPATIBLE_PROVIDERS
+
+    for provider in sorted(OPENAI_COMPATIBLE_PROVIDERS | {"minimax"}):
+        preset = MODEL_PRESETS[provider]
+        if os.environ.get(preset["api_key_var"]):
+            model_name = os.environ.get(preset["env_var"], preset["default_model"])
+            console.print(f"[dim]Using {preset['name']} model: {model_name}[/dim]")
             return build_chat_model(provider, model_name)
 
     # Default to Ollama if no API keys are configured

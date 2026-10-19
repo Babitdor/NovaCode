@@ -25,7 +25,9 @@ def configured(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(NovaConfig, "get_model_base_url", lambda _self: None)
     for provider, env in model_create.PROVIDER_KEY_ENV.items():
         monkeypatch.setenv(env, "test-key")
-        monkeypatch.setattr(model_create.settings, f"{provider}_api_key", "test-key")
+        # Newer providers resolve keys from the keychain/env and have no field.
+        if hasattr(model_create.settings, f"{provider}_api_key"):
+            monkeypatch.setattr(model_create.settings, f"{provider}_api_key", "test-key")
 
 
 @pytest.mark.parametrize(
