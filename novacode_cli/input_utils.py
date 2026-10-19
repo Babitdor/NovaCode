@@ -225,12 +225,22 @@ _PASTE_PLACEHOLDER_RE = re.compile(
 )
 
 
-def resolve_paste_placeholders(text: str, paste_tracker: PasteTracker) -> str:
+def resolve_paste_placeholders(
+    text: str,
+    paste_tracker: PasteTracker,
+    *,
+    spill_over: int | None = None,
+    spill_dir: Path | None = None,
+) -> str:
     """Replace paste placeholders with the original full text.
 
     Args:
         text: The input text possibly containing paste placeholders
         paste_tracker: The PasteTracker instance holding the original texts
+        spill_over: A paste longer than this many characters (too much for the
+            model's context window) is saved to ``spill_dir`` instead, and the
+            message carries its opening lines and the file path.
+        spill_dir: Where such pastes are saved.
 
     Returns:
         The text with all paste placeholders resolved to their full content
@@ -240,10 +250,39 @@ def resolve_paste_placeholders(text: str, paste_tracker: PasteTracker) -> str:
         original = paste_tracker.get_paste(paste_id)
         if original is not None:
             paste_tracker.remove_paste(paste_id)
+            if spill_over is not None and spill_dir is not None and len(original) > spill_over:
+                return spill_paste(original, spill_dir)
             return original
         return m.group(0)  # fallback: keep placeholder if paste not found
 
     return _PASTE_PLACEHOLDER_RE.sub(_replacer, text)
+
+
+#: Opening lines of a saved paste that the message itself carries.
+SPILL_HEAD_LINES = 40
+
+
+def spill_paste(text: str, folder: Path) -> str:
+    """Save a paste too large for the context window; return what the agent gets.
+
+    Nothing is cut: the whole paste is on disk, and the agent reads it with
+    ``read_file`` in chunks (offset/limit), as it would any large file.
+    """
+    import time
+
+    folder.mkdir(parents=True, exist_ok=True)
+    ignore = folder / ".gitignore"
+    if not ignore.exists():
+        ignore.write_text("*\n", encoding="utf-8")  # pastes are not project files
+    path = folder / f"paste-{time.strftime('%Y%m%d-%H%M%S')}-{len(text)}.txt"
+    path.write_text(text, encoding="utf-8")
+    lines = text.splitlines()
+    head = "\n".join(lines[:SPILL_HEAD_LINES])
+    return (
+        f"[Pasted text: {len(lines):,} lines, {len(text) / 1024:,.0f} KB. Too large for the "
+        f"context window, so it is saved in full at {path} — read it with read_file "
+        f"(offset/limit) in chunks as needed. Its opening lines:]\n{head}\n[end of excerpt]"
+    )
 
 
 # CSS at-rules and Python/JS decorators that should NOT be treated as file mentions.

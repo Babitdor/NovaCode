@@ -183,6 +183,29 @@ _MIN_HEIGHT = 12
 _SHORT_HEIGHT = 20
 
 
+#: A sent message is drawn in full up to this size; past it, its opening lines
+#: and a note (drawing megabytes of text froze the UI for seconds).
+_SHOWN_MESSAGE_LINES = 40
+_SHOWN_MESSAGE_CHARS = 6_000
+#: Inputs longer than this are not kept for Up/Down recall.
+_HISTORY_MAX_CHARS = 100_000
+
+
+def _user_message_body(text: str, *, markdown: bool = False) -> Any:  # noqa: ANN401
+    """A user message for the chat: whole when small, its opening lines when huge."""
+    lines = text.count("\n") + 1
+    if len(text) <= _SHOWN_MESSAGE_CHARS and lines <= _SHOWN_MESSAGE_LINES:
+        return Markdown(text) if markdown else Text(text)
+    head = "\n".join(text[:_SHOWN_MESSAGE_CHARS].split("\n")[:_SHOWN_MESSAGE_LINES])
+    body = Text(head)
+    more = lines - (head.count("\n") + 1)
+    body.append(
+        f"\n… {more:,} more lines · {len(text) / 1024:,.0f} KB in all, sent in full",
+        style="dim italic",
+    )
+    return body
+
+
 def _responsive_breakpoints(width: int, height: int) -> tuple[bool, bool, bool, bool]:
     """Map a terminal size to (narrow, compact, short, tiny) layout classes."""
     return (
@@ -5523,7 +5546,7 @@ class NovaApp(App):
                         await self._replay_journal_entry(entry)
                         shown += 1
                 turn += 1
-                await self._add_message(self._user_label(), "user", Markdown(text))
+                await self._add_message(self._user_label(), "user", _user_message_body(text, markdown=True))
                 shown += 1
             elif role == "ai":
                 # Tool calls ride on the AIMessage; replay them into the
@@ -7986,7 +8009,7 @@ class NovaApp(App):
         # pastes (so the box stays readable while composing). On submit we expand
         # them back to the full text, which is what both the agent receives AND
         # what the chat shows — the sent message is displayed in full.
-        text = resolve_paste_placeholders(event.value, self.paste_tracker).strip()
+        text = self._resolve_pastes(event.value).strip()
         # Strip deceptive/invisible Unicode (BiDi overrides, zero-width chars) a
         # paste may smuggle in — a prompt-injection vector. Warn + sanitize.
         text = self._sanitize_user_text(text)
@@ -8092,11 +8115,28 @@ class NovaApp(App):
             return None
         return settings.nova_dir / "input_history.jsonl"
 
+    def _resolve_pastes(self, value: str) -> str:
+        """Expand the box's ``[paste #N]`` placeholders into the text to send.
+
+        No size limit: a paste over a quarter of the model's context window
+        (about 4 characters a token) is saved under ``.nova/pastes`` and the
+        message carries its opening lines and the path, for ``read_file``.
+        """
+        from novacode_cli.config.config import settings
+
+        window = getattr(self.token_tracker, "context_window_size", 0) or 200_000
+        return resolve_paste_placeholders(
+            value,
+            self.paste_tracker,
+            spill_over=window,  # tokens * 4 chars / 4 = a quarter of the window
+            spill_dir=settings.get_workspace_root() / ".nova" / "pastes",
+        )
+
     def _remember_input(self, box: Any, text: str) -> None:  # noqa: ANN401
         """Keep a sent input for Up/Down, here and in later sessions of this project."""
         remember = getattr(box, "remember", None)
-        if remember is None:
-            return
+        if remember is None or len(text) > _HISTORY_MAX_CHARS:
+            return  # a huge paste would load megabytes into the box on Up
         remember(text)
         import json
 
@@ -8225,7 +8265,7 @@ class NovaApp(App):
             self._redirect_prompt = message
             await self._stop_main_turn()
         else:
-            await self._add_message(self._user_label(), "user", Text(message))
+            await self._add_message(self._user_label(), "user", _user_message_body(message))
             await self._stream_prompt(message)
 
     async def _run_stop(self, text: str) -> None:
@@ -8266,7 +8306,7 @@ class NovaApp(App):
             box = self.query_one("#prompt", PromptInput)
         except NoMatches:
             return ""
-        text = resolve_paste_placeholders(box.text, self.paste_tracker).strip()
+        text = self._resolve_pastes(box.text).strip()
         if not text or text.startswith(("/", "!")):
             return ""
         box.text = ""
@@ -9395,7 +9435,7 @@ class NovaApp(App):
             mentioned_agents and agent_name is None
         ):
             ordered = " → ".join(f"@{a}" for a in mentioned_agents)
-            await self._add_message(Text(f"You → {ordered}", style="bold cyan"), "user", Text(text))
+            await self._add_message(Text(f"You → {ordered}", style="bold cyan"), "user", _user_message_body(text))
             preamble = (
                 "This request references specialist subagents by @name. Delegate "
                 "each part of the work to the named agent using the `task` tool, "
@@ -9408,14 +9448,14 @@ class NovaApp(App):
 
         # Single agent at the start: delegate directly to that one subagent.
         if agent_name:
-            await self._add_message(self._user_label(agent_name), "user", Text(query))
+            await self._add_message(self._user_label(agent_name), "user", _user_message_body(query))
             await self._stream_prompt(
                 f"Call the '{agent_name}' subagent to do the following:\n\n{query}"
             )
             return
 
         # Plain prompt — send it to the agent as a single turn.
-        await self._add_message(self._user_label(), "user", Text(text))
+        await self._add_message(self._user_label(), "user", _user_message_body(text))
         # Surface any background jobs that finished since the last turn (the user
         # sees the clean prompt; the agent sees the note prepended).
         agent_text = text
@@ -9721,7 +9761,7 @@ class NovaApp(App):
                     style="italic #9ece6a",
                 )
             )
-            await self._add_message(self._user_label(), "user", Text(prompt))
+            await self._add_message(self._user_label(), "user", _user_message_body(prompt))
             await self._stream_prompt(prompt)
 
     async def _check_context(self) -> None:
@@ -11861,7 +11901,7 @@ class NovaApp(App):
         if skill.pinned_prompt:
             label = self._user_label()
             label.append(f" · pinned skill: {skill.name}", style="bold #7aa2f7")
-            await self._add_message(label, "user", Text(text))
+            await self._add_message(label, "user", _user_message_body(text))
         t.append(
             f"⚡ {'Pinning' if skill.pinned_prompt else 'Invoking'} skill: {skill.name}",
             style="bold #7aa2f7",
