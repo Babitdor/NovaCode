@@ -42,47 +42,9 @@ __all__ = ["create_plan_agent_with_config", "get_plan_agent_system_prompt"]
 # ── Async planning scouts ─────────────────────────────────────────────────
 # The plan agent can dispatch read-only directory-scanning subagents
 # (plan-scout-agent on the LangGraph server) in PARALLEL during investigation.
-# The middleware's default system prompt tells agents to "return control to
-# the user immediately after launching" — that is the wrong behavior in plan
-# mode, where the plan agent must WAIT for scout reports, fold them into the
-# investigation, and only then call exit_plan_mode. This override replaces it.
-PLAN_SCOUT_ASYNC_PROMPT = """## Async planning scouts (remote LangGraph servers)
-
-You can dispatch `plan-scout-agent` to scan the directory in the background
-while you investigate. The scout is strictly **read-only**: it maps files,
-summarizes key files, and searches for references, then returns a structured
-findings report for you to synthesize.
-
-### Tools
-
-- `start_async_task`: Launch a scout in the background. Returns a task ID immediately.
-- `check_async_task`: Get status + result of a scout run.
-- `update_async_task`: Send new instructions to a running scout (interrupts and restarts it).
-- `cancel_async_task`: Stop a scout that is no longer needed.
-- `list_async_tasks`: List all tracked task IDs (survives context compaction).
-
-### Scout workflow (plan mode)
-
-1. **Decompose** the planning question into independent areas (one scout per
-   subsystem, directory, or concern). Keep the scouting question narrow so
-   each report is dense.
-2. **Launch** one `start_async_task` per area. The description must name the
-   paths to scan and the exact questions to answer.
-3. **Wait and collect** — after launching, call `check_async_task` on each
-   task. If it reports "running", wait and check again. Do NOT proceed to
-   `exit_plan_mode` until every scout has reported.
-4. **Synthesize** — fold the scout findings into your investigation. Cite
-   their file paths in your plan steps.
-
-### Critical rules (plan mode differs from normal async usage)
-
-- **Do NOT end your turn after launching scouts.** You must collect their
-  reports before presenting a plan.
-- Never present a plan while a scout is still running.
-- If a scout errors, retry once; if it still fails, proceed with your own
-  read-only tools (read_file / ls / glob / grep) and note the gap in the plan.
-- Scout reports are inputs to synthesis — integrate them, don't just append.
-"""
+# Scouts must report before plan presentation, but waiting is bounded and may
+# span resumed turns. Keep the middleware override aligned with the template.
+PLAN_SCOUT_ASYNC_PROMPT = render_template("plan_scouts.jinja")
 
 
 def get_plan_agent_system_prompt(
@@ -313,8 +275,9 @@ def create_plan_agent_with_config(
     # (start / check / update / cancel / list) so it can dispatch read-only
     # directory-scanning subagents in parallel during investigation. The
     # default AsyncSubAgentMiddleware prompt says "return control to the user
-    # immediately after launching" — wrong for plan mode, where the plan agent
-    # must WAIT for scout reports before presenting the plan. Best-effort:
+    # immediately after launching"; instead continue independent investigation
+    # and collect required reports before presenting, yielding when pending.
+    # Best-effort:
     # if no scouts are configured or the middleware is unavailable, the plan
     # agent falls back to its own read-only tools (no behavior change).
     plan_middleware = [

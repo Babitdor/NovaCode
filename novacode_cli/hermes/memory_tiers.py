@@ -112,7 +112,8 @@ def compact_memory_file(path: Path, max_chars: int = MAX_MEMORY_CHARS) -> bool:
     if not path.exists():
         return False
 
-    content = path.read_text(encoding="utf-8")
+    original_bytes = path.read_bytes()
+    content = original_bytes.decode("utf-8")
     if len(content) <= max_chars:
         return False
 
@@ -129,11 +130,21 @@ def compact_memory_file(path: Path, max_chars: int = MAX_MEMORY_CHARS) -> bool:
         if newline_pos != -1:
             end_pos = newline_pos
 
-    truncated = content[:end_pos].rstrip() + "\n" + _MEMORY_TRUNCATION_NOTICE + "\n"
+    archive_name = f"{path.stem}-{hashlib.sha256(original_bytes).hexdigest()[:16]}.txt"
+    archive = path.parent / ".history" / archive_name
+    truncated = (
+        content[:end_pos].rstrip() + "\n" + _MEMORY_TRUNCATION_NOTICE
+        + f"\nFull original: [.history/{archive_name}](.history/{archive_name})\n"
+    )
 
     # Guard: don't write if compaction would grow the file.
     if len(truncated) >= len(content):
         return False
+    # Archive successfully before any destructive truncation. A failure leaves
+    # the source untouched, and .txt keeps snapshots out of topic retrieval.
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    if not archive.exists():
+        archive.write_bytes(original_bytes)
     path.write_text(truncated, encoding="utf-8")
 
     _emit_memory_event(
@@ -232,6 +243,15 @@ def _upsert_index_pointer(memories_dir: Path, topic_slug: str) -> None:
     line = f"- [{topic_slug}]({topic_slug}.md)"
     if index.exists():
         content = index.read_text(encoding="utf-8")
+        if "<!-- nova-memory-wiki:managed -->" in content:
+            # Keep the injected home stable. /dream will classify this new
+            # page into its final map; meanwhile it remains reachable here.
+            inbox = memories_dir / "wiki-operations.md"
+            if inbox.exists():
+                current = inbox.read_text(encoding="utf-8")
+                if f"]({topic_slug}.md)" not in current:
+                    inbox.write_text(current.rstrip() + "\n" + line + "\n", encoding="utf-8")
+                return
         if re.search(rf"\]\(\s*{re.escape(topic_slug)}\.md\s*\)", content):
             return  # pointer already present
         header = _INDEX_HEADER_RE.match(content)
@@ -403,6 +423,10 @@ def record_habit(agent_dir: Path, bullets: str) -> None:
     habits_file = agent_dir / "HABITS.md"
 
     content = habits_file.read_text(encoding="utf-8") if habits_file.exists() else _HABITS_HEADER
+
+    if "<!-- nova-memory-wiki:checklist -->" in content:
+        record_lesson(agent_dir, "habits-lessons", bullets)
+        return
 
     deduped = _dedup_against(content, bullets)
     if not deduped:

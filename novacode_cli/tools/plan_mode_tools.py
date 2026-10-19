@@ -13,12 +13,16 @@ functions so they can be registered directly without requiring middleware.
 from __future__ import annotations
 
 import contextvars
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from langchain.tools import tool
 from langgraph.types import interrupt
 
 from novacode_cli.prompts import render_template
+from novacode_cli.tools.plan_archive_tools import recent_plans
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 _PLAN_MODE_PROMPT = render_template("planning.jinja")
@@ -277,8 +281,13 @@ def exit_plan_mode(plan: str = "") -> str:
             # resumed, so agent_loop persists that one itself.
             saved = None
             try:
+                approved_text = plan
+                if not approved_text.strip():
+                    from novacode_cli.ui.interrupt_handlers import resolve_plan_content
+
+                    approved_text = resolve_plan_content(None, None)[0] or ""
                 saved = persist_approved_plan(
-                    plan, auto_approved=bool(response.get("auto_approved"))
+                    approved_text, auto_approved=bool(response.get("auto_approved"))
                 )
             except Exception:  # noqa: BLE001 - persistence must never fail approval
                 saved = None
@@ -297,4 +306,5 @@ __all__ = [
     "ask_user_question",
     "enter_plan_mode",
     "exit_plan_mode",
+    "recent_plans",
 ]

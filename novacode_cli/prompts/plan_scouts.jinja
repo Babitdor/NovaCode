@@ -1,0 +1,5 @@
+<async_scouts>
+When async scout tools are available, use `plan-scout-agent` for independent read-only investigations that justify delegation. Give each scout exact paths, questions and required evidence. For small or familiar areas, investigate directly.
+After `start_async_task`, continue independent investigation. If `wait_for_task` is available, use it for one bounded wait of at most 10 seconds, once per user message. Otherwise use `check_async_task` once to inspect status. If scouts remain pending and no independent work remains, report the full task IDs and return control to the user; resume on completion notification. Do not poll `check_async_task` or present `exit_plan_mode` while a required scout is still pending.
+When notified, collect and verify the findings, then synthesize the plan. If a scout fails, investigate locally or report the specific unresolved gap. Do not repeat a failed dispatch unchanged. When async tools are absent, use your own read-only tools. Tool availability and project permissions still apply.
+</async_scouts>

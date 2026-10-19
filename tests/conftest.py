@@ -10,6 +10,7 @@ import pytest
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
 #: Env vars that carry credentials. Anything that saves a credential writes
 #: these directly into ``os.environ`` (see `config/credentials.py`), and callers
@@ -178,6 +179,20 @@ def _guard_the_real_user_config() -> Iterator[None]:
         f"a test modified the real user config at {path}; "
         "stub Novaconfig on the name the code resolves, or patch config.HOME_DIR"
     )
+
+
+@pytest.fixture
+def isolated_plan_storage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
+    """Keep approval tests out of the real workspace and personal plan archive."""
+    from novacode_cli import plan_archive
+    from novacode_cli.config.config import settings
+
+    project = tmp_path / "approval-project"
+    project.mkdir(exist_ok=True)
+    global_plans = tmp_path / "home" / ".nova" / "plans"
+    monkeypatch.setattr(settings, "project_root", project)
+    monkeypatch.setattr(plan_archive, "global_plans_root", lambda: global_plans)
+    return project, global_plans
 
 
 @pytest.fixture(autouse=True)

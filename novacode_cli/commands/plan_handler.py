@@ -9,6 +9,7 @@ This module handles:
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -153,6 +154,7 @@ async def _start_plan_mode(
             ask_user_question,
             enter_plan_mode,
             exit_plan_mode,
+            recent_plans,
         )
         from novacode_cli.tools.web_tools import (
             web_search,
@@ -170,6 +172,7 @@ async def _start_plan_mode(
                 ask_user_question,
                 enter_plan_mode,
                 exit_plan_mode,
+                recent_plans,
                 web_search,
                 docs_search,
                 duckduckgo_search,
@@ -251,6 +254,7 @@ async def _disable_plan_mode(
                     pass
 
     if getattr(session_state, "auto_approve", False):
+        await _save_plan_approval(plan_content, auto_approved=True)
         session_state.plan_mode_enabled = False
         console.print("[green]Plan Approved - switching to execution mode (auto-approved)[/green]")
         console.print()
@@ -269,6 +273,7 @@ async def _disable_plan_mode(
     )
 
     if result["approved"]:
+        await _save_plan_approval(plan_content, auto_approved=False)
         session_state.plan_mode_enabled = False
         console.print("[green]Plan Approved - switching to execution mode[/green]")
         console.print()
@@ -296,6 +301,18 @@ async def _disable_plan_mode(
     return True
 
 
+async def _save_plan_approval(plan_content: str | None, *, auto_approved: bool) -> None:
+    """Save through the shared writer without blocking approval on disk errors."""
+    from novacode_cli.tools.plan_mode_tools import persist_approved_plan
+
+    try:
+        await asyncio.to_thread(
+            persist_approved_plan, plan_content or "", auto_approved=auto_approved
+        )
+    except OSError:
+        console.print("[yellow]The approved plan could not be saved to disk.[/yellow]")
+
+
 async def handle_plan_approval(
     agent,
     session_state: "SessionState",
@@ -315,6 +332,7 @@ async def handle_plan_approval(
         True if approved, False if rejected.
     """
     if getattr(session_state, "auto_approve", False):
+        await _save_plan_approval(plan_content, auto_approved=True)
         session_state.plan_mode_enabled = False
         session_state.clear_plan_agent()
         console.print("[green]Plan Auto-Approved![/green]")
@@ -340,6 +358,7 @@ async def handle_plan_approval(
     )
 
     if result["approved"]:
+        await _save_plan_approval(plan_content, auto_approved=False)
         session_state.plan_mode_enabled = False
         session_state.clear_plan_agent()
         console.print("[green]Plan Approved![/green]")

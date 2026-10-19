@@ -595,7 +595,9 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
         "_run_voice", "voice settings (opens /settings → Voice) · /voice test|download|doctor"
     ),
     "research": SlashCommand("_run_research", "launch a multi-agent research swarm"),
-    "dream": SlashCommand("_run_dream", "reflect over memories to surface ideas", wants_text=False),
+    "dream": SlashCommand(
+        "_run_dream", "organize and consolidate the memory wiki", wants_text=False
+    ),
     "evolution": SlashCommand(
         "_run_evolution", "view skills unlocked / levelled up by complex tasks", wants_text=False
     ),
@@ -10359,7 +10361,7 @@ class NovaApp(App):
             "• /research <query> — launch multi-agent research swarm\n"
             "• /ralph <task> — run autonomously (looping mode)\n"
             "• /evolution — view self-evolution logs\n"
-            "• /dream — consolidate memory from previous sessions\n"
+            "• /dream — maintain the memory wiki and consolidate lessons\n"
             "• /<skill> (e.g. /graphify) — run a skill\n"
             "Sessions (several at once):\n"
             "• /tabs — list sessions · /tab — choose a project and start one\n"
@@ -13338,6 +13340,7 @@ class NovaApp(App):
                 ask_user_question,
                 enter_plan_mode,
                 exit_plan_mode,
+                recent_plans,
             )
 
             model = getattr(self.session_state, "_model", None)
@@ -13347,7 +13350,7 @@ class NovaApp(App):
             plan_agent, plan_backend = create_plan_agent_with_config(
                 model=model,
                 assistant_id=getattr(self.session_state, "_assistant_id", None) or "nova",
-                tools=[ask_user_question, enter_plan_mode, exit_plan_mode],
+                tools=[ask_user_question, enter_plan_mode, exit_plan_mode, recent_plans],
                 steering_instructions=getattr(self.session_state, "steering_instructions", None),
                 auto_approve=getattr(self.session_state, "auto_approve", False),
                 # Share the core agent's checkpointer + store so plan mode sees
@@ -13768,6 +13771,18 @@ class NovaApp(App):
             )
             if choice in ("auto", "manual"):
                 planner_usage.forget_session(planner.COMMAND, root)
+                # Both choices are an explicit user approval. "Auto" only
+                # changes permissions for the subsequent implementation run.
+                from novacode_cli.tools.plan_mode_tools import persist_approved_plan
+
+                try:
+                    saved = await asyncio.to_thread(
+                        persist_approved_plan, turn.plan, auto_approved=False
+                    )
+                    if saved:
+                        self._log(Text(f"Plan saved to {saved}", style="dim"))
+                except OSError:
+                    self._log(Text("The approved plan could not be saved to disk.", style="yellow"))
                 if choice == "auto":
                     # Scoped to this plan's run, as in the /plan approval handler.
                     if not getattr(self.session_state, "auto_approve", False):

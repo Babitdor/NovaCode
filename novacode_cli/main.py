@@ -185,6 +185,7 @@ from novacode_cli.tools.plan_mode_tools import (
     ask_user_question,
     enter_plan_mode,
     exit_plan_mode,
+    recent_plans,
 )
 # Vixie desktop pet integration
 from novacode_cli.vixie.server import start_vixie_server, stop_vixie_server
@@ -429,6 +430,7 @@ async def _run_agent_session(
         # stripped from subagents in _harden_subagent_specs.
         enter_plan_mode,
         exit_plan_mode,
+        recent_plans,
         # Wiki Tools
         wiki_read,
         wiki_search,

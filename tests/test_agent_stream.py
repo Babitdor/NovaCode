@@ -13,8 +13,12 @@ import asyncio
 import types
 from typing import TYPE_CHECKING
 
+import pytest
+
 import novacode_cli.ui_events as ev
 from novacode_cli.core.agent_loop import iterate_agent_events
+
+pytestmark = pytest.mark.usefixtures("isolated_plan_storage")
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator

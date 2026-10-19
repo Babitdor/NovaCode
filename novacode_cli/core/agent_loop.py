@@ -1168,8 +1168,10 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                         )
                         break
 
-                    if approved_text or auto_approved:
-                        saved = _save_unresumed_plan((resolved, auto_approved), session_state)
+                    if approved_text or auto_approved or plan_file is None:
+                        saved = await asyncio.to_thread(
+                            _save_unresumed_plan, (resolved, auto_approved), session_state
+                        )
                         if saved:
                             yield ev.ContextMessage(f"Plan saved to {saved}", icon="✓", color="green")
                     try:

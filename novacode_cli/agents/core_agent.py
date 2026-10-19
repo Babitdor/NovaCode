@@ -1922,6 +1922,11 @@ def create_agent_with_config(
     if _mb_extra:
         tools = list(tools) + _mb_extra
 
+    from novacode_cli.tools.memory_wiki_tools import create_memory_wiki_tool
+
+    if "memory_wiki" not in _have_tool:
+        tools = [*tools, create_memory_wiki_tool(settings.get_agent_dir(assistant_id))]
+
     tracing_enabled = False
 
     if is_tracing_enabled():

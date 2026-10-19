@@ -13,6 +13,8 @@ import pytest
 from novacode_cli.commands import claude_plan
 from novacode_cli.commands.claude_plan import PlanTurn, run_turn
 
+pytestmark = pytest.mark.usefixtures("isolated_plan_storage")
+
 # A stand-in for `claude -p ... --output-format stream-json`: a question on the
 # first turn, a written plan once resumed.
 FAKE_CLAUDE = r'''

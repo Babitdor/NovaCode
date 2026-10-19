@@ -4,11 +4,21 @@ This module provides the handle_dream_command function that runs
 a memory consolidation pass to organize and clean up memory files.
 """
 
+from __future__ import annotations
+
+import asyncio
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from novacode_cli.config.config import COLORS, console
 from novacode_cli.prompts import render_template
+
+if TYPE_CHECKING:
+    from novacode_cli.commands import CommandContext, CommandRegistry
+
+_CONTEXT_TOPIC_PREVIEW = 8
+_STATUS_TOPIC_PREVIEW = 6
 
 # A UI sink: called with one Rich-markup string per line ("" = blank line).
 EmitFn = Callable[[str], None]
@@ -20,7 +30,7 @@ def _console_emit(message: str = "") -> None:
 
 
 async def handle_dream_command(
-    session_state,
+    session_state: object,
     assistant_id: str | None = None,
     agent_dir: Path | None = None,
     emit: EmitFn | None = None,
@@ -40,6 +50,7 @@ async def handle_dream_command(
         session_state: Current session state.
         assistant_id: The active agent id (defaults to the main agent).
         agent_dir: Optional explicit agent directory (overrides the resolved one).
+        emit: Optional renderer-specific status sink.
 
     Returns:
         The consolidation prompt string, or True if there is nothing to consolidate.
@@ -48,6 +59,9 @@ async def handle_dream_command(
 
     if emit is None:
         emit = _console_emit
+    if getattr(session_state, "plan_mode_enabled", False):
+        emit("[yellow]Exit plan mode before running memory wiki maintenance.[/yellow]")
+        return True
 
     # Resolve the REAL memory directory (the one Nova actually writes to).
     if agent_dir is None:
@@ -60,11 +74,17 @@ async def handle_dream_command(
     # under memories/ (indexed by INDEX.md).
     tier_files = {
         "agent.md": "user model, preferences & general notes",
+        "HABITS.md": "stable operating checklist; incident lessons belong in topic memory",
     }
     memories_dir = agent_dir / "memories"
 
     present = [(name, role) for name, role in tier_files.items() if (agent_dir / name).exists()]
-    topic_files = sorted(memories_dir.glob("*.md")) if memories_dir.exists() else []
+    topic_files = sorted(
+        [
+            *memories_dir.glob("*.md"),
+            *(memories_dir / "projects").glob("*/*.md"),
+        ]
+    )
 
     if not present and not topic_files:
         emit("")
@@ -89,26 +109,32 @@ async def handle_dream_command(
     if topic_files:
         lines.append(
             f"- `/memories/memories/` — {len(topic_files)} topic file(s): "
-            + ", ".join(f.name for f in topic_files[:8])
-            + ("…" if len(topic_files) > 8 else "")
+            + ", ".join(f.name for f in topic_files[:_CONTEXT_TOPIC_PREVIEW])
+            + ("…" if len(topic_files) > _CONTEXT_TOPIC_PREVIEW else "")
         )
     memory_dir_context = "\n".join(lines)
 
-    # Pick the index target the agent should keep tidy, as a full virtual path
-    # the agent's file tools accept: the topic INDEX.md under memories/ if it
-    # exists, else Nova's cross-session MEMORY.md.
-    index_file = (
-        "/memories/memories/INDEX.md"
-        if (memories_dir / "INDEX.md").exists()
-        else "/memories/MEMORY.md"
-    )
+    # The wiki has one canonical home, including on its first maintenance pass.
+    index_file = "/memories/memories/INDEX.md"
+
+    from novacode_cli.memory.wiki import maintain_wiki, snapshot_wiki
+
+    try:
+        wiki = await asyncio.to_thread(maintain_wiki, agent_dir)
+        backup = wiki["backup"] or str(await asyncio.to_thread(snapshot_wiki, agent_dir))
+    except (OSError, ValueError, RuntimeError) as exc:
+        emit(f"[yellow]Memory maintenance stopped: {exc}[/yellow]")
+        return True
 
     emit("")
+    emit(f"[dim]Wiki: {wiki['topics']} topics; {len(wiki['broken_links'])} unresolved links.[/dim]")
     emit(f"[bold {COLORS['primary']}]💭 Memory Consolidation (Dream)[/bold {COLORS['primary']}]")
     for name, role in present:
         emit(f"  [cyan]{name}[/cyan] [dim]— {role}[/dim]")
     if topic_files:
-        names = ", ".join(f.name for f in topic_files[:6]) + ("…" if len(topic_files) > 6 else "")
+        names = ", ".join(f.name for f in topic_files[:_STATUS_TOPIC_PREVIEW]) + (
+            "…" if len(topic_files) > _STATUS_TOPIC_PREVIEW else ""
+        )
         emit(f"  [cyan]memories/[/cyan] [dim]— {len(topic_files)} topic file(s): {names}[/dim]")
     emit("")
 
@@ -118,14 +144,15 @@ async def handle_dream_command(
         memory_dir_context=memory_dir_context,
         index_file=index_file,
         index_max_lines=100,
-        transcripts_dir=str(transcripts_dir) if transcripts_dir.exists() else None,
+        transcripts_dir="/memories/transcripts/" if transcripts_dir.exists() else None,
+        backup_dir="/memories/" + Path(backup).relative_to(agent_dir).as_posix(),
     )
 
 
 def get_dream_prompt(
     memory_dir: Path,
     transcripts_dir: Path | None = None,
-    index_file: str = "INDEX.md",
+    index_file: str = "/memories/memories/INDEX.md",
     index_max_lines: int = 100,
 ) -> str:
     """Generate the memory consolidation prompt.
@@ -133,7 +160,7 @@ def get_dream_prompt(
     Args:
         memory_dir: Path to the memory directory
         transcripts_dir: Optional path to transcripts directory
-        index_file: Name of the index file (default: INDEX.md)
+        index_file: Virtual wiki home path.
         index_max_lines: Maximum lines for the index (default: 100)
 
     Returns:
@@ -141,7 +168,7 @@ def get_dream_prompt(
     """
     return render_template(
         "memory_consolidation.jinja",
-        memory_dir=str(memory_dir),
+        memory_dir=memory_dir.as_posix().rstrip("/") + "/",
         memory_dir_context=f"Memory files are stored in {memory_dir}",
         index_file=index_file,
         index_max_lines=index_max_lines,
@@ -154,8 +181,8 @@ def get_dream_prompt(
 # ---------------------------------------------------------------------------
 
 
-def register_commands(registry) -> None:
-    from novacode_cli.commands import CommandContext
+def register_commands(registry: CommandRegistry) -> None:
+    """Register the shared command handler for every renderer."""
 
     async def _handle(ctx: CommandContext) -> bool:
         result = await handle_dream_command(ctx.session_state, ctx.assistant_id)

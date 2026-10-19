@@ -26,6 +26,7 @@ BLOCKED_TOOLS: frozenset[str] = frozenset({
     "git_stash",
     # Planning-only tool — not allowed during execution
     "write_todos",
+    "memory_wiki",
 })
 
 # ── Restricted write tools ─────────────────────────────────────────────

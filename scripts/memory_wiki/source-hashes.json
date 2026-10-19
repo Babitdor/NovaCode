@@ -1,0 +1,16 @@
+{
+  "novacode_cli/memory/wiki.py": "6f8608bc57b372825c4d6f31b5df9acf3c3172087d5fca6aa08e5ec90d4ab601",
+  "novacode_cli/memory/agent_memory.py": "ab403654ebc6d03a6e71fa54720fd3dea1a85ff4cf6d6167559688a15869fab0",
+  "novacode_cli/tools/memory_wiki_tools.py": "ef7356df339de8de70339e6a7d1c53a374e98f1e23f1a02d0b300d4ad8143a37",
+  "novacode_cli/commands/dream_handler.py": "75480904fc95eb3822cb4247d942e62ca751df0b050705ead458e34a328a1903",
+  "novacode_cli/hermes/memory_tiers.py": "89623faaa7e9b9d0950ccff6f36c8929964f543c3f60d654eb19cce114ae9249",
+  "novacode_cli/prompts/memory_consolidation.jinja": "52d32a022e8adb24d1322d287612084bf51f25e68223d73e273fa7c7a2d56820",
+  "novacode_cli/prompts/longterm_memory.jinja": "125e5851d59dcd6ec07c2f4f0ff7269aa65823452e775156b71ab6a196396431",
+  "novacode_cli/agents/core_agent.py": "bf0591c3e8c2d571c9e7a31115bd1c13ed22b03a40829fbcf88cb7ca896bf06a",
+  "novacode_cli/config/plan_mode.py": "3d33da72929938c371b7c2578e7ea76dedd67211a5c9223de6d388fabb868d7b",
+  "novacode_cli/cowork/broker_middleware.py": "4b942623318c29aece734491b567785e4ec07007dc9b9f41d5cb3979ae7aa553",
+  "tests/test_memory_wiki.py": "937a70cbefe0207f21274ea0ccfeabd7c81f2ecd47abbdb4cc1e1ffc313db684",
+  "scripts/verify_memory_wiki.py": "fa112350d6ec6d7c3529364cd783ab0cfb69f75fc1f9b26f2ed0fcb92bf9278e",
+  "scripts/memory_wiki/run_mutant.py": "bf12bb1a1159ba1474dd8fcedb9e8b897d387b61062aed796be8faf66e183a27",
+  "novacode_cli/tui/app.py": "fea3c3263f4253b2137037499556a8bad629c1a8d46851436ff920ebc8713330"
+}

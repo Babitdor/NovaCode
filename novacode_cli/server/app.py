@@ -115,6 +115,7 @@ def _create_server_agent(
         ask_user_question,
         enter_plan_mode,
         exit_plan_mode,
+        recent_plans,
     )
 
     tools = [
@@ -122,6 +123,7 @@ def _create_server_agent(
         ask_user_question,
         enter_plan_mode,
         exit_plan_mode,
+        recent_plans,
         wiki_read,
         wiki_search,
         wiki_update_index,

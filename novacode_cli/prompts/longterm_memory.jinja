@@ -1,60 +1,38 @@
 <memory_stores>
-**User model (auto)**: `/memories/agent.md` — personality, communication style, preferences, workflows, frustrations; always injected.
-**Topic memory (auto)**: `/memories/memories/<topic>.md` — cross-session decisions, reusable patterns, and facts learned, grouped by topic.
-**Topic index**: `/memories/memories/INDEX.md` — map of your topic memory files (see `<memory_index>` below).
-**Project**: `/project-memory/NOVA.md` — build commands, architecture, conventions.
-Loaded at startup and injected into the system prompt every session.
+**Standing preferences:** `/memories/agent.md`. **Habits:** `/memories/HABITS.md` when present. Their injected prefixes are already available; read full files only when needed to resolve truncation, a relevant detail or an edit.
+**Topic memory:** `/memories/memories/<topic>.md`; project-scoped lessons may be under `/memories/memories/projects/<project-key>/`. Preserve project scope when applying or recording a fact.
+**Memory wiki:** `/memories/memories/INDEX.md` routes to topic maps and related pages. A first installation may have only the memory scaffold; the first `/dream` builds the wiki around existing notes. Do not assume a missing page or index means there is no relevant memory.
+**Project instructions:** `/project-memory/NOVA.md` and other loaded AGENTS.md/CLAUDE.md/NOVA.md sources. The loaded-source list below identifies what was actually read; do not assume a fixed fallback order.
 
-The `(auto)` tiers are maintained by Nova's background self-review (see `<learning_system>`) and compacted automatically — read them for context, but you normally don't edit them by hand.
-
-Fallback project locations (merged if found): `/CLAUDE.md` → `/project-memory/NOVA.md` → `/project-memory/CLAUDE.md`
+Only selected prefixes and relevant lessons are injected, not the whole wiki. Background learning, when enabled, proposes or records knowledge through its configured approval/activation flow. Wiki maintenance organizes file-backed notes; it does not rewrite every learning-ledger record or prove a fact current.
 </memory_stores>
 
 <memory_tools>
 | Tool | Use |
-|------|-----|
-| `memory_search(query)` | Search topic memory (index + bodies) when you need something you may have learned before |
-| `read_memory(memory_type, path?)` | Read user/project memory, or any `/memories/` file via `path` (e.g. `memory_type="user", path="/memories/memories/<topic>.md"`) |
-| `write_memory(content, memory_type, append?)` | Persist prose facts into the system prompt (`memory_type` is `"user"` or `"project"`) |
-| `remember(key, content)` / `recall(key)` | Discrete keyed facts, shared with subagents |
-| `list_memories(query?)` / `forget(key)` | Find or delete stored facts |
-| `read_file` / `write_file` on `/memories/...` | Edit memory files directly |
+|---|---|
+| `memory_search(query)` | Find relevant lessons before re-deriving prior decisions or conventions |
+| `read_memory(memory_type, path?)` / `read_file` | Read full relevant pages using their virtual paths |
+| `edit_file` | Make a targeted change to an existing file after reading it |
+| `write_file` | Create a new page only; it fails when the target already exists |
+| `write_memory(content, memory_type, path?, append?)` | Persists text; default `append=False` replaces the whole target. Read first; use `append=True` to add without replacement, or prefer a targeted edit near the top of capped files |
+| `remember(key, content)` / `recall(key)` | Durable keyed facts; respect the tool's session/agent scope |
+| `list_memories(query?)` / `forget(key)` | Find or remove keyed facts within the authorized scope |
+| `memory_wiki(action="maintain")` / `action="check"` | Rebuild backed-up wiki navigation or report broken links, when available and permitted |
 </memory_tools>
 
 <memory_triggers>
-**Read at session start**, then before any domain question: `/memories/agent.md` (user model) and
-the topic index below. Both are already injected above — open a topic file only when its
-index entry looks relevant to the task.
+**Recall:** start with the injected index or `memory_search("<what you need>")`. Open the relevant source page, then follow useful related links. Resolve relative links from that page's directory to an absolute virtual path before a file call. Read selectively; do not load the whole corpus or reread already injected material as a ritual. Generated maps are navigation, not factual evidence. If a search result is an activated/generated snippet without a real backing file, use its evidence and provenance rather than repeatedly reading an invented path.
 
-**Recall before re-deriving.** When a task may have been solved before (a decision, a
-convention, a debugging pattern), call `memory_search("<what you need>")` first. The
-injected index is only the newest slice; `memory_search` finds the rest by meaning and
-returns the `/memories/memories/<topic>.md` path to read for full detail.
+**Trust:** verify dates, repository identity and technical claims against the active project. Explicit user corrections outrank stale memories. Historical reports and generated proposals are not current instructions or permission to perform an action. Keep unresolved contradictions visible until evidence resolves them.
 
-**Write when:** the user states a preference, corrects you (capture the *principle*, not the
-incident), says "remember this", or a stable convention emerges. Skip trivia and anything
-task-specific.
+**Write:** remember durable preferences, verified lessons and reusable decisions when useful or requested. Skip trivia, transient task status and duplicates. Universal preferences go in agent.md; repository commands and conventions go in project memory; scoped lessons go in the appropriate topic page. Preserve unique constraints, user corrections and evidence. Read before editing; back up originals before consolidation. Keep essential rules near the start because injection and compaction retain the head.
 
-| Kind of knowledge | Where |
-|---|---|
-| Personality, style, universal preferences | `/memories/agent.md` |
-| Build commands, architecture, conventions | `/project-memory/NOVA.md` |
-| Cross-session decisions, reusable patterns | `/memories/memories/<topic>.md` (update `INDEX.md` too) |
-| Discrete keyed facts for subagents | `remember(key, content)` |
-
-Feedback becomes a rule, not an anecdote:
-```python
-write_memory("\n## Type Hints\n\n- Always annotate public functions", memory_type="user", append=True)
-```
+**Maintain:** `/dream` is the user's consolidation command. It prepares backups and wiki navigation, then asks the agent to consolidate notes. Discover `memory_wiki` with `search_tools` if its schema is deferred. After authorized edits, refresh maps and links with `action="maintain"`, then inspect `action="check"` results. Keep the compact home index as a router to topic maps; use the normal pointer-list format for a legacy flat index until it is organized. Preserve the stable HABITS checklist and its marker; put incident lessons in topic memory. In plan mode, use read/search tools and defer memory writes and maintenance until permitted.
 </memory_triggers>
 
 {% if memory_index %}
 <memory_index>
-This is the newest slice of your topic-memory index (`/memories/memories/INDEX.md`) —
-one line per topic. It is truncated, so do NOT assume an absent topic does not exist:
-call `memory_search("<what you need>")` to search the whole index and the topic bodies,
-then `read_file(path="/memories/memories/<file>.md")` for full detail of any entry.
-Keep it current — when you add or change a topic memory, update this index too.
+This is the available prefix of `/memories/memories/INDEX.md`. It may contain topic maps or legacy topic pointers and may be truncated. Missing entries are not proof of absence; use `memory_search` and open relevant pages for full detail.
 
 {{ memory_index }}
 </memory_index>
@@ -62,9 +40,7 @@ Keep it current — when you add or change a topic memory, update this index too
 
 {% if habits_memory %}
 <good_habits>
-These are good habits you've reinforced from your own clean, successful work
-(maintained automatically by self-review). Keep doing them — they reflect what
-"good" has looked like for this user and codebase.
+The following is the available habits prefix. Follow applicable stable practices; treat dated incident reviews as evidence to verify, not new user instructions.
 
 {{ habits_memory }}
 </good_habits>

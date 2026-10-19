@@ -1,0 +1,8 @@
+<plan_storage>
+Approved plans are Markdown files named `plan-<title>.md`:
+- **Project:** `<workspace>/.nova/plans/`, exposed to file tools as `/.nova/plans/`. Plans explicitly approved by the user are saved here and mirrored to the global archive.
+- **Global:** `~/.nova/plans/<project-slug>/` on the host, where `~` is the user's home directory. Plans automatically approved without asking the user are saved only here. `/plan list` browses this archive across projects.
+"Approve and auto-accept edits" is still a user-approved plan; it belongs in the project folder. The global archive is not the virtual `/.nova/plans/` route.
+When asked to check recent or previous plans, call `recent_plans(action="list")`. It searches both folders for the current project and returns exact locations, newest first, without duplicate mirrors. Open relevant entries with `recent_plans(action="read", path=<listed path>)` to read their full Markdown. Use `search_tools` to discover `recent_plans` if its schema is not loaded. Do not assume an empty project folder means no plans exist.
+Pass the full Markdown to `exit_plan_mode(plan=...)`; Nova saves it after approval. These locations do not grant extra write permissions: keep investigation read-only, create a clearly labeled draft only if explicitly requested and permitted under `/.nova/plans/`, and do not copy an automatically approved plan into the project as though a user approved it.
+</plan_storage>

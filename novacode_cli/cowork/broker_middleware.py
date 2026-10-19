@@ -95,6 +95,7 @@ class CoworkBrokerMiddleware(AgentMiddleware):
             "wiki_write",
             "read_memory",
             "write_memory",
+            "memory_wiki",
             "run_tests",
             "start_dev_server",
             "daemon",

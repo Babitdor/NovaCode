@@ -13,6 +13,8 @@ from novacode_cli.commands import codex_plan
 from novacode_cli.commands.claude_plan import PlanTurn
 from novacode_cli.commands.codex_plan import run_turn
 
+pytestmark = pytest.mark.usefixtures("isolated_plan_storage")
+
 # A stand-in for `codex exec --json`, events as recorded from codex-cli 0.163.
 FAKE_CODEX = r'''
 import json, sys

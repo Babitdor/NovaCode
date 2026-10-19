@@ -109,7 +109,7 @@ Record learnings in XML blocks. Omit empty blocks.
 - `<lesson topic="..." scope="general|project">` — decisions, patterns, facts as bullets, grouped under a short kebab-case `topic`. `general` lessons are kept for every project; `project` lessons only for this one. Emit one block per topic.
 - `<pitfall topic="..." scope="general|project">` — one thing that went wrong and how it was resolved, as three short fields: `<symptom>` (what appeared, quoting the error text exactly), `<cause>` (why), `<fix>` (what resolved it — only if you saw it work). Prefer this over a `<lesson>` whenever there is an error to point to: the symptom is what the next session will be looking at.
 - `<skill>` — at most one, with a `<scope>general|project</scope>` line. Only if step 2 identified a recurring workflow that was shown to work.
-- `<habit>` — at most one. Only on a clean win (step 2b): 1-2 bullets of reusable good-practice guidance. Written to `HABITS.md` (always injected). Omit unless genuinely notable.
+- `<habit>` — at most one. Only on a clean win (step 2b): 1-2 bullets of reusable good-practice guidance. Stored through the habit writer: a stable wiki checklist remains in `HABITS.md`, while new incident lessons go to topic memory in wiki mode. Omit unless genuinely notable.
 - `<prompt_issue template="...">` — per step 5, when a system-prompt template's wording caused a misread or wrong approach this session. One short paragraph: what was unclear + the behaviour it caused.
 
 <!--

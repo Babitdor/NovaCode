@@ -10,6 +10,8 @@ import pytest
 from novacode_cli.commands import planner_usage as pu
 from novacode_cli.commands.claude_plan import PlanTurn
 
+pytestmark = pytest.mark.usefixtures("isolated_plan_storage")
+
 
 @pytest.fixture(autouse=True)
 def stores(monkeypatch, tmp_path):

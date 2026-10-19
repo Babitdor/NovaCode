@@ -783,6 +783,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
             return self._corpus_cache
 
         from novacode_cli.memory.parsed_cache import MemoryCorpus, ParsedMemoryCache, file_hash
+        from novacode_cli.memory.wiki import HUBS, MANAGED
         parsed = getattr(self, "_parsed_memory_cache", None)
         if parsed is None:
             parsed = self._parsed_memory_cache = ParsedMemoryCache()
@@ -793,6 +794,12 @@ class AgentMemoryMiddleware(AgentMiddleware):
             if path.name == "INDEX.md":
                 continue
             try:
+                # Generated maps are navigation, not recalled factual lessons.
+                # They remain available through the wiki home and file tools.
+                if path.stem in {f"wiki-{group}" for group in HUBS}:
+                    with path.open("rb") as source:
+                        if MANAGED.encode() in source.read(256):
+                            continue
                 digest = file_hash(path)
             except OSError:
                 continue

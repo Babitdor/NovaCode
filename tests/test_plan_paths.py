@@ -12,9 +12,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 import novacode_cli.tools.plan_mode_tools as pmt
 from novacode_cli.config.config import settings
 from novacode_cli.ui.interrupt_handlers import resolve_plan_content
+
+pytestmark = pytest.mark.usefixtures("isolated_plan_storage")
 
 
 class _SessionState:
