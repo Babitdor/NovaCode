@@ -522,6 +522,10 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
         "manage parallel session tabs: launch / resume / list / close (ctrl+n, alt+<n>)",
         aliases=("session",),
     ),
+    "worktree": SlashCommand(
+        "_run_worktree_command",
+        "isolated git worktree + session for feature work (/worktree <name>[: task] · remove)",
+    ),
     "resume": SlashCommand("_run_resume", "resume a saved session for this path (/resume <id>)"),
     "artifacts": SlashCommand("_run_artifacts", "open the artifacts list", wants_text=False),
     "subagents": SlashCommand(
@@ -3245,6 +3249,62 @@ class NovaApp(App):
             style="dim",
         )
         self._log(block)
+
+    async def _run_worktree_command(self, text: str) -> None:
+        """``/worktree [list] | <name>[: task] | remove <name>``.
+
+        Feature work in isolation: ``<name>`` makes (or reuses) the git worktree
+        ``nova/<name>`` and opens a session tab working in it. Unlike ``/tabs
+        new``, it never falls back to sharing the current folder.
+        """
+        from novacode_cli.sessions import worktree as wt
+
+        rest = text.partition(" ")[2].strip()
+        sub, _, arg = rest.partition(" ")
+        repo = await asyncio.to_thread(wt.repo_root, Path.cwd())
+        if repo is None or not await asyncio.to_thread(wt.has_commits, repo):
+            self._log(
+                Text(
+                    "✖ /worktree needs a git repository with at least one commit "
+                    "(git init, then commit) — a worktree branches from HEAD.",
+                    style="bold #f7768e",
+                )
+            )
+            return
+
+        if sub.lower() in ("", "list"):
+            found = await asyncio.to_thread(wt.nova_worktrees, repo)
+            block = Text()
+            for path, branch in found:
+                open_tab = any(p.worktree and Path(p.worktree) == path for p in self._panes)
+                block.append(f"• {branch}", style="bold")
+                block.append(f"  {path}" + ("  [open tab]" if open_tab else ""), style="dim")
+                block.append("\n")
+            if not found:
+                block.append("No Nova worktrees for this repository.\n", style="dim")
+            block.append("\n/worktree <name>[: task] · /worktree remove <name>", style="dim")
+            self._log(block)
+            return
+
+        if sub.lower() == "remove":
+            branch = f"nova/{wt.slugify(arg, fallback='')}"
+            found = {b: p for p, b in await asyncio.to_thread(wt.nova_worktrees, repo)}
+            path = found.get(branch)
+            if not arg.strip() or path is None:
+                self._log(Text(f"No worktree on {branch}. See /worktree list.", style="#e0af68"))
+                return
+            if any(
+                p.worktree and Path(p.worktree) == path and p.status not in ("crashed", "exited")
+                for p in self._panes
+            ):
+                self._log(Text("Close its session tab first (/tabs close).", style="#e0af68"))
+                return
+            outcome = await asyncio.to_thread(wt.remove_worktree, path, repo=repo)
+            self._log(Text(f"worktree {outcome}", style="dim"))
+            return
+
+        name, _, task = rest.partition(":")
+        await self.spawn_session(name.strip(), task.strip())
 
     async def _resume_tab(self, selector: str = "") -> None:
         """Reopen a saved conversation in its own approved project tab."""

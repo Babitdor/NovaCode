@@ -29,6 +29,7 @@ _EXAMPLES = {
     "router": "/router  ·  switch setups and edit model routes",
     "context": "/context imported compact  ·  /context imported full  ·  /context imported relevant",
     "tabs": "/tabs  ·  /tabs close  ·  /tabs new <name>: <task>",
+    "worktree": "/worktree  ·  /worktree <name>: <task>  ·  /worktree remove <name>",
     "compare": "/compare claude:<id> codex:<id>",
     "resume": "/resume <session-id>",
     "steer": "/steer <instruction>  ·  You can also type naturally during a running turn.",

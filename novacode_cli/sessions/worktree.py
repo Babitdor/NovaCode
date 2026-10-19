@@ -102,6 +102,19 @@ def _existing_paths(repo: Path) -> set[Path]:
     return found
 
 
+def nova_worktrees(repo: Path) -> list[tuple[Path, str]]:
+    """``(path, branch)`` for each worktree of *repo* on a ``nova/`` branch."""
+    code, out, _ = _git(["worktree", "list", "--porcelain"], cwd=repo)
+    found: list[tuple[Path, str]] = []
+    path = None
+    for line in out.splitlines() if code == 0 else []:
+        if line.startswith("worktree "):
+            path = Path(line[len("worktree ") :].strip()).resolve()
+        elif line.startswith(f"branch refs/heads/{_BRANCH_PREFIX}") and path is not None:
+            found.append((path, line[len("branch refs/heads/") :].strip()))
+    return found
+
+
 def _branch_exists(repo: Path, branch: str) -> bool:
     code, _, _ = _git(["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], cwd=repo)
     return code == 0

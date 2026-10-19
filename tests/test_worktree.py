@@ -287,3 +287,57 @@ if __name__ == "__main__":
     import sys
 
     sys.exit(pytest.main([__file__, "-v", "--assert=plain"]))
+
+
+# ── /worktree ────────────────────────────────────────────────────────────────
+
+
+def test_nova_worktrees_lists_only_nova_branches(repo):
+    info = wt.create_worktree("feature", repo=repo)
+    _run(["git", "worktree", "add", "-b", "other", str(repo.parent / "other"), "HEAD"], repo)
+    assert wt.nova_worktrees(repo) == [(info.path, "nova/feature")]
+
+
+def _command(repo, monkeypatch, text, panes=()):
+    import asyncio
+    from types import SimpleNamespace
+
+    from novacode_cli.tui.app import NovaApp
+
+    monkeypatch.chdir(repo)
+    spawned, logged = [], []
+
+    async def spawn(name, task):
+        spawned.append((name, task))
+
+    app = SimpleNamespace(
+        _panes=list(panes), _log=lambda t: logged.append(t.plain), spawn_session=spawn
+    )
+    asyncio.run(NovaApp._run_worktree_command(app, text))
+    return spawned, "\n".join(logged)
+
+
+def test_worktree_command_opens_a_session_in_a_new_worktree(repo, monkeypatch):
+    spawned, _ = _command(repo, monkeypatch, "/worktree login page: add OAuth")
+    assert spawned == [("login page", "add OAuth")]
+
+
+def test_worktree_command_lists_and_removes(repo, monkeypatch):
+    from types import SimpleNamespace
+
+    info = wt.create_worktree("feature", repo=repo)
+    _, shown = _command(repo, monkeypatch, "/worktree")
+    assert "nova/feature" in shown
+
+    tab = SimpleNamespace(worktree=info.path, status="idle")
+    _, shown = _command(repo, monkeypatch, "/worktree remove feature", panes=[tab])
+    assert "Close its session tab" in shown and info.path.exists()
+
+    _, shown = _command(repo, monkeypatch, "/worktree remove feature")
+    assert "removed" in shown and not info.path.exists()
+
+
+def test_worktree_command_refuses_without_a_commit(tmp_path, monkeypatch):
+    _run(["git", "init", "-b", "main"], tmp_path)
+    spawned, shown = _command(tmp_path, monkeypatch, "/worktree feature")
+    assert spawned == [] and "at least one commit" in shown
