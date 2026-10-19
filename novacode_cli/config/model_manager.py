@@ -25,10 +25,13 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 # Routed through ChatOpenAI with this base URL (same pattern as OpenRouter).
 OPENCODE_BASE_URL = "https://opencode.ai/zen/go/v1"
 OPENCODE_ZEN_BASE_URL = "https://opencode.ai/zen/v1"
+# Command Code's Provider API (https://commandcode.ai/docs/provider).
+COMMANDCODE_BASE_URL = "https://api.commandcode.ai/provider/v1"
 
 # Type for supported providers
 ProviderType = Literal[
-    "openai", "anthropic", "ollama", "google", "openrouter", "opencode", "opencode_zen", "nvidia"
+    "openai", "anthropic", "ollama", "google", "openrouter", "opencode", "opencode_zen",
+    "commandcode", "nvidia",
 ]
 
 #: Providers that accept a custom OpenAI-compatible endpoint. OpenRouter and
@@ -168,6 +171,24 @@ MODEL_PRESETS: dict[str, dict[str, Any]] = {
         "base_url": OPENCODE_ZEN_BASE_URL,
         "models": ["big-pickle", "deepseek-v4.1-flash", "glm-5.3", "kimi-k3", "claude-sonnet-4-6", "gpt-5.4"],
     },
+    "commandcode": {
+        "name": "Command Code",
+        "description": "Command Code's Provider API (Claude, GPT, DeepSeek, GLM, Kimi, Qwen...)",
+        "default_model": "deepseek/deepseek-v4-flash",
+        "env_var": "COMMANDCODE_MODEL",
+        "api_key_var": "COMMANDCODE_API_KEY",
+        "requires_api_key": True,
+        "base_url": COMMANDCODE_BASE_URL,
+        # Offline fallback only; the picker reads the live /models list.
+        "models": [
+            "deepseek/deepseek-v4-flash",
+            "deepseek/deepseek-v4-pro",
+            "zai-org/GLM-5.3",
+            "moonshotai/Kimi-K3",
+            "claude-sonnet-5-5",
+            "gpt-5.5",
+        ],
+    },
     "nvidia": {
         "name": "NVIDIA NIM",
         "description": "NVIDIA-hosted models (DeepSeek, Nemotron, Llama) via build.nvidia.com",
@@ -263,7 +284,8 @@ def get_opencode_models(provider: str = "opencode") -> list[str]:
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         # OpenCode asks third-party coding agents to identify themselves.
-        headers.update(gateway_headers(opencode_session_id()))
+        if provider != "commandcode":
+            headers.update(gateway_headers(opencode_session_id()))
 
         response = httpx.get(f"{preset['base_url']}/models", headers=headers, timeout=10)
         response.raise_for_status()
@@ -273,7 +295,7 @@ def get_opencode_models(provider: str = "opencode") -> list[str]:
             entry["id"]
             for entry in payload.get("data", [])
             if isinstance(entry, dict) and isinstance(entry.get("id"), str) and entry["id"].strip()
-            and protocol(provider, entry["id"]) != "unsupported"
+            and (provider == "commandcode" or protocol(provider, entry["id"]) != "unsupported")
         ]
     except Exception:  # noqa: BLE001 — network/parse failure falls back, as Ollama does
         models = []
@@ -371,6 +393,9 @@ class ModelManager:
             return ("OpenCode Go", model)
         if self.settings.has_opencode_zen:
             return ("OpenCode Zen", os.environ.get("OPENCODE_ZEN_MODEL", "big-pickle"))
+        if self.settings.has_commandcode:
+            model = os.environ.get("COMMANDCODE_MODEL", "deepseek/deepseek-v4-flash")
+            return ("Command Code", model)
         if self.settings.has_nvidia:
             model = os.environ.get("NVIDIA_MODEL", "deepseek-ai/deepseek-v4-pro-0813")
             return ("NVIDIA NIM", model)

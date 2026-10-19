@@ -5931,6 +5931,7 @@ class RouterScreen(ModalScreen[dict | None]):
         ("Jev · TypeSafe API", "jev"),
         ("Jev · OpenCode Zen", "opencode_zen"),
         ("Jev Free · OpenCode Zen", "opencode_zen_free"),
+        ("Jev · Command Code", "commandcode"),
         ("Tev1 · local Ollama", "tev1"),
         ("Custom System One", "custom"),
     )
@@ -6012,6 +6013,8 @@ class RouterScreen(ModalScreen[dict | None]):
             preset = "jev"
         elif self._endpoint == self._config.TOOL_VERDICT_OPENCODE_ENDPOINT:
             preset = "opencode_zen_free" if self._model == self._config.TOOL_VERDICT_OPENCODE_FREE_MODEL else "opencode_zen"
+        elif self._endpoint == self._config.TOOL_VERDICT_COMMANDCODE_ENDPOINT:
+            preset = "commandcode"
         elif self._endpoint == self._config.ROUTER_DEFAULT_ENDPOINT and self._model.startswith(
             "tev1"
         ):
@@ -6170,6 +6173,12 @@ class RouterScreen(ModalScreen[dict | None]):
                 else self._config.TOOL_VERDICT_OPENCODE_MODEL
             )
             self._hint("Uses your OpenCode Zen API key, configured through /auth.")
+        elif event.value == "commandcode":
+            endpoint = self._config.TOOL_VERDICT_COMMANDCODE_ENDPOINT
+            self.query_one("#router-endpoint", Input).value = endpoint
+            model = self._config.TOOL_VERDICT_COMMANDCODE_MODEL
+            self.query_one("#router-decision-model", Input).value = model
+            self._hint("Uses your Command Code API key, configured through /auth.")
         elif event.value == "tev1":
             self.query_one("#router-endpoint", Input).value = self._config.TOOL_VERDICT_DEFAULT_ENDPOINT
             self.query_one("#router-decision-model", Input).value = self._config.TOOL_VERDICT_DEFAULT_MODEL

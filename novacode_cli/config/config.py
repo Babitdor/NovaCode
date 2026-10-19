@@ -796,6 +796,7 @@ class Settings:
 
     version: str = __version__
     opencode_zen_api_key: str | None = None
+    commandcode_api_key: str | None = None
 
     def __repr__(self) -> str:
         """The settings, with every credential masked.
@@ -876,6 +877,10 @@ class Settings:
         opencode_zen_key = (
             secret_manager.get_secret("opencode_zen_api_key") if secret_manager else None
         ) or os.environ.get("OPENCODE_ZEN_API_KEY")
+        # CMD_API_KEY is the name Command Code's own docs use.
+        commandcode_key = (
+            secret_manager.get_secret("commandcode_api_key") if secret_manager else None
+        ) or os.environ.get("COMMANDCODE_API_KEY") or os.environ.get("CMD_API_KEY")
 
         # Detect Ollama host configuration
         ollama_host = os.environ.get("OLLAMA_HOST")
@@ -895,6 +900,7 @@ class Settings:
             openrouter_api_key=openrouter_key,
             opencode_api_key=opencode_key,
             opencode_zen_api_key=opencode_zen_key,
+            commandcode_api_key=commandcode_key,
             nvidia_api_key=nvidia_key,
             tavily_api_key=tavily_key,
             langsmith_api_key=langsmith_key,
@@ -938,6 +944,11 @@ class Settings:
     @property
     def has_opencode_zen(self) -> bool:
         return bool(self.opencode_zen_api_key)
+
+    @property
+    def has_commandcode(self) -> bool:
+        """Check if a Command Code API key is configured."""
+        return bool(self.commandcode_api_key)
 
     @property
     def has_tavily(self) -> bool:

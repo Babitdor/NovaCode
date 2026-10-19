@@ -46,6 +46,22 @@ class ProviderSignInChoice(ModalScreen[str | None]):
                 yield Button("Sign in to OpenCode Console", id="opencode-console", variant="primary")
                 yield Button("Enter API key", id="provider-replace")
                 yield Link("OpenCode setup guide", url=f"https://opencode.ai/docs/{'zen' if self.provider == 'opencode_zen' else 'go'}/")
+            elif self.provider == "commandcode":
+                yield Static("Connect Command Code")
+                yield Static(
+                    "Create an API key in Command Code Studio, then paste it here.\n"
+                    "API access needs the Pro plan or higher, or the Provider plan; "
+                    "the Go plan has none."
+                )
+                yield Button("Open Command Code Studio", id="commandcode-studio", variant="primary")
+                yield Button("Enter API key", id="provider-replace")
+                from novacode_cli.config.nova_config import NovaConfig, _config_bool
+
+                zdr = _config_bool(NovaConfig().get("commandcode_zdr", False))
+                yield Button(
+                    f"Zero data retention: {'on' if zdr else 'off'} (switch)", id="commandcode-zdr"
+                )
+                yield Link("Provider API guide", url="https://commandcode.ai/docs/provider")
             elif self.provider == "google":
                 yield Static("Connect Gemini")
                 yield Static(
@@ -81,6 +97,8 @@ class ProviderSignInChoice(ModalScreen[str | None]):
             "provider-replace": "replace_key",
             "anthropic-console": "console",
             "opencode-console": "console",
+            "commandcode-studio": "console",
+            "commandcode-zdr": "zdr",
         }
         self.dismiss(choices.get(event.button.id))
 
@@ -180,6 +198,11 @@ class GoogleSignInScreen(ModalScreen[bool]):
 async def open_anthropic_console() -> None:
     """Open the documented key-creation page without handling login cookies."""
     await asyncio.to_thread(webbrowser.open, "https://platform.claude.com/settings/keys")
+
+
+async def open_commandcode_studio() -> None:
+    """Open Command Code Studio, where API keys are created."""
+    await asyncio.to_thread(webbrowser.open, "https://commandcode.ai/studio/")
 
 
 async def open_opencode_console() -> None:

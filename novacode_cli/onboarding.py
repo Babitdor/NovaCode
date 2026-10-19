@@ -39,6 +39,7 @@ API_KEY_NAMES = {
     "openrouter": "openrouter_api_key",
     "opencode": "opencode_api_key",
     "opencode_zen": "opencode_zen_api_key",
+    "commandcode": "commandcode_api_key",
     "nvidia": "nvidia_api_key",
     "groq": "groq_api_key",
     # Cloud voice providers. Listed here, not just in the audio registry, so the
@@ -344,6 +345,7 @@ class OnboardingWizard:
         "5": {"name": "openrouter", "display": "OpenRouter"},
         "6": {"name": "opencode", "display": "OpenCode Go"},
         "8": {"name": "opencode_zen", "display": "OpenCode Zen"},
+        "9": {"name": "commandcode", "display": "Command Code"},
         "7": {"name": "nvidia", "display": "NVIDIA NIM"},
     }
 

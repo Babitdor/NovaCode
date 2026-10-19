@@ -228,6 +228,8 @@ _DANGEROUS_ENV_VARS: frozenset[str] = frozenset(
         "OPENROUTER_API_KEY",
         "OPENCODE_API_KEY",
         "OPENCODE_ZEN_API_KEY",
+        "COMMANDCODE_API_KEY",
+        "CMD_API_KEY",
         "TAVILY_API_KEY",
         "REPLICATE_API_KEY",
         "REPLICATE_API_TOKEN",

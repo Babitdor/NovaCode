@@ -695,22 +695,30 @@ class SystemOneClient:
         return parse_answers(payload)
 
 
-def create_system_one_client(config: NovaConfig) -> DecisionClient:
-    """Resolve credentials without sending TypeSafe keys to custom servers."""
+def decision_api_key(endpoint: str) -> str:
+    """The key for a System One *endpoint*: each hosted one gets only its own key,
+    never sent to a custom or local server."""
     from novacode_cli.config.credentials import credential_value
     from novacode_cli.config.nova_config import NovaConfig
 
+    hosted = {
+        NovaConfig.TOOL_VERDICT_JEV_ENDPOINT: "TYPESAFE_API_KEY",
+        NovaConfig.TOOL_VERDICT_OPENCODE_ENDPOINT: "OPENCODE_ZEN_API_KEY",
+        NovaConfig.TOOL_VERDICT_COMMANDCODE_ENDPOINT: "COMMANDCODE_API_KEY",
+    }
+    if endpoint in hosted:
+        return credential_value(hosted[endpoint])
+    return credential_value("SYSTEM_ONE_API_KEY") or "nova"
+
+
+def create_system_one_client(config: NovaConfig) -> DecisionClient:
+    """Resolve credentials without sending TypeSafe keys to custom servers."""
     endpoint = config.get_tool_verdict_endpoint()
     from novacode_cli.agents.openai_decisions import decisions_client, speaks_openai_decisions
 
     if speaks_openai_decisions(endpoint):
         return decisions_client(endpoint, config.get_tool_verdict_model())
-    if endpoint == NovaConfig.TOOL_VERDICT_JEV_ENDPOINT:
-        api_key = credential_value("TYPESAFE_API_KEY")
-    elif endpoint == NovaConfig.TOOL_VERDICT_OPENCODE_ENDPOINT:
-        api_key = credential_value("OPENCODE_ZEN_API_KEY")
-    else:
-        api_key = credential_value("SYSTEM_ONE_API_KEY") or "nova"
+    api_key = decision_api_key(endpoint)
     return SystemOneClient(
         endpoint=endpoint, model=config.get_tool_verdict_model(), api_key=api_key
     )

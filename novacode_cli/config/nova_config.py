@@ -501,6 +501,8 @@ class NovaConfig:
     TOOL_VERDICT_OPENCODE_ENDPOINT = "https://opencode.ai/zen/v1/systemone"
     TOOL_VERDICT_OPENCODE_MODEL = "jev-1.13"
     TOOL_VERDICT_OPENCODE_FREE_MODEL = "jev-1.13-free"
+    TOOL_VERDICT_COMMANDCODE_ENDPOINT = "https://api.commandcode.ai/provider/v1/systemone"
+    TOOL_VERDICT_COMMANDCODE_MODEL = "typesafe/jev"
     TOOL_VERDICT_OPENAI_ENDPOINT = "https://api.openai.com/v1/decisions"
     TOOL_VERDICT_OPENAI_MODEL = "gpt-6-luna"
     #: ``llama serve`` speaks System One at its default address. In router mode

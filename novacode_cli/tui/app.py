@@ -499,7 +499,10 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     ),
     "init": SlashCommand("_run_init", "generate NOVA.md from the codebase"),
     "model": SlashCommand(
-        "_run_model", "configure chat, subagent, and decision models", wants_text=False
+        "_run_model",
+        "configure chat, subagent, and decision models",
+        wants_text=False,
+        aliases=("models",),
     ),
     "router": SlashCommand(
         "_run_router", "switch routing setups and edit model routes", wants_text=False

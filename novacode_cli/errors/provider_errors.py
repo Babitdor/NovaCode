@@ -47,6 +47,18 @@ _NOTICES = {
         "The provider rejected your credentials — check your API key or subscription.\n"
         "Details: {text}"
     ),
+    "plan": (
+        "⚠️  Your plan has no API access\n"
+        "The key is valid, but the account's plan does not include API use "
+        "(Command Code: Pro or higher, or the Provider plan). Upgrade, or pick another provider.\n"
+        "Details: {text}"
+    ),
+    "zdr": (
+        "⚠️  No zero-data-retention route for this model\n"
+        "Command Code has no ZDR-capable provider for it. Pick another model, or turn "
+        "zero data retention off for Command Code in /auth.\n"
+        "Details: {text}"
+    ),
     "region": (
         "🌏  Model not available in your region\n"
         "This model is region-restricted and needs an explicit opt-in on your provider "
@@ -68,7 +80,7 @@ _NOTICES = {
 
 # Categories that won't recover within a retry window, so don't waste backoff.
 # "region" needs a user opt-in on the provider account, so retrying is pointless.
-_PERMANENT = frozenset({"usage_limit", "auth", "region"})
+_PERMANENT = frozenset({"usage_limit", "auth", "region", "plan", "zdr"})
 
 
 def _status_code(exc: BaseException) -> int | None:
@@ -125,6 +137,12 @@ def _classify(exc: BaseException | None) -> str | None:
         or ("region" in low and ("opt in" in low or "opt-in" in low))
     ):
         return "region"
+
+    # A valid key on a plan without API access (Command Code's Go plan).
+    if "upgrade_required" in low:
+        return "plan"
+    if "cmd_zdr_no_providers" in low:
+        return "zdr"
 
     # Authentication / authorization.
     if (

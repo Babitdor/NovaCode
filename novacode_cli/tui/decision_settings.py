@@ -61,6 +61,7 @@ class DecisionSettings(VerticalScroll):
                 ("Jev · TypeSafe API", "jev"),
                 ("Jev · OpenCode Zen", "opencode_zen"),
                 ("Jev Free · OpenCode Zen", "opencode_zen_free"),
+                ("Jev · Command Code", "commandcode"),
                 ("Tev1 · local Ollama", "tev1"),
                 ("llama.cpp · local (llama serve)", "llamacpp"),
                 ("Custom System One", "custom"),
@@ -119,6 +120,8 @@ class DecisionSettings(VerticalScroll):
             preset = "jev"
         elif endpoint == NovaConfig.TOOL_VERDICT_OPENCODE_ENDPOINT:
             preset = "opencode_zen_free" if model == NovaConfig.TOOL_VERDICT_OPENCODE_FREE_MODEL else "opencode_zen"
+        elif endpoint == NovaConfig.TOOL_VERDICT_COMMANDCODE_ENDPOINT:
+            preset = "commandcode"
         elif endpoint == NovaConfig.TOOL_VERDICT_DEFAULT_ENDPOINT and model.startswith("tev1"):
             preset = "tev1"
         elif endpoint == NovaConfig.TOOL_VERDICT_LLAMACPP_ENDPOINT:
@@ -169,6 +172,12 @@ class DecisionSettings(VerticalScroll):
                 else NovaConfig.TOOL_VERDICT_OPENCODE_MODEL
             )
             self._hint("Uses your OpenCode Zen API key. Add it with Manage API key or /auth.")
+        elif event.value == "commandcode":
+            self.query_one("#decision-endpoint", Input).value = (
+                NovaConfig.TOOL_VERDICT_COMMANDCODE_ENDPOINT
+            )
+            self.query_one("#decision-model", Input).value = NovaConfig.TOOL_VERDICT_COMMANDCODE_MODEL
+            self._hint("Uses your Command Code API key (Pro plan or higher). Add it with Manage API key or /auth.")
         elif event.value == "tev1":
             self.query_one(
                 "#decision-endpoint", Input
@@ -206,6 +215,8 @@ class DecisionSettings(VerticalScroll):
             provider = "openai"
         elif endpoint == NovaConfig.TOOL_VERDICT_OPENCODE_ENDPOINT:
             provider = "opencode_zen"
+        elif endpoint == NovaConfig.TOOL_VERDICT_COMMANDCODE_ENDPOINT:
+            provider = "commandcode"
         await self.app.push_screen_wait(AuthManagerScreen(focus=provider))
 
     @work(exclusive=True, group="decision-save")
@@ -224,6 +235,13 @@ class DecisionSettings(VerticalScroll):
             and not await asyncio.to_thread(credential_value, "OPENCODE_ZEN_API_KEY")
         ):
             self._hint("Add an OpenCode Zen API key through /auth before enabling Zen Jev.", error=True)
+            return
+        if (
+            enabled
+            and endpoint == NovaConfig.TOOL_VERDICT_COMMANDCODE_ENDPOINT
+            and not await asyncio.to_thread(credential_value, "COMMANDCODE_API_KEY")
+        ):
+            self._hint("Add a Command Code API key through /auth before enabling its Jev.", error=True)
             return
         if (
             enabled

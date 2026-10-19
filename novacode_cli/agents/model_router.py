@@ -176,14 +176,9 @@ class ModelRouter:
         Mirrors ``tool_verdicts.create_system_one_client``: a TypeSafe key is only
         sent to TypeSafe's own endpoint, never to a custom or local server.
         """
-        from novacode_cli.config.credentials import credential_value
+        from novacode_cli.agents.tool_verdicts import decision_api_key
 
-        endpoint = self._config.get_router_decision_endpoint()
-        if endpoint == self._config.TOOL_VERDICT_JEV_ENDPOINT:
-            return credential_value("TYPESAFE_API_KEY")
-        if endpoint == self._config.TOOL_VERDICT_OPENCODE_ENDPOINT:
-            return credential_value("OPENCODE_ZEN_API_KEY")
-        return credential_value("SYSTEM_ONE_API_KEY") or "nova"
+        return decision_api_key(self._config.get_router_decision_endpoint())
 
     def _fallback(self, reason: str) -> RouteDecision:
         """The default route, with the reason the classifier was not used."""

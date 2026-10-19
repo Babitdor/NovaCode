@@ -13,6 +13,7 @@ PROVIDER_KEY_ENV: dict[str, str] = {
     "openrouter": "OPENROUTER_API_KEY",
     "opencode": "OPENCODE_API_KEY",
     "opencode_zen": "OPENCODE_ZEN_API_KEY",
+    "commandcode": "COMMANDCODE_API_KEY",
     "nvidia": "NVIDIA_API_KEY",
 }
 
@@ -308,6 +309,46 @@ def _build_chat_model(provider: str, model_name: str) -> BaseChatModel:
             # does not ask by default for a custom base URL.
             stream_usage=True,
             **ollama_kwargs,
+        )
+
+    if provider == "commandcode":
+        # Command Code's Provider API: Claude models are served only on the
+        # Anthropic Messages route (400 elsewhere), every other model on Chat
+        # Completions. The public /models list confirms the split by prefix.
+        from novacode_cli.config.model_manager import COMMANDCODE_BASE_URL
+
+        from novacode_cli.config.nova_config import _config_bool
+
+        api_key = settings.commandcode_api_key or os.environ.get("COMMANDCODE_API_KEY")
+        # Zero data retention, switched in /auth: only ZDR-capable upstreams
+        # serve the request, and a model with none fails with 422 instead.
+        zdr = {"x-cmd-zdr": "1"} if _config_bool(nova_config.get("commandcode_zdr", False)) else {}
+        if model_name.lower().startswith("claude-"):
+            from langchain_anthropic import ChatAnthropic
+
+            budget = nova_config.get("thinking_budget", 0) or 0
+            return ChatAnthropic(
+                model_name=model_name,
+                api_key=api_key,
+                # The SDK appends /v1/messages itself.
+                base_url=COMMANDCODE_BASE_URL.removesuffix("/v1"),
+                default_headers=zdr,
+                max_tokens=20_000,  # type: ignore[arg-type]
+                max_retries=5,
+                **anthropic_thinking_kwargs(model_name, effort, int(budget)),
+            )
+        from novacode_cli.utils.backend_patches import apply_openai_reasoning_content_patch
+
+        apply_openai_reasoning_content_patch()
+        # A gateway to many upstreams, like OpenCode: drop `name` on messages.
+        return _opencode_chat_class()(
+            model=model_name,
+            api_key=api_key,
+            base_url=COMMANDCODE_BASE_URL,
+            default_headers=zdr,
+            max_retries=5,
+            stream_usage=True,
+            **openai_reasoning_kwargs(model_name, effort),
         )
 
     if provider in ("openai", "openrouter", "opencode", "opencode_zen"):
@@ -706,6 +747,13 @@ def create_model() -> BaseChatModel:
             "OpenCode Go",
         ),
         (settings.has_opencode_zen, "opencode_zen", "OPENCODE_ZEN_MODEL", "big-pickle", "OpenCode Zen"),
+        (
+            settings.has_commandcode,
+            "commandcode",
+            "COMMANDCODE_MODEL",
+            "deepseek/deepseek-v4-flash",
+            "Command Code",
+        ),
         (
             settings.has_nvidia,
             "nvidia",

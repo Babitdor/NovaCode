@@ -304,14 +304,26 @@ class AuthManagerScreen(ModalScreen[None]):
         env_var = credential_env_var(name)
         if env_var is None:
             return
-        if name in {"google", "anthropic", "opencode", "opencode_zen"}:
+        if name in {"google", "anthropic", "opencode", "opencode_zen", "commandcode"}:
             from novacode_cli.tui.provider_signin import (
                 GoogleSignInScreen,
                 ProviderSignInChoice,
                 open_anthropic_console,
+                open_commandcode_studio,
                 open_opencode_console,
             )
             choice = await self.app.push_screen_wait(ProviderSignInChoice(name))
+            if choice == "zdr":
+                from novacode_cli.config.nova_config import NovaConfig, _config_bool
+
+                config = NovaConfig()
+                on = not _config_bool(config.get("commandcode_zdr", False))
+                config.set("commandcode_zdr", on)
+                self.app.notify(
+                    f"Command Code zero data retention {'on' if on else 'off'}. "
+                    "Applies the next time a Command Code model loads (/model or restart)."
+                )
+                return
             if name == "google":
                 from novacode_cli.config import google_oauth_auth as google
                 if choice == "signin":
@@ -347,6 +359,8 @@ class AuthManagerScreen(ModalScreen[None]):
             elif choice == "console":
                 if name in {"opencode", "opencode_zen"}:
                     await open_opencode_console()
+                elif name == "commandcode":
+                    await open_commandcode_studio()
                 else:
                     await open_anthropic_console()
             if choice not in {"api_key", "replace_key", "console"}:

@@ -79,6 +79,8 @@ def get_models_dev_context(model_name: str) -> int | None:
     if not isinstance(catalog, dict) or not catalog:
         return None
     lower = model_name.strip().lower()
+    # Command Code prefixes the org ("zai-org/GLM-5.3"): match on the last segment.
+    tail = lower.rsplit("/", 1)[-1]
     best: int | None = None
     for provider in catalog.values():
         models = provider.get("models") if isinstance(provider, dict) else None
@@ -88,7 +90,7 @@ def get_models_dev_context(model_name: str) -> int | None:
             ml = mid.lower()
             # OpenCode/OpenRouter use bare ids ("glm-5.3"); models.dev may prefix
             # them ("deepseek/deepseek-v4-flash"), so match the last path segment.
-            if ml != lower and ml.rsplit("/", 1)[-1] != lower:
+            if ml != lower and ml.rsplit("/", 1)[-1] != tail:
                 continue
             if isinstance(entry, dict):
                 ctx = (entry.get("limit") or {}).get("context")
