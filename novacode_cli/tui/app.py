@@ -37,6 +37,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
+    from collections.abc import Collection, Sequence
+
     from textual.screen import Screen
     from textual.timer import Timer
     from textual.worker import Worker
@@ -646,6 +648,10 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
         "_run_wiki", "show Obsidian LLM Wiki browser (interactive)", wants_text=False
     ),
     "effort": SlashCommand("_run_effort", "set model reasoning effort"),
+    "statusline": SlashCommand("_run_statusline", "choose status-line fields"),
+    "auto-approve": SlashCommand(
+        "_run_auto_approve", "toggle tool auto-approval (on / off / status)"
+    ),
     "learning": SlashCommand(
         "_run_learning", "Nova's learning loop (/learning on|off|status|auto on|off|review)"
     ),
@@ -660,6 +666,8 @@ _TUI_COMMAND_ALIASES: dict[str, str] = {
 # Commands that change the active agent, workspace, or turn input stay deferred.
 _LIVE_UI_COMMANDS = frozenset(
     {
+        "statusline",
+        "auto-approve",
         "help",
         "evolution",
         "auth",
@@ -1605,6 +1613,20 @@ class NovaApp(App):
         border-bottom: solid $primary 60%;
     }
     #prompt-prefix.plan-mode { color: $primary; background: $primary 14%; }
+    Screen #prompt-row.auto-approve-mode.normal-mode,
+    Screen #prompt-row.auto-approve-mode.plan-mode {
+        border-top: solid $warning 85%; border-bottom: solid $warning 85%;
+        background: $warning 15%;
+    }
+    Screen #prompt.auto-approve-mode.normal-mode, Screen #prompt.auto-approve-mode.plan-mode,
+    Screen #prompt-prefix.auto-approve-mode.normal-mode,
+    Screen #prompt-prefix.auto-approve-mode.plan-mode {
+        background: $warning 15%; color: $text;
+    }
+    Screen #prompt:focus.auto-approve-mode.normal-mode,
+    Screen #prompt:focus.auto-approve-mode.plan-mode { background: $warning 23%; }
+    Screen #prompt-prefix.auto-approve-mode.normal-mode,
+    Screen #prompt-prefix.auto-approve-mode.plan-mode { color: $warning; }
     /* Input-mode badge (plan / bash / goal). Sits between the input and the
        info bar; empty in normal mode. Colours come from the theme so the modes
        track /theme instead of carrying tokyo-night hexes. */
@@ -2098,6 +2120,11 @@ class NovaApp(App):
         self._animate_matrix_rain = False
         self._home_dashboard_enabled = True
         self._home_style = "dashboard"
+        from novacode_cli.tui.statusline import DEFAULT_FIELDS
+
+        self._statusline_fields = DEFAULT_FIELDS
+        self._reasoning_effort = None
+        self._status_branch = "—"
         self.session_state = session_state
         # Self-planning approvals use the same clean-thread handoff as `/plan`.
         # Headless and remote runners keep their existing caller-specific flow.
@@ -2113,7 +2140,12 @@ class NovaApp(App):
         try:
             from novacode_cli.config.nova_config import NovaConfig
 
-            self._router_mode_enabled = NovaConfig().get_router_enabled()
+            config = NovaConfig()
+            self._router_mode_enabled = config.get_router_enabled()
+            from novacode_cli.tui.statusline import selected_fields
+
+            self._statusline_fields = selected_fields(config.get("statusline_fields"))
+            self._reasoning_effort = config.get("reasoning_effort")
         except Exception:  # noqa: BLE001 — the footer must not block app startup
             self._router_mode_enabled = False
         # Provider of the live model, recorded on save so a resume can rebuild
@@ -2296,7 +2328,7 @@ class NovaApp(App):
         self._input_pulse_timer: Any = None
         self._pulse_on = False
         # Per-keystroke de-churn: last (plan, bash) mode state + last palette list.
-        self._last_mode_state: tuple[bool, bool, bool] | None = None
+        self._last_mode_state: tuple[bool, bool, bool, bool] | None = None
         self._last_palette: list[str] | None = None
         # Notification badge: last seen unread count (drives status refresh).
         self._last_notif_count = 0
@@ -2993,6 +3025,7 @@ class NovaApp(App):
         self._panes: list = [pane]
         self._root_pane = pane
         self._active_pane = pane
+        self._status_tail = None
         # Seed the (hidden) tab bar now so it is never empty when a session is
         # spawned later. See _refresh_tabs for why an empty bar is a problem.
         self._refresh_tabs()
@@ -3278,6 +3311,13 @@ class NovaApp(App):
             return
         if low == "/close":
             await self._close_session(pane)
+            return
+        if low == "/statusline":
+            await self._run_statusline(stripped)
+            return
+        if (low.split(maxsplit=1) or [""])[0].replace("_", "-") == "/auto-approve":
+            message = await self._set_auto_approve(stripped, pane=pane)
+            self._log(Text(message, style=self._palette.warning))
             return
         if low in ("/tasks", "/jobs"):
             self._open_tasks_panel()
@@ -4076,6 +4116,11 @@ class NovaApp(App):
                 pane.state["_model_provider"] = msg["model_provider"]
                 if pane is self._active_pane:
                     self._model_provider = msg["model_provider"]
+            if "reasoning_effort" in msg:
+                pane.state["_reasoning_effort"] = msg["reasoning_effort"]
+                if pane is self._active_pane:
+                    self._reasoning_effort = msg["reasoning_effort"]
+                    self._status_tail = None
             if isinstance(msg.get("todos"), list):
                 pane.state["_todos"] = msg["todos"]
                 if state is not None:
@@ -5071,6 +5116,10 @@ class NovaApp(App):
             with contextlib.suppress(Exception):
                 await msg.reply_fn(f"✖ Session “{pane.title}” is not running.")
             return
+        command = (msg.text.strip().split(maxsplit=1) or [""])[0].lower().replace("_", "-")
+        if command == "/auto-approve":
+            await msg.reply_fn(await self._set_auto_approve(msg.text, pane=pane))
+            return
         live_followup = (
             pane.status == "running" and not getattr(msg, "images", None)
             and not msg.text.lstrip().startswith("/")
@@ -5426,6 +5475,9 @@ class NovaApp(App):
 
                 text = (getattr(m, "text", "") or "").strip()
                 low = text.lower()
+                if (low.split(maxsplit=1) or [""])[0].replace("_", "-") == "/auto-approve":
+                    await m.reply_fn(await self._set_auto_approve(text))
+                    continue
                 if low.startswith("/steer"):
                     text = text[len("/steer") :].strip()
                 elif text.startswith("/"):
@@ -7318,7 +7370,9 @@ class NovaApp(App):
 
         # Activity segment — animated spinner + elapsed while live, else a ● dot.
         # Rebuilt every animation frame; the heavier state below is cached.
-        if compact_ui:
+        if "activity" not in self._statusline_fields:
+            pass
+        elif compact_ui:
             prefix = f"{motion.spinner(self._spinner_frame)} " if self._turn_active else ""
             elapsed = f" · {time.monotonic() - self._turn_start:0.1f}s" if self._turn_active else ""
             line.append(f"{prefix}{str(self._activity).lower()}{elapsed}", style=pal.muted)
@@ -7372,7 +7426,7 @@ class NovaApp(App):
         except NoMatches:
             pass
 
-    def _build_status_tail(self) -> tuple[Text, Text]:
+    def _build_status_tail(self, fields: Collection[str] | None = None) -> tuple[Text, Text]:
         """Slow-changing status segments, cached on a short TTL by _refresh_status.
 
         Returns ``(left, right)``: the left segment follows the activity text and
@@ -7381,15 +7435,22 @@ class NovaApp(App):
         notification counts, and skill/file counts every frame.
         """
         pal = self._palette
+        selected = set(self._statusline_fields if fields is None else fields)
         line = Text()
         right = Text()
         compact_ui = self._home_style in {"banner", "minimal"}
 
         def _divider() -> None:
-            line.append("  ·  " if compact_ui else "   ┃   ", style=pal.rail)
+            if line or "activity" in selected:
+                line.append("  ·  " if compact_ui else "   ┃   ", style=pal.rail)
+
+        for key, value in self._statusline_values(selected).items():
+            if key in selected and value:
+                _divider()
+                line.append(value, style=pal.muted)
 
         # Context segment — a filling gauge that recolors green→amber→red.
-        if self.token_tracker is not None:
+        if "context" in selected and self.token_tracker is not None:
             try:
                 bd = self.token_tracker.get_breakdown()
             except Exception:  # noqa: BLE001
@@ -7405,7 +7466,7 @@ class NovaApp(App):
                     line.append_text(self._ctx_gauge(p, pal))
                     line.append(f"  {p:.0f}%", style=f"bold {ctx_color}")
 
-        if self.token_tracker is not None:
+        if "cache" in selected and self.token_tracker is not None:
             cache_summary_fn = getattr(self.token_tracker, "cache_summary", None)
             cache_summary = (
                 cache_summary_fn(compact=self._narrow or self._compact)
@@ -7420,7 +7481,7 @@ class NovaApp(App):
                 line.append(cache_summary, style=cache_style)
 
         # Nova learning status (review cycle).
-        if self._nova_status:
+        if "learning" in selected and self._nova_status:
             _divider()
             line.append("◆ ", style=pal.accent)
             line.append(self._nova_status, style=self._nova_status_style)
@@ -7428,7 +7489,7 @@ class NovaApp(App):
         # Remote bridge indicator — platform abbreviations when a bridge is live.
         try:
             mgr = getattr(self.session_state, "_remote_bridge_manager", None)
-            if mgr is not None:
+            if "bridges" in selected and mgr is not None:
                 _active = [
                     b for b in mgr.active_bridges if b.get("status") in ("running", "connecting...")
                 ]
@@ -7450,13 +7511,13 @@ class NovaApp(App):
             pass
 
         notif = self._unread_count()
-        if notif:
+        if "notifications" in selected and notif:
             _divider()
             line.append("🔔 ", style=f"bold {pal.warning}")
             line.append(str(notif), style=f"bold {pal.warning}")
 
         pending = self._pending_approval_count()
-        if pending:
+        if "notifications" in selected and pending:
             _divider()
             line.append("⚡ ", style=f"bold {pal.warning}")
             line.append(str(pending), style=f"bold {pal.warning}")
@@ -7464,8 +7525,16 @@ class NovaApp(App):
         # Right-docked counts. Skills shows the *enabled* set so it reflects
         # /skills toggles, not the full installed list. Dropped on narrow
         # terminals where there is no room for them.
-        skill_count = 0 if self._narrow or self._compact else self._cached_enabled_skill_count()
-        file_count = 0 if self._narrow or self._compact else self._cached_agent_md_count()
+        skill_count = (
+            self._cached_enabled_skill_count()
+            if "skills" in selected and not (self._narrow or self._compact)
+            else 0
+        )
+        file_count = (
+            self._cached_agent_md_count()
+            if "files" in selected and not (self._narrow or self._compact)
+            else 0
+        )
 
         if file_count:
             right.append(
@@ -7538,6 +7607,9 @@ class NovaApp(App):
 
     def _set_info(self, selector: str, renderable: Text) -> None:
         """Update an info-bar Static, ignoring it if not mounted yet."""
+        if selector == "#info-branch":
+            self._status_branch = renderable.plain
+            self._status_tail = None
         if self._home_style in {"banner", "minimal"} and selector in {
             "#info-workspace", "#info-model", "#info-branch",
         }:
@@ -7731,9 +7803,10 @@ class NovaApp(App):
         # Skip the badge/class/pulse work entirely when the mode is unchanged —
         # this runs on every keystroke, so the common case (mode didn't change)
         # must be a cheap no-op.
-        if self._last_mode_state == (plan, bash, bool(goal)):
+        auto = bool(getattr(self.session_state, "auto_approve", False))
+        if self._last_mode_state == (plan, bash, bool(goal), auto):
             return
-        self._last_mode_state = (plan, bash, bool(goal))
+        self._last_mode_state = (plan, bash, bool(goal), auto)
         try:
             badge = self._w("#mode-badge", Static)
             prompt = self._w("#prompt", PromptInput)
@@ -7762,6 +7835,12 @@ class NovaApp(App):
             short = goal if len(goal) <= 60 else goal[:57] + "…"
             _paint(badge, Text(f"  🎯 GOAL — {short}", style=f"bold {pal.warning}"))
             badge.display = True
+        elif auto:
+            _paint(
+                badge,
+                Text("  AUTO-APPROVE — tools run without asking", style=f"bold {pal.warning}"),
+            )
+            badge.display = True
         else:
             _paint(badge, "")
             badge.display = False
@@ -7770,6 +7849,7 @@ class NovaApp(App):
         prompt.set_class(bash, "bash-mode")
         prompt.set_class(plan and not bash, "plan-mode")
         prompt.set_class(not plan and not bash, "normal-mode")
+        prompt.set_class(auto and not bash, "auto-approve-mode")
 
         # Also style the > prefix chevron and the prompt row to match.
         try:
@@ -7777,6 +7857,7 @@ class NovaApp(App):
             prefix.set_class(bash, "bash-mode")
             prefix.set_class(plan and not bash, "plan-mode")
             prefix.set_class(not plan and not bash, "normal-mode")
+            prefix.set_class(auto and not bash, "auto-approve-mode")
             _paint(prefix, "$ " if bash else "> ")
         except NoMatches:
             pass
@@ -7785,6 +7866,7 @@ class NovaApp(App):
             row.set_class(bash, "bash-mode")
             row.set_class(plan and not bash, "plan-mode")
             row.set_class(not plan and not bash, "normal-mode")
+            row.set_class(auto and not bash, "auto-approve-mode")
         except NoMatches:
             pass
 
@@ -8306,6 +8388,8 @@ class NovaApp(App):
                     coroutine = self._run_remote(text)
                 elif command_name == "theme":
                     coroutine = self._run_theme()
+                elif command_name == "auto-approve":
+                    coroutine = self._run_auto_approve(text, pane=self._active_pane)
                 elif command_name == "help":
                     self._run_help()
                     return
@@ -10187,6 +10271,9 @@ class NovaApp(App):
                                 with suppress(Exception):
                                     await reply_fn("⏹ Stopped." if stopped else "Nothing is running.")
                             continue
+                        if (low.split(maxsplit=1) or [""])[0].replace("_", "-") == "/auto-approve":
+                            await msg.reply_fn(await self._set_auto_approve(text))
+                            continue
                         if low.startswith("/steer"):
                             text = text[len("/steer") :].strip()
                         elif text.startswith("/"):
@@ -10429,6 +10516,8 @@ class NovaApp(App):
             return self._remote_help_text(), None
         if cmd in ("stop", "cancel"):
             return "Nothing is running.", None
+        if cmd == "auto-approve":
+            return await self._set_auto_approve(text), None
         if cmd == "redirect":  # nothing to interrupt: just the message
             return ("Usage: /redirect <what to do instead>", None) if not arg else (None, arg)
         if cmd in ("tokens", "context", "cost") and not arg:
@@ -14705,42 +14794,162 @@ class NovaApp(App):
         self._log(t)
         self._refresh_status()
 
+    def _statusline_values(self, fields: Collection[str]) -> dict[str, str]:
+        """Read optional status details from cached, active-session state."""
+        from novacode_cli._version import __version__
+        from novacode_cli.config.config import settings
+
+        pane = getattr(self, "_active_pane", None)
+        directory = (
+            (getattr(pane, "worktree", None) or settings.get_workspace_root())
+            if "directory" in fields
+            else ""
+        )
+        branch = getattr(pane, "branch", None) or self._status_branch
+        if pane is not None and pane.kind == "child" and not pane.branch:
+            branch = "—"  # The root's branch is not the child workspace's branch.
+        model = getattr(self, "_routed_model_name", None) or self.model_name or "unknown"
+        phase = (
+            "planning"
+            if getattr(self.session_state, "plan_mode_enabled", False)
+            else "implementation"
+        )
+        task_count = 0
+        if "background" in fields:
+            task_count = len(self._tasks_registry().active())
+            task_count += sum(task.status == "running" for task in self._background_agent_tasks())
+        return {
+            "model": str(model),
+            "effort": f"effort: {self._reasoning_effort or 'default'}",
+            "directory": str(directory),
+            "branch": f"branch: {branch}",
+            "session": f"session: {getattr(pane, 'title', None) or self.assistant_id or 'Nova'}",
+            "version": f"v{__version__}",
+            "phase": phase,
+            "permissions": "auto-approve"
+            if getattr(self.session_state, "auto_approve", False)
+            else "ask approvals",
+            "background": f"tasks: {task_count}",
+        }
+
+    def _statusline_preview(self, fields: Sequence[str]) -> Text:
+        """Render the draft selection without touching live settings."""
+        line = Text(str(self._activity).upper() if "activity" in fields else "")
+        left, right = self._build_status_tail(fields)
+        line.append_text(left)
+        if right:
+            if line:
+                line.append("   ·   ")
+            line.append_text(right)
+        return line
+
+    async def _run_statusline(self, text: str) -> None:
+        """Open the preview picker and persist only an explicitly saved draft."""
+        from novacode_cli.config.nova_config import NovaConfig
+        from novacode_cli.tui.statusline_screen import StatusLineScreen
+
+        if len(text.split()) > 1:
+            self._log(Text("Usage: /statusline", style="yellow"))
+            return
+        selected = await self.push_screen_wait(
+            StatusLineScreen(self._statusline_fields, self._statusline_preview)
+        )
+        if selected is None:
+            return
+        await asyncio.to_thread(lambda: NovaConfig().set("statusline_fields", selected))
+        self._statusline_fields = tuple(selected)
+        self._status_tail = None
+        self._refresh_status()
+
+    async def _set_auto_approve(self, text: str, *, pane: SessionPane | None = None) -> str:
+        """Change one session's approval preference, never a persistent default."""
+        parts = text.split(maxsplit=1)
+        arg = parts[1].strip().lower() if len(parts) > 1 else "toggle"
+        state = pane.state.get("session_state") if pane is not None else self.session_state
+        if state is None:
+            return "Session is unavailable."
+        current = bool(getattr(state, "auto_approve", False))
+        if arg == "status":
+            return f"Auto-approve is {'on' if current else 'off'} for this session."
+        if arg not in {"toggle", "on", "off"}:
+            return "Usage: /auto-approve [on|off|status]"
+        enabled = not current if arg == "toggle" else arg == "on"
+        if (
+            pane is not None
+            and pane.kind == "child"
+            and not await self._supervisor().set_auto_approve(pane.sid, enabled=enabled)
+        ):
+            return "Could not update auto-approve: session is unreachable."
+        state.auto_approve = enabled
+        if getattr(state, "_pre_remote_auto_approve", None) is not None:
+            state._pre_remote_auto_approve = enabled
+        if pane is None or pane is getattr(self, "_active_pane", None):
+            self._plan_scoped_auto_approve = False
+            self._status_tail = None
+            self._update_mode_badge()
+            self._refresh_status()
+        else:
+            pane.state["_plan_scoped_auto_approve"] = False
+        return f"Auto-approve {'on' if enabled else 'off'} for this session."
+
+    async def _run_auto_approve(self, text: str, *, pane: SessionPane | None = None) -> None:
+        """Handle the explicit session permission toggle."""
+        if pane is None:
+            active = getattr(self, "_active_pane", None)
+            pane = active if active is not None and active.kind == "child" else None
+        self._log(Text(await self._set_auto_approve(text, pane=pane), style=self._palette.warning))
+
     async def _run_effort(self, text: str) -> None:
         """Handle /effort natively: set reasoning effort level."""
         from novacode_cli.config.nova_config import NovaConfig
-        from novacode_cli.config.model_create import create_model
+        from novacode_cli.config.model_create import build_chat_model, reasoning_setting_note
 
         parts = text.split(maxsplit=1)
         args = parts[1].strip() if len(parts) > 1 else ""
         nova_config = NovaConfig()
-        current = nova_config.get("reasoning_effort", "off")
+        current = self._reasoning_effort or "default"
 
         if not args:
             t = Text()
             t.append("Reasoning Effort Configuration\n", style="bold")
             t.append(f"Current: ", style="dim")
             t.append(f"{current}\n", style="bold cyan")
-            t.append("\nUsage: /effort <low|medium|high|off>\n", style="dim")
+            t.append("\nUsage: /effort <low|medium|high|off|default>\n", style="dim")
+            t.append(
+                reasoning_setting_note(
+                    self._model_provider, self.model_name, self._reasoning_effort
+                )
+            )
             self._log(t)
             return
 
         val = args.strip().lower()
-        if val in ("none", "default"):
+        if val == "none":
             val = "off"
-        if val not in ("low", "medium", "high", "off"):
+        if val not in ("low", "medium", "high", "off", "default"):
             self._log(
                 Text(f"Invalid effort level '{args}'. Choose: low, medium, high, off", style="red")
             )
             return
 
-        nova_config.set("reasoning_effort", val)
+        nova_config.set("reasoning_effort", None if val == "default" else val)
         t = Text(f"● Reasoning effort set to '{val}' and saved to config.\n", style="green")
 
         # Hot-swap the model
-        if self.session_state is not None:
+        if self.session_state is not None and self._model_provider:
             try:
-                new_model = create_model()
-                new_agent, new_backend = await self.session_state.switch_model(new_model)
+                runtime_model = getattr(self.session_state, "_model", None)
+                model_name = (
+                    getattr(runtime_model, "model_name", None)
+                    or getattr(runtime_model, "model", None)
+                    or self.model_name
+                )
+                new_model = await asyncio.to_thread(
+                    build_chat_model, self._model_provider, model_name
+                )
+                new_agent, new_backend = await self.session_state.switch_model(
+                    new_model, steering_instructions=self.session_state.steering_instructions
+                )
                 self.agent = new_agent
                 self.backend = new_backend
                 self.model_name = getattr(new_model, "model_name", None) or getattr(
@@ -14751,7 +14960,14 @@ class NovaApp(App):
                         self.token_tracker.set_model(self.model_name)
                     except Exception:  # noqa: BLE001
                         pass
-                t.append("● Model recreated with new reasoning effort dynamically!", style="green")
+                self._reasoning_effort = None if val == "default" else val
+                self._status_tail = None
+                t.append("● Applied to the current model.\n", style="green")
+                t.append(
+                    reasoning_setting_note(
+                        self._model_provider, self.model_name, self._reasoning_effort
+                    )
+                )
             except Exception as e:
                 t.append(f"⚠ Could not recreate model dynamically: {e}", style="yellow")
                 t.append(

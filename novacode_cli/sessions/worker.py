@@ -359,6 +359,7 @@ class SessionWorker:
 
     async def run(self) -> int:
         from novacode_cli.commands.side_commands import is_goal_control
+        from novacode_cli.config.nova_config import NovaConfig
         from novacode_cli.sessions.tasks import job_snapshot
         from novacode_cli.shell.jobs import get_registry
 
@@ -377,6 +378,7 @@ class SessionWorker:
                 "model": self.model_name,
                 "assistant_id": self.assistant_id,
                 "model_provider": getattr(self.session_state, "session_model_provider", None),
+                "reasoning_effort": NovaConfig().get("reasoning_effort"),
                 "todos": getattr(self.session_state, "todos", []),
             }
         )
@@ -471,6 +473,13 @@ class SessionWorker:
                         interrupt_task_waits(self.session_state.thread_id)
                     else:
                         self._start_turn(pid, text, images, auto_approve)
+
+                elif kind == "approval_mode":
+                    enabled = msg.get("enabled")
+                    if isinstance(enabled, bool):
+                        self.session_state.auto_approve = enabled
+                    else:
+                        self._emit({"t": "error", "message": "Invalid approval mode."})
 
                 elif kind == "session_reply":
                     future = self._session_pending.get(str(msg.get("id")))

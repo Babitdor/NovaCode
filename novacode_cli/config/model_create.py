@@ -218,6 +218,71 @@ def google_thinking_kwargs(model_name: str, effort: str | None) -> dict:
     return {}
 
 
+def gateway_reasoning_kwargs(provider: str, model_name: str, effort: str | None) -> dict:
+    """Map verified gateway controls without assuming all models accept effort.
+
+    OpenRouter translates its unified reasoning field across upstream families.
+    Command Code and OpenCode use OpenAI-shaped effort for GPT and DeepSeek V4.
+    On those gateways ``off`` requests minimum effort, not disabled thinking.
+    Unknown families keep provider defaults rather than receiving guessed fields.
+    """
+    if effort not in {"off", "low", "medium", "high"}:
+        return {}
+    if provider == "openrouter":
+        return {"extra_body": {"reasoning": {"effort": "low" if effort == "off" else effort}}}
+    kwargs = openai_reasoning_kwargs(model_name, effort)
+    name = model_name.lower().rsplit("/", 1)[-1]
+    if not kwargs and name.startswith("deepseek-v4"):
+        return {"reasoning_effort": "low" if effort in {"off", "low"} else "high"}
+    return kwargs
+
+
+def reasoning_setting_note(  # noqa: PLR0911 — each provider has a different control
+    provider: str | None, model_name: str, effort: str | None
+) -> str:
+    """Describe the configured control honestly, including model limitations."""
+    if not effort or effort == "default":
+        return "Using the provider's default reasoning settings."
+    name = model_name.lower().rsplit("/", 1)[-1]
+    if provider == "nvidia":
+        return "NVIDIA uses a model-specific thinking toggle; low/medium/high all enable it."
+    if provider == "ollama":
+        return (
+            "Ollama receives reasoning_effort (off → none); support depends on the installed model."
+        )
+    if provider == "google" and google_thinking_kwargs(model_name, effort):
+        return (
+            "Gemini receives its version-specific thinking level or budget; "
+            "some models cannot disable thinking."
+        )
+    if name.startswith("claude-") and provider in {
+        "anthropic",
+        "commandcode",
+        "opencode",
+        "opencode_zen",
+    }:
+        return (
+            "Claude receives adaptive effort or a thinking budget; "
+            "off uses minimum effort on adaptive models."
+        )
+    if provider == "openrouter":
+        return (
+            "OpenRouter receives unified reasoning effort; off requests low. "
+            "Upstream model support varies."
+        )
+    if openai_reasoning_kwargs(model_name, effort):
+        return (
+            "The model receives reasoning effort; off requests low "
+            "because some models cannot disable thinking."
+        )
+    if provider in {"commandcode", "opencode", "opencode_zen"} and name.startswith("deepseek-v4"):
+        return "DeepSeek V4 receives low/high effort (medium → high, off → low)."
+    return (
+        "No verified configurable effort control for this model/route; "
+        "provider defaults remain in effect."
+    )
+
+
 def build_chat_model(provider: str, model_name: str) -> BaseChatModel:
     """Build a provider model, attaching local diagnostics only when requested."""
     model = _build_chat_model(provider, model_name)
@@ -348,7 +413,7 @@ def _build_chat_model(provider: str, model_name: str) -> BaseChatModel:
             default_headers=zdr,
             max_retries=5,
             stream_usage=True,
-            **openai_reasoning_kwargs(model_name, effort),
+            **gateway_reasoning_kwargs(provider, model_name, effort),
         )
 
     if provider in ("openai", "openrouter", "opencode", "opencode_zen"):
@@ -364,7 +429,10 @@ def _build_chat_model(provider: str, model_name: str) -> BaseChatModel:
         # that actually carry the field.
         apply_openai_reasoning_content_patch()
 
-        openai_kwargs: dict = openai_reasoning_kwargs(model_name, effort)
+        openai_kwargs: dict = (
+            openai_reasoning_kwargs(model_name, effort) if provider == "openai"
+            else gateway_reasoning_kwargs(provider, model_name, effort)
+        )
         if provider == "openrouter":
             # OpenRouter is OpenAI-compatible: same client, custom base URL + key.
             from novacode_cli.config.model_manager import OPENROUTER_BASE_URL
@@ -395,11 +463,17 @@ def _build_chat_model(provider: str, model_name: str) -> BaseChatModel:
                 raise ValueError("This OpenCode model uses an API not supported by the chat provider.")
             if api == "messages":
                 from langchain_anthropic import ChatAnthropic
+                thinking_kwargs = (
+                    anthropic_thinking_kwargs(
+                        model_name, effort, int(nova_config.get("thinking_budget", 0) or 0)
+                    ) if model_name.lower().startswith("claude-") else {}
+                )
                 return ChatAnthropic(
                     model=model_name, api_key=openai_kwargs["api_key"],
                     base_url=openai_kwargs["base_url"],
                     default_headers=openai_kwargs["default_headers"],
                     max_tokens=20_000, max_retries=5,
+                    **thinking_kwargs,
                 )
             if api == "responses":
                 openai_kwargs.update(use_responses_api=True, store=False)

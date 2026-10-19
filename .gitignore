@@ -13,6 +13,7 @@ develop-eggs/
 dist/
 docs/*
 !docs/context-learning/
+!docs/reasoning-support.md
 # Any nested docs/ folder stays ignored, as the old bare docs/ rule had it.
 */**/docs/
 # Any nested docs/ folder stays ignored, as the old bare docs/ rule had it.

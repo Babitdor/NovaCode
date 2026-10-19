@@ -83,6 +83,8 @@ STATEFUL_ATTRS: tuple[str, ...] = (
     # tabs and saving recorded the OTHER session's provider — silently
     # corrupting which model each session restores to.
     "_model_provider",
+    "_reasoning_effort",
+    "_plan_scoped_auto_approve",
     "session_state",
     "assistant_id",
     "_restored_messages",
@@ -161,6 +163,8 @@ def fresh_state(
         "backend": None,
         "model_name": model_name,
         "_model_provider": model_provider,
+        "_reasoning_effort": None,
+        "_plan_scoped_auto_approve": False,
         "session_state": session_state,
         "assistant_id": assistant_id,
         "_restored_messages": [],

@@ -96,7 +96,7 @@ def test_an_nvidia_key_alone_is_reported_as_the_active_provider(isolated, monkey
 
     manager = ModelManager()
     for attr in ("has_openai", "has_anthropic", "has_google", "has_openrouter",
-                 "has_opencode"):
+                 "has_opencode", "has_opencode_zen", "has_commandcode"):
         monkeypatch.setattr(type(manager.settings), attr, property(lambda _: False))
     monkeypatch.setattr(manager.nova_config, "get_model_config", lambda: None)
     assert manager.get_current_provider()[0] == "NVIDIA NIM"

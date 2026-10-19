@@ -589,6 +589,37 @@ async def test_cancel_drops_queued_prompts(monkeypatch: pytest.MonkeyPatch, *, s
 # ── HITL forwarding ──────────────────────────────────────────────────────────
 
 
+async def test_explicit_approval_mode_control_updates_the_running_session(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    started = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def stream(_text: str, *_args: object, **_kwargs: object) -> AsyncIterator[ev.Done]:
+        started.set()
+        await finish.wait()
+        yield ev.Done()
+
+    worker, sent = _make(monkeypatch, stream)
+    running = asyncio.create_task(worker.run())
+    try:
+        worker.inbox.put_nowait({"t": "prompt", "id": "p1", "text": "work"})
+        await asyncio.wait_for(started.wait(), 5)
+        worker.inbox.put_nowait({"t": "approval_mode", "enabled": True})
+        assert await _wait_for(lambda: worker.session_state.auto_approve)
+        worker.inbox.put_nowait({"t": "approval_mode", "enabled": False})
+        assert await _wait_for(lambda: not worker.session_state.auto_approve)
+        worker.inbox.put_nowait({"t": "approval_mode", "enabled": "true"})
+        assert await _wait_for(lambda: _frames(sent, "error"))
+        assert not worker.session_state.auto_approve
+        assert worker._turn_running()
+        assert not _frames(sent, "turn_done")
+    finally:
+        finish.set()
+        worker.inbox.put_nowait({"t": "shutdown"})
+        await asyncio.wait_for(running, 10)
+
+
 def _interrupt_stream(box):
     async def gen(text, *a, **kw):
         req = ev.InterruptRequest(

@@ -395,6 +395,13 @@ class SessionSupervisor:
         if child.status == "needs-approval":
             child.status = "running"
 
+    async def set_auto_approve(self, session_id: str, *, enabled: bool) -> bool:
+        """Update one worker's approval mode without starting or cancelling a turn."""
+        child = self._children.get(session_id)
+        if child is None:
+            return False
+        return await self._send(child, {"t": "approval_mode", "enabled": enabled})
+
     async def cancel(self, session_id: str) -> None:
         child = self._children.get(session_id)
         if child is not None:

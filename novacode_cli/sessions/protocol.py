@@ -14,6 +14,7 @@ Parent -> child::
     {"t": "prompt",          "id": "p8", "text": "...", "steer": true}
     {"t": "interrupt_reply", "id": "i3", "result": {...}}
     {"t": "cancel"}
+    {"t": "approval_mode", "enabled": true}
     {"t": "job_control", "action": "list|terminate|restart|clear|detach|logs", "job_id": 41, "request_id": "..."}
     {"t": "shutdown"}
 
