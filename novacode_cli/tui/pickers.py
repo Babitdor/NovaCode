@@ -38,34 +38,33 @@ class SessionPickerApp(App[tuple[str, bool] | None]):
         super().__init__()
         self._sessions = sessions
         self._session_id: str | None = None
+        from novacode_cli.config.nova_config import NovaConfig
+        from novacode_cli.tui.home import home_style
 
-    def on_mount(self) -> None:
-        from novacode_cli.session.session_restore import resume_option_label
-        from novacode_cli.tui.app import NovaApp
-        from novacode_cli.tui.screens import PickScreen
-
-        NovaApp._apply_saved_theme(self)  # type: ignore[arg-type]
-        self.push_screen(
-            PickScreen(
-                "Resume a session (this path)",
-                [resume_option_label(s) for s in self._sessions],
-                hint="↑/↓ select · Enter resume · Esc cancel",
-            ),
-            self._picked,
+        config = NovaConfig()
+        self._home_style = home_style(
+            config.get("home_style"), legacy_dashboard=config.get("home_dashboard_enabled", True)
         )
 
+    def on_mount(self) -> None:
+        from novacode_cli.tui.app import NovaApp
+        from novacode_cli.tui.resume_picker import ResumeSessionScreen
+
+        NovaApp._apply_saved_theme(self)  # type: ignore[arg-type]
+        screen = ResumeSessionScreen(self._sessions)
+        screen.add_class(f"{self._home_style}-ui")
+        self.push_screen(screen, self._picked)
+
     def _picked(self, idx: int | None) -> None:
-        from novacode_cli.session.session_restore import RESUME_CHOICE_TITLE, RESUME_CHOICES
-        from novacode_cli.tui.screens import PickScreen
+        from novacode_cli.tui.resume_picker import ResumeModeScreen
 
         if idx is None or not 0 <= idx < len(self._sessions):
             self.exit(None)
             return
         self._session_id = self._sessions[idx].session_id
-        self.push_screen(
-            PickScreen(RESUME_CHOICE_TITLE, RESUME_CHOICES, hint="Enter choose · Esc cancel"),
-            self._chosen,
-        )
+        screen = ResumeModeScreen()
+        screen.add_class(f"{self._home_style}-ui")
+        self.push_screen(screen, self._chosen)
 
     def _chosen(self, choice: int | None) -> None:
         self.exit((self._session_id, choice == 0) if choice in (0, 1) else None)

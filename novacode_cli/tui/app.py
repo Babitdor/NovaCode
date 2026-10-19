@@ -65,6 +65,7 @@ from novacode_cli.tui.home import (
     home_style,
     system_text,
 )
+from novacode_cli.tui.resume_picker import RESUME_CSS
 
 logger = logging.getLogger(__name__)
 
@@ -2033,7 +2034,7 @@ class NovaApp(App):
         color: $text;
         text-style: bold;
     }
-    """
+    """ + RESUME_CSS
 
     BINDINGS = [
         Binding("ctrl+shift+backspace", "ui_reset", "Restore UI", priority=True),
@@ -3448,7 +3449,7 @@ class NovaApp(App):
     async def _resume_tab(self, selector: str = "") -> None:
         """Reopen a saved conversation in its own approved project tab."""
         from novacode_cli.sessions.resume import resolve_saved_tab
-        from novacode_cli.session.session_restore import format_session_age
+        from novacode_cli.tui.resume_picker import ResumeSessionScreen
 
         manager = self.session_manager
         if manager is None:
@@ -3474,17 +3475,8 @@ class NovaApp(App):
             if not sessions:
                 self._log(Text("No saved sessions available to reopen as tabs.", style="yellow"))
                 return
-            labels = [
-                f"{meta.session_id[:8]} · {meta.project_root or 'unknown project'} · "
-                f"{meta.message_count} msgs · {format_session_age(meta.last_active)}"
-                for meta in sessions
-            ]
             selected = await self.push_screen_wait(
-                PickScreen(
-                    "Resume session in a new tab",
-                    labels,
-                    hint="↑/↓ select · Enter resume · Esc cancel",
-                )
+                ResumeSessionScreen(sessions, title="Resume in a new tab")
             )
             if selected is None or not 0 <= selected < len(sessions):
                 return
@@ -12642,25 +12634,16 @@ class NovaApp(App):
                     )
                 )
                 return
-            from novacode_cli.session.session_restore import resume_option_label
+            from novacode_cli.tui.resume_picker import ResumeSessionScreen
 
-            options = [resume_option_label(s) for s in sessions]
-            idx = await self.push_screen_wait(
-                PickScreen(
-                    "Resume a session (this path)",
-                    options,
-                    hint="↑/↓ select · Enter resume · Esc cancel",
-                )
-            )
-            if not (0 <= idx < len(sessions)):
+            idx = await self.push_screen_wait(ResumeSessionScreen(sessions))
+            if idx is None or not (0 <= idx < len(sessions)):
                 return
             target_id = sessions[idx].session_id
 
-        from novacode_cli.session.session_restore import RESUME_CHOICE_TITLE, RESUME_CHOICES
+        from novacode_cli.tui.resume_picker import ResumeModeScreen
 
-        choice = await self.push_screen_wait(
-            PickScreen(RESUME_CHOICE_TITLE, RESUME_CHOICES, hint="Enter choose · Esc cancel")
-        )
+        choice = await self.push_screen_wait(ResumeModeScreen())
         if choice not in (0, 1):
             return
         compact = choice == 0
