@@ -11,6 +11,7 @@ Message envelopes
 Parent -> child::
 
     {"t": "prompt",          "id": "p7", "text": "...", "auto_approve": false, "images": [{"base64_data": "...", "format": "png", "placeholder": "[image]"}]}
+    {"t": "prompt",          "id": "p8", "text": "...", "steer": true}
     {"t": "interrupt_reply", "id": "i3", "result": {...}}
     {"t": "cancel"}
     {"t": "job_control", "action": "list|terminate|restart|clear|detach|logs", "job_id": 41, "request_id": "..."}
@@ -25,6 +26,11 @@ Child -> parent::
     {"t": "error", "message": "..."}
     {"t": "jobs", "jobs": [{"id": 41, "command": "...", "status": "running", ...}]}
     {"t": "job_logs", "request_id": "...", "output": "bounded log tail"}
+
+The optional ``steer`` prompt flag delivers plain text to a running turn's next
+model step. Commands, images and changed approval modes remain queued. Without
+the flag, prompts retain FIFO turn queueing. Every accepted prompt still receives
+one ``turn_done``; a consumed live follow-up is marked ``steered: true``.
 
 Three fields need special handling; everything else in ``ui_events`` is already
 JSON-safe:

@@ -262,7 +262,10 @@ async def _run_prompts(worker, sent, prompts, *, timeout=15.0):
 
 
 @pytest.mark.asyncio
-async def test_queued_approval_mode_cannot_escalate_active_turn(monkeypatch):
+@pytest.mark.parametrize("steer", [False, True])
+async def test_queued_approval_mode_cannot_escalate_active_turn(
+    monkeypatch: pytest.MonkeyPatch, *, steer: bool
+):
     seen = []
     active = asyncio.Event()
     release = asyncio.Event()
@@ -280,7 +283,9 @@ async def test_queued_approval_mode_cannot_escalate_active_turn(monkeypatch):
     try:
         await worker.inbox.put({"t": "prompt", "id": "p1", "text": "manual", "auto_approve": False})
         await asyncio.wait_for(active.wait(), 5)
-        await worker.inbox.put({"t": "prompt", "id": "p2", "text": "auto", "auto_approve": True})
+        await worker.inbox.put({
+            "t": "prompt", "id": "p2", "text": "auto", "auto_approve": True, "steer": steer,
+        })
         await asyncio.sleep(0.05)
         assert worker.session_state.auto_approve is False
         release.set()
@@ -435,6 +440,54 @@ async def test_agent_exception_is_reported_not_fatal(monkeypatch):
 # ── queueing: a prompt mid-turn must not be dropped or starved ───────────────
 
 
+@pytest.mark.asyncio
+async def test_explicit_live_followup_reaches_the_next_step_before_turn_end(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from novacode_cli.bootstrap.steering import SteeringMiddleware
+
+    started = asyncio.Event()
+    step = asyncio.Event()
+    finish = asyncio.Event()
+    picked_up = asyncio.Event()
+    calls = []
+
+    async def source(
+        text: str, _agent: object, _aid: str | None, state: _SS, **_kwargs: object
+    ) -> AsyncIterator[ev.Done]:
+        calls.append(text)
+        started.set()
+        await step.wait()
+        update = SteeringMiddleware(instructions=state.steering_instructions).before_model({}, None)
+        assert update is not None
+        assert "Use the corrected filename" in update["messages"][0].content
+        picked_up.set()
+        await finish.wait()
+        yield ev.Done()
+
+    worker, sent = _make(monkeypatch, source)
+    running = asyncio.create_task(worker.run())
+    try:
+        await worker.inbox.put({"t": "prompt", "id": "p1", "text": "first"})
+        await asyncio.wait_for(started.wait(), 5)
+        await worker.inbox.put({
+            "t": "prompt", "id": "p2", "text": "Use the corrected filename", "steer": True,
+        })
+        assert await _wait_for(lambda: bool(worker.session_state.steering_instructions))
+        step.set()
+        await asyncio.wait_for(picked_up.wait(), 5)
+        assert not _frames(sent, "turn_done")
+        finish.set()
+        assert await _wait_for(lambda: len(_frames(sent, "turn_done")) == 2)
+        assert calls == ["first"]
+        assert not worker.session_state.steering_instructions
+    finally:
+        finish.set()
+        step.set()
+        worker.inbox.put_nowait({"t": "shutdown"})
+        await asyncio.wait_for(running, 10)
+
+
 @pytest.mark.timeout(30)
 async def test_prompt_releases_background_task_wait(monkeypatch):
     from types import SimpleNamespace
@@ -473,7 +526,10 @@ async def test_prompt_releases_background_task_wait(monkeypatch):
 
 
 @pytest.mark.timeout(30)
-async def test_prompt_during_turn_is_queued_then_run(monkeypatch):
+@pytest.mark.parametrize("steer", [False, True])
+async def test_prompt_during_turn_is_queued_then_run(
+    monkeypatch: pytest.MonkeyPatch, *, steer: bool
+):
     seen: list[str] = []
     gate = asyncio.Event()
 
@@ -488,9 +544,8 @@ async def test_prompt_during_turn_is_queued_then_run(monkeypatch):
 
     w.inbox.put_nowait({"t": "prompt", "id": "p1", "text": "first"})
     await _wait_for(lambda: seen == ["first"])
-    w.inbox.put_nowait({"t": "prompt", "id": "p2", "text": "second"})
-    await _wait_for(lambda: bool(w._queued))
-    assert w._queued, "second prompt should be waiting, not dropped"
+    w.inbox.put_nowait({"t": "prompt", "id": "p2", "text": "second", "steer": steer})
+    assert await _wait_for(lambda: bool(w._live_prompts if steer else w._queued))
 
     # Release the first turn and send NOTHING else: the queued prompt must start
     # on turn completion alone, or it would starve until the next parent message.
@@ -503,7 +558,8 @@ async def test_prompt_during_turn_is_queued_then_run(monkeypatch):
 
 
 @pytest.mark.timeout(30)
-async def test_cancel_drops_queued_prompts(monkeypatch):
+@pytest.mark.parametrize("steer", [False, True])
+async def test_cancel_drops_queued_prompts(monkeypatch: pytest.MonkeyPatch, *, steer: bool):
     started = asyncio.Event()
 
     async def forever(text, *a, **kw):
@@ -516,14 +572,18 @@ async def test_cancel_drops_queued_prompts(monkeypatch):
 
     w.inbox.put_nowait({"t": "prompt", "id": "p1", "text": "x"})
     await asyncio.wait_for(started.wait(), timeout=5)
-    w.inbox.put_nowait({"t": "prompt", "id": "p2", "text": "y"})
-    await _wait_for(lambda: bool(w._queued))
+    w.inbox.put_nowait({"t": "prompt", "id": "p2", "text": "y", "steer": steer})
+    assert await _wait_for(lambda: bool(w._live_prompts if steer else w._queued))
 
     w.inbox.put_nowait({"t": "cancel"})
     assert await _wait_for(lambda: not w._queued and not w._turn_running())
 
     w.inbox.put_nowait({"t": "shutdown"})
     await asyncio.wait_for(task, timeout=10)
+    assert not w.session_state.steering_instructions
+    assert {frame["id"] for frame in _frames(sent, "turn_done")} == {"p1", "p2"}
+    followup = next(frame for frame in _frames(sent, "turn_done") if frame["id"] == "p2")
+    assert not followup.get("steered", False)
 
 
 # ── HITL forwarding ──────────────────────────────────────────────────────────

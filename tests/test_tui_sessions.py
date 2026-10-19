@@ -483,7 +483,10 @@ async def test_child_tab_inherits_mode_and_sends_it_on_remote_and_local_turns(mo
         send.assert_awaited_with(child.sid, "local", auto_approve=auto)
         msg = RemoteMessage(RemotePlatform.TELEGRAM, 7, "user", "remote", AsyncMock())
         await app._remote_child_turn(child, msg)
-        send.assert_awaited_with(child.sid, "remote", auto_approve=auto, prompt_id=child.remote_turns[-1].prompt_id)
+        send.assert_awaited_with(
+            child.sid, "remote", auto_approve=auto, steer=True,
+            prompt_id=child.remote_turns[-1].prompt_id,
+        )
         assert child.state["session_state"].auto_approve is auto
 
 
@@ -993,6 +996,191 @@ async def _drive_child_input_forwarded():
 
 def test_input_in_a_child_tab_goes_to_that_process():
     asyncio.run(_drive_child_input_forwarded())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", ["/close", "/tabs close child-1", "continue working"])
+async def test_child_input_never_cancels_a_running_root(command: str):
+    from novacode_cli import ui_events as ev
+    from novacode_cli.tui.session_pane import fresh_state
+
+    app = _app()
+    started = asyncio.Event()
+    finish = asyncio.Event()
+    cancelled = asyncio.Event()
+    async with app.run_test() as pilot:
+        stub = _StubSupervisor()
+        app._session_supervisor = stub
+        root = app._root_pane
+
+        async def root_turn() -> None:
+            app._turn_active = True
+            await app._deliver(root, ev.StatusUpdate(message="working"))
+            started.set()
+            try:
+                await finish.wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            await app._deliver(
+                root,
+                ev.AssistantMessage(text="root completed", agent_name="nova", agent_color="cyan"),
+            )
+
+        root_worker = app.run_worker(root_turn(), group="turn")
+        await asyncio.wait_for(started.wait(), timeout=5)
+        child = await _add_pane(app)
+        child.state = fresh_state(session_state=_SS())
+        await app._switch_to(child)
+        await pilot.pause()
+
+        try:
+            child_worker = app._dispatch(command)
+            await child_worker.wait()
+            await pilot.pause()
+            assert not cancelled.is_set(), "Child input cancelled another session's turn worker"
+            assert not root_worker.is_finished
+            if command.startswith("/"):
+                assert stub.closed == [child.sid]
+                assert child not in app._panes
+            else:
+                assert stub.prompts == [(child.sid, command)]
+                assert child.status == "running"
+        finally:
+            finish.set()
+        await root_worker.wait()
+
+
+@pytest.mark.asyncio
+async def test_child_close_keeps_its_target_when_the_visible_tab_changes():
+    from novacode_cli.tui.session_pane import fresh_state
+
+    app = _app()
+    async with app.run_test():
+        stub = _StubSupervisor()
+        app._session_supervisor = stub
+        child = await _add_pane(app)
+        child.state = fresh_state(session_state=_SS())
+        await app._switch_to(child)
+
+        worker = app._dispatch("/close")
+        # Change the viewport before the worker gets its first event-loop turn.
+        app._select_pane(app._root_pane)
+        await worker.wait()
+
+        assert stub.closed == [child.sid]
+        assert app._active_pane is app._root_pane
+        assert child not in app._panes
+
+
+@pytest.mark.asyncio
+async def test_root_input_keeps_its_owner_when_the_visible_tab_changes(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from novacode_cli.tui.session_pane import fresh_state
+
+    app = _app()
+    async with app.run_test():
+        stub = _StubSupervisor()
+        app._session_supervisor = stub
+        child = await _add_pane(app)
+        child.state = fresh_state(session_state=_SS())
+        received = []
+
+        async def stream(text: str) -> None:
+            received.append((app._active_pane.sid, text, app.agent))
+
+        monkeypatch.setattr(app, "_stream_prompt", stream)
+        root_agent = app.agent
+        worker = app._dispatch("root task")
+        app._select_pane(child)
+        await worker.wait()
+
+        assert received == [(app._root_pane.sid, "root task", root_agent)]
+        assert not stub.prompts
+
+
+@pytest.mark.asyncio
+async def test_telegram_tab_close_preserves_another_running_session():
+    import time
+    from unittest.mock import AsyncMock
+
+    from novacode_cli.remote.bridge import RemoteMessage, RemotePlatform
+
+    app = _app()
+    async with app.run_test():
+        stub = _StubSupervisor()
+        app._session_supervisor = stub
+        running = await _add_pane(app, sid="running", title="running")
+        running.status = "running"
+        closing = await _add_pane(app, sid="closing", title="closing")
+        message = RemoteMessage(
+            RemotePlatform.TELEGRAM,
+            7,
+            "user",
+            "2. closing",
+            AsyncMock(),
+            sender_id="42",
+            thread_id=88,
+        )
+        app._remote_tab_closers = {
+            app._telegram_picker_key(message): {
+                "choices": {message.text: closing.sid},
+                "expires": time.monotonic() + 300,
+            }
+        }
+
+        assert await app._remote_route(message)
+
+        assert stub.closed == [closing.sid]
+        assert running in app._panes
+        assert running.status == "running"
+        assert not stub.cancelled
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("origin", ["terminal", "telegram"])
+async def test_busy_child_followup_is_sent_to_its_worker_as_live_input(
+    monkeypatch: pytest.MonkeyPatch, origin: str
+):
+    from unittest.mock import AsyncMock
+
+    from novacode_cli.remote.bridge import RemoteMessage, RemotePlatform
+    from novacode_cli.remote.routing import RemoteRouter
+    from novacode_cli.tui.session_pane import fresh_state
+
+    app = _app()
+    async with app.run_test():
+        stub = _StubSupervisor()
+        app._session_supervisor = stub
+        send = AsyncMock(return_value="p-live")
+        monkeypatch.setattr(stub, "send_prompt", send)
+        child = await _add_pane(app)
+        child.state = fresh_state(session_state=_SS())
+        await app._switch_to(child)
+        child.status = "running"
+        child.child = object()
+        app._sync_child_activity(child)
+
+        if origin == "terminal":
+            app._add_live_steer("Use the corrected filename")
+            workers = [
+                worker for worker in app.workers if worker.group == f"session-input-{child.sid}"
+            ]
+            await app.workers.wait_for_complete(workers)
+        else:
+            app._remote_router = RemoteRouter(topics={(7, child.sid): 88})
+            message = RemoteMessage(
+                RemotePlatform.TELEGRAM, 7, "user", "Use the corrected filename", AsyncMock(),
+                thread_id=88,
+            )
+            assert await app._remote_route(message)
+
+        assert send.await_count == 1
+        assert send.await_args.args == (child.sid, "Use the corrected filename")
+        assert send.await_args.kwargs["steer"] is True
+        assert not app._live_steers
+        assert not child.state["session_state"].steering_instructions
 
 
 async def _drive_child_rejects_other_slash():

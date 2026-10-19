@@ -6218,6 +6218,11 @@ class RouterScreen(ModalScreen[dict | None]):
     RouterScreen #router-model, RouterScreen #router-decision-model,
     RouterScreen #router-endpoint, RouterScreen #router-criteria,
     RouterScreen #router-id { width: 1fr; }
+    RouterScreen #modal-buttons {
+        height: auto; layout: grid; grid-size: 3; grid-columns: 1fr; grid-rows: 3;
+    }
+    RouterScreen #modal-buttons Button { width: 1fr; min-width: 0; }
+    RouterScreen.narrow #modal-buttons { grid-size: 2; }
     """
 
     #: Decision-model presets, mirroring the System One panel in ``/model``.

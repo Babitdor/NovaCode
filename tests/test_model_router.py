@@ -550,6 +550,42 @@ def test_route_decision_reports_fallback_state():
 # ── the /router screen ──────────────────────────────────────────────────────
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(240, 60), (120, 50), (100, 35), (80, 24), (60, 24)])
+async def test_router_actions_are_visible_and_cancel_is_clickable(size: tuple[int, int]):
+    from textual.app import App
+    from textual.widgets import Button
+
+    from novacode_cli.tui.app import NovaApp
+    from novacode_cli.tui.screens import RouterScreen
+
+    config = _configured()
+    original = config.config_path.read_bytes()
+    results = []
+
+    class Harness(App):
+        CSS = NovaApp.CSS
+
+        def on_mount(self) -> None:
+            screen = RouterScreen(config)
+            screen.set_class(size[0] < 90, "narrow")
+            screen.set_class(size[1] < 30, "short")
+            self.push_screen(screen, results.append)
+
+    app = Harness()
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        actions = screen.query_one("#modal-buttons")
+        for button in actions.query(Button):
+            assert actions.content_region.contains_region(button.region), button.id
+            assert screen.region.contains_region(button.region), button.id
+        assert await pilot.click("#router-cancel")
+        await pilot.pause()
+        assert results == [None]
+        assert config.config_path.read_bytes() == original
+
+
 def test_router_screen_refuses_a_route_with_no_provider():
     """An unset Select holds ``Select.NULL``, not ``Select.BLANK``.
 

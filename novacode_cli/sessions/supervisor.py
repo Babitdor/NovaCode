@@ -27,10 +27,14 @@ import os
 import sys
 import time
 from collections import deque
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable, Sequence
+
+    from novacode_cli.image_utils import ImageData
 
 from novacode_cli.sessions import protocol
 
@@ -347,13 +351,24 @@ class SessionSupervisor:
             return False
         return True
 
-    async def send_prompt(self, session_id: str, text: str, *, images=None, auto_approve: bool | None = None, prompt_id: str | None = None) -> str | None:
+    async def send_prompt(
+        self,
+        session_id: str,
+        text: str,
+        *,
+        images: Sequence[ImageData] | None = None,
+        auto_approve: bool | None = None,
+        prompt_id: str | None = None,
+        steer: bool = False,
+    ) -> str | None:
         """Queue a prompt on the child; returns its id, or None if unreachable."""
         child = self._children.get(session_id)
         if child is None:
             return None
         pid = prompt_id or f"p{next(self._prompt_ids)}"
-        payload = {"t": "prompt", "id": pid, "text": text}
+        payload: dict[str, Any] = {"t": "prompt", "id": pid, "text": text}
+        if steer:
+            payload["steer"] = True
         if auto_approve is not None:
             payload["auto_approve"] = auto_approve
         if images:

@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any, Callable
 if TYPE_CHECKING:
     from textual.screen import Screen
     from textual.timer import Timer
+    from textual.worker import Worker
 
     # Annotation-only: the clipboard image is passed straight to the tracker, so
     # the module is never imported at runtime on this path.
@@ -5051,6 +5052,8 @@ class NovaApp(App):
             pane.remote_snapshot = RemoteAnswerStream(None)
         state = pane.state.get("session_state")
         options = {"auto_approve": bool(getattr(state, "auto_approve", False))}
+        if pane.status == "running" and not images and not text.lstrip().startswith("/"):
+            options["steer"] = True
         if prompt_id is not None:
             options["prompt_id"] = prompt_id
         if images:
@@ -5068,6 +5071,10 @@ class NovaApp(App):
             with contextlib.suppress(Exception):
                 await msg.reply_fn(f"✖ Session “{pane.title}” is not running.")
             return
+        live_followup = (
+            pane.status == "running" and not getattr(msg, "images", None)
+            and not msg.text.lstrip().startswith("/")
+        )
         with contextlib.suppress(Exception):
             await self._add_message(
                 Text(f"📡 {msg.user_name} → {pane.title}", style="bold cyan"),
@@ -5102,7 +5109,12 @@ class NovaApp(App):
             turn.status.start()
         if turn.answer_stream is not None:
             turn.answer_stream.start()
-        if len(pane.remote_turns) > 1:
+        if live_followup:
+            with contextlib.suppress(Exception):
+                await msg.reply_fn(
+                    f"↗ Sent to **{pane.title}** for its next model step."
+                )
+        elif len(pane.remote_turns) > 1:
             with contextlib.suppress(Exception):
                 await msg.reply_fn(
                     f"◌ Queued for **{pane.title}** behind {len(pane.remote_turns) - 1} more."
@@ -8427,6 +8439,16 @@ class NovaApp(App):
         up at its next step. The instruction is removed when the turn ends
         (one-turn lifetime) so it doesn't leak into later turns.
         """
+        pane = getattr(self, "_active_pane", None)
+        if pane is not None and pane.kind == "child":
+            # The real middleware lives in the worker process, not this proxy.
+            self.run_worker(
+                self._dispatch_to_child(pane, text),
+                group=f"session-input-{pane.sid}",
+                exclusive=False,
+            )
+            return
+
         from novacode_cli.bootstrap.steering import SteeringInstruction
 
         if getattr(self.session_state, "steering_instructions", None) is None:
@@ -9588,16 +9610,26 @@ class NovaApp(App):
             self._log(Text(result["error"], style="yellow"))
 
     # -- input routing --------------------------------------------------------
-    @work(exclusive=True, group="turn")
-    async def _dispatch(self, text: str) -> None:
-        """Route input: quit / !bash / slash command / @agent / agent prompt."""
-        self.workers.cancel_group(self, "voice_tts")
-
-        # Input typed while a spawned session is on screen goes to THAT process.
+    def _dispatch(self, text: str) -> Worker[None]:
+        """Choose the owning session before starting an exclusive turn worker."""
         pane = getattr(self, "_active_pane", None)
         if pane is not None and pane.kind == "child":
-            await self._dispatch_to_child(pane, text)
-            return
+            # Starting a worker in "turn" cancels the root before its body runs.
+            # Bind the target now so a subsequent tab switch cannot redirect it.
+            return self.run_worker(
+                self._dispatch_to_child(pane, text),
+                group=f"session-input-{pane.sid}",
+                exclusive=False,
+            )
+        return self._dispatch_root(text)
+
+    @work(exclusive=True, group="turn")
+    async def _dispatch_root(self, text: str) -> None:
+        """Route main-session input: commands, delegation or an agent prompt."""
+        root = getattr(self, "_root_pane", None)
+        if root is not None and root is not getattr(self, "_active_pane", None):
+            await self._switch_to(root)
+        self.workers.cancel_group(self, "voice_tts")
 
         low = text.lower()
         if low in _EXIT_COMMANDS:

@@ -116,7 +116,9 @@ class AgentRuntimeState:
             exec_sandbox=self._sandbox is None and self._sandbox_type == "os",
             store=self._store,
             checkpointer=self._checkpointer,
-            steering_instructions=steering_instructions or [],
+            steering_instructions=(
+                steering_instructions if steering_instructions is not None else []
+            ),
             session_id=session_id or getattr(self, "session_id", None),
         )
 
@@ -184,7 +186,9 @@ class AgentRuntimeState:
             exec_sandbox=self._sandbox is None and self._sandbox_type == "os",
             store=self._store,
             checkpointer=self._checkpointer,
-            steering_instructions=steering_instructions or [],
+            steering_instructions=(
+                steering_instructions if steering_instructions is not None else []
+            ),
             session_id=getattr(self, "session_id", None),
         )
 

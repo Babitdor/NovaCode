@@ -48,8 +48,9 @@ from langchain.agents.middleware.types import (
     AgentState,
     ModelRequest,
     ModelResponse,
+    hook_config,
 )
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 logger = logging.getLogger(__name__)
 
@@ -312,6 +313,22 @@ class SteeringMiddleware(AgentMiddleware):
 
     async def abefore_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:  # noqa: ANN401
         return self.before_model(state, runtime)
+
+    @hook_config(can_jump_to=["model"])
+    def after_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:  # noqa: ANN401
+        """Deliver late user input before a final answer ends the graph turn."""
+        messages = state.get("messages", [])
+        last = messages[-1] if messages else None
+        if not isinstance(last, AIMessage) or last.tool_calls:
+            # Tool results must pair with their calls before adding user input.
+            return None
+        update = self.before_model(state, runtime)
+        return {**update, "jump_to": "model"} if update else None
+
+    @hook_config(can_jump_to=["model"])
+    async def aafter_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:  # noqa: ANN401
+        """Async version of the late-message continuation check."""
+        return self.after_model(state, runtime)
 
     def wrap_model_call(
         self,

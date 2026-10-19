@@ -13,7 +13,8 @@ normal approval modal and sends the decision back. Every path resolves the
 interrupt future in a ``finally``, so a dead or slow parent can never wedge the
 agent graph: it fails closed to ``default_interrupt_response``.
 
-One turn runs at a time. Up to sixteen prompts wait in FIFO order; further
+One turn runs at a time. Prompts wait in FIFO order unless plain-text follow-ups
+explicitly opt into live steering. Up to sixteen follow-ups can wait; further
 prompts are rejected explicitly until capacity becomes available.
 """
 
@@ -127,6 +128,7 @@ class SessionWorker:
         self._session_ids = itertools.count(1)
         self._interrupt_ids = itertools.count(1)
         self._queued: deque[tuple[str, str, list, bool]] = deque()
+        self._live_prompts: dict[str, tuple[Any, bool]] = {}
         self._turn: asyncio.Task | None = None
         self._turn_id: str | None = None
         self._seen: set[str] = set()
@@ -277,7 +279,20 @@ class SessionWorker:
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(self._save(is_error=not ok), timeout=5)
             finally:
+                pending, self._live_prompts = self._live_prompts, {}
+                completed = []
+                for pid, (instruction, approval) in reversed(list(pending.items())):
+                    if instruction in self.session_state.steering_instructions:
+                        self.session_state.steering_instructions.remove(instruction)
+                    if instruction.consumed or not ok or self._stop:
+                        completed.append((pid, instruction.consumed))
+                    else:
+                        # A message arriving after the last graph hook still
+                        # needs an answer; never silently discard it.
+                        self._queued.appendleft((pid, instruction.instruction, [], approval))
                 self._emit({"t": "turn_done", "id": prompt_id, "ok": ok})
+                for pid, consumed in reversed(completed):
+                    self._emit({"t": "turn_done", "id": pid, "ok": ok, "steered": consumed})
 
     async def _resolve_slash(self, text: str, *, prompt_id: str | None = None) -> str | None:
         """Resolve commands in the child's own workspace, never as raw model input."""
@@ -431,9 +446,24 @@ class SessionWorker:
                     elif self._turn_running() and not images and is_goal_control(text):
                         await self._resolve_slash(text, prompt_id=pid)
                         self._emit({"t": "turn_done", "id": pid, "ok": True, "running": True})
-                    elif self._turn_running() and len(self._queued) >= MAX_QUEUED_PROMPTS:
+                    elif (
+                        self._turn_running()
+                        and len(self._queued) + len(self._live_prompts) >= MAX_QUEUED_PROMPTS
+                    ):
                         self._emit({"t": "error", "message": "Prompt queue is full."})
                         self._emit({"t": "turn_done", "id": pid, "ok": False})
+                    elif (
+                        self._turn_running() and msg.get("steer") is True
+                        and not images and not text.lstrip().startswith("/")
+                        and auto_approve == self.session_state.auto_approve
+                    ):
+                        from novacode_cli.bootstrap.steering import SteeringInstruction
+                        from novacode_cli.tools.waiter_tools import interrupt_task_waits
+
+                        instruction = SteeringInstruction("steer", text, live=True)
+                        self.session_state.steering_instructions.append(instruction)
+                        self._live_prompts[pid] = (instruction, auto_approve)
+                        interrupt_task_waits(self.session_state.thread_id)
                     elif self._turn_running():
                         self._queued.append((pid, text, images, auto_approve))
                         from novacode_cli.tools.waiter_tools import interrupt_task_waits
@@ -524,6 +554,11 @@ class SessionWorker:
         """Finish every accepted queued request when it will not be run."""
         queued, self._queued = self._queued, deque()
         for prompt_id, *_ in queued:
+            self._emit({"t": "turn_done", "id": prompt_id, "ok": False})
+        live, self._live_prompts = self._live_prompts, {}
+        for prompt_id, (instruction, _approval) in live.items():
+            if instruction in self.session_state.steering_instructions:
+                self.session_state.steering_instructions.remove(instruction)
             self._emit({"t": "turn_done", "id": prompt_id, "ok": False})
 
     async def _save(self, *, is_error: bool = False) -> None:

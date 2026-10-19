@@ -74,3 +74,19 @@ def test_os_confinement_survives_a_rebuild(builds) -> None:
     rt = _runtime("os", sandbox=None)
     asyncio.run(rt.switch_model(object()))
     assert builds[-1]["exec_sandbox"] is True, "the shell lost its OS sandbox"
+
+
+@pytest.mark.parametrize("rebuild", ["switch_model", "reload_mcp_servers"])
+def test_rebuild_preserves_the_shared_empty_steering_list(builds: list[dict], rebuild: str) -> None:
+    from novacode_cli.bootstrap.steering import SteeringInstruction, SteeringMiddleware
+
+    runtime = _runtime("none", sandbox=None)
+    shared = []
+    if rebuild == "switch_model":
+        asyncio.run(runtime.switch_model(object(), steering_instructions=shared))
+    else:
+        asyncio.run(runtime.reload_mcp_servers(steering_instructions=shared))
+    assert builds[-1]["steering_instructions"] is shared
+    middleware = SteeringMiddleware(instructions=builds[-1]["steering_instructions"])
+    shared.append(SteeringInstruction("steer", "Apply my correction", live=True))
+    assert "Apply my correction" in middleware.before_model({}, None)["messages"][0].content
