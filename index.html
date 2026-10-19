@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Nova, a coding agent that verifies its own work</title>
-<meta name="description" content="Nova is an open-source coding agent for your terminal. Give it a task and it reads your codebase, edits files, runs the tests, and checks whether the result actually works before handing it back.">
-<meta property="og:title" content="Nova, a coding agent that verifies its own work">
-<meta property="og:description" content="Give Nova a task. It plans, edits, runs the tests, and retries when verification fails. Open source, runs locally, bring your own model.">
+<title>Nova, a terminal coding agent with memory you can explore</title>
+<meta name="description" content="An open-source coding agent for the terminal. Its memory is a wiki of Markdown pages you can read and search, and its plans wait for your approval.">
+<meta property="og:title" content="Nova, a terminal coding agent with memory you can explore">
+<meta property="og:description" content="Memory you can explore, plans you approve, sessions that run side by side, and hosted or local models. Open source, MIT licensed.">
 <meta property="og:image" content="assets/og.jpg">
 <meta property="og:type" content="website">
 <meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)">
@@ -14,6 +14,9 @@
 <link rel="icon" type="image/png" href="assets/favicon.png">
 <link rel="preload" as="font" type="font/woff2" href="assets/fonts/geist-var.woff2" crossorigin>
 <link rel="preload" as="image" href="assets/hero.webp" imagesrcset="assets/hero-960.webp 960w, assets/hero.webp 1672w" imagesizes="100vw" fetchpriority="high">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Nova","alternateName":"NovaCode","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Linux, Windows","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"license":"https://opensource.org/licenses/MIT","codeRepository":"https://github.com/Babitdor/NovaCode","description":"An open-source coding agent for the terminal with a memory wiki you can read and search, plans you approve, parallel project sessions and hosted or local models."}
+</script>
 <script>document.documentElement.classList.add("js")</script>
 
 <style>
@@ -21,13 +24,14 @@
    Nova landing page.
 
    Language: an editorial page wearing a terminal's chrome. Neutral ground,
-   one accent, real screenshots, and over that the things a terminal has:
-   a prompt above each chapter, title bars on panels, monospace labels, and a
+   one accent, real captures, and over that the things a terminal has: a
+   prompt above each chapter, title bars on panels, monospace labels, and a
    status line along the bottom that tracks where you are, as Nova's own TUI
-   does. In dark mode the page is also the night sky from the hero art: stars,
-   a faint grid, and glow on whatever is lit.
-   The product is shown, never imitated: the terminals here are captures of
-   Nova itself, and the chrome only frames real content.
+   does. In dark mode the page is also the night sky from the hero art.
+
+   The product is shown, never imitated. The memory explorer is the real
+   wiki structure, the council ballot is the real approval step, and the two
+   screenshots are captures of Nova itself.
 
    System, followed everywhere:
      · one accent (--accent), nothing else is coloured
@@ -58,25 +62,33 @@
   --page-accent:#c2410c; --page-on-accent:#ffffff;
   --accent:#c2410c;
   --on-accent:#ffffff;
-  --accent-wash:#fbe9e0;
   --shadow:0 1px 2px rgb(23 23 26 / .06), 0 18px 40px -18px rgb(23 23 26 / .22);
 
   --sans:"Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono:"Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --r-press:999px;
   --r-view:14px;
+  --r-code:10px;
   --wrap:1240px;
   --gutter:clamp(20px, 4vw, 40px);
   --ease:cubic-bezier(.16, 1, .3, 1);
 
+  /* Three spacing moods. Sections pick one deliberately; they do not all match. */
+  --pad-tight:clamp(48px, 6vw, 80px);
+  --pad:clamp(72px, 10vw, 136px);
+  --pad-airy:clamp(88px, 12vw, 168px);
+
+  /* The one panel fill. Every "look at this" surface reads it. */
+  --panel:color-mix(in srgb, var(--surface) 86%, transparent);
+
   --glow:0 0 0 0 transparent;
   --grid:transparent;
 
-  /* z-index scale: sky -1, nav 20, status line 25, skip link 30, scanlines 40. */
+  /* z-index scale: sky and texture -1 (behind all content), nav 20, menu 21, status line 25, skip link 30. */
   --z-nav:20;
+  --z-menu:21;
   --z-status:25;
   --z-skip:30;
-  --z-scan:40;
 }
 @media (prefers-color-scheme: dark){
   :root{
@@ -90,7 +102,6 @@
     --page-accent:#f4723f; --page-on-accent:#16110e;
     --accent:#f4723f;
     --on-accent:#16110e;
-    --accent-wash:#2a1810;
     --shadow:0 1px 2px rgb(0 0 0 / .4), 0 22px 48px -20px rgb(0 0 0 / .7);
     --glow:0 0 44px -10px color-mix(in srgb, var(--accent) 55%, transparent);
     --grid:rgb(255 255 255 / .028);
@@ -116,21 +127,23 @@ body::before{
 }
 #sky{position:fixed; inset:0; width:100%; height:100%; z-index:-1; pointer-events:none; display:none}
 @media (prefers-color-scheme: dark){ #sky{display:block} }
-/* CRT scanlines: fixed, inert, and faint enough to read through. */
+/* CRT scanlines: texture, so they sit behind the content (-1) with the sky,
+   never over it. Above the content they dim text and the focus ring and cross
+   the skip link — decoration does not belong on top of either. */
 body::after{
-  content:""; position:fixed; inset:0; z-index:var(--z-scan); pointer-events:none;
+  content:""; position:fixed; inset:0; z-index:-1; pointer-events:none; display:none;
   background:repeating-linear-gradient(0deg, rgb(0 0 0 / .05) 0 1px, transparent 1px 3px);
-  opacity:0;
 }
-@media (prefers-color-scheme: dark){ body::after{opacity:1} }
+@media (prefers-color-scheme: dark){ body::after{display:block} }
 
 img,svg{display:block; max-width:100%}
 img{height:auto}
 a{color:inherit}
-h1,h2,h3,p,ul,ol,dl,dd,figure{margin:0}
+h1,h2,h3,p,ul,ol,dl,dd,figure,pre{margin:0}
 ul,ol{padding:0; list-style:none}
 code,pre,kbd{font-family:var(--mono)}
 :focus-visible{outline:2px solid var(--accent); outline-offset:3px; border-radius:6px}
+.sr{position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; border:0}
 
 .wrap{width:100%; max-width:var(--wrap); margin-inline:auto; padding-inline:var(--gutter)}
 .skip{
@@ -157,6 +170,7 @@ h1 b, h2 b{font-weight:inherit; color:var(--accent)}
   font:500 .78rem/1 var(--mono); letter-spacing:.09em; text-transform:uppercase; color:var(--muted);
 }
 .head{display:grid; gap:16px; margin-bottom:clamp(36px, 5vw, 60px)}
+.head .body + .body{margin-top:-4px}
 
 /* ---------- terminal chrome ---------- */
 .cmdline{
@@ -170,10 +184,6 @@ h1 b, h2 b{font-weight:inherit; color:var(--accent)}
   display:inline-block; width:.62em; height:1.15em; background:var(--accent);
   box-shadow:var(--glow); translate:0 .05em;
 }
-.tag{
-  font:500 .78rem/1 var(--mono); color:var(--muted); margin-top:auto; padding-top:6px;
-}
-.tag::before{content:"--"; color:var(--accent)}
 .bar{
   display:flex; align-items:center; gap:7px; height:38px; padding:0 14px;
   border-bottom:1px solid var(--line);
@@ -184,7 +194,9 @@ h1 b, h2 b{font-weight:inherit; color:var(--accent)}
 .bar span{margin-left:8px}
 .win{border:1px solid var(--line); transition:border-color .3s, box-shadow .3s}
 .win:hover{border-color:color-mix(in srgb, var(--accent) 45%, var(--line)); box-shadow:var(--glow)}
-section{padding-block:clamp(72px, 10vw, 136px)}
+section{padding-block:var(--pad)}
+.s-tight{padding-block:var(--pad-tight)}
+.s-airy{padding-block:var(--pad-airy)}
 
 /* ---------- things you press ---------- */
 .btn{
@@ -203,6 +215,8 @@ section{padding-block:clamp(72px, 10vw, 136px)}
 .btn-primary svg{transition:transform .25s var(--ease)}
 .btn-quiet{border-color:var(--line); color:var(--text); background:transparent}
 .btn-quiet:hover{border-color:var(--text)}
+.btn[disabled]{opacity:.55; cursor:default}
+.btn[disabled]:active{transform:none}
 
 /* ---------- nav ---------- */
 .nav{
@@ -212,71 +226,115 @@ section{padding-block:clamp(72px, 10vw, 136px)}
   position:fixed; inset:0 0 auto 0; z-index:var(--z-nav);
   background:transparent; border-bottom:1px solid transparent;
   transition:background-color .3s, border-color .3s, backdrop-filter .3s;
-  --text:#f3f3f5; --muted:#d3d3da; --line:rgb(255 255 255 / .34);
+  /* Over the art, measured with the nav's own text hidden so the plate is the
+     scrim alone: across 390-1920px the tightest node is the accent wordmark
+     (15.2px/900) at 5.33:1 over the art's brightest patch, then the #e6e6ec
+     links at 13.09:1 and the #f3f3f5 labels at 17.19:1. The orange has the
+     least headroom in the bar, so it is what bounds how thin the scrim gets. */
+  --text:#f3f3f5; --muted:#e6e6ec; --line:rgb(255 255 255 / .34);
   --accent:#f4723f; --on-accent:#16110e;  /* the dark theme's accent: it has to read on the art */
 }
+/* The art is bright in places — the code panes near the top — and the nav floats
+   on it. A scrim that belongs to the header, not to the art, holds every link
+   above 4.5:1 over the brightest pane and fades out below the bar. The art keeps
+   its own softer vignette underneath. */
+.nav::before{
+  content:""; position:absolute; inset:0 0 auto 0; height:150%; z-index:-1;
+  pointer-events:none;
+  background:linear-gradient(180deg,
+    rgb(8 6 14 / .8) 0, rgb(8 6 14 / .68) 62%, rgb(8 6 14 / 0) 100%);
+  transition:opacity .3s;
+}
+.nav.stuck::before, .nav.menu-open::before{opacity:0}
 /* Past the art it needs something behind it to stay readable: glass, not a slab. */
-.nav.stuck{
+.nav.stuck, .nav.menu-open{
   --text:var(--page-text); --muted:var(--page-muted); --line:var(--page-line);
   --accent:var(--page-accent); --on-accent:var(--page-on-accent);
   background:color-mix(in srgb, var(--bg) 62%, transparent);
   backdrop-filter:saturate(160%) blur(16px); -webkit-backdrop-filter:saturate(160%) blur(16px);
   border-bottom-color:var(--line);
 }
+.nav.menu-open{background:var(--bg)}
 @media (prefers-reduced-transparency: reduce){
-  .nav.stuck{background:var(--bg); backdrop-filter:none; -webkit-backdrop-filter:none}
+  .nav.stuck, .nav.menu-open{background:var(--bg); backdrop-filter:none; -webkit-backdrop-filter:none}
 }
 .nav-row{display:flex; align-items:center; gap:28px; height:64px}
 .brand{display:inline-flex; align-items:center; gap:10px; text-decoration:none; font:600 .95rem/1 var(--mono)}
 .brand b{color:var(--accent)} .brand span{color:var(--muted); font-weight:500}
 .brand img{width:26px; height:26px; border-radius:7px}
-.nav-links{display:flex; gap:26px; margin-left:auto}
-.nav-links a{text-decoration:none; color:var(--muted); font:500 .86rem/1 var(--mono); transition:color .2s}
+.nav-links{display:flex; gap:24px; margin-left:auto}
+.nav-links a{
+  position:relative; text-decoration:none; color:var(--muted);
+  font:500 .86rem/1 var(--mono); transition:color .2s;
+}
 .nav-links a::after{content:"/"; color:var(--line); margin-left:1px}
-.nav-links a:hover{color:var(--text)}
+/* The nav answers with a rule that draws under the label, not a colour swap. */
+.nav-links a::before{
+  content:""; position:absolute; left:0; right:0; bottom:-7px; height:1px;
+  background:var(--accent); transform:scaleX(0); transform-origin:left;
+  transition:transform .35s var(--ease);
+}
+@media (hover: hover){ .nav-links a:hover{color:var(--text)} .nav-links a:hover::before{transform:scaleX(1)} }
+.nav-links a:focus-visible{color:var(--text)}
+.nav-links a:focus-visible::before{transform:scaleX(1)}
 .nav .brand, .nav .btn-quiet{color:var(--text)}
 .nav .btn{min-height:38px; padding:0 16px; font-size:.92rem}
 .nav .btn-quiet{border-color:transparent; padding:0 8px}
 .nav .btn-quiet:hover{border-color:transparent; color:var(--accent)}
+.menu-btn{
+  display:none; align-items:center; gap:8px; margin-left:auto;
+  min-height:38px; padding:0 14px; border-radius:var(--r-press); cursor:pointer;
+  border:1px solid var(--line); background:transparent; color:var(--text);
+  font:500 .86rem/1 var(--mono);
+}
+.menu-btn i{display:block; width:14px; height:1px; background:currentColor; box-shadow:0 -4px 0 currentColor, 0 4px 0 currentColor}
+.menu-btn[aria-expanded="true"]{border-color:var(--accent); color:var(--accent)}
 
 /* ---------- hero: the art, full-bleed, with the prompt docked on its lower edge ---------- */
 .hero{position:relative; padding:0}
 .art{
   /* Short enough that the docked prompt clears the nav above and the status
      line below: the first screen ends on the Install button, not under it. */
-  position:relative; width:100%; aspect-ratio:1672 / 941; max-height:calc(100dvh - 126px); min-height:340px;
+  position:relative; width:100%; aspect-ratio:1672 / 941; max-height:calc(100dvh - 200px); min-height:340px;
   overflow:hidden; background:#120a1c;
 }
 .art picture, .art img{position:absolute; inset:0; width:100%; height:100%}
 .art img{object-fit:cover; object-position:42% 38%}
-/* The room dissolves into the page, whichever theme the page is in. */
+/* The room dissolves into the page, whichever theme the page is in. The top
+   scrim is what keeps the nav legible over the code panes. */
 .art::after{
   content:""; position:absolute; inset:0; pointer-events:none;
   background:
-    linear-gradient(180deg, rgb(8 6 14 / .62) 0, transparent 15%),
+    linear-gradient(180deg, rgb(8 6 14 / .82) 0, rgb(8 6 14 / .5) 9%, transparent 24%),
     linear-gradient(180deg, transparent 0, transparent 62%, color-mix(in srgb, var(--bg) 80%, transparent) 90%, var(--bg) 100%);
 }
 .dock{position:relative; z-index:1; margin-top:-58px; display:flex; justify-content:center; padding-inline:var(--gutter)}
 .dock-in{
-  width:min(780px, 100%); border-radius:var(--r-view); overflow:hidden;
+  width:min(920px, 100%); border-radius:var(--r-view); overflow:hidden;
   border:1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
-  background:color-mix(in srgb, var(--bg) 82%, transparent);
+  background:color-mix(in srgb, var(--bg) 84%, transparent);
   backdrop-filter:blur(18px) saturate(150%); -webkit-backdrop-filter:blur(18px) saturate(150%);
   box-shadow:var(--shadow), var(--glow);
 }
 @media (prefers-reduced-transparency: reduce){
   .dock-in{background:var(--bg); backdrop-filter:none; -webkit-backdrop-filter:none}
 }
-.dock-row{display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:12px 12px 12px 18px}
+/* The positioning line is real text in the first screen, not part of the art: it
+   is the only claim above the fold, so it carries display size. */
+.hero-line{
+  padding:16px 20px 0; font-size:clamp(1.02rem, 0.6vw + .9rem, 1.44rem); line-height:1.4;
+  letter-spacing:-.022em; color:var(--text); font-weight:600; text-wrap:pretty;
+}
+.dock-row{display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:14px 12px 14px 20px}
 .dock-row .cmdline{flex:1 1 220px; font-size:.95rem; color:var(--text)}
 .dock-status{
-  display:flex; gap:18px; flex-wrap:wrap; padding:8px 18px; border-top:1px solid var(--line);
+  display:flex; gap:18px; flex-wrap:wrap; padding:8px 20px; border-top:1px solid var(--line);
   font:500 .74rem/1 var(--mono); color:var(--muted);
 }
 .dock-status b{color:var(--accent); font-weight:600}
 .dock-status span:last-child{margin-left:auto}
 
-/* ---------- statement: the headline, and what is in the box ---------- */
+/* ---------- statement: the headline, and the page's own index ---------- */
 .statement{padding-block:clamp(56px, 8vw, 96px) clamp(40px, 5vw, 64px)}
 .statement-grid{display:grid; grid-template-columns:minmax(0, 1.25fr) minmax(0, .75fr); gap:clamp(32px, 5vw, 64px); align-items:end}
 .statement-copy{display:grid; gap:20px}
@@ -286,23 +344,161 @@ section{padding-block:clamp(72px, 10vw, 136px)}
   background:var(--accent); box-shadow:var(--glow); vertical-align:baseline;
 }
 .statement-side{display:grid; gap:24px}
-.inventory{border-radius:var(--r-view); overflow:hidden; background:color-mix(in srgb, var(--surface) 86%, transparent);
+.toc{border-radius:var(--r-view); overflow:hidden; background:var(--panel);
   backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); font:500 .86rem/1.5 var(--mono)}
-.inventory .body{padding:14px 18px 18px}
-.inventory dl{display:grid; gap:4px}
-.inventory dl > div{display:flex; align-items:baseline; gap:8px}
-.inventory dl > div::before{content:""; order:2; flex:1; border-bottom:1px dotted var(--line); transform:translateY(-4px)}
-.inventory dt{color:var(--muted)}
-.inventory dd{order:3; color:var(--accent); font-weight:700}
+.toc .body{padding:14px 18px 18px}
+.toc dl{display:grid; gap:4px}
+.toc dl > div{display:flex; align-items:baseline; gap:8px}
+.toc dl > div::before{content:""; order:2; flex:1; border-bottom:1px dotted var(--line); transform:translateY(-4px)}
+.toc dt{color:var(--muted)}
+.toc dd{order:3; color:var(--accent); font-weight:700; text-align:right}
 
-/* ---------- providers: logos, nothing else ---------- */
-.providers{padding-block:0 clamp(48px, 6vw, 72px)}
-.providers-row{display:flex; flex-wrap:wrap; align-items:center; gap:18px clamp(24px, 4vw, 52px)}
+/* ---------- memory: the explorer. The signature moment. ---------- */
+.explorer{border:1px solid var(--line); border-radius:var(--r-view); overflow:hidden;
+  background:var(--panel); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px)}
+.ex-grid{display:grid; grid-template-columns:minmax(0, 224px) minmax(0, 1fr)}
+.ex-index{border-right:1px solid var(--line); padding:16px 0 18px; font:500 .82rem/1.5 var(--mono)}
+.ex-root{color:var(--muted); padding:0 16px; font-size:.76rem; letter-spacing:.06em}
+.ex-index ul{display:grid; gap:1px; margin-top:6px}
+.ex-index ul + .ex-root{margin-top:14px}
+.ex-file{
+  display:block; width:100%; text-align:left; cursor:pointer; position:relative;
+  padding:6px 16px 6px 28px; border:0; background:none; color:var(--muted);
+  font:inherit; transition:color .2s, background-color .2s;
+}
+.ex-file::before{
+  content:""; position:absolute; left:15px; top:50%; width:5px; height:5px; border-radius:50%;
+  background:var(--line); translate:0 -50%; transition:background-color .2s, box-shadow .2s;
+}
+.ex-file.sub{padding-left:40px}
+.ex-file.sub::before{left:27px}
+@media (hover: hover){
+  .ex-file:hover{color:var(--text); background:color-mix(in srgb, var(--text) 5%, transparent)}
+}
+.ex-file[aria-current="true"]{color:var(--text)}
+.ex-file[aria-current="true"]::before{background:var(--accent); box-shadow:var(--glow)}
+.ex-page{padding:20px 24px 22px; min-height:322px; display:grid; align-content:start; gap:12px}
+.ex-path{font:500 .76rem/1 var(--mono); color:var(--muted); letter-spacing:.04em}
+.ex-page h3{font:600 1.05rem/1.3 var(--mono); letter-spacing:-.01em}
+.ex-body{display:grid; gap:10px; color:var(--muted); font-size:.95rem; max-width:58ch}
+.ex-body b{color:var(--text); font-weight:600}
+.ex-list{display:grid; gap:7px}
+.ex-list li{display:flex; gap:10px; align-items:baseline; flex-wrap:wrap}
+.ex-list span{color:var(--muted); font-size:.88rem}
+.ex-link{
+  border:0; background:none; padding:0; cursor:pointer; font:inherit; color:var(--text);
+  text-decoration:underline; text-underline-offset:3px;
+  text-decoration-color:color-mix(in srgb, var(--accent) 55%, transparent);
+  transition:text-decoration-color .2s, color .2s;
+}
+@media (hover: hover){ .ex-link:hover{color:var(--accent); text-decoration-color:var(--accent)} }
+.ex-link:focus-visible{color:var(--accent)}
+.ex-related{display:flex; gap:10px; flex-wrap:wrap; align-items:baseline; padding-top:12px; border-top:1px solid var(--line)}
+.ex-label{font:500 .72rem/1 var(--mono); letter-spacing:.09em; text-transform:uppercase; color:var(--muted)}
+.ex-foot{display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding:12px 16px;
+  border-top:1px solid var(--line); background:color-mix(in srgb, var(--text) 3%, transparent)}
+.ex-dream{
+  display:inline-flex; align-items:center; gap:8px; cursor:pointer;
+  min-height:34px; padding:0 15px; border-radius:var(--r-press);
+  border:1px solid var(--line); background:var(--raised); color:var(--text);
+  font:500 .82rem/1 var(--mono); transition:border-color .2s, color .2s, transform .2s var(--ease);
+}
+.ex-dream:hover{border-color:var(--accent); color:var(--accent)}
+.ex-dream:active{transform:scale(.97)}
+.ex-log{display:flex; gap:8px 18px; flex-wrap:wrap; font:500 .76rem/1.4 var(--mono); color:var(--muted)}
+.ex-log li{display:flex; gap:7px; align-items:baseline}
+.ex-log li::before{content:"\2713"; color:var(--accent); font-weight:700}
+.ex-log li:last-child{color:var(--text)}
+
+/* ---------- council: three plans, one approval ---------- */
+.ballot{display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:clamp(14px, 2vw, 22px)}
+.plan{
+  display:grid; gap:10px; align-content:start; text-align:left; cursor:pointer;
+  padding:20px 20px 18px; border-radius:var(--r-view); border:1px solid var(--line);
+  background:var(--panel); color:var(--text); font:inherit;
+  transition:border-color .3s, box-shadow .3s, transform .3s var(--ease);
+}
+@media (hover: hover){ .plan:hover{border-color:color-mix(in srgb, var(--accent) 45%, var(--line)); box-shadow:var(--glow)} }
+.plan:active{transform:translateY(1px)}
+.plan[aria-pressed="true"]{border-color:var(--accent); box-shadow:var(--glow)}
+.plan-rank{font:600 .74rem/1 var(--mono); letter-spacing:.09em; color:var(--muted)}
+.plan[aria-pressed="true"] .plan-rank{color:var(--accent)}
+.plan-title{font:600 1.02rem/1.3 var(--sans); letter-spacing:-.01em}
+.plan-body{color:var(--muted); font-size:.92rem}
+.plan-crit{color:var(--muted); font-size:.86rem; padding-top:10px; border-top:1px solid var(--line)}
+.plan-crit b{color:var(--text); font-weight:600}
+.plan-votes{font:500 .76rem/1 var(--mono); color:var(--muted)}
+.plan[aria-pressed="true"] .plan-votes{color:var(--accent)}
+.handoff{
+  display:flex; gap:10px; align-items:baseline; margin-top:18px;
+  font:500 .86rem/1.5 var(--mono); color:var(--muted);
+}
+.handoff::before{content:"\276F"; color:var(--accent); font-weight:700; flex:none}
+.handoff.on{color:var(--text)}
+/* Choosing a plan and handing it over are two presses, so they get two rows of
+   the same furniture: the status on the left, the approval on the right. */
+.row-handoff{display:flex; gap:12px 18px; align-items:center; justify-content:space-between; flex-wrap:wrap; margin-top:18px}
+.row-handoff .handoff{margin-top:0; flex:1 1 340px}
+.row-handoff .btn{flex:none}
+
+/* ---------- sessions: one window, two project tabs ---------- */
+.bridge{
+  display:grid; grid-template-columns:1fr 1fr;
+  border:1px solid var(--line); border-radius:var(--r-view); overflow:hidden;
+  background:var(--panel); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
+}
+.bridge > div + div{border-left:1px solid var(--line)}
+.transcript{display:grid; gap:12px; padding:16px 18px; font-size:.92rem; min-height:168px; align-content:start}
+.transcript li{display:grid; gap:4px}
+.transcript .who{font:500 .7rem/1 var(--mono); letter-spacing:.08em; text-transform:uppercase; color:var(--muted)}
+.transcript .msg{color:var(--text)}
+.transcript .meta{font:500 .72rem/1.3 var(--mono); color:var(--accent)}
+.transcript .queued{color:var(--muted); font:500 .76rem/1.3 var(--mono)}
+.composer{display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:12px 14px; border-top:1px solid var(--line)}
+.composer-line{flex:1 1 200px; min-width:0; font:500 .84rem/1.4 var(--mono); color:var(--text); overflow-wrap:anywhere}
+.composer-line .ps{color:var(--accent); font-weight:700; margin-right:.5ch}
+.composer .btn{min-height:38px; padding:0 16px; font-size:.84rem}
+
+/* ---------- models: a role ledger ---------- */
+.ledger{display:grid; border-top:1px solid var(--line)}
+.ledger > div{
+  display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, .8fr) minmax(0, 1.6fr);
+  gap:16px; align-items:baseline; padding:16px 2px; border-bottom:1px solid var(--line);
+}
+.ledger dt{font:600 .95rem/1.3 var(--sans); letter-spacing:-.01em}
+.ledger dd{color:var(--muted); font-size:.92rem}
+.ledger dd code{color:var(--text)}
+.providers-row{display:flex; flex-wrap:wrap; align-items:center; gap:18px clamp(24px, 4vw, 52px); margin-top:clamp(28px, 4vw, 44px)}
 .providers-row p{color:var(--muted); font-size:.95rem; margin-right:8px}
 .providers-row svg{height:26px; width:auto; color:var(--text); opacity:.62; transition:opacity .2s}
-.providers-row a:hover svg{opacity:1}
+@media (hover: hover){ .providers-row a:hover svg{opacity:1} }
 
-/* ---------- code: prose beside evidence ---------- */
+/* ---------- plans: a file tree ---------- */
+.tree{
+  overflow-x:auto; padding:22px 24px 24px; border-radius:var(--r-view);
+  background:var(--panel); border:1px solid var(--line);
+  font:500 .84rem/1.85 var(--mono); color:var(--text);
+}
+.tree .c{color:var(--muted)}
+.tree .k{color:var(--accent); font-weight:600}
+.tree .g{color:var(--muted)}
+
+/* ---------- trust: three claims, each with its limit ---------- */
+.trust-grid{display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:clamp(20px, 3vw, 40px)}
+.trust-col{display:grid; gap:10px; align-content:start; padding-top:18px; border-top:2px solid var(--line)}
+.trust-col h3{font:600 .78rem/1 var(--mono); letter-spacing:.09em; text-transform:uppercase}
+.trust-col p{color:var(--muted); font-size:.95rem}
+.trust-col .limit{color:var(--muted); font-size:.86rem; padding-top:10px; border-top:1px solid var(--line)}
+.trust-col .limit b{color:var(--text); font-weight:600}
+
+/* ---------- capabilities: a spec sheet ---------- */
+.caps{display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:0 clamp(20px, 3vw, 40px)}
+.caps li{padding:18px 0 20px; border-top:1px solid var(--line); display:grid; gap:6px; align-content:start}
+.cap-name{font:600 .95rem/1.3 var(--sans); letter-spacing:-.01em}
+.cap-line{color:var(--muted); font-size:.9rem}
+.cap-tag{font:500 .7rem/1 var(--mono); letter-spacing:.08em; text-transform:uppercase; color:var(--accent)}
+
+/* ---------- code, figures, pairs ---------- */
 code{
   font-size:.88em; padding:.12em .42em; border-radius:6px;
   background:color-mix(in srgb, var(--text) 8%, transparent);
@@ -313,17 +509,13 @@ figcaption{color:var(--muted); font-size:.93rem; margin-top:14px}
 .pair{display:grid; grid-template-columns:1fr 1fr; gap:clamp(28px, 5vw, 72px); margin-top:clamp(40px, 5vw, 64px)}
 .pair > div{display:grid; gap:10px; align-content:start}
 .pair > div + div{border-left:1px solid var(--line); padding-left:clamp(28px, 5vw, 72px)}
-
-/* ---------- build: prose beside a command you can copy ---------- */
 .split{display:grid; grid-template-columns:minmax(0, 5fr) minmax(0, 6fr); gap:clamp(32px, 5vw, 80px); align-items:center}
 .split-copy{display:grid; gap:18px}
 .codeblock{
   position:relative; border-radius:var(--r-view); overflow:hidden;
-  background:color-mix(in srgb, var(--surface) 86%, transparent);
-  backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
+  background:var(--panel); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
 }
-.codeblock pre{padding:22px 26px 24px}
-.codeblock pre{margin:0; overflow-x:auto; font-size:.9rem; line-height:1.75; color:var(--text)}
+.codeblock pre{padding:22px 26px 24px; margin:0; overflow-x:auto; font-size:.9rem; line-height:1.75; color:var(--text)}
 .codeblock .c{color:var(--muted)}
 .codeblock .k{color:var(--accent); font-weight:500}
 .copy{
@@ -341,19 +533,21 @@ figcaption{color:var(--muted); font-size:.93rem; margin-top:14px}
 .copy.done .i-check{display:block}
 .codeblock > .copy{position:absolute; top:50px; right:14px}
 
-/* ---------- grow: four steps along one line that fills as it arrives ---------- */
-.steps{display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:clamp(18px, 2.4vw, 36px); position:relative}
-.steps::before, .steps::after{content:""; position:absolute; left:0; top:0; height:2px; border-radius:2px}
-.steps::before{right:0; background:var(--line)}
-.steps::after{width:100%; background:var(--accent); box-shadow:var(--glow); transform-origin:left; transform:scaleX(1)}
-.steps li{padding-top:28px; display:grid; gap:8px; align-content:start}
-.steps p{color:var(--muted); font-size:.98rem}
+/* ---------- proof chips ---------- */
+.proof{display:flex; flex-wrap:wrap; gap:8px; margin-top:4px}
+.proof li{
+  display:inline-flex; align-items:center; gap:7px;
+  padding:6px 13px 6px 11px; border-radius:var(--r-press);
+  border:1px solid var(--line); background:color-mix(in srgb, var(--raised) 70%, transparent);
+  font:500 .8rem/1.3 var(--mono); color:var(--muted);
+}
+.proof li::before{content:"\2713"; color:var(--accent); font-weight:700; font-size:.9em}
+.proof code{background:none; padding:0; font-size:inherit; color:var(--text)}
 
 /* ---------- install: tabs over copyable commands ---------- */
-.install-box{border-radius:var(--r-view); overflow:hidden;
-  background:color-mix(in srgb, var(--surface) 86%, transparent);
+.install-box{border-radius:var(--r-view); overflow:hidden; background:var(--panel);
   backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px)}
-.tabs{display:flex; gap:4px; padding:10px; border-bottom:1px solid var(--line)}
+.tabs{display:flex; gap:4px; padding:10px; border-bottom:1px solid var(--line); flex-wrap:wrap}
 .tab{
   min-height:38px; padding:0 18px; border-radius:var(--r-press); cursor:pointer;
   border:0; background:transparent; color:var(--muted); font:500 .84rem/1 var(--mono);
@@ -363,13 +557,13 @@ figcaption{color:var(--muted); font-size:.93rem; margin-top:14px}
 .tab[aria-selected="true"]{background:var(--raised); color:var(--text); box-shadow:0 0 0 1px var(--line)}
 .pane{display:none; padding:8px 10px 10px}
 .pane.on{display:block}
-.cmd{display:flex; align-items:center; gap:14px; padding:13px 14px; border-radius:10px}
+.cmd{display:flex; align-items:center; gap:14px; padding:13px 14px; border-radius:var(--r-code)}
 .cmd + .cmd{border-top:1px solid var(--line); border-radius:0}
 .cmd::before{content:"$"; font:600 .92rem/1 var(--mono); color:var(--accent)}
 .cmd code{flex:1; min-width:0; overflow-x:auto; white-space:nowrap; background:none; padding:0; font-size:.92rem}
 .install-note{color:var(--muted); font-size:.95rem; margin-top:16px}
 
-/* ---------- faq: the question list is the right-hand column ---------- */
+/* ---------- faq ---------- */
 .faq-grid{display:grid; grid-template-columns:minmax(0, 4fr) minmax(0, 7fr); gap:clamp(28px, 5vw, 80px); align-items:start}
 details{border-top:1px solid var(--line)}
 details:last-child{border-bottom:1px solid var(--line)}
@@ -388,56 +582,6 @@ details p{color:var(--muted); padding:0 44px 24px 0; max-width:64ch}
 
 .actions{display:flex; flex-wrap:wrap; gap:12px; margin-top:6px}
 
-/* ---------- demo: one task, start to finish ---------- */
-.demo{border-radius:var(--r-view); overflow:hidden;
-  background:color-mix(in srgb, var(--surface) 86%, transparent);
-  backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px)}
-.demo-task{padding:20px 24px; border-bottom:1px solid var(--line)}
-.demo-task p{color:var(--muted); font-size:.95rem; margin-top:8px}
-.demo-q{font:500 1rem/1.55 var(--mono); color:var(--text); text-wrap:pretty}
-.demo-q::before{content:"\203A"; color:var(--accent); font-weight:700; margin-right:.4ch}
-.demo-log{padding:18px 24px 22px; display:grid; font:500 .88rem/1.75 var(--mono)}
-.demo-log li{display:flex; gap:10px; align-items:baseline; color:var(--muted)}
-.demo-log li.ok{color:var(--text)}
-.demo-log li.bad{color:var(--accent)}
-.demo-log li.fin{color:var(--accent); font-weight:700}
-.demo-log .mk{color:var(--accent); font-weight:700; flex:none}
-.demo-log .dt{color:var(--muted); margin-left:auto; padding-left:14px; font-size:.8rem}
-.demo-note{padding:14px 24px 18px; border-top:1px solid var(--line); color:var(--muted);
-  font-size:.95rem; max-width:62ch}
-
-/* ---------- verify: the loop, drawn ---------- */
-.flow{border-radius:var(--r-view); border:1px solid var(--line); overflow:hidden;
-  background:color-mix(in srgb, var(--surface) 86%, transparent)}
-.flow-row{display:grid; grid-template-columns:repeat(6, minmax(0, 1fr)); position:relative}
-.flow-node{padding:22px 6px 20px; text-align:center; position:relative; color:var(--muted);
-  font:500 .76rem/1.3 var(--mono); letter-spacing:.05em}
-.flow-node + .flow-node::before{
-  content:"\2192"; position:absolute; left:0; top:50%; translate:0 -50%;
-  color:var(--line); font-size:.95rem; line-height:1;
-}
-.flow-node.key{color:var(--text)}
-.flow-node.key::after{content:""; position:absolute; inset:auto 22% -1px; height:2px;
-  background:var(--accent); box-shadow:var(--glow)}
-.lanes{display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); border-top:1px solid var(--line)}
-.lane{padding:18px 22px 20px; display:grid; gap:9px; align-content:start}
-.lane + .lane{border-left:1px solid var(--line)}
-.lane h3{font:600 .78rem/1 var(--mono); letter-spacing:.09em; text-transform:uppercase}
-.lane p{color:var(--muted); font-size:.93rem; max-width:40ch}
-.lane-fail h3{color:var(--accent)}
-.lane-pass h3{color:var(--text)}
-
-/* ---------- proof: verified facts, as evidence under a claim ---------- */
-.proof{display:flex; flex-wrap:wrap; gap:8px; margin-top:4px}
-.proof li{
-  display:inline-flex; align-items:center; gap:7px;
-  padding:6px 13px 6px 11px; border-radius:var(--r-press);
-  border:1px solid var(--line); background:color-mix(in srgb, var(--raised) 70%, transparent);
-  font:500 .8rem/1.3 var(--mono); color:var(--muted);
-}
-.proof li::before{content:"\2713"; color:var(--accent); font-weight:700; font-size:.9em}
-.proof code{background:none; padding:0; font-size:inherit; color:var(--text)}
-
 /* ---------- close + footer ---------- */
 .close{padding-block:0 clamp(72px, 9vw, 120px)}
 .close-box{
@@ -447,6 +591,10 @@ details p{color:var(--muted); padding:0 44px 24px 0; max-width:64ch}
 }
 .close-box h2{max-width:18ch}
 footer{border-top:1px solid var(--line); padding-block:28px 72px}
+.foot{display:flex; flex-wrap:wrap; gap:14px 28px; align-items:center; color:var(--muted); font-size:.93rem}
+.foot nav{display:flex; gap:22px; margin-left:auto}
+.foot a{display:inline-block; padding-block:2px; text-decoration:none; transition:color .2s}
+.foot a:hover{color:var(--text)}
 
 /* ---------- status line: where you are on the page, as in Nova's own TUI ---------- */
 .statusline{
@@ -476,125 +624,173 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
 }
 @supports not (animation-timeline: scroll()){ .statusline .gauge{display:none} }
 @keyframes fill{to{transform:scaleX(1)}}
-.foot{display:flex; flex-wrap:wrap; gap:14px 28px; align-items:center; color:var(--muted); font-size:.93rem}
-.foot nav{display:flex; gap:22px; margin-left:auto}
-.foot a{text-decoration:none; transition:color .2s}
-.foot a:hover{color:var(--text)}
 
 /* ---------- motion: entrances and feedback only ---------- */
 @media (prefers-reduced-motion: no-preference){
   .js .rise{opacity:0; transform:translateY(18px); animation:rise .8s var(--ease) forwards; animation-delay:calc(var(--i, 0) * 90ms + 60ms)}
-  .js .art img{opacity:0; transform:scale(1.05); animation:artin 1.5s var(--ease) .05s forwards}
-  .js .dock{opacity:0; transform:translateY(22px); animation:rise .9s var(--ease) .6s forwards}
+  /* Neither the art nor the dock hides behind opacity: the artwork is the largest
+     paint on screen and the dock holds the only claim above the fold. Both still
+     move — the art settles its scale, the dock slides up. */
+  .js .art img{transform:scale(1.05); animation:artin 1.5s var(--ease) forwards}
+  .js .dock{transform:translateY(22px); animation:rise .9s var(--ease) .12s forwards}
   .statement h1::after{animation:blink 1.1s steps(1) infinite}
   .js .rv{opacity:0; transform:translateY(22px); transition:opacity .7s var(--ease), transform .7s var(--ease); transition-delay:calc(var(--i, 0) * 70ms)}
   .js .rv.in{opacity:1; transform:none}
-  .js .steps::after{transform:scaleX(0); transition:transform 1.4s var(--ease) .15s}
-  .js .steps.in::after{transform:scaleX(1)}
+  /* The open file's dot is the explorer's idle: it marks what is live. */
+  .ex-file[aria-current="true"]::before{animation:pulse 3.2s ease-in-out infinite}
 }
 @media (prefers-reduced-motion: no-preference){
   .caret{animation:blink 1.1s steps(1) infinite}
-  .js .cmdline .typed{width:0}
-  .js .cmdline.in .typed, .js .dock .cmdline .typed{animation:type calc(var(--n) * 55ms) steps(var(--n)) .25s forwards}
+  .js .dock .cmdline .typed{width:0; animation:type calc(var(--n) * 55ms) steps(var(--n)) .9s forwards}
 }
 @keyframes type{to{width:calc(var(--n) * 1ch)}}
 @keyframes blink{50%{opacity:0}}
 @keyframes rise{to{opacity:1; transform:none}}
 @keyframes artin{to{opacity:1; transform:none}}
+@keyframes pulse{0%,100%{opacity:1} 50%{opacity:.45}}
 @media (prefers-reduced-motion: reduce){
   html{scroll-behavior:auto}
   *,*::before,*::after{animation:none !important; transition:none !important}
 }
 
+/* ---------- below 1080px: the nav becomes one tap away ---------- */
+@media (max-width: 1080px){
+  .nav-links{
+    position:fixed; inset:64px 0 auto 0; z-index:var(--z-menu);
+    display:none; flex-direction:column; gap:0; margin:0;
+    background:var(--bg); border-bottom:1px solid var(--line);
+    padding:6px var(--gutter) 22px;
+  }
+  .nav-links.open{display:flex}
+  .nav-links a{padding:15px 0; font-size:1rem; border-bottom:1px solid var(--line)}
+  .nav-links a::after{display:none}
+  .nav-links a::before{display:none}
+  .menu-btn{display:inline-flex}
+  .nav .btn-quiet{display:none}
+  .nav .btn-primary{margin-left:0}
+}
 /* ---------- below 900px: one column, in reading order ---------- */
 @media (max-width: 900px){
-  .nav-links{display:none}
   .nav-row{gap:12px}
-  .nav .btn-primary{margin-left:auto}
   /* minmax(0, 1fr), not 1fr: a bare 1fr track grows to fit a long code line. */
-  .statement-grid, .split, .faq-grid, .pair, .lanes{grid-template-columns:minmax(0, 1fr)}
-  .lane + .lane{border-left:0; border-top:1px solid var(--line)}
-  /* The flow is a chain of six steps, and the order is the point. Two columns
-     read it as task/plan/test | understand/edit/verify, which scrambles the
-     sequence and drops the arrows, so on a narrow screen it becomes a single
-     column read top to bottom with the arrow turned to point down. */
-  .flow-row{grid-template-columns:minmax(0, 1fr); gap:0}
-  .flow-node{padding:9px 6px 9px 26px; text-align:left}
-  .flow-node + .flow-node::before{
-    display:block; left:6px; top:0; translate:0 -50%;
-    transform:rotate(90deg);
-  }
-  .flow-node.key{padding-left:26px}
-  .flow-node.key::after{inset:auto auto -1px 26px; width:44px}
+  .statement-grid, .split, .faq-grid, .pair, .trust-grid, .caps{grid-template-columns:minmax(0, 1fr)}
+  .pair > div + div{border-left:0; padding-left:0; border-top:1px solid var(--line); padding-top:28px}
+  .trust-col{padding-top:16px}
+  .caps li{padding:16px 0 18px}
   /* A narrow screen cannot hold the whole painting: cropped to fit, the
      wordmark on its right was cut in half. Show her side only, in a taller
      frame; the name is in the nav and the headline just below. */
   .art{aspect-ratio:4 / 5; max-height:calc(100dvh - 190px); min-height:300px}
   .art img{object-position:14% 40%}
-  .pair > div + div{border-left:0; padding-left:0; border-top:1px solid var(--line); padding-top:28px}
-  .steps{grid-template-columns:minmax(0, 1fr); gap:0}
-  .steps::before, .steps::after{width:2px; height:auto; bottom:0; right:auto}
-  .steps::after{transform-origin:top; height:100%}
-  .steps li{padding:0 0 26px 24px}
+  .hero-line{padding:14px 16px 0}
+  .dock-row{padding:12px 12px 12px 16px}
+  .dock-status{padding:8px 16px}
+  /* A prompt is one line by nature, and on the desktop the chrome clips it to
+     the panel. A phone is too narrow for that to be invisible, so let a long
+     one break instead of losing its tail. */
+  .cmdline{white-space:normal; overflow:visible; align-items:baseline; gap:.5ch}
+  .cmdline .cm{overflow-wrap:anywhere}
+  /* A deep path inside <code> is a single unbreakable word. */
+  code{overflow-wrap:break-word}
+  /* A command that still overflows would sit in a scroll container no keyboard
+     can reach; let it wrap the way the prompt above it does. */
+  .cmd code{white-space:pre-wrap; overflow-wrap:anywhere; overflow-x:visible}
+  .codeblock pre{white-space:pre-wrap; overflow-wrap:anywhere; overflow-x:visible}
+  /* Thumb-sized targets for the two controls that keep their place in the bar. */
+  .nav-row .btn, #menu-btn{min-height:44px}
+  /* The explorer becomes a topic strip over the open page. */
+  .ex-grid{grid-template-columns:minmax(0, 1fr)}
+  .ex-index{border-right:0; border-bottom:1px solid var(--line); padding:12px 0 10px}
+  .ex-index ul{display:flex; gap:6px; overflow-x:auto; padding:0 14px 4px; scroll-snap-type:x proximity;
+    /* The strip is wider than the screen; the fade and the hidden bar are the
+       only cue that it continues, since a phone draws no scrollbar. */
+    scrollbar-width:none; -webkit-mask-image:linear-gradient(90deg, #000 calc(100% - 34px), transparent);
+    mask-image:linear-gradient(90deg, #000 calc(100% - 34px), transparent)}
+  .ex-index ul::-webkit-scrollbar{display:none}
+  .ex-index ul + .ex-root{margin-top:10px}
+  .ex-file{
+    flex:none; width:auto; padding:12px 13px 12px 24px; border-radius:var(--r-press);
+    border:1px solid var(--line); scroll-snap-align:start; white-space:nowrap;
+  }
+  .ex-file::before{left:11px}
+  .ex-file.sub{padding-left:24px}
+  .ex-file.sub::before{left:11px}
+  .ex-file[aria-current="true"]{border-color:var(--accent)}
+  .ex-page{padding:18px 18px 20px; min-height:0}
+  .ballot{grid-template-columns:minmax(0, 1fr)}
+  .bridge{grid-template-columns:minmax(0, 1fr)}
+  .bridge > div + div{border-left:0; border-top:1px solid var(--line)}
+  .ledger > div{grid-template-columns:minmax(0, 1fr); gap:4px; padding:14px 2px}
+  .ledger dd:last-child{margin-top:2px}
   .faq-grid > div:first-child{position:static !important}
   .foot nav{margin-left:0}
 }
-@media (max-width: 900px) and (prefers-reduced-motion: no-preference){
-  .js .steps::after{transform:scaleY(0)}
-  .js .steps.in::after{transform:scaleY(1)}
-}
 @media (max-width: 520px){
-  .nav .btn-quiet{display:none}
   .cmd{flex-wrap:wrap}
   .statusline .where{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .dock-status span:last-child{margin-left:0}
+  .tree{font-size:.76rem; padding:18px 16px 20px}
 }
 </style>
 </head>
-
 <body>
 <a class="skip" href="#main">Skip to content</a>
 <canvas id="sky" aria-hidden="true"></canvas>
 
 <header class="nav" id="nav">
   <div class="wrap nav-row">
-    <a class="brand" href="#top" aria-label="Nova, home">
-      <img src="assets/emblem-256.png" width="26" height="26" alt="">
-      <span><b>nova</b>@code:~$</span>
+    <a class="brand" href="#top" aria-label="Nova, back to top">
+      <img src="assets/emblem-128.webp" alt="" width="26" height="26">
+      <b>nova</b><span>@code</span>
     </a>
-    <nav class="nav-links" aria-label="Sections">
-      <a href="docs/index.html">docs</a>
-      <a href="#demo">demo</a>
-      <a href="#verify">verify</a>
-      <a href="#code">code</a>
-      <a href="#build">build</a>
-      <a href="#safe">safe</a>
-      <a href="#grow">grow</a>
+    <nav class="nav-links" id="nav-links" aria-label="Sections">
+      <a href="docs/">docs</a>
+      <a href="#memory">memory</a>
+      <a href="#council">council</a>
+      <a href="#sessions">sessions</a>
+      <a href="#models">models</a>
+      <a href="#plans">plans</a>
+      <a href="#trust">trust</a>
       <a href="#faq">faq</a>
     </nav>
-    <a class="btn btn-quiet" href="https://github.com/Babitdor/NovaCode"><svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M208.31,75.68A59.78,59.78,0,0,0,202.93,28,8,8,0,0,0,196,24a59.75,59.75,0,0,0-48,24H124A59.75,59.75,0,0,0,76,24a8,8,0,0,0-6.93,4,59.78,59.78,0,0,0-5.38,47.68A58.14,58.14,0,0,0,56,104v8a56.06,56.06,0,0,0,48.44,55.47A39.8,39.8,0,0,0,96,192v8H72a24,24,0,0,1-24-24A40,40,0,0,0,8,136a8,8,0,0,0,0,16,24,24,0,0,1,24,24,40,40,0,0,0,40,40H96v16a8,8,0,0,0,16,0V192a24,24,0,0,1,48,0v40a8,8,0,0,0,16,0V192a39.8,39.8,0,0,0-8.44-24.53A56.06,56.06,0,0,0,216,112v-8A58.14,58.14,0,0,0,208.31,75.68ZM200,112a40,40,0,0,1-40,40H112a40,40,0,0,1-40-40v-8a41.74,41.74,0,0,1,6.9-22.48A8,8,0,0,0,80,73.83a43.81,43.81,0,0,1,.79-33.58,43.88,43.88,0,0,1,32.32,20.06A8,8,0,0,0,119.82,64h32.35a8,8,0,0,0,6.74-3.69,43.87,43.87,0,0,1,32.32-20.06A43.81,43.81,0,0,1,192,73.83a8.09,8.09,0,0,0,1,7.65A41.72,41.72,0,0,1,200,104Z"/></svg>View source</a>
-    <a class="btn btn-primary" href="#install">Install Nova</a>
+    <a class="btn btn-quiet" href="https://github.com/Babitdor/NovaCode">Source</a>
+    <a class="btn btn-primary" href="#install">Install</a>
+    <button class="menu-btn" type="button" id="menu-btn" aria-expanded="false" aria-controls="nav-links">
+      <i aria-hidden="true"></i><span>menu</span>
+    </button>
   </div>
 </header>
 
 <main id="main">
 
   <!-- ================= hero ================= -->
-  <section class="hero" id="top" aria-label="Nova.Code">
+  <section class="hero" id="top" data-chapter="~/desk">
     <div class="art">
       <picture>
+        <!-- Under ~960px the browser was still fetching the 1672w source (164 KB)
+             where the 960w one (67 KB) covers the slot, and the preload went
+             unused. One candidate up to 960px removes both problems. -->
+        <source media="(max-width: 960px)" type="image/webp" srcset="assets/hero-960.webp 960w" sizes="100vw">
         <source type="image/webp" srcset="assets/hero-960.webp 960w, assets/hero.webp 1672w" sizes="100vw">
-        <img src="assets/hero.webp" width="1672" height="941" fetchpriority="high"
-             alt="Nova, an illustrated developer with long auburn hair, rests her chin on her hand at a desk lit by amber lamps. Holographic code panes float behind her, a crescent moon hangs in a violet sky, and a laptop with a glowing moon sits beside the wordmark Nova.Code, your coding companion.">
+        <img src="assets/hero.webp" width="1672" height="941" fetchpriority="high" decoding="async"
+             alt="Nova's workspace at night: a figure at a desk before a tall window, ringed by floating code panes, with the Nova.Code wordmark on the right.">
       </picture>
     </div>
     <div class="dock">
       <div class="dock-in">
+        <p class="hero-line">A terminal coding assistant with memory you can explore and workflows you can control.</p>
         <div class="dock-row">
-          <p class="cmdline"><span class="ps">&#10095;</span><span class="typed" style="--n:11">uv run nova</span><span class="caret" aria-hidden="true"></span></p>
-          <a class="btn btn-primary" href="#install">Install Nova</a>
-          <a class="btn btn-quiet" href="https://github.com/Babitdor/NovaCode"><svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M208.31,75.68A59.78,59.78,0,0,0,202.93,28,8,8,0,0,0,196,24a59.75,59.75,0,0,0-48,24H124A59.75,59.75,0,0,0,76,24a8,8,0,0,0-6.93,4,59.78,59.78,0,0,0-5.38,47.68A58.14,58.14,0,0,0,56,104v8a56.06,56.06,0,0,0,48.44,55.47A39.8,39.8,0,0,0,96,192v8H72a24,24,0,0,1-24-24A40,40,0,0,0,8,136a8,8,0,0,0,0,16,24,24,0,0,1,24,24,40,40,0,0,0,40,40H96v16a8,8,0,0,0,16,0V192a24,24,0,0,1,48,0v40a8,8,0,0,0,16,0V192a39.8,39.8,0,0,0-8.44-24.53A56.06,56.06,0,0,0,216,112v-8A58.14,58.14,0,0,0,208.31,75.68ZM200,112a40,40,0,0,1-40,40H112a40,40,0,0,1-40-40v-8a41.74,41.74,0,0,1,6.9-22.48A8,8,0,0,0,80,73.83a43.81,43.81,0,0,1,.79-33.58,43.88,43.88,0,0,1,32.32,20.06A8,8,0,0,0,119.82,64h32.35a8,8,0,0,0,6.74-3.69,43.87,43.87,0,0,1,32.32-20.06A43.81,43.81,0,0,1,192,73.83a8.09,8.09,0,0,0,1,7.65A41.72,41.72,0,0,1,200,104Z"/></svg>View source</a>
+          <p class="cmdline">
+            <span class="ps" aria-hidden="true">&#10095;</span>
+            <span class="typed" style="--n:11">uv run nova</span>
+            <span class="caret" aria-hidden="true"></span>
+          </p>
+          <a class="btn btn-primary" href="#install">Install Nova
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </a>
+          <a class="btn btn-quiet" href="https://github.com/Babitdor/NovaCode">Source</a>
         </div>
-        <div class="dock-status" aria-hidden="true">
+        <div class="dock-status">
           <span><b>READY</b></span><span>~/your-repo</span><span>main</span><span>ctx 0%</span>
         </div>
       </div>
@@ -602,330 +798,370 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
   </section>
 
   <!-- ================= statement ================= -->
-  <section class="statement">
+  <section class="statement" id="what" data-chapter="~/desk">
     <div class="wrap statement-grid">
       <div class="statement-copy rv">
-        <p class="eyebrow">Open source, MIT licensed</p>
-        <h1>A coding agent that <b>verifies</b> its own work.</h1>
-        <p class="lede">Give Nova a task. It reads your codebase, plans the change, edits
-          files, runs the tests, then looks at whether the tests actually pass. If they
-          don't, it takes the failure back as feedback and tries again.</p>
+        <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="cm">man nova</span></p>
+        <h1>It keeps notes in Markdown. It asks before it edits.</h1>
+        <p class="lede">Nova is a coding agent for the terminal. Its memory is a wiki of Markdown pages you can read, search and delete. Its plans wait for your approval. Its sessions run side by side, and its models are yours to pick, hosted or local.</p>
         <div class="actions">
-          <a class="btn btn-primary" href="#install">Install Nova</a>
-          <a class="btn btn-quiet" href="#demo">See it work</a>
+          <a class="btn btn-primary" href="#install">Install Nova
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </a>
+          <a class="btn btn-quiet" href="#memory">Open the memory</a>
         </div>
       </div>
       <div class="statement-side rv" style="--i:1">
-        <div class="inventory win">
-          <div class="bar" aria-hidden="true"><i></i><i></i><i></i><span>what ships</span></div>
-          <div class="body">
+        <div class="toc win">
+          <div class="bar" aria-hidden="true"><i></i><i></i><i></i><span>contents</span></div>
+          <div class="toc-in">
             <dl>
-              <div><dt>tools bound at startup</dt><dd>38</dd></div>
-              <div><dt>in-session subagents</dt><dd>12</dd></div>
-              <div><dt>model providers</dt><dd>7</dd></div>
-              <div><dt>MCP presets</dt><dd>12</dd></div>
-              <div><dt>sandbox backends</dt><dd>6</dd></div>
+              <div><dt>memory</dt><dd>wiki, /dream</dd></div>
+              <div><dt>planning</dt><dd>/council, plan mode</dd></div>
+              <div><dt>sessions</dt><dd>parallel tabs, @tab:</dd></div>
+              <div><dt>models</dt><dd>hosted, Ollama, /router</dd></div>
+              <div><dt>learning</dt><dd>/learning, reviewable</dd></div>
+              <div><dt>recovery</dt><dd>snapshots, /restore</dd></div>
             </dl>
           </div>
         </div>
-        <p class="body" style="font-size:.92rem">Proof, not the pitch. What Nova does with
-          those numbers is the rest of the page.</p>
       </div>
     </div>
   </section>
 
-  <!-- ================= demo: the whole loop, once ================= -->
-  <section id="demo" aria-label="One task, start to finish">
+  <!-- ================= memory: the signature moment ================= -->
+  <section id="memory" class="s-airy" data-chapter="~/desk/memory/INDEX.md">
     <div class="wrap">
       <div class="head rv">
-        <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:11">nova --task</span></p>
-        <h2>One task, start to finish.</h2>
-        <p class="body">The shape of a real run: the work, the part where it failed, and what
-          it did about the failure. Every step here is a capability described later on this
-          page, except the last two, which need a setting turned on.</p>
+        <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="cm">open memory</span></p>
+        <h2>Memory you can explore.</h2>
+        <p class="body">Nova stores preferences and topic notes in readable Markdown. A compact home index routes to topic maps and related pages, with project lessons kept scoped. The agent searches for relevant notes and opens their full sources.</p>
       </div>
 
-      <div class="demo win rv">
-        <div class="bar" aria-hidden="true"><i></i><i></i><i></i><span>rate-limit</span></div>
-        <div class="demo-task">
-          <p class="demo-q">Add rate limiting to the API. Use the existing Redis client,
-            cover the public endpoints, and add tests.</p>
+      <div class="explorer rv" id="explorer">
+        <div class="bar" aria-hidden="true"><i></i><i></i><i></i><span>memory</span></div>
+        <div class="ex-grid">
+          <nav class="ex-index" aria-label="Memory files">
+            <p class="ex-root">memories/</p>
+            <ul>
+              <li><button class="ex-file" type="button" data-open="INDEX.md" aria-current="true">INDEX.md</button></li>
+              <li><button class="ex-file" type="button" data-open="wiki-nova.md">wiki-nova.md</button></li>
+              <li><button class="ex-file" type="button" data-open="wiki-operations.md">wiki-operations.md</button></li>
+            </ul>
+            <p class="ex-root">memories/projects/</p>
+            <ul>
+              <li><button class="ex-file sub" type="button" data-open="nova-code.md">nova-code.md</button></li>
+            </ul>
+            <p class="ex-root">root</p>
+            <ul>
+              <li><button class="ex-file" type="button" data-open="agent.md">agent.md</button></li>
+              <li><button class="ex-file" type="button" data-open="HABITS.md">HABITS.md</button></li>
+            </ul>
+          </nav>
+          <article class="ex-page" aria-labelledby="ex-title">
+            <p class="ex-path" id="ex-path">memories/INDEX.md</p>
+            <h3 id="ex-title">Memory Wiki</h3>
+            <div class="ex-body" id="ex-body">
+              <p>Start with a relevant map or a search. Read the full page, follow useful links, then check dated claims against the active project.</p>
+              <ul class="ex-list">
+                <li><button class="ex-link" type="button" data-open="wiki-nova.md">wiki-nova.md</button><span>runtime, UI and agent architecture</span></li>
+                <li><button class="ex-link" type="button" data-open="wiki-operations.md">wiki-operations.md</button><span>tools, memory management</span></li>
+                <li><button class="ex-link" type="button" data-open="agent.md">agent.md</button><span>standing preferences</span></li>
+                <li><button class="ex-link" type="button" data-open="HABITS.md">HABITS.md</button><span>work checklist</span></li>
+              </ul>
+            </div>
+            <div class="ex-related" id="ex-related">
+              <span class="ex-label">related</span>
+              <button class="ex-link" type="button" data-open="wiki-nova.md">wiki-nova.md</button>
+              <button class="ex-link" type="button" data-open="wiki-operations.md">wiki-operations.md</button>
+              <button class="ex-link" type="button" data-open="agent.md">agent.md</button>
+              <button class="ex-link" type="button" data-open="HABITS.md">HABITS.md</button>
+            </div>
+          </article>
         </div>
-        <ol class="demo-log">
-          <li class="ok"><span class="mk">&#10003;</span><span>Exploring repository</span></li>
-          <li class="ok"><span class="mk">&#10003;</span><span>Found the existing Redis client in <code>core/cache.py</code></span></li>
-          <li class="ok"><span class="mk">&#10003;</span><span>Planning implementation</span></li>
-          <li class="ok"><span class="mk">&#10003;</span><span>Implemented a sliding-window limiter</span></li>
-          <li class="ok"><span class="mk">&#10003;</span><span>Added tests</span></li>
-          <li class="ok"><span class="mk">&#10003;</span><span>Running the suite</span><span class="dt">2 failed</span></li>
-          <li class="bad"><span class="mk">&#10007;</span><span>Limiter ran before auth: middleware order</span></li>
-          <li class="ok"><span class="mk">&#10003;</span><span>Moved the limiter behind the auth middleware</span></li>
-          <li class="ok"><span class="mk">&#10003;</span><span>Running the suite again</span><span class="dt">148 passed</span></li>
-        </ol>
-        <div class="demo-note">
-          <b>Written code is not a finished task.</b> The first five lines are what any
-          agent does. Lines six to nine are why Nova is different: it ran the tests, read
-          the failures, and treated them as work still outstanding.
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ================= providers ================= -->
-  <section class="providers" aria-label="Supported model providers">
-    <div class="wrap providers-row rv">
-      <p>Runs on the model you already use</p>
-      <a href="https://openai.com" title="OpenAI"><svg viewBox="0 0 24 24" fill="currentColor" role="img" aria-label="OpenAI"><path d="M9.205 8.658v-2.26c0-.19.072-.333.238-.428l4.543-2.616c.619-.357 1.356-.523 2.117-.523 2.854 0 4.662 2.212 4.662 4.566 0 .167 0 .357-.024.547l-4.71-2.759a.797.797 0 00-.856 0l-5.97 3.473zm10.609 8.8V12.06c0-.333-.143-.57-.429-.737l-5.97-3.473 1.95-1.118a.433.433 0 01.476 0l4.543 2.617c1.309.76 2.189 2.378 2.189 3.948 0 1.808-1.07 3.473-2.76 4.163zM7.802 12.703l-1.95-1.142c-.167-.095-.239-.238-.239-.428V5.899c0-2.545 1.95-4.472 4.591-4.472 1 0 1.927.333 2.712.928L8.23 5.067c-.285.166-.428.404-.428.737v6.898zM12 15.128l-2.795-1.57v-3.33L12 8.658l2.795 1.57v3.33L12 15.128zm1.796 7.23c-1 0-1.927-.332-2.712-.927l4.686-2.712c.285-.166.428-.404.428-.737v-6.898l1.974 1.142c.167.095.238.238.238.428v5.233c0 2.545-1.974 4.472-4.614 4.472zm-5.637-5.303l-4.544-2.617c-1.308-.761-2.188-2.378-2.188-3.948A4.482 4.482 0 014.21 6.327v5.423c0 .333.143.571.428.738l5.947 3.449-1.95 1.118a.432.432 0 01-.476 0zm-.262 3.9c-2.688 0-4.662-2.021-4.662-4.519 0-.19.024-.38.047-.57l4.686 2.71c.286.167.571.167.856 0l5.97-3.448v2.26c0 .19-.07.333-.237.428l-4.543 2.616c-.619.357-1.356.523-2.117.523zm5.899 2.83a5.947 5.947 0 005.827-4.756C22.287 18.339 24 15.84 24 13.296c0-1.665-.713-3.282-1.998-4.448.119-.5.19-.999.19-1.498 0-3.401-2.759-5.947-5.946-5.947-.642 0-1.26.095-1.88.31A5.962 5.962 0 0010.205 0a5.947 5.947 0 00-5.827 4.757C1.713 5.447 0 7.945 0 10.49c0 1.666.713 3.283 1.998 4.448-.119.5-.19 1-.19 1.499 0 3.401 2.759 5.946 5.946 5.946.642 0 1.26-.095 1.88-.309a5.96 5.96 0 004.162 1.713z"></path></svg></a>
-      <a href="https://www.anthropic.com" title="Anthropic"><svg viewBox="0 0 24 24" fill="currentColor" role="img" aria-label="Anthropic"><path d="M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z"/></svg></a>
-      <a href="https://gemini.google.com" title="Google Gemini"><svg viewBox="0 0 24 24" fill="currentColor" role="img" aria-label="Google Gemini"><path d="M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81"/></svg></a>
-      <a href="https://build.nvidia.com" title="NVIDIA"><svg viewBox="0 0 24 24" fill="currentColor" role="img" aria-label="NVIDIA"><path d="M8.948 8.798v-1.43a6.7 6.7 0 0 1 .424-.018c3.922-.124 6.493 3.374 6.493 3.374s-2.774 3.851-5.75 3.851c-.398 0-.787-.062-1.158-.185v-4.346c1.528.185 1.837.857 2.747 2.385l2.04-1.714s-1.492-1.952-4-1.952a6.016 6.016 0 0 0-.796.035m0-4.735v2.138l.424-.027c5.45-.185 9.01 4.47 9.01 4.47s-4.08 4.964-8.33 4.964c-.37 0-.733-.035-1.095-.097v1.325c.3.035.61.062.91.062 3.957 0 6.82-2.023 9.593-4.408.459.371 2.34 1.263 2.73 1.652-2.633 2.208-8.772 3.984-12.253 3.984-.335 0-.653-.018-.971-.053v1.864H24V4.063zm0 10.326v1.131c-3.657-.654-4.673-4.46-4.673-4.46s1.758-1.944 4.673-2.262v1.237H8.94c-1.528-.186-2.73 1.245-2.73 1.245s.68 2.412 2.739 3.11M2.456 10.9s2.164-3.197 6.5-3.533V6.201C4.153 6.59 0 10.653 0 10.653s2.35 6.802 8.948 7.42v-1.237c-4.84-.6-6.492-5.936-6.492-5.936z"/></svg></a>
-      <a href="https://openrouter.ai" title="OpenRouter"><svg viewBox="0 0 24 24" fill="currentColor" role="img" aria-label="OpenRouter"><path d="M16.778 1.844v1.919q-.569-.026-1.138-.032-.708-.008-1.415.037c-1.93.126-4.023.728-6.149 2.237-2.911 2.066-2.731 1.95-4.14 2.75-.396.223-1.342.574-2.185.798-.841.225-1.753.333-1.751.333v4.229s.768.108 1.61.333c.842.224 1.789.575 2.185.799 1.41.798 1.228.683 4.14 2.75 2.126 1.509 4.22 2.11 6.148 2.236.88.058 1.716.041 2.555.005v1.918l7.222-4.168-7.222-4.17v2.176c-.86.038-1.611.065-2.278.021-1.364-.09-2.417-.357-3.979-1.465-2.244-1.593-2.866-2.027-3.68-2.508.889-.518 1.449-.906 3.822-2.59 1.56-1.109 2.614-1.377 3.978-1.466.667-.044 1.418-.017 2.278.02v2.176L24 6.014Z"/></svg></a>
-      <a href="https://opencode.ai" title="OpenCode"><svg viewBox="0 0 24 24" fill="currentColor" role="img" aria-label="OpenCode"><path d="M16 6H8v12h8V6zm4 16H4V2h16v20z"></path></svg></a>
-      <a href="https://ollama.com" title="Ollama"><svg viewBox="0 0 24 24" fill="currentColor" role="img" aria-label="Ollama"><path d="M16.361 10.26a.894.894 0 0 0-.558.47l-.072.148.001.207c0 .193.004.217.059.353.076.193.152.312.291.448.24.238.51.3.872.205a.86.86 0 0 0 .517-.436.752.752 0 0 0 .08-.498c-.064-.453-.33-.782-.724-.897a1.06 1.06 0 0 0-.466 0zm-9.203.005c-.305.096-.533.32-.65.639a1.187 1.187 0 0 0-.06.52c.057.309.31.59.598.667.362.095.632.033.872-.205.14-.136.215-.255.291-.448.055-.136.059-.16.059-.353l.001-.207-.072-.148a.894.894 0 0 0-.565-.472 1.02 1.02 0 0 0-.474.007Zm4.184 2c-.131.071-.223.25-.195.383.031.143.157.288.353.407.105.063.112.072.117.136.004.038-.01.146-.029.243-.02.094-.036.194-.036.222.002.074.07.195.143.253.064.052.076.054.255.059.164.005.198.001.264-.03.169-.082.212-.234.15-.525-.052-.243-.042-.28.087-.355.137-.08.281-.219.324-.314a.365.365 0 0 0-.175-.48.394.394 0 0 0-.181-.033c-.126 0-.207.03-.355.124l-.085.053-.053-.032c-.219-.13-.259-.145-.391-.143a.396.396 0 0 0-.193.032zm.39-2.195c-.373.036-.475.05-.654.086-.291.06-.68.195-.951.328-.94.46-1.589 1.226-1.787 2.114-.04.176-.045.234-.045.53 0 .294.005.357.043.524.264 1.16 1.332 2.017 2.714 2.173.3.033 1.596.033 1.896 0 1.11-.125 2.064-.727 2.493-1.571.114-.226.169-.372.22-.602.039-.167.044-.23.044-.523 0-.297-.005-.355-.045-.531-.288-1.29-1.539-2.304-3.072-2.497a6.873 6.873 0 0 0-.855-.031zm.645.937a3.283 3.283 0 0 1 1.44.514c.223.148.537.458.671.662.166.251.26.508.303.82.02.143.01.251-.043.482-.08.345-.332.705-.672.957a3.115 3.115 0 0 1-.689.348c-.382.122-.632.144-1.525.138-.582-.006-.686-.01-.853-.042-.57-.107-1.022-.334-1.35-.68-.264-.28-.385-.535-.45-.946-.03-.192.025-.509.137-.776.136-.326.488-.73.836-.963.403-.269.934-.46 1.422-.512.187-.02.586-.02.773-.002zm-5.503-11a1.653 1.653 0 0 0-.683.298C5.617.74 5.173 1.666 4.985 2.819c-.07.436-.119 1.04-.119 1.503 0 .544.064 1.24.155 1.721.02.107.031.202.023.208a8.12 8.12 0 0 1-.187.152 5.324 5.324 0 0 0-.949 1.02 5.49 5.49 0 0 0-.94 2.339 6.625 6.625 0 0 0-.023 1.357c.091.78.325 1.438.727 2.04l.13.195-.037.064c-.269.452-.498 1.105-.605 1.732-.084.496-.095.629-.095 1.294 0 .67.009.803.088 1.266.095.555.288 1.143.503 1.534.071.128.243.393.264.407.007.003-.014.067-.046.141a7.405 7.405 0 0 0-.548 1.873c-.062.417-.071.552-.071.991 0 .56.031.832.148 1.279L3.42 24h1.478l-.05-.091c-.297-.552-.325-1.575-.068-2.597.117-.472.25-.819.498-1.296l.148-.29v-.177c0-.165-.003-.184-.057-.293a.915.915 0 0 0-.194-.25 1.74 1.74 0 0 1-.385-.543c-.424-.92-.506-2.286-.208-3.451.124-.486.329-.918.544-1.154a.787.787 0 0 0 .223-.531c0-.195-.07-.355-.224-.522a3.136 3.136 0 0 1-.817-1.729c-.14-.96.114-2.005.69-2.834.563-.814 1.353-1.336 2.237-1.475.199-.033.57-.028.776.01.226.04.367.028.512-.041.179-.085.268-.19.374-.431.093-.215.165-.333.36-.576.234-.29.46-.489.822-.729.413-.27.884-.467 1.352-.561.17-.035.25-.04.569-.04.319 0 .398.005.569.04a4.07 4.07 0 0 1 1.914.997c.117.109.398.457.488.602.034.057.095.177.132.267.105.241.195.346.374.43.14.068.286.082.503.045.343-.058.607-.053.943.016 1.144.23 2.14 1.173 2.581 2.437.385 1.108.276 2.267-.296 3.153-.097.15-.193.27-.333.419-.301.322-.301.722-.001 1.053.493.539.801 1.866.708 3.036-.062.772-.26 1.463-.533 1.854a2.096 2.096 0 0 1-.224.258.916.916 0 0 0-.194.25c-.054.109-.057.128-.057.293v.178l.148.29c.248.476.38.823.498 1.295.253 1.008.231 2.01-.059 2.581a.845.845 0 0 0-.044.098c0 .006.329.009.732.009h.73l.02-.074.036-.134c.019-.076.057-.3.088-.516.029-.217.029-1.016 0-1.258-.11-.875-.295-1.57-.597-2.226-.032-.074-.053-.138-.046-.141.008-.005.057-.074.108-.152.376-.569.607-1.284.724-2.228.031-.26.031-1.378 0-1.628-.083-.645-.182-1.082-.348-1.525a6.083 6.083 0 0 0-.329-.7l-.038-.064.131-.194c.402-.604.636-1.262.727-2.04a6.625 6.625 0 0 0-.024-1.358 5.512 5.512 0 0 0-.939-2.339 5.325 5.325 0 0 0-.95-1.02 8.097 8.097 0 0 1-.186-.152.692.692 0 0 1 .023-.208c.208-1.087.201-2.443-.017-3.503-.19-.924-.535-1.658-.98-2.082-.354-.338-.716-.482-1.15-.455-.996.059-1.8 1.205-2.116 3.01a6.805 6.805 0 0 0-.097.726c0 .036-.007.066-.015.066a.96.96 0 0 1-.149-.078A4.857 4.857 0 0 0 12 3.03c-.832 0-1.687.243-2.456.698a.958.958 0 0 1-.148.078c-.008 0-.015-.03-.015-.066a6.71 6.71 0 0 0-.097-.725C8.997 1.392 8.337.319 7.46.048a2.096 2.096 0 0 0-.585-.041Zm.293 1.402c.248.197.523.759.682 1.388.03.113.06.244.069.292.007.047.026.152.041.233.067.365.098.76.102 1.24l.002.475-.12.175-.118.178h-.278c-.324 0-.646.041-.954.124l-.238.06c-.033.007-.038-.003-.057-.144a8.438 8.438 0 0 1 .016-2.323c.124-.788.413-1.501.696-1.711.067-.05.079-.049.157.013zm9.825-.012c.17.126.358.46.498.888.28.854.36 2.028.212 3.145-.019.14-.024.151-.057.144l-.238-.06a3.693 3.693 0 0 0-.954-.124h-.278l-.119-.178-.119-.175.002-.474c.004-.669.066-1.19.214-1.772.157-.623.434-1.185.68-1.382.078-.062.09-.063.159-.012z"/></svg></a>
-    </div>
-  </section>
-
-<!-- ================= verify: the differentiator ================= -->
-  <section id="verify">
-    <div class="wrap">
-      <div class="head rv">
-        <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:16">open verify.book</span> <span class="cm"># the differentiator</span></p>
-        <h2>Code written isn't the same as a task finished.</h2>
-        <p class="body">Plausible code is the easy half. Nova checks the result against
-          what you actually asked for. When the check fails, the failure becomes the
-          input to the next attempt instead of something you discover later.</p>
-      </div>
-
-      <div class="flow win rv">
-        <div class="flow-row" role="img"
-             aria-label="The loop: task, understand, plan, edit, test, verify. Verification either passes, and the run is done, or fails, and the feedback goes back into another attempt.">
-          <span class="flow-node">task</span>
-          <span class="flow-node">understand</span>
-          <span class="flow-node">plan</span>
-          <span class="flow-node">edit</span>
-          <span class="flow-node">test</span>
-          <span class="flow-node key">verify</span>
-        </div>
-        <div class="lanes">
-          <div class="lane lane-pass">
-            <h3>Verify passes</h3>
-            <p>The run is done, and the verdict and the diff that earned it are stored.</p>
-          </div>
-          <div class="lane lane-fail">
-            <h3>Verify fails</h3>
-            <p>The failure comes back as feedback and the loop runs again, up to three
-              attempts, then reports honestly instead of guessing.</p>
-          </div>
+        <div class="ex-foot">
+          <button class="ex-dream" type="button" id="ex-dream">/dream</button>
+          <ol class="ex-log" id="ex-log" aria-live="polite"></ol>
         </div>
       </div>
+      <p class="sr" aria-live="polite" id="ex-status"></p>
 
       <div class="pair">
-        <div class="rv">
-          <h3>What the grader actually checks</h3>
-          <p class="body">Five criteria: did the run respond to the request, did it write
-            files, are there no errors, do the tests pass, and did it modify the tests to
-            get there instead of fixing the code. A separate model call scores them.</p>
+        <div>
+          <h3>What <code>/dream</code> does</h3>
+          <p class="body">It prepares backups and navigation, then asks the agent to consolidate the notes. Maintenance checks local links and preserves topic bodies.</p>
         </div>
-        <div class="rv" style="--i:1">
-          <h3>Turning it on</h3>
-          <p class="body">It is opt-in, and off by default, because grading costs one extra
-            model call per turn. <code>/learning on</code> grades each finished run, and
-            <code>/goal rubric &lt;criteria&gt;</code> holds a specific piece of work to your
-            own criteria, revising up to three times.</p>
+        <div>
+          <h3>What it does not do</h3>
+          <p class="body">Navigation maintenance does not establish whether a remembered claim is true. A new install starts with its memory scaffold; the wiki develops around accumulated notes.</p>
         </div>
       </div>
-    </div>
-  </section>
 
-  <!-- ================= code: finding code ================= -->
-  <section id="code">
-    <div class="wrap">
-      <div class="head rv">
-        <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:16">open code.book</span></p>
-        <h2>Describe the behaviour. Let it find the code.</h2>
-        <p class="body">You know what the code does. You don't always know what it was
-          called, or which of eleven files holds it. Semantic search answers the first,
-          so you don't have to answer the second.</p>
-        <ul class="proof">
-          <li>description-based search</li>
-          <li>related-code lookup from any line</li>
-          <li>ripgrep-backed file search</li>
-        </ul>
-      </div>
-      <div class="pair">
-        <div class="rv">
-          <h3>Search that returns code, not filenames</h3>
-          <p class="body">Two embeddings models fused with keyword search, so
-            "where do we validate webhook signatures" ranks the function that does it.
-            Returns the relevant chunks instead of whole files.</p>
-        </div>
-        <div class="rv" style="--i:1">
-          <h3>From a file and line</h3>
-          <p class="body">Point at a line and get the code that resembles it, which is how
-            you find the other half of a change that has to stay symmetrical.</p>
-        </div>
-      </div>
-      <div class="pair" style="margin-top:clamp(40px,5vw,64px)">
-        <div class="rv">
-          <h3>Long sessions don't have to lose the plot</h3>
-          <p class="body">As a session grows, Nova makes room instead of running out. Big
-            tool results are written to disk, older results are cleared but kept readable
-            under <code>/cleared/</code>, and the conversation is summarised with the most
-            recent turns preserved.</p>
-        </div>
-        <div class="rv" style="--i:1">
-          <h3>Sized to your model</h3>
-          <p class="body">The thresholds come from the model's real context window, not a
-            fixed number, and Nova always holds back an 8k-token reserve so a long run has
-            somewhere to put its conclusion.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ================= build: delegation ================= -->
-  <section id="build">
-    <div class="wrap">
-      <div class="head rv">
-        <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:13">open build.book</span></p>
-        <h2>Give it the jobs you'd normally break apart yourself.</h2>
-        <p class="body">A change that touches a parser, a migration and a test file is
-          three jobs with dependencies. Nova splits the work, and when a piece is genuinely
-          separable it hands it to a subagent with its own context.</p>
-        <ul class="proof">
-          <li><code>code-explorer</code></li>
-          <li><code>bug-fix-agent</code></li>
-          <li><code>browser-automation-agent</code></li>
-          <li>12 in-session subagents total</li>
-        </ul>
-      </div>
-      <figure class="rv">
+      <figure class="rv" style="margin-top:clamp(40px,5vw,64px)">
         <div class="shot">
-          <img src="assets/session-hero.png" width="1160" height="404" loading="lazy"
-               alt="A Nova session: three tool calls collapsed into one row above a six-item todo checklist, with the status bar showing workspace, branch, sandbox, model and context usage.">
+          <img src="assets/session-hero.png" width="1160" height="404" loading="lazy" decoding="async"
+               alt="A Nova session: the agent says it will orient itself in the memory directory, then lists the folder, reads the consolidation skill and opens the memory index.">
         </div>
-        <figcaption>Work in progress: tool calls collapse to a single row, and the checklist
-          keeps the plan visible while Nova works through it.</figcaption>
+        <figcaption>A session orienting itself before it touches a note: list the folder, read the consolidation skill, open the index.</figcaption>
       </figure>
-      <div class="pair">
-        <div class="rv">
-          <h3>Controversial decisions get a council</h3>
-          <p class="body"><code>/council</code> sends the problem to six agents with
-            genuinely different priorities. They critique each other anonymously, a judge
-            ranks them, and you get the top three. Nothing is built until you approve one.</p>
+    </div>
+  </section>
+  <!-- ================= council ================= -->
+  <section id="council" class="s-airy" data-chapter="~/desk/.nova/plans">
+    <div class="wrap">
+      <div class="head rv">
+        <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="cm">/council split the ingest worker out of the CLI</span></p>
+        <h2>A council before the code changes.</h2>
+        <p class="body">Three proposals, written independently. They critique each other anonymously, rank the survivors, and a judge writes the reasoning. You pick one. Selection is not approval: handing the plan to implementation is a separate step.</p>
+      </div>
+
+      <div class="ballot rv" id="ballot" role="group" aria-label="Proposals from the council">
+        <button class="plan" type="button" data-plan="a" aria-pressed="true">
+          <span class="plan-rank">Plan A &middot; 4 of 6 votes</span>
+          <span class="plan-title">Extract a worker process behind a queue</span>
+          <span class="plan-body">Move ingestion into its own process, talk over a queue, keep the CLI as a thin client.</span>
+          <span class="plan-crit"><b>Critique:</b> two deployment units to run and a queue to supervise; the split earns its keep only above one worker.</span>
+        </button>
+        <button class="plan" type="button" data-plan="b" aria-pressed="false">
+          <span class="plan-rank">Plan B &middot; 2 of 6 votes</span>
+          <span class="plan-title">Split the package, share the core</span>
+          <span class="plan-body">Keep one process, cut the module along its seam, share the core package.</span>
+          <span class="plan-crit"><b>Critique:</b> the seam that looked clean in the tree is a shared connection pool at runtime.</span>
+        </button>
+        <button class="plan" type="button" data-plan="c" aria-pressed="false">
+          <span class="plan-rank">Plan C &middot; 0 of 6 votes</span>
+          <span class="plan-title">Ship the interface first</span>
+          <span class="plan-body">Define the boundary, migrate callers, leave the implementation where it is.</span>
+          <span class="plan-crit"><b>Critique:</b> nothing becomes parallel, so the original motivation is untouched.</span>
+        </button>
+      </div>
+      <div class="row-handoff">
+        <p class="handoff" id="handoff" role="status">Plan A selected &middot; review the diff against the current CLI, then approve implementation separately.</p>
+        <button class="btn btn-quiet" type="button" id="handoff-btn">Hand off to implementation</button>
+      </div>
+      <p class="note">Council participants have no bound tools, so they cannot edit the repository. Diverse personas are not necessarily different models, and a vote does not prove the winning plan is correct. It uses several model calls.</p>
+    </div>
+  </section>
+
+  <!-- ================= sessions ================= -->
+  <section id="sessions" data-chapter="~/desk tabs">
+    <div class="wrap">
+      <div class="head rv">
+        <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="cm">@tab:api-3f2 is my endpoint still 200?</span></p>
+        <h2>Project agents that can talk to each other.</h2>
+        <p class="body">Run parallel session tabs and address another live tab with <code>@tab:&lt;session-id&gt; &lt;message&gt;</code>. Requests queue while the recipient is busy. Linked replies appear in both transcripts, with controls to open the other tab or attach the reply to your draft.</p>
+      </div>
+
+      <div class="bridge rv" id="bridge">
+        <div class="win">
+          <div class="bar" aria-hidden="true"><i></i><i></i><i></i><span>frontend</span></div>
+          <ol class="transcript" id="t-left">
+            <li>
+              <span class="who">you</span>
+              <span class="msg">@tab:api-3f2 is <code>GET /v2/ingest</code> still returning 200 after the queue change?</span>
+            </li>
+            <li id="left-reply" hidden>
+              <span class="who">&#8627; api-3f2</span>
+              <span class="meta">replied 11:04 &middot; 2 files read</span>
+              <span class="msg" id="left-reply-msg"></span>
+            </li>
+          </ol>
+          <div class="composer">
+            <p class="composer-line" id="draft"><span class="ps" aria-hidden="true">&#10095;</span><span id="draft-text">Waiting on api-3f2&hellip;</span></p>
+            <button class="btn btn-quiet" type="button" id="act-open" disabled>Open tab</button>
+            <button class="btn btn-primary" type="button" id="act-attach" disabled>Attach to draft</button>
+          </div>
         </div>
-        <div class="rv" style="--i:1">
-          <h3>Questions that need reading</h3>
-          <p class="body"><code>/research</code> fans a question across research
-            subagents, with a fact-check pass before the answer reaches you. Three by
-            default, up to six.</p>
+        <div class="win">
+          <div class="bar" aria-hidden="true"><i></i><i></i><i></i><span>api</span></div>
+          <ol class="transcript" id="t-right">
+            <li>
+              <span class="who">you</span>
+              <span class="msg">Extract the ingest worker, keep the routes where they are.</span>
+            </li>
+            <li id="right-work">
+              <span class="who">nova</span>
+              <span class="msg">Editing <code>ingest/worker.py</code>&hellip;</span>
+              <span class="queued" id="queued">&#8226; 1 message queued while this tab is busy</span>
+            </li>
+            <li id="right-reply" hidden>
+              <span class="who">nova</span>
+              <span class="meta">&#8617; sent to frontend 11:04</span>
+              <span class="msg" id="right-reply-msg"></span>
+            </li>
+          </ol>
+          <div class="composer">
+            <p class="composer-line"><span class="ps" aria-hidden="true">&#10095;</span>running tests<span class="cursor" aria-hidden="true"></span></p>
+          </div>
+        </div>
+      </div>
+      <p class="note">Messaging connects tabs within one Nova window. Each recipient keeps its project and approval boundaries. Only the explicit message is shared, and pending messages are held in memory.</p>
+      <p class="sr" role="status" id="tab-status"></p>
+    </div>
+  </section>
+
+  <!-- ================= models ================= -->
+  <section id="models" class="s-airy" data-chapter="~/.nova/config.toml">
+    <div class="wrap">
+      <div class="head rv">
+        <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="cm">/model</span></p>
+        <h2>Your model choices, across the workflow.</h2>
+        <p class="body">Nova speaks to hosted providers and to local Ollama models. <code>/model</code> sets the main agent and the delegated roles. Optional <code>/router</code> profiles pick among configured routes per turn using a decision model, and fall back to the default route when that decision fails.</p>
+      </div>
+
+      <dl class="ledger rv">
+        <div>
+          <dt>Main agent</dt>
+          <dd>the model in the loop</dd>
+          <dd><code>claude-sonnet-4-6</code> &middot; edits, verifies, answers</dd>
+        </div>
+        <div>
+          <dt>Subagents</dt>
+          <dd>delegated work</dd>
+          <dd><code>gpt-4.1-mini</code> &middot; searches, test runs, focused jobs</dd>
+        </div>
+        <div>
+          <dt>Router</dt>
+          <dd>per-turn selection</dd>
+          <dd><code>/router</code> off by default &middot; decision model reads the turn, then routes it</dd>
+        </div>
+        <div>
+          <dt>Local</dt>
+          <dd>Ollama on your machine</dd>
+          <dd><code>qwen2.5-coder:14b</code> &middot; no provider charges for this role</dd>
+        </div>
+      </dl>
+
+      <div class="providers-row rv">
+        <p>Providers and local runtimes Nova can be pointed at:</p>
+        <span title="Anthropic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor" width="26" height="26"><path d="M13.827 3.52h3.603L24 20h-3.603l-6.57-16.48zm-7.258 0h3.767L16.906 20h-3.674l-1.343-3.461H5.017l-1.344 3.46H0L6.57 3.522zm4.132 9.959L8.453 7.687 6.205 13.48h4.496z"/></svg></span>
+        <span title="OpenAI" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor" width="26" height="26"><path d="M9.205 8.658v-2.26c0-.19.072-.333.238-.428l4.543-2.616c.619-.357 1.356-.523 2.117-.523 2.854 0 4.662 2.212 4.662 4.566 0 .167 0 .357-.024.547l-4.71-2.759a.797.797 0 00-.856 0l-5.97 3.473zm10.609 8.8V12.06c0-.333-.143-.57-.429-.737l-5.97-3.473 1.95-1.118a.433.433 0 01.476 0l4.543 2.617c1.309.76 2.189 2.378 2.189 3.948 0 1.808-1.07 3.473-2.76 4.163zM7.802 12.703l-1.95-1.142c-.167-.095-.239-.238-.239-.428V5.899c0-2.545 1.95-4.472 4.591-4.472 1 0 1.927.333 2.712.928L8.23 5.067c-.285.166-.428.404-.428.737v6.898zM12 15.128l-2.795-1.57v-3.33L12 8.658l2.795 1.57v3.33L12 15.128zm1.796 7.23c-1 0-1.927-.332-2.712-.927l4.686-2.712c.285-.166.428-.404.428-.737v-6.898l1.974 1.142c.167.095.238.238.238.428v5.233c0 2.545-1.974 4.472-4.614 4.472zm-5.637-5.303l-4.544-2.617c-1.308-.761-2.188-2.378-2.188-3.948A4.482 4.482 0 014.21 6.327v5.423c0 .333.143.571.428.738l5.947 3.449-1.95 1.118a.432.432 0 01-.476 0zm-.262 3.9c-2.688 0-4.662-2.021-4.662-4.519 0-.19.024-.38.047-.57l4.686 2.71c.286.167.571.167.856 0l5.97-3.448v2.26c0 .19-.07.333-.237.428l-4.543 2.616c-.619.357-1.356.523-2.117.523zm5.899 2.83a5.947 5.947 0 005.827-4.756C22.287 18.339 24 15.84 24 13.296c0-1.665-.713-3.282-1.998-4.448.119-.5.19-.999.19-1.498 0-3.401-2.759-5.947-5.946-5.947-.642 0-1.26.095-1.88.31A5.962 5.962 0 0010.205 0a5.947 5.947 0 00-5.827 4.757C1.713 5.447 0 7.945 0 10.49c0 1.666.713 3.283 1.998 4.448-.119.5-.19 1-.19 1.499 0 3.401 2.759 5.946 5.946 5.946.642 0 1.26-.095 1.88-.309a5.96 5.96 0 004.162 1.713z"/></svg></span>
+        <span title="Google Gemini" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor" width="26" height="26"><path d="M12 0C12 3.2 13.6 6.2 16.2 8.1 18.8 10 22 10.7 24 12c-3.2 0-6.2 1.6-8.1 4.2C14 18.8 13.3 22 12 24c0-3.2-1.6-6.2-4.2-8.1C5.2 14 2 13.3 0 12c3.2 0 6.2-1.6 8.1-4.2C10 5.2 10.7 2 12 0z"/></svg></span>
+        <span title="NVIDIA NIM" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor" width="26" height="26"><path d="M9.6 8.4v-1.5c.2 0 .4 0 .6-.1 5.6-.3 9.2 4.7 9.2 4.7s-3.9 5.4-8.1 5.4c-.6 0-1.2-.1-1.7-.3v-5.6c2.2.3 2.7 1.3 4 3.5l3-2.5s-2.2-2.9-6-2.9c-.3 0-.7 0-1 .1V8.4zM9.6 3v2.6c.2 0 .4-.1.6-.1 7.8-.3 12.8 6.4 12.8 6.4s-5.8 7.1-12 7.1c-.5 0-1 0-1.4-.1v1.6c.4 0 .8.1 1.2.1 5 0 8.7-2.6 12.2-5.6.6.5 3 1.6 3.5 2.1-3.4 2.8-11.2 5.1-15.6 5.1-.4 0-.9 0-1.3-.1V21H3V3h6.6zm0 11.9v1.3c-5.2-.9-6.7-6.4-6.7-6.4S5.4 6.4 9.6 5.9v1.4h-.1c-2.2-.3-3.9 1.8-3.9 1.8s1 3.4 4 5.8z"/></svg></span>
+        <span title="Ollama" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor" width="26" height="26"><path d="M7.4 6.1c.5-.6 1-1.5 1-2.6C8.4 1.9 7.7.9 7 .9S5.6 1.9 5.6 3.5c0 1.1.5 2 1 2.6-.9.5-1.4 1.5-1.4 2.7v3.4c0 .5.4.9.9.9h1.3c.5 0 .9-.4.9-.9V8.8c0-1.2-.5-2.2-1.4-2.7h.5zm9.6 0c.5-.6 1-1.5 1-2.6 0-1.6-.7-2.6-1.4-2.6s-1.4 1-1.4 2.6c0 1.1.5 2 1 2.6-.9.5-1.4 1.5-1.4 2.7v3.4c0 .5.4.9.9.9h1.3c.5 0 .9-.4.9-.9V8.8c0-1.2-.5-2.2-1.4-2.7h.5zM12 4.6c-2.2 0-3.4 1.9-3.4 4.2v4.5c-.9.6-1.5 1.6-1.5 2.8 0 2.2 1.8 4 4 4h1.8c2.2 0 4-1.8 4-4 0-1.2-.6-2.2-1.5-2.8V8.8c0-2.3-1.2-4.2-3.4-4.2z"/></svg></span>
+        <span title="OpenRouter" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor" width="26" height="26"><path d="M16.8 3.3h3.8c1.2 0 2.3.5 3.1 1.3l-4 4a2.4 2.4 0 00-1.7-.7h-5.3l-2.5-2.5.1-.1L12.4 3.3h4.4zm3.9 9.4l4 4c-.8.8-1.9 1.3-3.1 1.3h-3.8l-2.9-2.9-1.1-1.1h5.2c.6 0 1.2-.3 1.7-.7v-.6zM0 11.3h4.9c.7 0 1.4.3 1.9.8l2.9 2.9H4.4c-.6 0-1.2.3-1.7.7l-2.7-2.7v-1.7zm0 1.7l2.7 2.7 1.7-1.7-1.7-1.7L0 13z"/></svg></span>
+        <span title="OpenCode" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor" width="26" height="26"><path d="M4 3h16v18H4V3zm2 2v14h12V5H6zm2 2h8v10H8V7z"/></svg></span>
+      </div>
+      <p class="note">Routing is off by default and needs configuration. Model capabilities, credentials and provider charges still apply, and while local inference is available, selecting it does not make every external integration offline.</p>
+    </div>
+  </section>
+
+  <!-- ================= plans ================= -->
+  <section id="plans" data-chapter="~/repo/.nova/plans">
+    <div class="wrap">
+      <div class="head rv">
+        <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="cm">find the plan we wrote last week</span></p>
+        <h2>Plans you can find again.</h2>
+        <p class="body">Read-only planning separates investigation from implementation. Approved plans live next to their project:</p>
+      </div>
+
+      <div class="split">
+        <div class="tree rv" role="group" aria-label="Where approved plans are stored">
+          <p><span class="g"># user-approved plans, project and archive</span></p>
+          <p><span class="k">your-repo/</span></p>
+          <p>&#9500;&#9472; .nova/plans/</p>
+          <p>&nbsp;&nbsp;&nbsp;&#9500;&#9472; <span class="k">plan-extract-ingest-worker.md</span> <span class="c">approved</span></p>
+          <p>&nbsp;&nbsp;&nbsp;&#9492;&#9472; plan-lazy-memory-index.md <span class="c">approved</span></p>
+          <p>&nbsp;</p>
+          <p><span class="k">~/.nova/plans/</span></p>
+          <p>&#9500;&#9472; your-repo/</p>
+          <p>&nbsp;&nbsp;&nbsp;&#9500;&#9472; <span class="k">plan-extract-ingest-worker.md</span> <span class="c">mirror</span></p>
+          <p>&nbsp;&nbsp;&nbsp;&#9492;&#9472; plan-lazy-memory-index.md <span class="c">mirror</span></p>
+          <p>&#9492;&#9472; other-project/</p>
+          <p>&nbsp;&nbsp;&nbsp;&#9492;&#9472; plan-tidy-colour-tokens.md <span class="c">auto-approved, archive only</span></p>
+        </div>
+        <div class="split-copy rv" style="--i:1">
+          <h3>Approve once, read it back in any later session</h3>
+          <p class="body">The agent's <code>recent_plans</code> tool lists both locations for the current project and reads the saved Markdown, so a committed decision comes back with its reasoning attached.</p>
+          <ul class="proof">
+            <li>Project plans in <code>&lt;project&gt;/.nova/plans/</code></li>
+            <li>Mirrored to <code>~/.nova/plans/&lt;project-slug&gt;/</code></li>
+            <li>Auto-approved plans stay in the archive</li>
+          </ul>
+          <p class="note">Optional <code>/claude-plan</code> and <code>/codex-plan</code> let an installed, authenticated Claude Code or Codex CLI prepare a plan for Nova to implement after approval. Those integrations bring their own installation and account requirements.</p>
         </div>
       </div>
     </div>
   </section>
-
-<!-- ================= safe ================= -->
-  <section id="safe">
+  <!-- ================= trust and control ================= -->
+  <section id="trust" class="s-airy" data-chapter="~/ledger">
     <div class="wrap">
       <div class="head rv">
-        <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:16">open safe.book</span></p>
-        <h2>Autonomous doesn't mean uncontrolled.</h2>
-        <p class="body">Nova will edit your files and run commands. What it won't do is
-          decide on its own what counts as risky. Every tool has a tier, and the tiers are
-          yours to set.</p>
+        <p class="cmdline"><span class="ps">nova &#10095;</span><span class="typed" style="--n:34">cat ~/.nova/refinement_events.json</span></p>
+        <h2>Nothing here changes behind your back.</h2>
+        <p class="body">Three things decide how far Nova can go on its own: what it learned, what still needs your approval, and what you can get back afterwards. Each one is a file you can read.</p>
       </div>
-      <figure class="rv">
-        <div class="shot">
-          <img src="assets/shot-shell.webp" width="1600" height="1106" loading="lazy"
-               alt="Nova's terminal interface. The user asks what changed on main this week, runs git log from the prompt, and Nova summarises the five commits beneath the command's output.">
+
+      <div class="trust-grid">
+        <div class="trust-col rv">
+          <h3>Learning, with a ledger</h3>
+          <p>When a run finishes, Hermes can review it and prepare a lesson, a habit, a skill or a prompt proposal. Each item lands in a versioned local ledger with its scope, the evidence it came from and its status.</p>
+          <p class="limit"><b>Where it stops:</b> approval and activation are separate steps, and a generated proposal is not treated as your instruction. Reviews and other auxiliary model work can add provider usage.</p>
         </div>
-        <figcaption>A shell command run from the prompt with <code>!</code>, its output inline,
-          and Nova's answer below it.</figcaption>
-      </figure>
-      <div class="pair">
-        <div class="rv">
-          <h3>Three tiers, per operation</h3>
-          <p class="body">Every tool is <code>allow</code>, <code>ask</code> or
-            <code>deny</code>, with hard-coded denials for things like <code>sudo</code>
-            and <code>rm -rf /</code> that your config cannot loosen. Editing and shell
-            commands ask by default. Set your own in
-            <code>.nova/approval-policy.json</code>.</p>
+        <div class="trust-col rv" style="--i:1">
+          <h3>Approval, per operation</h3>
+          <p>Editing a file, running a command, reaching the network: each has its own policy in <code>.nova/approval-policy.json</code>. Nova stops and asks when the policy says ask, and answers with the operation it wants to run.</p>
+          <p class="limit"><b>Where it stops:</b> hard-coded denials cannot be loosened by that file. In a headless run, <code>--deny-tools</code> rejects approval requests, so a pipeline stops instead of waiting on a prompt nobody is there to answer. It does not disable every tool, and it is not a read-only sandbox.</p>
         </div>
-        <div class="rv" style="--i:1">
-          <h3>Undo is already done</h3>
-          <p class="body">Before Nova overwrites or deletes a file it copies the original
-            into a snapshot. <code>/restore</code> puts it back, whether you asked for the
-            change or not.</p>
+        <div class="trust-col rv" style="--i:2">
+          <h3>Recovery, on your disk</h3>
+          <p>Context archives keep checksummed manifests so a compacted conversation can be inspected later. File snapshots let you browse and restore supported edits, and saved sessions keep their project, model and continuation details.</p>
+          <p class="limit"><b>Where it stops:</b> compaction is not perfect recall, and snapshot coverage depends on the operation. Large files can be skipped. Neither replaces version control.</p>
         </div>
       </div>
-      <ul class="proof rv" style="margin-top:clamp(32px,4vw,56px)">
-        <li>per-operation approval policy</li>
-        <li>snapshots before every write and delete</li>
-        <li><code>/restore</code></li>
-        <li>6 sandbox backends</li>
-        <li><code>--deny-tools</code> fails closed in CI</li>
+
+      <div class="codeblock win rv" style="margin-top:clamp(40px, 5vw, 64px)">
+        <div class="bar"><i></i><i></i><i></i><span>/learning review</span></div>
+        <button class="copy" type="button" data-copy="proposed skill: verify-pytest-before-commit
+scope: project
+evidence: 3 of 4 sessions in this repo committed before running the suite
+status: awaiting your decision">
+          <svg class="i-copy" aria-hidden="true"><use href="#i-copy"/></svg>
+          <svg class="i-check" aria-hidden="true"><use href="#i-check"/></svg>
+          <span>Copy</span>
+        </button>
+<pre><span class="c">proposed skill</span>   verify-pytest-before-commit
+<span class="c">scope</span>             project
+<span class="c">evidence</span>          3 of 4 sessions in this repo committed before running the suite
+<span class="c">status</span>            <span class="k">awaiting your decision</span>
+
+<span class="k">[a]pprove and activate   [r]evise   [d]iscard</span>   nothing is written until you choose</pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= capabilities ================= -->
+  <section id="also" class="s-tight" data-chapter="~/man nova">
+    <div class="wrap">
+      <div class="head rv">
+        <p class="cmdline"><span class="ps">nova &#10095;</span><span class="typed" style="--n:11">nova --help</span></p>
+        <h2>Everything else, and what each one needs.</h2>
+        <p class="body">Same rule as above: the extra is named on the row that needs it, so nothing shows up as a surprise during setup.</p>
+      </div>
+      <ul class="caps rv">
+        <li><span class="cap-name">Recoverable context</span><span class="cap-line">Inspect the context window, compact a conversation, browse recovery archives.</span></li>
+        <li><span class="cap-name">Resume saved work</span><span class="cap-line">Search saved sessions and read their project, model and continuation details.</span></li>
+        <li><span class="cap-name">Continue from other assistants</span><span class="cap-line">Import supported local Claude, Codex or Nova conversations and use them as context.</span></li>
+        <li><span class="cap-name">Goal mode</span><span class="cap-line">Keep working toward one objective across turns, with pause, resume and a turn budget.</span></li>
+        <li><span class="cap-name">Background specialists</span><span class="cap-line">Delegate focused jobs and keep working in your own tab.</span><span class="cap-tag">agents-server extra</span></li>
+        <li><span class="cap-name">Five terminal layouts</span><span class="cap-line">Dashboard, Classic, Centered, Banner or Minimal, plus color palettes.</span></li>
+        <li><span class="cap-name">Local voice</span><span class="cap-line">Dictate prompts and hear replies read back. Needs audio hardware, and the speech models download on first use.</span><span class="cap-tag">voice extra</span></li>
+        <li><span class="cap-name">Images in the conversation</span><span class="cap-line">Paste a screenshot and use it as task context.</span><span class="cap-tag">needs a vision model</span></li>
+        <li><span class="cap-name">Skills, MCP and plugins</span><span class="cap-line">Add reusable workflows, external tools and Python extensions.</span><span class="cap-tag">per integration</span></li>
+        <li><span class="cap-name">File recovery</span><span class="cap-line">Browse and restore snapshots from supported file operations.</span></li>
+        <li><span class="cap-name">Headless automation</span><span class="cap-line">One-shot tasks with text, JSON or streamed JSON, plus a JSON-lines pipe.</span></li>
+        <li><span class="cap-name">Remote and scheduled work</span><span class="cap-line">Discord and Telegram bridges, cron tasks, signed webhook events.</span><span class="cap-tag">integration config</span></li>
       </ul>
     </div>
   </section>
 
-  <!-- ================= where: integrations + models ================= -->
-  <section id="reach">
-    <div class="wrap split">
-      <div class="split-copy rv">
-        <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:13">open where.book</span></p>
-        <h2>Use it where you already work.</h2>
-        <p class="body">The terminal is the main event, not the only one. The same agent
-          runs headless in CI, answers from Discord or Telegram, and accepts runs from a
-          signed webhook.</p>
-        <p class="body">Nova is the agent and runtime layer, not a model. Pick a provider in
-          <code>/model</code>, including any model id a provider hasn't listed yet.</p>
-      </div>
-      <div class="codeblock win rv" style="--i:1">
-        <div class="bar" aria-hidden="true"><i></i><i></i><i></i><span>headless.sh</span></div>
-        <button class="copy" type="button" data-copy='uv run nova -p "run the suite, report failures" --output-format json --max-turns 10 --deny-tools'><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button>
-<pre><span class="c"># machine-readable output, capped at 10 turns,
-# approvals denied instead of awaited</span>
-<span class="k">uv run nova</span> -p "run the suite, report failures" \
-  --output-format json \
-  --max-turns 10 \
-  --deny-tools
-
-<span class="c"># or pipe the prompt in</span>
-echo "explain src/main.py" | <span class="k">uv run nova</span> -p</pre>
-      </div>
-    </div>
-  </section>
-
-  <!-- ================= grow: learning ================= -->
-  <section id="grow">
-    <div class="wrap">
-      <div class="head rv">
-        <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:16">open grow.book</span></p>
-        <h2>It learns from the work it gets wrong.</h2>
-        <p class="body">To be precise about what this means: Nova does not retrain your
-          model. It records what happened, grades it, retries when the grade is a fail,
-          and writes the lesson down where future sessions will read it. The improvements
-          are prompts, skills and thresholds on disk, all of which you can read and delete.</p>
-      </div>
-      <ol class="steps rv">
-        <li><h3>Trace</h3><p>Every run's tool calls, timings and verdicts go to a durable store.</p></li>
-        <li><h3>Grade</h3><p>A separate model call scores the result against five criteria.</p></li>
-        <li><h3>Retry</h3><p>A failing verdict re-runs the task with the feedback, up to three times.</p></li>
-        <li><h3>Learn</h3><p>A repeated failure can become a skill file or a tuned prompt.</p></li>
-      </ol>
-      <p class="body rv" style="margin-top:clamp(28px,4vw,44px);max-width:62ch">Off by
-        default, and still off in most cases even when on: a candidate prompt only replaces
-        the current one after enough runs to be worth trusting, and you can roll it back.</p>
-    </div>
-  </section>
-
   <!-- ================= install ================= -->
-  <section id="install">
+  <section id="install" data-chapter="~/install">
     <div class="wrap">
       <div class="head rv">
-        <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:14">cat INSTALL.md</span></p>
+        <p class="cmdline"><span class="ps">nova &#10095;</span><span class="typed" style="--n:13">cat README.md</span></p>
         <h2>Two commands and you are running.</h2>
-        <p class="body">Python 3.11 or newer. Nothing is installed globally.</p>
+        <p class="body">Python 3.11 or newer and uv. Nothing is installed globally.</p>
       </div>
       <div class="install-box win rv">
         <div class="tabs" role="tablist" aria-label="Install method">
@@ -934,82 +1170,90 @@ echo "explain src/main.py" | <span class="k">uv run nova</span> -p</pre>
           <button class="tab" role="tab" aria-selected="false" id="t-tool" aria-controls="p-tool" tabindex="-1">uv tool</button>
         </div>
         <div class="pane on" id="p-unix" role="tabpanel" aria-labelledby="t-unix">
-          <div class="cmd"><code>git clone https://github.com/Babitdor/NovaCode.git</code><button class="copy" type="button" data-copy="git clone https://github.com/Babitdor/NovaCode.git"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
-          <div class="cmd"><code>cd NovaCode &amp;&amp; uv sync</code><button class="copy" type="button" data-copy="cd NovaCode &amp;&amp; uv sync"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
-          <div class="cmd"><code>uv run nova</code><button class="copy" type="button" data-copy="uv run nova"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
+          <div class="cmd"><code>git clone https://github.com/Babitdor/NovaCode.git</code><button class="copy" type="button" data-copy="git clone https://github.com/Babitdor/NovaCode.git"><svg class="i-copy" aria-hidden="true"><use href="#i-copy"/></svg><svg class="i-check" aria-hidden="true"><use href="#i-check"/></svg><span>Copy</span></button></div>
+          <div class="cmd"><code>cd NovaCode &amp;&amp; uv sync</code><button class="copy" type="button" data-copy="cd NovaCode &amp;&amp; uv sync"><svg class="i-copy" aria-hidden="true"><use href="#i-copy"/></svg><svg class="i-check" aria-hidden="true"><use href="#i-check"/></svg><span>Copy</span></button></div>
+          <div class="cmd"><code>uv run nova</code><button class="copy" type="button" data-copy="uv run nova"><svg class="i-copy" aria-hidden="true"><use href="#i-copy"/></svg><svg class="i-check" aria-hidden="true"><use href="#i-check"/></svg><span>Copy</span></button></div>
         </div>
         <div class="pane" id="p-win" role="tabpanel" aria-labelledby="t-win">
-          <div class="cmd"><code>git clone https://github.com/Babitdor/NovaCode.git</code><button class="copy" type="button" data-copy="git clone https://github.com/Babitdor/NovaCode.git"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
-          <div class="cmd"><code>cd NovaCode; uv sync</code><button class="copy" type="button" data-copy="cd NovaCode; uv sync"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
-          <div class="cmd"><code>uv run nova</code><button class="copy" type="button" data-copy="uv run nova"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
+          <div class="cmd"><code>git clone https://github.com/Babitdor/NovaCode.git</code><button class="copy" type="button" data-copy="git clone https://github.com/Babitdor/NovaCode.git"><svg class="i-copy" aria-hidden="true"><use href="#i-copy"/></svg><svg class="i-check" aria-hidden="true"><use href="#i-check"/></svg><span>Copy</span></button></div>
+          <div class="cmd"><code>cd NovaCode; uv sync</code><button class="copy" type="button" data-copy="cd NovaCode; uv sync"><svg class="i-copy" aria-hidden="true"><use href="#i-copy"/></svg><svg class="i-check" aria-hidden="true"><use href="#i-check"/></svg><span>Copy</span></button></div>
+          <div class="cmd"><code>uv run nova</code><button class="copy" type="button" data-copy="uv run nova"><svg class="i-copy" aria-hidden="true"><use href="#i-copy"/></svg><svg class="i-check" aria-hidden="true"><use href="#i-check"/></svg><span>Copy</span></button></div>
         </div>
         <div class="pane" id="p-tool" role="tabpanel" aria-labelledby="t-tool">
-          <div class="cmd"><code>uv tool install "novacode-cli @ git+https://github.com/Babitdor/NovaCode.git"</code><button class="copy" type="button" data-copy='uv tool install "novacode-cli @ git+https://github.com/Babitdor/NovaCode.git"'><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
-          <div class="cmd"><code>nova</code><button class="copy" type="button" data-copy="nova"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
+          <div class="cmd"><code>uv tool install "novacode-cli @ git+https://github.com/Babitdor/NovaCode.git"</code><button class="copy" type="button" data-copy='uv tool install "novacode-cli @ git+https://github.com/Babitdor/NovaCode.git"'><svg class="i-copy" aria-hidden="true"><use href="#i-copy"/></svg><svg class="i-check" aria-hidden="true"><use href="#i-check"/></svg><span>Copy</span></button></div>
+          <div class="cmd"><code>nova</code><button class="copy" type="button" data-copy="nova"><svg class="i-copy" aria-hidden="true"><use href="#i-copy"/></svg><svg class="i-check" aria-hidden="true"><use href="#i-check"/></svg><span>Copy</span></button></div>
         </div>
       </div>
-      <p class="install-note">Voice input and output is optional and adds about 2 GB: <code>uv pip install -e '.[voice]'</code></p>
+      <p class="install-note">Voice is optional and pulls its own model downloads. <code>uv sync --extra voice</code> adds local speech in and out; <code>voice-orpheus</code> (about 2 GB), <code>voice-parakeet</code> and <code>voice-pocket</code> are separate opted-in extras, and the microphone and speakers are yours.</p>
     </div>
   </section>
 
   <!-- ================= faq ================= -->
-  <section id="faq">
+  <section id="faq" data-chapter="~/faq">
     <div class="wrap faq-grid">
-      <div class="rv" style="display:grid;gap:16px;align-content:start;position:sticky;top:104px"><p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:8">man nova</span></p><h2>Questions people ask first.</h2></div>
+      <div class="rv" style="display:grid;gap:16px;align-content:start;position:sticky;top:104px">
+        <p class="cmdline"><span class="ps">nova &#10095;</span><span class="typed" style="--n:8">man nova</span></p>
+        <h2>Questions people ask first.</h2>
+      </div>
       <div class="rv" style="--i:1">
         <details>
-          <summary>Do I need a global install?</summary>
-          <p>No. <code>uv run nova</code> runs the current code straight from the repo, so there are no stale copies and no PATH juggling. Add the repo's <code>.venv</code> to your PATH if you want a bare <code>nova</code> command anywhere.</p>
+          <summary>What does Nova remember between sessions?</summary>
+          <p>Preferences and topic notes as readable Markdown, in your own directory. A compact home index routes to topic maps and related pages, and lessons about one repository stay scoped to it. The agent can search that memory and open the full page behind a result. Look at it yourself: <code>~/.nova/agents/&lt;agent&gt;/memories/INDEX.md</code>.</p>
         </details>
         <details>
-          <summary>Which model providers work?</summary>
-          <p>OpenAI, Anthropic, Google Gemini, NVIDIA, OpenRouter, OpenCode, and local Ollama. Switch from the <code>/model</code> picker, including any model id a provider has not listed yet. Reasoning effort changes without a restart via <code>/effort</code>.</p>
+          <summary>What does /dream actually do?</summary>
+          <p>It prepares backups and navigation, then asks the agent to consolidate the notes. Maintenance checks the local links and keeps each topic body intact. A fresh install starts with the memory scaffold, and the wiki grows around whatever you have written down. Navigation maintenance does not confirm that a remembered claim is still true.</p>
         </details>
         <details>
-          <summary>Does it stay fast in a long session?</summary>
-          <p>That is what it is tuned for. Status updates repaint in place, rendered Markdown is cached, subagents compile on first use, and garbage collection runs while you are idle. Any freeze over one second is logged to <code>~/.nova/logs/freeze.log</code>.</p>
+          <summary>What is the council for?</summary>
+          <p>Comparing approaches before you commit to one. <code>/council &lt;task&gt;</code> runs independent proposals through critique, anonymous ranked voting and a judging stage, then puts up to three plans in front of you. Council participants have no bound tools, so they cannot edit the repository, and handing a plan to implementation is a separate approval.</p>
         </details>
         <details>
-          <summary>Does Nova check its own work by default?</summary>
-          <p>No, and this is worth being clear about. Grading adds one extra model call
-            per turn, so it is off until you ask for it. <code>/learning on</code> grades
-            each finished run against five criteria. For one specific piece of work,
-            <code>/goal rubric &lt;what counts as done&gt;</code> is tighter than a general
-            grade, and revises up to three times.</p>
+          <summary>Can two sessions in different projects talk?</summary>
+          <p>Yes. Run parallel tabs and address another one with <code>@tab:&lt;session-id&gt; &lt;message&gt;</code>. Requests queue while the recipient is busy, and linked replies appear in both transcripts, with controls to open the other tab or attach the reply to your draft. Messaging runs inside one Nova window today, each tab keeps its own project and approval boundaries, and only the explicit message is shared.</p>
+        </details>
+        <details>
+          <summary>Which models can I use?</summary>
+          <p>Hosted providers and local Ollama models. <code>/model</code> sets the main agent and the delegated roles, so a cheaper model can handle background work. Optional <code>/router</code> profiles pick a route per turn with a decision model; routing is off by default and falls back to the default route when its decision path fails.</p>
+        </details>
+        <details>
+          <summary>Where do approved plans end up?</summary>
+          <p>A plan you approve is saved in <code>&lt;project&gt;/.nova/plans/</code> and mirrored to <code>~/.nova/plans/&lt;project-slug&gt;/</code>. Plans approved automatically stay only in the global archive, so it never looks like you signed off on something you did not see. Later, ask Nova to find the recent plan and it searches both places.</p>
         </details>
         <details>
           <summary>Does the self-improvement retrain my model?</summary>
-          <p>No. There is no training anywhere in Nova. What changes are files on your disk:
-            a skill written from a repeated failure, a prompt candidate promoted after
-            enough runs, and tuned thresholds. You can read all of them, and roll them
-            back.</p>
+          <p>No. There is no training anywhere in Nova, and nothing is uploaded to change a model. What changes are files on your disk: a skill written from a repeated failure, a prompt candidate promoted after enough runs, tuned thresholds. You can read all of them, and roll them back.</p>
         </details>
         <details>
           <summary>What happens when a tool call needs approval?</summary>
-          <p>It stops and asks you, configurable per operation in
-            <code>.nova/approval-policy.json</code>. Hard-coded denials, like
-            <code>rm -rf /</code>, can't be loosened by that file. Headless runs are the
-            exception: <code>--deny-tools</code> rejects everything, so a pipeline fails
-            closed instead of hanging on a prompt nobody is there to answer.</p>
+          <p>It stops and asks you, configurable per operation in <code>.nova/approval-policy.json</code>. Hard-coded denials, like <code>rm -rf /</code>, cannot be loosened by that file. Headless runs are the exception: <code>--deny-tools</code> rejects approval requests so a pipeline stops rather than waiting on a prompt nobody is there to answer — that is not the same as disabling every tool.</p>
         </details>
         <details>
           <summary>Can I use it away from my machine?</summary>
-          <p>Yes. Bridge it to Discord or Telegram. Telegram takes voice notes, gives each session its own forum topic, and deletes a question once you have answered it. A signed webhook lets other systems start a run.</p>
+          <p>Yes, with integration config. Bridge it to Discord or Telegram: Telegram takes voice notes, gives each session its own forum topic, and deletes a question once you have answered it. Cron tasks and signed webhooks let other systems start a run. Scheduling depends on the Nova process or service being up.</p>
         </details>
       </div>
     </div>
   </section>
 
   <!-- ================= close ================= -->
-  <section class="close">
+  <section class="close" data-chapter="~/">
     <div class="wrap">
       <div class="close-box rv">
-        <h2>Install it and give it a real task.</h2>
-        <p class="body">Free, MIT licensed, and it runs on the model and machine you already have.</p>
+        <h2>Point it at a repository tonight.</h2>
+        <p class="lede">Approval still applies, memory still lands on disk in files you can read, and the first thing it does is look around before it touches anything.</p>
         <div class="actions">
-          <a class="btn btn-primary" href="#install">Install Nova <svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M221.66,133.66l-72,72a8,8,0,0,1-11.32-11.32L196.69,136H40a8,8,0,0,1,0-16H196.69L138.34,61.66a8,8,0,0,1,11.32-11.32l72,72A8,8,0,0,1,221.66,133.66Z"/></svg></a>
-          <a class="btn btn-quiet" href="https://github.com/Babitdor/NovaCode"><svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M208.31,75.68A59.78,59.78,0,0,0,202.93,28,8,8,0,0,0,196,24a59.75,59.75,0,0,0-48,24H124A59.75,59.75,0,0,0,76,24a8,8,0,0,0-6.93,4,59.78,59.78,0,0,0-5.38,47.68A58.14,58.14,0,0,0,56,104v8a56.06,56.06,0,0,0,48.44,55.47A39.8,39.8,0,0,0,96,192v8H72a24,24,0,0,1-24-24A40,40,0,0,0,8,136a8,8,0,0,0,0,16,24,24,0,0,1,24,24,40,40,0,0,0,40,40H96v16a8,8,0,0,0,16,0V192a24,24,0,0,1,48,0v40a8,8,0,0,0,16,0V192a39.8,39.8,0,0,0-8.44-24.53A56.06,56.06,0,0,0,216,112v-8A58.14,58.14,0,0,0,208.31,75.68ZM200,112a40,40,0,0,1-40,40H112a40,40,0,0,1-40-40v-8a41.74,41.74,0,0,1,6.9-22.48A8,8,0,0,0,80,73.83a43.81,43.81,0,0,1,.79-33.58,43.88,43.88,0,0,1,32.32,20.06A8,8,0,0,0,119.82,64h32.35a8,8,0,0,0,6.74-3.69,43.87,43.87,0,0,1,32.32-20.06A43.81,43.81,0,0,1,192,73.83a8.09,8.09,0,0,0,1,7.65A41.72,41.72,0,0,1,200,104Z"/></svg>View source</a>
+          <a class="btn btn-primary" href="https://github.com/Babitdor/NovaCode" rel="noopener">
+            <svg aria-hidden="true"><use href="#i-arrow"/></svg>
+            Clone the repository
+          </a>
+          <a class="btn btn-quiet" href="docs/">Read the documentation</a>
         </div>
+        <ul class="proof">
+          <li>MIT licensed</li>
+          <li>Python 3.11+</li>
+          <li>cloud or local models</li>
+        </ul>
       </div>
     </div>
   </section>
@@ -1017,119 +1261,506 @@ echo "explain src/main.py" | <span class="k">uv run nova</span> -p</pre>
 
 <footer>
   <div class="wrap foot">
-    <span style="font-family:var(--mono)"><b style="color:var(--accent)">nova</b>@code:~$ exit <span style="opacity:.7"># MIT licensed</span></span>
+    <span>Nova, 2026. Built in the terminal, for the terminal.</span>
     <nav aria-label="Footer">
-      <a href="https://github.com/Babitdor/NovaCode">GitHub</a>
-      <a href="docs/index.html">Docs</a>
-      <a href="https://github.com/Babitdor/NovaCode/issues">Issues</a>
+      <a href="https://github.com/Babitdor/NovaCode" rel="noopener">GitHub</a>
+      <a href="docs/">Documentation</a>
+      <a href="#install">Install</a>
     </nav>
   </div>
 </footer>
 
 <div class="statusline" aria-hidden="true">
   <span class="mode">NOVA</span>
-  <span class="where" id="where">~/desk</span>
-  <span class="gauge"><i></i></span>
+  <span class="where" id="sl-where">~/index</span>
+  <span id="sl-hint">memory: index ready</span>
+  <span class="gauge" aria-hidden="true"><i></i></span>
 </div>
 
+<svg class="sr" aria-hidden="true" focusable="false">
+  <symbol id="i-copy" viewBox="0 0 256 256"><path fill="currentColor" d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 256 256"><path fill="currentColor" d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 256 256"><path fill="currentColor" d="M221.66,133.66l-72,72a8,8,0,0,1-11.32-11.32L196.69,136H40a8,8,0,0,1,0-16H196.69L138.34,61.66a8,8,0,0,1,11.32-11.32l72,72A8,8,0,0,1,221.66,133.66Z"/></symbol>
+</svg>
+
 <script>
-(() => {
-  // Entrances: reveal each block once, as it comes into view.
-  const reveal = new IntersectionObserver((entries) => {
-    for (const e of entries) {
-      if (e.isIntersecting) { e.target.classList.add("in"); reveal.unobserve(e.target); }
-    }
-  }, { rootMargin: "0px 0px -8% 0px", threshold: 0.12 });
-  document.querySelectorAll(".rv").forEach((el) => reveal.observe(el));
-
-  // The nav gets its rule once the page has moved: a sentinel, not a scroll listener.
-  const nav = document.getElementById("nav");
-  new IntersectionObserver(([e]) => nav.classList.toggle("stuck", !e.isIntersecting), { rootMargin: "-64px 0px 0px 0px" })
-    .observe(document.querySelector(".art"));
-
-  // The status line names the chapter in view.
-  const where = document.getElementById("where");
-  const names = { top: "~/desk", demo: "~/desk/demo.sh", verify: "~/desk/verify.book", code: "~/desk/code.book",
-                  build: "~/desk/build.book", safe: "~/desk/safe.book", reach: "~/desk/where.book",
-                  grow: "~/desk/grow.book", install: "~/desk/INSTALL.md", faq: "~/desk/man/nova" };
-  const spy = new IntersectionObserver((entries) => {
-    for (const e of entries) if (e.isIntersecting && names[e.target.id]) where.textContent = names[e.target.id];
-  }, { rootMargin: "-45% 0px -50% 0px" });
-  Object.keys(names).forEach((id) => { const el = document.getElementById(id); if (el) spy.observe(el); });
-
-  // The night sky, dark mode only: a few hundred slow-twinkling points.
-  const sky = document.getElementById("sky");
-  const dark = matchMedia("(prefers-color-scheme: dark)");
-  const still = matchMedia("(prefers-reduced-motion: reduce)");
-  let stars = [], raf = 0;
-  const paint = (t) => {
-    const g = sky.getContext("2d");
-    g.clearRect(0, 0, sky.width, sky.height);
-    for (const s of stars) {
-      const a = still.matches ? s.a : s.a * (0.55 + 0.45 * Math.sin(t / s.p + s.o));
-      g.fillStyle = `rgba(${s.c}, ${a})`;
-      g.fillRect(s.x, s.y, s.r, s.r);
-    }
-    raf = still.matches ? 0 : requestAnimationFrame(paint);
+/* Nova landing page — behaviour.
+   Every interaction here mirrors something Nova actually does; nothing is decorative
+   for its own sake. Reduced-motion users get the same final states without the travel. */
+(function () {
+  "use strict";
+  var $ = function (s) { return document.querySelector(s); };
+  var all = function (s) { return Array.prototype.slice.call(document.querySelectorAll(s)); };
+  var closest = function (node, sel) {
+    while (node && node.nodeType === 1) { if (node.matches(sel)) return node; node = node.parentNode; }
+    return null;
   };
-  const seed = () => {
-    cancelAnimationFrame(raf);
-    if (!dark.matches) return;
-    const dpr = Math.min(devicePixelRatio || 1, 2);
-    sky.width = innerWidth * dpr; sky.height = innerHeight * dpr;
-    const count = Math.round((innerWidth * innerHeight) / 5200);
-    stars = Array.from({ length: count }, () => ({
-      x: Math.random() * sky.width, y: Math.random() * sky.height,
-      r: (Math.random() < 0.12 ? 2 : 1) * dpr, a: 0.25 + Math.random() * 0.6,
-      p: 900 + Math.random() * 2600, o: Math.random() * 6.3,
-      c: Math.random() < 0.18 ? "244, 114, 63" : "236, 236, 239",
-    }));
-    paint(0);
+  var motion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  var calm = motion.matches;
+  if (motion.addEventListener) motion.addEventListener("change", function (e) { calm = e.matches; });
+  var animate = function (node, frames, opts) {
+    if (node && !calm && node.animate) node.animate(frames, opts);
   };
-  seed();
-  addEventListener("resize", seed, { passive: true });
-  dark.addEventListener("change", seed);
-  still.addEventListener("change", seed);
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden) cancelAnimationFrame(raf); else seed();
-  });
+  var RISE = [{ opacity: 0, transform: "translateY(8px)" }, { opacity: 1, transform: "none" }];
+  var EASE = "cubic-bezier(.22,.61,.36,1)";
+  var gap = function (ms) { return calm ? 0 : ms; };
 
-  // Copy buttons confirm in place.
-  document.querySelectorAll("[data-copy]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const label = btn.querySelector("span");
-      try {
-        await navigator.clipboard.writeText(btn.dataset.copy);
-        btn.classList.add("done"); label.textContent = "Copied";
-      } catch {
-        label.textContent = "Press Ctrl+C";
+  /* ---------- 1. each block arrives once, on its own ---------- */
+  var rv = all(".rv");
+  if (!window.IntersectionObserver) {
+    rv.forEach(function (n) { n.classList.add("in"); });
+  } else {
+    var io = new IntersectionObserver(function (rows) {
+      rows.forEach(function (r) {
+        if (r.isIntersecting) { r.target.classList.add("in"); io.unobserve(r.target); }
+      });
+    }, { rootMargin: "0px 0px -10% 0px", threshold: 0.06 });
+    rv.forEach(function (n) { io.observe(n); });
+  }
+
+  /* ---------- 2. the status line follows the page the way a shell follows your cwd ---------- */
+  var nav = $("#nav"), where = $("#sl-where"), hint = $("#sl-hint");
+  var HINTS = {
+    "~/desk": "home &middot; install below",
+    "~/desk/memory/INDEX.md": "memory &middot; index ready",
+    "~/desk/.nova/plans": "council &middot; approval is separate",
+    "~/desk tabs": "tabs &middot; two projects linked",
+    "~/.nova/config.toml": "models &middot; hosted or local",
+    "~/repo/.nova/plans": "plans &middot; archived per project",
+    "~/ledger": "ledger &middot; evidence attached",
+    "~/man nova": "capabilities &middot; limits named per row",
+    "~/install": "install &middot; two ways in",
+    "~/faq": "faq &middot; what it does not do",
+    "~/": "ready when you are"
+  };
+  var marks = all("[data-chapter]"), lastChapter = "", pendingPaint = false;
+  function paint() {
+    pendingPaint = false;
+    var y = window.scrollY || window.pageYOffset || 0;
+    if (nav) nav.classList.toggle("stuck", y > 24);
+    var cur = marks[0];
+    for (var i = 0; i < marks.length; i++) { if (marks[i].offsetTop - 130 <= y) cur = marks[i]; }
+    /* A closing section shorter than the 130px lead can never pass it, because the
+       document ends first, so its chapter would never show. At the end of the
+       page, the last chapter is the current one. */
+    if (y >= document.documentElement.scrollHeight - window.innerHeight - 2) cur = marks[marks.length - 1];
+    if (!cur || !where) return;
+    var ch = cur.getAttribute("data-chapter");
+    if (ch === lastChapter) return;
+    lastChapter = ch;
+    where.textContent = ch;
+    if (hint) hint.innerHTML = HINTS[ch] || "ready";
+  }
+  function onScroll() {
+    if (pendingPaint) return;
+    pendingPaint = true;
+    window.requestAnimationFrame(paint);
+  }
+  window.addEventListener("scroll", onScroll, { passive: true });
+  window.addEventListener("resize", onScroll);
+  paint();
+
+  /* ---------- 3. in dark mode the page is the night sky above the terminal ---------- */
+  var sky = $("#sky");
+  if (sky && sky.getContext) {
+    var dark = window.matchMedia("(prefers-color-scheme: dark)");
+    var ctx = sky.getContext("2d"), stars = [], raf = 0, seed = 20260219;
+    var rand = function () { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+    var sizeCanvas = function () {
+      var w = sky.clientWidth || window.innerWidth, h = sky.clientHeight || window.innerHeight;
+      var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      sky.width = Math.round(w * dpr);
+      sky.height = Math.round(h * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+    var seedStars = function () {
+      var w = sky.clientWidth || window.innerWidth, h = sky.clientHeight || window.innerHeight;
+      var count = Math.round(Math.min(190, Math.max(70, (w * h) / 15000)));
+      stars = [];
+      for (var i = 0; i < count; i++) {
+        stars.push({
+          x: rand() * w,
+          y: rand() * h * 0.86,
+          r: 0.4 + rand() * 1.1,
+          a: 0.16 + rand() * 0.55,
+          s: 0.5 + rand() * 1.7,
+          p: rand() * 6.283
+        });
       }
-      setTimeout(() => { btn.classList.remove("done"); label.textContent = "Copy"; }, 1800);
+    };
+    var draw = function (t) {
+      ctx.clearRect(0, 0, sky.clientWidth, sky.clientHeight);
+      for (var i = 0; i < stars.length; i++) {
+        var st = stars[i];
+        ctx.globalAlpha = calm ? st.a : st.a * (0.7 + 0.3 * Math.sin(st.p + t * 0.0009 * st.s));
+        ctx.fillStyle = "#cdd2ff";
+        ctx.beginPath();
+        ctx.arc(st.x, st.y, st.r, 0, 6.2832);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    };
+    var loop = function (t) { draw(t); raf = window.requestAnimationFrame(loop); };
+    var startSky = function () {
+      if (raf) { window.cancelAnimationFrame(raf); raf = 0; }
+      sizeCanvas();
+      if (!dark.matches) { ctx.clearRect(0, 0, sky.clientWidth, sky.clientHeight); return; }
+      seedStars();
+      if (calm) { draw(0); } else { loop(0); }
+    };
+    startSky();
+    var resizeTimer = 0;
+    window.addEventListener("resize", function () {
+      window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(startSky, 180);
+    });
+    if (dark.addEventListener) dark.addEventListener("change", startSky);
+    else if (dark.addListener) dark.addListener(startSky);
+  }
+
+  /* ---------- 4. the menu, on the screen widths that need one ---------- */
+  var menuBtn = $("#menu-btn"), navLinks = $("#nav-links");
+  var setMenu = function (open) {
+    if (!menuBtn || !navLinks) return;
+    menuBtn.setAttribute("aria-expanded", open ? "true" : "false");
+    navLinks.classList.toggle("open", open);
+    if (nav) nav.classList.toggle("menu-open", open);
+  };
+  if (menuBtn && navLinks) {
+    menuBtn.addEventListener("click", function () {
+      setMenu(menuBtn.getAttribute("aria-expanded") !== "true");
+    });
+    navLinks.addEventListener("click", function (e) {
+      if (e.target.tagName === "A") setMenu(false);
+    });
+    /* A tap anywhere else puts the page back in charge. Clicks inside the bar
+       (including the toggle itself) belong to the bar. */
+    document.addEventListener("click", function (e) {
+      if (menuBtn.getAttribute("aria-expanded") !== "true") return;
+      var t = e.target;
+      if (t && t.closest && t.closest("#nav")) return;
+      setMenu(false);
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && menuBtn.getAttribute("aria-expanded") === "true") {
+        setMenu(false);
+        menuBtn.focus();
+      }
+    });
+    window.addEventListener("resize", function () { if (window.innerWidth > 1080) setMenu(false); });
+  }
+
+  /* ---------- 5. install tabs ---------- */
+  all('[role="tablist"]').forEach(function (list) {
+    var tabs = Array.prototype.slice.call(list.querySelectorAll('[role="tab"]'));
+    var pick = function (tab, moveFocus) {
+      tabs.forEach(function (t) {
+        var on = t === tab;
+        t.setAttribute("aria-selected", on ? "true" : "false");
+        t.tabIndex = on ? 0 : -1;
+        var pane = document.getElementById(t.getAttribute("aria-controls"));
+        if (pane) pane.classList.toggle("on", on);
+      });
+      if (moveFocus) tab.focus();
+    };
+    tabs.forEach(function (tab, i) {
+      tab.addEventListener("click", function () { pick(tab, false); });
+      tab.addEventListener("keydown", function (e) {
+        var next = null;
+        if (e.key === "ArrowRight" || e.key === "ArrowDown") next = tabs[(i + 1) % tabs.length];
+        else if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = tabs[(i - 1 + tabs.length) % tabs.length];
+        else if (e.key === "Home") next = tabs[0];
+        else if (e.key === "End") next = tabs[tabs.length - 1];
+        if (next) { e.preventDefault(); pick(next, true); }
+      });
+    });
+    /* The markup ships macOS/Linux selected; a Windows visitor should not have to go looking. */
+    var host = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "";
+    var onWin = tabs.filter(function (t) { return /win/i.test(t.id) || /windows/i.test(t.textContent); })[0];
+    if (onWin && /win/i.test(host)) pick(onWin, false);
+  });
+
+  /* ---------- 6. copy buttons ---------- */
+  all("[data-copy]").forEach(function (btn) {
+    /* The label swaps to "Copied" and nothing else announces it: without a live
+       region a screen reader user gets no confirmation that anything happened. */
+    btn.setAttribute("aria-live", "polite");
+    btn.addEventListener("click", function () {
+      var text = btn.getAttribute("data-copy") || "";
+      var settle = function (ok) {
+        var label = btn.querySelector("span");
+        btn.classList.toggle("done", ok);
+        if (label) label.textContent = ok ? "Copied" : "Press Ctrl+C";
+        window.setTimeout(function () {
+          btn.classList.remove("done");
+          if (label) label.textContent = "Copy";
+        }, 1900);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () { settle(true); }, function () { settle(false); });
+      } else {
+        var ta = document.createElement("textarea");
+        ta.setAttribute("readonly", "readonly");
+        ta.style.position = "fixed";
+        ta.style.top = "-1000px";
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        var ok = false;
+        try { ok = document.execCommand("copy"); } catch (err) { ok = false; }
+        document.body.removeChild(ta);
+        settle(ok);
+      }
     });
   });
 
-  // Install tabs, with arrow-key movement.
-  const tabs = [...document.querySelectorAll(".tab")];
-  const select = (tab) => {
-    tabs.forEach((t) => {
-      const on = t === tab;
-      t.setAttribute("aria-selected", on);
-      t.tabIndex = on ? 0 : -1;
-      document.getElementById(t.getAttribute("aria-controls")).classList.toggle("on", on);
+  /* ---------- 7. the memory explorer ---------- */
+  var PAGES = {
+    "INDEX.md": {
+      path: "memories/INDEX.md",
+      title: "Memory Wiki",
+      body: '<p>Start at a topic map or a search. Read the page in full, follow the links that matter, then line the date up against the project you are actually in.</p>' +
+        '<ul class="ex-list">' +
+        '<li><button class="ex-link" type="button" data-open="wiki-nova.md">wiki-nova.md</button><span>runtime, UI and agent architecture</span></li>' +
+        '<li><button class="ex-link" type="button" data-open="wiki-operations.md">wiki-operations.md</button><span>tools and memory management</span></li>' +
+        '<li><button class="ex-link" type="button" data-open="agent.md">agent.md</button><span>standing preferences</span></li>' +
+        '<li><button class="ex-link" type="button" data-open="HABITS.md">HABITS.md</button><span>work checklist</span></li>' +
+        '</ul>',
+      related: ["wiki-nova.md", "wiki-operations.md", "agent.md", "HABITS.md"]
+    },
+    "wiki-nova.md": {
+      path: "memories/wiki-nova.md",
+      title: "NovaCode runtime, UI and agent architecture",
+      body: '<p>The map for this codebase: one page per area, each one short enough to read before an edit.</p>' +
+        '<ul class="ex-list">' +
+        '<li><b>runtime</b><span>entry point, session state, shutdown</span></li>' +
+        '<li><b>tui</b><span>home layouts, screens, the composer</span></li>' +
+        '<li><b>agents</b><span>planning, delegation, specialist subagents</span></li>' +
+        '<li><button class="ex-link" type="button" data-open="nova-code.md">nova-code.md</button><span>lessons scoped to this repository</span></li>' +
+        '</ul>',
+      related: ["INDEX.md", "nova-code.md", "wiki-operations.md"]
+    },
+    "wiki-operations.md": {
+      path: "memories/wiki-operations.md",
+      title: "Operating practices, tools and memory management",
+      body: '<p>How the notes stay reachable, and what changes them.</p>' +
+        '<ul class="ex-list">' +
+        '<li><b>/dream</b><span>backs up first, then consolidates the notes</span></li>' +
+        '<li><b>maintenance</b><span>rebuilds the maps, reports unresolved links</span></li>' +
+        '<li><b>incidents</b><span>kept as history, not as standing rules</span></li>' +
+        '</ul>',
+      related: ["INDEX.md", "agent.md", "HABITS.md"]
+    },
+    "agent.md": {
+      path: "agent.md",
+      title: "User model and standing preferences",
+      body: '<p>Durable preferences, kept near the top of the file so compaction keeps them.</p>' +
+        '<ul class="ex-list">' +
+        '<li><b>Plans</b><span>approved plans live with their project</span></li>' +
+        '<li><b>Recall</b><span>start from the index, then read the page</span></li>' +
+        '<li><b>Report</b><span>say what passed, and what was not verified</span></li>' +
+        '</ul>',
+      related: ["INDEX.md", "HABITS.md"]
+    },
+    "HABITS.md": {
+      path: "HABITS.md",
+      title: "Habits Checklist",
+      body: '<p>Stable practices, in the order they apply.</p>' +
+        '<ul class="ex-list">' +
+        '<li><b>Work Checklist</b><span>scope, reproducer, smallest fix</span></li>' +
+        '<li><b>Final Review</b><span>diff, counts and claims against evidence</span></li>' +
+        '<li><b>Completion Report</b><span>what changed, what passed, what is unverified</span></li>' +
+        '</ul>',
+      related: ["INDEX.md", "agent.md"]
+    },
+    "nova-code.md": {
+      path: "memories/projects/nova-code.md",
+      title: "Project scoped lessons",
+      body: '<p>Kept with the checkout rather than globally, so a fact about one repository does not follow you into the next one.</p>' +
+        '<ul class="ex-list">' +
+        '<li><b>Scope is part of the note</b><span>where it was learned, and whether it still applies</span></li>' +
+        '<li><b>Corrections outrank notes</b><span>what you said last wins over what was written down</span></li>' +
+        '</ul>',
+      related: ["INDEX.md", "wiki-nova.md"]
+    }
+  };
+  var explorer = $("#explorer");
+  var exLog = $("#ex-log"), exStatus = $("#ex-status"), dream = $("#ex-dream");
+  if (explorer) {
+    var exPath = $("#ex-path"), exTitle = $("#ex-title"), exBody = $("#ex-body"), exRel = $("#ex-related");
+    var exPage = explorer.querySelector(".ex-page") || exBody;
+    var showPage = function (file) {
+      var page = PAGES[file];
+      if (!page) return;
+      all(".ex-file").forEach(function (b) {
+        b.setAttribute("aria-current", b.getAttribute("data-open") === file ? "true" : "false");
+      });
+      exPath.textContent = page.path;
+      exTitle.textContent = page.title;
+      exBody.innerHTML = page.body;
+      exRel.innerHTML = '<span class="ex-label">related</span>' + page.related.map(function (k) {
+        return '<button class="ex-link" type="button" data-open="' + k + '">' + k + "</button>";
+      }).join("");
+      animate(exPage, RISE, { duration: 340, easing: EASE });
+      if (exStatus) {
+        exStatus.textContent = page.title + ". " + page.related.length +
+          " related pages. Showing " + page.path + ".";
+      }
+    };
+    explorer.addEventListener("click", function (e) {
+      var btn = closest(e.target, "[data-open]");
+      if (btn) showPage(btn.getAttribute("data-open"));
+    });
+  }
+
+  /* /dream: maintenance with a record of what it did */
+  var STEPS = [
+    "backups: written before anything changed",
+    "links: 14 checked, 0 unresolved",
+    "maps: home index and topic maps rebuilt",
+    "bodies: topic pages preserved as they were",
+    "note: navigation does not confirm a claim is true",
+    "wiki ready &middot; 6 pages reachable"
+  ];
+  var dreamTimers = [];
+  if (dream && exLog) {
+    var dreamLabel = dream.textContent;
+    dream.addEventListener("click", function () {
+      dreamTimers.forEach(window.clearTimeout);
+      dreamTimers = [];
+      exLog.innerHTML = "";
+      dream.disabled = true;
+      dream.textContent = "running /dream\u2026";
+      var step = gap(430);
+      STEPS.forEach(function (text, i) {
+        dreamTimers.push(window.setTimeout(function () {
+          var li = document.createElement("li");
+          li.innerHTML = text;
+          exLog.appendChild(li);
+          if (i === STEPS.length - 1) {
+            dream.disabled = false;
+            dream.textContent = dreamLabel;
+          }
+        }, step * (i + 1) + (calm ? 0 : 260)));
+      });
+      if (exStatus) exStatus.textContent = "Running /dream on the memory wiki.";
+    });
+  }
+
+  /* ---------- 8. the council: choosing is one step, handing off is another ---------- */
+  var plans = all(".plan"), handoff = $("#handoff"), handoffBtn = $("#handoff-btn");
+  var LINES = {
+    a: {
+      pick: "Plan A selected &middot; review the diff against the current CLI, then approve implementation separately.",
+      hand: "Handed off &middot; Nova saved <code>plan-extract-worker.md</code> in this project's <code>.nova/plans/</code> and is waiting for your approval before it edits anything."
+    },
+    b: {
+      pick: "Plan B selected &middot; the shared connection pool is the open question, so read that critique before you approve anything.",
+      hand: "Handed off &middot; Nova saved <code>plan-split-package.md</code> in this project's <code>.nova/plans/</code> and is waiting for your approval before it edits anything."
+    },
+    c: {
+      pick: "Plan C selected &middot; nothing becomes parallel yet, because the boundary work lands first.",
+      hand: "Handed off &middot; Nova saved <code>plan-interface-first.md</code> in this project's <code>.nova/plans/</code> and is waiting for your approval before it edits anything."
+    }
+  };
+  var chosen = plans.length ? plans[0].getAttribute("data-plan") : null;
+  var markPlans = function () {
+    plans.forEach(function (p) {
+      p.setAttribute("aria-pressed", p.getAttribute("data-plan") === chosen ? "true" : "false");
     });
   };
-  tabs.forEach((tab, i) => {
-    tab.addEventListener("click", () => select(tab));
-    tab.addEventListener("keydown", (e) => {
-      const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
-      if (!step) return;
-      const next = tabs[(i + step + tabs.length) % tabs.length];
-      select(next); next.focus();
+  if (plans.length) {
+    markPlans();
+    if (handoff) handoff.innerHTML = LINES[chosen].pick;
+    plans.forEach(function (p) {
+      p.addEventListener("click", function () {
+        chosen = p.getAttribute("data-plan");
+        markPlans();
+        if (handoff) {
+          handoff.classList.remove("on");
+          handoff.innerHTML = LINES[chosen].pick;
+        }
+        if (handoffBtn) {
+          handoffBtn.disabled = false;
+          handoffBtn.textContent = "Hand off to implementation";
+        }
+      });
     });
-  });
-  // Open on the visitor's platform.
-  if (/Win/.test(navigator.userAgent)) select(document.getElementById("t-win"));
+  }
+  if (handoffBtn) {
+    handoffBtn.addEventListener("click", function () {
+      if (!chosen) return;
+      handoffBtn.disabled = true;
+      handoffBtn.textContent = "Handed off";
+      if (handoff) {
+        handoff.classList.add("on");
+        handoff.innerHTML = LINES[chosen].hand;
+      }
+    });
+  }
+
+  /* ---------- 9. two project tabs, one queued message, one linked reply ---------- */
+  var leftReply = $("#left-reply"), leftMsg = $("#left-reply-msg"),
+      rightReply = $("#right-reply"), rightMsg = $("#right-reply-msg"),
+      rightWork = $("#right-work"), queuedNote = $("#queued"),
+      draftText = $("#draft-text"), openBtn = $("#act-open"), attachBtn = $("#act-attach"),
+      tabStatus = $("#tab-status");
+  var REPLY_HTML = "Yes &mdash; <code>GET /v2/ingest</code> returns 200 after the queue change. Two files read: <code>routes.py</code>, <code>worker.py</code>.";
+  var REPLY_TEXT = "Yes \u2014 GET /v2/ingest returns 200 after the queue change. Two files read: routes.py, worker.py.";
+  var replyTimers = [];
+  var anchor = $("#t-right");
+  if (anchor && rightReply && leftReply) {
+    var reveal = function () {
+      if (queuedNote) queuedNote.hidden = true;
+      if (rightWork) rightWork.hidden = true;
+      rightMsg.innerHTML = REPLY_HTML;
+      leftMsg.innerHTML = REPLY_HTML;
+      rightReply.hidden = false;
+      leftReply.hidden = false;
+      if (openBtn) openBtn.disabled = false;
+      if (attachBtn) attachBtn.disabled = false;
+      if (draftText) draftText.textContent = "Reply from api-3f2, ready to attach";
+      animate(rightReply, RISE, { duration: 320, easing: EASE });
+      animate(leftReply, RISE, { duration: 340, delay: gap(140), easing: EASE, fill: "backwards" });
+      if (tabStatus) {
+        tabStatus.textContent = "api-3f2 replied to this tab: " + REPLY_TEXT +
+          " The reply is in both transcripts.";
+      }
+    };
+    var played = false;
+    if (!window.IntersectionObserver) {
+      reveal();
+    } else {
+      var bridgeIO = new IntersectionObserver(function (rows) {
+        rows.forEach(function (r) {
+          if (!r.isIntersecting || played) return;
+          played = true;
+          bridgeIO.unobserve(r.target);
+          replyTimers.push(window.setTimeout(reveal, gap(1500)));
+        });
+      }, { threshold: 0.25 });
+      bridgeIO.observe(anchor);
+    }
+  }
+  if (openBtn) {
+    openBtn.addEventListener("click", function () {
+      var win = openBtn.closest(".win");
+      if (win) animate(win, [{ opacity: 1 }, { opacity: 0.55 }, { opacity: 1 }], { duration: 520, easing: "ease-in-out" });
+      if (tabStatus) tabStatus.textContent = "api-3f2 is the tab on the right; both transcripts stay linked in this window.";
+    });
+  }
+  if (attachBtn) {
+    attachBtn.addEventListener("click", function () {
+      if (draftText) draftText.textContent = REPLY_TEXT;
+      if (tabStatus) tabStatus.textContent = "Attached to your draft. Attaching does not submit it.";
+      var composer = attachBtn.closest(".composer");
+      if (composer) animate(composer, RISE, { duration: 300, easing: EASE });
+    });
+  }
 })();
 </script>
+
 </body>
 </html>
+
+
