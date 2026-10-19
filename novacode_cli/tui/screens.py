@@ -2228,6 +2228,15 @@ class ClaudePluginsScreen(ModalScreen[None]):
         self.dismiss(None)
 
 
+def _matrix_rain_enabled(config: Any) -> bool:  # noqa: ANN401
+    """The saved Matrix Rain choice; unset follows NOVA_ANIMATIONS."""
+    import os
+
+    default = os.environ.get("NOVA_ANIMATIONS", "").strip().lower() in {"1", "true", "yes"}
+    value = config.get("matrix_rain_enabled", default)
+    return value if isinstance(value, bool) else default
+
+
 class ThemeScreen(ModalScreen[None]):
     """Browse and apply Textual themes with live preview."""
 
@@ -2237,14 +2246,64 @@ class ThemeScreen(ModalScreen[None]):
         super().__init__()
         self._theme_names: list[str] = []
 
+    DEFAULT_CSS = """
+    ThemeScreen #theme-appearance { height: auto; margin-bottom: 1; }
+    ThemeScreen #theme-appearance Horizontal { height: auto; align-vertical: middle; }
+    ThemeScreen #theme-appearance Static { height: auto; }
+    ThemeScreen .theme-description { color: $text-muted; }
+    """
+
     def compose(self) -> ComposeResult:
+        from novacode_cli.config.nova_config import NovaConfig
+        from novacode_cli.tui.home import HOME_STYLES, home_style
+
+        config = NovaConfig()
         with Vertical(id="modal-box"):
-            yield Static(Text("Choose Theme", style="bold"), id="modal-title")
+            yield Static(Text("Theme & appearance", style="bold"), id="modal-title")
+            with Vertical(id="theme-appearance"):
+                yield Static("Interface style")
+                yield Select(
+                    HOME_STYLES,
+                    value=home_style(
+                        config.get("home_style"),
+                        legacy_dashboard=config.get("home_dashboard_enabled", True),
+                    ),
+                    allow_blank=False,
+                    id="home-style-select",
+                )
+                yield Static(
+                    "Banner and Minimal also style conversations, tools, and controls.",
+                    classes="theme-description",
+                )
+                with Horizontal():
+                    yield Switch(value=_matrix_rain_enabled(config), id="matrix-rain-toggle")
+                    yield Static(" Matrix Rain animation on the Dashboard and Classic banners")
+            yield Static("Color theme")
             yield OptionList(id="theme-list")
             yield Static("", id="theme-hint")
             with Horizontal(id="modal-buttons"):
                 yield Button("Apply", id="apply", variant="primary")
                 yield Button("Close", id="close")
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id != "home-style-select" or event.value is Select.BLANK:
+            return
+        from novacode_cli.config.nova_config import NovaConfig
+        from novacode_cli.tui.home import home_style
+
+        style = home_style(event.value)
+        config = NovaConfig()
+        if config.get("home_style") != style:
+            config.set("home_style", style)
+        self.app._set_home_style(style)
+
+    def on_switch_changed(self, event: Switch.Changed) -> None:
+        if event.switch.id != "matrix-rain-toggle":
+            return
+        from novacode_cli.config.nova_config import NovaConfig
+
+        NovaConfig().set("matrix_rain_enabled", event.value)
+        self.app._set_matrix_rain_enabled(event.value)
 
     def on_mount(self) -> None:
         animate_modal_screen(self)
@@ -2329,11 +2388,9 @@ class SettingsScreen(ModalScreen[None]):
         height: auto; align-vertical: middle; margin-bottom: 1;
     }
     SettingsScreen .settings-description { color: $text-muted; margin-left: 2; }
-    SettingsScreen #planner-usage { height: auto; margin: 0 2 1 2; }
     """
 
     _PREFERENCES = {
-        "matrix_rain_enabled": False,
         "submit_on_enter": True,
         "autocomplete_enabled": True,
         "low_resource_mode": False,
@@ -2348,14 +2405,6 @@ class SettingsScreen(ModalScreen[None]):
 
     def _preference(self, key: str) -> bool:
         default = self._PREFERENCES[key]
-        if key == "matrix_rain_enabled":
-            import os
-
-            default = os.environ.get("NOVA_ANIMATIONS", "").strip().lower() in {
-                "1",
-                "true",
-                "yes",
-            }
         value = self._config.get(key, default)
         return value if isinstance(value, bool) else default
 
@@ -2363,33 +2412,61 @@ class SettingsScreen(ModalScreen[None]):
         with Vertical(id="modal-box"):
             yield Static(Text("Settings", style="bold"), id="modal-title")
             with VerticalScroll(id="settings-content"):
-                yield Static("APPEARANCE", classes="settings-section")
-                from novacode_cli.tui.home import HOME_STYLES, home_style
-
-                yield Static("Interface style", classes="settings-label")
+                yield Static("AGENT", classes="settings-section")
+                yield Static("Reasoning effort", classes="settings-label")
                 yield Select(
-                    HOME_STYLES,
-                    value=home_style(
-                        self._config.get("home_style"),
-                        legacy_dashboard=self._config.get("home_dashboard_enabled", True),
-                    ),
+                    [("Off", "off"), ("Low", "low"), ("Medium", "medium"), ("High", "high")],
+                    value=self._effort(),
                     allow_blank=False,
-                    id="home-style-select",
+                    id="effort-select",
                 )
                 yield Static(
-                    "Banner and Minimal also style conversations, tools, and controls. "
-                    "Applies immediately; your conversation and draft stay in place.",
+                    "How hard the model thinks before answering. Higher is slower and costs more. "
+                    "Same as /effort.",
+                    classes="settings-description",
+                )
+                yield Static("Context budget", classes="settings-label")
+                yield Select(
+                    self._budget_options(),
+                    value=self._budget(),
+                    allow_blank=False,
+                    id="context-budget-select",
+                )
+                yield Static(
+                    "How much of the model's window Nova works within before it moves old tool "
+                    "output out and summarizes. Larger keeps more, but every call costs more.",
+                    classes="settings-description",
+                )
+
+                yield Static("TOOL OUTPUT", classes="settings-section")
+                with Horizontal(classes="settings-row"):
+                    yield Switch(
+                        value=self._config.get_tool_verdicts_enabled(), id="decision-pruning-toggle"
+                    )
+                    yield Static("Decision-based tool pruning", classes="settings-label")
+                yield Static(
+                    "A decision model picks which old tool outputs to offload, instead of oldest "
+                    "first. Choose the model in /model → Decisions.",
+                    classes="settings-description",
+                )
+
+                yield Static("LEARNING", classes="settings-section")
+                with Horizontal(classes="settings-row"):
+                    yield Switch(value=self._config.get_learning_enabled(), id="learning-toggle")
+                    yield Static("Learn from sessions", classes="settings-label")
+                yield Static(
+                    "Nova proposes lessons and skills from what worked. Same as /learning on|off.",
                     classes="settings-description",
                 )
                 with Horizontal(classes="settings-row"):
-                    yield Switch(value=self._preference("matrix_rain_enabled"), id="matrix-rain-toggle")
-                    yield Static("Matrix Rain animation", classes="settings-label")
+                    yield Switch(
+                        value=self._config.get_learning_auto_approve(), id="learning-auto-toggle"
+                    )
+                    yield Static("Approve new lessons automatically", classes="settings-label")
                 yield Static(
-                    "Animate the Dashboard and Classic banners.", classes="settings-description"
+                    "Off: they wait for /learning review. Prompt changes always wait.",
+                    classes="settings-description",
                 )
-                with Horizontal(classes="settings-row"):
-                    yield Button("Change theme…", id="settings-theme")
-                    yield Static("Choose Nova's color theme.", classes="settings-description")
 
                 yield Static("INPUT", classes="settings-section")
                 with Horizontal(classes="settings-row"):
@@ -2441,17 +2518,45 @@ class SettingsScreen(ModalScreen[None]):
                     classes="settings-description",
                 )
 
-                yield Static("PLANNER USAGE", classes="settings-section")
-                yield Static("Reading usage…", id="planner-usage")
+                yield Static("APPEARANCE", classes="settings-section")
                 with Horizontal(classes="settings-row"):
-                    yield Button("Check Claude now", id="planner-usage-check")
+                    yield Button("Theme & appearance…", id="settings-theme")
                     yield Static(
-                        "Claude Code reports its limits only during a call: this makes one "
-                        "tiny call. Codex's come from its last session.",
+                        "Color theme, interface style and Matrix Rain live in /theme.",
                         classes="settings-description",
                     )
             with Horizontal(id="modal-buttons"):
                 yield Button("Close", id="close")
+
+    def _effort(self) -> str:
+        value = str(self._config.get("reasoning_effort", "off") or "off").lower()
+        return value if value in {"off", "low", "medium", "high"} else "off"
+
+    #: Context budgets offered, in tokens; 0 means the model's whole window.
+    _BUDGETS = (
+        ("64K", 64_000),
+        ("128K · default", 128_000),
+        ("200K", 200_000),
+        ("400K", 400_000),
+        ("1M", 1_000_000),
+        ("The model's whole window", 0),
+    )
+
+    def _budget(self) -> int:
+        from novacode_cli.context._analysis import DEFAULT_CONTEXT_BUDGET_TOKENS
+
+        value = self._config.get("context_budget_tokens")
+        try:
+            return DEFAULT_CONTEXT_BUDGET_TOKENS if value is None else int(value)
+        except (TypeError, ValueError):
+            return DEFAULT_CONTEXT_BUDGET_TOKENS
+
+    def _budget_options(self) -> list[tuple[str, int]]:
+        options = list(self._BUDGETS)
+        current = self._budget()
+        if current not in {tokens for _, tokens in options}:  # a hand-set value stays selectable
+            options.append((f"{current:,} tokens (custom)", current))
+        return options
 
     def _save_preference(self, key: str, *, value: bool | int | str) -> None:
         try:
@@ -2461,30 +2566,18 @@ class SettingsScreen(ModalScreen[None]):
 
     def on_mount(self) -> None:
         animate_modal_screen(self)
-        self.show_planner_usage()
-
-    @work(exclusive=True, group="planner-usage")
-    async def show_planner_usage(self, check_claude: bool = False) -> None:
-        """/claude-plan and /codex-plan usage, read off the UI loop."""
-        from novacode_cli.commands import planner_usage as pu
-
-        label = self.query_one("#planner-usage", Static)
-        button = self.query_one("#planner-usage-check", Button)
-        if check_claude:
-            button.disabled = True
-            label.update("Asking Claude Code…")
-        try:
-            claude = await pu.check_claude_now() if check_claude else await asyncio.to_thread(pu.claude_usage)
-            codex = await asyncio.to_thread(pu.codex_usage)
-            label.update(Text("\n\n").join([pu.usage_text(claude), pu.usage_text(codex)]))
-        except Exception as exc:  # noqa: BLE001
-            label.update(f"Could not read planner usage: {exc}")
-        finally:
-            button.disabled = False
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
+        if event.switch.id == "decision-pruning-toggle":
+            self._set_decision_pruning(event.value)
+            return
+        if event.switch.id in ("learning-toggle", "learning-auto-toggle"):
+            # /learning saves it and rebuilds the agent (its middleware reads it at build).
+            auto = "auto " if event.switch.id == "learning-auto-toggle" else ""
+            command = f"/learning {auto}{'on' if event.value else 'off'}"
+            self.app.run_worker(self.app._run_learning(command), group="settings-learning")
+            return
         key_by_id = {
-            "matrix-rain-toggle": "matrix_rain_enabled",
             "submit-enter-toggle": "submit_on_enter",
             "autocomplete-toggle": "autocomplete_enabled",
             "low-resource-toggle": "low_resource_mode",
@@ -2494,9 +2587,7 @@ class SettingsScreen(ModalScreen[None]):
         if key is None:
             return
         self._save_preference(key, value=event.value)
-        if key == "matrix_rain_enabled":
-            self.app._set_matrix_rain_enabled(event.value)
-        elif key == "submit_on_enter":
+        if key == "submit_on_enter":
             self.app._submit_on_enter = event.value
         elif key == "autocomplete_enabled":
             self.app._autocomplete_enabled = event.value
@@ -2506,16 +2597,43 @@ class SettingsScreen(ModalScreen[None]):
             self.app._low_resource_mode = event.value
             self.app._set_animation_fps(self.app._animation_fps)
 
+    @work(exclusive=True, group="settings-decision-pruning")
+    async def _set_decision_pruning(self, enabled: bool) -> None:  # noqa: FBT001
+        """Turn decision pruning on only when its model's key is there, then rebuild."""
+        from novacode_cli.tui.decision_settings import missing_key_hint
+
+        if enabled == self._config.get_tool_verdicts_enabled():
+            return
+        endpoint = self._config.get_tool_verdict_endpoint()
+        missing = enabled and await asyncio.to_thread(missing_key_hint, endpoint)
+        if missing:
+            switch = self.query_one("#decision-pruning-toggle", Switch)
+            with switch.prevent(Switch.Changed):
+                switch.value = False
+            self.app.notify(missing, severity="warning")
+            return
+        self._config.set_tool_verdicts_enabled(enabled)
+        model = self._config.get_tool_verdict_model()
+        await self.app._rebuild_agent(
+            f"Decision-based tool pruning {'on' if enabled else 'off'} ({model})."
+        )
+
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.value is Select.BLANK:
             return
-        if event.select.id == "home-style-select":
-            from novacode_cli.tui.home import home_style
-
-            style = home_style(event.value)
-            if self._config.get("home_style") != style:
-                self._save_preference("home_style", value=style)
-            self.app._set_home_style(style)
+        if event.select.id == "effort-select":
+            if event.value != self._effort():
+                # /effort saves it and rebuilds the model with the new effort.
+                effort = self.app._run_effort(f"/effort {event.value}")
+                self.app.run_worker(effort, group="settings-effort")
+            return
+        if event.select.id == "context-budget-select":
+            if event.value != self._budget():
+                self._save_preference("context_budget_tokens", value=int(event.value))
+                label = {tokens: name for name, tokens in self._budget_options()}[event.value]
+                self.app.run_worker(
+                    self.app._rebuild_agent(f"Context budget: {label}."), group="settings-budget"
+                )
             return
         if event.select.id != "animation-fps" or event.value is Select.BLANK:
             return
@@ -2531,8 +2649,6 @@ class SettingsScreen(ModalScreen[None]):
             self.dismiss(None)
         elif event.button.id == "settings-theme":
             self.app.push_screen(ThemeScreen())
-        elif event.button.id == "planner-usage-check":
-            self.show_planner_usage(check_claude=True)
 
     def action_close(self) -> None:
         self.dismiss(None)
@@ -2625,6 +2741,81 @@ class UpdateScreen(ModalScreen[None]):
 
     def action_close(self) -> None:
         self.dismiss(None)
+
+
+class UsageScreen(ModalScreen[None]):
+    """/usage: every plan or key whose usage Nova can read, as progress bars."""
+
+    DEFAULT_CSS = """
+    UsageScreen #modal-box { width: 90%; max-width: 84; height: auto; max-height: 90%; }
+    UsageScreen #usage-content { height: auto; max-height: 36; }
+    UsageScreen #usage-body { height: auto; padding: 1 2; }
+    UsageScreen #usage-note { height: auto; padding: 0 2 1 2; color: $text-muted; }
+    """
+    BINDINGS = [("escape", "close", "Close"), ("r", "refresh", "Refresh")]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="modal-box"):
+            yield Static("Usage", id="modal-title")
+            with VerticalScroll(id="usage-content"):
+                yield Static("Reading usage…", id="usage-body")
+                yield Static(USAGE_NOTE, id="usage-note")
+            with Horizontal(id="modal-buttons"):
+                yield Button("Check Claude now", id="usage-check-claude")
+                yield Button("Refresh", id="usage-refresh")
+                yield Button("Close", id="close", variant="primary")
+
+    def on_mount(self) -> None:
+        animate_modal_screen(self)
+        self.load()
+
+    @work(exclusive=True, group="usage")
+    async def load(self, check_claude: bool = False) -> None:  # noqa: FBT001, FBT002
+        """Read every provider off the UI loop; Claude Code only on request."""
+        from novacode_cli.commands import planner_usage as pu
+        from novacode_cli.commands.provider_usage import all_usage
+
+        body = self.query_one("#usage-body", Static)
+        buttons = [self.query_one(f"#usage-{name}", Button) for name in ("check-claude", "refresh")]
+        for button in buttons:
+            button.disabled = True
+        body.update("Asking Claude Code…" if check_claude else "Reading usage…")
+        try:
+            if check_claude:
+                await pu.check_claude_now()  # records a fresh reading for all_usage
+            found = await asyncio.to_thread(all_usage)
+            body.update(
+                Text("\n\n").join([pu.usage_text(usage) for usage in found])
+                if found
+                else Text("Nothing to show: no Claude Code, Codex or keyed provider has usage.")
+            )
+        except Exception as exc:  # noqa: BLE001 - leave a retryable screen
+            body.update(Text(f"Could not read usage: {exc}", style="red"))
+        finally:
+            for button in buttons:
+                button.disabled = False
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "usage-check-claude":
+            self.load(check_claude=True)
+        elif event.button.id == "usage-refresh":
+            self.load()
+        elif event.button.id == "close":
+            self.dismiss(None)
+
+    def action_refresh(self) -> None:
+        self.load()
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
+#: Shown under the bars in /usage (modal and remote text alike).
+USAGE_NOTE = (
+    "Claude Code reports its limits only during a call: Check Claude now makes one tiny "
+    "call. Codex's come from its last session. Anthropic and OpenAI API keys, Gemini, "
+    "NVIDIA and Ollama have no usage endpoint."
+)
 
 
 class ContextScreen(ModalScreen[None]):

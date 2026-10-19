@@ -107,7 +107,7 @@ async def test_zen_decisions_save_requires_zen_key_and_preserves_chat_config(
         screen, panel = await open_decisions(app, pilot)
         panel.query_one("#decision-preset", Select).value = "opencode_zen_free"
         await pilot.pause()
-        panel.query_one("#decision-enabled", Switch).value = True
+        panel._enabled = True
         if has_zen_key:
             await save_and_settle(screen, pilot)
             config = NovaConfig()

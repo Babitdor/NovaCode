@@ -69,6 +69,7 @@ class Usage:
     status: str = ""  # Claude: allowed / allowed_warning / rejected
     checked_at: float | None = None
     note: str = ""  # why there is no reading
+    lines: list[str] = field(default_factory=list)  # extra facts: credits, plan, spend
 
 
 def _window_label(key: str) -> str:
@@ -212,7 +213,7 @@ def usage_text(usage: Usage) -> Text:
           5-hour  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  59%  resets 21:50
     """
     text = Text(usage.name, style="bold")
-    if not usage.windows:
+    if not usage.windows and not usage.lines:
         return text.append(f"  {usage.note}", style="dim")
     if usage.status in ("rejected", "out of credits"):
         text.append("  LIMIT REACHED", style="bold red")
@@ -235,6 +236,8 @@ def usage_text(usage: Usage) -> Text:
         text.append("━" * (BAR_WIDTH - filled), style="grey35")
         text.append(f" {round(used * 100):>3}% used", style=f"bold {_bar_color(used)}")
         text.append(f"  {when}" if when else "", style="dim")
+    for line in usage.lines:
+        text.append(f"\n  {line}", style="dim")
     return text
 
 

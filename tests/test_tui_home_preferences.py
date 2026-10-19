@@ -10,7 +10,7 @@ from textual.widgets import Select, Static
 from novacode_cli.config.nova_config import NovaConfig
 from novacode_cli.states.Session import SessionState
 from novacode_cli.tui.app import NovaApp
-from novacode_cli.tui.screens import SettingsScreen
+from novacode_cli.tui.screens import ThemeScreen
 from novacode_cli.tui.widgets import MatrixRain
 from novacode_cli.ui.ui_elements import TokenTracker
 from tests.test_tui_app import _disable_live_update_checks  # noqa: F401
@@ -63,7 +63,7 @@ async def test_settings_switches_home_live_and_persists() -> None:
         banner = app._home_banner
         marker = Static("Keep this transcript entry")
         await app._transcript().mount(marker)
-        screen = SettingsScreen()
+        screen = ThemeScreen()
         app.push_screen(screen)
         await pilot.pause()
         selector = screen.query_one("#home-style-select", Select)
@@ -103,7 +103,7 @@ async def test_switch_during_chat_keeps_home_hidden_until_new_chat() -> None:
         marker = Static("An ongoing conversation")
         await app._transcript().mount(marker)
         root = app.screen
-        screen = SettingsScreen()
+        screen = ThemeScreen()
         app.push_screen(screen)
         await pilot.pause()
         screen.query_one("#home-style-select", Select).value = "classic"
@@ -198,7 +198,7 @@ async def test_style_selector_preserves_draft_and_allows_keyboard_switching() ->
         root = app.screen
         prompt = app.query_one("#prompt", PromptInput)
         prompt.value = "Keep this\nmultiline draft"
-        screen = SettingsScreen()
+        screen = ThemeScreen()
         app.push_screen(screen)
         await pilot.pause()
         selector = screen.query_one("#home-style-select", Select)
@@ -353,7 +353,7 @@ async def test_conversation_styles_keep_usage_modes_and_dialogs_usable(style: st
         assert app.query_one("#mode-badge").size.height > 0
         assert "PLAN" in str(app.query_one("#mode-badge").render())
         assert app.query_one("#prompt", PromptInput).has_class("plan-mode")
-        screen = SettingsScreen()
+        screen = ThemeScreen()
         app.push_screen(screen)
         await pilot.pause()
         assert screen.has_class("conversation-style")
@@ -464,7 +464,7 @@ async def test_style_covers_status_live_panels_and_form_controls(style: str) -> 
         assert terminal.styles.background.a == 0
         assert terminal.query_one("#term-log").styles.border_top[0] in {"", "none"}
         question.deactivate()
-        screen = SettingsScreen()
+        screen = ThemeScreen()
         app.push_screen(screen)
         await pilot.pause()
         switch = screen.query_one("#matrix-rain-toggle")

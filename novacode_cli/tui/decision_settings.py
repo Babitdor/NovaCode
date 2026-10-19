@@ -7,14 +7,36 @@ from typing import TYPE_CHECKING
 
 from rich.text import Text
 from textual import work
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import VerticalScroll
 from textual.message import Message
-from textual.widgets import Button, Input, Select, Static, Switch
+from textual.widgets import Button, Input, Select, Static
 
 from novacode_cli.config.nova_config import NovaConfig
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
+
+
+#: Hosted decision endpoints and the key each needs: (env var, provider name).
+_HOSTED_KEYS = {
+    NovaConfig.TOOL_VERDICT_OPENAI_ENDPOINT: ("OPENAI_API_KEY", "an OpenAI"),
+    NovaConfig.TOOL_VERDICT_JEV_ENDPOINT: ("TYPESAFE_API_KEY", "a Jev (TypeSafe)"),
+    NovaConfig.TOOL_VERDICT_OPENCODE_ENDPOINT: ("OPENCODE_ZEN_API_KEY", "an OpenCode Zen"),
+    NovaConfig.TOOL_VERDICT_COMMANDCODE_ENDPOINT: ("COMMANDCODE_API_KEY", "a Command Code"),
+}
+
+
+def missing_key_hint(endpoint: str) -> str | None:
+    """Why decision pruning can't be switched on for *endpoint*, or ``None``.
+
+    Blocking (reads the credential store): call it off the UI loop.
+    """
+    from novacode_cli.config.credentials import credential_value
+
+    needed = _HOSTED_KEYS.get(endpoint)
+    if needed and not credential_value(needed[0]):
+        return f"Add {needed[1]} API key through /auth before turning decision pruning on."
+    return None
 
 
 class DecisionSettings(VerticalScroll):
@@ -45,15 +67,14 @@ class DecisionSettings(VerticalScroll):
         self._loading = False
         self._applying = False
         self._preset = "tev1"
+        self._enabled = False
 
     def compose(self) -> ComposeResult:
-        """Show the toggle, presets and editable model/endpoint."""
+        """Show the presets and editable model/endpoint; /settings turns pruning on."""
         yield Static(
-            "Decide which tool outputs to offload. Summary generation uses your chat model."
+            "The model that decides which tool outputs to offload. Turn decision-based "
+            "tool pruning on or off in /settings."
         )
-        with Horizontal():
-            yield Switch(value=False, id="decision-enabled", disabled=True)
-            yield Static("Enable decision-based tool pruning")
         yield Select(
             [
                 ("OpenAI · Decisions API", "openai"),
@@ -106,7 +127,7 @@ class DecisionSettings(VerticalScroll):
     def _apply(self, enabled: bool, endpoint: str, model: str) -> None:  # noqa: FBT001
         """Populate controls without treating restored presets as new picks."""
         self._applying = True
-        self.query_one("#decision-enabled", Switch).value = enabled
+        self._enabled = enabled  # owned by /settings; Save keeps it as it is
         self.query_one("#decision-model", Input).value = model
         self.query_one("#decision-endpoint", Input).value = endpoint
         from novacode_cli.agents.openai_decisions import speaks_openai_decisions
@@ -128,7 +149,7 @@ class DecisionSettings(VerticalScroll):
             preset = "llamacpp"
         self._preset = preset
         self.query_one("#decision-preset", Select).value = preset
-        for widget in self.query("Switch, Input, Select"):
+        for widget in self.query("Input, Select"):
             widget.disabled = False
         self._loaded = True
         self._applying = False
@@ -222,42 +243,15 @@ class DecisionSettings(VerticalScroll):
     @work(exclusive=True, group="decision-save")
     async def save(self) -> None:
         """Validate credentials when enabled, then save settings atomically."""
-        from novacode_cli.config.credentials import credential_value
-
         if not self._loaded:
             self._hint("Decision settings are still loading.", error=True)
             return
-        enabled = self.query_one("#decision-enabled", Switch).value
+        enabled = self._enabled
         endpoint = self.query_one("#decision-endpoint", Input).value.strip()
         model = self.query_one("#decision-model", Input).value.strip()
-        if (
-            enabled and endpoint == NovaConfig.TOOL_VERDICT_OPENCODE_ENDPOINT
-            and not await asyncio.to_thread(credential_value, "OPENCODE_ZEN_API_KEY")
-        ):
-            self._hint("Add an OpenCode Zen API key through /auth before enabling Zen Jev.", error=True)
-            return
-        if (
-            enabled
-            and endpoint == NovaConfig.TOOL_VERDICT_COMMANDCODE_ENDPOINT
-            and not await asyncio.to_thread(credential_value, "COMMANDCODE_API_KEY")
-        ):
-            self._hint("Add a Command Code API key through /auth before enabling its Jev.", error=True)
-            return
-        if (
-            enabled
-            and endpoint == NovaConfig.TOOL_VERDICT_OPENAI_ENDPOINT
-            and not await asyncio.to_thread(credential_value, "OPENAI_API_KEY")
-        ):
-            self._hint("Add an OpenAI API key through /auth before enabling Decisions.", error=True)
-            return
-        if (
-            enabled
-            and endpoint == NovaConfig.TOOL_VERDICT_JEV_ENDPOINT
-            and not await asyncio.to_thread(credential_value, "TYPESAFE_API_KEY")
-        ):
-            self._hint(
-                "Add a Jev API key with Manage API key or /auth before enabling Jev.", error=True
-            )
+        missing = enabled and await asyncio.to_thread(missing_key_hint, endpoint)
+        if missing:
+            self._hint(missing, error=True)
             return
         try:
             await asyncio.to_thread(self._persist, enabled=enabled, endpoint=endpoint, model=model)

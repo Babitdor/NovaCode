@@ -525,6 +525,11 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
         "manage parallel session tabs: launch / resume / list / close (ctrl+n, alt+<n>)",
         aliases=("session",),
     ),
+    "usage": SlashCommand(
+        "_run_usage",
+        "plan and API usage: Claude Code, Codex, Command Code, OpenCode Go, OpenRouter",
+        wants_text=False,
+    ),
     "worktree": SlashCommand(
         "_run_worktree_command",
         "isolated git worktree + session for feature work (/worktree <name>[: task] · remove)",
@@ -3251,6 +3256,41 @@ class NovaApp(App):
             "\n/tabs new <name>[: task] · /tabs launch · /tabs resume [id] · /tabs close · alt+<n>",
             style="dim",
         )
+        self._log(block)
+
+    async def _rebuild_agent(self, saved: str) -> None:
+        """Rebuild the agent on the live model, so a setting read at build time
+        (decision pruning, the context budget) applies to this session now."""
+        try:
+            live_model = getattr(self.session_state, "_model", None)
+            if live_model is None:
+                self._log(Text(f"{saved} Used from your next session.", style="yellow"))
+                return
+            self.agent, self.backend = await self.session_state.switch_model(live_model)
+            self._log(Text(saved, style="green"))
+        except Exception:  # noqa: BLE001 — the setting is saved even if rebuilding fails
+            self._log(Text(f"{saved} Restart Nova to apply it.", style="yellow"))
+
+    async def _run_usage(self) -> None:
+        """``/usage``: every plan or key whose usage Nova can read.
+
+        A modal here; from Telegram/Discord, where no modal can show, the same
+        bars as text.
+        """
+        from novacode_cli.remote.command_ui import command_output
+        from novacode_cli.tui.screens import USAGE_NOTE, UsageScreen
+
+        if command_output.get() is None:
+            self.push_screen(UsageScreen())
+            return
+        from novacode_cli.commands.planner_usage import usage_text
+        from novacode_cli.commands.provider_usage import all_usage
+
+        found = await asyncio.to_thread(all_usage)
+        block = Text("\n\n").join([usage_text(usage) for usage in found])
+        if not found:
+            block = Text("No usage to show: no Claude Code, Codex or keyed provider with a usage API.")
+        block.append(f"\n\n{USAGE_NOTE}", style="dim")
         self._log(block)
 
     async def _run_worktree_command(self, text: str) -> None:
@@ -12112,22 +12152,8 @@ class NovaApp(App):
             return
 
         if result.get("kind") == "decision":
-            try:
-                live_model = getattr(self.session_state, "_model", None)
-                if live_model is None:
-                    self._log(
-                        Text("Decision settings saved; used in your next session.", style="yellow")
-                    )
-                    return
-                self.agent, self.backend = await self.session_state.switch_model(live_model)
-                state = "enabled" if result.get("enabled") else "disabled"
-                self._log(
-                    Text(f"System One tool pruning {state} ({result['model']}).", style="green")
-                )
-            except Exception:  # noqa: BLE001 — settings persist even if rebuilding fails
-                self._log(
-                    Text("Decision settings saved; restart Nova to apply them.", style="yellow")
-                )
+            state = "on" if result.get("enabled") else "off"
+            await self._rebuild_agent(f"Decision settings saved ({result['model']}, pruning {state}).")
             return
 
         role = str(result.get("role") or "main")

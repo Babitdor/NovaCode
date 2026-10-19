@@ -64,7 +64,7 @@ async def test_decisions_tab_is_separate_and_cancel_does_not_save():
         assert screen.query_one("#model-options").display is False
         assert screen.query_one("#model-custom-row").display is False
         assert str(screen.query_one("#switch", Button).label) == "Save"
-        panel.query_one("#decision-enabled", Switch).value = True
+        panel._enabled = True
         await pilot.press("escape")
         assert NovaConfig().get_tool_verdicts_enabled() is False
 
@@ -84,7 +84,7 @@ async def test_openai_preset_saved_without_changing_chat_model(monkeypatch):
             panel.query_one("#decision-endpoint", Input).value
             == NovaConfig.TOOL_VERDICT_OPENAI_ENDPOINT
         )
-        panel.query_one("#decision-enabled", Switch).value = True
+        panel._enabled = True
         await save_and_settle(screen, pilot)
         assert NovaConfig().get_tool_verdict_endpoint() == NovaConfig.TOOL_VERDICT_OPENAI_ENDPOINT
         assert NovaConfig().get_model_config() is None
@@ -95,7 +95,7 @@ async def test_toggle_and_future_custom_model_are_persisted(enabled: bool):  # n
     app = App()
     async with app.run_test(size=(100, 35)) as pilot:
         screen, panel = await open_decisions(app, pilot)
-        panel.query_one("#decision-enabled", Switch).value = enabled
+        panel._enabled = enabled
         panel.query_one("#decision-preset", Select).value = "custom"
         await pilot.pause()
         panel.query_one("#decision-model", Input).value = "kev1:future"
@@ -119,13 +119,13 @@ async def test_jev_preset_requires_auth_only_when_enabled():
             panel.query_one("#decision-endpoint", Input).value
             == NovaConfig.TOOL_VERDICT_JEV_ENDPOINT
         )
-        panel.query_one("#decision-enabled", Switch).value = True
+        panel._enabled = True
         screen._submit()
         await pilot.pause()
         assert "API key" in str(panel.query_one("#decision-status", Static).content)
         assert screen.is_mounted
         assert NovaConfig().get_tool_verdicts_enabled() is False
-        panel.query_one("#decision-enabled", Switch).value = False
+        panel._enabled = False
         await save_and_settle(screen, pilot)
         assert NovaConfig().get_tool_verdict_model() == "jev-latest"
 
@@ -136,7 +136,7 @@ async def test_authenticated_jev_can_be_enabled(monkeypatch: pytest.MonkeyPatch)
     async with app.run_test(size=(100, 35)) as pilot:
         screen, panel = await open_decisions(app, pilot)
         panel.query_one("#decision-preset", Select).value = "jev"
-        panel.query_one("#decision-enabled", Switch).value = True
+        panel._enabled = True
         await pilot.pause()
         await save_and_settle(screen, pilot)
         config = NovaConfig()
@@ -154,7 +154,7 @@ async def test_loading_does_not_replace_a_configured_tev1_variant():
         screen, panel = await open_decisions(app, pilot)
         await pilot.pause()
         assert panel.query_one("#decision-model", Input).value == "tev1:0.8b"
-        assert panel.query_one("#decision-enabled", Switch).value is True
+        assert panel._enabled is True
         screen.query_one("#model-tabs", Tabs).active = "tab-models"
         await pilot.pause()
         assert panel.display is False
@@ -211,7 +211,7 @@ async def test_nested_auth_preserves_the_decision_draft():
     async with app.run_test(size=(100, 35)) as pilot:
         screen, panel = await open_decisions(app, pilot)
         panel.query_one("#decision-model", Input).value = "future-model"
-        panel.query_one("#decision-enabled", Switch).value = True
+        panel._enabled = True
         panel.open_auth()
         for _ in range(120):
             await pilot.pause()
@@ -222,7 +222,7 @@ async def test_nested_auth_preserves_the_decision_draft():
         await pilot.pause()
         assert app.screen is screen
         assert panel.query_one("#decision-model", Input).value == "future-model"
-        assert panel.query_one("#decision-enabled", Switch).value is True
+        assert panel._enabled is True
 
 
 @pytest.mark.parametrize("enabled", [True, False])
@@ -255,6 +255,7 @@ async def test_decision_save_rebuilds_agent_without_changing_chat_model(
         push_screen_wait=pick,
         _log=lambda _msg: None,
     )
+    host._rebuild_agent = lambda saved: NovaApp._rebuild_agent(host, saved)
     await NovaApp._run_model(host)
     assert calls == [live_model]
     assert host.agent == "new-agent"
