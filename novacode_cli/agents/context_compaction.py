@@ -114,6 +114,13 @@ FAILURES_BEFORE_DIGEST = 3
 #: the same ten reads for hundreds of calls.
 PRUNE_TARGET = 0.8
 
+#: Request body size, in characters, at which inline images force a summary.
+#: Base64 is not model tokens: a 100 KB photo is ~135k characters but ~1-2k
+#: tokens, so comparing it with the token trigger summarized on every image read.
+#: ponytail: one figure under the smallest provider body cap (Anthropic's 32 MB);
+#: a provider that refuses smaller still compacts through the too-long path.
+MAX_REQUEST_CHARS = 20_000_000
+
 #: After a summary, the files the agent was working on are read back from disk
 #: into it (as Codex does: up to five, about 5k tokens each), so it does not
 #: start by re-reading them. The total also stays within the kept tail's budget.
@@ -773,12 +780,12 @@ class ContextCompactionMiddleware(AgentMiddleware):
 
         raw_tokens = raw(view)
         image_chars = estimate_content(view).image_transport_chars
-        # Retain the combined text/image body guard. Convert the non-base64
-        # estimate to transport units; encoded characters never become tokens.
-        transport_pressure = image_chars > 0 and image_chars + raw_tokens * 4 >= limits.trigger * 4
+        # Images count as tokens in raw_tokens; their base64 only matters for
+        # the size of the request body.
+        transport_pressure = image_chars > 0 and image_chars + raw_tokens * 4 >= MAX_REQUEST_CHARS
         cutoff = 0
         if force or transport_pressure or int(raw_tokens * self._scale) >= limits.trigger:
-            cutoff = tail_start(view, limits.keep, keep_transport_chars=limits.keep * 4)
+            cutoff = tail_start(view, limits.keep, keep_transport_chars=MAX_REQUEST_CHARS // 2)
             body = view[1:cutoff] if prior is not None else view[:cutoff]
             # Measure the actual dispatched-view difference: removing the first
             # full read just makes a repeated read in the tail become full.

@@ -236,8 +236,11 @@ async def test_dispatch_contract_across_budgets_and_concurrent_sessions(window: 
     await asyncio.gather(dispatch("session-a"), dispatch("session-b"))
 
 
-def test_nested_image_transport_is_separate_from_token_estimate():
+def test_nested_image_transport_is_separate_from_token_estimate(monkeypatch):
+    from novacode_cli.agents import context_compaction
     from novacode_cli.context.estimates import estimate_content
+
+    monkeypatch.setattr(context_compaction, "MAX_REQUEST_CHARS", 30_000)
 
     def result(size: int) -> ToolMessage:
         return ToolMessage(
@@ -278,7 +281,8 @@ def test_nested_image_transport_is_separate_from_token_estimate():
     assert plan.cutoff > 0
 
 
-def test_combined_text_and_image_body_still_triggers_transport_guard():
+def test_combined_text_and_image_body_still_triggers_transport_guard(monkeypatch):
+    from novacode_cli.agents import context_compaction
     from langchain.agents.middleware.types import ModelRequest
     from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
@@ -286,6 +290,7 @@ def test_combined_text_and_image_body_still_triggers_transport_guard():
 
     window = 4000
     limits = limits_for(window)
+    monkeypatch.setattr(context_compaction, "MAX_REQUEST_CHARS", limits.trigger * 4)
     text = "x" * int(limits.trigger * 4 * 0.65)
     image = "a" * int(limits.trigger * 4 * 0.6)
     messages = [

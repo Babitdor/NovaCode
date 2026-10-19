@@ -279,8 +279,34 @@ def _results(messages: list) -> dict:
     return {m.tool_call_id: _text(m) for m in messages if isinstance(m, ToolMessage)}
 
 
-def test_encoded_image_payloads_trigger_compaction_before_provider_refusal() -> None:
-    """A video frame is a large request body even when token counting says 90."""
+def _frames(size: int) -> list:
+    history = [HumanMessage(content=TASK)]
+    for index in range(3):
+        call_id = f"frame{index}"
+        history.append(
+            AIMessage(
+                content="",
+                tool_calls=[{"id": call_id, "name": "read_file", "args": {}, "type": "tool_call"}],
+            )
+        )
+        history.append(
+            ToolMessage(content=[{"type": "image", "base64": "a" * size}], tool_call_id=call_id)
+        )
+    return history
+
+
+def test_images_well_under_the_body_cap_do_not_force_a_summary() -> None:
+    """Base64 is not tokens: reading photos one by one summarized on every read."""
+    plan = ContextCompactionMiddleware(context_window=WINDOW)._plan(_request(_frames(150_000)))
+    assert plan.image_transport_chars == 450_000
+    assert plan.cutoff == 0
+
+
+def test_encoded_image_payloads_trigger_compaction_before_provider_refusal(monkeypatch) -> None:
+    """A request body over the cap is summarized even when token counting says 90."""
+    from novacode_cli.agents import context_compaction
+
+    monkeypatch.setattr(context_compaction, "MAX_REQUEST_CHARS", 30_000)
     history = [HumanMessage(content=TASK)]
     for index in range(3):
         call_id = f"frame{index}"
