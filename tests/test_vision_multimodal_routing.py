@@ -194,3 +194,28 @@ def test_declaring_image_support_on_a_profileless_model_is_safe() -> None:
     from novacode_cli.agents.core_agent import _declare_image_support
 
     _declare_image_support(object())  # no profile, not a chat model — a no-op
+
+
+def test_webp_is_sent_to_a_multimodal_model_as_jpeg() -> None:
+    """Ollama rejects WebP ("invalid image input"); PNG/JPEG are accepted everywhere."""
+    from langchain_core.messages import ToolMessage
+    from PIL import Image
+
+    from novacode_cli.bootstrap.vision_router import _portable_images
+
+    buffer = io.BytesIO()
+    Image.new("RGBA", (8, 8), (200, 10, 10, 128)).save(buffer, format="WEBP")
+    data = base64.b64encode(buffer.getvalue()).decode()
+    webp = {"type": "image", "base64": data, "mime_type": "image/webp"}
+    png = {"type": "image", "base64": "iVBORw0KGgo=", "mime_type": "image/png"}
+    messages = [ToolMessage(content=[webp, png], tool_call_id="t", name="read_file")]
+
+    out = _portable_images(messages)
+
+    block, kept = out[0].content
+    assert block["mime_type"] == "image/jpeg"
+    assert kept == png
+    assert Image.open(io.BytesIO(base64.b64decode(block["base64"]))).format == "JPEG"
+    assert out[0].tool_call_id == "t"
+    assert messages[0].content[0]["mime_type"] == "image/webp", "copy-on-write"
+    assert _portable_images(out) is out, "nothing left to convert: same list back"

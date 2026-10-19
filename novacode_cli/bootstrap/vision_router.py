@@ -29,6 +29,9 @@ the old "image input" crash class.
 
 from __future__ import annotations
 
+import base64
+import functools
+import io
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -349,6 +352,53 @@ def _strip_all_images(messages: list[AnyMessage]) -> list[AnyMessage]:
     return messages
 
 
+#: Formats every vision API accepts. Ollama rejects the rest ("invalid image
+#: input"), and one such block in history fails every later call.
+_PORTABLE_IMAGE_TYPES = frozenset({"image/png", "image/jpeg"})
+
+
+@functools.lru_cache(maxsize=32)
+def _as_jpeg(data: str) -> str:
+    from PIL import Image
+
+    from novacode_cli.image_utils import ImageProcessor
+
+    image = Image.open(io.BytesIO(base64.b64decode(data)))
+    return base64.b64encode(ImageProcessor.optimize_image(image, output_format="jpeg")).decode()
+
+
+def _portable_images(messages: list[AnyMessage]) -> list[AnyMessage]:
+    """Re-encode WebP/GIF/BMP/TIFF image blocks as JPEG (copy-on-write)."""
+    out = messages
+    for i, msg in enumerate(messages):
+        if not isinstance(msg.content, list):
+            continue
+        blocks = list(msg.content)
+        for j, block in enumerate(blocks):
+            if not (
+                isinstance(block, dict)
+                and block.get("type") == "image"
+                and isinstance(block.get("base64"), str)
+                and block.get("mime_type") not in _PORTABLE_IMAGE_TYPES
+            ):
+                continue
+            try:
+                jpeg = _as_jpeg(block["base64"])
+                blocks[j] = {**block, "base64": jpeg, "mime_type": "image/jpeg"}
+            except Exception:  # noqa: BLE001 — unreadable: send as is, the provider decides
+                logger.warning("could not convert %s", block.get("mime_type"), exc_info=True)
+        if blocks != msg.content:
+            if out is messages:
+                out = list(messages)
+            out[i] = msg.model_copy(update={"content": blocks})
+    return out
+
+
+def _with_portable_images(request: ModelRequest) -> ModelRequest:
+    messages = _portable_images(request.messages)
+    return request if messages is request.messages else request.override(messages=messages)
+
+
 def _latest_user_text(messages: list[AnyMessage]) -> str:
     """Return the newest HumanMessage's text (capped), for the caption task hint."""
     for msg in reversed(messages or []):
@@ -468,7 +518,7 @@ class VisionCaptionMiddleware(AgentMiddleware):
         for the model to read.
         """
         if self.main_model_supports_images:
-            return await handler(request)
+            return await handler(_with_portable_images(request))
         return await handler(
             request.override(messages=_strip_all_images(request.messages))
         )
@@ -480,7 +530,7 @@ class VisionCaptionMiddleware(AgentMiddleware):
     ) -> ModelResponse:
         """Synchronous variant of the strip safety net."""
         if self.main_model_supports_images:
-            return handler(request)
+            return handler(_with_portable_images(request))
         return handler(request.override(messages=_strip_all_images(request.messages)))
 
 
