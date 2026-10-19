@@ -4,6 +4,22 @@ from textual.theme import Theme
 
 NOVA_EXTRA_THEMES = (
     Theme(
+        name="nova-classic",
+        primary="#35eee4",
+        secondary="#219c98",
+        accent="#35eee4",
+        success="#63d9b1",
+        warning="#ecc77c",
+        error="#ff8282",
+        background="#030b0c",
+        foreground="#d8eeeb",
+        surface="#071718",
+        panel="#09282b",
+        boost="#0c3437",
+        dark=True,
+        variables={"text-muted": "#7dacab", "border": "#176264"},
+    ),
+    Theme(
         name="nova-synthwave",
         primary="#ff79d7",
         secondary="#a18bff",

@@ -108,8 +108,7 @@ def _get_index_locked(workspace_root: Path) -> Any:
     if not _is_semble_available():
         if not _semble_unavailable_warned:
             logger.debug(
-                "semble package not installed — code_search tools unavailable. "
-                "Install with: pip install semble"
+                "semble package not installed — code_search tools unavailable."
             )
             _semble_unavailable_warned = True
         return None
@@ -212,10 +211,9 @@ def code_search(query: str, top_k: int = 5) -> str:
 
     index = _get_index(workspace_root)
     if index is None:
-        return (
-            "Code search unavailable — the 'semble' package is not installed. "
-            "Install it with: pip install semble"
-        )
+        from novacode_cli.install_commands import missing_package
+
+        return f"Code search unavailable — {missing_package('semble')}"
 
     try:
         results = index.search(query, top_k=top_k)
@@ -272,10 +270,9 @@ def find_related_code(file_path: str, line: int, top_k: int = 3) -> str:
 
     index = _get_index(workspace_root)
     if index is None:
-        return (
-            "Code search unavailable — the 'semble' package is not installed. "
-            "Install it with: pip install semble"
-        )
+        from novacode_cli.install_commands import missing_package
+
+        return f"Code search unavailable — {missing_package('semble')}"
 
     try:
         # Semble's find_related takes a SearchResult object, not (path, line).

@@ -1,6 +1,6 @@
 """Discord bridge — forwards messages between Discord and the Nova-Code agent.
 
-Uses ``discord.py`` (pip install discord.py) to connect as a bot.
+Uses ``discord.py`` (a Nova dependency) to connect as a bot.
 Only messages in the allowlisted channel are processed; all others are
 silently ignored.
 
@@ -137,7 +137,9 @@ class DiscordBridge:
         try:
             import discord
         except ImportError:
-            self._last_error = "discord.py is not installed. Install with: pip install discord.py"
+            from novacode_cli.install_commands import missing_package
+
+            self._last_error = missing_package("discord.py")
             logger.error(self._last_error)
             return
 

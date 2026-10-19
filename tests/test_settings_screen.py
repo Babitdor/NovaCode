@@ -43,6 +43,9 @@ class Host(App):
     def _set_animation_fps(self, _fps: int) -> None:
         pass
 
+    def _run_voice(self, text: str) -> None:  # a Textual worker in NovaApp
+        self.calls.append(text)
+
 
 async def _open(app: Host, pilot):  # noqa: ANN001, ANN202
     screen = SettingsScreen()
@@ -119,3 +122,44 @@ async def test_a_hand_set_budget_stays_selectable():
         screen = await _open(app, pilot)
         assert screen.query_one("#context-budget-select", Select).value == 150_000
         assert app.calls == []
+
+
+async def test_voice_settings_live_here_and_reset_the_pipeline():
+    app = Host()
+    app._voice_pipeline = "warm"
+    async with app.run_test(size=(100, 60)) as pilot:
+        screen = SettingsScreen(section="voice")
+        app.push_screen(screen)
+        for _ in range(5):
+            await pilot.pause()
+        assert screen.query_one("#settings-content").scroll_y > 0, "opened at the Voice section"
+        screen.query_one("#voice-speak-toggle", Switch).value = False
+        screen.query_one("#voice-mode-select", Select).value = "listen"
+        screen.query_one("#voice-tts-select", Select).value = "none"
+        await pilot.pause()
+        voice = NovaConfig().get_voice_config()
+        assert (voice["speak_responses"], voice["mode"], voice["tts_provider"]) == (
+            False, "listen", "none"
+        )
+        assert app._voice_pipeline is None, "rebuilt with the new settings on next use"
+        await pilot.click("#voice-doctor")
+        await pilot.pause()
+        assert app.calls == ["/voice doctor"]
+
+
+async def test_slash_voice_opens_settings_and_subcommands_still_print():
+    from tests.test_tui_compaction_row import _app
+
+    app = _app()
+    async with app.run_test(size=(120, 50)) as pilot:
+        await app._run_voice("/voice").wait()
+        await pilot.pause()
+        assert isinstance(app.screen, SettingsScreen)
+        assert app.screen._section == "voice"
+        app.screen.dismiss(None)
+        await pilot.pause()
+        await app._run_voice("/voice status").wait()
+        await pilot.pause()
+        assert not isinstance(app.screen, SettingsScreen)
+        logs = " ".join(str(line.render()) for line in app.query(".logline"))
+        assert "enabled=" in logs

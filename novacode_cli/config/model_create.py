@@ -481,12 +481,14 @@ def _build_chat_model(provider: str, model_name: str) -> BaseChatModel:
             # than a missing package, and leaves the user with no next
             # step. Nova installs pull this in; a pre-existing
             # environment upgraded in place will not have it.
+            from novacode_cli.install_commands import install_command
+
+            command = install_command(["langchain-nvidia-ai-endpoints"])
             raise RuntimeError(
                 "The NVIDIA provider needs the langchain-nvidia-ai-endpoints "
                 "package, which is not installed in this environment. "
-                "Install it with:\n\n"
-                "    pip install langchain-nvidia-ai-endpoints\n\n"
-                "then run /model again."
+                f"Install it with:\n\n    {command}\n\n"
+                "then restart Nova and run /model again."
             ) from exc
 
         # Keyring-or-env, never a literal: same resolution as every other

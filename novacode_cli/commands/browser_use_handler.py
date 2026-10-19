@@ -315,11 +315,12 @@ async def _execute_browser_use_task(
     try:
         from browser_use import Agent, ChatOllama
     except ImportError as e:
+        from novacode_cli.install_commands import install_command
+
+        command = install_command(["browser-use", "playwright"], "browser")
         msg = (
-            f"/browser-use needs the optional `browser` extra ({e}).\n"
-            "From a checkout:   uv sync --extra browser\n"
-            "Installed tool:    uv tool install --force "
-            '"novacode-cli[browser] @ git+https://github.com/Babitdor/NovaCode.git"'
+            f"/browser-use needs the optional `browser` extra ({e}). Install it with:\n"
+            f"  {command}\nthen restart Nova."
         )
         raise ImportError(msg) from e
 

@@ -115,6 +115,8 @@ async def _drive_reply_headings() -> dict:
     out: dict = {}
     async with app.run_test(size=(120, 40)) as pilot:
         app.theme = "tokyo-night"
+        # A rendered reply belongs to the conversation, after home has yielded.
+        app._set_home_visible(visible=False)
         message = await app._add_message(
             Text("Nova", style="green"),
             "nova",

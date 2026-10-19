@@ -1126,7 +1126,7 @@ async def _drive_home_banner():
         rain._tick()
         out = rain.render()
         frame = out.plain if hasattr(out, "plain") else str(out)
-        assert "⣿" in frame and "█" in frame
+        assert "█" in frame  # Dashboard's compact header keeps the NOVA wordmark.
 
         # Responsive: reflow grows the grid on a wider terminal and shrinks +
         # swaps the art variant on a narrow one.
@@ -1236,6 +1236,9 @@ def test_tui_home_dashboard_layout_and_actions(monkeypatch: pytest.MonkeyPatch):
 
 
 async def test_tui_home_dashboard_matches_theme(monkeypatch: pytest.MonkeyPatch):
+    from textual.color import Color
+    from textual.style import Style
+
     from novacode_cli.tui.app import NovaApp
     from novacode_cli.tui.home import SystemSampler, SystemSnapshot
     from novacode_cli.ui.ui_elements import TokenTracker
@@ -1254,8 +1257,13 @@ async def test_tui_home_dashboard_matches_theme(monkeypatch: pytest.MonkeyPatch)
             accent = app.get_theme(theme).accent.lower()
             for selector in ("#home-system", "#home-model", "#home-tasks", "#home-context"):
                 rendered = app.query_one(selector).render()
-                styles = {str(span.style).lower() for span in rendered.spans}
-                assert any(accent in style for style in styles), (theme, selector, styles)
+                styles = [
+                    Style.parse(span.style) if isinstance(span.style, str) else span.style
+                    for span in rendered.spans
+                ]
+                assert any(style.foreground == Color.parse(accent) for style in styles), (
+                    theme, selector, styles
+                )
 
 
 async def test_goal_commands_keep_status_and_resume_in_tui(monkeypatch: pytest.MonkeyPatch):

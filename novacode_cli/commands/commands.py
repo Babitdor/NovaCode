@@ -360,7 +360,9 @@ async def handle_command(
                     "[dim]Install the 'semble' package to enable semantic "
                     "code search:[/dim]"
                 )
-                console.print("[dim]  pip install semble[/dim]")
+                from novacode_cli.install_commands import install_command
+
+                console.print(f"[dim]  {install_command(['semble'])}[/dim]")
                 console.print()
             else:
                 _reset_index()

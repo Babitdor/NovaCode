@@ -167,7 +167,8 @@ def _meter(label: str, percentage: float, accent: str, muted: str) -> Text:
 
 def system_text(snapshot: SystemSnapshot | None, *, accent: str = "", muted: str = "dim") -> Text:
     """Render actual host readings, including both network directions."""
-    body = Text("⌁  SYSTEM\n", style=f"bold {accent}" if accent else "bold")
+    body = Text()
+    body.append("SYSTEM\n", style=f"bold {accent}" if accent else "bold")
     if snapshot is None:
         body.append("Host counters unavailable", style=muted)
         return body
@@ -175,7 +176,10 @@ def system_text(snapshot: SystemSnapshot | None, *, accent: str = "", muted: str
     body.append("\n")
     body.append_text(_meter("RAM", snapshot.memory, accent, muted))
     body.append("\n")
-    body.append(f"↓ {_rate(snapshot.received_per_second)}  ↑ {_rate(snapshot.sent_per_second)}")
+    body.append("\n↓ ", style=muted)
+    body.append(_rate(snapshot.received_per_second))
+    body.append("   ↑ ", style=muted)
+    body.append(_rate(snapshot.sent_per_second))
     return body
 
 
@@ -207,9 +211,9 @@ class HomeSidebar(VerticalScroll):
 
     def compose(self) -> ComposeResult:
         """Build navigation links and workspace information."""
-        yield Static("✧  NOVA", classes="home-card-title")
+        yield Static("WORKSPACE", classes="home-card-title")
         for label, identifier in (
-            ("◉  Chat", "chat"),
+            (">  New conversation", "chat"),
             ("▣  Codebase", "codebase"),
             ("⌁  Run tests", "run"),
             ("⚒  Tools", "tools"),
@@ -239,11 +243,11 @@ class HomeActions(Horizontal):
     """Quick prompts that put editable text into the main composer."""
 
     def compose(self) -> ComposeResult:
-        """Build four editable task starters."""
+        """Build four editable task starters with a clear action and purpose."""
         for label, identifier in (
-            ("✦  Explain", "explain"),
-            ("⑂  Refactor", "refactor"),
-            ("⬡  Build", "build"),
-            ("⚙  Debug", "debug"),
+            ("[b]Explain[/b]\n[dim]Read the code[/dim]", "explain"),
+            ("[b]Refactor[/b]\n[dim]Clean it up[/dim]", "refactor"),
+            ("[b]Build[/b]\n[dim]New feature[/dim]", "build"),
+            ("[b]Debug[/b]\n[dim]Fix a problem[/dim]", "debug"),
         ):
             yield Button(label, id=f"home-action-{identifier}", classes="home-action")

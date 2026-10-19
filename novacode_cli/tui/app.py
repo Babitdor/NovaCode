@@ -53,6 +53,7 @@ if TYPE_CHECKING:
 from textual.binding import Binding
 from novacode_cli.tui.harness import HarnessDock, UIHarness, UIHarnessRequest
 from novacode_cli.tui.home import (
+    HOME_STYLES,
     HomeActions,
     HomeIdentity,
     HomeNavItem,
@@ -589,7 +590,9 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "refine": SlashCommand(
         "_passthrough_command", "refinement audit trail (/refine history|rollback <id>)"
     ),
-    "voice": SlashCommand("_run_voice", "local voice I/O settings (STT / VAD / TTS)"),
+    "voice": SlashCommand(
+        "_run_voice", "voice settings (opens /settings → Voice) · /voice test|download|doctor"
+    ),
     "research": SlashCommand("_run_research", "launch a multi-agent research swarm"),
     "dream": SlashCommand("_run_dream", "reflect over memories to surface ideas", wants_text=False),
     "evolution": SlashCommand(
@@ -680,7 +683,7 @@ _TUI_SLASH_COMMANDS = [f"/{name}" for name in TUI_COMMANDS]
 
 _HOME_RIGHT_MIN_WIDTH = 120
 _HOME_LEFT_MIN_WIDTH = 76
-_HOME_BANNER_MIN_HEIGHT = 48
+_HOME_BANNER_MIN_HEIGHT = 40
 # Below brand.TALL_MIN_HEIGHT the classic banner is the wordmark in a tight
 # rain box (12 rows with its padding); below this it is hidden.
 _CLASSIC_BANNER_MIN_HEIGHT = 17
@@ -1091,10 +1094,51 @@ class NovaApp(App):
         padding: 0 1;
         border: solid $accent 65%; background: $background;
     }
-    Screen.home #home-header { display: block; }
-    Screen.classic-home #home-header {
-        display: block; border: none; padding: 1 2; background: transparent;
+    Screen.home #home-header {
+        display: block; border: none; border-bottom: solid $border 35%;
+        background: $background;
     }
+    Screen.classic-home #home-header {
+        display: block; height: 1fr; border: solid $primary 15%;
+        padding: 0 2; background: $background;
+    }
+    Screen.classic-home #workspace-layout { display: none; }
+    Screen.classic-home #home-banner-slot { height: 1fr; }
+    Screen.classic-home #status-row,
+    Screen.classic-home #info-bar { display: none; }
+    Screen.classic-home #mode-badge { height: auto; }
+    Screen.classic-ui #prompt-dock { padding: 0; background: $background; }
+    Screen.classic-ui #prompt-row.normal-mode {
+        border: solid $primary 45%; background: $panel; padding: 0;
+    }
+    Screen.classic-ui #prompt-row.plan-mode { border: solid $primary 60%; }
+    Screen.classic-ui #prompt-row.bash-mode { border: solid $accent 60%; }
+    Screen.classic-ui #prompt.normal-mode,
+    Screen.classic-ui #prompt:focus.normal-mode,
+    Screen.classic-ui #prompt-prefix.normal-mode { background: $panel; }
+    Screen.classic-ui #prompt { padding: 0; }
+    Screen.classic-ui #cmdpalette { border: solid $primary 45%; background: $surface; }
+    Screen.classic-ui ChatMessage { border-left: solid $primary 30%; }
+    Screen.classic-ui .toolbody,
+    Screen.classic-ui #todo-dock,
+    Screen.classic-ui #subagents-dock { background: $surface; }
+    ModalScreen.classic-ui #modal-box,
+    ModalScreen.classic-ui #reference-shell {
+        border: solid $primary 50%; background: $background;
+    }
+    ModalScreen.classic-ui Input,
+    ModalScreen.classic-ui OptionList,
+    ModalScreen.classic-ui SelectCurrent {
+        border: solid $primary 30%; background: $surface;
+    }
+    ModalScreen.classic-ui Button {
+        border: solid $primary 35%; background: $panel; color: $text;
+    }
+    ModalScreen.classic-ui Button:focus,
+    ModalScreen.classic-ui Input:focus,
+    ModalScreen.classic-ui OptionList:focus { border: solid $primary; }
+    ModalScreen.classic-ui Button:hover { background: $primary 20%; }
+    ModalScreen.classic-ui Button:disabled { opacity: 50%; color: $text-muted; }
     Screen.classic-home #home-banner-caption { display: none; }
     Screen.classic-home.classic-low #home-header { display: none; }
     #home-banner-slot { height: auto; }
@@ -1104,42 +1148,65 @@ class NovaApp(App):
         border: solid $accent 50%; background: $surface;
         scrollbar-gutter: auto;
     }
-    Screen.home #home-left { display: block; width: 23; padding: 0 1; }
-    Screen.home #home-right { display: block; width: 36; padding: 0 1; }
+    Screen.home #home-left {
+        display: block; width: 26; padding: 1; border: none; background: $surface;
+    }
+    Screen.home #home-right {
+        display: block; width: 34; padding: 0; border: none; background: transparent;
+    }
     #conversation-column { width: 1fr; height: 1fr; min-width: 0; }
     #home-tab, #home-intro, #home-actions { display: none; }
     Screen.home #home-tab {
-        display: block; height: 2; margin: 0 1; padding: 0 1;
-        border-bottom: solid $accent; color: $accent; text-style: bold;
+        display: block; height: 3; margin: 0 2; padding: 1 0 0 0;
+        color: $text-muted; text-style: none;
     }
     Screen.home #home-intro {
-        display: block; height: 4; margin: 0 2; padding: 0 1;
-        color: $text; background: $surface;
+        display: block; height: 4; margin: 0 2; padding: 0;
+        color: $text; background: transparent;
     }
     #home-activity { display: none; }
     Screen.home #home-activity {
-        display: block; height: 3; margin: 0 2; padding: 0 1;
-        border: solid $accent 45%; color: $success;
+        display: block; height: 2; margin: 0 2; padding: 0;
+        border: none; color: $success;
     }
-    Screen.home #home-actions { display: block; height: 4; margin: 0 2; }
-    Screen.home #conversation-column { border: solid $accent 45%; }
-    .home-card { height: auto; margin: 0 0 1 0; padding: 0 1;
-        border: solid $accent 55%; background: $background; color: $text; }
+    Screen.home #home-actions {
+        display: block; layout: grid; grid-size: 2 2; grid-columns: 1fr 1fr;
+        grid-rows: 4 4; grid-gutter: 1; height: 9; margin: 0 2 1 2;
+    }
+    Screen.home #conversation-column { border: none; background: $background; }
+    Screen.home #panes { min-height: 0; }
+    .home-card { height: auto; margin: 0 0 1 0; padding: 1;
+        border: none; border-top: solid $border 35%; background: $surface; color: $text; }
     .home-card-title { color: $accent; text-style: bold; height: 1; }
-    .home-section { margin-top: 1; border-top: solid $accent 40%; height: 2; }
+    .home-section { margin-top: 1; border-top: solid $border 35%; height: 2; }
     .home-side-detail { height: 1; color: $text-muted;
         overflow-x: hidden; text-overflow: ellipsis; }
     .home-nav { width: 100%; height: 2; min-height: 2; min-width: 0;
         padding: 0 1; margin: 0; border: none; background: transparent;
         color: $text; content-align: left middle; text-align: left; text-style: none; }
-    .home-nav:hover, .home-nav:focus { background: $accent 20%; color: $accent; }
-    #home-nav-chat { background: $accent 12%; color: $accent; text-style: bold; }
-    .home-action { width: 1fr; height: 3; min-height: 3; min-width: 0;
-        margin: 0 1 0 0; border: solid $accent 50%;
-        background: $surface; color: $text; }
-    .home-action:hover, .home-action:focus { background: $accent 20%; color: $accent; }
+    .home-nav:hover, .home-nav:focus { background: $accent 15%; color: $accent;
+        border-left: solid $accent; padding-left: 0; }
+    #home-nav-chat { background: $accent 12%; color: $accent; text-style: bold;
+        border-left: solid $accent; padding-left: 0; }
+    .home-action { width: 1fr; height: 4; min-height: 4; min-width: 0;
+        margin: 0; border: round $border 45%; padding: 0 1;
+        background: $surface; color: $text; content-align: left middle; text-style: none; }
+    .home-action:hover, .home-action:focus { background: $accent 12%; color: $accent;
+        border: round $accent; text-style: bold; }
+    Screen.dashboard-ui #prompt-row.normal-mode {
+        border: round $border 65%; padding: 1 0; background: $panel;
+    }
+    Screen.dashboard-ui #prompt.normal-mode,
+    Screen.dashboard-ui #prompt:focus.normal-mode,
+    Screen.dashboard-ui #prompt-prefix.normal-mode { background: $panel; }
+    Screen.dashboard-ui #cmdpalette { border: round $border 65%; background: $surface; }
+    Screen.dashboard-ui #todo-dock,
+    Screen.dashboard-ui #subagents-dock { background: $surface; border: round $border 40%; }
+    ModalScreen.dashboard-ui #modal-box,
+    ModalScreen.dashboard-ui #reference-shell { border: round $border 65%; }
     Screen.home #prompt-dock { margin-left: 0; margin-right: 0; }
     Screen.home.dashboard-narrow #home-right { display: none; }
+    Screen.home.dashboard-narrow #home-activity { display: none; }
     Screen.home.dashboard-compact #home-left { display: none; }
     Screen.home.short #home-header { display: none; }
     Screen.home.short #home-actions { display: none; }
@@ -1270,6 +1337,33 @@ class NovaApp(App):
         border: round $border 50%; padding: 0; background: $background;
     }
     Screen.banner-ui #prompt-prefix.normal-mode { background: $background; }
+    Screen.centered-ui #prompt-row.normal-mode {
+        border: round $border 60%; background: $panel; padding: 1 0;
+    }
+    Screen.centered-ui #prompt.normal-mode,
+    Screen.centered-ui #prompt:focus.normal-mode,
+    Screen.centered-ui #prompt-prefix.normal-mode { background: $panel; }
+    Screen.centered-ui #prompt-dock { padding: 0 2; }
+    Screen.centered-home #prompt-dock { padding: 0; }
+    Screen.centered-ui #cmdpalette { border: round $border 60%; background: $panel; }
+    Screen.centered-ui ChatMessage.user { background: $panel; border: none; }
+    ModalScreen.centered-ui #modal-box,
+    ModalScreen.centered-ui #reference-shell {
+        border: round $border 60%; background: $panel;
+    }
+    ModalScreen.centered-ui Input,
+    ModalScreen.centered-ui OptionList,
+    ModalScreen.centered-ui SelectCurrent {
+        border: round $border 60%; background: $surface;
+    }
+    ModalScreen.centered-ui Button {
+        border: round $border 60%; background: $surface; color: $text;
+    }
+    ModalScreen.centered-ui Button:focus,
+    ModalScreen.centered-ui Input:focus,
+    ModalScreen.centered-ui OptionList:focus { border: round $accent; }
+    ModalScreen.centered-ui Button:hover { background: $accent 20%; }
+    ModalScreen.centered-ui Button:disabled { opacity: 50%; color: $text-muted; }
     Screen.banner-ui #transcript > .tool { padding: 0; }
     Screen.minimal-ui #panes > VerticalScroll { padding: 0 2; }
     Screen.minimal-ui ChatMessage { padding: 0 1; margin: 0 0 1 0; }
@@ -2285,7 +2379,7 @@ class NovaApp(App):
         with Vertical(id="home-header"):
             yield Vertical(id="home-banner-slot")
             yield Static(
-                "IDEAS INTO REALITY   •   BUILD  THINK  REFINE  TOGETHER", id="home-banner-caption"
+                "NOVA CODE   /   BUILD · THINK · REFINE", id="home-banner-caption"
             )
         with Vertical(id="home-style-header"):
             yield Static("", id="home-style-art")
@@ -2295,12 +2389,12 @@ class NovaApp(App):
             yield HomeSidebar(id="home-left")
             with Vertical(id="conversation-column"):
                 yield Static("", id="conversation-style-heading")
-                yield Static("◉  CONVERSATION", id="home-tab")
+                yield Static("WORKSPACE  /  NEW CONVERSATION", id="home-tab")
                 yield Static("", id="home-intro")
                 yield Static("●  Ready for a new chat", id="home-activity")
+                yield HomeActions(id="home-actions")
                 with ContentSwitcher(initial="transcript", id="panes"):
                     yield TranscriptScroll(id="transcript")
-                yield HomeActions(id="home-actions")
             yield HomeRightRail(id="home-right")
             yield HarnessDock(id="ui-harness-dock")
         yield OptionList(id="cmdpalette")
@@ -2408,7 +2502,9 @@ class NovaApp(App):
                 self.register_theme(theme)
             except Exception:  # noqa: BLE001
                 pass
-        name = DEFAULT_THEME
+        # getattr: SessionPickerApp borrows this method and has no home style.
+        classic = getattr(self, "_home_style", None) == "classic"
+        name = "nova-classic" if classic else DEFAULT_THEME
         try:
             from novacode_cli.config.nova_config import NovaConfig
 
@@ -7759,6 +7855,18 @@ class NovaApp(App):
             line, col = text, len(text)
         self._feed_palette(line, col)
         self._update_mode_badge(text)
+        self.call_after_refresh(self._position_palette)
+
+    def _position_palette(self) -> None:
+        """Anchor completions above the actual composer for every design."""
+        with suppress(NoMatches):
+            palette = self.query_one("#cmdpalette", OptionList)
+            if not palette.display:
+                return
+            dock = self.query_one("#prompt-dock", Vertical)
+            root = self._root_screen or self.screen
+            bottom = 0 if root.has_class("centered-home") else self.size.height - dock.region.y
+            palette.styles.margin = (0, 0, max(0, bottom), 0)
 
     def _feed_palette(self, line: str, col: int) -> None:
         """Run completion only when the line can have completions.
@@ -8000,6 +8108,7 @@ class NovaApp(App):
         for c in matches:
             palette.add_option(Option(c))
         palette.display = True
+        self.call_after_refresh(self._position_palette)
         try:
             palette.highlighted = 0
         except Exception:  # noqa: BLE001
@@ -10671,10 +10780,11 @@ class NovaApp(App):
             from novacode_cli.tui.terminal_view import InlineTerminal, TerminalCommandScreen
         except ImportError as exc:
             if exc.name == "pyte":
+                from novacode_cli.install_commands import install_command
+
                 message = (
-                    "Interactive terminal needs pyte. Update Nova's environment "
-                    "with `uv tool install -e . --force` (tool install) or "
-                    "`uv sync` (repo run), then restart Nova."
+                    f"Interactive terminal needs pyte. Install it with: "
+                    f"{install_command(['pyte'])}, then restart Nova."
                 )
             else:
                 message = f"Interactive terminal unavailable: {exc}"
@@ -11607,7 +11717,12 @@ class NovaApp(App):
 
     def _set_home_style(self, style: str) -> None:
         """Switch the empty-chat layout without replacing conversation widgets."""
+        from novacode_cli.config.nova_config import NovaConfig
+
+        previous_default = "nova-classic" if self._home_style == "classic" else DEFAULT_THEME
         self._home_style = home_style(style)
+        if self.theme == previous_default and not NovaConfig().get("theme"):
+            self.theme = "nova-classic" if self._home_style == "classic" else DEFAULT_THEME
         self._home_dashboard_enabled = self._home_style == "dashboard"
         if self._home_visible:
             self._show_home_banner()
@@ -11616,13 +11731,14 @@ class NovaApp(App):
             self._refresh_home_style()
         self._refresh_usage_metrics()
         self._refresh_info_bar()
+        self.call_after_refresh(self._position_palette)
 
     def _apply_interface_style(self) -> None:
         """Carry conversation styles into the root screen and active dialogs."""
-        for screen in (self._root_screen, self.screen):
+        for screen in self.screen_stack:
             if screen is not None:
                 screen.set_class(self._home_style in {"banner", "minimal"}, "conversation-style")
-                for style in ("banner", "minimal"):
+                for _, style in HOME_STYLES:
                     screen.set_class(self._home_style == style, f"{style}-ui")
 
     def _on_interface_screen_changed(self, _screen: Screen) -> None:
@@ -12086,7 +12202,17 @@ class NovaApp(App):
         quickly. Output is captured the same way as ``_passthrough_command``.
         """
         from novacode_cli.commands.commands import handle_command
+        from novacode_cli.remote.command_ui import command_output
 
+        parts = text.split(maxsplit=1)
+        if (parts[1].strip().lower() if len(parts) > 1 else "") in ("", "settings") and (
+            command_output.get() is None
+        ):
+            # The settings live in /settings; subcommands (test, doctor…) still run here.
+            from novacode_cli.tui.screens import SettingsScreen
+
+            self.push_screen(SettingsScreen(section="voice"))
+            return
         try:
             with _rich_console.capture() as cap:
                 await handle_command(
@@ -14145,23 +14271,23 @@ class NovaApp(App):
             self._set_home_visible(visible=True)
             return
         try:
-            from novacode_cli.config.config import get_responsive_ascii
-
             try:
                 width, height = self.size.width or None, self.size.height or None
             except Exception:  # noqa: BLE001
                 width = height = None
-            art = get_responsive_ascii(width=width, height=height)
+            art = self._home_banner_art(width, height)
             compact = self._banner_compact(height)
+            viewport_height = max(1, (height or 30) - 5) if self._home_style == "classic" else None
             rain = self._home_banner
             if isinstance(rain, MatrixRain) and rain.is_mounted:
-                rain.reflow(art, width, compact=compact)
+                rain.reflow(art, width, compact=compact, viewport_height=viewport_height)
                 self._set_home_visible(visible=True)
                 return
             rain = MatrixRain(
                 art=art,
                 width=width,
                 compact=compact,
+                viewport_height=viewport_height,
                 animate=self._matrix_rain_enabled(),
                 fps=min(15, self._animation_fps)
                 if self._low_resource_mode
@@ -14172,6 +14298,19 @@ class NovaApp(App):
             self._set_home_visible(visible=True)
         except Exception:  # noqa: BLE001
             self._home_banner = None
+
+    def _home_banner_art(self, width: int | None, height: int | None) -> str:
+        """Keep Classic's wordmark low beside the portrait, using the shared art."""
+        from novacode_cli._version import __version__
+        from novacode_cli.brand import art_for
+
+        classic = self._home_style == "classic"
+        return art_for(
+            width=(width - 3 if width is not None and classic else width),
+            height=0 if self._home_style == "dashboard" else height,
+            version=__version__,
+            lower_wordmark=classic,
+        )
 
     def _set_home_visible(self, *, visible: bool) -> None:
         """Keep the dashboard tied to the empty-chat state."""
@@ -14185,8 +14324,9 @@ class NovaApp(App):
         for style in ("centered", "banner", "minimal"):
             root.set_class(visible and self._home_style == style, f"{style}-home")
         self.query_one("#prompt", PromptInput).placeholder = (
-            "Ask Nova anything…  @file or /command" if styled else
-            "Type your message or @path/to/file  (shift+enter for a new line)"
+            "Ask Nova anything…  @file or /command"
+            if self._home_style in {"centered", "banner", "minimal"}
+            else "Type your message or @path/to/file. (Shift+Enter for a new line)"
         )
         rain = self._home_banner
         if isinstance(rain, MatrixRain):
@@ -14214,36 +14354,41 @@ class NovaApp(App):
         except NoMatches:
             # The refresh timer can fire after teardown removes these widgets.
             return
-        from novacode_cli._version import __version__
         from novacode_cli.config.config import settings
 
-        intro = (
-            f"\n  Nova  v{__version__}\n"
-            "  Your AI pair programmer. Build. Think. Refine. Together."
-        )
-        intro_widget.update(Text(intro))
         pal = self._palette
+        intro = Text()
+        intro.append("What are we building?\n", style=f"bold {pal.text}")
+        intro.append("Choose a starting point, or describe your task below.\n", style=pal.muted)
+        intro_widget.update(intro)
         workspace_widget.update(
             Text(str(settings.get_workspace_root()), style=f"bold {pal.success}",
                  no_wrap=True, overflow="ellipsis")
         )
-        model = Text("◇  MODEL\n", style=f"bold {pal.accent}", no_wrap=True,
-                     overflow="ellipsis")
-        model.append(self.model_name or "unknown")
+        workspace_widget.tooltip = str(settings.get_workspace_root())
+        model = Text(no_wrap=True, overflow="ellipsis")
+        model.append("MODEL\n", style=f"bold {pal.accent}")
+        model.append(self._routed_model_name or self.model_name or "unknown", style=pal.text)
         if self._model_provider:
             model.append(f"\n{self._model_provider}", style=pal.muted)
         model_widget.update(model)
         registry = getattr(self, "_task_registry", None)
         active = registry.active_count() if registry is not None else 0
-        tasks = Text("☷  TASK QUEUE\n", style=f"bold {pal.accent}")
-        tasks.append(f"{active} background job{'s' if active != 1 else ''} running\n")
+        tasks = Text()
+        tasks.append("BACKGROUND TASKS\n", style=f"bold {pal.accent}")
+        tasks.append(
+            f"{active} background job{'s' if active != 1 else ''} running\n", style=pal.text
+        )
         tasks.append("Ctrl+B to inspect", style=pal.muted)
         tasks_widget.update(tasks)
-        context = Text("▤  MEMORY / CONTEXT\n", style=f"bold {pal.accent}")
+        context = Text()
+        context.append("CONTEXT WINDOW\n", style=f"bold {pal.accent}")
         try:
             breakdown = self.token_tracker.get_breakdown() if self.token_tracker else None
             if breakdown is not None and breakdown.context_window_size:
-                context.append(f"{breakdown.usage_percentage:.0f}% of context window")
+                context.append(
+                    f"{breakdown.usage_percentage:.0f}% of context window", style=pal.text
+                )
             else:
                 context.append("No usage yet", style=pal.muted)
         except Exception:  # noqa: BLE001
@@ -14351,20 +14496,22 @@ class NovaApp(App):
         rain. Only acts while the banner is still on screen (home screen).
         """
         self._apply_responsive_layout(event)
+        self.call_after_refresh(self._position_palette)
         if self._home_visible:
             self._refresh_home_style()
         rain = self._home_banner
         if not isinstance(rain, MatrixRain) or not rain.is_mounted:
             return
         try:
-            from novacode_cli.config.config import get_responsive_ascii
-
             size = getattr(event, "size", None) or self.size
             width, height = size.width or None, size.height or None
             rain.reflow(
-                get_responsive_ascii(width=width, height=height),
+                self._home_banner_art(width, height),
                 width,
                 compact=self._banner_compact(height),
+                viewport_height=(
+                    max(1, (height or 30) - 5) if self._home_style == "classic" else None
+                ),
             )
         except Exception:  # noqa: BLE001
             pass
@@ -14981,10 +15128,11 @@ class NovaApp(App):
             self._log(Text(f"Code search unavailable: {ex}", style="yellow"))
             return
         if not _is_semble_available():
+            from novacode_cli.install_commands import missing_package
+
             self._log(
                 Text(
-                    "Code search is not available. Install 'semble' to enable "
-                    "semantic code search (pip install semble).",
+                    f"Code search is not available: {missing_package('semble')}",
                     style="yellow",
                 )
             )

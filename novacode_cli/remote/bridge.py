@@ -541,8 +541,10 @@ class RemoteBridgeManager:
                 return True, ""
 
         except ImportError:
-            logger.error("discord.py is not installed. Install it with: pip install discord.py")
-            return False, "discord.py is not installed. Install with: pip install discord.py"
+            from novacode_cli.install_commands import missing_package
+
+            logger.error(missing_package("discord.py"))
+            return False, missing_package("discord.py")
         except Exception as e:
             logger.error(f"Failed to start Discord bridge: {e}")
             return False, f"Failed to start Discord bridge: {e}"
@@ -712,7 +714,9 @@ class RemoteBridgeManager:
             return True, f"Channel #{channel_name} created (ID: {channel_id})"
 
         except ImportError:
-            return False, "discord.py is not installed. Install with: pip install discord.py"
+            from novacode_cli.install_commands import missing_package
+
+            return False, missing_package("discord.py")
         except Exception as e:
             logger.error(f"Failed to start Discord bridge with auto channel: {e}")
             return False, f"Failed to start Discord bridge: {e}"

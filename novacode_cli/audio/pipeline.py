@@ -80,11 +80,9 @@ def build_stt(provider: str, provider_configs: dict[str, Any] | None = None) -> 
         try:
             import sherpa_onnx  # noqa: F401
         except ImportError as e:
-            raise ImportError(
-                "The 'sherpa-onnx' package is required for Parakeet STT.\n"
-                "If developer/local install, run: pip install sherpa-onnx\n"
-                "If global uv tool install, run: uv tool install --with sherpa-onnx novacode-cli --reinstall"
-            ) from e
+            from novacode_cli.audio import parakeet_install_hint
+
+            raise ImportError(parakeet_install_hint()) from e
 
         from novacode_cli.audio.stt_parakeet import ParakeetTranscriber
 
@@ -197,11 +195,9 @@ class VoicePipeline:
             try:
                 import pocket_tts  # noqa: F401
             except ImportError as e:
-                raise ImportError(
-                    "The 'pocket-tts' package is required for Pocket-TTS.\n"
-                    "If developer/local install, run: pip install pocket-tts\n"
-                    "If global uv tool install, run: uv tool install --with pocket-tts novacode-cli --reinstall"
-                ) from e
+                from novacode_cli.audio import pocket_install_hint
+
+                raise ImportError(pocket_install_hint()) from e
 
             from novacode_cli.audio.tts_pocket import PocketSpeaker
 

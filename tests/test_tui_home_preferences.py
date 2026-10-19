@@ -52,7 +52,7 @@ async def test_saved_home_layout_is_loaded(saved: object, no_system_sampling: Mo
         if not redesigned:
             no_system_sampling.assert_not_called()
             assert app.query_one("#home-banner-caption").size.height == 0
-            assert app.query_one("#conversation-column").size.width == app.size.width
+            assert app.query_one("#home-header").region.width == app.size.width
 
 
 async def test_settings_switches_home_live_and_persists() -> None:

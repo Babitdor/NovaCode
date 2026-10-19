@@ -40,9 +40,11 @@ class PtyShell:
             try:
                 from winpty import PtyProcess
             except ImportError as exc:
+                from novacode_cli.install_commands import install_command
+
                 message = (
-                    "Interactive shell needs pywinpty on Windows. "
-                    "Run `uv tool install -e . --force` or `uv sync`, then restart Nova."
+                    "Interactive shell needs pywinpty on Windows. Install it with: "
+                    f"{install_command(['pywinpty'])}, then restart Nova."
                 )
                 raise PtyUnavailableError(message) from exc
             script = "& " + command if command.lstrip().startswith(('"', "'")) else command

@@ -109,12 +109,19 @@ class MatrixRain(Static):
     KATAKANA = "ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜｦﾝｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅ"
 
     def __init__(
-        self, art: str = "", width: int | None = None, *, animate: bool | None = None,
-        fps: int = 30, compact: bool = False,
+        self,
+        art: str = "",
+        width: int | None = None,
+        *,
+        animate: bool | None = None,
+        fps: int = 30,
+        compact: bool = False,
+        viewport_height: int | None = None,
     ) -> None:
         super().__init__("", id="matrix-rain")
         self._animation_enabled = animate
         self._compact = compact
+        self._viewport_height = viewport_height
         from novacode_cli.tui.animation_rate import animation_fps
 
         self._animation_fps = animation_fps(fps)
@@ -147,6 +154,16 @@ class MatrixRain(Static):
             art_lines.pop(0)
         while art_lines and not art_lines[-1].strip():
             art_lines.pop()
+        if self._viewport_height is not None and len(art_lines) + 2 > self._viewport_height:
+            from novacode_cli._version import __version__
+            from novacode_cli.brand import art_for, compact_mark
+
+            fallback = art_for(
+                width=(width or 80) - 1, version=__version__, height=0, lower_wordmark=True
+            )
+            art_lines = fallback.strip("\n").splitlines()
+            if len(art_lines) + 2 > self._viewport_height:
+                art_lines = [compact_mark()]
         self._art_lines = art_lines
 
         art_w = max((cell_len(ln) for ln in art_lines), default=0)
@@ -186,18 +203,31 @@ class MatrixRain(Static):
         self._row_count = max(art_h + 2, 10) if self._compact else max(art_h + 6, 18)
         self._art_left = max(0, (self._col_count - art_w) // 2)
         self._art_top = 1 if self._compact else 2
+        if self._viewport_height is not None:
+            self._row_count = max(1, self._viewport_height)
+            self._art_left = 1
+            self._art_top = max(0, self._row_count - art_h - 2)
         self._art_w = art_w  # the art's bounding box, measured with cell_len
         self._width = width
 
-    def reflow(self, art: str, width: int | None, *, compact: bool | None = None) -> None:
+    def reflow(
+        self,
+        art: str,
+        width: int | None,
+        *,
+        compact: bool | None = None,
+        viewport_height: int | None = None,
+    ) -> None:
         """Re-grid when the terminal width or banner layout changes."""
         if (
             width == self._width
             and (compact is None or compact == self._compact)
             and art == getattr(self, "_art_source", art)
+            and viewport_height == self._viewport_height
         ):
             return
         self._art_source = art
+        self._viewport_height = viewport_height
         if compact is not None:
             self._compact = compact
         self._configure(art, width)
@@ -294,8 +324,17 @@ class MatrixRain(Static):
         auto-sizing a ``Static`` used to get from its content is gone and the
         box would collapse to zero height. The grid dimensions are the size.
         """
-        self.styles.width = self._col_count
-        self.styles.height = self._row_count
+        self.styles.width = "1fr" if self._viewport_height is not None else self._col_count
+        self.styles.height = "1fr" if self._viewport_height is not None else self._row_count
+
+    def on_resize(self, event: events.Resize) -> None:
+        """Fit Classic's rain to its canvas, including multiline composer growth."""
+        if self._viewport_height is None:
+            return
+        self._viewport_height = event.size.height
+        self._configure(self._art_source, event.size.width + 4)
+        self._init_columns()
+        self.redraw_frame()
 
     def on_mount(self) -> None:
         self._init_columns()
@@ -373,9 +412,16 @@ class MatrixRain(Static):
         window" complaint. Recycling a column still restarts it above the top
         (see ``_fill_buffers``), which is what keeps the fall continuous.
         """
+        self._chars = list("0123456789" if self._viewport_height is not None else self.KATAKANA)
         self._columns = []
-        for _ in range(self._col_count):
+        for column_index in range(self._col_count):
             trail = random.randint(5, 14)
+            if self._viewport_height is not None:
+                trail = (
+                    random.randint(10, max(14, self._row_count))  # noqa: S311 — decorative rain
+                    if column_index % 3
+                    else 0
+                )
             self._columns.append(
                 {
                     "pos": random.uniform(-trail, self._row_count),
@@ -464,6 +510,7 @@ class MatrixRain(Static):
     def _build_strips(self) -> list[Strip]:
         """Advance one frame and render it as one ``Strip`` per row."""
         self._fill_buffers()
+        background = Style(bgcolor=self.rich_style.bgcolor)
         cols = self._col_count
         lines = self._frame_lines
         styles = self._frame_styles
@@ -485,7 +532,7 @@ class MatrixRain(Static):
                     Segment("".join(line[x:j]) if s else " " * (j - x), s or Style.null())
                 )
                 x = j
-            strips.append(Strip(segments, cols))
+            strips.append(Strip(segments, cols).apply_style(background))
         return strips
 
     def render(self) -> Text:

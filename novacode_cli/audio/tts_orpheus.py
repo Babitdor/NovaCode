@@ -72,13 +72,16 @@ class OrpheusSpeaker:
                 self._model = OrpheusCpp(verbose=False, lang=self._lang)
             except OSError as exc:
                 if _is_illegal_instruction(exc):
+                    from novacode_cli.install_commands import install_command
+
+                    rebuild = install_command(
+                        ["llama-cpp-python"], args="--force-reinstall --no-binary llama-cpp-python"
+                    )
                     msg = (
                         "Orpheus failed to load: this CPU doesn't support the "
                         "instruction set (AVX2/AVX-512) the prebuilt "
                         "llama-cpp-python wheel was built with. Rebuild it for "
-                        "your CPU:\n"
-                        "  pip install --force-reinstall --no-binary llama-cpp-python "
-                        "llama-cpp-python\n"
+                        f"your CPU:\n  {rebuild}\n"
                         "(needs a C++ compiler), or switch back with "
                         "/voice settings tts piper."
                     )

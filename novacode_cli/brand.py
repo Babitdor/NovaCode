@@ -102,10 +102,13 @@ def version_line(version: str | None = None) -> str:
     return f"v{version}" if version else ""
 
 
-def _lockup_rows(version: str | None) -> list[str]:
+def _lockup_rows(version: str | None, *, lower_wordmark: bool = False) -> list[str]:
     """The lockup rows, with *version*'s caption in the right-hand column."""
     column = [_pad(row, _COLUMN_WIDTH) for row in WORDMARK_LINES]
     blank, caption = " " * _COLUMN_WIDTH, _pad(version_line(version), _COLUMN_WIDTH)
+    if lower_wordmark and version:
+        # Opaque braille blanks keep rain digits from extending the version.
+        caption = _pad("⠀" + version_line(version) + "⠀⠀", _COLUMN_WIDTH)
     # The caption sits directly under the wordmark when there is one, and takes
     # the blank spacer row's place when there is not, so a versionless lockup is
     # exactly as tall as a versioned one -- the rain grid must not resize when a
@@ -122,6 +125,9 @@ def _lockup_rows(version: str | None) -> list[str]:
     # align, and centring a 6-row wordmark against a 12-row portrait would float
     # NOVA into the middle of the face. The rest of the column is blank.
     column.extend(" " * _COLUMN_WIDTH for _ in range(height - len(column)))
+    if lower_wordmark:
+        offset = 4
+        column = [blank] * offset + column[: height - offset]
 
     rows: list[str] = []
     for i, portrait_row in enumerate(_PORTRAIT):
@@ -251,7 +257,11 @@ TALL_MIN_HEIGHT = 30
 
 
 def art_for(
-    width: int | None = None, version: str | None = None, height: int | None = None
+    width: int | None = None,
+    version: str | None = None,
+    height: int | None = None,
+    *,
+    lower_wordmark: bool = False,
 ) -> str:
     """Responsive startup art for *width* terminal columns.
 
@@ -261,6 +271,8 @@ def art_for(
             This is the only caption the lockup gets: the appended
             ``NOVA · a terminal coding agent · v<version>`` row was dropped as a
             repeat of the wordmark the art draws directly above it.
+        height: Terminal rows; short windows use a compact wordmark.
+        lower_wordmark: Lower the wordmark beside the portrait for Classic.
 
     Returns:
         The lockup on wide terminals, the portrait alone when the lockup cannot
@@ -274,12 +286,16 @@ def art_for(
     usable = columns - _TRANSCRIPT_INSET
     short = height is not None and height < TALL_MIN_HEIGHT
     if usable >= LOCKUP_WIDTH and not short:
-        return "\n" + "\n".join(_lockup_rows(version)) + "\n"
+        rows = _lockup_rows(version, lower_wordmark=lower_wordmark)
+        return "\n" + "\n".join(rows) + "\n"
     if usable >= WORDMARK_WIDTH:
         # A window that is not full screen: NOVA itself, the portrait dropped.
         rows = list(WORDMARK_LINES)
         if version:
-            rows += [" " * WORDMARK_WIDTH, _pad(version_line(version).center(WORDMARK_WIDTH), WORDMARK_WIDTH)]
+            caption = version_line(version)
+            if lower_wordmark:
+                caption = "⠀" + caption + "⠀⠀"
+            rows += [" " * WORDMARK_WIDTH, _pad(caption.center(WORDMARK_WIDTH), WORDMARK_WIDTH)]
         return "\n" + "\n".join(rows) + "\n"
     if usable >= PORTRAIT_WIDTH and not short:
         rows = list(compact_art())

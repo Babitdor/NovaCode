@@ -2397,11 +2397,13 @@ class SettingsScreen(ModalScreen[None]):
         "auto_approve_decisions_enabled": False,
     }
 
-    def __init__(self) -> None:
+    def __init__(self, section: str | None = None) -> None:
+        """``section="voice"`` opens scrolled to the Voice settings."""
         super().__init__()
         from novacode_cli.config.nova_config import NovaConfig
 
         self._config = NovaConfig()
+        self._section = section
 
     def _preference(self, key: str) -> bool:
         default = self._PREFERENCES[key]
@@ -2468,6 +2470,8 @@ class SettingsScreen(ModalScreen[None]):
                     classes="settings-description",
                 )
 
+                yield from self._compose_voice()
+
                 yield Static("INPUT", classes="settings-section")
                 with Horizontal(classes="settings-row"):
                     yield Switch(value=self._preference("submit_on_enter"), id="submit-enter-toggle")
@@ -2528,6 +2532,80 @@ class SettingsScreen(ModalScreen[None]):
             with Horizontal(id="modal-buttons"):
                 yield Button("Close", id="close")
 
+    def _compose_voice(self) -> ComposeResult:
+        """The /voice settings: on/off, mode, spoken replies, providers, tools."""
+        from novacode_cli.audio.providers import STT_PROVIDERS, TTS_PROVIDERS
+
+        voice = self._config.get_voice_config()
+        yield Static("VOICE", classes="settings-section", id="settings-voice")
+        with Horizontal(classes="settings-row"):
+            yield Switch(value=bool(voice["enabled"]), id="voice-enabled-toggle")
+            yield Static("Voice input", classes="settings-label")
+        yield Static("Talk to Nova through your microphone.", classes="settings-description")
+        yield Static("Listening", classes="settings-label")
+        yield Select(
+            [("Push to talk · Ctrl+G", "push_to_talk"), ("Always listening · Ctrl+L", "listen")],
+            value=voice["mode"] if voice["mode"] in ("push_to_talk", "listen") else "push_to_talk",
+            allow_blank=False,
+            id="voice-mode-select",
+        )
+        with Horizontal(classes="settings-row"):
+            yield Switch(value=bool(voice["speak_responses"]), id="voice-speak-toggle")
+            yield Static("Speak replies aloud", classes="settings-label")
+        for kind, providers, current in (
+            ("stt", STT_PROVIDERS, voice["stt_provider"]),
+            ("tts", TTS_PROVIDERS, voice["tts_provider"]),
+        ):
+            label = "Speech to text" if kind == "stt" else "Text to speech"
+            yield Static(label, classes="settings-label")
+            options = [
+                (f"{meta.get('name', name)} · {meta.get('description', '')}", name)
+                for name, meta in providers.items()
+            ]
+            yield Select(
+                options,
+                value=current if current in providers else options[0][1],
+                allow_blank=False,
+                id=f"voice-{kind}-select",
+            )
+        yield Static(
+            "Deepgram and ElevenLabs keys are managed in /auth.", classes="settings-description"
+        )
+        with Horizontal(classes="settings-row"):
+            yield Button("Test voice", id="voice-test")
+            yield Button("Download models", id="voice-download")
+            yield Button("Diagnostics", id="voice-doctor")
+
+    def _voice_changed(self, **updates: object) -> None:
+        """Save a voice setting and drop the cached pipeline, which reads it at build."""
+        try:
+            self._config.set_voice_config(**updates)
+        except Exception as exc:  # noqa: BLE001
+            self.app.notify(f"Could not save voice settings: {exc}", severity="error")
+            return
+        self.app._voice_pipeline = None
+        state = getattr(self.app, "session_state", None)
+        if hasattr(state, "_voice_pipeline"):
+            state._voice_pipeline = None
+
+    @work(group="settings-voice-key")
+    async def _warn_missing_voice_key(self, provider: str) -> None:
+        from novacode_cli.audio.providers import STT_PROVIDERS, TTS_PROVIDERS
+        from novacode_cli.commands.voice_handler import _voice_provider_has_key
+
+        meta = STT_PROVIDERS.get(provider) or TTS_PROVIDERS.get(provider) or {}
+        if meta.get("requires_key") and not await asyncio.to_thread(
+            _voice_provider_has_key, provider, self._config
+        ):
+            name = meta.get("name", provider)
+            self.app.notify(f"{name} needs an API key: add it in /auth.", severity="warning")
+
+    def _scroll_to_voice(self) -> None:
+        """Scroll to the Voice section (``/voice`` opens Settings here)."""
+        self.query_one("#settings-content", VerticalScroll).scroll_to_widget(
+            self.query_one("#settings-voice"), top=True, animate=False
+        )
+
     def _effort(self) -> str:
         value = str(self._config.get("reasoning_effort", "off") or "off").lower()
         return value if value in {"off", "low", "medium", "high"} else "off"
@@ -2566,8 +2644,19 @@ class SettingsScreen(ModalScreen[None]):
 
     def on_mount(self) -> None:
         animate_modal_screen(self)
+        if self._section == "voice":
+            self.call_after_refresh(self._scroll_to_voice)
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
+        if event.switch.id in ("voice-enabled-toggle", "voice-speak-toggle"):
+            key = "enabled" if event.switch.id == "voice-enabled-toggle" else "speak_responses"
+            self._voice_changed(**{key: event.value})
+            if key == "enabled" and event.value:
+                from novacode_cli import audio
+
+                if not audio.is_voice_available():
+                    self.app.notify(audio.install_hint(), severity="warning")
+            return
         if event.switch.id == "decision-pruning-toggle":
             self._set_decision_pruning(event.value)
             return
@@ -2621,6 +2710,17 @@ class SettingsScreen(ModalScreen[None]):
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.value is Select.BLANK:
             return
+        if event.select.id in ("voice-mode-select", "voice-stt-select", "voice-tts-select"):
+            key = {
+                "voice-mode-select": "mode",
+                "voice-stt-select": "stt_provider",
+                "voice-tts-select": "tts_provider",
+            }[event.select.id]
+            if self._config.get_voice_config().get(key) != event.value:
+                self._voice_changed(**{key: event.value})
+                if key != "mode":
+                    self._warn_missing_voice_key(str(event.value))
+            return
         if event.select.id == "effort-select":
             if event.value != self._effort():
                 # /effort saves it and rebuilds the model with the new effort.
@@ -2649,6 +2749,10 @@ class SettingsScreen(ModalScreen[None]):
             self.dismiss(None)
         elif event.button.id == "settings-theme":
             self.app.push_screen(ThemeScreen())
+        elif event.button.id in ("voice-test", "voice-download", "voice-doctor"):
+            sub = event.button.id.removeprefix("voice-")
+            self.app.notify(f"Running /voice {sub}; its result appears in the conversation.")
+            self.app._run_voice(f"/voice {sub}")  # a worker already
 
     def action_close(self) -> None:
         self.dismiss(None)

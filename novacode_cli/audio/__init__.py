@@ -11,11 +11,9 @@ Every heavy dependency is **optional**. This package imports cleanly without any
 of them installed; :func:`is_voice_available` reports what's missing so the
 ``/voice`` command can print an install hint instead of crashing.
 
-Install with::
-
-    uv tool install -e '.[voice]'     # global 'nova' command
-    uv pip install -e '.[voice]'      # local dev install
-    uv sync --group dev               # includes all dev + voice deps"""
+Install with the command :func:`install_hint` prints: it matches how this Nova
+was installed (see :mod:`novacode_cli.install_commands`). From a checkout,
+``uv sync --group dev`` includes all dev + voice deps."""
 
 from __future__ import annotations
 
@@ -69,35 +67,42 @@ def is_pocket_available() -> bool:
     return _HAS_POCKET
 
 
+def _hint(what: str, packages: list[str], extra: str, **options: str) -> str:
+    from novacode_cli.install_commands import install_command
+
+    command = install_command(packages, extra, **options)
+    return f"{what} Install with:\n  {command}\nthen restart Nova."
+
+
+def install_line(hint: str) -> str:
+    """The command alone, from one of the hints below."""
+    return hint.splitlines()[1].strip()
+
+
 def orpheus_install_hint() -> str:
-    """One-line, user-facing hint for enabling the Orpheus TTS provider."""
-    return (
-        "Orpheus needs orpheus-cpp + llama-cpp-python. Install with:\n"
-        "  uv pip install orpheus-cpp\n"
-        "  uv pip install llama-cpp-python "
-        "--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu"
+    """User-facing hint for enabling the Orpheus TTS provider."""
+    return _hint(
+        "Orpheus needs orpheus-cpp and llama-cpp-python.",
+        ["orpheus-cpp", "llama-cpp-python"],
+        "voice-orpheus",
+        index_url="https://abetlen.github.io/llama-cpp-python/whl/cpu",
     )
 
 
 def pocket_install_hint() -> str:
-    """One-line, user-facing hint for enabling the Pocket TTS provider."""
-    return (
-        "Pocket-TTS needs the pocket-tts package. Install with:\n"
-        "  uv pip install pocket-tts\n"
-        "  # Or if global uv tool install:\n"
-        "  uv tool install --with pocket-tts novacode-cli --reinstall"
-    )
+    """User-facing hint for enabling the Pocket TTS provider."""
+    return _hint("Pocket-TTS needs the pocket-tts package.", ["pocket-tts"], "voice-pocket")
+
+
+def parakeet_install_hint() -> str:
+    """User-facing hint for enabling the Parakeet STT provider."""
+    return _hint("Parakeet needs the sherpa-onnx package.", ["sherpa-onnx"], "voice-parakeet")
 
 
 def install_hint() -> str:
-    """A one-line, user-facing hint for enabling voice."""
-    missing = ", ".join(missing_deps())
-    return (
-        "Install voice deps with one command:\n"
-        f"  uv tool install -e '.[voice]'     # global 'nova' command\n"
-        f"  uv pip install -e '.[voice]'      # local dev install\n"
-        f"Missing: {missing}"
-    )
+    """User-facing hint for enabling voice: what is missing and one command."""
+    missing = missing_deps() or list(_REQUIRED)
+    return _hint(f"Voice needs {', '.join(missing)}.", missing, "voice")
 
 
 def diagnose_voice() -> list[str]:
@@ -136,7 +141,7 @@ def diagnose_voice() -> list[str]:
             lines.append(
                 "  [WARN] nova resolves to conda environment.\n"
                 "    For voice to work, install with:\n"
-                "      uv tool install -e '.[voice]'"
+                f"      {install_line(install_hint())}"
             )
     lines.append(f"  cwd:     {os.getcwd()}")
 
@@ -208,9 +213,7 @@ def _probe_portaudio_dll(dll_path: str, lines: list[str]) -> None:
                 f"      2. The PortAudio binary is too old for your Windows version.\n"
                 f"    Fix:[/red]\n"
                 f"      which nova  # check which nova is on PATH\n"
-                f"      uv tool install -e '.[voice]' --reinstall novacode-cli\n"
-                f"      # or manually upgrade sounddevice:\n"
-                f"      uv tool upgrade --all"
+                f"      {install_line(install_hint())}"
             )
         else:
             lines.append(f"    [FAIL] DLL error (errno={err_code}): {exc}")

@@ -44,7 +44,10 @@ def main() -> None:
     try:
         import uvicorn
     except ImportError:
-        print("uvicorn is required. Install with: pip install 'novacode-cli[server]'")
+        from novacode_cli.install_commands import install_command
+
+        command = install_command(["fastapi", "uvicorn"], "server")
+        print(f"uvicorn is required. Install with: {command}")
         sys.exit(1)
 
     uvicorn.run(

@@ -120,10 +120,12 @@ def convert_file_content_block_to_text(
                     "text": f"[PDF content extracted as text]\n\n{text}",
                 })
             else:
+                from novacode_cli.install_commands import install_command
+
                 new_content.append({
                     "type": "text",
                     "text": "[PDF file could not be read — text extraction failed. "
-                            "Install PyMuPDF (pip install PyMuPDF) for PDF support.]",
+                            f"Install PyMuPDF ({install_command(['pymupdf'])}) for PDF support.]",
                 })
         else:
             new_content.append(block)

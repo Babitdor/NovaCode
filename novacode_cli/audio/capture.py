@@ -101,10 +101,12 @@ class AudioCapture:
                 diag = "\n".join(diagnose_voice())
             except Exception:
                 diag = "(diagnostics unavailable)"
+            from novacode_cli.audio import install_hint, install_line
+
             hint = (
                 f"Microphone stream failed: {msg}\n\n"
-                "  Run /voice doctor for full diagnostics, or check manually:\n"
-                "    uv tool install -e '.[voice]' --reinstall novacode-cli\n\n"
+                "  Run /voice doctor for full diagnostics, or reinstall the voice packages:\n"
+                f"    {install_line(install_hint())}\n\n"
                 f"[dim]{diag}[/dim]"
             )
             raise OSError(hint) from exc

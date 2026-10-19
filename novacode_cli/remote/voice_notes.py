@@ -10,7 +10,7 @@ ffmpeg binary on PATH, and no new dependency. Transcription goes through the
 provider the user selected with ``/voice``, so a voice note is not quietly
 handled by a different engine (or a different Whisper model) than push-to-talk.
 
-Voice support is an optional extra (``pip install 'novacode-cli[voice]'``), so
+Voice support is an optional extra (``voice``; see ``install_commands``), so
 the missing-dependency path raises :class:`VoiceNotesUnavailable` with an
 actionable message rather than failing obscurely — the bridge shows it to the
 sender, who is not at the terminal and cannot read a traceback.
@@ -60,11 +60,12 @@ def _decode_to_pcm16(data: bytes) -> np.ndarray:
         import numpy as np
         from faster_whisper.audio import decode_audio
     except ImportError as exc:  # pragma: no cover - depends on install extras
+        from novacode_cli.install_commands import install_command
+
+        command = install_command(["faster-whisper"], "voice")
         raise VoiceNotesUnavailable(
-            "Voice transcription isn't installed. Install the voice extra:\n"
-            "    pip install 'novacode-cli[voice]'\n"
-            "or, for a uv tool install:\n"
-            "    uv tool install --with faster-whisper novacode-cli --reinstall"
+            "Voice notes need Nova's voice packages (faster-whisper). On the computer "
+            f"running Nova, install them with:\n    {command}\nthen restart Nova."
         ) from exc
 
     audio = decode_audio(io.BytesIO(data), sampling_rate=_SAMPLE_RATE)
