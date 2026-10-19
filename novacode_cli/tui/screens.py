@@ -1197,6 +1197,13 @@ class McpScreen(ModalScreen[None]):
     DEFAULT_CSS = """
     McpScreen #modal-box { width: 90%; max-width: 110; height: 90%; }
     McpScreen #mcp-content { height: 1fr; min-height: 3; }
+    /* Six buttons need ~108 columns in one row, so Close fell off the box
+       below a 120-column terminal. Two rows of three always fit; narrow
+       terminals keep the shared two-column grid (.narrow wins on specificity). */
+    McpScreen #modal-buttons {
+        layout: grid; grid-size: 3; grid-columns: 1fr 1fr 1fr; grid-gutter: 0 1;
+    }
+    McpScreen #modal-buttons Button { width: 1fr; margin: 0; }
     """
 
     def __init__(self) -> None:

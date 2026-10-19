@@ -247,3 +247,19 @@ async def test_figma_refusal_explains_the_allowlist_and_desktop_option(
         hint = str(screen.query_one("#mcp-hint", Static).render())
         assert "approved apps" in hint
         assert "figma-desktop" in hint
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(120, 40), (100, 30), (90, 30)])
+async def test_every_mcp_button_fits_inside_the_dialog(size: tuple[int, int]) -> None:
+    class ScreenApp(App[None]):
+        async def on_mount(self) -> None:
+            await self.push_screen(McpScreen())
+
+    async with ScreenApp().run_test(size=size) as pilot:
+        await pilot.pause()
+        screen = pilot.app.screen
+        box = screen.query_one("#modal-box").region
+        for button in screen.query("#modal-buttons Button").results(Button):
+            assert box.contains_region(button.region), button.id
+            assert button.region.width >= len(str(button.label)) + 2, button.id
