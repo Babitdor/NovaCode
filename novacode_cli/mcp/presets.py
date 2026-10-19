@@ -47,6 +47,44 @@ def _google_workspace_preset(name: str, service: str, port: int) -> dict[str, An
 
 # Pre-defined MCP server presets
 MCP_PRESETS: dict[str, dict[str, Any]] = {
+    "figma": {
+        "name": "Figma MCP",
+        "description": (
+            "Official Figma design tools (OAuth; remote access requires an approved client; "
+            "use figma-desktop if unavailable)"
+        ),
+        "package": "Hosted Figma MCP (no local package required)",
+        "config": {
+            "transport": "http",
+            "url": "https://mcp.figma.com/mcp",
+            "oauth": True,
+        },
+    },
+    "figma-desktop": {
+        "name": "Figma Desktop MCP",
+        "description": (
+            "Local Figma design context; enable the desktop MCP server in Dev Mode "
+            "(eligible Dev or Full seat required)"
+        ),
+        "package": "Figma desktop app (no local package required)",
+        "config": {"transport": "http", "url": "http://127.0.0.1:3845/mcp"},
+    },
+    "vercel": {
+        "name": "Vercel MCP",
+        "description": "Official Vercel project, deployment and documentation tools (OAuth)",
+        "package": "Hosted Vercel MCP (no local package required)",
+        "config": {"transport": "http", "url": "https://mcp.vercel.com", "oauth": True},
+    },
+    "higgsfield": {
+        "name": "Higgsfield MCP",
+        "description": "Official Higgsfield creative tools (OAuth; paid subscription required)",
+        "package": "Hosted Higgsfield MCP (no local package required)",
+        "config": {
+            "transport": "http",
+            "url": "https://mcp.higgsfield.ai/mcp",
+            "oauth": True,
+        },
+    },
     "google-drive": _google_workspace_preset("Google Drive MCP", "drive", 8001),
     "gmail": _google_workspace_preset("Gmail MCP", "gmail", 8002),
     "google-docs": _google_workspace_preset("Google Docs MCP", "docs", 8003),

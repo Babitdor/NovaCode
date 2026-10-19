@@ -1,6 +1,7 @@
 """Preset catalog compatibility and installation configuration checks."""
 
 from copy import deepcopy
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -58,6 +59,61 @@ def test_cua_executable_path_with_spaces():
         )
     assert config.command == r"C:\Program Files\Cua\cua-driver.exe"
     assert config.args == ["mcp"]
+
+
+@pytest.mark.parametrize(
+    ("name", "url"),
+    [
+        ("figma", "https://mcp.figma.com/mcp"),
+        ("vercel", "https://mcp.vercel.com"),
+        ("higgsfield", "https://mcp.higgsfield.ai/mcp"),
+    ],
+)
+def test_hosted_design_presets_use_oauth_without_local_packages(name: str, url: str):
+    from novacode_cli.mcp.client import build_mcp_server_config
+
+    config = create_config_from_preset(name)
+    assert config is not None
+    assert config.transport == "http"
+    assert config.url == url
+    assert config.oauth is True
+    assert config.command is None
+    assert config.env == {}
+    assert config.header_secrets == {}
+    with patch("novacode_cli.mcp.auth.oauth_provider", return_value="oauth-provider"):
+        connection = build_mcp_server_config(config)
+    assert connection["auth"] == "oauth-provider"
+    assert connection["url"] == url
+
+
+def test_figma_desktop_uses_local_server_without_oauth():
+    config = create_config_from_preset("figma-desktop")
+    assert config is not None
+    assert config.url == "http://127.0.0.1:3845/mcp"
+    assert config.oauth is False
+
+
+@pytest.mark.parametrize("name", ["figma", "vercel", "higgsfield", "figma-desktop"])
+def test_hosted_preset_cli_install_does_not_prompt_or_install_packages(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from novacode_cli.mcp import commands
+    from novacode_cli.mcp.config import MCPConfig
+
+    path = tmp_path / "mcp.json"
+    monkeypatch.setattr(commands, "MCPConfig", lambda: MCPConfig(path))
+    with (
+        patch("prompt_toolkit.PromptSession") as session,
+        patch.object(commands, "_auto_install_package") as install,
+        patch.object(commands, "_install_npm_package") as npm_install,
+    ):
+        commands._install(name)
+    session.assert_not_called()
+    install.assert_not_called()
+    npm_install.assert_not_called()
+    config = MCPConfig(path).get_server(name)
+    assert config is not None
+    assert config.oauth is (name != "figma-desktop")
 
 
 @pytest.mark.parametrize(

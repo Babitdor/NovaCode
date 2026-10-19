@@ -17,6 +17,26 @@ docs/*
 */**/docs/
 # Any nested docs/ folder stays ignored, as the old bare docs/ rule had it.
 */**/docs/
+# Any nested docs/ folder stays ignored, as the old bare docs/ rule had it.
+*/**/docs/
+# Any nested docs/ folder stays ignored, as the old bare docs/ rule had it.
+*/**/docs/
+# Any nested docs/ folder stays ignored, as the old bare docs/ rule had it.
+*/**/docs/
+# Any nested docs/ folder stays ignored, as the old bare docs/ rule had it.
+*/**/docs/
+# Any nested docs/ folder stays ignored, as the old bare docs/ rule had it.
+*/**/docs/
+# Any nested docs/ folder stays ignored, as the old bare docs/ rule had it.
+*/**/docs/
+# Any nested docs/ folder stays ignored, as the old bare docs/ rule had it.
+*/**/docs/
+# Any nested docs/ folder stays ignored, as the old bare docs/ rule had it.
+*/**/docs/
+# Any nested docs/ folder stays ignored, as the old bare docs/ rule had it.
+*/**/docs/
+# Any nested docs/ folder stays ignored, as the old bare docs/ rule had it.
+*/**/docs/
 downloads/
 eggs/
 .eggs/

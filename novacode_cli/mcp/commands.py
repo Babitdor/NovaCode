@@ -689,19 +689,23 @@ def _install_preset(preset_id: str, preset: dict[str, Any], skip_install: bool) 
 
     # Check if preset needs user input
     user_inputs = {}
-    session = PromptSession()
+    session = (
+        PromptSession()
+        if "setup_prompt" in preset or "setup_secondary_prompt" in preset
+        else None
+    )
 
-    if "setup_prompt" in preset:
+    if "setup_prompt" in preset and session is not None:
         value = session.prompt(f"{preset['setup_prompt']} ").strip()
         user_inputs[preset["setup_key"]] = value
 
-    if "setup_secondary_prompt" in preset:
+    if "setup_secondary_prompt" in preset and session is not None:
         value = session.prompt(f"{preset['setup_secondary_prompt']} ").strip()
         user_inputs[preset["setup_secondary_key"]] = value
 
     # Install the package if needed
     package = preset.get("package", "")
-    if package and not skip_install:
+    if package and not skip_install and preset["config"].get("transport") == "stdio":
         _auto_install_package(package)
 
     # Create config from preset
@@ -719,6 +723,8 @@ def _install_preset(preset_id: str, preset: dict[str, Any], skip_install: bool) 
             style=COLORS["primary"],
         )
         console.print()
+        if config.oauth:
+            console.print("[dim]Open /mcp and select Authenticate to sign in securely.[/dim]")
         console.print("[dim]Restart your session for changes to take effect.[/dim]")
 
 

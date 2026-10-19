@@ -1,577 +1,449 @@
-# NovaCode landing page: design reference
+# NovaCode site: design reference
 
-The authority for what this page looks like, why, and what a future change is
-allowed to do to it. Written from `landing/index.html` (1,134 lines) plus
-measurements taken from the rendered page, not from intent.
+The authority for what this site looks like, why, and what a future change is
+allowed to do to it. Written before the build, then corrected against the
+rendered page. Values are tagged **Authored** (literal in the source) or
+**Measured** (read back from the built page in Chromium).
 
-**How to read the numbers.** Values are tagged:
-
-- **Authored**: literal in `index.html` (a token, a declaration, a `clamp()`).
-- **Measured**: read back from the live page in Chromium at 1280 x 900, 900 x 900
-  and 390 x 844, in both colour schemes. A `clamp()` resolves to a different
-  pixel value per viewport, so the authored expression is what travels; the
-  measured value is what it looks like today.
-
-Anything in this file that is neither authored nor measured is opinion, and is
-labelled as such.
+Brand rules live in `../BRAND.md`. That file owns the name forms, the promise,
+the limit rule and the voice. This file owns how *this site* expresses them.
 
 ---
 
-## 1. The thesis
+## 1. Concept card
 
-> An editorial page wearing a terminal's chrome.
+```
+Idea:        Nova's promise is verification, so the site is the proof: a sheet
+             that states each claim, its limit, and the evidence, then checks
+             itself in front of you.
+Metaphor:    a printer's proof / an engineering drawing sheet. Title block,
+             revision table, hairline rules, margin notes, a proof stamp.
+Signature:   the verification pass. A pinned stage where a real change to Nova
+             is applied line by line, its test runs, and the verdict flips from
+             FAIL to PASS. Scroll scrubs it.
+Emotion:     calm precision. The confidence of a document that has been checked.
+Motion verb: check and settle. A cursor moves, a mark lands, a rule locks.
+Screenshot:  the sheet at rest: near-white paper, hairline rules, mono row
+             numbers in the margin, one vermilion proof mark, a huge serif
+             claim, a dark plate of a real session.
+```
 
-This is the file's own opening comment and it is the correct summary. The page
-is a long-form, magazine-shaped argument about a developer tool. The terminal is
-its *chrome*: the title bars, the monospace labels, the docked prompt, the
-status line at the bottom of the window. The reading experience is editorial;
-the surface treatment is a TUI.
+**Why this and not the alternatives.** Three concepts were considered.
 
-Two consequences follow, and everything else in this document is downstream of
-them.
+| Concept | Territory | Originality | Fit | Feasible | Portable (lower is better) |
+|---|---|---|---|---|---|
+| A night sky that brightens as work verifies | the name (nova = a star that flares) | 2 | 3 | 5 | 4 |
+| The page is one session's scrollback | the profession's material | 3 | 5 | 4 | 3 |
+| **The proof sheet** | a metaphor for how it works | 4 | 5 | 4 | **2** |
 
-**The product is shown, never imitated.** Terminal-like framing must contain
-genuine Nova output. Never hand-draw a fake run. The session and shell captures
-in `assets/` are the reference. A mock terminal that could plausibly be any
-devtool is a lie, and this page is not allowed to tell one.
+The star idea is generic and the existing hero art already occupies it. The
+scrollback idea is what the previous site did, and "the page is a terminal" is
+the default devtool move. The proof sheet is the only one that could not be
+moved to another product: it depends on Nova's own doctrine that every claim
+carries its limit and every capability carries its evidence.
 
-**Dark mode is a continuation, not an inversion.** The hero is a night scene. In
-dark mode the page extends that world: stars on a canvas, a faint grid, an
-accent glow, faint scanlines. In light mode the art stays night and the page
-below it is daylight. Nothing else about the layout changes.
+**The anchor.** `BRAND.md` §3, the limit rule: *if you add a feature, add its
+limit in the same breath.* A sheet that states a claim, its cap and its proof is
+that rule turned into a layout.
 
 ---
 
-## 2. Brand
+## 2. The genericness test
 
-> **The brand spec is `BRAND.md` at the repo root.** That file owns the name
-> forms, the promise, the limit rule, the voice, the accent decision and the mark,
-> in a surface-agnostic form. This section records how *this page* expresses them,
-> and stays the authority for the measurements below.
+*If I gave a similar prompt to a generic model, would it land here?*
 
-**Name.** Nova, referred to in the interface as `NOVA.CODE`, with the shell
-identity `nova@code:~$`.
+No. A generic answer is a dark hero, a gradient, three feature cards, a mocked
+terminal and "supercharge your workflow". This page is a document: a title
+block, a revision table, numbered claims with margin limits, a real diff from
+Nova's own history, a real test run, a status line that counts proofs as you
+scroll, and a stamp that lands when the count is complete. The structure is the
+argument, not a container for it.
 
-**One-line promise.** A coding agent that verifies its own work.
+Three things were changed after asking the question:
 
-**What that means, as the page spells it out.** Nova reads a codebase, plans,
-edits, runs the tests, reads the failures, and retries. Generated code is not
-the finish line. The repeated word on this page is *proof*: the demo section
-runs a real task to a real failure and shows the recovery, and the sections
-after it are each backed by a capture, a command, or a named file rather than a
-claim.
+1. The hero was going to be a centred claim over the illustration. It is now an
+   asymmetric sheet: claim left, a dark plate of the real TUI right, title block
+   under the claim.
+2. The capabilities were going to be three cards. They are now ledger rows with
+   a number, a name, a limit and a proof mark.
+3. The illustration was going to be full-bleed. It is now a single treated
+   portrait plate with a caption, because a mascot wallpaper is not evidence.
 
-**Personality.** Five traits, each one visible somewhere on the page:
+---
 
-| Trait | How it shows up |
+## 3. Palette
+
+One theme. The product is a terminal and the sheet is paper; a second theme
+would mean composing every frame twice and neither would be the best frame.
+`prefers-color-scheme` is not used.
+
+| Token | Value | Role |
+|---|---|---|
+| `--paper` | `#f6f5f1` | Page ground |
+| `--paper-2` | `#eceae3` | Tinted band, table headers, inset rows |
+| `--ink` | `#12110e` | Primary text, rules at full strength |
+| `--ink-2` | `#45423b` | Body copy |
+| `--ink-3` | `#6a665c` | Meta, captions, margin notes |
+| `--rule` | `#d5d1c6` | Hairlines |
+| `--rule-2` | `#b5b0a2` | Structural rules, table borders |
+| `--accent` | `#b23a0c` | The single accent: proof marks, active phase, links |
+| `--accent-2` | `#e04a12` | Large marks and fills only, never small text |
+| `--plate` | `#101013` | Dark plate ground (the terminal world) |
+| `--plate-2` | `#17171b` | Raised surface inside a plate |
+| `--plate-ink` | `#e9e7e2` | Text on a plate |
+| `--plate-rule` | `#2b2b33` | Rules on a plate |
+
+**The chromatic budget.** Exactly one hue family (vermilion) appears in the UI.
+Success and failure do not get green and red: they get an accent tick and an
+accent cross, and the word carries the meaning. The product's own syntax colours
+appear only inside plates, because a photograph of the product is evidence and
+evidence is allowed to be itself.
+
+**Contrast floor.** Every text pair clears WCAG AA. Measured pairs are recorded
+in §9.
+
+---
+
+## 4. Type
+
+Three families, three strict roles. The split is the concept: **the serif is the
+human voice, the sans is prose, the mono is the machine.**
+
+| Family | Source | Role |
+|---|---|---|
+| Instrument Serif | Google, self-hosted, 400 + 400 italic | Display: h1, h2, the claim, pull quotes, big numbers |
+| Geist | self-hosted variable, 100-900 | Prose: body, lede, nav, buttons, FAQ answers |
+| Geist Mono | self-hosted variable, 100-900 | The machine: labels, commands, code, table cells, captions, the status line |
+
+A serif for a terminal tool is the deliberate risk. It is what makes the page a
+document rather than a dashboard, and it is why the mono reads as evidence
+instead of decoration.
+
+**Scale** (fluid, `clamp()`). Authored values, with what they resolve to at the
+two widths the site is checked at:
+
+| Role | Authored | @1440 | @390 |
+|---|---|---|---|
+| Display XL (hero claim) | `clamp(2.6rem, 5.4vw, 5.2rem)`, lh .92, tracking -.03em | 77.8 / 71.6 | 41.6 / 38.3 |
+| Display L (section h2) | `clamp(2rem, 3.4vw, 3.4rem)`, lh .98, tracking -.02em | 49.0 / 48.0 | 32.0 / 31.4 |
+| Display M (statement) | `clamp(1.45rem, 2.1vw, 2rem)`, lh 1.18 | 30.2 / 35.7 | 23.2 / 27.4 |
+| Lede | `clamp(1.05rem, 1.15vw, 1.25rem)`, lh 1.5, max 46ch | 16.8 / 25.2 | 16.8 / 25.2 |
+| Body | `1rem`, lh 1.62, max 62ch | 16.0 / 25.9 | 16.0 / 25.9 |
+| Small | `.875rem`, lh 1.55 | 14.0 / 21.7 | 14.0 / 21.7 |
+| Mono label | `.75rem`, tracking .12em, uppercase | 12.0 / 14.4 | 12.0 / 14.4 |
+| Mono data | `.8125rem`, tracking .01em | 13.0 / 21.1 | 13.0 / 21.1 |
+
+Display tracking is negative and set per size. Mono labels carry positive
+tracking. Body is 16px with 1.62 leading. Nothing is set below 12px.
+
+---
+
+## 5. Grid, shape, rhythm
+
+- **Grid.** 12 columns, `--wrap: 1400px`, `--gutter: 24px`,
+  `--margin: clamp(20px, 4.5vw, 72px)`. Baseline 8px.
+- **Alignment rule.** Every block starts on a column line. Margin notes hang in
+  the left gutter at `--margin` and never enter the text column.
+- **Shape.** One radius: `--r: 2px`. Documents have square corners. No pills, no
+  floating cards. A plate is a rectangle with a hairline and a caption.
+- **Section rhythm.** Sections alternate between full-bleed rules and inset
+  bands. No two consecutive sections share a layout family. Vertical rhythm is
+  `clamp(88px, 11vh, 160px)` between sections, halved inside a section.
+
+**Layout families, one per section** (see the wireframes in §7): asymmetric
+split, hanging-margin statement, pinned dark stage, ledger table, tier diagram,
+name strip, offset timeline, narrow centred column, sticky-split accordion,
+bordered close box.
+
+---
+
+## 6. Motion
+
+- **One clock.** Lenis drives scroll, GSAP's ticker drives everything else. No
+  `scroll` listeners, no private `requestAnimationFrame` loops.
+- **Easing.** `--ease: cubic-bezier(.22, 1, .36, 1)` for arrivals;
+  `cubic-bezier(.65, 0, .35, 1)` for scrubbed progress. One family.
+- **Durations.** Arrival 0.6-0.9s. Feedback 0.18-0.24s. Stagger 40-70ms.
+- **The verb.** *Check and settle.* Content arrives 14px low and settles; rules
+  draw from the left; marks land with a 0.6 → 1 scale snap and no bounce.
+- **Idle.** The status line's cursor blinks at 1.1s. The proof counter ticks
+  when a claim is passed. The stage's phase rail keeps a slow pulse while
+  pinned. Nothing else moves at rest.
+- **Reduced motion.** No smooth scroll, no pin, no scrub, no intro. The stage
+  renders its final state (verified) as a static composition. All content is
+  visible without JavaScript.
+
+---
+
+## 7. Wireframes
+
+```
+1  MASTHEAD                                            [stacked, full-bleed]
+┌──────────────────────────────────────────────────────────────────────┐
+│ NOVA.CODE ······························ proof  loop  verify  install│
+├───────────────────────────────────┬──────────────────────────────────┤
+│ A coding agent that               │ It reads the codebase, plans,    │
+│ verifies its own work.            │ edits, runs the tests, reads the │
+│                                   │ failures, and retries.           │
+│                                   │                                  │
+│                                   │ Every claim on this page is a    │
+│                                   │ test you can run.                │
+├───────────────────────────────────┴──────────────────────────────────┤
+│ $ uv run nova                                              [copy]    │
+├──────────────────────────────────────────────────────────────────────┤
+│ ┌──────────────────────────────────────────────────────────────────┐ │
+│ │  dark plate: real TUI capture, one title bar, no second chrome   │ │
+│ │  (plate-session.webp)                                            │ │
+│ └──────────────────────────────────────────────────────────────────┘ │
+│  FIG. 01  A real session, unedited.                                  │
+├──────────────────────────────────────────────────────────────────────┤
+│ SHEET 01/03 │ REVISION 3 │ STATUS DRAFT │ LICENCE MIT │ RUNTIME …    │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+```
+2  THE CLAIM                                           [hanging margins]
+┌──────────────────────────────────────────────────────────────────────┐
+│ CLAIM 01                                                             │
+│        Code written isn't the same                                   │
+│        as a task finished.                                           │
+│                                                                      │
+│  ┌ note ─────┐   Nova reads the codebase, plans the change, edits     │
+│  │ the loop  │   the files, runs the tests, reads the failures and    │
+│  │ is six    │   retries. The finish line is a result that has been   │
+│  │ steps     │   checked, not a diff that has been produced.          │
+│  └───────────┘                                                       │
+│                                                                      │
+│        "If you add a feature, add its limit in the same breath."     │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+```
+3  THE PROOF                                           [pinned dark stage]
+┌──────────────────────────────────────────────────────────────────────┐
+│ PROOF 01   context_compaction.py   +7 −2                             │
+│ ┌──────────────────────────────────┬───────────────────────────────┐ │
+│ │ 41  def _is_image_block(block):  │ $ pytest tests/test_context_  │ │
+│ │ 42 -    if block.get("type"):    │   compaction.py -q            │ │
+│ │ 42 +    if block.get("type") ==  │                               │ │
+│ │ 43 +       "image":              │ 2 failed, 34 passed in 25.00s │ │
+│ │ 44 +        return True          │                               │ │
+│ │ 45 +    return False             │ ── retry ──────────────────── │ │
+│ │                                  │ 36 passed in 11.68s           │ │
+│ │                                  │                               │ │
+│ │                                  │        ┌──────────────┐       │ │
+│ │                                  │        │  VERIFIED    │       │ │
+│ └──────────────────────────────────┴────────┴──────────────┴───────┘ │
+│ PLAN ── EDIT ── TEST ── READ ── RETRY ── VERIFY                      │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+```
+4  THE LOOP                                                  [ledger table]
+┌──────────────────────────────────────────────────────────────────────┐
+│ 01  PLAN      writes the todos before it touches a file      ✓       │
+│ 02  EDIT      applies the change, one hunk at a time         ✓       │
+│ 03  TEST      runs the suite it found, not one it invented   ✓       │
+│ 04  READ      reads the failure, not just the exit code      ✓       │
+│ 05  RETRY     stops at three attempts                        ✓       │
+│ 06  VERIFY    grades the result on five criteria             ✓       │
+├──────────────────────────────────────────────────────────────────────┤
+│ criteria:  correct · complete · tested · minimal · honest            │
+│ turn it on:  nova config set verify.enabled true                     │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+```
+5  THE CONTROLS                                              [tier diagram]
+┌──────────────────────────────────────────────────────────────────────┐
+│                    ┌──────────────┐  auto    reads, searches, plans  │
+│  every tool has    │   TIER 1     │  ask     writes, runs, deletes   │
+│  a tier, and the   ├──────────────┤  deny    network, secrets, push  │
+│  tiers are yours   │   TIER 2     │                                  │
+│                    ├──────────────┤  ┌────────────────────────────┐  │
+│                    │   TIER 3     │  │ dark plate: approval prompt│  │
+│                    └──────────────┘  └────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+```
+6  THE REACH                                                    [name strip]
+┌──────────────────────────────────────────────────────────────────────┐
+│ OPENAI   ANTHROPIC   GOOGLE   GROQ   OLLAMA   OPENROUTER   AZURE     │
+├──────────────────────────────────────────────────────────────────────┤
+│ $ nova -p "fix the failing test"        headless, exits with a code  │
+│ discord  telegram  browser              the same loop, elsewhere     │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+```
+7  THE LEARNING                                             [offset timeline]
+┌──────────────────────────────────────────────────────────────────────┐
+│   │                                                                  │
+│   ●── TRACE      every turn is written to a file you can open        │
+│   │                                                                  │
+│   ●── GRADE      five criteria, one extra model call, off by default │
+│   │                                                                  │
+│   ●── RETRY      a candidate prompt has to earn its place            │
+│   │                                                                  │
+│   ●── LEARN      prompts, skills and thresholds on disk, deletable   │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+```
+8  THE INSTALL                                        [narrow centred column]
+┌──────────────────────────────────────────────────────────────────────┐
+│                    ┌──────┬──────┬──────────────┐                    │
+│                    │  uv  │ pip  │ from source  │                    │
+│                    ├──────┴──────┴──────────────┤                    │
+│                    │ $ uv run nova        [copy]│                    │
+│                    └────────────────────────────┘                    │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+```
+9  THE QUESTIONS                                        [sticky-split accordion]
+┌──────────────────────────────────────────────────────────────────────┐
+│ Does it need an API key?  │  +  Which models does it support?        │
+│                           │  ─────────────────────────────────────   │
+│ Five questions,           │  +  Does it send my code anywhere?       │
+│ answered plainly.         │  ─────────────────────────────────────   │
+│                           │  +  What does it cost?                   │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+```
+10 THE CLOSE                                                  [bordered box]
+┌──────────────────────────────────────────────────────────────────────┐
+│  Install it and give it a real task.          ┌──────────────────┐   │
+│  $ uv run nova                                │                  │   │
+│  [install] [github]                           │   portrait       │   │
+│  MIT · local · your model                     │   plate          │   │
+│                                               └──────────────────┘   │
+│                                               FIG. 02  The author    │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+The close box is the one place the page shows a person. The portrait sits in a
+dark plate, cropped to the same 4:5 as the hero plate, with a figure caption
+under it. On `verify.html` the same box runs single-column and closes with a
+five-cell record strip instead.
+
+### The other two pages
+
+`verify.html` — the record. Same nav, same status line, same foot. A page head,
+then nine numbered steps: the claim, what was run, the output, and what it does
+not prove. It closes with a five-cell record strip (sheet, claims, verified,
+unverified, last run). Every step points at a file or a test that exists in the
+repository, so the page is a map to the evidence rather than a restatement of
+it.
+
+`404.html` — the void. Centred, one stamp, two ways back. No nav links and no
+footer columns; the page's own buttons are the navigation.
+
+---
+
+## 8. The page-wide driver
+
+One module maps scroll progress to every visual that carries the concept, so
+they always agree:
+
+```
+scroll progress ──┬── status line: CLAIMS n/9 · PROOFS n/9 · STATUS DRAFT→VERIFIED
+                  ├── margin proof marks: each claim's mark lands as it is passed
+                  ├── title block: STATUS field flips at the last claim
+                  └── close box: the stamp lands
+```
+
+The status line is the TUI's own status bar, so the device is the product's, not
+a borrowed HUD. It is fixed to the bottom, 34px tall, and the page reserves that
+space.
+
+---
+
+## 9. Measured record
+
+Taken from the built site, not from the sketch. Every number below was read out
+of the rendered page or a headless run against it.
+
+**Contrast** (computed from the rendered colours, WCAG 2.1 ratio):
+
+| Pair | Ratio | Needs |
+|---|---|---|
+| `--ink` on `--paper` (body, h1, h2) | 17.31 | 4.5 |
+| `--ink-2` on `--paper` (lede, nav, foot links) | 9.19 | 4.5 |
+| `--ink-3` on `--paper` (captions, meta) | 5.25 | 4.5 |
+| `--accent` on `--paper` (criteria keys) | 5.49 | 4.5 |
+| `--plate-ink` on `--plate` (stage text) | 14.46 | 4.5 |
+| `--plate-ink-2` on `--plate` (diff code) | 12.68 | 4.5 |
+| `--plate-ink-2` on `#181826` (plate bar) | 6.86 | 4.5 |
+| `#8a8790` on `--plate` (rail steps) | 5.38 | 4.5 |
+| `--paper` on `--ink` (button label) | 17.31 | 4.5 |
+
+The lowest pair is 5.25, so every text colour clears AA with margin. `--ink-3`
+was lightened twice during QA (`#78746a` → `#6f6b61` → `#6a665c`) to get there.
+
+**Type at the two checked widths** — see the scale table in §2. Nothing renders
+below 12px.
+
+**Page height:** 9,345px at 1440×900; 10,717px at 390×844.
+
+**Load** (headless Chromium, cold cache, 1440×900):
+
+| Metric | Value |
 |---|---|
-| Technically credible | Names files, flags, tiers, thresholds and model calls rather than speaking in benefits |
-| Autonomous but controlled | "Autonomous doesn't mean uncontrolled." Every tool has a tier, and the tiers are yours to set. |
-| Honest about limits | Opt-in costs one extra call; retries stop at three; headless can fail closed |
-| Local and inspectable | MIT licensed, runs on your machine and your model, learning written to readable files you can delete |
-| Calm | No urgency banners, no "revolutionise", no exclamation marks |
+| LCP | 244 ms |
+| CLS | 0.0000 (no layout shift recorded) |
+| DOMContentLoaded | 213 ms |
+| Requests | 11 |
+| Transfer | 434 KB |
+| JS | 147 KB (GSAP + ScrollTrigger + Lenis + app.js) |
+| CSS | 43 KB |
+| Fonts | 87 KB (4 woff2, all used) |
+| Images | 166 KB |
 
-The failure is the tone test. The demo section is built around a run that
-*failed twice*. The page is more credible for the failure than it would be for
-a clean run.
+**Scroll performance:** a full-page scroll in 2.5 s produced 361 frames, worst
+frame 8.4 ms, zero frames over 20 ms. Headless Chromium is uncapped, so the fps
+figure is not a display measurement; the meaningful number is that no frame
+during the pinned stage exceeded 20 ms.
 
-**Audience.** Developers who live in a terminal. The install section leads with
-`uv run nova` and a copy button, not a signup form. Nothing on the page asks
-for an email address.
+**axe-core:** 0 violations at 1440×900, 834×1112 and 390×844 on `index.html`,
+`verify.html` and `404.html`. No console errors. No horizontal page overflow at
+any of the three widths (`scrollWidth === innerWidth`).
 
----
-
-## 3. Voice
-
-Short declarative sentences. Technical words used correctly, without glossing.
-No hedging adverbs, no intensifiers, no second person when first person would
-do. Numbers rather than adjectives.
-
-Headlines are sentence case and are built as direct contrasts:
-
-- "Code written isn't the same as a task finished."
-- "Autonomous doesn't mean uncontrolled."
-- "Describe the behaviour. Let it find the code."
-
-The `commands` used as chapter eyebrows are literally commands a user could
-type: `nova > open code.book`, `nova > man nova`, `> uv run nova`. They are
-real, not decorative.
-
-**Trust is stated, not implied.** Every capability that could be overstated has a
-sentence next to it that caps the claim:
-
-- Grading costs one extra model call per turn, and is off by default.
-- Nova does not retrain your model.
-- Improvements are prompts, skills and thresholds on disk, readable and deletable.
-- Approval policy is per operation and user-configurable.
-- A candidate prompt only replaces the current one after enough runs to be worth
-  trusting, and can be rolled back.
-- Every step in the demo is a capability described later on the page, except the
-  last two, which need a setting turned on.
-
-If you add a feature, add its limit in the same breath. That sentence is the
-brand.
+**Not measured:** real-device frame timing, Safari and Firefox rendering, and
+screen-reader output. The site is checked in Chromium only.
 
 ---
 
-## 4. Message hierarchy
+## 10. What a future change may not do
 
-Thirteen blocks, in this order. The order is the argument; changing it changes
-the argument.
-
-| # | Section | Job it does |
-|---|---|---|
-| 1 | `top` | Full-bleed hero art, `NOVA.CODE` wordmark, docked `uv run nova` prompt, Install button. First screen ends on the Install button, by design. |
-| 2 | `statement` | The thesis in prose, plus an inventory of capabilities as a two-column definition list. |
-| 3 | `demo` | The proof: one real run, start to finish, including the failure and the fix. |
-| 4 | `providers` | A quiet full-width strip of provider logos. Deliberately low contrast. |
-| 5 | `verify` | The six-step verification loop, the five grader criteria, and how to turn it on. |
-| 6 | `code` | Navigation and comprehension: semantic search, related-code, long sessions, context sizing. |
-| 7 | `build` | Execution: subagents, skills, MCP servers. |
-| 8 | `safe` | Approval tiers and snapshots, shown through a real session capture. |
-| 9 | `reach` | Where Nova reaches: bridges to Discord, Telegram, and the browser. |
-| 10 | `grow` | The learning loop: trace, grade, retry, learn. With its limits. |
-| 11 | `install` | Provider-agnostic install, one tab per platform, copyable commands. |
-| 12 | `faq` | The objections, answered plainly, in an accordion. |
-| 13 | `close` | One box. "Install it and give it a real task." MIT licence. Two buttons. |
-
-**Measured** page height at 1280 wide: **10,240px**, thirteen sections plus
-footer. Section heights at that width run from 98px (`providers`) to 1,638px
-(`safe`). The page is long on purpose. Do not compress it into cards to save
-scroll.
-
-**Rhythm.** Editorial statement, then the evidence for it, then the next
-statement. Never two statement blocks in a row. Every claim is followed by
-something you can look at: a screenshot, a command, a log, or a chip.
+- Add a second accent hue to the UI. The product's colours stay inside plates.
+- Add a pill, a floating card, or a radius other than `--r`.
+- Put an eyebrow label above a heading unless the label is a real sheet number,
+  file path or command.
+- Add a section that is a statement without evidence next to it.
+- State a capability without its limit in the same block.
+- Replace the real diff or the real test output in the stage with a mock.
+- Add a loader. The hero intro is the entrance.
 
 ---
 
-## 5. Visual principles
-
-**5.1 One accent, nothing else is coloured.**
-Orange is Nova's brand accent (`BRAND.md` §7); the tokyo-night blue the product
-surfaces ship is a product-surface theme, not a second brand colour.
-Verified by walking every element on the page and bucketing computed text
-colours by saturation. Result: **five distinct text colours on the entire page**,
-of which exactly two are chromatic, and the second is only ever the foreground
-on top of the accent:
-
-- dark: `rgb(244,114,63)` (accent) and `rgb(22,17,14)` (on-accent)
-- light: `rgb(194,65,12)` and `rgb(255,255,255)`
-
-Forty elements paint in a chromatic colour at all, and that 40 is accent text
-plus on-accent button text combined. That is the whole chromatic budget. Success
-and failure do not get green and red; they get an accent tick and an accent
-cross, and the *word* carries the meaning. The hero artwork contains violet and
-amber, and that is fine, because illustration colour is not UI colour.
-
-**5.2 Things you press are pills. Things you look at are 14px panels.**
-Authored as `--r-press: 999px` and `--r-view: 14px`. Measured radii across the
-live page:
-
-| Radius | Elements | What it is |
-|---|---|---|
-| `999px` | 33 | Buttons, chips, tabs, pills |
-| `14px` | 9 | Panels, cards, terminal windows, the docked prompt |
-| `10px` | 3 | Command rows |
-| `7px` | 1 | The brand mark image |
-| `6px` | 41 | Inline `<code>`, focus rings |
-| `50%` | 9 | Status dots, carets, the scroll gauge |
-
-The two smaller values are deliberate: code snippets and the brand mark are
-dense objects that should not float. Do not normalise them to 14px.
-
-**5.3 The theme is one decision, made once.**
-Measured: every `section`, the `footer`, and the close box paint exactly **two
-grounds per theme** (page background and surface). No section inverts, no section
-goes dark in a light page. A visitor who has OS light mode never sees a dark
-section other than the hero art.
-
-**5.4 Contrast is a floor, not an accident.**
-All measured pairs clear WCAG AA with room to spare. Body copy is muted, not
-primary, and still clears AAA in dark mode.
-
-| Pair | Dark | Light |
-|---|---|---|
-| text on bg | 16.36 | 17.14 |
-| muted on bg | 7.54 | 6.43 |
-| muted on surface | 6.99 | 5.90 |
-| accent on bg | 6.73 | 4.96 |
-| on-accent on accent | 6.54 | 5.18 |
-
-The weakest is muted on surface in light mode at 5.90. If you add a light-mode
-surface surface and put small muted text on it, re-check it.
-
-**5.5 Motion means arrival and feedback. Nothing else.**
-See section 11.
-
-**5.6 Real output beats beautiful output.**
-The session capture and the shell capture are the two highest-trust assets on
-the page. Any new feature gets a real capture if it can.
-
----
-
-## 6. Colour tokens
-
-Authored on `:root` and overridden in `@media (prefers-color-scheme: dark)`.
-The dark values below were also read back from the rendered page and match.
-
-| Token | Light | Dark | Use |
-|---|---|---|---|
-| `--bg` | `#fafafa` | `#0e0e10` | Page ground |
-| `--surface` | `#f0f0f2` | `#17171b` | Panels, section fills |
-| `--raised` | `#ffffff` | `#1d1d22` | The lighter fill for small raised controls. Read in exactly three places: the `.copy` button, the selected `.tab`, and the `.proof` chips (mixed 70% toward transparent). |
-| `--text` | `#17171a` | `#ececef` | Primary text |
-| `--muted` | `#5b5b65` | `#a1a1ac` | Body copy, all secondary text |
-| `--line` | `#dedee3` | `#2a2a31` | Hairlines, borders |
-| `--accent` | `#c2410c` | `#f4723f` | The single accent |
-| `--on-accent` | `#ffffff` | `#16110e` | Text on the accent |
-| `--accent-wash` | `#fbe9e0` | `#2a1810` | **Defined but currently unreferenced.** No rule in `index.html` reads it. Treat it as a reserved token, not as existing behaviour. |
-
-Supporting values:
-
-| Token | Light | Dark |
-|---|---|---|
-| `--shadow` | `0 1px 2px rgb(23 23 26 / .06), 0 18px 40px -18px rgb(23 23 26 / .22)` | `0 1px 2px rgb(0 0 0 / .4), 0 22px 48px -20px rgb(0 0 0 / .7)` |
-| `--glow` | `0 0 44px -10px color-mix(in srgb, accent 55%, transparent)` | same expression |
-| `--grid` | n/a | `rgb(255 255 255 / .028)` |
-| `--r-press` | `999px` | `999px` |
-| `--r-view` | `14px` | `14px` |
-| `--wrap` | `1240px` | `1240px` |
-| `--gutter` | `clamp(20px, 4vw, 40px)` | same |
-| `--ease` | `cubic-bezier(.16, 1, .3, 1)` | same |
-
-The accent differs per theme on purpose: `#c2410c` in light, `#f4723f` in dark.
-Light-mode orange at dark-theme saturation would glow. Reach for the token, not
-for a literal.
-
-**The nav has its own palette.** While it sits over the hero art it hardcodes
-light values (`--text: #f3f3f5`, `--accent: #f4723f`, `--line: rgb(255 255 255 / .34)`)
-regardless of the visitor's theme, because the art is night in both themes. Once
-the page has scrolled past the art, `.nav.stuck` swaps every one of those to the
-page tokens and adds a glass background. This is the one place the page
-temporarily overrides the theme, and it is scoped to the art by an
-IntersectionObserver sentinel rather than a scroll listener.
-
----
-
-## 7. Typography
-
-Two families, both self-hosted as variable fonts under `assets/fonts/`:
-
-- **Geist** (sans) for prose and headings
-- **Geist Mono** for everything that the machine would say
-
-**Measured font distribution on the live page: 267 elements in Geist, 206 in
-Geist Mono.** Roughly 43% of all elements are monospace. That ratio is the
-taste. Mono is not decoration for code; it is how the interface labels itself.
-
-| Role | Authored | Measured @1280 | Measured @390 |
-|---|---|---|---|
-| Body (`body`) | `1.0625rem / 1.6`, weight 400 | `17px / 27.2px` | |
-| H1 (statement) | `clamp(2.3rem, 3.4vw + .7rem, 3.35rem)`, 620, `-.035em`, lh `1.04` | `65.92px / 68.56px / -2.307px` | `35.2px / 36.61px / -1.232px` |
-| H2 | `clamp(1.9rem, 2.6vw + .7rem, 2.9rem)`, 600, `-.03em`, lh `1.08` | `44.48px / 48.04px / -1.334px` | |
-| H3 | `1.2rem`, 600 | `19.2px / 24.96px` | |
-| Lede | `1.125rem`, max `52ch` | `18px`, max `698.8px`* | |
-| Body copy (`.body`) | max `62ch` | `17px`, max `698.8px` | |
-| Accordion answer | max `64ch` | | |
-| Demo note | `.95rem`, max `62ch` | `15.2px`, max `624.8px` | |
-| Eyebrow / chapter | mono | `12.48px`, `+1.123px` tracking | |
-| Command line | mono | `15.2px` | |
-| Button label | mono `550` | `14.72px` | |
-| Proof chip | mono `500` | `12.8px` | |
-| Status line | mono `500` | `12.16px` | |
-
-\* `ch` scales with font size, so 52ch of 18px Lede and 62ch of 15.2px note text
-both land near 625px. The `ch` unit is the rule; the pixel value is a
-consequence.
-
-**Measures.** Never full width. Prose is capped in `ch` units so the line length
-stays readable at any viewport. The Lede is the widest thing on the page.
-
-**Accented words inherit.** A highlighted word inside an H1 or H2 takes the
-heading's own size and weight and changes only its colour. It never becomes bold
-on top of bold, and it never jumps size. Look at "Code written isn't the same as
-a task finished" and "Autonomous doesn't mean uncontrolled."
-
-**Mono carries positive tracking.** `+.09em` on eyebrow-scale mono. Small
-monospace needs air.
-
----
-
-## 8. Layout
-
-| Property | Value | Source |
-|---|---|---|
-| Content width | `1240px` | `--wrap`, measured exactly 1240px at 1280 viewport |
-| Gutter | `clamp(20px, 4vw, 40px)` | `--gutter` |
-| Section padding | `clamp(72px, 10vw, 136px)` block | `section` |
-| Vertical rhythm | Sections do not alternate backgrounds. Ground changes come from panels, not from full-bleed bands. | measured |
-| Grid tracks | `minmax(0, 1fr)` | prevents long code from overflowing |
-| Horizontal overflow | none at 1280, 900, or 390 | measured `scrollWidth === innerWidth` at all three |
-
-The `minmax(0, 1fr)` discipline is not optional. Without it a single long token
-in a code block will push the page wide.
-
----
-
-## 9. Shape and depth
-
-- **Borders are hairlines.** `1px solid var(--line)`. They define edges; they do
-  not create emphasis.
-- **Shadows are two-part and restrained.** A 1px contact shadow plus a wide,
-  heavily negative-offset drop shadow. If you are adding a third shadow, stop.
-- **Blur is used for glass, not for decoration.** The stuck nav
-  (`saturate(160%) blur(16px)`) and the docked prompt (`blur(18px) saturate(150%)`)
-  are the only blurs, and both sit over the hero art where a solid fill would
-  look heavy.
-- **Transparency has a reduced mode.** `@media (prefers-reduced-transparency:
-  reduce)` drops the nav to an opaque `--bg` and removes `backdrop-filter`.
-
----
-
-## 10. Components
-
-**Terminal window (`.win`).** `14px` radius, hairline border, `--shadow`. A
-`38px` title bar with three `9px` dots filled in `--line`; only the first takes
-the accent and `--glow`, so the dots read as decoration rather than as three
-status lights. Hovering a window tints its border toward the accent
-(`45%` accent mixed into `--line`) and adds `--glow`. Windows are titled with the
-real thing: `rate-limit`, `nova`.
-
-**Docked prompt (`.dock`).** Sits `58px` below the hero art with a negative top
-margin, so it overlaps the image edge rather than floating after it. Width
-`min(780px, 100%)`. Border is `color-mix(accent 35%, --line)`, so the panel is
-tinted by the accent without being a second accent colour.
-
-**Buttons.** `.btn` has `min-height: 46px`, `999px` radius, `padding: 0 22px`,
-mono `550 .9rem/1`, `gap: 10px`. In the nav they compress to `38px` /
-`0 16px` / `.92rem`. The primary button injects a `❯` chevron as a `::before`,
-so every primary action reads as a command. Pressing it does
-`translateY(1px) scale(.985)`. Primary carries `--glow`; hovering mixes 12% of
-the body text colour into the accent, so the button shifts toward the page's own
-light or dark (down in light mode, up in dark) instead of glowing brighter.
-Quiet buttons are transparent with a `--line` border that goes to `--text` on
-hover.
-
-**Proof chips.** Mono, `999px`, `--line` border, prefixed with an accent `✓`.
-Used for capability lists. Never used as decoration.
-
-**Tabs.** A roving-tabindex tablist with left/right arrow wrapping. **It opens on
-the visitor's platform**, selected by `/Win/.test(navigator.userAgent)` at load.
-
-**Status line.** Fixed `34px` bar at the bottom of the viewport, full width,
-mirroring Nova's TUI. Left: `NOVA` in an accent block. Centre: the path of the
-chapter currently in view, driven by an IntersectionObserver with a `-45%/-50%`
-root margin. Right: a scroll-progress gauge. It is `aria-hidden`, so it is
-chrome, not content.
-
-The chapter paths are a small piece of voice in their own right:
-
-| Section | Path shown |
-|---|---|
-| top | `~/desk` |
-| demo | `~/desk/demo.sh` |
-| verify | `~/desk/verify.book` |
-| code | `~/desk/code.book` |
-| build | `~/desk/build.book` |
-| safe | `~/desk/safe.book` |
-| reach | `~/desk/where.book` |
-| grow | `~/desk/grow.book` |
-| install | `~/desk/INSTALL.md` |
-| faq | `~/desk/man/nova` |
-
-If you add a section, give it a path in this table, or it will inherit whatever
-was last in view.
-
-**Copy buttons.** Confirm in place: `Copy` to `Copied`, or `Press Ctrl+C` if the
-clipboard write throws, reverting after `1800ms`. No toast, no notification.
-
-**Process diagrams.** Horizontal timelines with a line that fills in `1.4s`.
-
-**Providers strip.** One muted lead-in line, "Runs on the model you already
-use", then a wrapping row of provider logos at `26px` height and `opacity: .62`,
-going to full opacity on hover. It exists to say "bring your own provider" and
-nothing more. Do not add a headline to it.
-
----
-
-## 11. Motion
-
-Motion is for arrival, and for telling the visitor something happened. It is
-never ambient page decoration.
-
-There are **two separate entrance systems**, and they are easy to confuse:
-
-| What | Class | Timing |
-|---|---|---|
-| Scroll reveal | `.rv` | `0.7s` opacity + transform, `translateY(22px)`, `70ms` per `--i` |
-| Keyed entrance | `.rise` | `0.8s`, `translateY(18px)`, `90ms` per `--i` plus `60ms` |
-| Hero image | `.art img` | `1.5s`, `scale(1.05)` to none, `50ms` delay |
-| Docked prompt | `.dock` | `0.9s`, `translateY(22px)`, `600ms` delay |
-| Typed command | `.cmdline .typed` | `55ms` per character, `250ms` delay, `steps(n)` |
-| Caret blink | `.caret`, `.statement h1::after` | `1.1s`, `steps(1)`, infinite |
-| Process line fill | `.steps::after` | `transform: scaleX(0) to 1`, `1.4s`, `150ms` delay |
-| Scroll gauge | `.statusline .gauge i` | `animation-timeline: scroll(root block)`, linear, no duration |
-| Easing | all of the above | `cubic-bezier(.16, 1, .3, 1)` |
-
-The scroll gauge is a genuine scroll-driven animation with no time component at
-all. Where `animation-timeline: scroll()` is unsupported, the gauge is removed
-from the layout entirely rather than left as a dead bar.
-
-Scroll reveals are `IntersectionObserver`-driven: an element gains `.in` once,
-with `rootMargin: "0px 0px -8% 0px"` and `threshold: 0.12`, then is unobserved.
-
-The hero art's starfield is the one continuous animation on the page, and it is
-dark-mode only: `round(width * height / 5200)` points on a canvas, capped at
-`dpr 2`, 12% of them rendered at 2px, 18% tinted to the accent, per-star alpha
-`0.25-0.85`, each twinkling on its own period between 900ms and 3500ms. It stops
-on `visibilitychange` and reseeds on resize and on a scheme change.
-
-**Known sharp edge:** the 18% accent stars are tinted with the literal string
-`"244, 114, 63"`, not with `var(--accent)`. A canvas cannot read a CSS variable,
-so the value is duplicated in JS. It currently matches the dark accent
-(`#f4723f`) exactly. If you retune the dark accent, change this string in the
-same commit or the stars quietly drift away from the theme.
-
-**Under `prefers-reduced-motion: reduce`, measured:** reveal transition duration
-is `0s`, revealed elements sit at `opacity: 1`, `scroll-behavior` is `auto` on
-both `html` and `body`, and the caret animation is `none`. The page is fully
-readable with all animation off.
-
-The mechanism is worth copying rather than reinventing: every rule that hides
-content in order to animate it in (`.js .rv{opacity:0}`, `.js .rise{opacity:0}`,
-`.js .cmdline .typed{width:0}`) lives **inside** a
-`@media (prefers-reduced-motion: no-preference)` block. The `reduce` branch
-therefore does not need to un-hide anything. Nothing can be stranded invisible
-because the rule that would have hidden it never applied.
-
----
-
-## 12. Responsive
-
-Measured at three widths:
-
-| | 1280 | 900 | 390 |
-|---|---|---|---|
-| `.art` aspect ratio | `1672 / 941` | `4 / 5` | `4 / 5` |
-| `.art` max-height | `calc(100dvh - 126px)` | `calc(100dvh - 190px)` | same |
-| `.art` object-position | `42% 38%` | `14% 40%` | `14% 40%` |
-| `.art` rendered box | 1280 x 720 | 900 x 710 | 390 x 488 |
-| Nav links | shown | hidden | hidden |
-| H1 | 65.92px | | 35.2px |
-| Content width | 1240px | 900px | 390px |
-| Horizontal overflow | none | none | none |
-| Page height | 10,240px | | 11,960px |
-
-The portrait art crop at `≤900px` shifts the image to `14% 40%`, which keeps the
-character in frame and lets the wordmark go, rather than centring and cutting
-the person in half.
-
-The mobile page is *taller* than the desktop page. That is correct: single
-column, the six-step verification flow becomes a vertical sequence with downward
-arrows, and feature pairs lose their vertical dividers. The argument is
-preserved; only the density changes.
-
----
-
-## 13. Accessibility
-
-Already implemented, and part of the design rather than an afterthought:
-
-- Skip link to main content.
-- Visible focus: `outline: 2px solid var(--accent)` with `outline-offset: 3px`
-  and a `6px` border radius on the ring, so it follows the shape of inline code
-  chips as well as panels. It is an `outline`, not a shadow, so it never shifts
-  layout.
-- Semantic landmarks and a real heading order, `h1` once, `h2` per section.
-- All controls labelled; the tablist is a proper tablist with arrow-key movement
-  and a roving tabindex.
-- The status line and decorative dots are `aria-hidden`.
-- `prefers-reduced-motion` and `prefers-reduced-transparency` are both honoured,
-  not merely declared.
-- The hero art is `<picture>` with `fetchpriority="high"` and a preloaded
-  `imagesrcset` (`assets/hero-960.webp` at 960w, `assets/hero.webp` at 1672w),
-  with intrinsic size `1672 x 941` reserved so the page does not reflow.
-
----
-
-## 14. Rules for changes
-
-**Do**
-
-- Reach for a token. If you need a colour, size, radius or easing that is not a
-  token, you have probably found a real gap; add the token and use it.
-- State the limit next to the claim.
-- Ship a real capture for a real feature.
-- Keep the reading order. Statement, then evidence.
-- Re-measure contrast if you introduce a new token pair.
-- Run the light and dark passes by eye, at 1280 and at 390.
-
-**Don't**
-
-- Don't add a second accent colour. Not for success, not for error, not for a
-  section.
-- Don't invent a fake terminal, fake session, or fake diff.
-- Don't invert a section, or give a section its own background band.
-- Don't widen prose past its `ch` cap, and don't un-cap it.
-- Don't add continuous or looping motion.
-- Don't add a framework, a build step, or a JS dependency. The page is one
-  static file with inline CSS, inline JS, inline SVG, and one `<canvas>`. It must
-  keep working when opened straight from disk.
-- Don't introduce a radius outside the set in section 5.2.
-- Don't put the wordmark or a claim in the hero art region that needs to be
-  legible at `14% 40%` on a portrait phone.
-
-**The test for any change.** Does it still read as an editorial page in a
-terminal's chrome? If a new element could be pasted into any other developer
-tool's site without looking wrong, it does not belong here.
-
----
-
-## 15. Verifying a change
-
-Do not trust a screenshot description or the source alone. The measurements in
-this document came from:
-
-1. Serving `landing/` over plain HTTP (`python -m http.server`) and driving it in
-   Chromium.
-2. Reading `getComputedStyle` on live elements, in both
-   `prefers-color-scheme` values. Note that `clamp()` resolves per viewport, so
-   also record the authored expression.
-3. Walking every element and bucketing computed `color` by saturation, to check
-   the one-accent rule rather than assuming it still holds.
-4. Walking up the tree for the nearest opaque background to compute a real
-   contrast ratio, rather than pairing tokens on paper.
-5. Reading the screenshots. Structure and DOM will not tell you that a page looks
-   calm; only looking at it will.
-
-Two mistakes worth not repeating, both made while writing this document:
-
-- `.body` is used by both the prose paragraphs and the mono inventory panel in
-  the statement section. A bare `querySelector('.body')` measured the panel
-  (13.76px mono) and produced a body-copy figure that was wrong by 3px and the
-  wrong typeface entirely. Scope the selector to a section.
-- The hero art's `aspect-ratio` lives on the `.art` **container**, not the
-  `<img>`. Measuring the image reports its intrinsic ratio (`1672/941`) at every
-  width, which looks like the portrait rule is missing when it is working.
-
----
-
-## 16. Provenance
-
-- Source: `landing/index.html` as of commit `7a717d7` ("landing: lead with
-  verification, cut unverified claims").
-- That commit is **not** `HEAD`. `HEAD` has since moved to `05a98bd`, but
-  `git diff 7a717d7 HEAD -- landing/index.html` is empty, so the page is
-  byte-identical and every measurement below still holds. Re-run that diff
-  before trusting this document against a newer page; if it is non-empty, the
-  figures need re-measuring.
-- All colour, type, radius, layout, contrast, responsive and reduced-motion
-  figures were measured from the rendered page at that commit, not read off the
-  stylesheet. Where an authored value and a rendered value differ (the `clamp()`
-  ranges, for example) both are given and labelled as such.
-- Assets: `landing/assets/` holds the hero (`hero.webp`, `hero-960.webp`), the
-  real captures (`session-hero.png`, `shot-shell.webp`), provider logos, the
-  emblem and favicon, the OG image, and the self-hosted Geist and Geist Mono
-  variable fonts. Generation helpers live in `landing/tools/`.
+## 11. Deploying
+
+The site is three static pages and an `assets/` folder. There is no build step:
+serve the directory and it works. `python -m http.server` is enough for a local
+check.
+
+Three things need the production URL, and are deliberately left out until there
+is one:
+
+1. `<link rel="canonical">` on each page.
+2. `og:url` (and an absolute `og:image`; it is relative today, which most social
+   scrapers will not resolve).
+3. `sitemap.xml`. `robots.txt` ships without a `Sitemap:` line for the same
+   reason.
+
+Everything else is absolute or self-contained: fonts, GSAP, ScrollTrigger and
+Lenis are vendored under `assets/`, so the pages have no third-party runtime
+dependency and work offline.
