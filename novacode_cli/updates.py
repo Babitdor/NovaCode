@@ -314,7 +314,8 @@ def install_update(progress: Progress | None = None) -> bool:
         uv = shutil.which("uv")
         if uv is None:
             _fail("This installation is managed by uv; install uv to update it.")
-        arguments = [uv, "tool", "upgrade", "novacode-cli"]
+        # Precompiled, so the first launch after an update does not compile every module.
+        arguments = [uv, "tool", "upgrade", "novacode-cli", "--compile-bytecode"]
         moved: list[tuple[Path, Path]] = []
         if sys.platform == "win32":
             # Reinstall just Nova so uv repairs a launcher even when an earlier

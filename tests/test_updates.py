@@ -130,7 +130,7 @@ def test_update_uses_original_manager(
     U.install_update()
     arguments = run.call_args.args[0]
     if kind == "uv-tool":
-        expected = ["uv", "tool", "upgrade", "novacode-cli"]
+        expected = ["uv", "tool", "upgrade", "novacode-cli", "--compile-bytecode"]
         if U.sys.platform == "win32":
             expected.extend(["--reinstall-package", "novacode-cli"])
         assert arguments == expected

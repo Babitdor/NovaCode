@@ -73,6 +73,7 @@ import asyncio
 import io
 import logging
 import sys
+import threading
 from pathlib import Path
 
 # Fix Windows console encoding to handle Unicode characters
@@ -985,10 +986,15 @@ async def main(
     # archive.jsonl plus large_tool_results/ and conversation_history/.
     # _cleanup_old_checkpoints only prunes checkpoint DBs, so without this the
     # session tree was the largest thing on disk and never shrank.
-    try:
-        SessionManager().cleanup_old_sessions(max_age_days=180)
-    except Exception:  # noqa: BLE001 — retention must never block startup
-        logging.getLogger(__name__).debug("Session retention sweep failed", exc_info=True)
+    # In the background: it walks every session dir (~1 s), and it only reaps
+    # dirs untouched for 180 days, never the session being opened.
+    def _sweep_sessions() -> None:
+        try:
+            SessionManager().cleanup_old_sessions(max_age_days=180)
+        except Exception:  # noqa: BLE001 — retention must never block startup
+            logging.getLogger(__name__).debug("Session retention sweep failed", exc_info=True)
+
+    threading.Thread(target=_sweep_sessions, name="nova-session-sweep", daemon=True).start()
 
     # Durable, SQLite-backed store at ~/.nova/store.db so structured memory
     # written via the LangGraph store survives restarts (falls back to
@@ -1755,11 +1761,15 @@ def cli_main() -> None:
 
         raise SystemExit(update_main(sys.argv[2:]))
     # Lazy imports: sandbox_factory pulls in deepagents; only needed when
-    # actually resolving/launching a sandbox, not at CLI startup.
-    from novacode_cli.integrations.sandbox_factory import (
-        parse_ports,
-        resolve_sandbox_type,
-    )
+    # actually resolving/launching a sandbox, not at CLI startup. deepagents
+    # loads here, without the OpenAI and Google SDKs a session may not use.
+    from novacode_cli.utils.lazy_providers import deferred_provider_imports
+
+    with deferred_provider_imports():
+        from novacode_cli.integrations.sandbox_factory import (
+            parse_ports,
+            resolve_sandbox_type,
+        )
 
     # Fix for gRPC fork issue on macOS
     # https://github.com/grpc/grpc/issues/37642
