@@ -677,6 +677,17 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
   *,*::before,*::after{animation:none !important; transition:none !important}
 }
 
+/* ---------- 1081-1164px: the bar is one link too wide, so tighten the gaps ----------
+   Nine links plus the two buttons need ~1,164px of bar at the authored gaps (28px between
+   groups, 24px between links). The off-canvas menu only takes over at 1080, so in this band
+   the row's content hung 43px past the right edge and clipped the primary button — measured
+   at 1081 x 900. Trimming the gaps recovers 94px and leaves the bar's height and its
+   authored values at every other width. */
+@media (min-width: 1081px) and (max-width: 1164px){
+  .nav-row{gap:18px}
+  .nav-links{gap:16px}
+}
+
 /* ---------- below 1080px: the nav becomes one tap away ---------- */
 @media (max-width: 1080px){
   .nav-links{
@@ -684,6 +695,12 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
     display:none; flex-direction:column; gap:0; margin:0;
     background:var(--bg); border-bottom:1px solid var(--line);
     padding:6px var(--gutter) 22px;
+    /* Nine rows plus their rules are taller than a landscape phone: 9 x 49px of link
+       is ~470px inside a panel that starts 64px down. Cap it at the space below the
+       bar — minus the 34px status line, which is fixed at the bottom and outranks the
+       panel — so the panel scrolls instead of its last section hiding under the bar.
+       Measured at 900x430: 451px of links in 332px of panel, last link reachable. */
+    max-height:calc(100dvh - 98px); overflow:auto; overscroll-behavior:contain;
   }
   .nav-links.open{display:flex}
   .nav-links a{padding:15px 0; font-size:1rem; border-bottom:1px solid var(--line)}
@@ -768,7 +785,12 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
       <b>nova</b><span>@code</span>
     </a>
     <nav class="nav-links" id="nav-links" aria-label="Sections">
-      <a href="docs/">docs</a>
+      <!-- Explicit index.html, not `docs/` or `changelog/`: a directory URL only
+           becomes a page when a server supplies the index, so from file:// it opened
+           the browser's directory listing instead ("Index of …\changelog\"). This
+           file is also opened straight from disk, which is what section 14 requires. -->
+      <a href="docs/index.html">docs</a>
+      <a href="changelog/index.html">changelog</a>
       <a href="#memory">memory</a>
       <a href="#council">council</a>
       <a href="#sessions">sessions</a>
@@ -1271,7 +1293,7 @@ status: awaiting your decision">
             <svg aria-hidden="true"><use href="#i-arrow"/></svg>
             Clone the repository
           </a>
-          <a class="btn btn-quiet" href="docs/">Read the documentation</a>
+          <a class="btn btn-quiet" href="docs/index.html">Read the documentation</a>
         </div>
         <ul class="proof">
           <li>MIT licensed</li>
@@ -1288,7 +1310,8 @@ status: awaiting your decision">
     <span>Nova, 2026. Built in the terminal, for the terminal.</span>
     <nav aria-label="Footer">
       <a href="https://github.com/Babitdor/NovaCode" rel="noopener">GitHub</a>
-      <a href="docs/">Documentation</a>
+      <a href="docs/index.html">Documentation</a>
+      <a href="changelog/index.html">Changelog</a>
       <a href="#install">Install</a>
     </nav>
   </div>
