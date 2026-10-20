@@ -1197,11 +1197,11 @@ class McpScreen(ModalScreen[None]):
     DEFAULT_CSS = """
     McpScreen #modal-box { width: 90%; max-width: 110; height: 90%; }
     McpScreen #mcp-content { height: 1fr; min-height: 3; }
-    /* Six buttons need ~108 columns in one row, so Close fell off the box
-       below a 120-column terminal. Two rows of three always fit; narrow
-       terminals keep the shared two-column grid (.narrow wins on specificity). */
+    /* Seven buttons need ~125 columns in one row, so Close fell off the box
+       on most terminals. Two rows of four always fit; narrow terminals keep
+       the shared two-column grid (.narrow wins on specificity). */
     McpScreen #modal-buttons {
-        layout: grid; grid-size: 3; grid-columns: 1fr 1fr 1fr; grid-gutter: 0 1;
+        layout: grid; grid-size: 4; grid-columns: 1fr 1fr 1fr 1fr; grid-gutter: 0 1;
     }
     McpScreen #modal-buttons Button { width: 1fr; margin: 0; }
     """
@@ -1224,8 +1224,11 @@ class McpScreen(ModalScreen[None]):
             with Horizontal(id="modal-buttons"):
                 yield Button("Install", id="install", variant="primary")
                 yield Button("Add Custom", id="add-custom")
-                yield Button("Authenticate", id="authenticate")
-                yield Button("Toggle Active", id="toggle-enable")
+                yield Button(
+                    "Sign in", id="authenticate", tooltip="Sign in to a remote server (browser)"
+                )
+                yield Button("Tools", id="select-tools")
+                yield Button("Toggle", id="toggle-enable")
                 yield Button("Remove", id="remove", variant="error")
                 yield Button("Close", id="close")
 
@@ -1305,6 +1308,8 @@ class McpScreen(ModalScreen[None]):
                     )
                 if sc.oauth:
                     label.append("  · OAuth", style="cyan")
+                if sc.tools is not None:
+                    label.append(f"  · {len(sc.tools)} tools", style="yellow")
                 configured.add_option(Option(label))
 
             # Show active tool count
@@ -1373,7 +1378,7 @@ class McpScreen(ModalScreen[None]):
             Text(
                 f"{len(self._presets)} presets \u00b7 "
                 "\U0001f511 = needs API key \u00b7 [\u2713] = already configured \u00b7 "
-                "select a remote server to authenticate in your browser",
+                "Tools picks which of a server's tools Nova may use",
                 style="dim",
             )
         )
@@ -1389,6 +1394,8 @@ class McpScreen(ModalScreen[None]):
             self._add_custom()
         elif event.button.id == "authenticate":
             self._authenticate_highlighted()
+        elif event.button.id == "select-tools":
+            self._select_tools_highlighted()
         elif event.button.id == "toggle-enable":
             self._toggle_highlighted()
 
@@ -1400,12 +1407,14 @@ class McpScreen(ModalScreen[None]):
         try:
             btn = self.query_one("#toggle-enable", Button)
             if idx is None or not (0 <= idx < len(self._config_names)):
-                btn.label = "Toggle Active"
+                btn.label = "Toggle"
                 btn.disabled = True
                 self.query_one("#authenticate", Button).disabled = True
+                self.query_one("#select-tools", Button).disabled = True
                 return
 
             btn.disabled = False
+            self.query_one("#select-tools", Button).disabled = False
             name = self._config_names[idx]
             from novacode_cli.mcp.config import MCPConfig
 
@@ -1468,6 +1477,54 @@ class McpScreen(ModalScreen[None]):
             self._reload()
             self.query_one("#mcp-hint", Static).update(status)
             button.disabled = False
+
+    @work
+    async def _select_tools_highlighted(self) -> None:
+        """Pick which of the highlighted server's tools Nova may use."""
+        index = self.query_one("#mcp-configured", OptionList).highlighted
+        if index is None or not 0 <= index < len(self._config_names):
+            return
+        name = self._config_names[index]
+        from novacode_cli.mcp.config import MCPConfig
+        from novacode_cli.mcp.middleware import list_server_tools
+        from novacode_cli.tui.mcp_tools_screen import McpToolsScreen
+
+        manager = MCPConfig()
+        config = manager.get_server(name)
+        if config is None:
+            return
+        hint = self.query_one("#mcp-hint", Static)
+        hint.update(Text(f"Loading {name}'s tools…", style="cyan"))
+        try:
+            tools = await list_server_tools(name, config)
+        except Exception:  # noqa: BLE001 - a server that cannot be reached is reported, not raised
+            hint.update(
+                Text(f"Could not list {name}'s tools. Is the server reachable?", style="red")
+            )
+            return
+        if not tools:
+            hint.update(Text(f"{name} offers no tools.", style="yellow"))
+            return
+        chosen = await self.app.push_screen_wait(McpToolsScreen(name, tools, config.tools))
+        if chosen is None:
+            self._reload()
+            return
+        # Everything selected means no allowlist, so tools the server adds later appear too.
+        allowed = None if len(chosen) == len(tools) else chosen
+        await manager.add_server_async(name, config.model_copy(update={"tools": allowed}))
+        status = Text(
+            f"{name}: {'all' if allowed is None else len(allowed)} of {len(tools)} tools enabled.",
+            style="green",
+        )
+        if hasattr(self.app, "session_state") and hasattr(
+            self.app.session_state, "reload_mcp_servers"
+        ):
+            try:
+                self.app.agent, self.app.backend = await self.app.session_state.reload_mcp_servers()
+            except Exception:  # noqa: BLE001 - saved; the next session picks it up
+                status = Text(f"{name}: saved. Restart the session to apply it.", style="yellow")
+        self._reload()
+        hint.update(status)
 
     @work
     async def _toggle_highlighted(self) -> None:

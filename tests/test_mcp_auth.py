@@ -232,6 +232,11 @@ async def test_figma_refusal_explains_the_allowlist_and_desktop_option(
 
     monkeypatch.setattr(config_module, "MCPConfig", Config)
     monkeypatch.setattr(client_module, "check_server_connection", refused)
+    # No background discovery: its repaint would replace the hint under test.
+    monkeypatch.setattr(
+        "novacode_cli.mcp.get_shared_mcp_middleware",
+        lambda: SimpleNamespace(_tools_discovered=True, _tools_cache=[]),
+    )
 
     class ScreenApp(App[None]):
         async def on_mount(self) -> None:
@@ -242,9 +247,12 @@ async def test_figma_refusal_explains_the_allowlist_and_desktop_option(
         screen.query_one("#mcp-configured", OptionList).highlighted = 0
         await pilot.pause()
         screen.query_one("#authenticate", Button).press()
-        await pilot.pause()
-        await pilot.pause()
-        hint = str(screen.query_one("#mcp-hint", Static).render())
+        hint = ""
+        for _ in range(50):  # the sign-in runs as a worker; wait for its result
+            await pilot.pause(0.02)
+            hint = str(screen.query_one("#mcp-hint", Static).render())
+            if "approved apps" in hint:
+                break
         assert "approved apps" in hint
         assert "figma-desktop" in hint
 
@@ -263,3 +271,86 @@ async def test_every_mcp_button_fits_inside_the_dialog(size: tuple[int, int]) ->
         for button in screen.query("#modal-buttons Button").results(Button):
             assert box.contains_region(button.region), button.id
             assert button.region.width >= len(str(button.label)) + 2, button.id
+
+
+@pytest.mark.asyncio
+async def test_tools_button_saves_a_selection_from_the_picker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from textual.widgets import SelectionList
+
+    from novacode_cli.mcp import config as config_module
+    from novacode_cli.mcp import middleware as middleware_module
+    from novacode_cli.tui.mcp_tools_screen import McpToolsScreen
+
+    servers = {"big": MCPServerConfig(transport="http", url="https://x.test/mcp")}
+    saved: dict[str, MCPServerConfig] = {}
+
+    class Config:
+        def list_servers(self) -> dict[str, MCPServerConfig]:
+            return servers
+
+        def get_server(self, name: str) -> MCPServerConfig:
+            return servers[name]
+
+        async def add_server_async(self, name: str, config: MCPServerConfig) -> None:
+            saved[name] = servers[name] = config
+
+    async def tools(name: str, config: MCPServerConfig) -> list[tuple[str, str, int]]:
+        return [("list_projects", "List projects", 3000), ("update_project", "Edit", 27000)]
+
+    monkeypatch.setattr(config_module, "MCPConfig", Config)
+    monkeypatch.setattr(middleware_module, "list_server_tools", tools)
+    monkeypatch.setattr(
+        "novacode_cli.mcp.get_shared_mcp_middleware",
+        lambda: SimpleNamespace(_tools_discovered=True, _tools_cache=[]),
+    )
+
+    class ScreenApp(App[None]):
+        async def on_mount(self) -> None:
+            await self.push_screen(McpScreen())
+
+    async with ScreenApp().run_test(size=(120, 40)) as pilot:
+        screen = pilot.app.screen
+        screen.query_one("#mcp-configured", OptionList).highlighted = 0
+        await pilot.pause()
+        screen.query_one("#select-tools", Button).press()
+        for _ in range(50):
+            await pilot.pause(0.02)
+            if isinstance(pilot.app.screen, McpToolsScreen):
+                break
+        await pilot.pause()
+        picker = pilot.app.screen
+        assert isinstance(picker, McpToolsScreen)
+        assert set(picker.query_one(SelectionList).selected) == {"list_projects", "update_project"}
+        picker.query_one("#tools-filter").value = "update"
+        await pilot.pause()
+        picker.query_one("#tools-none", Button).press()  # only the visible one
+        await pilot.pause()
+        picker.query_one("#tools-save", Button).press()
+        for _ in range(50):
+            await pilot.pause(0.02)
+            if "big" in saved:
+                break
+    assert saved["big"].tools == ["list_projects"]
+
+
+@pytest.mark.asyncio
+async def test_selecting_every_tool_removes_the_allowlist() -> None:
+    from novacode_cli.tui.mcp_tools_screen import McpToolsScreen
+
+    results: list = []
+
+    class ScreenApp(App[None]):
+        async def on_mount(self) -> None:
+            await self.push_screen(
+                McpToolsScreen("s", [("a_one", "", 10), ("b_two", "", 20)], ["a_*"]), results.append
+            )
+
+    async with ScreenApp().run_test() as pilot:
+        picker = pilot.app.screen
+        picker.query_one("#tools-all", Button).press()
+        await pilot.pause()
+        picker.query_one("#tools-save", Button).press()
+        await pilot.pause()
+    assert results == [["a_one", "b_two"]]

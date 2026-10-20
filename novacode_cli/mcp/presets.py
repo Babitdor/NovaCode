@@ -45,6 +45,30 @@ def _google_workspace_preset(name: str, service: str, port: int) -> dict[str, An
     }
 
 
+#: The Vercel tools enabled by the preset (about 63k chars of schemas).
+VERCEL_TOOLS = [
+    "search_vercel_documentation",
+    "get_auth_user",
+    "list_teams",
+    "get_team",
+    "list_projects",
+    "get_project",
+    "list_deployments",
+    "get_deployment",
+    "list_deployment_events",
+    "list_deployment_files",
+    "get_deployment_file_contents",
+    "get_runtime_logs",
+    "get_runtime_errors",
+    "get_git_deployment_context",
+    "list_domains",
+    "get_domain",
+    "list_project_domains",
+    "list_aliases",
+    "get_access_to_vercel_url",
+    "web_fetch_vercel_url",
+]
+
 # Pre-defined MCP server presets
 MCP_PRESETS: dict[str, dict[str, Any]] = {
     "figma": {
@@ -73,7 +97,15 @@ MCP_PRESETS: dict[str, dict[str, Any]] = {
         "name": "Vercel MCP",
         "description": "Official Vercel project, deployment and documentation tools (OAuth)",
         "package": "Hosted Vercel MCP (no local package required)",
-        "config": {"transport": "http", "url": "https://mcp.vercel.com", "oauth": True},
+        "config": {
+            "transport": "http",
+            "url": "https://mcp.vercel.com",
+            "oauth": True,
+            # The server exposes ~240 tools (~950k chars of schemas); loading a
+            # share of them overflows the request. These cover projects,
+            # deployments, logs, domains and docs; edit "tools" in mcp.json for more.
+            "tools": VERCEL_TOOLS,
+        },
     },
     "higgsfield": {
         "name": "Higgsfield MCP",

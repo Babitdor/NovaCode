@@ -118,6 +118,10 @@ class MCPServerConfig(BaseModel):
     oauth: bool = False
     description: str | None = None
     disabled: bool = False
+    # Tool names this server may expose (fnmatch patterns, unprefixed: "list_*").
+    # None exposes every tool. Some servers ship hundreds of large schemas, more
+    # than a provider will accept once a few are loaded.
+    tools: list[str] | None = None
 
     @field_validator("command")
     @classmethod

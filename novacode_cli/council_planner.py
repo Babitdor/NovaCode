@@ -47,7 +47,7 @@ from typing import TYPE_CHECKING, Any
 from novacode_cli.council import PERSONAS, Persona, _content_text
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterable
+    from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 
 logger = logging.getLogger(__name__)
 
@@ -897,6 +897,26 @@ def _failure_summary(run: CouncilRun) -> str:
     return f"{hits} of {len(reasons)} failures: {top}."
 
 
+async def _as_done(
+    council: list[Persona], work: Callable[[Persona], Awaitable[Any]]
+) -> AsyncIterator[tuple[Persona, Any]]:
+    """Run ``work`` for every persona at once; yield each ``(persona, result)`` as it lands.
+
+    Concurrent like ``gather`` (a round costs one agent's latency), but the TUI
+    can tick an agent off when it finishes instead of all of them at the end.
+    """
+    tasks = {asyncio.ensure_future(work(p)): p for p in council}
+    pending = set(tasks)
+    try:
+        while pending:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                yield tasks[task], task.result()
+    finally:
+        for task in pending:  # the caller stopped early (cancelled run)
+            task.cancel()
+
+
 def _event(name: str, run: CouncilRun, /, **payload: Any) -> dict[str, Any]:
     """One event on the council stream.
 
@@ -974,17 +994,12 @@ async def run_planning_council(
 
     # Concurrent: the plans are independent by design, so there is nothing to
     # serialize and a 6-agent round costs one agent's latency, not six.
-    results = await asyncio.gather(
-        *(
-            _brainstorm_one(persona, run, model, i)
-            for i, persona in enumerate(council, 1)
-        )
-    )
-
-    produced = [
-        (p, r) for p, (r, _) in zip(council, results, strict=True) if r is not None
-    ]
-    for persona, (result, reason) in zip(council, results, strict=True):
+    position = {persona.id: i for i, persona in enumerate(council, 1)}
+    results: dict[str, Any] = {}
+    async for persona, (result, reason) in _as_done(
+        council, lambda p: _brainstorm_one(p, run, model, position[p.id])
+    ):
+        results[persona.id] = result
         if result is None:
             run.failures.append(
                 {"agent_id": persona.id, "phase": BRAINSTORMING, "reason": reason}
@@ -993,6 +1008,10 @@ async def run_planning_council(
                 "agent.failed", run, agent_id=persona.id, name=persona.name,
                 phase=BRAINSTORMING, reason=reason,
             )
+        else:
+            yield _event("agent.completed", run, agent_id=persona.id, phase=BRAINSTORMING)
+
+    produced = [(p, results[p.id]) for p in council if results[p.id] is not None]
 
     # Ids are assigned over a shuffled list so a proposal's number carries no
     # information about which persona produced it.
@@ -1031,13 +1050,16 @@ async def run_planning_council(
     # --- Phase 2: critique --------------------------------------------------
     run.status = CRITIQUING
     yield _event("council.phase.started", run, phase=CRITIQUING)
-    critiques = await asyncio.gather(
-        *(_critique_one(p, run, anonymized, model, valid_ids) for p in council)
-    )
-    for persona, (critique, reason) in zip(council, critiques, strict=True):
+    async for persona, (critique, reason) in _as_done(
+        council, lambda p: _critique_one(p, run, anonymized, model, valid_ids)
+    ):
         if critique is None:
             run.failures.append(
                 {"agent_id": persona.id, "phase": CRITIQUING, "reason": reason}
+            )
+            yield _event(
+                "agent.failed", run, agent_id=persona.id, name=persona.name,
+                phase=CRITIQUING, reason=reason,
             )
             continue
         run.critiques.append(critique)
@@ -1053,10 +1075,9 @@ async def run_planning_council(
     # --- Phase 3: anonymous ranked voting -----------------------------------
     run.status = VOTING
     yield _event("council.phase.started", run, phase=VOTING)
-    ballots = await asyncio.gather(
-        *(_ballot_one(p, run, anonymized, model, valid_ids) for p in council)
-    )
-    for persona, (ballot, reason) in zip(council, ballots, strict=True):
+    async for persona, (ballot, reason) in _as_done(
+        council, lambda p: _ballot_one(p, run, anonymized, model, valid_ids)
+    ):
         if ballot is None:
             run.failures.append(
                 {"agent_id": persona.id, "phase": VOTING, "reason": reason}

@@ -141,3 +141,42 @@ def test_google_workspace_presets_scope_services_and_resolve_oauth_file(
     assert config.env["WORKSPACE_MCP_PORT"] == str(port)
     assert config.env["GOOGLE_OAUTH_REDIRECT_URI"] == f"http://localhost:{port}/oauth2callback"
     assert config.env["MCP_ENABLE_OAUTH21"] == "false"
+
+
+def test_vercel_preset_limits_its_tools_to_a_core_set():
+    config = create_config_from_preset("vercel", {})
+    assert config is not None
+    assert config.tools is not None
+    assert {"list_projects", "get_deployment", "get_runtime_logs"} <= set(config.tools)
+    assert len(config.tools) <= 25
+
+
+def test_server_allowlist_filters_tools_before_registration(tmp_path: Path):
+    import json
+
+    from mcp.types import Tool
+
+    from novacode_cli.mcp.middleware import MCPMiddleware
+
+    config_path = tmp_path / "mcp.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "big": {"transport": "http", "url": "https://x.test/mcp", "tools": ["list_*"]},
+                    "all": {"transport": "http", "url": "https://y.test/mcp"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    middleware = MCPMiddleware(config_path)
+    raw = [
+        Tool(name=n, inputSchema={"type": "object"})
+        for n in ("list_projects", "update_project", "list_teams")
+    ]
+    connection = {"transport": "streamable_http", "url": "https://x.test/mcp"}
+    kept = middleware._convert_raw_tools("big", connection, raw)
+    assert sorted(t.name for t in kept) == ["big_list_projects", "big_list_teams"]
+    everything = middleware._convert_raw_tools("all", connection, raw)
+    assert len(everything) == 3

@@ -1502,6 +1502,8 @@ class NovaApp(App):
         height: auto; padding: 0 2;
         background: $surface; margin: 1 0;
     }
+    /* /council plan cards draw their own border; no log-line band behind them. */
+    #transcript > .council-plan { height: auto; margin: 1 0 0 0; }
     /* --- /ralph native cards --- */
     #transcript > .ralph-run {
         height: auto; border-left: none;
@@ -5574,7 +5576,7 @@ class NovaApp(App):
         except Exception:  # noqa: BLE001
             pass
 
-    def _log(self, renderable: Any) -> None:
+    def _log(self, renderable: Any, *, classes: str = "logline") -> None:
         """Mount an ancillary line (errors, command output, notices)."""
         from novacode_cli.remote.command_ui import command_output
 
@@ -5582,7 +5584,7 @@ class NovaApp(App):
         if captured is not None:
             captured.append(renderable)
         self._close_tool_group()
-        self._transcript().mount(Static(renderable, classes="logline"))
+        self._transcript().mount(Static(renderable, classes=classes))
         self._schedule_prune()
         # Automatic scroll: don't yank a user who is reading history.
         self._scroll_end(force=False)
@@ -16603,25 +16605,13 @@ class NovaApp(App):
             return
 
         store = self._council_store()
-        from novacode_cli.council_planner import PLANNING_PERSONAS
+        from novacode_cli.tui.council_view import CouncilCard
 
-        self._log(Text("◈ Council convening — planning, not editing.", "bold cyan"))
-        # Said up front because this is genuinely slow: four phases of whole
-        # structured plans, and a hosted reasoning model can take minutes per
-        # call. Without this the user reads a quiet screen as a hang.
-        self._log(
-            Text(
-                f"  {len(PLANNING_PERSONAS)} agents · brainstorm → critique → vote "
-                "→ judge. This takes a few minutes.",
-                style="dim",
-            )
-        )
-        phase_label = {
-            cp.BRAINSTORMING: "Brainstorming independently",
-            cp.CRITIQUING: "Critiquing (anonymized)",
-            cp.VOTING: "Anonymous ranked vote",
-            cp.JUDGING: "Judge scoring against the rubric",
-        }
+        # One card that updates in place: phases, every agent's progress and the
+        # clock. This is genuinely slow (four phases of whole structured plans),
+        # so the card keeps visibly moving rather than reading as a hang.
+        card = CouncilCard(prompt)
+        await self._mount(card)
         # Read the project context off the loop: `_council_context` does sync
         # filesystem work (cwd lookup, is_file, read_text) and this runs while the
         # user is watching the transcript, so it would stall the UI.
@@ -16635,28 +16625,13 @@ class NovaApp(App):
                 run=run,
             ):
                 self._council_run_id = event["run_id"]
-                name, payload = event["event"], event["payload"]
-                if name == "council.phase.started":
-                    label = phase_label.get(payload.get("phase", ""))
-                    if label:
-                        self._log(Text(f"  → {label}", style="cyan"))
-                elif name == "proposal.created":
-                    self._log(Text(f"    ● {payload['proposal_id']} — {payload['title']}", "dim"))
-                elif name == "agent.failed":
-                    # With the reason: "dropped out" alone leaves the user
-                    # unable to tell a slow model from an unreachable one.
-                    why = payload.get("reason") or "no reply"
-                    self._log(Text(f"    ✖ {payload['name']} — {why}", style="yellow"))
-                elif name == "vote.tallied":
-                    entropy = payload["tally"].get("entropy", 0.0)
-                    self._log(Text(f"    ballots in · disagreement {entropy:.2f}", "dim"))
-                elif name == "council.failed":
-                    self._log(Text(f"✖ {payload['reason']}", style="red"))
-                elif name == "plans.selected":
+                card.apply(event["event"], event["payload"])
+                if event["event"] == "plans.selected":
                     latest = store.load(event["run_id"])
                     if latest is not None:
                         self._council_render_plans(latest)
         except Exception as exc:  # noqa: BLE001 — a council must not kill the TUI
+            card.finish("failed", f"Council failed: {exc}")
             self._log(Text(f"Council failed: {exc}", style="red"))
 
     def _council_context(self) -> str:
@@ -16676,16 +16651,17 @@ class NovaApp(App):
         return ""
 
     def _council_render_plans(self, run: Any) -> None:
-        """The top-3 cards, plus how to act on them."""
+        """The plan cards, then buttons (and the typed verbs) to act on them."""
+        from novacode_cli import council_planner as cp
+
         plans = run.ranked_plans()
         if not plans:
             self._log(Text("No plans were selected.", style="yellow"))
             return
-        self._log(Text(f"◈ Council results — {len(plans)} plans", style="bold cyan"))
         if run.judgment is not None and run.judgment.fell_back_to_vote:
             self._log(
                 Text(
-                    "  ⚠ The judge was unreachable — this order is the council's "
+                    "⚠ The judge was unreachable — this order is the council's "
                     "vote, not a rubric verdict.",
                     style="yellow",
                 )
@@ -16693,34 +16669,35 @@ class NovaApp(App):
         elif run.tally.get("entropy", 0.0) >= 0.9:
             self._log(
                 Text(
-                    "  ⚠ The council did not converge — this ranking is a "
+                    "⚠ The council did not converge — this ranking is a "
                     "judgement call, not a consensus.",
                     style="yellow",
                 )
             )
-        for plan in plans:
-            proposal = run.proposal(plan.proposal_id)
-            if proposal is None:
-                continue
-            head = "Recommended" if plan.rank == 1 else "Alternative"
-            self._log(
-                Text.assemble(
-                    (f"  #{plan.rank} ", "bold"),
-                    (f"{head} ", "green" if plan.rank == 1 else "dim"),
-                    (proposal.title, "bold"),
-                )
-            )
-            self._log(Text(f"     {proposal.summary}", style="dim"))
-            for pro in proposal.tradeoffs.get("pros", [])[:2]:
-                self._log(Text(f"     + {pro}", style="green"))
-            for con in proposal.tradeoffs.get("cons", [])[:2]:
-                self._log(Text(f"     - {con}", style="yellow"))
+        palette = getattr(self, "_palette", None)
+        if palette is not None:
+            from novacode_cli.tui.council_view import plan_cards
+
+            for card in plan_cards(run, palette):
+                self._log(card, classes="council-plan")
+        else:  # no theme (a bare harness): the plain listing
+            for plan in plans:
+                proposal = run.proposal(plan.proposal_id)
+                if proposal is not None:
+                    self._log(Text(f"#{plan.rank} {proposal.title} — {proposal.summary}"))
         self._log(
             Text(
-                "  /council view <n> · /council approve <n> · /council revise <notes>",
+                "#1 is recommended. Use the buttons, or type /council approve <n> · "
+                "view <n> · revise <notes> · reject",
                 style="dim",
             )
         )
+        if run.status == cp.AWAITING_APPROVAL and hasattr(self, "_transcript"):
+            from novacode_cli.tui.council_view import CouncilActions
+
+            self._close_tool_group()
+            self._transcript().mount(CouncilActions(run.id, len(plans)))
+            self._scroll_end(force=False)
 
     async def _council_show_plan(self, run: Any, index: int) -> None:
         plans = run.ranked_plans()
@@ -17253,6 +17230,11 @@ class NovaApp(App):
                 return
             self._overflow_retried = True
             self._log(Text("⚠ Context overflow — compacting and retrying…", style="bold #f7768e"))
+            # The provider's own words: an overflow is inferred from the error
+            # text, so this is what tells a real one from a misread rejection.
+            logger.warning("Context overflow reported by the provider: %s", e.message)
+            for line in (e.message or "").splitlines()[:3]:
+                self._log(Text(f"  {line[:300]}", style="dim"))
             await self._run_compact("")
             prompt = getattr(self, "_last_user_prompt", None)
             if prompt:

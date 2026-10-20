@@ -370,6 +370,23 @@ async def _fetch_raw_tools(connection: dict[str, Any]) -> list[MCPTool]:
         return await _list_all_tools(session)
 
 
+async def list_server_tools(name: str, config: Any) -> list[tuple[str, str, int]]:  # noqa: ANN401
+    """Every tool a server offers as ``(name, description, schema chars)``.
+
+    From the schema cache, which keeps the full unfiltered list, so the ``/mcp``
+    tool picker opens without connecting; a server never discovered is asked
+    live. ``config`` is the server's :class:`MCPServerConfig`.
+    """
+    entry = _load_schema_cache().get(name)
+    raw = entry.get("tools") if isinstance(entry, dict) else None
+    if not raw:
+        from novacode_cli.mcp.client import build_mcp_server_config
+
+        fetched = await _fetch_raw_tools(dict(build_mcp_server_config(config)))
+        raw = [t.model_dump(mode="json") for t in fetched]
+    return [(t["name"], t.get("description") or "", len(json.dumps(t))) for t in raw]
+
+
 class MCPState(AgentState):
     """State for the MCP middleware."""
 
@@ -485,7 +502,16 @@ class MCPMiddleware(AgentMiddleware):
         prefixed with the server name (e.g. ``serena_read_file``) so MCP tools
         never collide with the agent's built-in tools.
         """
+        from fnmatch import fnmatchcase
+
         from langchain_mcp_adapters.tools import convert_mcp_tool_to_langchain_tool
+
+        # The server's `tools` allowlist, applied here so cached and live
+        # discovery agree and a filtered tool is never registered at all.
+        server_config = self.mcp_config.get_server(server_name)
+        allowed = server_config.tools if server_config is not None else None
+        if allowed is not None:
+            raw_tools = [t for t in raw_tools if any(fnmatchcase(t.name, p) for p in allowed)]
 
         # stdio servers get ONE session reused across calls. They are the ones
         # that hold state (a browser, an indexed project) and the ones where a
