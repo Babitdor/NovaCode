@@ -65,6 +65,31 @@ One-shot mode exits after the task. It retains approval policies and reports whe
 
 ## Optional capabilities
 
+To install or update the global `nova` command with selected extras directly from GitHub:
+
+```bash
+uv tool install --upgrade "novacode-cli[voice,browser,agents-server] @ git+https://github.com/Babitdor/NovaCode.git"
+```
+
+To include all extras:
+
+```bash
+uv tool install --upgrade "novacode-cli[voice,voice-orpheus,voice-parakeet,voice-pocket,browser,bedrock,server,agents-server] @ git+https://github.com/Babitdor/NovaCode.git"
+```
+
+From a local checkout, use `uv tool install --upgrade ".[voice,browser,agents-server]"` instead. After installing the tool, launch it with `nova` from any project directory. Keep your desired extras in the install command when updating.
+
+| Extra | Capability |
+|---|---|
+| `voice` | Local speech input and output |
+| `voice-orpheus` | Optional Orpheus speech output |
+| `voice-parakeet` | Optional Parakeet speech input |
+| `voice-pocket` | Optional Pocket-TTS speech output |
+| `browser` | Browser-use integration |
+| `bedrock` | Amazon Bedrock provider |
+| `server` | FastAPI and Uvicorn server dependencies |
+| `agents-server` | On-demand background-agent server |
+
 Install extras from the checkout as needed:
 
 ```bash

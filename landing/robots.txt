@@ -1,5 +1,0 @@
-User-agent: *
-Allow: /
-
-# No sitemap is listed because the site has no production URL yet.
-# When it is deployed, add:  Sitemap: https://<host>/sitemap.xml
