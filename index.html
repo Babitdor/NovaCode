@@ -7,7 +7,7 @@
 <meta name="description" content="An open-source coding agent for the terminal. Its memory is a wiki of Markdown pages you can read and search, and its plans wait for your approval.">
 <meta property="og:title" content="Nova, a terminal coding agent with memory you can explore">
 <meta property="og:description" content="Memory you can explore, plans you approve, sessions that run side by side, and hosted or local models. Open source, MIT licensed.">
-<meta property="og:image" content="assets/og.jpg">
+<meta property="og:image" content="https://babitdor.github.io/NovaCode/assets/og.jpg">
 <meta property="og:type" content="website">
 <meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0e0e10" media="(prefers-color-scheme: dark)">
@@ -264,6 +264,7 @@ section{padding-block:var(--pad)}
 .brand img{width:26px; height:26px; border-radius:7px}
 .nav-links{display:flex; gap:24px; margin-left:auto}
 .nav-links a{
+  min-height:28px;display:inline-flex;align-items:center;
   position:relative; text-decoration:none; color:var(--muted);
   font:500 .86rem/1 var(--mono); transition:color .2s;
 }
@@ -772,7 +773,11 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
   .dock-status span:last-child{margin-left:0}
   .tree{font-size:.76rem; padding:18px 16px 20px}
 }
+@media(max-width:620px){.statusline{gap:10px}.statusline .where{flex-shrink:0}.statusline #sl-hint{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.statusline .gauge{display:none}}
+@media(max-width:620px){.cmd{display:grid;grid-template-columns:12px minmax(0,1fr);gap:12px;align-items:start}.cmd code{white-space:pre-wrap;overflow-wrap:anywhere;overflow-x:visible}.cmd .copy{grid-column:2;justify-self:end}.cmd::before{padding-top:4px}}
 </style>
+<link rel="canonical" href="https://babitdor.github.io/NovaCode/">
+<meta name="twitter:card" content="summary_large_image">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -780,7 +785,7 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
 
 <header class="nav" id="nav">
   <div class="wrap nav-row">
-    <a class="brand" href="#top" aria-label="Nova, back to top">
+    <a class="brand" href="#top" aria-label="nova @code, back to top">
       <img src="assets/emblem-128.webp" alt="" width="26" height="26">
       <b>nova</b><span>@code</span>
     </a>
@@ -1206,7 +1211,7 @@ status: awaiting your decision">
     <div class="wrap">
       <div class="head rv">
         <p class="cmdline"><span class="ps">nova &#10095;</span><span class="typed" style="--n:13">cat README.md</span></p>
-        <h2>Two commands and you are running.</h2>
+        <h2>Three commands and you are running.</h2>
         <p class="body">Python 3.11 or newer and uv. Nothing is installed globally.</p>
       </div>
       <div class="install-box win rv">

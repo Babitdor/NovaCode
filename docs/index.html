@@ -7,6 +7,7 @@
 <meta name="description" content="Complete reference for NovaCode, an open-source terminal-based AI coding agent built on LangGraph that verifies its own work.">
 <meta property="og:title" content="NovaCode Documentation">
 <meta property="og:description" content="Complete reference for NovaCode, a coding agent that plans, edits, runs tests, and verifies its own work.">
+<meta property="og:image" content="https://babitdor.github.io/NovaCode/assets/og.jpg">
 <meta property="og:type" content="website">
 <meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0e0e10" media="(prefers-color-scheme: dark)">
@@ -252,8 +253,8 @@ td.desc{color:var(--muted)}
 @supports not (animation-timeline: scroll()){.statusline .gauge{display:none}}
 @keyframes fill{to{transform:scaleX(1)}}
 
-.page-section{display:none}
-.page-section.active{display:block}
+.js .page-section{display:none}
+.js .page-section.active{display:block}
 
 @media (max-width:900px){
   .docs-layout{grid-template-columns:1fr}
@@ -296,7 +297,15 @@ td.desc{color:var(--muted)}
   html{scroll-behavior:auto}
   *,*::before,*::after{animation:none !important;transition:none !important}
 }
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+.head .page-title{font-size:clamp(2rem,3vw + .6rem,2.8rem);font-weight:620;letter-spacing:-.035em;line-height:1.06}
+html:not(.js) .sidebar-links{display:flex;flex-direction:column}
+@media(max-width:900px){html:not(.js) .sidebar{position:static;transform:none;visibility:visible;width:auto;height:auto}html:not(.js) .menu-btn{display:none}}
+@media(max-width:620px){.cmd{align-items:flex-start}.cmd code{white-space:pre-wrap;overflow-wrap:anywhere;overflow-x:visible}}
+@media(max-width:620px){.cmd{display:grid;grid-template-columns:12px minmax(0,1fr);gap:12px;align-items:start}.cmd code{white-space:pre-wrap;overflow-wrap:anywhere;overflow-x:visible}.cmd .copy{grid-column:2;justify-self:end}.cmd::before{padding-top:4px}}
 </style>
+<link rel="canonical" href="https://babitdor.github.io/NovaCode/docs/">
+<meta name="twitter:card" content="summary_large_image">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -305,7 +314,7 @@ td.desc{color:var(--muted)}
   <aside class="sidebar" id="sidebar" aria-label="Documentation navigation">
     <!-- The brand is the way home, so it carries no data-page: the page switcher collects every
          [data-page] and preventDefault()s it, which would swallow a link to the landing page. -->
-    <a class="sidebar-brand" href="../index.html" aria-label="Nova, back to the landing page">
+    <a class="sidebar-brand" href="../index.html" aria-label="nova@code:~$, back to the landing page">
       <img src="../assets/emblem-128.webp" width="26" height="26" alt="">
       <span><b>nova</b>@code:~$</span>
     </a>
@@ -313,52 +322,52 @@ td.desc{color:var(--muted)}
       <div class="sidebar-group open">
         <button class="sidebar-group-title" aria-expanded="true">Orientation</button>
         <div class="sidebar-links">
-          <a href="#" data-page="overview" class="active">What NovaCode is</a>
-          <a href="#" data-page="installation">Installation &amp; setup</a>
+          <a href="#page-overview" data-page="overview" class="active">What NovaCode is</a>
+          <a href="#page-installation" data-page="installation">Installation &amp; setup</a>
         </div>
       </div>
       <div class="sidebar-group">
         <button class="sidebar-group-title" aria-expanded="false">Operating NovaCode</button>
         <div class="sidebar-links">
-          <a href="#" data-page="cli">CLI reference</a>
-          <a href="#" data-page="config">Configuration</a>
-          <a href="#" data-page="tui">The TUI</a>
-          <a href="#" data-page="slash">Slash commands</a>
-          <a href="#" data-page="headless">Headless mode</a>
+          <a href="#page-cli" data-page="cli">CLI reference</a>
+          <a href="#page-config" data-page="config">Configuration</a>
+          <a href="#page-tui" data-page="tui">The TUI</a>
+          <a href="#page-slash" data-page="slash">Slash commands</a>
+          <a href="#page-headless" data-page="headless">Headless mode</a>
         </div>
       </div>
       <div class="sidebar-group">
         <button class="sidebar-group-title" aria-expanded="false">Capabilities</button>
         <div class="sidebar-links">
-          <a href="#" data-page="tools">Tools</a>
-          <a href="#" data-page="subagents">Subagents</a>
-          <a href="#" data-page="memory">Memory system</a>
-          <a href="#" data-page="skills">Skills system</a>
-          <a href="#" data-page="mcp">MCP integration</a>
-          <a href="#" data-page="plugins">Plugin system</a>
-          <a href="#" data-page="hermes">Autonomous learning</a>
-          <a href="#" data-page="verification">Verification loop</a>
-          <a href="#" data-page="remote">Remote bridges</a>
-          <a href="#" data-page="voice">Voice I/O</a>
+          <a href="#page-tools" data-page="tools">Tools</a>
+          <a href="#page-subagents" data-page="subagents">Subagents</a>
+          <a href="#page-memory" data-page="memory">Memory system</a>
+          <a href="#page-skills" data-page="skills">Skills system</a>
+          <a href="#page-mcp" data-page="mcp">MCP integration</a>
+          <a href="#page-plugins" data-page="plugins">Plugin system</a>
+          <a href="#page-hermes" data-page="hermes">Autonomous learning</a>
+          <a href="#page-verification" data-page="verification">Verification loop</a>
+          <a href="#page-remote" data-page="remote">Remote bridges</a>
+          <a href="#page-voice" data-page="voice">Voice I/O</a>
         </div>
       </div>
       <div class="sidebar-group">
         <button class="sidebar-group-title" aria-expanded="false">Under the hood</button>
         <div class="sidebar-links">
-          <a href="#" data-page="middleware">Middleware stack</a>
-          <a href="#" data-page="sessions">Session management</a>
-          <a href="#" data-page="context">Context management</a>
-          <a href="#" data-page="security">Security &amp; safety</a>
-          <a href="#" data-page="sandbox">Sandbox execution</a>
-          <a href="#" data-page="infrastructure">Infrastructure</a>
+          <a href="#page-middleware" data-page="middleware">Middleware stack</a>
+          <a href="#page-sessions" data-page="sessions">Session management</a>
+          <a href="#page-context" data-page="context">Context management</a>
+          <a href="#page-security" data-page="security">Security &amp; safety</a>
+          <a href="#page-sandbox" data-page="sandbox">Sandbox execution</a>
+          <a href="#page-infrastructure" data-page="infrastructure">Infrastructure</a>
         </div>
       </div>
       <div class="sidebar-group">
         <button class="sidebar-group-title" aria-expanded="false">Reference</button>
         <div class="sidebar-links">
-          <a href="#" data-page="directory">Directory structure</a>
-          <a href="#" data-page="extras">Optional dependencies</a>
-          <a href="#" data-page="troubleshooting">Troubleshooting</a>
+          <a href="#page-directory" data-page="directory">Directory structure</a>
+          <a href="#page-extras" data-page="extras">Optional dependencies</a>
+          <a href="#page-troubleshooting" data-page="troubleshooting">Troubleshooting</a>
           <!-- A real page, not a SPA section: no data-page, so the page switcher leaves the click
                alone and the browser navigates. -->
           <a href="../changelog/index.html">Changelog</a>
@@ -378,17 +387,18 @@ td.desc{color:var(--muted)}
       <a class="topnav-aux" href="https://github.com/Babitdor/NovaCode">GitHub</a>
       <a class="topnav-aux" href="../changelog/index.html">Changelog</a>
       <a class="topnav-aux" href="../index.html">Landing</a>
-      <a class="btn btn-primary" href="#" data-page="installation" style="min-height:38px;padding:0 16px;font-size:.88rem">Install</a>
+      <a class="btn btn-primary" href="#page-installation" data-page="installation" style="min-height:38px;padding:0 16px;font-size:.88rem">Install</a>
     </nav>
 
     <main id="main" class="docs-content">
+      <h1 class="sr-only">NovaCode documentation</h1>
 
       <!-- 1. WHAT NOVACODE IS -->
       <div class="page-section active" id="page-overview">
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:10">man nova</span></p>
-            <h1>A coding agent that <b>verifies</b> its own work.</h1>
+            <h2 class="page-title">A coding agent that <b>verifies</b> its own work.</h2>
             <p class="lede">NovaCode is an open-source, terminal-based AI coding assistant built on
               LangGraph and the <code>deepagents</code> framework. It runs entirely in your terminal
               with a Textual TUI, a headless non-interactive mode for scripting and CI, and remote
@@ -481,7 +491,7 @@ td.desc{color:var(--muted)}
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:13">cat README.md</span></p>
-            <h1>Two commands and you are <b>running</b>.</h1>
+            <h2 class="page-title">Three commands and you are <b>running</b>.</h2>
             <p class="lede">Python 3.11 or newer. Nothing is installed globally.</p>
           </div>
           <div class="install-box win rv">
@@ -562,7 +572,7 @@ td.desc{color:var(--muted)}
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:10">nova --help</span></p>
-            <h1>CLI <b>reference</b>.</h1>
+            <h2 class="page-title">CLI <b>reference</b>.</h2>
             <p class="lede">Every subcommand, flag, and environment variable, with defaults.</p>
           </div>
         </section>
@@ -696,7 +706,7 @@ td.desc{color:var(--muted)}
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:14">nova config show</span></p>
-            <h1>Config <b>file</b>.</h1>
+            <h2 class="page-title">Config <b>file</b>.</h2>
             <p class="lede">Configuration lives in <code>~/.nova/Nova.config.json</code>, with project config under <code>.nova/</code>.</p>
           </div>
           <div class="codeblock win rv">
@@ -796,7 +806,7 @@ td.desc{color:var(--muted)}
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:8">nova</span></p>
-            <h1>The <b>TUI</b>.</h1>
+            <h2 class="page-title">The <b>TUI</b>.</h2>
             <p class="lede">The only interactive UI. Chat messages, modals, animations, and keyboard shortcuts.</p>
           </div>
           <p class="body rv">The Textual TUI provides a scrollable transcript, multi-line input that
@@ -873,7 +883,7 @@ td.desc{color:var(--muted)}
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:8">/help</span></p>
-            <h1>Slash <b>commands</b>.</h1>
+            <h2 class="page-title">Slash <b>commands</b>.</h2>
             <p class="lede">All slash commands are registered via <code>CommandRegistry</code> and invoked through a single dispatch. Plugin commands are registered last, so built-ins always win on collision.</p>
           </div>
           <div class="table-wrap">
@@ -991,7 +1001,7 @@ td.desc{color:var(--muted)}
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:14">nova -p "..."</span></p>
-            <h1>Headless <b>mode</b>.</h1>
+            <h2 class="page-title">Headless <b>mode</b>.</h2>
             <p class="lede">Run a single prompt non-interactively and exit. Built for scripting and CI.</p>
           </div>
           <div class="codeblock win rv">
@@ -1066,7 +1076,7 @@ echo "explain src/main.py" | <span class="k">uv run nova</span> -p</pre>
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:12">search_tools *</span></p>
-            <h1>Tools.</h1>
+            <h2 class="page-title">Tools.</h2>
             <p class="lede">50+ built-in tools across 22 modules. Rarely used tools are deferred behind <code>search_tools</code>, so they cost no context until needed.</p>
           </div>
         </section>
@@ -1267,7 +1277,7 @@ search_tools("*")            <span class="c"># browse the catalog</span></pre>
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:14">/agents</span></p>
-            <h1>Sub<b>agents</b>.</h1>
+            <h2 class="page-title">Sub<b>agents</b>.</h2>
             <p class="lede">In-process specialists, a research swarm, and 12 async background agents.</p>
           </div>
         </section>
@@ -1357,7 +1367,7 @@ search_tools("*")            <span class="c"># browse the catalog</span></pre>
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:14">memory_search</span></p>
-            <h1>Memory <b>system</b>.</h1>
+            <h2 class="page-title">Memory <b>system</b>.</h2>
             <p class="lede">A three-tier model: Episodic, Semantic, and Procedural.</p>
           </div>
         </section>
@@ -1424,7 +1434,7 @@ search_tools("*")            <span class="c"># browse the catalog</span></pre>
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:12">/skills</span></p>
-            <h1>Skills <b>system</b>.</h1>
+            <h2 class="page-title">Skills <b>system</b>.</h2>
             <p class="lede">50+ built-in skills with progressive disclosure. Install from any public GitHub repo.</p>
           </div>
           <p class="body rv">A skill is a playbook (<code>SKILL.md</code>) with YAML frontmatter
@@ -1510,7 +1520,7 @@ search_tools("*")            <span class="c"># browse the catalog</span></pre>
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:8">/mcp</span></p>
-            <h1>MCP <b>integration</b>.</h1>
+            <h2 class="page-title">MCP <b>integration</b>.</h2>
             <p class="lede">Extend the agent with Model Context Protocol servers. Tools are eagerly discovered with server-prefixed names to avoid collisions.</p>
           </div>
         </section>
@@ -1546,7 +1556,7 @@ search_tools("*")            <span class="c"># browse the catalog</span></pre>
           <h2 class="rv">Management</h2>
           <div class="codeblock win rv">
             <pre><span class="k">nova</span> mcp add brave-search --preset brave-search
-<span class="k">nova</span> mcp add my-server --transport http --url https://example.com/mcp
+<span class="k">nova</span> mcp add my-server --transport http --url http://localhost:8000/mcp
 <span class="k">nova</span> mcp add my-server --transport stdio --command "python -m my_mcp_server"
 <span class="k">nova</span> mcp list
 <span class="k">nova</span> mcp remove my-server</pre>
@@ -1563,7 +1573,7 @@ search_tools("*")            <span class="c"># browse the catalog</span></pre>
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:10">/plugins</span></p>
-            <h1>Plugin <b>system</b>.</h1>
+            <h2 class="page-title">Plugin <b>system</b>.</h2>
             <p class="lede">Python entry-point based plugins that register slash commands and add middleware at defined slots.</p>
           </div>
           <p class="body rv">Plugins are discovered via the <code>nova.plugins</code> entry point group
@@ -1627,7 +1637,7 @@ search_tools("*")            <span class="c"># browse the catalog</span></pre>
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:12">/learning</span></p>
-            <h1>Autonomous <b>learning</b>.</h1>
+            <h2 class="page-title">Autonomous <b>learning</b>.</h2>
             <p class="lede">Hermes is Nova's learning and memory subsystem. It runs out-of-band and never blocks the agent's task turn.</p>
           </div>
           <p class="body rv">The system is orchestrated by <code>NovaLearningMiddleware</code>
@@ -1741,7 +1751,7 @@ search_tools("*")            <span class="c"># browse the catalog</span></pre>
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:12">/goal rubric</span></p>
-            <h1>Verification <b>loop</b>.</h1>
+            <h2 class="page-title">Verification <b>loop</b>.</h2>
             <p class="lede">Code written isn't the same as a task finished. Nova checks the result against what you asked for.</p>
           </div>
         </section>
@@ -1805,7 +1815,7 @@ search_tools("*")            <span class="c"># browse the catalog</span></pre>
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:10">/remote</span></p>
-            <h1>Remote <b>bridges</b>.</h1>
+            <h2 class="page-title">Remote <b>bridges</b>.</h2>
             <p class="lede">The bridge runs as background asyncio tasks inside the same event loop as the CLI. A remote message executes like any local prompt.</p>
           </div>
           <div class="table-wrap">
@@ -1887,7 +1897,7 @@ search_tools("*")            <span class="c"># browse the catalog</span></pre>
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:10">/voice</span></p>
-            <h1>Voice <b>I/O</b>.</h1>
+            <h2 class="page-title">Voice <b>I/O</b>.</h2>
             <p class="lede">Speak prompts and hear Nova read replies back. The bundled speech models
               run on your machine; hosted speech providers are a separate choice.</p>
           </div>
@@ -1948,7 +1958,7 @@ search_tools("*")            <span class="c"># browse the catalog</span></pre>
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:12">/middleware</span></p>
-            <h1>Middleware <b>stack</b>.</h1>
+            <h2 class="page-title">Middleware <b>stack</b>.</h2>
             <p class="lede">Every model call passes through this chain. The base stack is order-sensitive, outermost to innermost.</p>
           </div>
           <div class="table-wrap">
@@ -1995,7 +2005,7 @@ search_tools("*")            <span class="c"># browse the catalog</span></pre>
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:14">/sessions</span></p>
-            <h1>Session <b>management</b>.</h1>
+            <h2 class="page-title">Session <b>management</b>.</h2>
             <p class="lede">A composite state object, durable storage, and parallel sessions across git worktrees.</p>
           </div>
         </section>
@@ -2093,7 +2103,7 @@ search_tools("*")            <span class="c"># browse the catalog</span></pre>
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:10">/context</span></p>
-            <h1>Context <b>management</b>.</h1>
+            <h2 class="page-title">Context <b>management</b>.</h2>
             <p class="lede">A three-stage pipeline sized to the model's actual context window.</p>
           </div>
           <ol class="steps rv">
@@ -2146,7 +2156,7 @@ search_tools("*")            <span class="c"># browse the catalog</span></pre>
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:14">open safe.book</span></p>
-            <h1>Security &amp; <b>safety</b>.</h1>
+            <h2 class="page-title">Security &amp; <b>safety</b>.</h2>
             <p class="lede">Autonomous doesn't mean uncontrolled. Every tool has a tier, and the tiers are yours to set.</p>
           </div>
         </section>
@@ -2211,7 +2221,7 @@ search_tools("*")            <span class="c"># browse the catalog</span></pre>
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:14">--sandbox</span></p>
-            <h1>Sandbox <b>execution</b>.</h1>
+            <h2 class="page-title">Sandbox <b>execution</b>.</h2>
             <p class="lede">Seven providers, from OS-level confinement to hardware-virtualized microVMs.</p>
           </div>
           <div class="table-wrap">
@@ -2253,7 +2263,7 @@ search_tools("*")            <span class="c"># browse the catalog</span></pre>
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:12">/cowork</span></p>
-            <h1>Infrastructure.</h1>
+            <h2 class="page-title">Infrastructure.</h2>
             <p class="lede">Surfaces beyond the terminal: notifications, a web chat, and a desktop companion app.</p>
           </div>
         </section>
@@ -2315,7 +2325,7 @@ search_tools("*")            <span class="c"># browse the catalog</span></pre>
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:10">tree ~/.nova</span></p>
-            <h1>Directory <b>structure</b>.</h1>
+            <h2 class="page-title">Directory <b>structure</b>.</h2>
           </div>
         </section>
 
@@ -2381,7 +2391,7 @@ search_tools("*")            <span class="c"># browse the catalog</span></pre>
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:16">uv pip install</span></p>
-            <h1>Optional <b>dependencies</b>.</h1>
+            <h2 class="page-title">Optional <b>dependencies</b>.</h2>
             <p class="lede">The base install is kept lean. Heavier features are extras.</p>
           </div>
           <div class="codeblock win rv">
@@ -2429,7 +2439,7 @@ uv pip install novacode-cli[voice-pocket]</pre>
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:12">nova doctor</span></p>
-            <h1>Trouble<b>shooting</b>.</h1>
+            <h2 class="page-title">Trouble<b>shooting</b>.</h2>
             <p class="lede">Common issues and how to resolve them.</p>
           </div>
         </section>
@@ -2522,9 +2532,26 @@ uv pip install novacode-cli[voice-pocket]</pre>
     });
   }
 
-  function showPage(name) {
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebar-overlay');
+  const menuBtn = document.getElementById('menu-btn');
+
+  function showPage(name, focus = false) {
+    if (!Object.hasOwn(pageNames, name)) name = 'overview';
     sections.forEach(s => s.classList.toggle('active', s.id === 'page-' + name));
-    links.forEach(l => l.classList.toggle('active', l.dataset.page === name));
+    links.forEach(l => {
+      const active = l.dataset.page === name;
+      l.classList.toggle('active', active);
+      if (active) l.setAttribute('aria-current', 'page');
+      else l.removeAttribute('aria-current');
+    });
+    const section = document.getElementById('page-' + name);
+    const heading = section.querySelector('.page-title');
+    document.title = (heading ? heading.textContent : 'Documentation') + ' · NovaCode';
+    if (focus) {
+      section.tabIndex = -1;
+      section.focus({ preventScroll: true });
+    }
     if (pageNames[name]) where.textContent = pageNames[name];
     document.querySelectorAll('.sidebar-group').forEach(g => {
       const hasActive = g.querySelector('a.active');
@@ -2537,12 +2564,28 @@ uv pip install novacode-cli[voice-pocket]</pre>
     setDrawer(false, false);
     window.scrollTo(0, 0);
     markScrollables();
+
   }
 
   links.forEach(l => l.addEventListener('click', e => {
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     e.preventDefault();
-    showPage(l.dataset.page);
+    if (location.hash !== l.hash) history.pushState(null, '', l.hash);
+    showPage(l.dataset.page, true);
   }));
+
+  // Accept the original #topic links as well as real section anchors.
+  function initFromHash() {
+    let hash;
+    try { hash = decodeURIComponent(location.hash.slice(1)); } catch { hash = ''; }
+    const name = hash.replace(/^page-/, '');
+    const target = document.getElementById(hash);
+    const owner = target?.closest('.page-section');
+    showPage(owner ? owner.id.replace(/^page-/, '') : name);
+    if (target && !target.classList.contains('page-section')) target.scrollIntoView();
+  }
+  window.addEventListener('hashchange', initFromHash);
+  initFromHash();
 
   document.querySelectorAll('.sidebar-group-title').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -2552,9 +2595,6 @@ uv pip install novacode-cli[voice-pocket]</pre>
     });
   });
 
-  const sidebar = document.getElementById('sidebar');
-  const overlay = document.getElementById('sidebar-overlay');
-  const menuBtn = document.getElementById('menu-btn');
   // One owner for the drawer: the classes and the button's aria state must never disagree, so the
   // button, the overlay, Escape and a page switch all go through here. Opening moves focus into
   // the drawer (it sits before the button in the DOM, so Tab alone would never reach it) and
@@ -2573,7 +2613,14 @@ uv pip install novacode-cli[voice-pocket]</pre>
   menuBtn.addEventListener('click', () => setDrawer(!sidebar.classList.contains('open'), false));
   overlay.addEventListener('click', () => setDrawer(false, true));
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && sidebar.classList.contains('open')) setDrawer(false, true);
+    if (!sidebar.classList.contains('open')) return;
+    if (e.key === 'Escape') setDrawer(false, true);
+    if (e.key === 'Tab' && window.innerWidth <= 900) {
+      const stops = [...sidebar.querySelectorAll('a,button')].filter(el => el.getClientRects().length);
+      const first = stops[0], last = stops[stops.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
   });
 
   const reveal = new IntersectionObserver((entries) => {
@@ -2624,4 +2671,4 @@ uv pip install novacode-cli[voice-pocket]</pre>
 })();
 </script>
 </body>
-</html></longcat_think>
+</html>

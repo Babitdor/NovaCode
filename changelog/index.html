@@ -7,7 +7,7 @@
 <meta name="description" content="Every NovaCode release, newest first: what changed, what was fixed, and what is still a known limit.">
 <meta property="og:title" content="Changelog · NovaCode">
 <meta property="og:description" content="Every NovaCode release, newest first, taken from the repository's changelog directory.">
-<meta property="og:image" content="../assets/og.jpg">
+<meta property="og:image" content="https://babitdor.github.io/NovaCode/assets/og.jpg">
 <meta property="og:type" content="article">
 <meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0e0e10" media="(prefers-color-scheme: dark)">
@@ -221,13 +221,33 @@ footer{border-top:1px solid var(--line);padding-block:28px 72px}
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{animation:none !important;transition:none !important}
 }
+/* Native disclosure controls remain usable without JavaScript or a network. */
+.changelog-entry{border-top:1px solid var(--line);scroll-margin-top:90px}
+.changelog-entry:target{border-color:var(--accent)}
+.entry-toggle{cursor:pointer;padding:24px 0;min-height:48px;transition:background .2s}
+.entry-toggle:hover{background:var(--surface)}
+.entry-toggle:active{background:var(--line)}
+.entry-toggle::marker{color:var(--accent)}
+.version{display:inline;font:600 1.15rem/1.5 var(--mono);letter-spacing:-.03em}
+.entry-toggle time{margin-left:16px;color:var(--muted);font-size:.86rem}
+.release-summary{display:block;margin:8px 0 0 20px;color:var(--muted);line-height:1.6;overflow-wrap:anywhere}
+.release-content{padding:0 0 28px 20px;overflow-wrap:anywhere;font-size:1rem;line-height:1.6;color:var(--muted)}
+.release-content h3{font:600 1rem/1.5 var(--sans);margin:24px 0 10px;color:var(--text)}
+.release-content ul{list-style:disc;padding-left:20px}
+.release-content li+li{margin-top:8px}
+.release-content strong{color:var(--text)}
+.release-content a{text-decoration:underline;text-underline-offset:3px;color:var(--accent-ink)}
+#release-status{min-height:1.6em;font-size:.86rem;color:var(--muted);margin-top:12px}
+@media(max-width:620px){.topnav .tn-aux[href="../docs/index.html"]{display:inline-flex;min-height:32px;align-items:center}}
 </style>
+<link rel="canonical" href="https://babitdor.github.io/NovaCode/changelog/">
+<meta name="twitter:card" content="summary_large_image">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
 
 <header class="topnav">
-  <a class="tn-brand" href="../index.html" aria-label="Nova, back to the landing page">
+  <a class="tn-brand" href="../index.html" aria-label="nova@code:~$, back to the landing page">
     <img src="../assets/emblem-128.webp" width="26" height="26" alt="">
     <span><b>nova</b>@code:~$</span>
   </a>
@@ -245,931 +265,854 @@ footer{border-top:1px solid var(--line);padding-block:28px 72px}
       <p class="cmdline"><span class="ps">nova &#10095;</span><span class="c">cat changelog/CHANGELOG-v*.md</span></p>
       <h1>Changelog</h1>
       <!-- generated:changelog-summary -->
-        <p class="lede">51 releases &middot; v1.0.0 &rarr; v1.0.50 &middot; from the repository's <code>changelog/</code> directory</p>
-      <!-- /generated:changelog-summary -->
+<p class="lede">55 releases &middot; v1.0.0 &rarr; v1.0.54 &middot; from the repository's <code>changelog/</code> directory</p>
+<!-- /generated:changelog-summary -->
       <p class="body"><a class="gh" href="https://github.com/Babitdor/NovaCode/tree/main/changelog" rel="noopener">changelog/ on GitHub &#8599;</a></p>
     </div>
 
+    <p id="release-status" role="status" aria-live="polite"></p>
+    <div id="releases">
     <!-- generated:changelog-releases -->
-      <!-- Written by landing/tools/make_changelog_page.py from changelog/CHANGELOG-v*.md:
-           51 files, 62,239 bytes, v1.0.0 to v1.0.50. Edit the source files, not this region;
-           re-run the tool to regenerate it. No date is recorded so repeat runs match. -->
-      <section class="rel" id="v1-0-50">
-        <div class="rel-head">
-          <h2>v1.0.50</h2>
-          <span class="rel-chip">latest</span>
-          <span class="rel-tags">Added &middot; Fixed &middot; Validation and limits</span>
-        </div>
-        <h3>Added</h3>
-        <ul class="rel-list">
-          <li><code>/statusline</code> opens a checkbox picker with a live preview, Save, Reset and Cancel. Saved field choices persist across launches and apply across designs.</li>
-          <li><code>/auto-approve [on|off|status]</code> controls the current session's approval mode. An amber composer and explicit label indicate automatic tool approval. Child tabs and Telegram topics retain independent approval preferences.</li>
-          <li>A provider reasoning-support report documents supported controls and limits.</li>
-        </ul>
-        <h3>Fixed</h3>
-        <ul class="rel-list">
-          <li><code>/effort</code> preserves the current provider, model and shared steering list when rebuilding, instead of falling back to the globally saved model. <code>default</code> removes the override; the command describes model-specific limitations.</li>
-          <li>OpenCode's Claude route forwards thinking settings. OpenRouter receives its unified reasoning control, and Command Code/OpenCode DeepSeek V4 models receive low/high effort settings.</li>
-          <li>Session switches refresh status details and preserve per-session effort and plan-scoped approval state. Explicit approval choices survive remote shutdown.</li>
-        </ul>
-        <h3>Validation and limits</h3>
-        <ul class="rel-list">
-          <li>Focused runs passed: 143 provider/UI tests and 145 session/worker/TUI tests. Final checks passed 42 worker/control tests and 17 provider-wiring tests, including serialized HTTP-body checks with an offline mock transport.</li>
-          <li>New picker modules and tests pass Ruff lint/formatting; picker modules pass mypy. Diff whitespace checks pass. Existing broader lint issues remain.</li>
-          <li>Live authenticated model calls were not run. Supported reasoning controls still depend on the model and route; <code>off</code> can mean minimum effort.</li>
-          <li>No dependencies were added. Personal configuration and unrelated local files are excluded from this release.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-49">
-        <div class="rel-head">
-          <h2>v1.0.49</h2>
-          <span class="rel-tags">Fixed &middot; Validation and limits</span>
-        </div>
-        <h3>Fixed</h3>
-        <ul class="rel-list">
-          <li>Follow-up messages in the main terminal, session tabs and Telegram reach a running agent at its next model step. Input received during a final response can continue the same turn, and unread late input remains available for a subsequent turn. In-flight model and tool calls finish before pickup.</li>
-          <li>Model switches and MCP reloads preserve the shared live-input queue.</li>
-          <li>Closing or sending input to a child session no longer cancels another session's turn. Input retains its intended session across tab switches.</li>
-          <li>Model routing actions use a responsive grid so Cancel and the other buttons remain visible and clickable on smaller terminals.</li>
-        </ul>
-        <h3>Validation and limits</h3>
-        <ul class="rel-list">
-          <li>211 focused steering, session, remote and TUI regression tests passed. The broader run also detected a user-config change at teardown; subsequent 45-test and 21-test runs passed with the config guard clean.</li>
-          <li>Router regressions passed at five terminal sizes. Live model and Telegram service calls were not run. No dependencies were added.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-48">
-        <div class="rel-head">
-          <h2>v1.0.48</h2>
-          <span class="rel-tags">Added &middot; Improved &middot; Validation and limits</span>
-        </div>
-        <h3>Added</h3>
-        <ul class="rel-list">
-          <li>Figma, Vercel and Higgsfield MCP presets use the providers' official hosted endpoints with browser OAuth and Nova's existing secret-backed token storage.</li>
-          <li>A Figma Desktop preset connects to the enabled local Dev Mode server. Figma's remote service currently restricts access to approved clients; desktop use requires an eligible seat. Higgsfield requires a paid subscription.</li>
-          <li>The landing site includes a redesigned home page, verification page, custom 404 page, responsive navigation, motion effects and local assets.</li>
-        </ul>
-        <h3>Improved</h3>
-        <ul class="rel-list">
-          <li>HTTP presets skip local package installation and unnecessary input prompts. CLI installation explains how to authenticate through <code>/mcp</code>.</li>
-          <li>The README is condensed around setup, essential commands and optional capabilities, with brief instructions for the new integrations and a Classic terminal preview. The original Nova logo is retained.</li>
-        </ul>
-        <h3>Validation and limits</h3>
-        <ul class="rel-list">
-          <li>74 focused MCP preset, authentication, session and tool-discovery tests passed. Preset/test lint and formatting, changed-line installer lint and preset typing checks passed. Account authorization and live provider tool calls were not run.</li>
-          <li>All three landing pages passed a local Chrome smoke check at desktop and mobile widths with reduced motion: no JavaScript errors, failed assets or horizontal overflow. Local asset/link/anchor checks and application JavaScript syntax passed. This is not a full accessibility or browser compatibility evaluation.</li>
-          <li>Python dependencies are unchanged. The static site includes local GSAP, ScrollTrigger, SplitText and Lenis browser libraries with their bundled notices.</li>
-          <li><code>FEATURES.md</code>, private credentials and local review artifacts are not published.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-47">
-        <div class="rel-head">
-          <h2>v1.0.47</h2>
-          <span class="rel-tags">Improved &middot; Validation and limits</span>
-        </div>
-        <h3>Improved</h3>
-        <ul class="rel-list">
-          <li>Explicitly approved plans are saved in the project's <code>.nova/plans</code> folder and mirrored to the global archive. Automatically approved plans stay global. <code>recent_plans</code> lets the agent find and read both stores for the current project.</li>
-          <li><code>/dream</code> maintains a linked memory wiki with compact indexes, topic maps, related pages, backups and broken-link checks. It recognizes habits-only and project-scoped notes, preserves stable habit checklists and defers writes in plan mode. Memory overflow retains recoverable originals.</li>
-          <li>Main, planning, memory and review prompts now agree on delegation, bounded waiting, instruction scope, plan locations and wiki navigation. Responses can follow the requested format without a fixed four-line limit. Desktop sleep requires a user request or applicable standing instruction.</li>
-        </ul>
-        <h3>Validation and limits</h3>
-        <ul class="rel-list">
-          <li>Release checks passed: 135 memory/wiki tests and 142 prompt, planning, approval, async-task and agent integration tests. The memory engine/tool retained 99% coverage; five focused runtime files passed mypy. Detailed evidence is in <code>scripts/PROMPT_AUDIT.md</code> and <code>scripts/memory_wiki/EVIDENCE.md</code>.</li>
-          <li>The memory-wiki engine/tool previously achieved 99% branch-aware coverage; three isolated manual mutants were rejected. These checks establish structural contracts, not live-model reasoning or consolidation quality.</li>
-          <li>The full suite is not claimed passing: a background handoff timeout was also reproduced on the baseline. Existing typing errors remain documented.</li>
-          <li>No new dependencies, model changes or paid provider calls. Personal memories, credentials and prompt overrides are not included in this release.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-46">
-        <div class="rel-head">
-          <h2>v1.0.46</h2>
-          <span class="rel-tags">Improved &middot; Validation and limits</span>
-        </div>
-        <h3>Improved</h3>
-        <ul class="rel-list">
-          <li>Startup resume, <code>/resume</code>, and reopening saved tabs share a searchable session browser. Search tasks, projects, models, or session IDs while preserving the correct session selection.</li>
-          <li>A scrollable details pane shows the saved task, project, model, status, blockers, and next step. Legacy sessions clearly indicate when their original model cannot be restored.</li>
-          <li>Resume dialogs follow the selected design and color palette. Compact layouts keep search, actions, and the selected session visible while preserving the current draft.</li>
-          <li>The resume-mode dialog explains the existing summary-first and as-saved choices.</li>
-        </ul>
-        <h3>Validation and limits</h3>
-        <ul class="rel-list">
-          <li>79 focused regression tests passed, covering resume choices, saved-model restoration, saved tabs, session clearing, and design preferences. The final nine UI tests also passed after the compact-selection adjustment.</li>
-          <li>The new dialog and its tests pass Ruff and formatting checks; the new dialog passes mypy. Headless previews were reviewed at desktop and compact sizes.</li>
-          <li>No new dependencies or live provider calls. Native terminal rendering was not manually tested.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-45">
-        <div class="rel-head">
-          <h2>v1.0.45</h2>
-          <span class="rel-tags">Fixed &middot; Validation and limits</span>
-        </div>
-        <h3>Fixed</h3>
-        <ul class="rel-list">
-          <li><code>/effort</code> on Claude Sonnet 5.5 (and other Claude 4.6+ and Fable models) failed with "<code>thinking={"type": "enabled", "budget_tokens": ...}</code> is not supported". Nova now sends adaptive thinking with <code>output_config.effort</code> to those models and keeps <code>budget_tokens</code> for older ones. "off" is the lowest effort, since disabled thinking is rejected by Opus 5.5, Sonnet 5.5 and Fable.</li>
-          <li>OpenAI: <code>/effort</code> reaches every reasoning model (o-series, GPT-5 and later), not only names containing o1/o3, and is no longer sent to models that reject it (gpt-4o, gpt-4.1, <code>*-chat</code>, o1-mini/preview). "off" is "low", since "none" and "minimal" are not accepted by every model.</li>
-          <li>Gemini: 3.x and later get <code>thinking_level</code> (Gemini 3 Pro has no medium), 2.5 gets <code>thinking_budget</code> within each model's limits ("off" is 0 on Flash and the 128 minimum on Pro), and 2.0 gets no thinking setting.</li>
-        </ul>
-        <h3>Validation and limits</h3>
-        <ul class="rel-list">
-          <li>34 tests cover each model family, including the requests langchain builds for Claude, OpenAI (both APIs) and Gemini 3; the model-build, NVIDIA and TUI effort tests pass.</li>
-          <li>Not tried against the live providers.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-44">
-        <div class="rel-head">
-          <h2>v1.0.44</h2>
-          <span class="rel-tags">Added &middot; Changed &middot; Validation and limits</span>
-        </div>
-        <h3>Added</h3>
-        <ul class="rel-list">
-          <li><code>/update</code> has an <strong>Update now</strong> button: it saves the session (stopping a running turn after asking), installs the update in the same terminal, restarts Nova and reopens the session, continuing an interrupted turn. A failed update restarts the current version.</li>
-          <li><code>/claude-review</code> and <code>/codex-review</code>: Claude Code or Codex reviews the changes headless and read-only; Nova verifies the findings and reports them. Both resume with <code>resume</code> and report progress to Telegram.</li>
-          <li><code>/claude-plan resume</code> and <code>/codex-plan resume</code> continue a planning stopped with Esc or <code>/stop</code>.</li>
-          <li>Settings shows Claude Code and Codex usage (5-hour and weekly windows) as progress bars, with a <strong>Check Claude now</strong> refresh.</li>
-          <li>Message queueing, interrupt-and-redirect (<code>/redirect</code>, also from Telegram), pulling a queued message back with Up, and Up/Down input history.</li>
-        </ul>
-        <h3>Changed</h3>
-        <ul class="rel-list">
-          <li><code>nova update</code> shows animated stage progress and a finish screen without clearing the terminal. On Windows it runs in the foreground (the running launcher is moved aside), so the shell prompt returns only when it is done.</li>
-          <li>Per-call tool schemas are 55% smaller (45 tools / 57k characters to 25 / 25k): most-used tools are ranked on the last 30 days, the async agent roster is one line per agent, rarely called tools load through <code>search_tools</code>, and long descriptions are shorter.</li>
-          <li>The NOVA wordmark shows in windows narrower than the full banner and in windows from 17 rows tall, instead of disappearing.</li>
-          <li><code>wait_for_task</code> is a short look of at most 10 seconds, once per user message.</li>
-        </ul>
-        <h3>Validation and limits</h3>
-        <ul class="rel-list">
-          <li>Focused suites for updates, planners, reviews, banners, tool search, queueing and the TUI pass; the full suite was not run.</li>
-          <li>Update now and the in-place Windows update were tested with stand-ins and a throwaway uv tool, not yet on a real Nova install.</li>
-          <li>Only the main session is reopened after an update; extra session tabs are not.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-43">
-        <div class="rel-head">
-          <h2>v1.0.43</h2>
-          <span class="rel-tags">Fixed &middot; Validation and limits</span>
-        </div>
-        <h3>Fixed</h3>
-        <ul class="rel-list">
-          <li>Start approved TUI plans in a fresh execution conversation with the complete plan text, including plans from <code>/plan</code>, <code>/claude-plan</code>, <code>/codex-plan</code>, and main-agent self-planning.</li>
-          <li>Import implementation steps and verification checks into the execution todo list before starting. Reject todo updates that remove or rename imported plan items, and report items left open after execution.</li>
-          <li>Stop the handoff if the approved plan cannot be loaded, preserve the planning backend until plan resolution, and remove plan-debug chat messages.</li>
-        </ul>
-        <h3>Validation and limits</h3>
-        <ul class="rel-list">
-          <li>The focused plan, command handoff, agent stream, middleware, path, and archive suite passed 82 tests.</li>
-          <li>Ruff, formatting, and mypy checks pass for the new plan execution module; <code>git diff --check</code> passes.</li>
-          <li>The full suite timed out before producing a final report. Existing legacy modules retain lint findings. No new dependencies were added.</li>
-          <li>Todo tracking does not prove semantic completion by a model. The existing done gate nudges once when items remain open, and the TUI reports remaining items.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-42">
-        <div class="rel-head">
-          <h2>v1.0.42</h2>
-          <span class="rel-tags">Improved &middot; Fixed &middot; Validation and limits</span>
-        </div>
-        <h3>Improved</h3>
-        <ul class="rel-list">
-          <li>Added Centered, Banner, and Minimal interface styles in Settings alongside Dashboard and Classic. Styles apply immediately and preserve the conversation and multiline draft.</li>
-          <li>Extended Banner and Minimal styling to conversations, tool output, task panels, terminals, status indicators, and modal dialogs, including <code>/model</code> and nested confirmations.</li>
-          <li>Unified modal tabs, lists, fields, buttons, and backdrops with the selected style and color theme. Minimal uses compact inputs and borderless panels; Banner uses subtle frames.</li>
-          <li>Removed the user-message hover background and fixed terminal text colors that ignored the selected theme.</li>
-        </ul>
-        <h3>Fixed</h3>
-        <ul class="rel-list">
-          <li>Apply interface styles on every screen change, including modal screens that open without a resize event.</li>
-          <li>Ignore periodic home refreshes after layout widgets have been removed during shutdown.</li>
-          <li>Preserve existing Dashboard/Classic preferences when no new interface style is saved.</li>
-        </ul>
-        <h3>Validation and limits</h3>
-        <ul class="rel-list">
-          <li>The focused home, question, subagent, terminal, and reference-screen run passed 83 checks and exposed one shutdown refresh failure; that failure passed after the fix.</li>
-          <li>Subsequent focused runs passed the modal styling, keyboard navigation, nested confirmation, live switching, form control, and removed-layout regressions.</li>
-          <li>Visually inspected Banner and Minimal model and settings dialogs. Home presentation and preference tests pass Ruff; home presentation passes its focused mypy check. The wider TUI retains existing lint findings.</li>
-          <li>Tests used isolated user profiles. The full suite and live model providers were not exercised. No new dependencies were added.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-41">
-        <div class="rel-head">
-          <h2>v1.0.41</h2>
-          <span class="rel-tags">Improved &middot; Fixed &middot; Validation and limits</span>
-        </div>
-        <h3>Improved</h3>
-        <ul class="rel-list">
-          <li>Added a persistent <strong>Redesigned home screen</strong> toggle under <strong>Settings → Appearance</strong>. Turn it off for the classic banner and chat layout; changes apply immediately without replacing the conversation.</li>
-          <li>Classic mode skips dashboard resource sampling and hides its taller banner in short terminals to keep the composer usable.</li>
-          <li>Removed decorative vertical accent bars from messages, task cards, notices, terminals, and detail panels, including rendering code that recreated bars during updates.</li>
-        </ul>
-        <h3>Fixed</h3>
-        <ul class="rel-list">
-          <li><code>/clear</code> now rebuilds the full fresh-chat context estimate, including tool schemas, before refreshing the CTX indicators and home panels. Opening <code>/context</code> no longer changes the count merely by including those schemas.</li>
-          <li>Ignore late system-resource samples after the dashboard panel has been removed during shutdown.</li>
-        </ul>
-        <h3>Validation and limits</h3>
-        <ul class="rel-list">
-          <li>All 121 focused offline home-layout, context, animation, message, task-card, reference, workspace, harness, and terminal regression checks passed across two runs.</li>
-          <li>New test files pass Ruff lint and formatting checks; the wider repository retains existing lint findings.</li>
-          <li>Live-provider behavior was not exercised. No new dependencies were added.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-40">
-        <div class="rel-head">
-          <h2>v1.0.40</h2>
-          <span class="rel-tags">Fixed &middot; Validation and limits</span>
-        </div>
-        <h3>Fixed</h3>
-        <ul class="rel-list">
-          <li>Keep newer provider context counts after compaction and exclude auxiliary summarizer requests from the main context indicator.</li>
-          <li>Refresh the TUI context indicators together when usage arrives. Remote goal runs now sum usage across turns while displaying the latest request's context size.</li>
-          <li>Release <code>wait_for_task</code> when new user input arrives, allowing the agent to respond while the background shell job or subagent continues. Wait interruption is isolated by conversation and supported by the TUI, child sessions, and remote messages.</li>
-        </ul>
-        <h3>Validation and limits</h3>
-        <ul class="rel-list">
-          <li>A combined offline goal, compaction, usage, protocol, waiter, worker, remote-status, and TUI regression run passed all 205 tests.</li>
-          <li>Waiter Ruff formatting, lint, and mypy checks passed; the wider repository retains existing lint findings.</li>
-          <li>Live-provider behavior was not exercised. No new dependencies were added.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-39">
-        <div class="rel-head">
-          <h2>v1.0.39</h2>
-          <span class="rel-tags">Improved &middot; Fixed &middot; Validation and limits</span>
-        </div>
-        <h3>Improved</h3>
-        <ul class="rel-list">
-          <li>Redesigned the home screen with navigation tabs, quick task starters, and theme-aware system, model, task, and context panels.</li>
-          <li>Added live CPU, RAM, and network counters through the new direct <code>psutil</code> dependency. The composer spans the terminal width and navigation tabs align left.</li>
-          <li>Goals now retain their objective, lifecycle, and turn budget across session saves. Added pause, resume, and budget controls to the TUI, shared commands, and child sessions.</li>
-          <li>Goal continuation yields to planning and queued input, pauses on interruption, avoids tool-free loops, and requires an explicit completion declaration with evidence.</li>
-        </ul>
-        <h3>Fixed</h3>
-        <ul class="rel-list">
-          <li>Added a reducer for concurrent <code>_context_snapshot</code> writes, preventing the remote <code>INVALID_CONCURRENT_GRAPH_UPDATE</code> error while preserving a complete diagnostic.</li>
-          <li>Prevented completed or paused goals and old rubrics from leaking into later agent requests or background threads.</li>
-          <li>Restored the full conversation area when a shell command starts from the home screen.</li>
-        </ul>
-        <h3>Validation and limits</h3>
-        <ul class="rel-list">
-          <li>Goal, agent-stream, worker, headless, and snapshot checks passed (144 tests in one focused run); final TUI/session/worker checks passed (114 tests in another run). These runs overlap.</li>
-          <li>Targeted Ruff and mypy checks passed. The wider repository retains existing lint findings.</li>
-          <li>The full suite reached a shell background-handoff timeout. That timeout, three context-metric assertion failures, and the async delegation prompt assertion failure were reproduced on unchanged <code>7f4b87e</code>.</li>
-          <li>One TUI scroll-timing assertion failed in the broad TUI run and passed on its focused rerun and subsequent session run.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-38">
-        <div class="rel-head">
-          <h2>v1.0.38</h2>
-          <span class="rel-tags">Improved &middot; Validation and limits</span>
-        </div>
-        <h3>Improved</h3>
-        <ul class="rel-list">
-          <li>The prompt composer starts at one text row and grows as lines or soft wraps are added, leaving more room for the conversation when idle.</li>
-          <li>Explicitly enables soft wrapping and adds TUI coverage for multiline cursor navigation, in-place editing, growth, and shrinkage.</li>
-        </ul>
-        <h3>Validation and limits</h3>
-        <ul class="rel-list">
-          <li>TUI and clipboard tests passed (107 tests).</li>
-          <li>Ruff still reports existing findings in the touched files; none were on the added lines.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-37">
-        <div class="rel-head">
-          <h2>v1.0.37</h2>
-          <span class="rel-tags">Fixed &middot; Validation and limits</span>
-        </div>
-        <h3>Fixed</h3>
-        <ul class="rel-list">
-          <li>Isolated learning proposal tests from a developer's auto-approval setting and real proposal ledger.</li>
-          <li>Updated curator and skill refinement regressions to verify proposal approval and between-turn activation.</li>
-          <li>Clarified curator and refinement messages to describe pending proposals.</li>
-        </ul>
-        <h3>Validation and limits</h3>
-        <ul class="rel-list">
-          <li>Focused learning regressions passed (194 tests); the directly affected set passed again after final edits (60 tests).</li>
-          <li>A live model review was not exercised; these tests use offline fixtures.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-36">
-        <div class="rel-head">
-          <h2>v1.0.36</h2>
-          <span class="rel-tags">Fixed &middot; Validation and limits</span>
-        </div>
-        <h3>Fixed</h3>
-        <ul class="rel-list">
-          <li>The main agent is prompted to collect required async subagent results before claiming a task is complete, using bounded waits and a clear pending status after five minutes.</li>
-          <li>Async subagents that finish during an active TUI turn are queued for an automatic result fetch after that turn.</li>
-          <li><code>!!</code> returns to the TUI when its terminal command exits, without waiting for an extra Enter key.</li>
-        </ul>
-        <h3>Validation and limits</h3>
-        <ul class="rel-list">
-          <li>Focused async completion, prompt, waiter, and terminal command tests passed (35 tests).</li>
-          <li>A live remote subagent was not exercised; the remote completion path was tested offline.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-35">
-        <div class="rel-head">
-          <h2>v1.0.35</h2>
-          <span class="rel-tags">Added &middot; Validation and limits</span>
-        </div>
-        <h3>Added</h3>
-        <ul class="rel-list">
-          <li><code>wait_for_task</code> performs a bounded wait for a background shell job or async subagent and reports its current status or result.</li>
-          <li><code>list_waiters</code> exposes active waits and their targets.</li>
-          <li>The TUI task bar shows the number of active waiters and their targets, with details in a tooltip.</li>
-        </ul>
-        <h3>Validation and limits</h3>
-        <ul class="rel-list">
-          <li>Focused waiter, shell-job, prompt, and TUI tests passed. Ruff and an isolated mypy check passed.</li>
-          <li>A live remote subagent wait was not exercised; the remote path is covered with offline tests.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-34">
-        <div class="rel-head">
-          <h2>v1.0.34</h2>
-          <span class="rel-tags">Improved &middot; Validation and limits</span>
-        </div>
-        <h3>Improved</h3>
-        <ul class="rel-list">
-          <li>The coding workflow checks what numeric values include and verifies ambiguous classifications against the full category definition.</li>
-          <li>The optional post-edit reminder recognizes failed checks and checks with no tool result.</li>
-          <li>Terminal Bench analysis records post-edit check attempts and compares matched jobs; the evaluation launcher supports SWE-bench Verified.</li>
-        </ul>
-        <h3>Validation and limits</h3>
-        <ul class="rel-list">
-          <li>A matched Terminal Bench financial-document task improved from reward 0 to 1, with seven verifier tests passing. This single task does not establish a general accuracy gain and used more tokens.</li>
-          <li>Focused agent and prompt regressions passed (87 tests). The full suite was kept separate; five pre-existing scoped mypy errors remain.</li>
-          <li>A separate HTML-filter benchmark has a flawed clean-input comparison; its score was not used as evidence for a harness change.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-33">
-        <div class="rel-head">
-          <h2>v1.0.33</h2>
-          <span class="rel-tags">Improved &middot; Validation and limits</span>
-        </div>
-        <h3>Improved</h3>
-        <ul class="rel-list">
-          <li>The shared coding agent asks for an independent check before generalizing from one example and gives more useful guidance when a shell check repeats without progress.</li>
-          <li>Context compaction budgets encoded images by request size and treats provider HTTP 413 responses as a signal to compact. Oversized inline tool images can be omitted on the fallback retry.</li>
-          <li>Terminal Bench runs use the effective Harbor time limit in the prompt, report failures and token use locally, and allow more graph steps before the task time limit.</li>
-        </ul>
-        <h3>Validation and limits</h3>
-        <ul class="rel-list">
-          <li>The full Terminal Bench 2 run passed 49 of 89 tasks before these fixes. A graph-cutoff replay passed, but took a different path below the old graph limit, so causation is unproven.</li>
-          <li>An image-heavy video replay reached grading without the earlier HTTP 413, but still failed the verifier's second video. The prompt change has not established better task accuracy.</li>
-          <li>Focused context, provider-error, loop-guard, analyzer, and evaluation-wrapper checks passed. The full unit suite and full Terminal Bench run were not repeated for this release.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-32">
-        <div class="rel-head">
-          <h2>v1.0.32</h2>
-          <span class="rel-tags">Added &middot; Fixed &middot; Limits and validation</span>
-        </div>
-        <h3>Added</h3>
-        <ul class="rel-list">
-          <li>Cross-project communication between live tabs in one Nova window: use <code>@tab:&lt;session-id&gt; &lt;message&gt;</code> or <code>@&lt;unique-title&gt; &lt;message&gt;</code>, with autocomplete, queued delivery and linked replies. Agents can list sessions, send messages, read owned requests and explicitly reply through four session tools.</li>
-          <li>Linked replies render as Markdown in initially collapsed panels. <strong>Attach to prompt</strong> adds the final answer to the owning tab's draft without sending it or interrupting a task; <strong>Open tab</strong> navigates explicitly.</li>
-          <li><code>/tabs resume</code> picks a saved session across projects; <code>/tabs resume &lt;id&gt;</code> accepts an exact ID or unique prefix. Sessions reopen in their saved project with their history, assistant, model continuation and checklist. Already-open sessions reuse their tab.</li>
-          <li>Reproducible cross-session regression, coverage, baseline-probe and fault-injection checks, with separate implementation evidence reports.</li>
-        </ul>
-        <h3>Fixed</h3>
-        <ul class="rel-list">
-          <li>Linked replies retain the latest main-agent answer instead of concatenating intermediate and subagent output into a duplicate raw transcript block.</li>
-          <li>Child sessions save after each turn, including interruption and error paths. Cancelling subprocess startup removes the incomplete tab.</li>
-          <li>Child shutdown closes stdin before waiting for process exit, releasing outstanding pipe reads.</li>
-          <li>Telegram topics use <code>NovaCode · &lt;session name&gt;</code>. Existing topics update on reconnect while preserving their history and routing; unchanged titles avoid repeated edits and failed edits can retry without creating duplicate topics.</li>
-          <li>Telegram and peer turns use correlated prompt IDs so queued replies and attachments remain associated with the correct request. Unicode tab addresses are supported and ambiguous names fail clearly.</li>
-        </ul>
-        <h3>Limits and validation</h3>
-        <ul class="rel-list">
-          <li>Cross-session communication covers live tabs in a single Nova window. It shares only explicit message content; each recipient retains its own workspace, history, model and tool approval settings. Message bookkeeping is bounded and held in memory.</li>
-          <li>Resuming requires an existing, Nova-approved project folder. Historical tools are displayed without executing them. Model availability and legacy-session fallbacks retain the existing continuation behavior.</li>
-          <li>Targeted Windows session, tab, Telegram, transcript and model-restoration regressions pass using simulated model events, mocked Telegram APIs and real child-process transport rehearsals. New communication and resume modules have 100% line coverage.</li>
-          <li>No live-provider or live-Telegram validation was performed. Existing full-suite timeouts and repository-wide lint limitations are documented in <code>CROSS_SESSION_EVIDENCE.md</code> and <code>TAB_RESUME_EVIDENCE.md</code>.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-31">
-        <div class="rel-head">
-          <h2>v1.0.31</h2>
-          <span class="rel-tags">Added &middot; Fixed &middot; Limits and validation</span>
-        </div>
-        <h3>Added</h3>
-        <ul class="rel-list">
-          <li>Telegram remote commands now use the normal TUI handlers in the main session topic, including skills, model selection, settings, and plugin commands.</li>
-          <li>Interactive command panels expose numbered choices in chat. Use <code>/choose N</code>, <code>/set N value</code>, <code>/input N value</code>, <code>/panel N</code>, and <code>/back</code> to select actions, edit fields, submit forms, navigate pages, and close panels. Controls belong to the requesting sender and topic; password fields are masked.</li>
-          <li>Telegram's native slash-command autocomplete menu includes registered commands and enabled skills. Menus refresh in the background after connection, skill management, and plugin registration; unchanged menus do not issue another registration request.</li>
-          <li>Child sessions resolve slash commands through shared CLI handlers and invoke skills in their own workspace, preserving skill arguments and pinned prompts.</li>
-          <li>Included context-display screenshots (<code>CTX1.png</code> and <code>CTX2.png</code>) and regression coverage for context-gauge updates while idle.</li>
-        </ul>
-        <h3>Fixed</h3>
-        <ul class="rel-list">
-          <li>Commands sent during a running main-session task are queued until the turn finishes, with a bounded queue and cleanup on shutdown.</li>
-          <li>Telegram command names with a bot suffix route correctly, including panel controls. Menu names use underscores in place of hyphens and resolve back to the original commands.</li>
-          <li>Failed, cancelled, expired, and undeliverable remote command panels release their resources; expired panels dismiss waiting dialogs.</li>
-          <li>Large command panels can be paged, and long command output is split for delivery.</li>
-        </ul>
-        <h3>Limits and validation</h3>
-        <ul class="rel-list">
-          <li>Telegram permits at most 100 command-menu entries, shared across the chat's topics. Commands take priority, followed by enabled skills; other skills remain callable with <code>/skill:name</code>.</li>
-          <li>TUI-only management panels are available in the main topic. Child topics use the shared CLI handlers for other commands.</li>
-          <li>Remote command, autocomplete, streaming, topic, and session-worker regression tests pass with mocked Telegram APIs. Live Telegram behavior has not been verified.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-30">
-        <div class="rel-head">
-          <h2>v1.0.30</h2>
-          <span class="rel-tags">Added &middot; Fixed &middot; Limits</span>
-        </div>
-        <h3>Added</h3>
-        <ul class="rel-list">
-          <li>Clicking a task in the subagents panel opens a full page laid out like the main transcript: the task as a prompt block, the agent's name over rendered Markdown, and each run of tool calls as one block with a theme-coloured bullet per call and its result on the same line. Results are matched to their own call, so parallel calls that finish out of order still read correctly.</li>
-          <li>A Telegram topic that connects while a turn is running joins that turn, starting from the response so far, instead of waiting for the next prompt.</li>
-        </ul>
-        <ul class="rel-list">
-          <li>Nova's own context compaction for the main agent and every subagent: prune old tool results, trim old tool-call arguments, then summarize with the <code>/compact</code> engine. Your messages are kept verbatim, a failed summary no longer fails the turn, and the summary call no longer streams into the transcript.</li>
-          <li>Nova works within a 128K-token context budget by default. Set <code>context_budget_tokens</code> to change it (<code>0</code> uses the model's whole window). <code>/context</code>, auto-compact, and compaction all use the same figure.</li>
-        </ul>
-        <ul class="rel-list">
-          <li>Learning reviews once when a task ends, with the real outcome. Lessons are stored per project and reach the shared pool only when a second project confirms them; a failed task shares nothing.</li>
-          <li>Pitfalls are stored as symptom, cause, and fix, and recalled when failing output matches them by meaning, using a local embedding model (word overlap as fallback). Built-in environment lessons are recalled only at a failure.</li>
-        </ul>
-        <ul class="rel-list">
-          <li>Ollama models run through Ollama's OpenAI-compatible endpoint. Thinking off maps to <code>reasoning_effort=none</code>, and a local model's context window is read from its Modelfile <code>num_ctx</code>, then <code>OLLAMA_CONTEXT_LENGTH</code>.</li>
-          <li><code>--help</code> shows the NovaCode name and version.</li>
-          <li>The evaluation harness runs Terminal-Bench through Harbor on local Docker or Modal, in a hermetic home that never reads or writes <code>~/.nova</code>, with <code>--ak</code> knobs for <code>reasoning_effort</code>, <code>max_tokens</code>, <code>learning=off|on|frozen</code>, and <code>context_budget</code>.</li>
-        </ul>
-        <h3>Fixed</h3>
-        <ul class="rel-list">
-          <li>The loop guard's hard stop now ends the turn; previously a model could keep repeating a command through it. A repeat is flagged on the second identical result, near-identical calls with the same result count as one, and a hard stop left by an interrupted turn no longer ends the next one.</li>
-          <li>A reply cut off by the output limit is no longer accepted as the end of a turn; the agent is nudged to continue, up to three times in a row.</li>
-        </ul>
-        <ul class="rel-list">
-          <li>Sandbox file tools work on images without <code>python3</code>: read, list, and glob fall back to shell, and write/edit say what is missing. A populated directory is no longer reported as empty.</li>
-          <li>Sandbox installers no longer hang on interactive prompts, and files written to <code>/tmp</code>, <code>/dev</code>, <code>/proc</code>, or <code>/sys</code> land where the shell sees them. Sandbox provider lifecycle and timeout handling are repaired.</li>
-        </ul>
-        <ul class="rel-list">
-          <li><code>rm -rf</code> below the top level is allowed again (for example <code>rm -rf /tmp/build</code>). Root, home, and top-level directories stay blocked in any argument position, quoted or not, including with the long <code>--recursive</code> / <code>--force</code> options.</li>
-          <li>The dangerous-command pattern for <code>halt</code> / <code>shutdown</code> no longer matches those words inside other commands.</li>
-          <li>A test run's failure summary is treated as a failure.</li>
-        </ul>
-        <ul class="rel-list">
-          <li><code>/context</code> rows no longer stay at 0 when one tool has no JSON schema, and the embedding cache no longer raises <code>KeyError</code> after it fills.</li>
-          <li>The status bar updates CTX on every model call, and the cache hit rate can no longer exceed 100%.</li>
-          <li>The TUI stays responsive on long, tool-heavy turns: large tool arguments are compared in milliseconds rather than seconds, saved tool results are checked on disk once rather than on every model call, and compaction's planning pass runs off the UI loop.</li>
-          <li>Compaction recovers from a too-long summary request, keeps injected notes out of your quoted messages, and budgets a subagent against its own model.</li>
-          <li>Improved async concurrency and runtime efficiency.</li>
-        </ul>
-        <h3>Limits</h3>
-        <ul class="rel-list">
-          <li>The 128K default budget's effect on task success has not been measured. Set <code>context_budget_tokens</code> to <code>0</code> to return to the whole window.</li>
-          <li>In the subagent page the tool block is always expanded. A remote (async) agent's page updates step by step rather than token by token.</li>
-          <li>Recall by meaning needs the local embedding model; without it, matching falls back to word overlap.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-29">
-        <div class="rel-head">
-          <h2>v1.0.29</h2>
-          <span class="rel-tags">Added &middot; Fixed &middot; Limits</span>
-        </div>
-        <h3>Added</h3>
-        <ul class="rel-list">
-          <li>Persistent public <code>--mode pipe</code> / <code>--headless</code> JSONL sessions for remote-app bridges, with readiness, request IDs, tool approvals, cancellation, queues, and clean shutdown. Includes process-local <code>--model</code>, startup/request/approval deadlines, a documented v1 protocol, and a Node adapter example.</li>
-        </ul>
-        <ul class="rel-list">
-          <li>Telegram toggle in the <code>/trello</code> board header connects a dedicated Trello topic using the current remote bridge or saved protected credentials.</li>
-          <li>Authorized users can send text tasks or <code>/add &lt;task&gt;</code> to create Loaded cards, and <code>/status</code> to see counts. Topic messages never become ordinary session prompts or steering.</li>
-          <li>Topic links, asynchronous connection status, duplicate message protection, deleted-topic recovery, and paused intake when the toggle is off or the board stops.</li>
-          <li>Headless deadlines (<code>--timeout</code>), optional partial text events, versioned JSON records with exit codes, bounded UTF-8 input, and structured startup errors.</li>
-        </ul>
-        <h3>Fixed</h3>
-        <ul class="rel-list">
-          <li>Internal compaction uses the threshold shown by <code>/context</code>; category estimates rebuild after compaction and resume. Internal SESSION INTENT drafts are hidden behind an animated compaction status.</li>
-          <li>Startup restore seeds a fresh checkpoint instead of merging saved history with old messages and summarization cutoffs. Restore budgets count tool arguments and retained reasoning, and restored metrics include both the briefing and injected instructions/memory.</li>
-        </ul>
-        <ul class="rel-list">
-          <li>Trello execution and logs stay with the board's owning TUI tab. Queued execution waits until that tab is selected and idle.</li>
-          <li>Telegram task intake preserves the session's approval mode, existing topic subscriptions, and dedicated handlers across bridge restarts. Connection and acknowledgment operations have deadlines.</li>
-          <li>Notification hook payloads identify TUI-managed delivery and provide the current installation's Nova.png path. The example Windows hook defers to the native TUI notifier to avoid a second toast with the old avatar.</li>
-          <li>Pipe output survives partial writes and interrupted writes, routes ordinary/native/child diagnostic output to stderr, and reports cancellation, timeouts, closed pipes, and incomplete event streams consistently.</li>
-          <li>Headless approval requests reject unresolved verdicts rather than silently granting permission. <code>--print</code> no longer enables auto-approve or persists recursive workspace trust. Use explicit <code>--auto-approve</code> and, when needed, <code>--trust-workspace</code> (folder-only).</li>
-          <li>Subagent prose no longer pollutes the final headless answer or turn count; exceeding the turn budget cannot be hidden by an interrupt or completion event.</li>
-        </ul>
-        <h3>Limits</h3>
-        <ul class="rel-list">
-          <li>The board remains in memory; keep Nova and the board running. The dedicated topic accepts text tasks only.</li>
-          <li>Telegram must already be configured through <code>/remote</code>; forum topics and bot Manage Topics permission are required.</li>
-          <li>Existing user-installed PowerShell notification hooks need the updated <code>examples/hooks/windows-notify.ps1</code> to honor the new payload fields.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-28">
-        <div class="rel-head">
-          <h2>v1.0.28</h2>
-          <span class="rel-tags">Added &middot; Limitations</span>
-        </div>
-        <h3>Added</h3>
-        <ul class="rel-list">
-          <li>Added approval-gated <code>/session launch</code> for opening an existing approved folder as a session tab with an initial task.</li>
-          <li>The new tab receives a dedicated Telegram topic through the current session's remote bridge and routes topic messages to that tab.</li>
-          <li>Added project pickers to the local TUI and Telegram so approved folders can be selected without typing paths.</li>
-          <li>Renamed the local session management command to <code>/tabs</code>; <code>/tab</code> in Telegram opens the project picker, and <code>/tab close</code> offers a picker of running tabs.</li>
-          <li>Session tabs animate while agents work and show live Telegram/Discord connection indicators.</li>
-          <li>Added a keyboard-accessible jump-to-latest button in every transcript; tabs remember whether you are reading history.</li>
-          <li>Telegram photos and image documents now reach the corresponding Nova session as image inputs, with optional captions and queued delivery while busy.</li>
-          <li>Tabs inherit the source tool approval mode and send it per turn; remote connections never enable auto-approve. Dismissed tool approval dialogs reject the request.</li>
-          <li>Telegram tab pickers are removed after launch approval, cancellation, closing, or expiry. Repeated confirmations cannot start another tab or reach the agent as prompts; new pickers supersede older requests in the same requester/topic scope.</li>
-          <li>Tab switching returns immediately while history replays in small batches. Background token bursts no longer repaint the tab bar per token, and spinner frames avoid layout when their width stays the same.</li>
-          <li>Stream buffers retain their parts across switches; delayed stream/tool repaint callbacks belong to their originating pane. Approved-folder disk checks run off the UI thread, and concurrent launches reserve capacity before starting processes.</li>
-          <li>The footer names the selected tab and shows only its tasks. Child tabs have their own task snapshots and <code>/tasks</code> panel; terminate, restart, and logs controls route to that child's process. Main-tab completion logs, notes, and notifications remain in the main conversation.</li>
-          <li>Task panel polling transfers metadata only; log requests fetch one bounded tail and match the originating tab and request ID.</li>
-          <li>Escape and Ctrl+B in child tabs no longer kill or detach main-tab commands. Closing a worker stops its background commands, and exited tabs clear running task indicators.</li>
-          <li>Windows termination stops the whole process tree before the shell exits, preventing orphaned child processes. Background launch failures report failure instead of success. Task tool descriptions explain session-local IDs and how to stop and verify tasks.</li>
-        </ul>
-        <h3>Limitations</h3>
-        <ul class="rel-list">
-          <li>Telegram can request and approve a launch from its originating topic. Existing approved folders only are supported.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-27">
-        <div class="rel-head">
-          <h2>v1.0.27</h2>
-        </div>
-        <ul class="rel-list">
-          <li>On Telegram reconnect, validate saved session topics and recreate topics that Telegram confirms were deleted. Persist the replacement ID and bind incoming messages and outgoing responses to it.</li>
-          <li>Reuse valid topics and reopen closed ones. Network failures, rate limits, and permission errors leave the saved mapping intact and report a connection warning instead of creating duplicate topics.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-26">
-        <div class="rel-head">
-          <h2>v1.0.26</h2>
-        </div>
-        <ul class="rel-list">
-          <li><code>/remote</code> now includes Telegram user authorization controls: a user ID field, Authorize/Revoke buttons, and the saved authorized user list. The panel scrolls on shorter terminals to keep the controls accessible.</li>
-          <li><code>/remote</code> subcommands entered in the prompt now execute directly, including during an active task, instead of opening the remote panel and discarding arguments.</li>
-          <li>Remote subcommands use the root session's bridge manager even when a child tab is visible.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-25">
-        <div class="rel-head">
-          <h2>v1.0.25</h2>
-        </div>
-        <ul class="rel-list">
-          <li>Telegram group messages rejected by sender authorization now display a throttled explanation in Nova, including the sender ID and the command to authorize that user.</li>
-          <li>Added local <code>/remote allow-user telegram &lt;USER_ID&gt;</code> and <code>/remote deny-user telegram &lt;USER_ID&gt;</code> commands (also available for Discord). Permissions persist and update active bridges immediately in the current Nova process.</li>
-          <li>Preserve registered session topic IDs when incoming Telegram messages omit <code>is_topic_message</code>, keeping prompts and replies routed to the correct session.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-24">
-        <div class="rel-head">
-          <h2>v1.0.24</h2>
-        </div>
-        <ul class="rel-list">
-          <li>Telegram <code>/remote</code> connects each Nova session to a named topic containing its session ID, including main sessions and sessions already running when the bridge starts.</li>
-          <li>Separate Nova windows share an authenticated local Telegram polling connection, preventing competing <code>getUpdates</code> requests. Topic messages reach their registered Nova process; replies and local streamed output stay in that topic.</li>
-          <li>Topic mappings and polling offsets persist, and another connected window takes over polling when the owner exits. A saved session cannot be connected in two windows simultaneously.</li>
-          <li>Added private bot topic-mode support, retryable topic capability detection, and visible setup guidance and topic IDs in <code>/remote</code>.</li>
-          <li>General-chat messages are delivered only when one Nova window is connected; with several windows, send messages in the session's topic.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-23">
-        <div class="rel-head">
-          <h2>v1.0.23</h2>
-        </div>
-        <ul class="rel-list">
-          <li>Replaced <code>/help</code>'s transcript dump with a searchable, categorized Textual command guide covering built-in commands, aliases, plugin and panel commands, skills, and keyboard shortcuts.</li>
-          <li>Added a responsive <code>/evolution</code> dashboard with lifetime totals, searchable activity, unlock/level-up filters, scrollable task details, refresh, and clear empty/error states.</li>
-          <li>Evolution history loads asynchronously and its panel can open during an active agent turn.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-22">
-        <div class="rel-head">
-          <h2>v1.0.22</h2>
-        </div>
-        <ul class="rel-list">
-          <li>Fixed ANSI theme color parsing that made inline code and file paths appear as solid gray blocks in resumed sessions.</li>
-          <li>Added a contrast check for inline code and CSS color/alpha support.</li>
-          <li>Cached replies now refresh their colors when the theme changes while preserving rendering performance.</li>
-          <li>Added five themes to <code>/themes</code>: <code>nova-synthwave</code>, <code>nova-aurora</code>, <code>nova-ember</code>, <code>nova-abyss</code>, and the light <code>nova-paper</code> palette.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-21">
-        <div class="rel-head">
-          <h2>v1.0.21</h2>
-          <p class="rel-sub">Zen Jev decisions and Nova exit screen</p>
-        </div>
-        <ul class="rel-list">
-          <li>Add OpenCode Zen Jev and Jev Free presets in /model → Decisions and /router. Use the Zen API key for the exact official System One endpoint, including decision-based tool pruning and opt-in auto-approval.</li>
-          <li>Keep TypeSafe, Zen, and custom endpoint credentials isolated. Carry NovaCode's user agent and stable session header on Zen decision requests. Manage the Zen credential directly from the Decisions tab.</li>
-          <li>Print Nova's wordmark, current version, session label, and <code>nova --continue &lt;session-id&gt;</code> after the Textual application exits. Check saved root-session metadata before offering continuation; adapt the wordmark for narrow terminals and safely render session names.</li>
-        </ul>
-        <p class="rel-note">Zen Jev documentation: <a href="https://opencode.ai/docs/zen/#jev">https://opencode.ai/docs/zen/#jev</a>.</p>
-      </section>
-      <section class="rel" id="v1-0-20">
-        <div class="rel-head">
-          <h2>v1.0.20</h2>
-          <p class="rel-sub">OpenCode Zen and guided Console sign-in</p>
-        </div>
-        <ul class="rel-list">
-          <li>Add OpenCode Zen alongside OpenCode Go in /auth, /model, router targets, role models, and first-run setup. Zen uses its own API key and endpoint; existing Go configuration remains compatible.</li>
-          <li>Offer “Sign in to OpenCode Console” for both services. Open the official Console in a browser, then return to Nova's masked API-key field. This implements OpenCode's documented Console/key flow, rather than claiming unsupported third-party OAuth.</li>
-          <li>Discover available models independently for Zen and Go. Select Chat Completions, Responses, or Anthropic Messages according to each model's documented API. Exclude native Google and System One models from the conversational picker.</li>
-          <li>Identify gateway traffic as NovaCode, retain the stable session header, mask saved Zen credentials in settings, and strip them from shell subprocess environments.</li>
-          <li>Avoid reporting a public model-list response as proof that an OpenCode key was authenticated.</li>
-        </ul>
-        <p class="rel-note">Official setup: <a href="https://opencode.ai/docs/zen/">https://opencode.ai/docs/zen/</a> and <a href="https://opencode.ai/docs/go/">https://opencode.ai/docs/go/</a>.</p>
-      </section>
-      <section class="rel" id="v1-0-19">
-        <div class="rel-head">
-          <h2>v1.0.19</h2>
-          <p class="rel-sub">Live Discord and Telegram responses</p>
-        </div>
-        <ul class="rel-list">
-          <li>Stream local TUI turns, including Ctrl+B background agent tasks, to connected Discord and Telegram chats. Show a separate live activity message for the session, plan, tool calls, and their results, alongside an editable answer.</li>
-          <li>Stream replies to remote prompts, including routed child sessions, without sending the final answer twice. Start the TUI message consumer when a bridge is enabled after launch and avoid duplicate consumers.</li>
-          <li>Coalesce token updates off the TUI rendering path. Retry the latest answer after failed edits, retain bounded buffers, and stop streaming pumps on completion or cancellation.</li>
-          <li>Render Telegram Markdown as supported HTML and paginate without breaking tags. Keep Discord fenced code blocks balanced across message pages. Reconcile all pages after answer replacement or shrinkage instead of dropping overflow text.</li>
-          <li>Refresh /remote connection status live and explain that connected chats receive local tasks. Suppress automatic Discord mentions in model output.</li>
-          <li>Honor Telegram flood-control retry delays and treat unchanged edits as successful. Preserve final Markdown indentation and keep an unavailable debug log from preventing remote startup.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-18">
-        <div class="rel-head">
-          <h2>v1.0.18</h2>
-          <p class="rel-sub">References, skill pins, and background tasks</p>
-        </div>
-        <ul class="rel-list">
-          <li>Explain resolved file attachments in the model context and show referenced files in the live user transcript, so the target file and loaded context are visible.</li>
-          <li>Show slash skill invocations as user messages with a pinned-skill label while continuing to load structured instruction snapshots through the skills middleware.</li>
-          <li>Include Ctrl+B background agent turns and running remote async subagents in the Background Tasks dialog and persistent tasks indicator, alongside shell jobs. Track completion, failure, cancellation, and bounded agent logs; support cancellation and log viewing for local background agent turns.</li>
-          <li>Let the Background Tasks list fill the available modal height, including on short terminals. Keep running tasks first and preserve selection and scrolling during live updates.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-17">
-        <div class="rel-head">
-          <h2>v1.0.17</h2>
-          <p class="rel-sub">Specialist skills and tool resolvers</p>
-        </div>
-        <ul class="rel-list">
-          <li>Give foreground and async specialists selective skill libraries with their own activation state. General-purpose agents keep the full enabled library. Discover selected directories before parsing instructions to reduce specialist startup work.</li>
-          <li>Configure custom agents with <code>skill_names: [skill-name, another-skill]</code>, <code>skill_names: []</code> for no skills, or <code>skill_names: "*"</code> for the full library.</li>
-          <li>Resolve space-separated <code>metadata.include_tools</code> names to private tools, runtime aliases, or integration groups. Support async resolvers and recheck activation and run context before private tool execution. Compaction removes access when activation messages disappear.</li>
-          <li>Map MCP server names and unambiguous original tool names to the existing inventory without reconnecting servers. Tools registered independently remain searchable; their implementation takes precedence over a private tool with the same name.</li>
-          <li>Keep Nova's verified Deep Agents dependency range. Nova implements this behavior in its own middleware, including on the locked 0.7.10 release; it does not depend on the newer upstream skill-tools API.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-16">
-        <div class="rel-head">
-          <h2>v1.0.16</h2>
-          <p class="rel-sub">Progressive skill loading</p>
-        </div>
-        <ul class="rel-list">
-          <li>Pin enabled skills using <code>$skill-name</code>, <code>/skill-name</code>, or the new <strong>Pin to prompt</strong> control in <code>/skills</code>. Load each skill as a structured instruction snapshot, without preloading its supporting files. Earlier snapshots remain unchanged after edits.</li>
-          <li>Add <code>skills_load</code> and <code>skills_read_resource</code> tools for explicit activation and bounded, on-demand reference reads. Relative resource paths resolve against the skill directory and reject traversal.</li>
-          <li>Activate optional tool schemas declared in <code>metadata.include_tools</code>. Dedicated skill tools are gated until their skill is loaded; removing activation messages during compaction removes that access. Existing independently registered tools remain searchable.</li>
-          <li>Add a <strong>Reload</strong> control and per-run <code>pinned_skills</code> / <code>skills_metadata=None</code> support. Keep the full skill library outside session checkpoints and run async discovery and pin reads off the UI event loop.</li>
-          <li>Use consistent user → shared → Claude → plugin → project precedence across discovery, invocation, previews, and the agent. Preserve nested YAML metadata and multiline frontmatter during skill normalization.</li>
-          <li>Keep <code>/skills</code> action buttons usable on narrow terminals and show compact pinned-skill labels when restoring sessions.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-15">
-        <div class="rel-head">
-          <h2>v1.0.15</h2>
-          <p class="rel-sub">Update completion screen</p>
-        </div>
-        <ul class="rel-list">
-          <li>After a successful <code>nova update</code>, clear interactive progress output and show a centered NOVA logo, the newly installed version, “Update successful.” and “Restart Nova”.</li>
-          <li>Show the same completion screen from the Windows update helper after the launcher exits and installation finishes. Read the version from the updated environment instead of a previously imported version.</li>
-          <li>Keep failed-update diagnostics visible, preserve the up-to-date message for no-op updates, and leave redirected output free of terminal control codes.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-14">
-        <div class="rel-head">
-          <h2>v1.0.14</h2>
-          <p class="rel-sub">Background commands and release notices</p>
-        </div>
-        <ul class="rel-list">
-          <li>Give Ctrl+B priority over text editing shortcuts. Detach running shell, bash and execute commands even when the editor contains a draft; preserve that draft.</li>
-          <li>Keep the Background Tasks panel single-instance during repeated Ctrl+B presses. Ignore repeated handoff requests so preserved drafts are not submitted accidentally.</li>
-          <li>Register <code>!</code> commands with the background-task controller, retain their process and logs during handoff, and track completion/termination in the task panel.</li>
-          <li>Remove detached commands from the foreground control list so Esc cannot kill work already moved to the background. Clean up shell process trees on cancellation.</li>
-          <li>Display a <code>Ctrl+B · run in background</code> hint beneath running execution-tool output and hide it once the command finishes.</li>
-          <li>Show the available release's version/title and a short changelog preview in the transcript. Add View more pages and official changelog links to automatic notices and <code>/update</code>.</li>
-          <li>Fetch release metadata off the UI loop, deduplicate notices by revision, bound changelog content, and keep update notices usable when metadata is unavailable.</li>
-          <li>Display animated retry progress (1/3, 2/3, 3/3) for failed provider requests before reporting a final error. Keep retries confined to model calls, stop on cancellation, and skip authentication, quota and context overflow failures.</li>
-          <li>Add <code>general-purpose-async</code> for background coding, investigation, testing, research and analysis, with workspace file tools, shell/bash, web/docs tools, model retries and unattended approval enforcement.</li>
-          <li>Prefer async delegation for general work as well as specialists. Return control to the user when delegated work is pending and continue on completion, keeping synchronous general-purpose as a fallback.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-13">
-        <div class="rel-head">
-          <h2>v1.0.13</h2>
-        </div>
-        <ul class="rel-list">
-          <li>Read the version shown by <code>nova --version</code>, startup ASCII art and the agent API from the shared release version constant instead of the stale hardcoded <code>1.0.6</code> value.</li>
-          <li>Handle <code>nova --version</code> through the lightweight entry point without importing the agent runtime or starting onboarding.</li>
-          <li>Include the current version beneath the compact startup portrait and use UTF-8-capable console output for <code>--version</code> on Windows.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-12">
-        <div class="rel-head">
-          <h2>v1.0.12</h2>
-        </div>
-        <ul class="rel-list">
-          <li>Show <code>NovaCode · &lt;session name&gt;</code> in the terminal window/tab title and update it when switching sessions or refreshing their names.</li>
-          <li>Keep the main session tab and terminal title synchronized with the current session ID after <code>/resume</code> and <code>/clear</code>.</li>
-          <li>Sanitize session names before writing terminal controls, skip terminal writes in headless mode, and avoid repeating unchanged titles.</li>
-          <li>Add <code>/settings</code> → Performance → Live animation frame rate with persistent 15, 30 and 60 FPS choices, defaulting to 30 FPS. Apply changes immediately to status/tool spinners, shimmer and enabled Matrix Rain.</li>
-          <li>Keep motion speed independent of refresh rate, limit background-state polling separately, and retain low-resource overrides and focus/visibility pauses.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-11">
-        <div class="rel-head">
-          <h2>v1.0.11</h2>
-        </div>
-        <ul class="rel-list">
-          <li>Batch shell output and yield between pipe reads so keyboard input, cancellation and repainting can run during noisy commands. Handle long lines and split UTF-8 without <code>readline</code> overflow.</li>
-          <li>Reuse wrap calculations for unchanged output lines, evict discarded lines from the cache, and parse only the retained display tail of large command results.</li>
-          <li>Remove per-line forced scrolling from live shell, tool and background-agent output. Coalesced log paints follow the latest output when the user is already at the bottom.</li>
-          <li>Bound shell/execute result capture while the command runs, instead of retaining all output until completion; keep live output streaming and the existing truncated-result notice.</li>
-          <li>Cover cancellation while waiting for a shell process to exit after its output closes.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-10">
-        <div class="rel-head">
-          <h2>v1.0.10</h2>
-        </div>
-        <ul class="rel-list">
-          <li>Add Google browser sign-in under <code>/auth</code> for Gemini Developer API, using a user-owned Desktop OAuth client and Cloud quota project. Includes PKCE, state validation, cancellation, refresh, saved-account selection and disconnection; API keys remain available.</li>
-          <li>Add guided Anthropic Console setup alongside API-key entry. Claude subscription OAuth is not offered because Anthropic explicitly excludes third-party applications.</li>
-          <li>Display the selected Google authentication method in provider readiness and credential screens.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-9">
-        <div class="rel-head">
-          <h2>v1.0.9</h2>
-        </div>
-        <ul class="rel-list">
-          <li>Render imported Codex and Claude sessions as structured conversation cards with Markdown and collapsible historical tool records in the transcript and View preview.</li>
-          <li>Preserve the imported history display when resuming a saved Nova session; hide the internal continuation reference message.</li>
-          <li>Page long histories, bound displayed excerpts, and release removed history data to keep the TUI responsive. Complete normalized history remains saved.</li>
-          <li>Format Claude tool arguments as JSON and retain tool error indicators.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-8">
-        <div class="rel-head">
-          <h2>v1.0.8</h2>
-          <span class="rel-tags">Fixed</span>
-        </div>
-        <h3>Fixed</h3>
-        <ul class="rel-list">
-          <li>Command output renders only visible rows, with bounded row caches, instead of rendering entire logs on each paint. Hidden output remains available and reflows when revealed or resized.</li>
-          <li>Removed output and chat widgets immediately release their text, markdown visuals, and render caches.</li>
-          <li>Late background output and stream callbacks cannot revive removed cards or restart their paint timers.</li>
-          <li>Transcript scrollback is bounded by content size as well as widget count, while preserving active replies and tool/subagent cards. Persisted session and agent context remain intact.</li>
-          <li>Streaming previews read only recent fragments instead of repeatedly copying the full growing answer and reasoning buffers.</li>
-          <li>Long turns retain speech-summary text only when voice responses are enabled, with a bounded summary buffer.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-7">
-        <div class="rel-head">
-          <h2>v1.0.7</h2>
-          <span class="rel-tags">Added &middot; Notes</span>
-        </div>
-        <h3>Added</h3>
-        <ul class="rel-list">
-          <li><code>/auth</code> can connect OpenAI with a ChatGPT account using OpenAI's Sign in with ChatGPT flow, while preserving API-key setup. The ChatGPT-plan path uses the Responses API with streaming and response storage disabled; OAuth tokens are stored separately in the OS credential store and refreshed as needed.</li>
-          <li>OpenAI ChatGPT sign-in status is shown in <code>/auth</code> and can be removed independently of an API key.</li>
-        </ul>
-        <h3>Notes</h3>
-        <ul class="rel-list">
-          <li>ChatGPT-plan access is subject to OpenAI account eligibility and the current preview limits. Some hosted Responses tools are unavailable in this mode; OpenAI API-key access remains the full existing path.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-6">
-        <div class="rel-head">
-          <h2>v1.0.6</h2>
-          <span class="rel-tags">New Features</span>
-        </div>
-        <h3>New Features</h3>
-        <ul class="rel-list">
-          <li><strong>Bug investigation async specialist</strong>: Traces reported defects through code and tests, then returns evidence-backed root-cause hypotheses and focused verification steps.</li>
-          <li><strong>Performance audit async specialist</strong>: Reviews latency, memory, CPU, task cleanup, and multi-session resource behavior, returning ranked findings and measurement suggestions.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-5">
-        <div class="rel-head">
-          <h2>v1.0.5</h2>
-          <span class="rel-tags">Improvements</span>
-        </div>
-        <h3>Improvements</h3>
-        <ul class="rel-list">
-          <li><strong>Async subagent preference</strong>: Nova now prefers available async specialists for independent background work, while retaining synchronous <code>task</code> delegation when results are needed immediately, no suitable async agent is available, or background dispatch fails.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-4">
-        <div class="rel-head">
-          <h2>v1.0.4</h2>
-          <span class="rel-tags">Security Improvements</span>
-        </div>
-        <h3>Security Improvements</h3>
-        <ul class="rel-list">
-          <li><strong>More conservative decision approvals</strong>: Approval decisions now include the active user request, use a stricter risk rubric and confidence threshold, and deterministically reject high-impact deletion, overwrite, Git-history, database, and system commands. Unclear or low-confidence answers still fail closed.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-3">
-        <div class="rel-head">
-          <h2>v1.0.3</h2>
-          <span class="rel-tags">Improvements</span>
-        </div>
-        <h3>Improvements</h3>
-        <ul class="rel-list">
-          <li><strong>Approval decision indicators</strong>: Auto-approve sessions now display a green approval or red rejection message with the decision model and tool name. Fail-closed outcomes identify when the model was unavailable or uncertain.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-2">
-        <div class="rel-head">
-          <h2>v1.0.2</h2>
-          <span class="rel-tags">New Features</span>
-        </div>
-        <h3>New Features</h3>
-        <ul class="rel-list">
-          <li><strong>Decision-model auto-approval</strong>: An opt-in <code>/settings</code> switch lets the configured Decisions model approve or reject actions that require review during auto-approve sessions. Policy denials remain blocked, and unavailable or uncertain verdicts fail closed. Configure Tev1, Jev, Luna, or another supported decision model in <code>/model</code> → Decisions.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-1">
-        <div class="rel-head">
-          <h2>v1.0.1</h2>
-          <span class="rel-tags">New Features &middot; Improvements</span>
-        </div>
-        <h3>New Features</h3>
-        <ul class="rel-list">
-          <li><strong>Prompt cache visibility</strong>: The TUI status bar and <code>/context</code> now show the provider-reported cache hit rate and cumulative input tokens read from and written to the prompt cache. The compact status bar adapts the indicator to narrower terminals.</li>
-        </ul>
-        <h3>Improvements</h3>
-        <ul class="rel-list">
-          <li>Cache read, cache creation, and input-token counts are accumulated across model calls in a turn, so the hit rate reflects the whole session run rather than just the last response.</li>
-          <li>Cache metrics remain hidden for providers that do not report prompt-cache usage; Nova does not estimate hits.</li>
-        </ul>
-      </section>
-      <section class="rel" id="v1-0-0">
-        <div class="rel-head">
-          <h2>v1.0.0</h2>
-          <span class="rel-tags">New Features &middot; Improvements &middot; Bug Fixes &middot; Technical Changes</span>
-        </div>
-        <p class="rel-note">The version numbering restarts here. This file is the baseline that later releases build on: the sections below describe what Nova does at this point, and each future release gets its own <code>CHANGELOG-v&lt;major&gt;.&lt;minor&gt;.&lt;patch&gt;.md</code>.</p>
-        <h3>New Features</h3>
-        <h4>Per-Turn Model Routing (<code>/router</code>)</h4>
-        <ul class="rel-list">
-          <li><strong>A route per kind of work</strong>: Nova can hold several routes, each a <code>provider:model</code> pair, and pick one per turn instead of running every turn on a single model</li>
-          <li><strong>Criteria are the classifier's prompt</strong>: A route carries a plain-English description of the work it should win, which is what the decision model reads. A route without criteria is refused rather than silently never selected, because a route the classifier cannot match is worse than one that is missing</li>
-          <li><strong><code>/router</code> screen</strong>: A native modal to add, edit, remove and reorder routes. It edits a working copy and returns a payload, so Cancel has no side effects and nothing reaches the config until Save</li>
-          <li><strong>Decision model is configurable</strong>: Presets for <strong>Jev</strong> (TypeSafe System One API), <strong>Tev1</strong> (local Ollama, the default and free), or a custom endpoint and model name</li>
-          <li><strong>Off until switched on</strong>: Routing defaults to disabled, so an existing <code>Nova.config.json</code> behaves exactly as before and a session that never opens <code>/router</code> is unaffected</li>
-          <li><strong>Falls back rather than fails</strong>: If the classifier is unreachable, returns something unreadable, or names a route that cannot be built, the turn runs on the default route - a router that could break a turn would be worse than no router</li>
-          <li><strong>Routes live in <code>Nova.config.json</code></strong>: <code>router_enabled</code>, <code>router_routes</code>, <code>router_default_route</code>, <code>router_decision_endpoint</code>, <code>router_decision_model</code> and <code>router_min_confidence</code>, written through a validating setter so a typo caught in the screen never reaches model construction mid-turn</li>
-        </ul>
-        <h4>Settings Screen (<code>/settings</code>)</h4>
-        <ul class="rel-list">
-          <li><strong>Native preferences modal</strong>: Opens from <code>/settings</code>, applies immediately, and persists to <code>Nova.config.json</code></li>
-          <li><strong>Matrix Rain switch</strong>: Turns the home-banner animation on or off without editing the environment or restarting</li>
-        </ul>
-        <h3>Improvements</h3>
-        <h4>Idle Resource Efficiency</h4>
-        <ul class="rel-list">
-          <li><strong>Every numerical backend is capped, not just OpenBLAS</strong>: <code>OPENBLAS_NUM_THREADS</code> was already pinned to 1, but OpenMP, MKL and NumExpr still defaulted to a machine-wide thread pool, so each Nova process - the TUI and every spawned session - could occupy every core while idle. All four are now pinned with <code>setdefault</code>, so an explicit user value still wins</li>
-          <li><strong>Voice models load on demand</strong>: A text session no longer constructs or preloads the native voice models. Previously any of <code>enabled</code>, <code>speak_responses</code> or push-to-talk triggered the full model load at boot, so a user who had never spoken to Nova paid a large load for a feature they had not touched. Only explicitly enabled voice builds a pipeline now, and the models load on first use</li>
-          <li><strong>Speech does not allocate the microphone stack</strong>: <code>VoicePipeline.warmup</code> takes <code>input_audio=False</code> to build the TTS side alone, and <code>_ensure_components</code> splits into <code>_ensure_input_components</code> and <code>_ensure_tts</code> so each direction loads only what it needs. Explicit <code>/voice download</code> still warms the full stack</li>
-          <li><strong>The home banner no longer repaints forever</strong>: <code>MatrixRain</code> animated roughly 15 times a second on an idle terminal. It is now off by default, keeps its first themed frame, and stays available as an opt-in through <code>NOVA_ANIMATIONS=1</code> or the new Settings switch. Resizing and theme changes still repaint a static banner</li>
-          <li><strong>Live tool output is bounded by construction</strong>: The pending-output map held an unbounded <code>list[str]</code> per call, so a chatty command grew it until the painter happened to drain it. <code>OutputTail</code> caps each call by bytes and by lines, and <code>MAX_PENDING_CALLS</code> caps how many calls may be buffered at once. Dropping a call trims only the live display - final tool results still arrive through the normal event/session path</li>
-        </ul>
-        <h4>Startup and the agent server</h4>
-        <ul class="rel-list">
-          <li><strong>Deep Agents metadata scan is no longer paid twice</strong>: The startup scan is patched so the version metadata is read once instead of on every check</li>
-          <li><strong>The agent-server extra is optional and reported honestly</strong>: <code>/agent-server</code> says whether the extra is installed and prints the <code>uv sync --extra agents-server</code> hint when it is missing</li>
-        </ul>
-        <h4>Textual UI</h4>
-        <ul class="rel-list">
-          <li><strong>Branded workspace approval screen</strong>: Path approval opens a native screen showing what is being approved instead of a bare prompt</li>
-          <li><strong>Theme-aware tool rendering and session usage display</strong></li>
-          <li><strong>Subagent panel reset on clear</strong>: Interrupted subagent timers stop and the panel resets rather than showing stale rows</li>
-          <li><strong>Every subagent is created from one screen</strong>, as in-process or background</li>
-        </ul>
-        <h3>Bug Fixes</h3>
-        <ul class="rel-list">
-          <li><strong>Banner animation could never start</strong>: <code>MatrixRain.on_mount</code> enabled the rain through <code>set_animation_enabled</code>, which returns early when the widget is not mounted - and <code>is_mounted</code> is still <code>False</code> inside <code>on_mount</code>. Setting <code>NOVA_ANIMATIONS=1</code> therefore produced a static banner. The timer start moved into <code>_start_timer</code>, which <code>on_mount</code> calls directly and <code>set_animation_enabled</code> delegates to.</li>
-          <li><strong>A failed MCP discovery is no longer cached</strong>: A transient outage used to look like "no such tool" for the rest of the session, and an outage is now told apart from a genuine absence</li>
-          <li><strong>MCP tools work from the agent server and from background agents</strong>: Previously they were declared but not callable on those paths</li>
-          <li><strong>An async agent whose graph cannot build is never registered</strong>, so a broken server config surfaces as an error instead of a dead dispatch</li>
-          <li><strong>Windows updates report progress</strong>: The launcher is released before the external updater runs, a locked launcher during <code>uv tool</code> updates is handled, and progress plus the final result are streamed live. An already-current install says so instead of looking stalled</li>
-        </ul>
-        <h3>Technical Changes</h3>
-        <ul class="rel-list">
-          <li><strong><code>OutputTail</code> extracted to <code>novacode_cli/tui/output_buffer.py</code></strong>: Self-contained (no TUI imports) so the bounded buffer can be tested and reused independently of the app that consumes it</li>
-          <li><strong>Per-role model plumbing</strong>: <code>config/role_models.py</code> is the single place that answers what each role runs on, with one config key per role so two Nova processes cannot clobber each other's settings</li>
-          <li><strong>Session interoperability</strong>: Claude and Codex histories can be imported through session adapters, and multimodal content blocks from <code>read_file</code> are preserved through to the model</li>
-          <li><strong>Test coverage</strong>: <code>tests/test_resource_efficiency.py</code> pins the thread-pool caps, lazy voice loading, the opt-in banner, and the buffer ceilings; <code>tests/test_model_router.py</code> covers route selection, fallback, and config round-trips; <code>tests/test_workspace_approval.py</code>, <code>tests/test_startup_version_scan.py</code> and the UI harness tests cover the newer surfaces</li>
-          <li><strong>Measurement scripts</strong>: <code>scripts/benchmark_idle.py</code> measures an idle process, <code>scripts/verify_resource_efficiency.py</code> checks the claims against a running build, and <code>scripts/mutate_resource_efficiency.py</code> re-injects each defect to prove the tests are not vacuous</li>
-        </ul>
-      </section>
-    <!-- /generated:changelog-releases -->
+<details class="changelog-entry" id="v1-0-54" data-version="1.0.54" data-sha="5e46a796d5cc76eefc4ca17b43db69243d274708">
+<summary class="entry-toggle"><h2 class="version">v1.0.54</h2><span class="release-summary">Essential SendMessage(recipient, content) tool for plain-text messages between connected project tabs, using existing queued delivery and linked replies. list_sessions is also always available for recipient discovery.</span></summary>
+<div class="release-content"><p><a href="#v1-0-54">Link to v1.0.54</a></p><h3>Added</h3>
+<ul>
+<li>Essential <code>SendMessage(recipient, content)</code> tool for plain-text messages between connected project tabs, using existing queued delivery and linked replies. <code>list_sessions</code> is also always available for recipient discovery.</li>
+<li>Essential <code>EnterWorktreeTool(name)</code> and <code>ExitWorktreeTool()</code> for moving the current local agent's file and shell tools into a fresh Git worktree and back. Exit keeps the worktree, branch, commits and uncommitted changes.</li>
+<li>Workspace transition guards for parallel tool calls and cancellation, normal approval handling, and plan-mode restrictions.</li>
+<li>Usage documentation and real Git, shell, agent-graph and mutation checks.</li>
+</ul>
+<h3>Verification and limits</h3>
+<ul>
+<li>80 focused worktree, tool-discovery and messaging regression tests passed; all three targeted behavioral mutants were detected.</li>
+<li>Three release metadata, version banner and real CLI version checks passed.</li>
+<li>Messaging connects tabs within one NovaCode TUI instance. Independently launched terminal instances and standalone headless runs are not connected.</li>
+<li>Worktree switching requires a local Git repository with a commit. External MCP servers, existing jobs and remote agents retain their own workspaces. Active workspace switches are not restored after resume or agent rebuild.</li>
+<li>Full-suite collection remains blocked by the installed deepagents API mismatch (<code>create_sub_agent</code> is absent). Five upstream startup-version scan tests also fail against missing installed deepagents internals. New files pass Ruff; no dependencies were added.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-53" data-version="1.0.53" data-sha="a552389cff0671222b871929e38d520ecc98aef3">
+<summary class="entry-toggle"><h2 class="version">v1.0.53</h2><span class="release-summary">Agent teams and autonomous swarm switches in /settings under Experimental. Swarm requires teams; both remain disabled by default. Settings apply at the next prompt without changing the model or clearing the conversation.</span></summary>
+<div class="release-content"><p><a href="#v1-0-53">Link to v1.0.53</a></p><h3>Added</h3>
+<ul>
+<li>Agent teams and autonomous swarm switches in <code>/settings</code> under Experimental. Swarm requires teams; both remain disabled by default. Settings apply at the next prompt without changing the model or clearing the conversation.</li>
+<li>Usage examples for manual teams and worktree swarm tasks in the agent teams guide.</li>
+</ul>
+<h3>Fixed</h3>
+<ul>
+<li>Refresh team feature gates when rebuilding an existing session, including the swarm scheduler on a reused coordinator.</li>
+<li>Preserve ownership of existing workers when disabling teams. Running workers are not cancelled, new swarm assignments pause, and re-enabling teams restores access to the same coordinator.</li>
+</ul>
+<h3>Verification and limits</h3>
+<ul>
+<li>83 focused settings, invocation and team tests passed offline. A final 36-test rerun also passed with a strengthened running-worker lifecycle regression.</li>
+<li>Type checks passed for configuration, invocation and team bootstrap. No new Ruff findings were introduced; existing formatting debt remains in the settings screen and its older tests.</li>
+<li>No new dependencies or paid calls. Live provider and container execution were not evaluated; agent teams and swarm remain experimental.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-52" data-version="1.0.52" data-sha="66256e3ed34a6f2c2fbb306ed93d4f555abcc050">
+<summary class="entry-toggle"><h2 class="version">v1.0.52</h2><span class="release-summary">Experimental agent teams, disabled by default: persistent in-process teammates, fork/worktree workers, a configured container adapter, durable scoped inboxes, versioned task claims, approval forwarding and separately gated swarm scheduling.</span></summary>
+<div class="release-content"><p><a href="#v1-0-52">Link to v1.0.52</a></p><h3>Added</h3>
+<ul>
+<li>Experimental agent teams, disabled by default: persistent in-process teammates, fork/worktree workers, a configured container adapter, durable scoped inboxes, versioned task claims, approval forwarding and separately gated swarm scheduling.</li>
+<li>Editable built-in specialists shipped as flat agent definition files and seeded once into the global agents directory without overwriting user definitions.</li>
+<li>Automatic memory-wiki consolidation behind time, session-count and ownership gates, with a restricted background dream agent and <code>/dream</code> controls.</li>
+<li>Request-local snip/collapse strategies before model compaction, recoverable offloaded results, and context accounting based on schemas actually sent.</li>
+</ul>
+<h3>Fixed</h3>
+<ul>
+<li>Project agent definitions override global namesakes before execution-mode filtering, consistently across lookup, synchronous/background rosters and HTTP listings. New definitions use <code>&lt;project&gt;/.nova/agents/&lt;name&gt;.md</code> or <code>~/.nova/agents/&lt;name&gt;.md</code>; existing directory definitions remain supported.</li>
+<li>Root TUI sessions and session workers refresh changed definitions before their next turn while retaining the model, checkpoint, workspace and policy settings.</li>
+<li>Background-only mentions route to <code>start_async_task</code>; <code>async: true</code> retains both synchronous and background invocation under the same name.</li>
+<li>Context displays distinguish estimated category shares from provider input usage, account for deferred tools and identify MCP schemas by server.</li>
+<li>Prompt guidance names background tools only when their server is usable.</li>
+</ul>
+<h3>Verification and limits</h3>
+<ul>
+<li>The retained invocation/session/team regression passed 275 checks. Pre-push checks across 41 test files, using isolated groups and reruns, finished with 520 passing cases, one skip and three UI failures reproduced on unchanged baseline: todo collapse, long-list scrolling and the responsive-layout mock. A timing-sensitive stream check passed on rerun; a bounded UI batch's remaining cases were run separately. This is not a green full-suite result.</li>
+<li>A fresh staged-source wheel includes all 14 built-in agent files and the new modules, and excludes the removed specialist modules and review captures.</li>
+<li>Team/container behavior remains experimental. Live Docker/provider execution, real-model task quality and resumable reconnect are unverified. Recovery is cleanup-only; shared file-read caching remains deferred.</li>
+<li>Earlier broad-suite failures/timeouts and two baseline runtime typing errors are documented in the agent-team and invocation evidence. No new dependencies or paid model calls were required.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-51" data-version="1.0.51" data-sha="366b723cc7e50654a1229a978b980b7fb66db2c7">
+<summary class="entry-toggle"><h2 class="version">v1.0.51</h2><span class="release-summary">Nine providers in /auth and /model: Azure OpenAI (v1 API; endpoint in /auth or AZURE_OPENAI_ENDPOINT), Amazon Bedrock (optional [bedrock] extra; Bedrock API key or any AWS credential), Mistral, Groq, Cerebras, xAI, Hugging Face, Kimi For Coding and MiniMax. Model lists come from the cached models.dev catalog, curated ids first.</span></summary>
+<div class="release-content"><p><a href="#v1-0-51">Link to v1.0.51</a></p><h3>Added</h3>
+<ul>
+<li>Nine providers in <code>/auth</code> and <code>/model</code>: Azure OpenAI (v1 API; endpoint in <code>/auth</code> or <code>AZURE_OPENAI_ENDPOINT</code>), Amazon Bedrock (optional <code>[bedrock]</code> extra; Bedrock API key or any AWS credential), Mistral, Groq, Cerebras, xAI, Hugging Face, Kimi For Coding and MiniMax. Model lists come from the cached models.dev catalog, curated ids first.</li>
+<li>Session history is a tree in one append-only <code>tree.jsonl</code> per session. <code>/tree</code> browses every branch, filters by message type, bookmarks entries and continues from any earlier point without losing the old branch.</li>
+<li><code>/export [file]</code> writes a self-contained HTML page of the session tree, with token-shaped secrets masked. <code>/share</code> uploads it as a secret GitHub gist (after a confirmation) and prints a link that renders it.</li>
+<li><code>/nova</code> shows a pixel avatar above the composer that reacts to what the agent is doing. Frames are a 64-pixel sprite sheet drawn with octant glyphs, or half-blocks where octants are unavailable.</li>
+</ul>
+<h3>Fixed</h3>
+<ul>
+<li>The <code>/mcp</code> dialog's buttons sit in two rows of three, so Close is no longer cut off on terminals between about 90 and 120 columns.</li>
+<li>A refused MCP OAuth registration (403) now says why. For Figma's hosted server, which only admits approved clients, it points to the <code>figma-desktop</code> preset. Connection errors are unwrapped from task-group exception groups.</li>
+</ul>
+<h3>Removed</h3>
+<ul>
+<li>The native Windows avatar overlay window (128-pixel RGBA frames). It crashed Windows Terminal; the character-cell avatar is used on every platform.</li>
+</ul>
+<h3>Validation and limits</h3>
+<ul>
+<li>Focused runs passed: 86 tests across sessions, avatar, providers, MCP and status-line controls, then 12 MCP tests including a button-fit check at 90, 100 and 120 columns.</li>
+<li>Live calls to the nine new providers were not made (no keys available). Kimi For Coding may restrict its plan to approved coding agents.</li>
+<li><code>uv.lock</code> adds <code>langchain-aws</code> and boto3 for the optional <code>bedrock</code> extra only; the base install is unchanged.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-50" data-version="1.0.50" data-sha="fb3bcf23f320acf2db5131d5eb28958d8cc431c7">
+<summary class="entry-toggle"><h2 class="version">v1.0.50</h2><span class="release-summary">/statusline opens a checkbox picker with a live preview, Save, Reset and Cancel. Saved field choices persist across launches and apply across designs.</span></summary>
+<div class="release-content"><p><a href="#v1-0-50">Link to v1.0.50</a></p><h3>Added</h3>
+<ul>
+<li><code>/statusline</code> opens a checkbox picker with a live preview, Save, Reset and Cancel. Saved field choices persist across launches and apply across designs.</li>
+<li><code>/auto-approve [on|off|status]</code> controls the current session's approval mode. An amber composer and explicit label indicate automatic tool approval. Child tabs and Telegram topics retain independent approval preferences.</li>
+<li>A provider reasoning-support report documents supported controls and limits.</li>
+</ul>
+<h3>Fixed</h3>
+<ul>
+<li><code>/effort</code> preserves the current provider, model and shared steering list when rebuilding, instead of falling back to the globally saved model. <code>default</code> removes the override; the command describes model-specific limitations.</li>
+<li>OpenCode's Claude route forwards thinking settings. OpenRouter receives its unified reasoning control, and Command Code/OpenCode DeepSeek V4 models receive low/high effort settings.</li>
+<li>Session switches refresh status details and preserve per-session effort and plan-scoped approval state. Explicit approval choices survive remote shutdown.</li>
+</ul>
+<h3>Validation and limits</h3>
+<ul>
+<li>Focused runs passed: 143 provider/UI tests and 145 session/worker/TUI tests. Final checks passed 42 worker/control tests and 17 provider-wiring tests, including serialized HTTP-body checks with an offline mock transport.</li>
+<li>New picker modules and tests pass Ruff lint/formatting; picker modules pass mypy. Diff whitespace checks pass. Existing broader lint issues remain.</li>
+<li>Live authenticated model calls were not run. Supported reasoning controls still depend on the model and route; <code>off</code> can mean minimum effort.</li>
+<li>No dependencies were added. Personal configuration and unrelated local files are excluded from this release.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-49" data-version="1.0.49" data-sha="6659793f431fb4f6046847da1a44f1eb4d1b0d02">
+<summary class="entry-toggle"><h2 class="version">v1.0.49</h2><span class="release-summary">Follow-up messages in the main terminal, session tabs and Telegram reach a running agent at its next model step. Input received during a final response can continue the same turn, and unread late input remains available for a subsequent turn. In-flight model and tool calls finish before pickup.</span></summary>
+<div class="release-content"><p><a href="#v1-0-49">Link to v1.0.49</a></p><h3>Fixed</h3>
+<ul>
+<li>Follow-up messages in the main terminal, session tabs and Telegram reach a running agent at its next model step. Input received during a final response can continue the same turn, and unread late input remains available for a subsequent turn. In-flight model and tool calls finish before pickup.</li>
+<li>Model switches and MCP reloads preserve the shared live-input queue.</li>
+<li>Closing or sending input to a child session no longer cancels another session's turn. Input retains its intended session across tab switches.</li>
+<li>Model routing actions use a responsive grid so Cancel and the other buttons remain visible and clickable on smaller terminals.</li>
+</ul>
+<h3>Validation and limits</h3>
+<ul>
+<li>211 focused steering, session, remote and TUI regression tests passed. The broader run also detected a user-config change at teardown; subsequent 45-test and 21-test runs passed with the config guard clean.</li>
+<li>Router regressions passed at five terminal sizes. Live model and Telegram service calls were not run. No dependencies were added.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-48" data-version="1.0.48" data-sha="cdd76fc46539275927f4f1d12df1e86aec63ff44">
+<summary class="entry-toggle"><h2 class="version">v1.0.48</h2><span class="release-summary">Figma, Vercel and Higgsfield MCP presets use the providers' official hosted endpoints with browser OAuth and Nova's existing secret-backed token storage.</span></summary>
+<div class="release-content"><p><a href="#v1-0-48">Link to v1.0.48</a></p><h3>Added</h3>
+<ul>
+<li>Figma, Vercel and Higgsfield MCP presets use the providers' official hosted endpoints with browser OAuth and Nova's existing secret-backed token storage.</li>
+<li>A Figma Desktop preset connects to the enabled local Dev Mode server. Figma's remote service currently restricts access to approved clients; desktop use requires an eligible seat. Higgsfield requires a paid subscription.</li>
+<li>The landing site includes a redesigned home page, verification page, custom 404 page, responsive navigation, motion effects and local assets.</li>
+</ul>
+<h3>Improved</h3>
+<ul>
+<li>HTTP presets skip local package installation and unnecessary input prompts. CLI installation explains how to authenticate through <code>/mcp</code>.</li>
+<li>The README is condensed around setup, essential commands and optional capabilities, with brief instructions for the new integrations and a Classic terminal preview. The original Nova logo is retained.</li>
+</ul>
+<h3>Validation and limits</h3>
+<ul>
+<li>74 focused MCP preset, authentication, session and tool-discovery tests passed. Preset/test lint and formatting, changed-line installer lint and preset typing checks passed. Account authorization and live provider tool calls were not run.</li>
+<li>All three landing pages passed a local Chrome smoke check at desktop and mobile widths with reduced motion: no JavaScript errors, failed assets or horizontal overflow. Local asset/link/anchor checks and application JavaScript syntax passed. This is not a full accessibility or browser compatibility evaluation.</li>
+<li>Python dependencies are unchanged. The static site includes local GSAP, ScrollTrigger, SplitText and Lenis browser libraries with their bundled notices.</li>
+<li><code>FEATURES.md</code>, private credentials and local review artifacts are not published.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-47" data-version="1.0.47" data-sha="4f6ed340d740e693c8a7772da9402397d95c8ae6">
+<summary class="entry-toggle"><h2 class="version">v1.0.47</h2><span class="release-summary">Explicitly approved plans are saved in the project's .nova/plans folder and mirrored to the global archive. Automatically approved plans stay global. recent_plans lets the agent find and read both stores for the current project.</span></summary>
+<div class="release-content"><p><a href="#v1-0-47">Link to v1.0.47</a></p><h3>Improved</h3>
+<ul>
+<li>Explicitly approved plans are saved in the project's <code>.nova/plans</code> folder and mirrored to the global archive. Automatically approved plans stay global. <code>recent_plans</code> lets the agent find and read both stores for the current project.</li>
+<li><code>/dream</code> maintains a linked memory wiki with compact indexes, topic maps, related pages, backups and broken-link checks. It recognizes habits-only and project-scoped notes, preserves stable habit checklists and defers writes in plan mode. Memory overflow retains recoverable originals.</li>
+<li>Main, planning, memory and review prompts now agree on delegation, bounded waiting, instruction scope, plan locations and wiki navigation. Responses can follow the requested format without a fixed four-line limit. Desktop sleep requires a user request or applicable standing instruction.</li>
+</ul>
+<h3>Validation and limits</h3>
+<ul>
+<li>Release checks passed: 135 memory/wiki tests and 142 prompt, planning, approval, async-task and agent integration tests. The memory engine/tool retained 99% coverage; five focused runtime files passed mypy. Detailed evidence is in <code>scripts/PROMPT_AUDIT.md</code> and <code>scripts/memory_wiki/EVIDENCE.md</code>.</li>
+<li>The memory-wiki engine/tool previously achieved 99% branch-aware coverage; three isolated manual mutants were rejected. These checks establish structural contracts, not live-model reasoning or consolidation quality.</li>
+<li>The full suite is not claimed passing: a background handoff timeout was also reproduced on the baseline. Existing typing errors remain documented.</li>
+<li>No new dependencies, model changes or paid provider calls. Personal memories, credentials and prompt overrides are not included in this release.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-46" data-version="1.0.46" data-sha="3d675a9fb7b09f28501be137624a6ff18926f3c2">
+<summary class="entry-toggle"><h2 class="version">v1.0.46</h2><span class="release-summary">Startup resume, /resume, and reopening saved tabs share a searchable session browser. Search tasks, projects, models, or session IDs while preserving the correct session selection.</span></summary>
+<div class="release-content"><p><a href="#v1-0-46">Link to v1.0.46</a></p><h3>Improved</h3>
+<ul>
+<li>Startup resume, <code>/resume</code>, and reopening saved tabs share a searchable session browser. Search tasks, projects, models, or session IDs while preserving the correct session selection.</li>
+<li>A scrollable details pane shows the saved task, project, model, status, blockers, and next step. Legacy sessions clearly indicate when their original model cannot be restored.</li>
+<li>Resume dialogs follow the selected design and color palette. Compact layouts keep search, actions, and the selected session visible while preserving the current draft.</li>
+<li>The resume-mode dialog explains the existing summary-first and as-saved choices.</li>
+</ul>
+<h3>Validation and limits</h3>
+<ul>
+<li>79 focused regression tests passed, covering resume choices, saved-model restoration, saved tabs, session clearing, and design preferences. The final nine UI tests also passed after the compact-selection adjustment.</li>
+<li>The new dialog and its tests pass Ruff and formatting checks; the new dialog passes mypy. Headless previews were reviewed at desktop and compact sizes.</li>
+<li>No new dependencies or live provider calls. Native terminal rendering was not manually tested.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-45" data-version="1.0.45" data-sha="bdc5e9a9dca3a89a718176cda6bbd2ffd6c99b87">
+<summary class="entry-toggle"><h2 class="version">v1.0.45</h2><span class="release-summary">/effort on Claude Sonnet 5.5 (and other Claude 4.6+ and Fable models) failed with &quot;thinking={&quot;type&quot;: &quot;enabled&quot;, &quot;budget_tokens&quot;: ...} is not supported&quot;. Nova now sends adaptive thinking with output_config.effort to those models and keeps budget_tokens for older ones. &quot;off&quot; is the lowest effort, since disabled thinking is rejected by Opus 5.5, Sonnet 5.5 and Fable.</span></summary>
+<div class="release-content"><p><a href="#v1-0-45">Link to v1.0.45</a></p><h3>Fixed</h3>
+<ul>
+<li><code>/effort</code> on Claude Sonnet 5.5 (and other Claude 4.6+ and Fable models) failed with &quot;<code>thinking={&quot;type&quot;: &quot;enabled&quot;, &quot;budget_tokens&quot;: ...}</code> is not supported&quot;. Nova now sends adaptive thinking with <code>output_config.effort</code> to those models and keeps <code>budget_tokens</code> for older ones. &quot;off&quot; is the lowest effort, since disabled thinking is rejected by Opus 5.5, Sonnet 5.5 and Fable.</li>
+<li>OpenAI: <code>/effort</code> reaches every reasoning model (o-series, GPT-5 and later), not only names containing o1/o3, and is no longer sent to models that reject it (gpt-4o, gpt-4.1, <code>*-chat</code>, o1-mini/preview). &quot;off&quot; is &quot;low&quot;, since &quot;none&quot; and &quot;minimal&quot; are not accepted by every model.</li>
+<li>Gemini: 3.x and later get <code>thinking_level</code> (Gemini 3 Pro has no medium), 2.5 gets <code>thinking_budget</code> within each model's limits (&quot;off&quot; is 0 on Flash and the 128 minimum on Pro), and 2.0 gets no thinking setting.</li>
+</ul>
+<h3>Validation and limits</h3>
+<ul>
+<li>34 tests cover each model family, including the requests langchain builds for Claude, OpenAI (both APIs) and Gemini 3; the model-build, NVIDIA and TUI effort tests pass.</li>
+<li>Not tried against the live providers.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-44" data-version="1.0.44" data-sha="53bf1b2008326430bce3ebb2b01d9d174fdd5a5f">
+<summary class="entry-toggle"><h2 class="version">v1.0.44</h2><span class="release-summary">/update has an Update now button: it saves the session (stopping a running turn after asking), installs the update in the same terminal, restarts Nova and reopens the session, continuing an interrupted turn. A failed update restarts the current version.</span></summary>
+<div class="release-content"><p><a href="#v1-0-44">Link to v1.0.44</a></p><h3>Added</h3>
+<ul>
+<li><code>/update</code> has an <strong>Update now</strong> button: it saves the session (stopping a running turn after asking), installs the update in the same terminal, restarts Nova and reopens the session, continuing an interrupted turn. A failed update restarts the current version.</li>
+<li><code>/claude-review</code> and <code>/codex-review</code>: Claude Code or Codex reviews the changes headless and read-only; Nova verifies the findings and reports them. Both resume with <code>resume</code> and report progress to Telegram.</li>
+<li><code>/claude-plan resume</code> and <code>/codex-plan resume</code> continue a planning stopped with Esc or <code>/stop</code>.</li>
+<li>Settings shows Claude Code and Codex usage (5-hour and weekly windows) as progress bars, with a <strong>Check Claude now</strong> refresh.</li>
+<li>Message queueing, interrupt-and-redirect (<code>/redirect</code>, also from Telegram), pulling a queued message back with Up, and Up/Down input history.</li>
+</ul>
+<h3>Changed</h3>
+<ul>
+<li><code>nova update</code> shows animated stage progress and a finish screen without clearing the terminal. On Windows it runs in the foreground (the running launcher is moved aside), so the shell prompt returns only when it is done.</li>
+<li>Per-call tool schemas are 55% smaller (45 tools / 57k characters to 25 / 25k): most-used tools are ranked on the last 30 days, the async agent roster is one line per agent, rarely called tools load through <code>search_tools</code>, and long descriptions are shorter.</li>
+<li>The NOVA wordmark shows in windows narrower than the full banner and in windows from 17 rows tall, instead of disappearing.</li>
+<li><code>wait_for_task</code> is a short look of at most 10 seconds, once per user message.</li>
+</ul>
+<h3>Validation and limits</h3>
+<ul>
+<li>Focused suites for updates, planners, reviews, banners, tool search, queueing and the TUI pass; the full suite was not run.</li>
+<li>Update now and the in-place Windows update were tested with stand-ins and a throwaway uv tool, not yet on a real Nova install.</li>
+<li>Only the main session is reopened after an update; extra session tabs are not.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-43" data-version="1.0.43" data-sha="2d984455c8cf89d9b85bf876e3b1096fe2e739a5">
+<summary class="entry-toggle"><h2 class="version">v1.0.43</h2><span class="release-summary">Start approved TUI plans in a fresh execution conversation with the complete plan text, including plans from /plan, /claude-plan, /codex-plan, and main-agent self-planning.</span></summary>
+<div class="release-content"><p><a href="#v1-0-43">Link to v1.0.43</a></p><h3>Fixed</h3>
+<ul>
+<li>Start approved TUI plans in a fresh execution conversation with the complete plan text, including plans from <code>/plan</code>, <code>/claude-plan</code>, <code>/codex-plan</code>, and main-agent self-planning.</li>
+<li>Import implementation steps and verification checks into the execution todo list before starting. Reject todo updates that remove or rename imported plan items, and report items left open after execution.</li>
+<li>Stop the handoff if the approved plan cannot be loaded, preserve the planning backend until plan resolution, and remove plan-debug chat messages.</li>
+</ul>
+<h3>Validation and limits</h3>
+<ul>
+<li>The focused plan, command handoff, agent stream, middleware, path, and archive suite passed 82 tests.</li>
+<li>Ruff, formatting, and mypy checks pass for the new plan execution module; <code>git diff --check</code> passes.</li>
+<li>The full suite timed out before producing a final report. Existing legacy modules retain lint findings. No new dependencies were added.</li>
+<li>Todo tracking does not prove semantic completion by a model. The existing done gate nudges once when items remain open, and the TUI reports remaining items.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-42" data-version="1.0.42" data-sha="6f5acd213357462eea909dda414c1e09cd9bf695">
+<summary class="entry-toggle"><h2 class="version">v1.0.42</h2><span class="release-summary">Added Centered, Banner, and Minimal interface styles in Settings alongside Dashboard and Classic. Styles apply immediately and preserve the conversation and multiline draft.</span></summary>
+<div class="release-content"><p><a href="#v1-0-42">Link to v1.0.42</a></p><h3>Improved</h3>
+<ul>
+<li>Added Centered, Banner, and Minimal interface styles in Settings alongside Dashboard and Classic. Styles apply immediately and preserve the conversation and multiline draft.</li>
+<li>Extended Banner and Minimal styling to conversations, tool output, task panels, terminals, status indicators, and modal dialogs, including <code>/model</code> and nested confirmations.</li>
+<li>Unified modal tabs, lists, fields, buttons, and backdrops with the selected style and color theme. Minimal uses compact inputs and borderless panels; Banner uses subtle frames.</li>
+<li>Removed the user-message hover background and fixed terminal text colors that ignored the selected theme.</li>
+</ul>
+<h3>Fixed</h3>
+<ul>
+<li>Apply interface styles on every screen change, including modal screens that open without a resize event.</li>
+<li>Ignore periodic home refreshes after layout widgets have been removed during shutdown.</li>
+<li>Preserve existing Dashboard/Classic preferences when no new interface style is saved.</li>
+</ul>
+<h3>Validation and limits</h3>
+<ul>
+<li>The focused home, question, subagent, terminal, and reference-screen run passed 83 checks and exposed one shutdown refresh failure; that failure passed after the fix.</li>
+<li>Subsequent focused runs passed the modal styling, keyboard navigation, nested confirmation, live switching, form control, and removed-layout regressions.</li>
+<li>Visually inspected Banner and Minimal model and settings dialogs. Home presentation and preference tests pass Ruff; home presentation passes its focused mypy check. The wider TUI retains existing lint findings.</li>
+<li>Tests used isolated user profiles. The full suite and live model providers were not exercised. No new dependencies were added.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-41" data-version="1.0.41" data-sha="aa4e41811ef5971958ae91e994fa84ff3c7315e9">
+<summary class="entry-toggle"><h2 class="version">v1.0.41</h2><span class="release-summary">Added a persistent Redesigned home screen toggle under Settings → Appearance. Turn it off for the classic banner and chat layout; changes apply immediately without replacing the conversation.</span></summary>
+<div class="release-content"><p><a href="#v1-0-41">Link to v1.0.41</a></p><h3>Improved</h3>
+<ul>
+<li>Added a persistent <strong>Redesigned home screen</strong> toggle under <strong>Settings → Appearance</strong>. Turn it off for the classic banner and chat layout; changes apply immediately without replacing the conversation.</li>
+<li>Classic mode skips dashboard resource sampling and hides its taller banner in short terminals to keep the composer usable.</li>
+<li>Removed decorative vertical accent bars from messages, task cards, notices, terminals, and detail panels, including rendering code that recreated bars during updates.</li>
+</ul>
+<h3>Fixed</h3>
+<ul>
+<li><code>/clear</code> now rebuilds the full fresh-chat context estimate, including tool schemas, before refreshing the CTX indicators and home panels. Opening <code>/context</code> no longer changes the count merely by including those schemas.</li>
+<li>Ignore late system-resource samples after the dashboard panel has been removed during shutdown.</li>
+</ul>
+<h3>Validation and limits</h3>
+<ul>
+<li>All 121 focused offline home-layout, context, animation, message, task-card, reference, workspace, harness, and terminal regression checks passed across two runs.</li>
+<li>New test files pass Ruff lint and formatting checks; the wider repository retains existing lint findings.</li>
+<li>Live-provider behavior was not exercised. No new dependencies were added.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-40" data-version="1.0.40" data-sha="0079f3c922018bd89bc96062d102e063e6ba99db">
+<summary class="entry-toggle"><h2 class="version">v1.0.40</h2><span class="release-summary">Keep newer provider context counts after compaction and exclude auxiliary summarizer requests from the main context indicator.</span></summary>
+<div class="release-content"><p><a href="#v1-0-40">Link to v1.0.40</a></p><h3>Fixed</h3>
+<ul>
+<li>Keep newer provider context counts after compaction and exclude auxiliary summarizer requests from the main context indicator.</li>
+<li>Refresh the TUI context indicators together when usage arrives. Remote goal runs now sum usage across turns while displaying the latest request's context size.</li>
+<li>Release <code>wait_for_task</code> when new user input arrives, allowing the agent to respond while the background shell job or subagent continues. Wait interruption is isolated by conversation and supported by the TUI, child sessions, and remote messages.</li>
+</ul>
+<h3>Validation and limits</h3>
+<ul>
+<li>A combined offline goal, compaction, usage, protocol, waiter, worker, remote-status, and TUI regression run passed all 205 tests.</li>
+<li>Waiter Ruff formatting, lint, and mypy checks passed; the wider repository retains existing lint findings.</li>
+<li>Live-provider behavior was not exercised. No new dependencies were added.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-39" data-version="1.0.39" data-sha="6ead94dd27483d83470739cad4734be482db7806">
+<summary class="entry-toggle"><h2 class="version">v1.0.39</h2><span class="release-summary">Redesigned the home screen with navigation tabs, quick task starters, and theme-aware system, model, task, and context panels.</span></summary>
+<div class="release-content"><p><a href="#v1-0-39">Link to v1.0.39</a></p><h3>Improved</h3>
+<ul>
+<li>Redesigned the home screen with navigation tabs, quick task starters, and theme-aware system, model, task, and context panels.</li>
+<li>Added live CPU, RAM, and network counters through the new direct <code>psutil</code> dependency. The composer spans the terminal width and navigation tabs align left.</li>
+<li>Goals now retain their objective, lifecycle, and turn budget across session saves. Added pause, resume, and budget controls to the TUI, shared commands, and child sessions.</li>
+<li>Goal continuation yields to planning and queued input, pauses on interruption, avoids tool-free loops, and requires an explicit completion declaration with evidence.</li>
+</ul>
+<h3>Fixed</h3>
+<ul>
+<li>Added a reducer for concurrent <code>_context_snapshot</code> writes, preventing the remote <code>INVALID_CONCURRENT_GRAPH_UPDATE</code> error while preserving a complete diagnostic.</li>
+<li>Prevented completed or paused goals and old rubrics from leaking into later agent requests or background threads.</li>
+<li>Restored the full conversation area when a shell command starts from the home screen.</li>
+</ul>
+<h3>Validation and limits</h3>
+<ul>
+<li>Goal, agent-stream, worker, headless, and snapshot checks passed (144 tests in one focused run); final TUI/session/worker checks passed (114 tests in another run). These runs overlap.</li>
+<li>Targeted Ruff and mypy checks passed. The wider repository retains existing lint findings.</li>
+<li>The full suite reached a shell background-handoff timeout. That timeout, three context-metric assertion failures, and the async delegation prompt assertion failure were reproduced on unchanged <code>7f4b87e</code>.</li>
+<li>One TUI scroll-timing assertion failed in the broad TUI run and passed on its focused rerun and subsequent session run.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-38" data-version="1.0.38" data-sha="c16ffdd68f2d3867ae0f2ac4824a76f1f513df7f">
+<summary class="entry-toggle"><h2 class="version">v1.0.38</h2><span class="release-summary">The prompt composer starts at one text row and grows as lines or soft wraps are added, leaving more room for the conversation when idle.</span></summary>
+<div class="release-content"><p><a href="#v1-0-38">Link to v1.0.38</a></p><h3>Improved</h3>
+<ul>
+<li>The prompt composer starts at one text row and grows as lines or soft wraps are added, leaving more room for the conversation when idle.</li>
+<li>Explicitly enables soft wrapping and adds TUI coverage for multiline cursor navigation, in-place editing, growth, and shrinkage.</li>
+</ul>
+<h3>Validation and limits</h3>
+<ul>
+<li>TUI and clipboard tests passed (107 tests).</li>
+<li>Ruff still reports existing findings in the touched files; none were on the added lines.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-37" data-version="1.0.37" data-sha="3befa68754ec80772b0b73414558b16422b8be0a">
+<summary class="entry-toggle"><h2 class="version">v1.0.37</h2><span class="release-summary">Isolated learning proposal tests from a developer's auto-approval setting and real proposal ledger.</span></summary>
+<div class="release-content"><p><a href="#v1-0-37">Link to v1.0.37</a></p><h3>Fixed</h3>
+<ul>
+<li>Isolated learning proposal tests from a developer's auto-approval setting and real proposal ledger.</li>
+<li>Updated curator and skill refinement regressions to verify proposal approval and between-turn activation.</li>
+<li>Clarified curator and refinement messages to describe pending proposals.</li>
+</ul>
+<h3>Validation and limits</h3>
+<ul>
+<li>Focused learning regressions passed (194 tests); the directly affected set passed again after final edits (60 tests).</li>
+<li>A live model review was not exercised; these tests use offline fixtures.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-36" data-version="1.0.36" data-sha="af40e35f5ae48dc57ba33077ba36d44ffc6566f8">
+<summary class="entry-toggle"><h2 class="version">v1.0.36</h2><span class="release-summary">The main agent is prompted to collect required async subagent results before claiming a task is complete, using bounded waits and a clear pending status after five minutes.</span></summary>
+<div class="release-content"><p><a href="#v1-0-36">Link to v1.0.36</a></p><h3>Fixed</h3>
+<ul>
+<li>The main agent is prompted to collect required async subagent results before claiming a task is complete, using bounded waits and a clear pending status after five minutes.</li>
+<li>Async subagents that finish during an active TUI turn are queued for an automatic result fetch after that turn.</li>
+<li><code>!!</code> returns to the TUI when its terminal command exits, without waiting for an extra Enter key.</li>
+</ul>
+<h3>Validation and limits</h3>
+<ul>
+<li>Focused async completion, prompt, waiter, and terminal command tests passed (35 tests).</li>
+<li>A live remote subagent was not exercised; the remote completion path was tested offline.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-35" data-version="1.0.35" data-sha="7a7b1a747f8932ebf20065d3c7ca04fcb9ab44b5">
+<summary class="entry-toggle"><h2 class="version">v1.0.35</h2><span class="release-summary">wait_for_task performs a bounded wait for a background shell job or async subagent and reports its current status or result.</span></summary>
+<div class="release-content"><p><a href="#v1-0-35">Link to v1.0.35</a></p><h3>Added</h3>
+<ul>
+<li><code>wait_for_task</code> performs a bounded wait for a background shell job or async subagent and reports its current status or result.</li>
+<li><code>list_waiters</code> exposes active waits and their targets.</li>
+<li>The TUI task bar shows the number of active waiters and their targets, with details in a tooltip.</li>
+</ul>
+<h3>Validation and limits</h3>
+<ul>
+<li>Focused waiter, shell-job, prompt, and TUI tests passed. Ruff and an isolated mypy check passed.</li>
+<li>A live remote subagent wait was not exercised; the remote path is covered with offline tests.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-34" data-version="1.0.34" data-sha="b941b319ec6c20331686d957813bd94eb3812d79">
+<summary class="entry-toggle"><h2 class="version">v1.0.34</h2><span class="release-summary">The coding workflow checks what numeric values include and verifies ambiguous classifications against the full category definition.</span></summary>
+<div class="release-content"><p><a href="#v1-0-34">Link to v1.0.34</a></p><h3>Improved</h3>
+<ul>
+<li>The coding workflow checks what numeric values include and verifies ambiguous classifications against the full category definition.</li>
+<li>The optional post-edit reminder recognizes failed checks and checks with no tool result.</li>
+<li>Terminal Bench analysis records post-edit check attempts and compares matched jobs; the evaluation launcher supports SWE-bench Verified.</li>
+</ul>
+<h3>Validation and limits</h3>
+<ul>
+<li>A matched Terminal Bench financial-document task improved from reward 0 to 1, with seven verifier tests passing. This single task does not establish a general accuracy gain and used more tokens.</li>
+<li>Focused agent and prompt regressions passed (87 tests). The full suite was kept separate; five pre-existing scoped mypy errors remain.</li>
+<li>A separate HTML-filter benchmark has a flawed clean-input comparison; its score was not used as evidence for a harness change.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-33" data-version="1.0.33" data-sha="b8ac0b2d2d1496557f4816dd805784ba464107d0">
+<summary class="entry-toggle"><h2 class="version">v1.0.33</h2><span class="release-summary">The shared coding agent asks for an independent check before generalizing from one example and gives more useful guidance when a shell check repeats without progress.</span></summary>
+<div class="release-content"><p><a href="#v1-0-33">Link to v1.0.33</a></p><h3>Improved</h3>
+<ul>
+<li>The shared coding agent asks for an independent check before generalizing from one example and gives more useful guidance when a shell check repeats without progress.</li>
+<li>Context compaction budgets encoded images by request size and treats provider HTTP 413 responses as a signal to compact. Oversized inline tool images can be omitted on the fallback retry.</li>
+<li>Terminal Bench runs use the effective Harbor time limit in the prompt, report failures and token use locally, and allow more graph steps before the task time limit.</li>
+</ul>
+<h3>Validation and limits</h3>
+<ul>
+<li>The full Terminal Bench 2 run passed 49 of 89 tasks before these fixes. A graph-cutoff replay passed, but took a different path below the old graph limit, so causation is unproven.</li>
+<li>An image-heavy video replay reached grading without the earlier HTTP 413, but still failed the verifier's second video. The prompt change has not established better task accuracy.</li>
+<li>Focused context, provider-error, loop-guard, analyzer, and evaluation-wrapper checks passed. The full unit suite and full Terminal Bench run were not repeated for this release.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-32" data-version="1.0.32" data-sha="96cccb53e57b8c1003d870cd11424873a7cbb939">
+<summary class="entry-toggle"><h2 class="version">v1.0.32</h2><span class="release-summary">Cross-project communication between live tabs in one Nova window: use @tab:&lt;session-id&gt; &lt;message&gt; or @&lt;unique-title&gt; &lt;message&gt;, with autocomplete, queued delivery and linked replies. Agents can list sessions, send messages, read owned requests and explicitly reply through four session tools.</span></summary>
+<div class="release-content"><p><a href="#v1-0-32">Link to v1.0.32</a></p><h3>Added</h3>
+<ul>
+<li>Cross-project communication between live tabs in one Nova window: use <code>@tab:&lt;session-id&gt; &lt;message&gt;</code> or <code>@&lt;unique-title&gt; &lt;message&gt;</code>, with autocomplete, queued delivery and linked replies. Agents can list sessions, send messages, read owned requests and explicitly reply through four session tools.</li>
+<li>Linked replies render as Markdown in initially collapsed panels. <strong>Attach to prompt</strong> adds the final answer to the owning tab's draft without sending it or interrupting a task; <strong>Open tab</strong> navigates explicitly.</li>
+<li><code>/tabs resume</code> picks a saved session across projects; <code>/tabs resume &lt;id&gt;</code> accepts an exact ID or unique prefix. Sessions reopen in their saved project with their history, assistant, model continuation and checklist. Already-open sessions reuse their tab.</li>
+<li>Reproducible cross-session regression, coverage, baseline-probe and fault-injection checks, with separate implementation evidence reports.</li>
+</ul>
+<h3>Fixed</h3>
+<ul>
+<li>Linked replies retain the latest main-agent answer instead of concatenating intermediate and subagent output into a duplicate raw transcript block.</li>
+<li>Child sessions save after each turn, including interruption and error paths. Cancelling subprocess startup removes the incomplete tab.</li>
+<li>Child shutdown closes stdin before waiting for process exit, releasing outstanding pipe reads.</li>
+<li>Telegram topics use <code>NovaCode · &lt;session name&gt;</code>. Existing topics update on reconnect while preserving their history and routing; unchanged titles avoid repeated edits and failed edits can retry without creating duplicate topics.</li>
+<li>Telegram and peer turns use correlated prompt IDs so queued replies and attachments remain associated with the correct request. Unicode tab addresses are supported and ambiguous names fail clearly.</li>
+</ul>
+<h3>Limits and validation</h3>
+<ul>
+<li>Cross-session communication covers live tabs in a single Nova window. It shares only explicit message content; each recipient retains its own workspace, history, model and tool approval settings. Message bookkeeping is bounded and held in memory.</li>
+<li>Resuming requires an existing, Nova-approved project folder. Historical tools are displayed without executing them. Model availability and legacy-session fallbacks retain the existing continuation behavior.</li>
+<li>Targeted Windows session, tab, Telegram, transcript and model-restoration regressions pass using simulated model events, mocked Telegram APIs and real child-process transport rehearsals. New communication and resume modules have 100% line coverage.</li>
+<li>No live-provider or live-Telegram validation was performed. Existing full-suite timeouts and repository-wide lint limitations are documented in <code>CROSS_SESSION_EVIDENCE.md</code> and <code>TAB_RESUME_EVIDENCE.md</code>.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-31" data-version="1.0.31" data-sha="036ce1953a15957676a15c2f6c522d87e372493a">
+<summary class="entry-toggle"><h2 class="version">v1.0.31</h2><span class="release-summary">Telegram remote commands now use the normal TUI handlers in the main session topic, including skills, model selection, settings, and plugin commands.</span></summary>
+<div class="release-content"><p><a href="#v1-0-31">Link to v1.0.31</a></p><h3>Added</h3>
+<ul>
+<li>Telegram remote commands now use the normal TUI handlers in the main session topic, including skills, model selection, settings, and plugin commands.</li>
+<li>Interactive command panels expose numbered choices in chat. Use <code>/choose N</code>, <code>/set N value</code>, <code>/input N value</code>, <code>/panel N</code>, and <code>/back</code> to select actions, edit fields, submit forms, navigate pages, and close panels. Controls belong to the requesting sender and topic; password fields are masked.</li>
+<li>Telegram's native slash-command autocomplete menu includes registered commands and enabled skills. Menus refresh in the background after connection, skill management, and plugin registration; unchanged menus do not issue another registration request.</li>
+<li>Child sessions resolve slash commands through shared CLI handlers and invoke skills in their own workspace, preserving skill arguments and pinned prompts.</li>
+<li>Included context-display screenshots (<code>CTX1.png</code> and <code>CTX2.png</code>) and regression coverage for context-gauge updates while idle.</li>
+</ul>
+<h3>Fixed</h3>
+<ul>
+<li>Commands sent during a running main-session task are queued until the turn finishes, with a bounded queue and cleanup on shutdown.</li>
+<li>Telegram command names with a bot suffix route correctly, including panel controls. Menu names use underscores in place of hyphens and resolve back to the original commands.</li>
+<li>Failed, cancelled, expired, and undeliverable remote command panels release their resources; expired panels dismiss waiting dialogs.</li>
+<li>Large command panels can be paged, and long command output is split for delivery.</li>
+</ul>
+<h3>Limits and validation</h3>
+<ul>
+<li>Telegram permits at most 100 command-menu entries, shared across the chat's topics. Commands take priority, followed by enabled skills; other skills remain callable with <code>/skill:name</code>.</li>
+<li>TUI-only management panels are available in the main topic. Child topics use the shared CLI handlers for other commands.</li>
+<li>Remote command, autocomplete, streaming, topic, and session-worker regression tests pass with mocked Telegram APIs. Live Telegram behavior has not been verified.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-30" data-version="1.0.30" data-sha="d80d4cf61b445d8fc33559150354ad54e7df01eb">
+<summary class="entry-toggle"><h2 class="version">v1.0.30</h2><span class="release-summary">Clicking a task in the subagents panel opens a full page laid out like the main transcript: the task as a prompt block, the agent's name over rendered Markdown, and each run of tool calls as one block with a theme-coloured bullet per call and its result on the same line. Results are matched to their own call, so parallel calls that finish out of order still read correctly.</span></summary>
+<div class="release-content"><p><a href="#v1-0-30">Link to v1.0.30</a></p><h3>Added</h3>
+<ul>
+<li>Clicking a task in the subagents panel opens a full page laid out like the main transcript: the task as a prompt block, the agent's name over rendered Markdown, and each run of tool calls as one block with a theme-coloured bullet per call and its result on the same line. Results are matched to their own call, so parallel calls that finish out of order still read correctly.</li>
+<li>A Telegram topic that connects while a turn is running joins that turn, starting from the response so far, instead of waiting for the next prompt.</li>
+<li>Nova's own context compaction for the main agent and every subagent: prune old tool results, trim old tool-call arguments, then summarize with the <code>/compact</code> engine. Your messages are kept verbatim, a failed summary no longer fails the turn, and the summary call no longer streams into the transcript.</li>
+<li>Nova works within a 128K-token context budget by default. Set <code>context_budget_tokens</code> to change it (<code>0</code> uses the model's whole window). <code>/context</code>, auto-compact, and compaction all use the same figure.</li>
+<li>Learning reviews once when a task ends, with the real outcome. Lessons are stored per project and reach the shared pool only when a second project confirms them; a failed task shares nothing.</li>
+<li>Pitfalls are stored as symptom, cause, and fix, and recalled when failing output matches them by meaning, using a local embedding model (word overlap as fallback). Built-in environment lessons are recalled only at a failure.</li>
+<li>Ollama models run through Ollama's OpenAI-compatible endpoint. Thinking off maps to <code>reasoning_effort=none</code>, and a local model's context window is read from its Modelfile <code>num_ctx</code>, then <code>OLLAMA_CONTEXT_LENGTH</code>.</li>
+<li><code>--help</code> shows the NovaCode name and version.</li>
+<li>The evaluation harness runs Terminal-Bench through Harbor on local Docker or Modal, in a hermetic home that never reads or writes <code>~/.nova</code>, with <code>--ak</code> knobs for <code>reasoning_effort</code>, <code>max_tokens</code>, <code>learning=off|on|frozen</code>, and <code>context_budget</code>.</li>
+</ul>
+<h3>Fixed</h3>
+<ul>
+<li>The loop guard's hard stop now ends the turn; previously a model could keep repeating a command through it. A repeat is flagged on the second identical result, near-identical calls with the same result count as one, and a hard stop left by an interrupted turn no longer ends the next one.</li>
+<li>A reply cut off by the output limit is no longer accepted as the end of a turn; the agent is nudged to continue, up to three times in a row.</li>
+<li>Sandbox file tools work on images without <code>python3</code>: read, list, and glob fall back to shell, and write/edit say what is missing. A populated directory is no longer reported as empty.</li>
+<li>Sandbox installers no longer hang on interactive prompts, and files written to <code>/tmp</code>, <code>/dev</code>, <code>/proc</code>, or <code>/sys</code> land where the shell sees them. Sandbox provider lifecycle and timeout handling are repaired.</li>
+<li><code>rm -rf</code> below the top level is allowed again (for example <code>rm -rf /tmp/build</code>). Root, home, and top-level directories stay blocked in any argument position, quoted or not, including with the long <code>--recursive</code> / <code>--force</code> options.</li>
+<li>The dangerous-command pattern for <code>halt</code> / <code>shutdown</code> no longer matches those words inside other commands.</li>
+<li>A test run's failure summary is treated as a failure.</li>
+<li><code>/context</code> rows no longer stay at 0 when one tool has no JSON schema, and the embedding cache no longer raises <code>KeyError</code> after it fills.</li>
+<li>The status bar updates CTX on every model call, and the cache hit rate can no longer exceed 100%.</li>
+<li>The TUI stays responsive on long, tool-heavy turns: large tool arguments are compared in milliseconds rather than seconds, saved tool results are checked on disk once rather than on every model call, and compaction's planning pass runs off the UI loop.</li>
+<li>Compaction recovers from a too-long summary request, keeps injected notes out of your quoted messages, and budgets a subagent against its own model.</li>
+<li>Improved async concurrency and runtime efficiency.</li>
+</ul>
+<h3>Limits</h3>
+<ul>
+<li>The 128K default budget's effect on task success has not been measured. Set <code>context_budget_tokens</code> to <code>0</code> to return to the whole window.</li>
+<li>In the subagent page the tool block is always expanded. A remote (async) agent's page updates step by step rather than token by token.</li>
+<li>Recall by meaning needs the local embedding model; without it, matching falls back to word overlap.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-29" data-version="1.0.29" data-sha="d1c220b14498848a5d1ab73122e9f8756f046f17">
+<summary class="entry-toggle"><h2 class="version">v1.0.29</h2><span class="release-summary">Persistent public --mode pipe / --headless JSONL sessions for remote-app bridges, with readiness, request IDs, tool approvals, cancellation, queues, and clean shutdown. Includes process-local --model, startup/request/approval deadlines, a documented v1 protocol, and a Node adapter example.</span></summary>
+<div class="release-content"><p><a href="#v1-0-29">Link to v1.0.29</a></p><h3>Added</h3>
+<ul>
+<li>Persistent public <code>--mode pipe</code> / <code>--headless</code> JSONL sessions for remote-app bridges, with readiness, request IDs, tool approvals, cancellation, queues, and clean shutdown. Includes process-local <code>--model</code>, startup/request/approval deadlines, a documented v1 protocol, and a Node adapter example.</li>
+<li>Telegram toggle in the <code>/trello</code> board header connects a dedicated Trello topic using the current remote bridge or saved protected credentials.</li>
+<li>Authorized users can send text tasks or <code>/add &lt;task&gt;</code> to create Loaded cards, and <code>/status</code> to see counts. Topic messages never become ordinary session prompts or steering.</li>
+<li>Topic links, asynchronous connection status, duplicate message protection, deleted-topic recovery, and paused intake when the toggle is off or the board stops.</li>
+<li>Headless deadlines (<code>--timeout</code>), optional partial text events, versioned JSON records with exit codes, bounded UTF-8 input, and structured startup errors.</li>
+</ul>
+<h3>Fixed</h3>
+<ul>
+<li>Internal compaction uses the threshold shown by <code>/context</code>; category estimates rebuild after compaction and resume. Internal SESSION INTENT drafts are hidden behind an animated compaction status.</li>
+<li>Startup restore seeds a fresh checkpoint instead of merging saved history with old messages and summarization cutoffs. Restore budgets count tool arguments and retained reasoning, and restored metrics include both the briefing and injected instructions/memory.</li>
+<li>Trello execution and logs stay with the board's owning TUI tab. Queued execution waits until that tab is selected and idle.</li>
+<li>Telegram task intake preserves the session's approval mode, existing topic subscriptions, and dedicated handlers across bridge restarts. Connection and acknowledgment operations have deadlines.</li>
+<li>Notification hook payloads identify TUI-managed delivery and provide the current installation's Nova.png path. The example Windows hook defers to the native TUI notifier to avoid a second toast with the old avatar.</li>
+<li>Pipe output survives partial writes and interrupted writes, routes ordinary/native/child diagnostic output to stderr, and reports cancellation, timeouts, closed pipes, and incomplete event streams consistently.</li>
+<li>Headless approval requests reject unresolved verdicts rather than silently granting permission. <code>--print</code> no longer enables auto-approve or persists recursive workspace trust. Use explicit <code>--auto-approve</code> and, when needed, <code>--trust-workspace</code> (folder-only).</li>
+<li>Subagent prose no longer pollutes the final headless answer or turn count; exceeding the turn budget cannot be hidden by an interrupt or completion event.</li>
+</ul>
+<h3>Limits</h3>
+<ul>
+<li>The board remains in memory; keep Nova and the board running. The dedicated topic accepts text tasks only.</li>
+<li>Telegram must already be configured through <code>/remote</code>; forum topics and bot Manage Topics permission are required.</li>
+<li>Existing user-installed PowerShell notification hooks need the updated <code>examples/hooks/windows-notify.ps1</code> to honor the new payload fields.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-28" data-version="1.0.28" data-sha="e692ff79ed39241b3aee9f04c01fdfb3d6c8c282">
+<summary class="entry-toggle"><h2 class="version">v1.0.28</h2><span class="release-summary">Added approval-gated /session launch for opening an existing approved folder as a session tab with an initial task.</span></summary>
+<div class="release-content"><p><a href="#v1-0-28">Link to v1.0.28</a></p><h3>Added</h3>
+<ul>
+<li>Added approval-gated <code>/session launch</code> for opening an existing approved folder as a session tab with an initial task.</li>
+<li>The new tab receives a dedicated Telegram topic through the current session's remote bridge and routes topic messages to that tab.</li>
+<li>Added project pickers to the local TUI and Telegram so approved folders can be selected without typing paths.</li>
+<li>Renamed the local session management command to <code>/tabs</code>; <code>/tab</code> in Telegram opens the project picker, and <code>/tab close</code> offers a picker of running tabs.</li>
+<li>Session tabs animate while agents work and show live Telegram/Discord connection indicators.</li>
+<li>Added a keyboard-accessible jump-to-latest button in every transcript; tabs remember whether you are reading history.</li>
+<li>Telegram photos and image documents now reach the corresponding Nova session as image inputs, with optional captions and queued delivery while busy.</li>
+<li>Tabs inherit the source tool approval mode and send it per turn; remote connections never enable auto-approve. Dismissed tool approval dialogs reject the request.</li>
+<li>Telegram tab pickers are removed after launch approval, cancellation, closing, or expiry. Repeated confirmations cannot start another tab or reach the agent as prompts; new pickers supersede older requests in the same requester/topic scope.</li>
+<li>Tab switching returns immediately while history replays in small batches. Background token bursts no longer repaint the tab bar per token, and spinner frames avoid layout when their width stays the same.</li>
+<li>Stream buffers retain their parts across switches; delayed stream/tool repaint callbacks belong to their originating pane. Approved-folder disk checks run off the UI thread, and concurrent launches reserve capacity before starting processes.</li>
+<li>The footer names the selected tab and shows only its tasks. Child tabs have their own task snapshots and <code>/tasks</code> panel; terminate, restart, and logs controls route to that child's process. Main-tab completion logs, notes, and notifications remain in the main conversation.</li>
+<li>Task panel polling transfers metadata only; log requests fetch one bounded tail and match the originating tab and request ID.</li>
+<li>Escape and Ctrl+B in child tabs no longer kill or detach main-tab commands. Closing a worker stops its background commands, and exited tabs clear running task indicators.</li>
+<li>Windows termination stops the whole process tree before the shell exits, preventing orphaned child processes. Background launch failures report failure instead of success. Task tool descriptions explain session-local IDs and how to stop and verify tasks.</li>
+</ul>
+<h3>Limitations</h3>
+<ul>
+<li>Telegram can request and approve a launch from its originating topic. Existing approved folders only are supported.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-27" data-version="1.0.27" data-sha="18e3b51e72bbd6da77e4b6c4d452aa34f15c57fd">
+<summary class="entry-toggle"><h2 class="version">v1.0.27</h2><span class="release-summary">On Telegram reconnect, validate saved session topics and recreate topics that Telegram confirms were deleted. Persist the replacement ID and bind incoming messages and outgoing responses to it.</span></summary>
+<div class="release-content"><p><a href="#v1-0-27">Link to v1.0.27</a></p><ul>
+<li>On Telegram reconnect, validate saved session topics and recreate topics that Telegram confirms were deleted. Persist the replacement ID and bind incoming messages and outgoing responses to it.</li>
+<li>Reuse valid topics and reopen closed ones. Network failures, rate limits, and permission errors leave the saved mapping intact and report a connection warning instead of creating duplicate topics.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-26" data-version="1.0.26" data-sha="add086e9f40f56166e7ffbfcf14cc099463e0080">
+<summary class="entry-toggle"><h2 class="version">v1.0.26</h2><span class="release-summary">/remote now includes Telegram user authorization controls: a user ID field, Authorize/Revoke buttons, and the saved authorized user list. The panel scrolls on shorter terminals to keep the controls accessible.</span></summary>
+<div class="release-content"><p><a href="#v1-0-26">Link to v1.0.26</a></p><ul>
+<li><code>/remote</code> now includes Telegram user authorization controls: a user ID field, Authorize/Revoke buttons, and the saved authorized user list. The panel scrolls on shorter terminals to keep the controls accessible.</li>
+<li><code>/remote</code> subcommands entered in the prompt now execute directly, including during an active task, instead of opening the remote panel and discarding arguments.</li>
+<li>Remote subcommands use the root session's bridge manager even when a child tab is visible.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-25" data-version="1.0.25" data-sha="b128a073f51377d0618b372daee9e1ed50af31c7">
+<summary class="entry-toggle"><h2 class="version">v1.0.25</h2><span class="release-summary">Telegram group messages rejected by sender authorization now display a throttled explanation in Nova, including the sender ID and the command to authorize that user.</span></summary>
+<div class="release-content"><p><a href="#v1-0-25">Link to v1.0.25</a></p><ul>
+<li>Telegram group messages rejected by sender authorization now display a throttled explanation in Nova, including the sender ID and the command to authorize that user.</li>
+<li>Added local <code>/remote allow-user telegram &lt;USER_ID&gt;</code> and <code>/remote deny-user telegram &lt;USER_ID&gt;</code> commands (also available for Discord). Permissions persist and update active bridges immediately in the current Nova process.</li>
+<li>Preserve registered session topic IDs when incoming Telegram messages omit <code>is_topic_message</code>, keeping prompts and replies routed to the correct session.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-24" data-version="1.0.24" data-sha="31909e88677353f8de4c735fd368a34dd4e58653">
+<summary class="entry-toggle"><h2 class="version">v1.0.24</h2><span class="release-summary">Telegram /remote connects each Nova session to a named topic containing its session ID, including main sessions and sessions already running when the bridge starts.</span></summary>
+<div class="release-content"><p><a href="#v1-0-24">Link to v1.0.24</a></p><ul>
+<li>Telegram <code>/remote</code> connects each Nova session to a named topic containing its session ID, including main sessions and sessions already running when the bridge starts.</li>
+<li>Separate Nova windows share an authenticated local Telegram polling connection, preventing competing <code>getUpdates</code> requests. Topic messages reach their registered Nova process; replies and local streamed output stay in that topic.</li>
+<li>Topic mappings and polling offsets persist, and another connected window takes over polling when the owner exits. A saved session cannot be connected in two windows simultaneously.</li>
+<li>Added private bot topic-mode support, retryable topic capability detection, and visible setup guidance and topic IDs in <code>/remote</code>.</li>
+<li>General-chat messages are delivered only when one Nova window is connected; with several windows, send messages in the session's topic.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-23" data-version="1.0.23" data-sha="143df8f4575af8f702bdd52c73e78cb579089a05">
+<summary class="entry-toggle"><h2 class="version">v1.0.23</h2><span class="release-summary">Replaced /help's transcript dump with a searchable, categorized Textual command guide covering built-in commands, aliases, plugin and panel commands, skills, and keyboard shortcuts.</span></summary>
+<div class="release-content"><p><a href="#v1-0-23">Link to v1.0.23</a></p><ul>
+<li>Replaced <code>/help</code>'s transcript dump with a searchable, categorized Textual command guide covering built-in commands, aliases, plugin and panel commands, skills, and keyboard shortcuts.</li>
+<li>Added a responsive <code>/evolution</code> dashboard with lifetime totals, searchable activity, unlock/level-up filters, scrollable task details, refresh, and clear empty/error states.</li>
+<li>Evolution history loads asynchronously and its panel can open during an active agent turn.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-22" data-version="1.0.22" data-sha="e0782828d4cbe2b560cc338598b5f8013a70e1c6">
+<summary class="entry-toggle"><h2 class="version">v1.0.22</h2><span class="release-summary">Fixed ANSI theme color parsing that made inline code and file paths appear as solid gray blocks in resumed sessions.</span></summary>
+<div class="release-content"><p><a href="#v1-0-22">Link to v1.0.22</a></p><ul>
+<li>Fixed ANSI theme color parsing that made inline code and file paths appear as solid gray blocks in resumed sessions.</li>
+<li>Added a contrast check for inline code and CSS color/alpha support.</li>
+<li>Cached replies now refresh their colors when the theme changes while preserving rendering performance.</li>
+<li>Added five themes to <code>/themes</code>: <code>nova-synthwave</code>, <code>nova-aurora</code>, <code>nova-ember</code>, <code>nova-abyss</code>, and the light <code>nova-paper</code> palette.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-21" data-version="1.0.21" data-sha="d82f728e37c072f7c9a0569691ddacdfabd25a85">
+<summary class="entry-toggle"><h2 class="version">v1.0.21</h2><span class="release-summary">Add OpenCode Zen Jev and Jev Free presets in /model → Decisions and /router. Use the Zen API key for the exact official System One endpoint, including decision-based tool pruning and opt-in auto-approval.</span></summary>
+<div class="release-content"><p><a href="#v1-0-21">Link to v1.0.21</a></p><ul>
+<li>Add OpenCode Zen Jev and Jev Free presets in /model → Decisions and /router. Use the Zen API key for the exact official System One endpoint, including decision-based tool pruning and opt-in auto-approval.</li>
+<li>Keep TypeSafe, Zen, and custom endpoint credentials isolated. Carry NovaCode's user agent and stable session header on Zen decision requests. Manage the Zen credential directly from the Decisions tab.</li>
+<li>Print Nova's wordmark, current version, session label, and <code>nova --continue &lt;session-id&gt;</code> after the Textual application exits. Check saved root-session metadata before offering continuation; adapt the wordmark for narrow terminals and safely render session names. Zen Jev documentation: https://opencode.ai/docs/zen/#jev.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-20" data-version="1.0.20" data-sha="c76bf5a29466d6fa475f9e6f3ea56352e4670e61">
+<summary class="entry-toggle"><h2 class="version">v1.0.20</h2><span class="release-summary">Add OpenCode Zen alongside OpenCode Go in /auth, /model, router targets, role models, and first-run setup. Zen uses its own API key and endpoint; existing Go configuration remains compatible.</span></summary>
+<div class="release-content"><p><a href="#v1-0-20">Link to v1.0.20</a></p><ul>
+<li>Add OpenCode Zen alongside OpenCode Go in /auth, /model, router targets, role models, and first-run setup. Zen uses its own API key and endpoint; existing Go configuration remains compatible.</li>
+<li>Offer “Sign in to OpenCode Console” for both services. Open the official Console in a browser, then return to Nova's masked API-key field. This implements OpenCode's documented Console/key flow, rather than claiming unsupported third-party OAuth.</li>
+<li>Discover available models independently for Zen and Go. Select Chat Completions, Responses, or Anthropic Messages according to each model's documented API. Exclude native Google and System One models from the conversational picker.</li>
+<li>Identify gateway traffic as NovaCode, retain the stable session header, mask saved Zen credentials in settings, and strip them from shell subprocess environments.</li>
+<li>Avoid reporting a public model-list response as proof that an OpenCode key was authenticated. Official setup: https://opencode.ai/docs/zen/ and https://opencode.ai/docs/go/.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-19" data-version="1.0.19" data-sha="fefc7e000a4a97b0760162203229c396ea25921b">
+<summary class="entry-toggle"><h2 class="version">v1.0.19</h2><span class="release-summary">Stream local TUI turns, including Ctrl+B background agent tasks, to connected Discord and Telegram chats. Show a separate live activity message for the session, plan, tool calls, and their results, alongside an editable answer.</span></summary>
+<div class="release-content"><p><a href="#v1-0-19">Link to v1.0.19</a></p><ul>
+<li>Stream local TUI turns, including Ctrl+B background agent tasks, to connected Discord and Telegram chats. Show a separate live activity message for the session, plan, tool calls, and their results, alongside an editable answer.</li>
+<li>Stream replies to remote prompts, including routed child sessions, without sending the final answer twice. Start the TUI message consumer when a bridge is enabled after launch and avoid duplicate consumers.</li>
+<li>Coalesce token updates off the TUI rendering path. Retry the latest answer after failed edits, retain bounded buffers, and stop streaming pumps on completion or cancellation.</li>
+<li>Render Telegram Markdown as supported HTML and paginate without breaking tags. Keep Discord fenced code blocks balanced across message pages. Reconcile all pages after answer replacement or shrinkage instead of dropping overflow text.</li>
+<li>Refresh /remote connection status live and explain that connected chats receive local tasks. Suppress automatic Discord mentions in model output.</li>
+<li>Honor Telegram flood-control retry delays and treat unchanged edits as successful. Preserve final Markdown indentation and keep an unavailable debug log from preventing remote startup.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-18" data-version="1.0.18" data-sha="90da79e48f3aaaea2c465575b23d27a6c6fb61e3">
+<summary class="entry-toggle"><h2 class="version">v1.0.18</h2><span class="release-summary">Explain resolved file attachments in the model context and show referenced files in the live user transcript, so the target file and loaded context are visible.</span></summary>
+<div class="release-content"><p><a href="#v1-0-18">Link to v1.0.18</a></p><ul>
+<li>Explain resolved file attachments in the model context and show referenced files in the live user transcript, so the target file and loaded context are visible.</li>
+<li>Show slash skill invocations as user messages with a pinned-skill label while continuing to load structured instruction snapshots through the skills middleware.</li>
+<li>Include Ctrl+B background agent turns and running remote async subagents in the Background Tasks dialog and persistent tasks indicator, alongside shell jobs. Track completion, failure, cancellation, and bounded agent logs; support cancellation and log viewing for local background agent turns.</li>
+<li>Let the Background Tasks list fill the available modal height, including on short terminals. Keep running tasks first and preserve selection and scrolling during live updates.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-17" data-version="1.0.17" data-sha="5142310301a00515f2ba52cc0b54a642a805c750">
+<summary class="entry-toggle"><h2 class="version">v1.0.17</h2><span class="release-summary">Give foreground and async specialists selective skill libraries with their own activation state. General-purpose agents keep the full enabled library. Discover selected directories before parsing instructions to reduce specialist startup work.</span></summary>
+<div class="release-content"><p><a href="#v1-0-17">Link to v1.0.17</a></p><ul>
+<li>Give foreground and async specialists selective skill libraries with their own activation state. General-purpose agents keep the full enabled library. Discover selected directories before parsing instructions to reduce specialist startup work.</li>
+<li>Configure custom agents with <code>skill_names: [skill-name, another-skill]</code>, <code>skill_names: []</code> for no skills, or <code>skill_names: &quot;*&quot;</code> for the full library.</li>
+<li>Resolve space-separated <code>metadata.include_tools</code> names to private tools, runtime aliases, or integration groups. Support async resolvers and recheck activation and run context before private tool execution. Compaction removes access when activation messages disappear.</li>
+<li>Map MCP server names and unambiguous original tool names to the existing inventory without reconnecting servers. Tools registered independently remain searchable; their implementation takes precedence over a private tool with the same name.</li>
+<li>Keep Nova's verified Deep Agents dependency range. Nova implements this behavior in its own middleware, including on the locked 0.7.10 release; it does not depend on the newer upstream skill-tools API.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-16" data-version="1.0.16" data-sha="e57e83ff385e9c6d620ff0343de7950c4b3bb32d">
+<summary class="entry-toggle"><h2 class="version">v1.0.16</h2><span class="release-summary">Pin enabled skills using $skill-name, /skill-name, or the new Pin to prompt control in /skills. Load each skill as a structured instruction snapshot, without preloading its supporting files. Earlier snapshots remain unchanged after edits.</span></summary>
+<div class="release-content"><p><a href="#v1-0-16">Link to v1.0.16</a></p><ul>
+<li>Pin enabled skills using <code>$skill-name</code>, <code>/skill-name</code>, or the new <strong>Pin to prompt</strong> control in <code>/skills</code>. Load each skill as a structured instruction snapshot, without preloading its supporting files. Earlier snapshots remain unchanged after edits.</li>
+<li>Add <code>skills_load</code> and <code>skills_read_resource</code> tools for explicit activation and bounded, on-demand reference reads. Relative resource paths resolve against the skill directory and reject traversal.</li>
+<li>Activate optional tool schemas declared in <code>metadata.include_tools</code>. Dedicated skill tools are gated until their skill is loaded; removing activation messages during compaction removes that access. Existing independently registered tools remain searchable.</li>
+<li>Add a <strong>Reload</strong> control and per-run <code>pinned_skills</code> / <code>skills_metadata=None</code> support. Keep the full skill library outside session checkpoints and run async discovery and pin reads off the UI event loop.</li>
+<li>Use consistent user → shared → Claude → plugin → project precedence across discovery, invocation, previews, and the agent. Preserve nested YAML metadata and multiline frontmatter during skill normalization.</li>
+<li>Keep <code>/skills</code> action buttons usable on narrow terminals and show compact pinned-skill labels when restoring sessions.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-15" data-version="1.0.15" data-sha="f66ab9f2903c33a754dc867262f92f0f08020a07">
+<summary class="entry-toggle"><h2 class="version">v1.0.15</h2><span class="release-summary">After a successful nova update, clear interactive progress output and show a centered NOVA logo, the newly installed version, “Update successful.” and “Restart Nova”.</span></summary>
+<div class="release-content"><p><a href="#v1-0-15">Link to v1.0.15</a></p><ul>
+<li>After a successful <code>nova update</code>, clear interactive progress output and show a centered NOVA logo, the newly installed version, “Update successful.” and “Restart Nova”.</li>
+<li>Show the same completion screen from the Windows update helper after the launcher exits and installation finishes. Read the version from the updated environment instead of a previously imported version.</li>
+<li>Keep failed-update diagnostics visible, preserve the up-to-date message for no-op updates, and leave redirected output free of terminal control codes.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-14" data-version="1.0.14" data-sha="fbcc6697450f2ff438f70cb6cb2765433b876443">
+<summary class="entry-toggle"><h2 class="version">v1.0.14</h2><span class="release-summary">Give Ctrl+B priority over text editing shortcuts. Detach running shell, bash and execute commands even when the editor contains a draft; preserve that draft.</span></summary>
+<div class="release-content"><p><a href="#v1-0-14">Link to v1.0.14</a></p><ul>
+<li>Give Ctrl+B priority over text editing shortcuts. Detach running shell, bash and execute commands even when the editor contains a draft; preserve that draft.</li>
+<li>Keep the Background Tasks panel single-instance during repeated Ctrl+B presses. Ignore repeated handoff requests so preserved drafts are not submitted accidentally.</li>
+<li>Register <code>!</code> commands with the background-task controller, retain their process and logs during handoff, and track completion/termination in the task panel.</li>
+<li>Remove detached commands from the foreground control list so Esc cannot kill work already moved to the background. Clean up shell process trees on cancellation.</li>
+<li>Display a <code>Ctrl+B · run in background</code> hint beneath running execution-tool output and hide it once the command finishes.</li>
+<li>Show the available release's version/title and a short changelog preview in the transcript. Add View more pages and official changelog links to automatic notices and <code>/update</code>.</li>
+<li>Fetch release metadata off the UI loop, deduplicate notices by revision, bound changelog content, and keep update notices usable when metadata is unavailable.</li>
+<li>Display animated retry progress (1/3, 2/3, 3/3) for failed provider requests before reporting a final error. Keep retries confined to model calls, stop on cancellation, and skip authentication, quota and context overflow failures.</li>
+<li>Add <code>general-purpose-async</code> for background coding, investigation, testing, research and analysis, with workspace file tools, shell/bash, web/docs tools, model retries and unattended approval enforcement.</li>
+<li>Prefer async delegation for general work as well as specialists. Return control to the user when delegated work is pending and continue on completion, keeping synchronous general-purpose as a fallback.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-13" data-version="1.0.13" data-sha="40ae6ca2c66569b1966158c0fb8f4138c2414660">
+<summary class="entry-toggle"><h2 class="version">v1.0.13</h2><span class="release-summary">Read the version shown by nova --version, startup ASCII art and the agent API from the shared release version constant instead of the stale hardcoded 1.0.6 value.</span></summary>
+<div class="release-content"><p><a href="#v1-0-13">Link to v1.0.13</a></p><ul>
+<li>Read the version shown by <code>nova --version</code>, startup ASCII art and the agent API from the shared release version constant instead of the stale hardcoded <code>1.0.6</code> value.</li>
+<li>Handle <code>nova --version</code> through the lightweight entry point without importing the agent runtime or starting onboarding.</li>
+<li>Include the current version beneath the compact startup portrait and use UTF-8-capable console output for <code>--version</code> on Windows.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-12" data-version="1.0.12" data-sha="5453a9ff4d46da618b9d34b2360f440b09e3f8cb">
+<summary class="entry-toggle"><h2 class="version">v1.0.12</h2><span class="release-summary">Show NovaCode · &lt;session name&gt; in the terminal window/tab title and update it when switching sessions or refreshing their names.</span></summary>
+<div class="release-content"><p><a href="#v1-0-12">Link to v1.0.12</a></p><ul>
+<li>Show <code>NovaCode · &lt;session name&gt;</code> in the terminal window/tab title and update it when switching sessions or refreshing their names.</li>
+<li>Keep the main session tab and terminal title synchronized with the current session ID after <code>/resume</code> and <code>/clear</code>.</li>
+<li>Sanitize session names before writing terminal controls, skip terminal writes in headless mode, and avoid repeating unchanged titles.</li>
+<li>Add <code>/settings</code> → Performance → Live animation frame rate with persistent 15, 30 and 60 FPS choices, defaulting to 30 FPS. Apply changes immediately to status/tool spinners, shimmer and enabled Matrix Rain.</li>
+<li>Keep motion speed independent of refresh rate, limit background-state polling separately, and retain low-resource overrides and focus/visibility pauses.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-11" data-version="1.0.11" data-sha="e36ea3d78d7cd4d205592c1213a317ddaefc9236">
+<summary class="entry-toggle"><h2 class="version">v1.0.11</h2><span class="release-summary">Batch shell output and yield between pipe reads so keyboard input, cancellation and repainting can run during noisy commands. Handle long lines and split UTF-8 without readline overflow.</span></summary>
+<div class="release-content"><p><a href="#v1-0-11">Link to v1.0.11</a></p><ul>
+<li>Batch shell output and yield between pipe reads so keyboard input, cancellation and repainting can run during noisy commands. Handle long lines and split UTF-8 without <code>readline</code> overflow.</li>
+<li>Reuse wrap calculations for unchanged output lines, evict discarded lines from the cache, and parse only the retained display tail of large command results.</li>
+<li>Remove per-line forced scrolling from live shell, tool and background-agent output. Coalesced log paints follow the latest output when the user is already at the bottom.</li>
+<li>Bound shell/execute result capture while the command runs, instead of retaining all output until completion; keep live output streaming and the existing truncated-result notice.</li>
+<li>Cover cancellation while waiting for a shell process to exit after its output closes.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-10" data-version="1.0.10" data-sha="2f37941e4e48a803ba7a9841194af718d51f044f">
+<summary class="entry-toggle"><h2 class="version">v1.0.10</h2><span class="release-summary">Add Google browser sign-in under /auth for Gemini Developer API, using a user-owned Desktop OAuth client and Cloud quota project. Includes PKCE, state validation, cancellation, refresh, saved-account selection and disconnection; API keys remain available.</span></summary>
+<div class="release-content"><p><a href="#v1-0-10">Link to v1.0.10</a></p><ul>
+<li>Add Google browser sign-in under <code>/auth</code> for Gemini Developer API, using a user-owned Desktop OAuth client and Cloud quota project. Includes PKCE, state validation, cancellation, refresh, saved-account selection and disconnection; API keys remain available.</li>
+<li>Add guided Anthropic Console setup alongside API-key entry. Claude subscription OAuth is not offered because Anthropic explicitly excludes third-party applications.</li>
+<li>Display the selected Google authentication method in provider readiness and credential screens.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-9" data-version="1.0.9" data-sha="1af2bdb508e1c32c68de56aecf0bab7ef232f1f1">
+<summary class="entry-toggle"><h2 class="version">v1.0.9</h2><span class="release-summary">Render imported Codex and Claude sessions as structured conversation cards with Markdown and collapsible historical tool records in the transcript and View preview.</span></summary>
+<div class="release-content"><p><a href="#v1-0-9">Link to v1.0.9</a></p><ul>
+<li>Render imported Codex and Claude sessions as structured conversation cards with Markdown and collapsible historical tool records in the transcript and View preview.</li>
+<li>Preserve the imported history display when resuming a saved Nova session; hide the internal continuation reference message.</li>
+<li>Page long histories, bound displayed excerpts, and release removed history data to keep the TUI responsive. Complete normalized history remains saved.</li>
+<li>Format Claude tool arguments as JSON and retain tool error indicators.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-8" data-version="1.0.8" data-sha="5f47b27ba8c905cd4d7feb41bcc18548440f85a5">
+<summary class="entry-toggle"><h2 class="version">v1.0.8</h2><span class="release-summary">Command output renders only visible rows, with bounded row caches, instead of rendering entire logs on each paint. Hidden output remains available and reflows when revealed or resized.</span></summary>
+<div class="release-content"><p><a href="#v1-0-8">Link to v1.0.8</a></p><h3>Fixed</h3>
+<ul>
+<li>Command output renders only visible rows, with bounded row caches, instead of rendering entire logs on each paint. Hidden output remains available and reflows when revealed or resized.</li>
+<li>Removed output and chat widgets immediately release their text, markdown visuals, and render caches.</li>
+<li>Late background output and stream callbacks cannot revive removed cards or restart their paint timers.</li>
+<li>Transcript scrollback is bounded by content size as well as widget count, while preserving active replies and tool/subagent cards. Persisted session and agent context remain intact.</li>
+<li>Streaming previews read only recent fragments instead of repeatedly copying the full growing answer and reasoning buffers.</li>
+<li>Long turns retain speech-summary text only when voice responses are enabled, with a bounded summary buffer.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-7" data-version="1.0.7" data-sha="1b747ab5a77212a890ba7a935f0c10892aa2d0ba">
+<summary class="entry-toggle"><h2 class="version">v1.0.7</h2><span class="release-summary">/auth can connect OpenAI with a ChatGPT account using OpenAI's Sign in with ChatGPT flow, while preserving API-key setup. The ChatGPT-plan path uses the Responses API with streaming and response storage disabled; OAuth tokens are stored separately in the OS credential store and refreshed as needed.</span></summary>
+<div class="release-content"><p><a href="#v1-0-7">Link to v1.0.7</a></p><h3>Added</h3>
+<ul>
+<li><code>/auth</code> can connect OpenAI with a ChatGPT account using OpenAI's Sign in with ChatGPT flow, while preserving API-key setup. The ChatGPT-plan path uses the Responses API with streaming and response storage disabled; OAuth tokens are stored separately in the OS credential store and refreshed as needed.</li>
+<li>OpenAI ChatGPT sign-in status is shown in <code>/auth</code> and can be removed independently of an API key.</li>
+</ul>
+<h3>Notes</h3>
+<ul>
+<li>ChatGPT-plan access is subject to OpenAI account eligibility and the current preview limits. Some hosted Responses tools are unavailable in this mode; OpenAI API-key access remains the full existing path.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-6" data-version="1.0.6" data-sha="f1f1f0cb54b793fcb2934109c6f5f4d774255bd0">
+<summary class="entry-toggle"><h2 class="version">v1.0.6</h2><span class="release-summary">Bug investigation async specialist: Traces reported defects through code and tests, then returns evidence-backed root-cause hypotheses and focused verification steps.</span></summary>
+<div class="release-content"><p><a href="#v1-0-6">Link to v1.0.6</a></p><h3>New Features</h3>
+<ul>
+<li><strong>Bug investigation async specialist</strong>: Traces reported defects through code and tests, then returns evidence-backed root-cause hypotheses and focused verification steps.</li>
+<li><strong>Performance audit async specialist</strong>: Reviews latency, memory, CPU, task cleanup, and multi-session resource behavior, returning ranked findings and measurement suggestions.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-5" data-version="1.0.5" data-sha="d380039223970fc308b28d7dfe4518db1b9c17cc">
+<summary class="entry-toggle"><h2 class="version">v1.0.5</h2><span class="release-summary">Async subagent preference: Nova now prefers available async specialists for independent background work, while retaining synchronous task delegation when results are needed immediately, no suitable async agent is available, or background dispatch fails.</span></summary>
+<div class="release-content"><p><a href="#v1-0-5">Link to v1.0.5</a></p><h3>Improvements</h3>
+<ul>
+<li><strong>Async subagent preference</strong>: Nova now prefers available async specialists for independent background work, while retaining synchronous <code>task</code> delegation when results are needed immediately, no suitable async agent is available, or background dispatch fails.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-4" data-version="1.0.4" data-sha="9f4eb724a6fad3278b57dc6aba511941640e54b8">
+<summary class="entry-toggle"><h2 class="version">v1.0.4</h2><span class="release-summary">More conservative decision approvals: Approval decisions now include the active user request, use a stricter risk rubric and confidence threshold, and deterministically reject high-impact deletion, overwrite, Git-history, database, and system commands. Unclear or low-confidence answers still fail closed.</span></summary>
+<div class="release-content"><p><a href="#v1-0-4">Link to v1.0.4</a></p><h3>Security Improvements</h3>
+<ul>
+<li><strong>More conservative decision approvals</strong>: Approval decisions now include the active user request, use a stricter risk rubric and confidence threshold, and deterministically reject high-impact deletion, overwrite, Git-history, database, and system commands. Unclear or low-confidence answers still fail closed.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-3" data-version="1.0.3" data-sha="753549583ff45d7896b7ce45ca61eddff2c35d9c">
+<summary class="entry-toggle"><h2 class="version">v1.0.3</h2><span class="release-summary">Approval decision indicators: Auto-approve sessions now display a green approval or red rejection message with the decision model and tool name. Fail-closed outcomes identify when the model was unavailable or uncertain.</span></summary>
+<div class="release-content"><p><a href="#v1-0-3">Link to v1.0.3</a></p><h3>Improvements</h3>
+<ul>
+<li><strong>Approval decision indicators</strong>: Auto-approve sessions now display a green approval or red rejection message with the decision model and tool name. Fail-closed outcomes identify when the model was unavailable or uncertain.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-2" data-version="1.0.2" data-sha="97e3ad945e87f02de210a806f7885580e13e802f">
+<summary class="entry-toggle"><h2 class="version">v1.0.2</h2><span class="release-summary">Decision-model auto-approval: An opt-in /settings switch lets the configured Decisions model approve or reject actions that require review during auto-approve sessions. Policy denials remain blocked, and unavailable or uncertain verdicts fail closed. Configure Tev1, Jev, Luna, or another supported decision model in /model → Decisions.</span></summary>
+<div class="release-content"><p><a href="#v1-0-2">Link to v1.0.2</a></p><h3>New Features</h3>
+<ul>
+<li><strong>Decision-model auto-approval</strong>: An opt-in <code>/settings</code> switch lets the configured Decisions model approve or reject actions that require review during auto-approve sessions. Policy denials remain blocked, and unavailable or uncertain verdicts fail closed. Configure Tev1, Jev, Luna, or another supported decision model in <code>/model</code> → Decisions.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-1" data-version="1.0.1" data-sha="8e9954ef2ebd5c7f78c56ecd62a0295e1d73d3ef">
+<summary class="entry-toggle"><h2 class="version">v1.0.1</h2><span class="release-summary">Prompt cache visibility: The TUI status bar and /context now show the provider-reported cache hit rate and cumulative input tokens read from and written to the prompt cache. The compact status bar adapts the indicator to narrower terminals.</span></summary>
+<div class="release-content"><p><a href="#v1-0-1">Link to v1.0.1</a></p><h3>New Features</h3>
+<ul>
+<li><strong>Prompt cache visibility</strong>: The TUI status bar and <code>/context</code> now show the provider-reported cache hit rate and cumulative input tokens read from and written to the prompt cache. The compact status bar adapts the indicator to narrower terminals.</li>
+</ul>
+<h3>Improvements</h3>
+<ul>
+<li>Cache read, cache creation, and input-token counts are accumulated across model calls in a turn, so the hit rate reflects the whole session run rather than just the last response.</li>
+<li>Cache metrics remain hidden for providers that do not report prompt-cache usage; Nova does not estimate hits.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-0" data-version="1.0.0" data-sha="9003d7f9cf1d5bf58caeb0174a37edb96c82abf3">
+<summary class="entry-toggle"><h2 class="version">v1.0.0</h2><span class="release-summary">A route per kind of work: Nova can hold several routes, each a provider:model pair, and pick one per turn instead of running every turn on a single model</span></summary>
+<div class="release-content"><p><a href="#v1-0-0">Link to v1.0.0</a></p><h3>Per-Turn Model Routing (`/router`)</h3>
+<ul>
+<li><strong>A route per kind of work</strong>: Nova can hold several routes, each a <code>provider:model</code> pair, and pick one per turn instead of running every turn on a single model</li>
+<li><strong>Criteria are the classifier's prompt</strong>: A route carries a plain-English description of the work it should win, which is what the decision model reads. A route without criteria is refused rather than silently never selected, because a route the classifier cannot match is worse than one that is missing</li>
+<li><strong><code>/router</code> screen</strong>: A native modal to add, edit, remove and reorder routes. It edits a working copy and returns a payload, so Cancel has no side effects and nothing reaches the config until Save</li>
+<li><strong>Decision model is configurable</strong>: Presets for <strong>Jev</strong> (TypeSafe System One API), <strong>Tev1</strong> (local Ollama, the default and free), or a custom endpoint and model name</li>
+<li><strong>Off until switched on</strong>: Routing defaults to disabled, so an existing <code>Nova.config.json</code> behaves exactly as before and a session that never opens <code>/router</code> is unaffected</li>
+<li><strong>Falls back rather than fails</strong>: If the classifier is unreachable, returns something unreadable, or names a route that cannot be built, the turn runs on the default route - a router that could break a turn would be worse than no router</li>
+<li><strong>Routes live in <code>Nova.config.json</code></strong>: <code>router_enabled</code>, <code>router_routes</code>, <code>router_default_route</code>, <code>router_decision_endpoint</code>, <code>router_decision_model</code> and <code>router_min_confidence</code>, written through a validating setter so a typo caught in the screen never reaches model construction mid-turn</li>
+</ul>
+<h3>Settings Screen (`/settings`)</h3>
+<ul>
+<li><strong>Native preferences modal</strong>: Opens from <code>/settings</code>, applies immediately, and persists to <code>Nova.config.json</code></li>
+<li><strong>Matrix Rain switch</strong>: Turns the home-banner animation on or off without editing the environment or restarting</li>
+</ul>
+<h3>Idle Resource Efficiency</h3>
+<ul>
+<li><strong>Every numerical backend is capped, not just OpenBLAS</strong>: <code>OPENBLAS_NUM_THREADS</code> was already pinned to 1, but OpenMP, MKL and NumExpr still defaulted to a machine-wide thread pool, so each Nova process - the TUI and every spawned session - could occupy every core while idle. All four are now pinned with <code>setdefault</code>, so an explicit user value still wins</li>
+<li><strong>Voice models load on demand</strong>: A text session no longer constructs or preloads the native voice models. Previously any of <code>enabled</code>, <code>speak_responses</code> or push-to-talk triggered the full model load at boot, so a user who had never spoken to Nova paid a large load for a feature they had not touched. Only explicitly enabled voice builds a pipeline now, and the models load on first use</li>
+<li><strong>Speech does not allocate the microphone stack</strong>: <code>VoicePipeline.warmup</code> takes <code>input_audio=False</code> to build the TTS side alone, and <code>_ensure_components</code> splits into <code>_ensure_input_components</code> and <code>_ensure_tts</code> so each direction loads only what it needs. Explicit <code>/voice download</code> still warms the full stack</li>
+<li><strong>The home banner no longer repaints forever</strong>: <code>MatrixRain</code> animated roughly 15 times a second on an idle terminal. It is now off by default, keeps its first themed frame, and stays available as an opt-in through <code>NOVA_ANIMATIONS=1</code> or the new Settings switch. Resizing and theme changes still repaint a static banner</li>
+<li><strong>Live tool output is bounded by construction</strong>: The pending-output map held an unbounded <code>list[str]</code> per call, so a chatty command grew it until the painter happened to drain it. <code>OutputTail</code> caps each call by bytes and by lines, and <code>MAX_PENDING_CALLS</code> caps how many calls may be buffered at once. Dropping a call trims only the live display - final tool results still arrive through the normal event/session path</li>
+</ul>
+<h3>Startup and the agent server</h3>
+<ul>
+<li><strong>Deep Agents metadata scan is no longer paid twice</strong>: The startup scan is patched so the version metadata is read once instead of on every check</li>
+<li><strong>The agent-server extra is optional and reported honestly</strong>: <code>/agent-server</code> says whether the extra is installed and prints the <code>uv sync --extra agents-server</code> hint when it is missing</li>
+</ul>
+<h3>Textual UI</h3>
+<ul>
+<li><strong>Branded workspace approval screen</strong>: Path approval opens a native screen showing what is being approved instead of a bare prompt</li>
+<li><strong>Theme-aware tool rendering and session usage display</strong></li>
+<li><strong>Subagent panel reset on clear</strong>: Interrupted subagent timers stop and the panel resets rather than showing stale rows</li>
+<li><strong>Every subagent is created from one screen</strong>, as in-process or background</li>
+</ul>
+<h3>Bug Fixes</h3>
+<ul>
+<li><strong>Banner animation could never start</strong>: <code>MatrixRain.on_mount</code> enabled the rain through <code>set_animation_enabled</code>, which returns early when the widget is not mounted - and <code>is_mounted</code> is still <code>False</code> inside <code>on_mount</code>. Setting <code>NOVA_ANIMATIONS=1</code> therefore produced a static banner. The timer start moved into <code>_start_timer</code>, which <code>on_mount</code> calls directly and <code>set_animation_enabled</code> delegates to.</li>
+<li><strong>A failed MCP discovery is no longer cached</strong>: A transient outage used to look like &quot;no such tool&quot; for the rest of the session, and an outage is now told apart from a genuine absence</li>
+<li><strong>MCP tools work from the agent server and from background agents</strong>: Previously they were declared but not callable on those paths</li>
+<li><strong>An async agent whose graph cannot build is never registered</strong>, so a broken server config surfaces as an error instead of a dead dispatch</li>
+<li><strong>Windows updates report progress</strong>: The launcher is released before the external updater runs, a locked launcher during <code>uv tool</code> updates is handled, and progress plus the final result are streamed live. An already-current install says so instead of looking stalled</li>
+</ul>
+<h3>Technical Changes</h3>
+<ul>
+<li><strong><code>OutputTail</code> extracted to <code>novacode_cli/tui/output_buffer.py</code></strong>: Self-contained (no TUI imports) so the bounded buffer can be tested and reused independently of the app that consumes it</li>
+<li><strong>Per-role model plumbing</strong>: <code>config/role_models.py</code> is the single place that answers what each role runs on, with one config key per role so two Nova processes cannot clobber each other's settings</li>
+<li><strong>Session interoperability</strong>: Claude and Codex histories can be imported through session adapters, and multimodal content blocks from <code>read_file</code> are preserved through to the model</li>
+<li><strong>Test coverage</strong>: <code>tests/test_resource_efficiency.py</code> pins the thread-pool caps, lazy voice loading, the opt-in banner, and the buffer ceilings; <code>tests/test_model_router.py</code> covers route selection, fallback, and config round-trips; <code>tests/test_workspace_approval.py</code>, <code>tests/test_startup_version_scan.py</code> and the UI harness tests cover the newer surfaces</li>
+<li><strong>Measurement scripts</strong>: <code>scripts/benchmark_idle.py</code> measures an idle process, <code>scripts/verify_resource_efficiency.py</code> checks the claims against a running build, and <code>scripts/mutate_resource_efficiency.py</code> re-injects each defect to prove the tests are not vacuous</li>
+</ul></div>
+</details>
+<!-- /generated:changelog-releases -->
+    </div>
   </div>
 </main>
 
@@ -1184,16 +1127,6 @@ footer{border-top:1px solid var(--line);padding-block:28px 72px}
   </div>
 </footer>
 
-<script>
-/* A permalink lands, it does not travel. An old link (#v1-0-30) still resolves to its release,
-   and a smooth scroll would animate 13,752px through every release before the reader arrives
-   (measured on the previous revision: still moving at 1.2s). The page sets no smooth behaviour
-   of its own, so this only guards against a browser or extension turning it on. */
-(function () {
-  "use strict";
-  if (!location.hash) return;
-  document.documentElement.style.scrollBehavior = "auto";
-})();
-</script>
+<script src="../assets/changelog.js" defer></script>
 </body>
 </html>

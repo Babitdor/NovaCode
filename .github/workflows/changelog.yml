@@ -1,0 +1,52 @@
+name: Changelog
+
+on:
+  push:
+    branches: [gh-pages]
+    paths:
+      - "tools/make_changelog_page.py"
+      - ".github/workflows/changelog.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: changelog-refresh
+  cancel-in-progress: false
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout this site repo
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: site
+
+      - name: Checkout main branch changelog sources
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: nova-source
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Regenerate changelog index
+        working-directory: site
+        run: python tools/make_changelog_page.py --source-dir ../nova-source/changelog
+
+      - name: Commit if changed
+        working-directory: site
+        run: |
+          if ! git diff --quiet -- changelog/index.html; then
+            git config user.name "NovaBot"
+            git config user.email "nova-bot@localhost"
+            git add changelog/index.html
+            git commit -m "chore(changelog): regenerate from main"
+            git push origin HEAD:gh-pages
+          fi
