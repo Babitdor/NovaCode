@@ -302,10 +302,10 @@ def test_windows_locked_entrypoint_is_success_when_uv_installed_the_package(
     progress = Mock()
 
     assert U.install_update(progress) is True
-    progress.done.assert_any_call("package updated; Windows could not replace the running nova.exe")
+    progress.done.assert_any_call("uv installed the package; the running nova.exe is still in use")
 
 
-def test_windows_locked_entrypoint_remains_failure_when_package_did_not_upgrade(
+def test_windows_locked_entrypoint_is_success_even_when_package_version_is_unchanged(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _windows_tool(monkeypatch, tmp_path, "", rewrites=False)
@@ -325,8 +325,9 @@ def test_windows_locked_entrypoint_remains_failure_when_package_did_not_upgrade(
         ),
     )
 
-    with pytest.raises(subprocess.CalledProcessError):
-        U.install_update(Mock())
+    progress = Mock()
+    assert U.install_update(progress) is True
+    progress.done.assert_any_call("uv installed the package; the running nova.exe is still in use")
 
 
 def test_update_command_reports_success_for_installed_package_with_locked_launcher(
@@ -338,7 +339,7 @@ def test_update_command_reports_success_for_installed_package_with_locked_launch
         "check_for_update",
         lambda **_kwargs: U.UpdateStatus(True, "1.0", "1.1"),
     )
-    monkeypatch.setattr(U, "installed_version", lambda _python: "1.1")
+    monkeypatch.setattr(U, "installed_version", lambda _python: "1.0")
     monkeypatch.setattr(
         U,
         "_run",
@@ -357,7 +358,7 @@ def test_update_command_reports_success_for_installed_package_with_locked_launch
     assert U.update_main([]) == 0
     captured = capsys.readouterr()
     assert "NovaCode updated" in captured.out
-    assert "package updated; Windows could not replace the running nova.exe" in captured.out
+    assert "uv installed the package; the running nova.exe is still in use" in captured.out
     assert "Update failed" not in captured.err
 
 
