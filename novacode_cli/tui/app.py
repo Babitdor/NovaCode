@@ -16675,7 +16675,20 @@ class NovaApp(App):
                 )
             )
         palette = getattr(self, "_palette", None)
-        if palette is not None:
+        animated = palette is not None and hasattr(self, "_transcript")
+        if animated:
+            # Animated cards in the transcript (staggered fade, filling score
+            # bars); a remote bridge capturing this command gets the final cards.
+            from novacode_cli.remote.command_ui import command_output
+            from novacode_cli.tui.council_view import STAGGER, PlanCard, plan_cards
+
+            captured = command_output.get()
+            if captured is not None:
+                captured.extend(plan_cards(run, palette))
+            self._close_tool_group()
+            for index, plan in enumerate(plans):
+                self._transcript().mount(PlanCard(run, plan, delay=index * STAGGER))
+        elif palette is not None:
             from novacode_cli.tui.council_view import plan_cards
 
             for card in plan_cards(run, palette):
@@ -16695,8 +16708,12 @@ class NovaApp(App):
         if run.status == cp.AWAITING_APPROVAL and hasattr(self, "_transcript"):
             from novacode_cli.tui.council_view import CouncilActions
 
+            from novacode_cli.tui.council_view import STAGGER
+
             self._close_tool_group()
-            self._transcript().mount(CouncilActions(run.id, len(plans)))
+            self._transcript().mount(
+                CouncilActions(run.id, len(plans), delay=(len(plans) + 1) * STAGGER)
+            )
             self._scroll_end(force=False)
 
     async def _council_show_plan(self, run: Any, index: int) -> None:
