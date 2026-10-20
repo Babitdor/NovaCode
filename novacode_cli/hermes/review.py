@@ -578,18 +578,22 @@ class ReviewRunner:
         if spec:
             from novacode_cli.config.config import Settings
             from novacode_cli.hermes.activation import content_hash
-            from novacode_cli.skills.schema import normalize_skill_frontmatter
-            content = normalize_skill_frontmatter(spec["body"], spec["name"], spec["description"])
-            source = (
-                Settings.from_environment().ensure_user_skills_dir()
-                / spec["name"] / "SKILL.md"
-            )
-            ledger.propose(
-                content=content, project=self._project or "", kind="skill", session=session,
-                target=spec["name"], evidence=evidence, auto_approve=auto,
-                source_hash=content_hash(source.read_bytes()) if source.is_file() else "",
-                source_path=str(source.resolve()) if source.is_file() else "",
-            )
+            from novacode_cli.skills.schema import prepare_skill_content
+            try:
+                content = prepare_skill_content(spec["body"], spec["name"], spec["description"])
+            except ValueError:
+                logger.warning("Skipping invalid generated skill '%s'", spec["name"], exc_info=True)
+            else:
+                source = (
+                    Settings.from_environment().ensure_user_skills_dir()
+                    / spec["name"] / "SKILL.md"
+                )
+                ledger.propose(
+                    content=content, project=self._project or "", kind="skill", session=session,
+                    target=spec["name"], evidence=evidence, auto_approve=auto,
+                    source_hash=content_hash(source.read_bytes()) if source.is_file() else "",
+                    source_path=str(source.resolve()) if source.is_file() else "",
+                )
         for block in re.findall(
             r"<prompt_improvement>(.*?)</prompt_improvement>", response_content, re.DOTALL
         ):

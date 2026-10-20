@@ -316,7 +316,7 @@ class EvolutionEngine:
                 skill_dir.name, new_md.rstrip() + "\n", source=skill_path,
                 origin="evolution", evidence=(f"session:{self._tracker.owner}",),
             )
-        except OSError:
+        except (OSError, ValueError):
             logger.exception("Failed to write levelled-up skill '%s'", skill_dir.name)
             return False
         _emit("nova_skill_leveled", f"↑ Skill levelled up: {skill_dir.name}")

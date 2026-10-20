@@ -45,7 +45,7 @@ from pathlib import Path
 import wcmatch.glob as wcglob
 from deepagents.backends.filesystem import FilesystemBackend
 from deepagents.backends.local_shell import LocalShellBackend
-from deepagents.backends.protocol import EditResult, GlobResult, GrepResult, ReadResult
+from deepagents.backends.protocol import EditResult, GlobResult, GrepResult, ReadResult, WriteResult
 
 __all__ = ["OptimizedFilesystemBackend", "OptimizedLocalShellBackend"]
 
@@ -210,6 +210,25 @@ def _cap_results(
 
 class OptimizedFilesystemBackend(FilesystemBackend):
     """FilesystemBackend with a non-hanging grep fallback and regex support."""
+
+    def write(self, file_path: str, content: str) -> WriteResult:
+        """Keep agent-authored skills discoverable in supported skill libraries."""
+        # Check only actual installed skill paths, never arbitrary SKILL.md
+        # examples or repository source files. The parent still owns the write
+        # and its symlink/path protections; validation happens before mutation.
+        if Path(file_path).name == "SKILL.md":
+            try:
+                target = self._resolve_path(file_path)
+                library = target.parent.parent
+                if library.name == "skills" and library.parent.name in {
+                    ".nova", ".agents", ".claude",
+                }:
+                    from novacode_cli.skills.schema import prepare_skill_content
+
+                    content = prepare_skill_content(content, target.parent.name)
+            except (OSError, RuntimeError, ValueError) as exc:
+                return WriteResult(error=f"Cannot save skill '{file_path}': {exc}")
+        return super().write(file_path, content)
 
     def _to_virtual_path(self, path: str | Path) -> str:
         """Map a real path to its virtual form, following symlinks/junctions.

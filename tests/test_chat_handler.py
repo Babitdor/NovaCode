@@ -311,6 +311,36 @@ def test_sse_round_trip(council_server):
     assert verdict["winner_id"] == "architect"
 
 
+def test_sse_loads_configured_council(council_server: str, monkeypatch: pytest.MonkeyPatch):
+    from dataclasses import replace
+
+    from novacode_cli import council_settings
+
+    settings = council_settings.default_settings()
+    settings = replace(
+        settings,
+        members=(
+            replace(settings.members[0], name="Custom Architect", system="Inspect interfaces."),
+            *settings.members[1:],
+        ),
+    )
+    monkeypatch.setattr(council_settings, "load_settings", lambda: settings)
+    resolved = []
+
+    def models(
+        snapshot: council_settings.CouncilSettings, default: object, *, debate: bool = False,
+    ) -> dict[str, object]:
+        resolved.append((snapshot, debate))
+        return {p.id: default for p in snapshot.personas(debate=debate)}
+
+    monkeypatch.setattr(council_settings, "resolve_models", models)
+    frames = _read_sse(council_server, "Check saved voices")
+    start = next(data for event, data in frames if event == "council_start")
+    assert start["agents"][0]["name"] == "Custom Architect"
+    assert len(start["agents"]) == 5
+    assert resolved == [(settings, True)]
+
+
 def test_sse_empty_topic_errors(council_server):
     frames = _read_sse(council_server, "   ")
     types = [t for t, _ in frames]

@@ -30,12 +30,15 @@ SKILL.md MUST have exactly two parts:
 ```yaml
 ---
 name: <skill-name>
-description: <verb> <object/domain>. Use when: <signal 1>, <signal 2>, <signal 3>.
+description: "<verb> <object/domain>. Use when: <signal 1>, <signal 2>, <signal 3>."
 version: 1.0.0
 tags: [tag-one, tag-two]
 ---
 ```
 - `name` + `description` are required; `version` (semver) + `tags` (list) are metadata.
+- Use a lowercase kebab-case name of at most 64 characters matching the skill directory.
+- Keep the description nonempty and at most 1024 characters. Quote descriptions
+  containing colons, quotes or Windows paths with valid YAML escaping.
 - No other keys without a reason. Description defines triggers — do NOT explain usage elsewhere.
 
 ### Part 2 — Markdown Body

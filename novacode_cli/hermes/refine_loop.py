@@ -265,19 +265,16 @@ async def _apply_skill(item: dict[str, str], store: BaseStore) -> bool:
     new_md = item.get("change", "").strip()
     if not new_md:
         return False
-    # Ensure YAML frontmatter is present (the planner may omit it).
-    if not new_md.startswith("---"):
-        from novacode_cli.skills.skill_creation import _add_frontmatter
-
-        new_md = _add_frontmatter(new_md, target, None)
-
     try:
+        from novacode_cli.skills.schema import prepare_skill_content
+
+        new_md = prepare_skill_content(new_md, target)
         current = skill_path.read_text(encoding="utf-8")
         if new_md.strip() == current.strip():
             return False
         versioning.snapshot(skill_dir, reason="refine_loop", source="refine")
         skill_path.write_text(new_md.rstrip() + "\n", encoding="utf-8")
-    except OSError:
+    except (OSError, ValueError):
         return False
     # Record a cooldown so the same skill isn't re-refined every run.
     await _record_cooldown(store, target)

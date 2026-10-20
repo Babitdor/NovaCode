@@ -639,7 +639,7 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "create": SlashCommand("_run_create", "Skills & Agents web UI"),
     "council": SlashCommand(
         "_run_council",
-        "plan a task with the council (view / approve N / revise / history)",
+        "plan a task with the council (settings / view / approve N / revise / history)",
     ),
     "clear": SlashCommand("_run_clear", "clear the transcript", wants_text=False),
     "tokens": SlashCommand("_run_token_view", "show token / context usage", wants_text=False),
@@ -16725,6 +16725,10 @@ class NovaApp(App):
         sub = parts[1].strip().lower() if len(parts) > 1 else ""
         rest = parts[2].strip() if len(parts) > 2 else ""
 
+        if sub == "settings":
+            await self._council_settings()
+            return
+
         # Preserved: a bare /council (and /council stop) is the web UI this
         # command has always opened.
         if sub in ("", "stop"):
@@ -16739,6 +16743,37 @@ class NovaApp(App):
 
         # Anything else is the task to plan.
         self.run_worker(self._council_plan(text.split(maxsplit=1)[1].strip()))
+
+    async def _council_settings(self) -> None:
+        """Edit a private council draft and persist only an explicit Save."""
+        from novacode_cli.config.nova_config import NovaConfig
+        from novacode_cli.council_settings import default_settings, load_settings, parse_settings
+        from novacode_cli.remote.command_ui import command_output
+        from novacode_cli.tui.council_settings_screen import CouncilSettingsScreen
+
+        if command_output.get() is not None:
+            self._log(Text(
+                "Open /council settings in the terminal to edit council voices and models."
+            ))
+            return
+        warning = ""
+        try:
+            settings = await asyncio.to_thread(load_settings)
+        except ValueError as exc:
+            settings = default_settings()
+            warning = f"Saved settings are invalid: {exc}. Review defaults before saving."
+        result = await self.push_screen_wait(CouncilSettingsScreen(settings, warning=warning))
+        if result is None:
+            return
+        try:
+            saved = parse_settings(result).to_dict()
+            await asyncio.to_thread(lambda: NovaConfig().set("council", saved))
+        except (ValueError, OSError) as exc:
+            self._log(Text(f"Could not save council settings: {exc}", style="red"))
+            return
+        self._log(Text(
+            "Council settings saved. They apply to the next council run.", style="green"
+        ))
 
     async def _council_subcommand(self, sub: str, rest: str) -> None:
         from novacode_cli import council_planner as cp
@@ -16820,9 +16855,14 @@ class NovaApp(App):
         """Drive a planning council, logging each phase as it lands."""
         from novacode_cli import council_planner as cp
         from novacode_cli.council import get_council_model
+        from novacode_cli.council_settings import load_settings, resolve_models
 
         try:
-            model = get_council_model()
+            model = getattr(getattr(self, "session_state", None), "_model", None)
+            if model is None:
+                model = await asyncio.to_thread(get_council_model)
+            settings = await asyncio.to_thread(load_settings)
+            models = await asyncio.to_thread(resolve_models, settings, model)
         except Exception as exc:  # noqa: BLE001 — no provider configured
             self._log(Text(f"Council unavailable: {exc}", style="red"))
             return
@@ -16846,6 +16886,10 @@ class NovaApp(App):
                 context=council_context,
                 store=store,
                 run=run,
+                members=settings.personas(),
+                member_models=models,
+                judge_model=models["judge"],
+                judge_perspective=f"{settings.judge.name}\n{settings.judge.system}",
             ):
                 self._council_run_id = event["run_id"]
                 card.apply(event["event"], event["payload"])

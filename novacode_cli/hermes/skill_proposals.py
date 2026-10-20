@@ -20,7 +20,10 @@ def propose_skill(
     """Return a revision reference for a create, update, or recoverable archive."""
     from novacode_cli.config.config import Settings
     from novacode_cli.hermes.memory_tiers import project_memory_key
+    from novacode_cli.skills.schema import prepare_skill_content
 
+    if not archive:
+        content = prepare_skill_content(content, name)
     settings = Settings.from_environment()
     user_root = settings.ensure_user_skills_dir().resolve()
     scope = "shared" if source is None or source.resolve().parent.parent == user_root else "project"

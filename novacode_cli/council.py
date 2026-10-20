@@ -417,6 +417,8 @@ async def run_council(
     model: Any,
     personas: list[Persona] | None = None,
     history: list[dict[str, Any]] | None = None,
+    *,
+    member_models: dict[str, Any] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Run a council debate over *topic* and yield event dicts.
 
@@ -433,6 +435,7 @@ async def run_council(
       ``verdict`` -> ``done``.
     """
     members = personas or PERSONAS
+    models = dict(member_models or {})
     name_to_id = {p.name: p.id for p in members}
     id_to_name = {p.id: p.name for p in members}
     history_block = _format_history(history)
@@ -472,7 +475,7 @@ async def run_council(
         full = ""
         failed: str | None = None
         try:
-            async for event in _stream_persona_turn(persona, convo, model):
+            async for event in _stream_persona_turn(persona, convo, models.get(persona.id, model)):
                 if event[0] == "delta":
                     full += event[1]
                     yield {"type": "agent_delta", "id": persona.id, "text": event[1]}
@@ -514,7 +517,7 @@ async def run_council(
     tally: dict[str, int] = {p.id: 0 for p in answered}
 
     ballots = await asyncio.gather(
-        *(_cast_ballot(v, answered, answers, topic, model) for v in answered)
+        *(_cast_ballot(v, answered, answers, topic, models.get(v.id, model)) for v in answered)
     )
 
     for voter, choice_name, reason in ballots:

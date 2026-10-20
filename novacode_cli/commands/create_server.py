@@ -1527,7 +1527,7 @@ class CreateRequestHandler(LocalRequestHandler):
 
         return None
 
-    def _create_skill(self, body: dict) -> None:
+    def _create_skill(self, body: dict) -> None:  # noqa: PLR0911 - Validate before creating files.
         """Create a new skill."""
         name = body.get("name", "").strip()
         description = body.get("description", "").strip()
@@ -1560,8 +1560,13 @@ class CreateRequestHandler(LocalRequestHandler):
             self._send_error(f"Skill '{name}' already exists", 409)
             return
 
-        # Ensure content has frontmatter
-        final_content = _ensure_frontmatter(content, name, description)
+        from novacode_cli.skills.schema import prepare_skill_content
+
+        try:
+            final_content = prepare_skill_content(content, name, description)
+        except ValueError as exc:
+            self._send_error(str(exc), 400)
+            return
 
         # Write atomically
         skill_dir.mkdir(parents=True, exist_ok=True)
@@ -1608,6 +1613,14 @@ class CreateRequestHandler(LocalRequestHandler):
 
         if not skill_dir:
             self._send_error(f"Skill '{name}' not found", 404)
+            return
+
+        from novacode_cli.skills.schema import prepare_skill_content
+
+        try:
+            content = prepare_skill_content(content, name)
+        except ValueError as exc:
+            self._send_error(str(exc), 400)
             return
 
         # Write atomically

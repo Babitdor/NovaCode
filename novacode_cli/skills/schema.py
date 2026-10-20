@@ -29,6 +29,8 @@ CANONICAL_SECTIONS: tuple[str, ...] = (
 
 # Frontmatter keys the schema guarantees (others the author wrote are preserved).
 _REQUIRED_KEYS = ("name", "description", "version", "tags")
+_MAX_NAME_LENGTH = 64
+_MAX_DESCRIPTION_LENGTH = 1024
 
 _FM_KEY_RE = re.compile(r"^([A-Za-z0-9_-]+)\s*:\s*(.*)$")
 
@@ -163,6 +165,65 @@ def validate_skill_structure(content: str) -> list[str]:
     return issues
 
 
+def prepare_skill_content(content: str, name: str, description: str = "") -> str:
+    """Normalize and validate authored skills before saving or proposing them.
+
+    The destination directory determines the command name. Repair missing
+    metadata and scalar quoting, preserve extra metadata and the markdown body,
+    and reject invalid YAML rather than saving an undiscoverable skill.
+    """
+    import yaml
+
+    if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name) or len(name) > _MAX_NAME_LENGTH:
+        message = "Skill name must be lowercase kebab-case, at most 64 characters"
+        raise ValueError(message)
+    if not isinstance(content, str) or not content.strip():
+        message = "Skill content must contain markdown instructions"
+        raise ValueError(message)
+    original, _ = _split_frontmatter(content.removeprefix("\ufeff"))
+    if original:
+        try:
+            original_metadata = yaml.safe_load(original)
+        except yaml.YAMLError:
+            pass  # Scalar quoting may be repairable by the normalizer below.
+        else:
+            if not isinstance(original_metadata, dict):
+                message = "Skill frontmatter must be a YAML mapping"
+                raise ValueError(message)  # noqa: TRY004 - Authored YAML validation contract.
+    normalized = normalize_skill_frontmatter(content.removeprefix("\ufeff"), name, description)
+    frontmatter, body = _split_frontmatter(normalized)
+    try:
+        metadata = yaml.safe_load(frontmatter or "")
+    except yaml.YAMLError as exc:
+        message = "Skill frontmatter is invalid YAML; fix it before saving"
+        raise ValueError(message) from exc
+    if not isinstance(metadata, dict):
+        message = "Skill frontmatter must be a YAML mapping"
+        raise ValueError(message)  # noqa: TRY004 - Authored YAML validation contract.
+    metadata["name"] = name
+    trigger = metadata.get("description")
+    if not isinstance(trigger, str) or not trigger.strip():
+        message = "Skill description must be nonempty text"
+        raise ValueError(message)
+    if len(trigger) > _MAX_DESCRIPTION_LENGTH:
+        message = "Skill description must be at most 1024 characters"
+        raise ValueError(message)
+    tags = metadata.get("tags")
+    if not isinstance(tags, list) or any(not isinstance(tag, str) for tag in tags):
+        message = "Skill tags must be a YAML list of strings"
+        raise ValueError(message)
+    if not body.strip():
+        message = "Skill content must contain markdown instructions after the frontmatter"
+        raise ValueError(message)
+    metadata["version"] = str(metadata.get("version") or DEFAULT_VERSION)
+    extras = {key: value for key, value in metadata.items() if key not in {"name", "description"}}
+    header = (
+        f"name: {name}\ndescription: {json.dumps(trigger, ensure_ascii=False)}\n"
+        + yaml.safe_dump(extras, allow_unicode=True, sort_keys=False).rstrip()
+    )
+    return f"---\n{header}\n---\n\n{body.rstrip()}\n"
+
+
 def render_schema_block() -> str:
     """Return the canonical-structure guidance text (for prompts / the critic)."""
     sections = "\n".join(f"   - ## {s}" for s in CANONICAL_SECTIONS)
@@ -186,7 +247,8 @@ __all__ = [
     "CANONICAL_SECTIONS",
     "DEFAULT_VERSION",
     "normalize_skill_frontmatter",
-    "yaml_str",
+    "prepare_skill_content",
     "render_schema_block",
     "validate_skill_structure",
+    "yaml_str",
 ]

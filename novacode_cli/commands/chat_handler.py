@@ -946,16 +946,22 @@ class _ChatHandler(BaseHTTPRequestHandler):
 
         async def _produce() -> None:
             from novacode_cli.council import get_council_model, run_council
+            from novacode_cli.council_settings import load_settings, resolve_models
 
             try:
-                model = get_council_model()
+                model = await asyncio.to_thread(get_council_model)
+                settings = await asyncio.to_thread(load_settings)
+                models = await asyncio.to_thread(resolve_models, settings, model, debate=True)
             except Exception as exc:  # noqa: BLE001
                 q.put(("council_error", {"message": f"Model unavailable: {exc}"}))
                 q.put(_STREAM_END)
                 return
 
             try:
-                async for event in run_council(topic, model, history=history):
+                async for event in run_council(
+                    topic, model, personas=settings.personas(debate=True),
+                    history=history, member_models=models,
+                ):
                     etype = event.pop("type")
                     q.put((etype, event))
             except Exception as exc:  # noqa: BLE001

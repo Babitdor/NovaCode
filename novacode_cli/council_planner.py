@@ -759,7 +759,8 @@ def _vote_digest(tally: dict[str, Any]) -> str:
 
 
 async def _judge(
-    run: CouncilRun, model: Any, rubric: dict[str, float], max_plans: int
+    run: CouncilRun, model: Any, rubric: dict[str, float], max_plans: int,
+    perspective: str = "",
 ) -> Judgment:
     """Score the candidate set. Falls back to the vote order if the judge fails.
 
@@ -778,7 +779,13 @@ async def _judge(
         + _vote_digest(run.tally)
     )
     wanted = min(max_plans, len(run.proposals))
-    data, _reason = await _ask_json(model, _judge_guide(rubric, wanted), user)
+    guide = _judge_guide(rubric, wanted)
+    if perspective:
+        guide += (
+            "\n\nAdditional judge perspective (retain the required rubric and JSON format):\n"
+            + perspective
+        )
+    data, _reason = await _ask_json(model, guide, user)
 
     selected: list[SelectedPlan] = []
     if data is not None:
@@ -945,6 +952,9 @@ async def run_planning_council(
     rubric: dict[str, float] | None = None,
     max_plans: int = MAX_PLANS,
     run: CouncilRun | None = None,
+    member_models: dict[str, Any] | None = None,
+    judge_model: Any = None,  # noqa: ANN401 - Provider model protocol, like the main model.
+    judge_perspective: str = "",
 ) -> AsyncIterator[dict[str, Any]]:
     """Run the planning council and yield events.
 
@@ -956,6 +966,7 @@ async def run_planning_council(
     the user asks for a revision.
     """
     council = members or PLANNING_PERSONAS
+    models = dict(member_models or {})
     rubric = rubric or RUBRIC
     if run is None:
         run = CouncilRun(id=new_run_id(), prompt=prompt, context=context)
@@ -997,7 +1008,7 @@ async def run_planning_council(
     position = {persona.id: i for i, persona in enumerate(council, 1)}
     results: dict[str, Any] = {}
     async for persona, (result, reason) in _as_done(
-        council, lambda p: _brainstorm_one(p, run, model, position[p.id])
+        council, lambda p: _brainstorm_one(p, run, models.get(p.id, model), position[p.id])
     ):
         results[persona.id] = result
         if result is None:
@@ -1051,7 +1062,7 @@ async def run_planning_council(
     run.status = CRITIQUING
     yield _event("council.phase.started", run, phase=CRITIQUING)
     async for persona, (critique, reason) in _as_done(
-        council, lambda p: _critique_one(p, run, anonymized, model, valid_ids)
+        council, lambda p: _critique_one(p, run, anonymized, models.get(p.id, model), valid_ids)
     ):
         if critique is None:
             run.failures.append(
@@ -1076,7 +1087,7 @@ async def run_planning_council(
     run.status = VOTING
     yield _event("council.phase.started", run, phase=VOTING)
     async for persona, (ballot, reason) in _as_done(
-        council, lambda p: _ballot_one(p, run, anonymized, model, valid_ids)
+        council, lambda p: _ballot_one(p, run, anonymized, models.get(p.id, model), valid_ids)
     ):
         if ballot is None:
             run.failures.append(
@@ -1097,7 +1108,9 @@ async def run_planning_council(
     run.status = JUDGING
     yield _event("council.phase.started", run, phase=JUDGING)
     yield _event("judge.started", run)
-    run.judgment = await _judge(run, model, rubric, max_plans)
+    run.judgment = await _judge(
+        run, judge_model if judge_model is not None else model, rubric, max_plans, judge_perspective
+    )
     _save()
     yield _event(
         "judge.completed",

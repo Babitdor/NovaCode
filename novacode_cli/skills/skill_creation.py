@@ -9,6 +9,7 @@ from novacode_cli.config.config import COLORS, Settings, console
 from novacode_cli.config.model_create import create_model
 from novacode_cli.skills.load import list_skills
 from novacode_cli.skills.skill_system_prompt import render_skill_creation_prompt
+from novacode_cli.skills.schema import prepare_skill_content
 from novacode_cli.tools import web_search
 
 
@@ -94,11 +95,8 @@ async def _generate_skill(
         if skill_file.exists():
             skill_content = skill_file.read_text(encoding="utf-8").strip()
 
-            # Validate frontmatter
-            if not skill_content.startswith("---"):
-                logger.warning("SKILL.md missing frontmatter; adding defaults")
-                skill_content = _add_frontmatter(skill_content, skill_name, description)
-                skill_file.write_text(skill_content, encoding="utf-8")
+            skill_content = prepare_skill_content(skill_content, skill_name, description or "")
+            skill_file.write_text(skill_content, encoding="utf-8")
 
             logger.debug("Skill content generated and normalized")
             return skill_content
@@ -109,6 +107,7 @@ async def _generate_skill(
             if extracted:
                 logger.debug("Extracted SKILL.md from agent response (file not written)")
                 skill_file.parent.mkdir(parents=True, exist_ok=True)
+                extracted = prepare_skill_content(extracted, skill_name, description or "")
                 skill_file.write_text(extracted, encoding="utf-8")
                 return extracted
 
@@ -129,7 +128,7 @@ async def _generate_skill(
 
 def _add_frontmatter(content: str, name: str, description: str | None) -> str:
     """Ensure YAML frontmatter with name and description."""
-    return f"---\nname: {name}\ndescription: {description or 'No description provided'}\n---\n\n{content}"
+    return prepare_skill_content(content, name, description or "")
 
 
 def _extract_skill_md_from_response(response: str, skill_name: str) -> str | None:
@@ -169,7 +168,7 @@ def _extract_skill_md_from_response(response: str, skill_name: str) -> str | Non
     for match in fm_matches:
         stripped = match.strip()
         if stripped.startswith("---") and len(stripped) > 50:
-            return stripped
+            return _ensure_frontmatter(stripped, skill_name)
 
     # Strategy 3: Check if the response itself looks like SKILL.md content
     stripped_response = response.strip()
@@ -181,9 +180,7 @@ def _extract_skill_md_from_response(response: str, skill_name: str) -> str | Non
 
 def _ensure_frontmatter(content: str, skill_name: str) -> str:
     """Ensure content has valid YAML frontmatter."""
-    if content.startswith("---"):
-        return content
-    return f"---\nname: {skill_name}\ndescription: Auto-generated skill\n---\n\n{content}"
+    return prepare_skill_content(content, skill_name)
 
 
 def _get_static_template(skill_name: str) -> str:
@@ -198,7 +195,7 @@ def _get_static_template(skill_name: str) -> str:
     skill_title = skill_name.replace("-", " ").replace("_", " ").title()
     return f"""---
 name: {skill_name}
-description: <verb> <object>. Use when: <signal 1>, <signal 2>.
+description: "<verb> <object>. Use when: <signal 1>, <signal 2>."
 version: 1.0.0
 tags: []
 ---
@@ -227,7 +224,7 @@ example-command --flag value
 """
 
 
-def _create(
+def _create(  # noqa: PLR0911 - Validate destination and metadata before creating files.
     skill_name: str,
     agent: str,
     project: bool = False,
@@ -251,6 +248,12 @@ def _create(
             "[dim]Skill names must only contain letters, numbers, hyphens, and underscores.[/dim]",
             style=COLORS["dim"],
         )
+        return
+
+    try:
+        template = prepare_skill_content(_get_static_template(skill_name), skill_name)
+    except ValueError as exc:
+        console.print(f"[bold red]Error:[/bold red] {exc}")
         return
 
     # Determine scope - either from flags or by asking
@@ -308,14 +311,12 @@ def _create(
     import asyncio
     content = asyncio.run(_generate_skill(skill_name, skills_dir)) # type: ignore
     if content is None:
-        content = _get_static_template(skill_name)
-        skill_md = skill_dir / "SKILL.md"
-        skill_md.write_text(content, encoding="utf-8")
+        content = template
         used_llm = False
     else:
-        # _generate_skill already wrote SKILL.md via the agent; no second write needed.
         used_llm = True
     skill_md = skill_dir / "SKILL.md"
+    skill_md.write_text(prepare_skill_content(content, skill_name), encoding="utf-8")
 
     console.print(f"✓ Skill '{skill_name}' created successfully!", style=COLORS["primary"])
     console.print(f"Location: {skill_dir}\n", style=COLORS["dim"])
@@ -1150,11 +1151,16 @@ def _add(
             console.print("\n[dim]Use --force to overwrite.[/dim]", style=COLORS["dim"])
             return
 
+        try:
+            fallback = prepare_skill_content(_get_static_template(skill_name), skill_name)
+        except ValueError as exc:
+            console.print(f"[bold red]Error:[/bold red] {exc}")
+            return
         skill_dir.mkdir(parents=True, exist_ok=True)
         content = asyncio.run(_generate_skill(skill_name, skills_dir, description=description))
         if not content:
             # LLM failed — write a minimal stub so the install still succeeds
-            content = _get_static_template(skill_name)
+            content = fallback
             (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
 
         generated = True
