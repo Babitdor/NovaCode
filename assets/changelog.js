@@ -58,7 +58,7 @@
     entry.dataset.sha = sha;
     entry.innerHTML = '<summary class="entry-toggle"><h2 class="version">v' + version + '</h2>' +
       '<span class="release-summary">' + escape(summary || 'Release v' + version) + '</span></summary>' +
-      '<div class="release-content"><p><a href="#' + id + '">Link to v' + version + '</a></p>' + blocks.join('') + '</div>';
+      '<div class="release-content">' + blocks.join('') + '</div>';
     return entry;
   }
 

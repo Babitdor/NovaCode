@@ -331,8 +331,7 @@ def render_entry(entry: ReleaseEntry) -> str:
         f'<details class="changelog-entry" id="{anchor}" data-version="{entry.version}" data-sha="{entry.sha}">\n'
         f'<summary class="entry-toggle"><h2 class="version">v{entry.version}</h2>{time_html}'
         f'<span class="release-summary">{_html_escape(entry.description)}</span></summary>\n'
-        f'<div class="release-content"><p><a href="#{anchor}">Link to v{entry.version}</a></p>'
-        f'{entry.details_html}</div>\n</details>'
+        f'<div class="release-content">{entry.details_html}</div>\n</details>'
     )
 
 
