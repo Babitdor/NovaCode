@@ -1680,7 +1680,7 @@ class NovaApp(App):
         overflow-y: auto;
     }
     #todo-scroll.active { display: block; }
-    #todo-scroll.collapsed { max-height: 1; overflow-y: hidden; }
+    #todo-scroll.collapsed { height: 1; min-height: 1; max-height: 1; overflow-y: hidden; }
     #todo-dock {
         display: none;
         height: auto;
@@ -1692,7 +1692,8 @@ class NovaApp(App):
     #todo-dock.active { display: block; }
     #todo-dock:hover { background: $boost; }
     /* Collapsed: just the one-line summary header. */
-    #todo-dock.collapsed { max-height: 1; overflow-y: hidden; }
+    #todo-dock.collapsed { height: 1; min-height: 1; max-height: 1; overflow-y: hidden; }
+    Screen.dashboard-ui #todo-dock.collapsed { border: none; }
     /* --- Dynamic subagents: the fan-out a dispatch spawned, while it runs.
        Above the transcript so a 32-way fan-out stays watchable, and hidden
        entirely until something is in flight. The collapsed state keeps the one
@@ -9319,7 +9320,6 @@ class NovaApp(App):
             f"Continue with what you were doing, taking this result into account."
         )
         await self._stream_prompt(prompt)
-        await self._maybe_run_approved_plan()
 
     @work
     async def _open_tasks_panel(self) -> None:
@@ -9835,8 +9835,6 @@ class NovaApp(App):
             self._pending_job_notes = []
             agent_text = f"[Background jobs finished since your last turn]\n{notes}\n\n{text}"
         await self._stream_prompt(agent_text)
-        # If a plan was approved during this turn, hand off to the main agent.
-        await self._maybe_run_approved_plan()
 
     @staticmethod
     def _parse_natural_launch_intent(text: str) -> tuple[str, str] | None:
@@ -9898,6 +9896,8 @@ class NovaApp(App):
         # stay put for the rest of the turn (see the sticky guard in _render).
         status_phrases.reset()
         self._set_status(status_phrases.status_line("thinking", sticky_phrase=True))
+        turn_completed = False
+        self._stream_turn_failed = False
         try:
             if self._remote_msg is None:
                 await self._start_local_remote_stream(text)
@@ -9908,6 +9908,7 @@ class NovaApp(App):
             else:
                 await self._save_session(pending_prompt=text, task_status="interrupted")
                 await self._do_stream(text, assistant_id)
+            turn_completed = not self._stream_turn_failed
             self._avatar_react("happy")
         except asyncio.CancelledError:
             self._reset_streaming()
@@ -9965,6 +9966,12 @@ class NovaApp(App):
             # (e.g. a review triggered on the final turn never drained its
             # completion event).
             self._set_nova_indicator("")
+        # Every entry point (plain prompts, skills and remote commands) must
+        # perform the approval handoff. Do it before deferred commands or async
+        # reports can start another exclusive turn and cancel this continuation.
+        if turn_completed and getattr(self.session_state, "approved_plan_content", None):
+            await self._maybe_run_approved_plan()
+            return
         # Refresh the per-category context breakdown from agent state, then
         # proactively manage the context window once the turn has settled.
         await self._update_context_breakdown()
@@ -10298,6 +10305,8 @@ class NovaApp(App):
             # Through _deliver, not _render directly: if the user switches tabs
             # mid-turn, this turn's events must keep going to the ROOT pane
             # rather than into whichever pane is now on screen.
+            if isinstance(e, (ev.Cancelled, ev.Error)):
+                self._stream_turn_failed = True
             await self._deliver(getattr(self, "_root_pane", None), e)
 
     @work(group="remote")
@@ -13675,6 +13684,9 @@ class NovaApp(App):
             approved = None
         try:
             if approved:
+                # Checklist initialization is part of the same turn. Keep queued
+                # commands/reports from replacing its worker before execution.
+                self._turn_active = True
                 try:
                     self.session_state.clear_plan_agent()
                 except Exception:  # noqa: BLE001
@@ -13694,6 +13706,8 @@ class NovaApp(App):
 
                 todos = build_plan_todos(approved)
                 self.session_state.todos = todos
+                self._todos = list(todos)
+                self._todos_agent = None
                 self._paint_todos(todos)
                 try:
                     await self.agent.aupdate_state(
@@ -13711,7 +13725,10 @@ class NovaApp(App):
                     return
 
                 prompt = (
-                    "The user approved this plan. The current todo list was imported "
+                    "The user approved this plan. Start implementation now; do not "
+                    "re-enter plan mode or request approval again for the same scope. "
+                    "If a scope change needs a revised plan, explain why and request "
+                    "approval for that revision. The current todo list was imported "
                     "from its implementation steps and verification checks. Read the "
                     "complete plan below, work through every imported item in order, "
                     "and keep every imported item verbatim in `write_todos` while "
@@ -13722,7 +13739,11 @@ class NovaApp(App):
                     "item open until all substeps and verification checks are done.\n\n"
                     f"<approved_plan>\n{approved}\n</approved_plan>"
                 )
-                with activate_plan_todo_guard([todo["content"] for todo in todos]):
+                session = self.session_state
+                with activate_plan_todo_guard(
+                    [todo["content"] for todo in todos],
+                    is_planning=lambda: bool(getattr(session, "plan_mode_enabled", False)),
+                ):
                     await self._stream_prompt(prompt)
                 try:
                     _st = await self.agent.aget_state({"configurable": {"thread_id": _tid}})
@@ -13741,6 +13762,8 @@ class NovaApp(App):
                 except Exception:  # noqa: BLE001 — a state read must not replace the turn result
                     pass
         finally:
+            if approved:
+                self._turn_active = False
             # "Auto-approve edits" was scoped to this plan run — restore, so
             # the NEXT plan prompts for approval again instead of silently
             # self-approving (see the plan-approval modal handler).
@@ -14119,7 +14142,6 @@ class NovaApp(App):
         )
         if args:
             await self._stream_prompt(args)
-            await self._maybe_run_approved_plan()
 
     async def _run_goal(self, text: str) -> None:
         """Manage the thread's goal and its autonomous execution.
@@ -17595,6 +17617,7 @@ class NovaApp(App):
         if (
             not self._pending_async_completion_ids
             or getattr(self, "_turn_active", False)
+            or getattr(self.session_state, "approved_plan_content", None)
             or self._async_report_scheduled
         ):
             return
@@ -17603,7 +17626,11 @@ class NovaApp(App):
 
     def _dispatch_pending_async_report(self) -> None:
         self._async_report_scheduled = False
-        if getattr(self, "_turn_active", False) or not self._pending_async_completion_ids:
+        if (
+            getattr(self, "_turn_active", False)
+            or getattr(self.session_state, "approved_plan_content", None)
+            or not self._pending_async_completion_ids
+        ):
             return
         task_id = self._pending_async_completion_ids.pop(0)
         self._log(Text("↻ Async agent finished — fetching result…", style="cyan"))
@@ -17636,7 +17663,6 @@ class NovaApp(App):
             f"report the error clearly."
         )
         await self._stream_prompt(prompt)
-        await self._maybe_run_approved_plan()
 
     #: How long a state read is shared (see :meth:`_read_state`).
     _STATE_SHARE_SECONDS = 2.0

@@ -43,7 +43,7 @@ class PlanModeMiddleware(AgentMiddleware):
                     f"[Plan Mode] `{tool_name}` is blocked during planning. "
                     "You are currently in the planning phase and cannot execute commands or modify task state yet. "
                     "Please research the codebase using read-only tools, design a plan, and call `exit_plan_mode(plan=...)` "
-                    "to request user approval. Do NOT attempt to run implementation tools or write todos yet."
+                    "to request user approval. Do NOT attempt to run implementation tools before approval."
                 ),
                 tool_call_id=request.tool_call["id"],
                 status="error",

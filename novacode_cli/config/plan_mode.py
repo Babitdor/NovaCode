@@ -9,8 +9,8 @@ from __future__ import annotations
 
 # ── Blocked tools ──────────────────────────────────────────────────────
 # These tools are completely disallowed during plan mode.  They modify
-# state (shell, git, server, test runner) or are planning-only tools
-# that should not be called during execution (write_todos).
+# state (shell, git, server, test runner). Planning checklists are allowed:
+# write_todos changes tracking state without implementing the plan.
 BLOCKED_TOOLS: frozenset[str] = frozenset({
     # Shell execution
     "shell",
@@ -24,8 +24,6 @@ BLOCKED_TOOLS: frozenset[str] = frozenset({
     # Git operations (modifies repo)
     "git_branch",
     "git_stash",
-    # Planning-only tool — not allowed during execution
-    "write_todos",
     "memory_wiki",
 })
 

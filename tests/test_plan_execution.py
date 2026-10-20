@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
 
-from langchain_core.messages import ToolMessage
+from langchain.agents.middleware.types import ToolCallRequest
 
 from novacode_cli.agents.plan_execution import (
     PlanTodoGuardMiddleware,
@@ -61,25 +60,29 @@ def test_external_planner_ordered_steps_are_imported():
     ]
 
 
-def test_plan_todo_guard_rejects_dropping_a_step_and_allows_status_updates():
+def test_plan_todo_guard_restores_dropped_steps_and_allows_status_updates():
     steps = ["Update the parser", "Add regression tests"]
     middleware = PlanTodoGuardMiddleware()
 
-    async def call(todos: list[dict[str, str]]) -> ToolMessage | str:
-        request = SimpleNamespace(
-            tool_call={"name": "write_todos", "id": "call-1", "args": {"todos": todos}}
+    async def call(todos: list[dict[str, str]]) -> list[dict[str, str]]:
+        request = ToolCallRequest(
+            tool_call={"name": "write_todos", "id": "call-1", "args": {"todos": todos}},
+            tool=None,
+            state={},
+            runtime=None,
         )
 
-        async def handler(_request: object) -> str:
-            return "handled"
+        async def handler(request: ToolCallRequest) -> list[dict[str, str]]:
+            return request.tool_call["args"]["todos"]
 
         with activate_plan_todo_guard(steps):
             return await middleware.awrap_tool_call(request, handler)
 
     dropped = asyncio.run(call([{"content": steps[0], "status": "completed"}]))
-    assert isinstance(dropped, ToolMessage)
-    assert dropped.status == "error"
-    assert "Add regression tests" in str(dropped.content)
+    assert dropped == [
+        {"content": steps[0], "status": "completed"},
+        {"content": steps[1], "status": "pending"},
+    ]
 
     preserved = asyncio.run(
         call(
@@ -90,4 +93,8 @@ def test_plan_todo_guard_rejects_dropping_a_step_and_allows_status_updates():
             ]
         )
     )
-    assert preserved == "handled"
+    assert preserved == [
+        {"content": steps[0], "status": "completed"},
+        {"content": steps[1], "status": "in_progress"},
+        {"content": "Extra implementation detail", "status": "pending"},
+    ]

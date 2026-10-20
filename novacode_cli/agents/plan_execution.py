@@ -9,12 +9,16 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
 from langchain.agents.middleware import AgentMiddleware
-from langchain_core.messages import ToolMessage
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterator
 
+    from langchain_core.messages import ToolMessage
+
 _required_plan_steps: ContextVar[tuple[str, ...]] = ContextVar("required_plan_steps", default=())
+_planning_check: ContextVar[Callable[[], bool] | None] = ContextVar(
+    "plan_todo_planning", default=None
+)
 _STEP_SECTION = {
     "steps",
     "implementation steps",
@@ -76,7 +80,28 @@ def _list_steps(body: str) -> list[str]:
     ]
 
 
+def _without_verification(plan: str) -> str:
+    """Exclude verification subtrees from implementation-step discovery."""
+    # Nested verification headings are still checks, not implementation steps.
+    # Remove their contents before the ordered-list fallback can import them
+    # again without the verification label.
+    lines: list[str] = []
+    verification_level: int | None = None
+    for line in plan.splitlines():
+        heading = _HEADING.match(line)
+        if heading:
+            level = len(heading.group(1))
+            if verification_level is not None and level <= verification_level:
+                verification_level = None
+            if heading.group(2).strip().lower() in _VERIFICATION_SECTION:
+                verification_level = level
+        if verification_level is None:
+            lines.append(line)
+    return "\n".join(lines)
+
+
 def _implementation_steps(plan: str) -> list[str]:
+    plan = _without_verification(plan)
     for level, body in _section_text(plan, _STEP_SECTION):
         steps = _heading_steps(body, level) or _list_steps(body)
         if steps:
@@ -114,6 +139,7 @@ def _verification_steps(plan: str) -> list[str]:
             if item:
                 cleaned = _clean_item(item.group(1))
                 if cleaned:
+                    cleaned = re.sub(r"^(?:verify:\s*)+", "", cleaned, flags=re.IGNORECASE)
                     checks.append(f"Verify: {cleaned}")
     return checks
 
@@ -122,7 +148,13 @@ def build_plan_todos(plan: str) -> list[dict[str, str]]:
     """Turn plan steps and explicit checks into the agent's tracked todo state."""
     steps = _implementation_steps(plan)
     checks = _verification_steps(plan)
-    items = list(dict.fromkeys([*steps, *checks]))
+    items: list[str] = []
+    seen: set[str] = set()
+    for item in [*steps, *checks]:
+        key = _todo_key(item)
+        if key not in seen:
+            seen.add(key)
+            items.append(item)
     if not items:
         items = ["Complete the full approved plan and its verification requirements"]
     return [
@@ -131,49 +163,75 @@ def build_plan_todos(plan: str) -> list[dict[str, str]]:
     ]
 
 
+def _todo_key(content: str) -> str:
+    """Match the same action despite presentation-only verification prefixes."""
+    return re.sub(r"^(?:verify:\s*)+", "", _clean_item(content), flags=re.IGNORECASE)
+
+
 @contextmanager
-def activate_plan_todo_guard(steps: list[str]) -> Iterator[None]:
+def activate_plan_todo_guard(
+    steps: list[str],
+    *,
+    is_planning: Callable[[], bool] | None = None,
+) -> Iterator[None]:
     """Require every imported plan item to remain in write_todos while executing."""
     token = _required_plan_steps.set(tuple(steps))
+    planning_token = _planning_check.set(is_planning)
     try:
         yield
     finally:
+        _planning_check.reset(planning_token)
         _required_plan_steps.reset(token)
 
 
 class PlanTodoGuardMiddleware(AgentMiddleware):
-    """Reject todo updates that remove or rename an approved plan item."""
+    """Merge approved requirements into updates without failing the tool call."""
 
     async def awrap_tool_call(
         self,
         request: Any,  # noqa: ANN401
         handler: Callable[..., Awaitable[Any]],
     ) -> ToolMessage | Any:  # noqa: ANN401
-        """Keep approved implementation and verification steps in the todo list."""
+        """Preserve omitted requirements and their last recorded completion state."""
         tool_call = request.tool_call
         if tool_call.get("name") != "write_todos":
             return await handler(request)
 
         required = _required_plan_steps.get()
-        if not required:
+        state = getattr(request, "state", {})
+        planning = _planning_check.get()
+        if (
+            not required
+            or (isinstance(state, dict) and state.get("plan_mode_enabled"))
+            or (planning is not None and planning())
+        ):
             return await handler(request)
 
         args = tool_call.get("args", {})
-        todos = args.get("todos", []) if isinstance(args, dict) else []
-        present = {
-            item.get("content", "").strip()
-            for item in todos
+        todos = args.get("todos") if isinstance(args, dict) else None
+        if not isinstance(todos, list) or any(
+            not isinstance(item, dict) or not isinstance(item.get("content"), str) for item in todos
+        ):
+            return await handler(request)  # Let the tool validate malformed arguments.
+        previous = state.get("todos", []) if isinstance(state, dict) else []
+        known = {
+            _todo_key(item["content"]): item
+            for item in (previous or [])
             if isinstance(item, dict) and isinstance(item.get("content"), str)
         }
-        missing = [step for step in required if step not in present]
-        if missing:
-            return ToolMessage(
-                content=(
-                    "Approved plan items must stay in the todo list until completed. "
-                    "Keep every imported plan item verbatim, update its status, and "
-                    f"add any substeps separately. Missing: {', '.join(missing)}"
-                ),
-                tool_call_id=tool_call.get("id", ""),
-                status="error",
+        proposed = {_todo_key(item["content"]): item for item in todos}
+        merged = []
+        required_keys = {_todo_key(step) for step in required}
+        for step in required:
+            key = _todo_key(step)
+            item = proposed.get(key) or known.get(key) or {"status": "pending"}
+            merged.append({**item, "content": step})
+        merged.extend(item for item in todos if _todo_key(item["content"]) not in required_keys)
+        return await handler(
+            request.override(
+                tool_call={
+                    **tool_call,
+                    "args": {**args, "todos": merged},
+                }
             )
-        return await handler(request)
+        )
