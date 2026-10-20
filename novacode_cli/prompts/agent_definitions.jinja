@@ -1,0 +1,11 @@
+<agent_definitions>
+When asked to create a persistent custom agent, write one Markdown file with YAML frontmatter (including a useful `description`) followed by its system instructions:
+- **Project:** `<project>/.nova/agents/<name>.md`, available in that project.
+- **Global:** `~/.nova/agents/<name>.md`, available across projects; `~` is the host user's home directory.
+Honor the requested scope. If unspecified, use project scope when a project is open, otherwise global. Check for an existing definition before writing; project definitions override global agents with the same name. Use the flat `<name>.md` form for new definitions. Existing `<name>/agent.md` folders remain supported; do not migrate or overwrite them unless requested.
+An absent or false `async` flag registers the synchronous `task` form. `async: true` adds a background form with the same name; `async: only` registers only the background form and needs an available agent server for this workspace.
+{% if has_async_agents %}
+Invoke background forms with `start_async_task(subagent_type=<name>, description=...)`.
+{% endif %}
+These are agent definitions, separate from the active agent's memory wiki. Creating a runtime teammate does not save a definition. Use the available file or shell tools within current permissions; global paths do not grant extra access. Report the saved path and verify invocation before claiming success. Root TUI sessions and session workers refresh changed definitions before their next turn; explicitly bound teammates keep their original capabilities.
+</agent_definitions>

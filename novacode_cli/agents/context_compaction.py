@@ -1,6 +1,12 @@
 """Nova's context compaction: one middleware for everything that shrinks a turn.
 
 A run is left as it is until it is compacted, as Claude Code and Codex do.
+Before a summary is considered, two cheap strategies shrink the history *before
+the current turn* (see :mod:`novacode_cli.context.strategies`): **snip** drops
+zombie messages and stale markers, and **collapse** restructures old completed
+turns into digests once the request passes ``COLLAPSE_AT`` of the window. The
+summary is sized against what is left, so it runs only when they were not
+enough.
 Clearing old tool results on every call (the earlier design) stripped the
 agent's working set while it was still using it, and it re-read the same files
 for hundreds of calls. Now:
@@ -147,6 +153,9 @@ class CompactionState(AgentState):
     _compaction_backoff: Annotated[NotRequired[dict[str, int] | None], PrivateStateAttr]
     """After a failed summary: ``failures`` so far, and ``retry_at`` (message count)."""
 
+    _collapse_event: Annotated[NotRequired[dict[str, Any] | None], PrivateStateAttr]
+    """Where context collapse stops: ``boundary_id``, the first kept user message."""
+
 
 @dataclass(frozen=True)
 class Limits:
@@ -174,6 +183,10 @@ class _Plan:
     raw_tokens: int
     #: Inline image transport is a separate guard, never a token estimate.
     image_transport_chars: int = 0
+    #: The collapse boundary in force for this call (see strategies.collapse_turns).
+    collapse_boundary: str | None = None
+    #: State to save when this call moved the collapse boundary.
+    collapse_update: dict[str, Any] | None = None
 
 
 def limits_for(window: int, *, prune: int | None = None) -> Limits:
@@ -572,9 +585,24 @@ class ContextCompactionMiddleware(AgentMiddleware):
         context_window: int = 0,
         prune_edit: Any = None,  # noqa: ANN401 - a ContextEdit
         scorer: Any = None,  # noqa: ANN401 - a VerdictScorer
+        offload_dir: Any = None,  # noqa: ANN401 - a Path; where collapsed results go
     ) -> None:
         """Configure the stages; see the class docstring."""
         super().__init__()
+        from novacode_cli.agents.tool_offload import OffloadingToolUsesEdit
+        from novacode_cli.config.nova_config import NovaConfig
+
+        config = NovaConfig()
+        self._snip = config.get("context_snip", True) is not False
+        self._collapse = config.get("context_collapse", True) is not False
+        # Collapsed results are saved where /cleared/ points, so read_file can
+        # bring them back; without a directory a collapsed turn keeps one-line
+        # previews only.
+        self._save = (
+            OffloadingToolUsesEdit(offload_dir=offload_dir)._save
+            if offload_dir is not None
+            else None
+        )
         self._model = model
         self._backend = backend
         self._window = int(context_window or 0)
@@ -721,6 +749,51 @@ class ContextCompactionMiddleware(AgentMiddleware):
             self._scale = (self._scale + ratio) / 2
 
     # ── planning: stages 1 and 2, and whether stage 3 is due ────────────
+    def dispatch_view(
+        self, messages: Sequence[AnyMessage], boundary: str | None
+    ) -> list[AnyMessage]:
+        """``messages`` after snip and collapse: what is sent and what is sized."""
+        from novacode_cli.context.strategies import collapse_turns, snip_history
+
+        view = list(messages)
+        if self._snip:
+            view, _ = snip_history(view)
+        if self._collapse and boundary:
+            view, _ = collapse_turns(view, boundary, self._save)
+        return view
+
+    def _collapse_plan(
+        self,
+        messages: Sequence[AnyMessage],
+        state: Mapping[str, Any],
+        size: Callable[[str | None], int],
+        window: int,
+    ) -> tuple[str | None, dict[str, Any] | None]:
+        """The collapse boundary for this call, and the state update if it moved.
+
+        It only moves at the start of a turn (no assistant reply yet), so a run's
+        requests keep one stable prefix, and only past ``COLLAPSE_AT``.
+        """
+        from novacode_cli.context.strategies import (
+            COLLAPSE_AT,
+            collapse_boundary,
+            current_turn_start,
+        )
+
+        event = state.get("_collapse_event")
+        boundary = event.get("boundary_id") if isinstance(event, Mapping) else None
+        if not self._collapse:
+            return None, None
+        turn_start = current_turn_start(messages)
+        if any(isinstance(m, AIMessage) for m in messages[turn_start:]):
+            return boundary, None
+        if size(boundary) < int(window * COLLAPSE_AT):
+            return boundary, None
+        moved = collapse_boundary(messages)
+        if moved is None or moved == boundary:
+            return boundary, None
+        return moved, {"_collapse_event": {"boundary_id": moved}}
+
     def _plan(self, request: ModelRequest, *, force: bool = False) -> _Plan:
         state = request.state or {}
         messages, prior = effective_view(request.messages, state.get("_summarization_event"))
@@ -738,12 +811,21 @@ class ContextCompactionMiddleware(AgentMiddleware):
                 min(limits.keep, usable),
             )
         overhead = self._overhead(request)
+        boundary: str | None = None
 
         def raw(view: Sequence[AnyMessage]) -> int:
-            return _request_size_tokens(compact_observations(list(view))) + overhead
+            sent = compact_observations(self.dispatch_view(view, boundary))
+            return _request_size_tokens(sent) + overhead
 
         def count(view: Sequence[AnyMessage]) -> int:
             return int(raw(view) * self._scale)
+
+        def size_with(candidate: str | None) -> int:
+            nonlocal boundary
+            boundary = candidate
+            return count(messages)
+
+        boundary, collapse_update = self._collapse_plan(messages, state, size_with, limits.window)
 
         if self._scorer is not None:
             try:
@@ -800,7 +882,9 @@ class ContextCompactionMiddleware(AgentMiddleware):
             )
             if not body or not (force or worthwhile):
                 cutoff = 0
-        return _Plan(view, prior, cutoff, limits, raw_tokens, image_chars)
+        return _Plan(
+            view, prior, cutoff, limits, raw_tokens, image_chars, boundary, collapse_update
+        )
 
     # ── stage 3 ─────────────────────────────────────────────────────────
     async def _summarize(self, model: Any, head: list[AnyMessage], window: int) -> str:  # noqa: ANN401
@@ -957,7 +1041,7 @@ class ContextCompactionMiddleware(AgentMiddleware):
                 if not waiting:
                     retry_at = len(request.messages) + 4 * failures
                     update = {"_compaction_backoff": {"failures": failures, "retry_at": retry_at}}
-                return plan.messages, update
+                return self.dispatch_view(plan.messages, plan.collapse_boundary), update
             summary = mechanical_digest(head)
 
         source_messages = (request.state or {}).get("messages") or head
@@ -978,7 +1062,7 @@ class ContextCompactionMiddleware(AgentMiddleware):
             len(head),
             int(plan.raw_tokens * self._scale),
         )
-        return [message, *tail], {
+        return self.dispatch_view([message, *tail], plan.collapse_boundary), {
             "_summarization_event": {
                 "cutoff_index": cutoff,
                 "summary_message": message,
@@ -1002,7 +1086,11 @@ class ContextCompactionMiddleware(AgentMiddleware):
         learned = None
         if not plan.cutoff:
             try:
-                response = await handler(request.override(messages=plan.messages))
+                response = await handler(
+                    request.override(
+                        messages=self.dispatch_view(plan.messages, plan.collapse_boundary)
+                    )
+                )
             except Exception as error:
                 if not _is_overflow(error):
                     raise
@@ -1011,12 +1099,13 @@ class ContextCompactionMiddleware(AgentMiddleware):
                 plan = await asyncio.to_thread(self._plan, request, force=True)
             else:
                 self._calibrate(response, plan.raw_tokens)
-                return response
+                return _with_update(response, plan.collapse_update)
 
         if plan.cutoff:
             messages, update = await self._compact(request, plan, overflow=learned is not None)
         else:  # too long, and nothing before the tail to summarize
-            messages, update = _clip_results(plan.messages), None
+            messages = _clip_results(self.dispatch_view(plan.messages, plan.collapse_boundary))
+            update = None
         try:
             response = await handler(request.override(messages=messages))
         except Exception as error:
@@ -1028,6 +1117,8 @@ class ContextCompactionMiddleware(AgentMiddleware):
             # Summarized on schedule and still refused: the kept tail holds a
             # result that is too large on its own.
             response = await handler(request.override(messages=_clip_results(messages)))
+        if plan.collapse_update:
+            update = {**plan.collapse_update, **(update or {})}
         if update is None:
             return response
         from novacode_cli.context.snapshot import ContextSnapshot
@@ -1046,7 +1137,11 @@ class ContextCompactionMiddleware(AgentMiddleware):
         learned = None
         if not plan.cutoff:
             try:
-                response = handler(request.override(messages=plan.messages))
+                response = handler(
+                    request.override(
+                        messages=self.dispatch_view(plan.messages, plan.collapse_boundary)
+                    )
+                )
             except Exception as error:
                 if not _is_overflow(error):
                     raise
@@ -1055,12 +1150,13 @@ class ContextCompactionMiddleware(AgentMiddleware):
                 plan = self._plan(request, force=True)
             else:
                 self._calibrate(response, plan.raw_tokens)
-                return response
+                return _with_update(response, plan.collapse_update)
 
         if plan.cutoff:
             messages, update = _run_sync(self._compact(request, plan, overflow=learned is not None))
         else:  # too long, and nothing before the tail to summarize
-            messages, update = _clip_results(plan.messages), None
+            messages = _clip_results(self.dispatch_view(plan.messages, plan.collapse_boundary))
+            update = None
         try:
             response = handler(request.override(messages=messages))
         except Exception as error:
@@ -1072,6 +1168,8 @@ class ContextCompactionMiddleware(AgentMiddleware):
             # Summarized on schedule and still refused: the kept tail holds a
             # result that is too large on its own.
             response = handler(request.override(messages=_clip_results(messages)))
+        if plan.collapse_update:
+            update = {**plan.collapse_update, **(update or {})}
         if update is None:
             return response
         from novacode_cli.context.snapshot import ContextSnapshot
@@ -1079,6 +1177,13 @@ class ContextCompactionMiddleware(AgentMiddleware):
         if source and ContextSnapshot.capture(request).generation != source:
             return response
         return ExtendedModelResponse(model_response=response, command=Command(update=update))
+
+
+def _with_update(response: Any, update: dict[str, Any] | None) -> Any:  # noqa: ANN401
+    """Attach a state update to a model response when there is one."""
+    if not update:
+        return response
+    return ExtendedModelResponse(model_response=response, command=Command(update=update))
 
 
 __all__ = [

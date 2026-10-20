@@ -19,6 +19,15 @@ from novacode_cli.tui.app import NovaApp
 from novacode_cli.ui.ui_elements import TokenTracker
 
 
+@pytest.fixture(autouse=True)
+def _private_home(monkeypatch, tmp_path):
+    """/context remembers the last prompt size in ~/.nova; keep tests off the real one."""
+    from novacode_cli.config import config
+
+    monkeypatch.setattr(config, "HOME_DIR", tmp_path)
+
+
+
 def session(messages):
     return SessionData(meta=SessionMeta(
         session_id="saved", thread_id="old-thread", created_at="2026-10-10",
@@ -89,6 +98,7 @@ async def test_restored_metrics_count_continuation_and_injected_baseline():
         _active_agent=lambda: (agent, None), _refresh_router_model_from_state=lambda values: None,
         _routed_model_name=None, model_name="gpt-4o", _maybe_warn_ollama_offload=AsyncMock(),
         _read_state=lambda agent, config, timeout=None: agent.aget_state(config),
+        _context_strategies=NovaApp._context_strategies,
     )
     tracker.reset()
     await NovaApp._update_context_breakdown(app)

@@ -376,7 +376,7 @@ def test_every_user_agent_marked_async_is_collected():
     expected = {
         "code-explorer",
         "code-reviewer",
-        "code-simplier",
+        "code-simplifier",
         "serena",
         "ultra-mode-agent",
     }

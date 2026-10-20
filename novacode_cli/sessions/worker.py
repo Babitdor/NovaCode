@@ -157,7 +157,8 @@ class SessionWorker:
         self._session_pending[request_id] = future
         try:
             self._emit({"t": "session_request", "id": request_id, "method": method, "payload": payload})
-            return await asyncio.wait_for(future, timeout=10)
+            timeout = 310 if method == "authorize" else 10
+            return await asyncio.wait_for(future, timeout=timeout)
         except asyncio.TimeoutError:
             return {"error": "Session broker did not answer before the timeout."}
         finally:
@@ -227,6 +228,11 @@ class SessionWorker:
         from novacode_cli.sessions.gateway import endpoint
         token = endpoint.set(self.session_request)
         try:
+            from novacode_cli.agents.invocation import refresh_definitions
+
+            self.agent, self.backend = await refresh_definitions(
+                self.agent, self.backend, self.session_state
+            )
             if text.lstrip().startswith("/") and not images:
                 text = await self._resolve_slash(text, prompt_id=prompt_id)
                 if text is None:
@@ -380,6 +386,11 @@ class SessionWorker:
                 "model_provider": getattr(self.session_state, "session_model_provider", None),
                 "reasoning_effort": NovaConfig().get("reasoning_effort"),
                 "todos": getattr(self.session_state, "todos", []),
+                **(
+                    {"team_handshake": self.session_state.team_handshake}
+                    if getattr(self.session_state, "team_handshake", None)
+                    else {}
+                ),
             }
         )
 

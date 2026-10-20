@@ -1,4 +1,4 @@
-"""Custom subagent files (``agent.md``) and the tools a subagent may be given.
+"""Custom subagent definitions and the tools a subagent may be given.
 
 An ``agent.md`` is YAML frontmatter plus the system prompt::
 
@@ -12,16 +12,59 @@ An ``agent.md`` is YAML frontmatter plus the system prompt::
 ``tools`` is optional. Absent means every tool (what agents always had);
 a list means exactly those, on top of the file/shell tools every subagent gets
 from deepagents itself (:data:`ALWAYS_INCLUDED`).
+
+Create new definitions as flat ``.nova/agents/<name>.md`` files in a project or
+``~/.nova/agents/<name>.md`` globally. Existing ``<name>/agent.md`` folders and
+Claude Code agent files remain supported::
+
+    ---
+    name: approver
+    description: Final gate; writes decision.md.
+    tools: Read, Grep, Glob, Bash, Write
+    model: opus
+    ---
+
+Claude tool names map to Nova's (:data:`CLAUDE_TOOL_NAMES`). A list that names
+any file/shell tool is a Claude-style allowlist: the file/shell tools it leaves
+out are taken away (:class:`FilesystemToolFilter`), so ``approver`` has no
+``edit_file``.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+from langchain.agents.middleware import AgentMiddleware
+from langchain_core.messages import ToolMessage
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from langchain.agents.middleware.types import ModelRequest, ModelResponse
+    from langchain.tools.tool_node import ToolCallRequest
+    from langgraph.types import Command
 
 #: Given to every subagent by deepagents' own middleware; not selectable.
-ALWAYS_INCLUDED = ("ls", "read_file", "write_file", "edit_file", "glob", "grep", "execute")
+ALWAYS_INCLUDED = (
+    "ls", "read_file", "write_file", "edit_file", "delete", "glob", "grep", "execute",
+)
+
+#: Claude Code tool names in an agent file's ``tools:`` → Nova's tool names.
+CLAUDE_TOOL_NAMES = {
+    "Read": "read_file",
+    "Write": "write_file",
+    "Edit": "edit_file",
+    "MultiEdit": "edit_file",
+    "Grep": "grep",
+    "Glob": "glob",
+    "LS": "ls",
+    "Bash": "execute",
+    "WebFetch": "fetch_url",
+    "WebSearch": "web_search",
+    "TodoWrite": "write_todos",
+}
 
 
 def _parse(content: str) -> tuple[dict[str, Any], str]:
@@ -78,7 +121,78 @@ def agent_tools(content: str) -> list[str] | None:
         return None
     if isinstance(tools, str):
         tools = [t.strip() for t in tools.split(",")]
-    return [str(t) for t in tools if str(t).strip()]
+    names = [str(t).strip() for t in tools if str(t).strip()]
+    return list(dict.fromkeys(CLAUDE_TOOL_NAMES.get(n, n) for n in names))
+
+
+def filesystem_allowlist(chosen: list[str] | None) -> set[str] | None:
+    """The file/shell tools an agent keeps, or None when it keeps all of them.
+
+    Only a list naming at least one of them restricts: Nova's own agent files
+    never list them (the /agents picker hides them), so they keep every one.
+    """
+    allowed = set(chosen or ()) & set(ALWAYS_INCLUDED)
+    return allowed or None
+
+
+class FilesystemToolFilter(AgentMiddleware):
+    """Takes away the file/shell tools an agent's ``tools:`` list left out.
+
+    deepagents gives every subagent all of :data:`ALWAYS_INCLUDED`; this hides
+    the others from the model and refuses a call to one anyway.
+    """
+
+    def __init__(self, allowed: set[str]) -> None:
+        """Keep *allowed* of :data:`ALWAYS_INCLUDED`; block the rest."""
+        super().__init__()
+        self._blocked = set(ALWAYS_INCLUDED) - allowed
+
+    def _bind(self, request: ModelRequest) -> ModelRequest:
+        keep = [t for t in request.tools if getattr(t, "name", None) not in self._blocked]
+        return request.override(tools=keep)
+
+    def _refusal(self, request: ToolCallRequest) -> ToolMessage | None:
+        call = request.tool_call
+        if call["name"] not in self._blocked:
+            return None
+        return ToolMessage(
+            f"{call['name']} is not in this agent's tools.",
+            tool_call_id=call["id"],
+            name=call["name"],
+            status="error",
+        )
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], ModelResponse],
+    ) -> ModelResponse:
+        """Bind only the allowed file/shell tools."""
+        return handler(self._bind(request))
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        """Bind only the allowed file/shell tools."""
+        return await handler(self._bind(request))
+
+    def wrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], ToolMessage | Command],
+    ) -> ToolMessage | Command:
+        """Refuse a blocked tool the model called anyway."""
+        return self._refusal(request) or handler(request)
+
+    async def awrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]],
+    ) -> ToolMessage | Command:
+        """Refuse a blocked tool the model called anyway."""
+        return self._refusal(request) or await handler(request)
 
 
 def write_agent(path: Path, front: dict[str, Any], body: str) -> None:

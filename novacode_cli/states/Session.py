@@ -571,6 +571,15 @@ class SessionState:
             session_id=self.session_id,
         )
 
+    async def reload_agent_definitions(self) -> tuple[Any, Any]:
+        """Recompile named-agent tools on the same model and checkpoint."""
+        return await self._agent_runtime.switch_model(
+            self._agent_runtime._model,
+            steering_instructions=self.steering_instructions,
+            session_id=self.session_id,
+            notify_model_switch=False,
+        )
+
     async def reload_mcp_servers(self) -> tuple[Any, Any]:
         """Reload MCP servers dynamically.
 

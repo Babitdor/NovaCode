@@ -317,6 +317,9 @@ def reasoning_setting_note(  # noqa: PLR0911 — each provider has a different c
 def build_chat_model(provider: str, model_name: str) -> BaseChatModel:
     """Build a provider model, attaching local diagnostics only when requested."""
     model = _build_chat_model(provider, model_name)
+    # Lossless model identity for new worker processes; never infer a gateway
+    # provider from its OpenAI-compatible model class or change its defaults.
+    model.metadata = {**(model.metadata or {}), "nova_provider": provider, "nova_model": model_name}
     if os.environ.get("NOVA_LOCAL_METRICS") == "1":
         from novacode_cli.tracking.local_metrics import callbacks
 

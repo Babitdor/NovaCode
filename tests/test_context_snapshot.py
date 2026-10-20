@@ -11,6 +11,15 @@ from novacode_cli.ui.execution import _bound_tools
 from novacode_cli.ui.ui_elements import TokenTracker
 
 
+@pytest.fixture(autouse=True)
+def _private_home(monkeypatch, tmp_path):
+    """/context remembers the last prompt size in ~/.nova; keep tests off the real one."""
+    from novacode_cli.config import config
+
+    monkeypatch.setattr(config, "HOME_DIR", tmp_path)
+
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("missing_checkpoint", [False, True])
 async def test_empty_checkpoint_keeps_tools_and_system_baseline(missing_checkpoint):
@@ -30,6 +39,8 @@ async def test_empty_checkpoint_keeps_tools_and_system_baseline(missing_checkpoi
         _routed_model_name=None,
         model_name="claude-opus-4-8",
         _maybe_warn_ollama_offload=AsyncMock(),
+        _read_state=lambda ag, config, **_: ag.aget_state(config),
+        _context_strategies=NovaApp._context_strategies,
     )
     await NovaApp._update_context_breakdown(app)
     breakdown = tracker.get_breakdown()
@@ -63,6 +74,8 @@ async def test_compaction_snapshot_counts_only_summary_and_retained_tail():
         _routed_model_name=None,
         model_name="claude-opus-4-8",
         _maybe_warn_ollama_offload=AsyncMock(),
+        _read_state=lambda ag, config, **_: ag.aget_state(config),
+        _context_strategies=NovaApp._context_strategies,
     )
     tracker.reset()
     await NovaApp._update_context_breakdown(app)

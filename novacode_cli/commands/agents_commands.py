@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from novacode_cli.config.config import COLORS, Settings, console
+from novacode_cli.config.config import agent_md as _agent_md
 from novacode_cli.prompts import render_template
 
 
@@ -131,7 +132,7 @@ async def _agents_list(settings: Settings) -> bool:
     project_agents = []
 
     for agent_name, agent_dir, scope in all_agents:
-        agent_md = agent_dir / "agent.md"
+        agent_md = _agent_md(agent_dir)
         # Read first non-empty line for description
         description = extract_agent_description(agent_md)
 

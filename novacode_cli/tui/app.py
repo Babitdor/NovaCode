@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     # Annotation-only: the clipboard image is passed straight to the tracker, so
     # the module is never imported at runtime on this path.
     from novacode_cli.image_utils import ImageData
+    from novacode_cli.memory.dream_gates import GateReport
     from novacode_cli.session.history_tree import HistoryTree
     from novacode_cli.sessions.supervisor import SessionSupervisor
 
@@ -601,7 +602,7 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     ),
     "research": SlashCommand("_run_research", "launch a multi-agent research swarm"),
     "dream": SlashCommand(
-        "_run_dream", "organize and consolidate the memory wiki", wants_text=False
+        "_run_dream", "consolidate the memory wiki now (/dream status · /dream auto on|off)"
     ),
     "evolution": SlashCommand(
         "_run_evolution", "view skills unlocked / levelled up by complex tasks", wants_text=False
@@ -2741,6 +2742,10 @@ class NovaApp(App):
         self._refresh_info_bar()
         self.run_worker(self._check_nova_update(), name="nova-update-check", group="nova-updates")
         self.set_interval(3600, self._schedule_nova_update_check)
+        # Automatic dream: checked once, after startup has settled, and only if
+        # all three gates (time, sessions, lock) pass. See memory/dream_gates.py.
+        if not self.is_headless:
+            self.set_timer(45, self._schedule_auto_dream)
         # Background tasks (Ctrl+B): observe the registry so the persistent
         # indicator + notifications update reactively; tick once a second so the
         # runtime clock advances while tasks run.
@@ -9769,7 +9774,7 @@ class NovaApp(App):
             await self._launch_project_session(folder=requested_folder, task=initial_task)
             return
 
-        # @agent mention(s) -> delegate through the main agent's `task` tool.
+        # @agent mentions delegate through the main agent's sync or async tool.
         try:
             from novacode_cli.config.config import settings
             from novacode_cli.input_utils import (
@@ -9787,28 +9792,37 @@ class NovaApp(App):
 
         # Two or more agents (or an agent mentioned mid-message): hand the whole
         # request to the main agent and let it orchestrate the named subagents in
-        # order via `task`. @file mentions are expanded by the normal turn path.
+        # order via the appropriate tool. @files expand through the normal path.
         if len(mentioned_agents) >= 2 or (  # noqa: PLR2004
             mentioned_agents and agent_name is None
         ):
             ordered = " → ".join(f"@{a}" for a in mentioned_agents)
             await self._add_message(Text(f"You → {ordered}", style="bold cyan"), "user", _user_message_body(text))
-            preamble = (
-                "This request references specialist subagents by @name. Delegate "
-                "each part of the work to the named agent using the `task` tool, "
-                "in the order implied by the request, passing results (e.g. edited "
-                "files) from one to the next. Referenced agents in order: "
-                f"{', '.join(mentioned_agents)}.\n\nRequest:\n{text}"
-            )
+            from novacode_cli.agents.invocation import delegation_prompt
+
+            try:
+                preamble = await asyncio.to_thread(
+                    delegation_prompt, text, mentioned_agents, settings
+                )
+            except ValueError as exc:
+                self._log(Text(str(exc), style="yellow"))
+                return
             await self._stream_prompt(preamble)
             return
 
         # Single agent at the start: delegate directly to that one subagent.
         if agent_name:
             await self._add_message(self._user_label(agent_name), "user", _user_message_body(query))
-            await self._stream_prompt(
-                f"Call the '{agent_name}' subagent to do the following:\n\n{query}"
-            )
+            from novacode_cli.agents.invocation import delegation_prompt
+
+            try:
+                prompt = await asyncio.to_thread(
+                    delegation_prompt, query, [agent_name], settings
+                )
+            except ValueError as exc:
+                self._log(Text(str(exc), style="yellow"))
+                return
+            await self._stream_prompt(prompt)
             return
 
         # Plain prompt — send it to the agent as a single turn.
@@ -9980,9 +9994,12 @@ class NovaApp(App):
             ag, _ = self._active_agent()
             config = {"configurable": {"thread_id": self.session_state.thread_id}}
             state = await self._read_state(ag, config)
-            tracker.context_snapshot = (state.values if state else {}).get("_context_snapshot")
-            self._refresh_router_model_from_state(state.values if state else {})
-            msgs = effective_messages(state.values) if state else []
+            values = (state.values if state else None) or {}
+            tracker.context_snapshot = values.get("_context_snapshot")
+            self._refresh_router_model_from_state(values)
+            msgs = effective_messages(values) if state else []
+            # Count what is sent: the same snip and collapse the model sees.
+            msgs, saved = self._context_strategies(msgs, values)
             # Off the loop: it can shell out to `ollama show`, which hangs
             # while the local daemon is busy (a 42s UI freeze was measured).
             model = self._routed_model_name or self.model_name or tracker.model_name
@@ -10002,7 +10019,37 @@ class NovaApp(App):
             breakdown.total_tokens += baseline
             snapshot = getattr(tracker, "context_snapshot", None)
             if snapshot and isinstance(snapshot.get("estimated_input_tokens"), int):
-                breakdown = breakdown.scaled_to(snapshot["estimated_input_tokens"])
+                # The request's measured system prompt (with the MCP section)
+                # and tool schemas; only the conversation is scaled.
+                breakdown = breakdown.anchored_to(snapshot)
+            from dataclasses import replace as _replace
+
+            from novacode_cli.context.snapshot import (
+                remember_system_tokens,
+                remembered_system_tokens,
+            )
+
+            breakdown = _replace(breakdown, **saved)
+            agent_key = str(getattr(self, "assistant_id", None) or "agent")
+            measured = (snapshot or {}).get("estimated_system_tokens")
+            if isinstance(measured, int) and measured > 0:
+                await asyncio.to_thread(remember_system_tokens, agent_key, measured)
+            elif not snapshot:
+                # No request yet this session: the startup figure is the core
+                # prompt alone. The last measured prompt (with the MCP list,
+                # skills and memory injected per request) is the better guess.
+                last = await asyncio.to_thread(remembered_system_tokens, agent_key)
+                system = (
+                    breakdown.system_prompt_tokens
+                    + breakdown.user_memory_tokens
+                    + breakdown.project_memory_tokens
+                )
+                if last > system:
+                    breakdown = _replace(
+                        breakdown,
+                        system_prompt_tokens=breakdown.system_prompt_tokens + last - system,
+                        total_tokens=breakdown.total_tokens + last - system,
+                    )
             tracker.model_name = model
             tracker.context_window_size = breakdown.context_window_size
             tracker.set_breakdown(breakdown)
@@ -10015,6 +10062,27 @@ class NovaApp(App):
             self._refresh_usage_metrics()
 
         await self._maybe_warn_ollama_offload(tracker.model_name)
+
+    @staticmethod
+    def _context_strategies(
+        messages: list, values: dict[str, Any]
+    ) -> tuple[list, dict[str, int]]:
+        """Snip and collapse ``messages`` as the request does; what each saved."""
+        from novacode_cli.config.nova_config import NovaConfig
+        from novacode_cli.context.strategies import collapse_turns, snip_history
+
+        config = NovaConfig()
+        saved = {"snipped_tokens": 0, "collapsed_tokens": 0, "collapsed_turns": 0}
+        if config.get("context_snip", True) is not False:
+            messages, report = snip_history(messages)
+            saved["snipped_tokens"] = report.chars // 4
+        event = values.get("_collapse_event")
+        boundary = event.get("boundary_id") if isinstance(event, dict) else None
+        if boundary and config.get("context_collapse", True) is not False:
+            messages, report = collapse_turns(messages, boundary)
+            saved["collapsed_tokens"] = report.chars // 4
+            saved["collapsed_turns"] = report.turns
+        return messages, saved
 
     def _refresh_router_model_from_state(self, state_values: dict[str, Any]) -> None:
         """Show the destination model selected by the latest router decision."""
@@ -10195,9 +10263,13 @@ class NovaApp(App):
             self._compacted_last_turn = False
 
     async def _do_stream(self, text: str, assistant_id: str | None = None) -> None:
+        from novacode_cli.agents.invocation import refresh_definitions
         from novacode_cli.input_utils import parse_file_mentions
         from novacode_cli.sessions.gateway import session_events
 
+        self.agent, self.backend = await refresh_definitions(
+            self.agent, self.backend, self.session_state
+        )
         if "@" in text:
             _, files = await asyncio.to_thread(parse_file_mentions, text)
             if files:
@@ -15422,9 +15494,80 @@ class NovaApp(App):
         """Show the Obsidian LLM Wiki browser (interactive)."""
         await self.push_screen_wait(WikiScreen())
 
-    async def _run_dream(self) -> None:
-        """Run /dream: show a native memory-consolidation summary, then stream it."""
+    def _dream_dirs(self) -> tuple[Path, Path]:
+        """The memory root the dream consolidates, and the sessions it counts."""
+        from novacode_cli.config.config import settings
+
+        agent_dir = settings.get_agent_dir(self.assistant_id or "agent")
+        sessions_dir = getattr(self.session_manager, "sessions_dir", None)
+        return agent_dir, Path(sessions_dir or Path.home() / ".nova" / "sessions")
+
+    async def _run_dream(self, text: str = "/dream") -> None:
+        """Run /dream now, or show / switch the automatic dream's gates."""
+        from novacode_cli.config.nova_config import NovaConfig
+        from novacode_cli.memory import dream_gates as gates
+
+        parts = text.split()
+        sub = parts[1].lower() if len(parts) > 1 else ""
+        agent_dir, sessions_dir = self._dream_dirs()
+
+        if sub == "auto":
+            choice = (parts[2:3] or [""])[0].lower()
+            if choice not in {"on", "off"}:
+                self._log(Text("Usage: /dream auto on|off", style="yellow"))
+                return
+            NovaConfig().set("auto_dream", choice == "on")
+            self._log(Text(f"Automatic dreaming {choice}.", style="green"))
+            return
+        if sub == "status":
+            report = await asyncio.to_thread(gates.check_gates, agent_dir, sessions_dir)
+            auto = NovaConfig().get("auto_dream", True) is not False
+            self._log(self._dream_status(report, auto=auto))
+            return
+        if sub:
+            self._log(Text("Usage: /dream · /dream status · /dream auto on|off", style="yellow"))
+            return
+
+        # Manual: the user asked, so only the lock gate applies.
+        lock = gates.DreamLock(agent_dir)
+        if not await asyncio.to_thread(lock.acquire):
+            self._log(Text("A dream is already running; try again when it finishes.", "yellow"))
+            return
+        try:
+            await self._run_dream_now(agent_dir)
+        finally:
+            lock.release()
+
+    def _dream_status(self, report: GateReport, *, auto: bool) -> Text:
+        """The three gates as a short checklist."""
+        from datetime import UTC, datetime
+
+        from novacode_cli.memory import dream_gates as gates
+
+        hours = (datetime.now(UTC) - report.since).total_seconds() / 3600
+        rows = [
+            (report.time_ok, f"time      {hours:.0f}h since the last dream "
+             f"(needs {gates.TIME_GATE.total_seconds() / 3600:.0f}h)"),
+            (report.sessions_ok, f"sessions  {report.sessions} since then "
+             f"(needs {gates.SESSION_GATE})"),
+            (report.lock_ok, "lock      free" if report.lock_ok
+             else f"lock      held by {report.lock_holder}"),
+        ]
+        out = Text("💭 Dream gates", style="bold")
+        out.append(f"   automatic dreaming {'on' if auto else 'off'}\n", style="dim")
+        for ok, line in rows:
+            out.append("  ✓ " if ok else "  ○ ", style="green" if ok else "dim")
+            out.append(line + "\n", style="" if ok else "dim")
+        verdict = "all three pass: the next session start will dream" if report.open else (
+            "a gate is closed: no automatic dream yet"
+        )
+        out.append(f"  {verdict} · /dream runs one now", style="dim")
+        return out
+
+    async def _run_dream_now(self, agent_dir: Path) -> None:
+        """The manual dream: consolidate in the conversation, then reset the gates."""
         from novacode_cli.commands.dream_handler import handle_dream_command
+        from novacode_cli.memory import dream_gates as gates
 
         # Collect the handler's status lines and render them as ONE cohesive
         # native block (blank separators are dropped — no empty log widgets).
@@ -15450,6 +15593,86 @@ class NovaApp(App):
         if isinstance(result, str) and result.strip():
             self._log(Text("💭 Dreaming over memories…", style="bold"))
             await self._stream_prompt(result)
+            await asyncio.to_thread(gates.record_dream, agent_dir, "manual", "completed")
+
+    def _schedule_auto_dream(self) -> None:
+        self.run_worker(self._auto_dream(), name="auto-dream", group="dream", exclusive=True)
+
+    async def _auto_dream(self) -> None:
+        """Dream in the background when the time, session and lock gates all pass."""
+        from novacode_cli.config.nova_config import NovaConfig
+        from novacode_cli.memory import dream_gates as gates
+
+        if NovaConfig().get("auto_dream", True) is False:
+            return
+        agent_dir, sessions_dir = self._dream_dirs()
+        report = await asyncio.to_thread(gates.check_gates, agent_dir, sessions_dir)
+        if not report.open:
+            logger.info("Auto-dream skipped: gates %s", report)
+            return
+        lock = gates.DreamLock(agent_dir)
+        if not await asyncio.to_thread(lock.acquire):
+            return
+        line = Static(
+            Text("💭 Dreaming in the background — consolidating memory…", style="dim italic"),
+            classes="logline",
+        )
+        try:
+            outcome, summary = await self._dream_in_background(agent_dir, line)
+            if outcome:
+                await asyncio.to_thread(gates.record_dream, agent_dir, "auto", outcome)
+            if summary:
+                line.update(summary)
+        except Exception as exc:  # noqa: BLE001 - a background dream must never disturb a session
+            logger.warning("Auto-dream failed", exc_info=True)
+            if line.is_mounted:
+                line.update(Text(f"💭 The background dream stopped: {exc}", style="yellow"))
+        finally:
+            await asyncio.to_thread(lock.release)
+
+    async def _dream_in_background(self, agent_dir: Path, line: Static) -> tuple[str, Text | None]:
+        """Run the dream agent; the outcome to record ("" = none) and the final line."""
+        import uuid
+
+        from novacode_cli.agent_stream import run_agent_stream
+        from novacode_cli.agents.dream_agent import BACKGROUND_NOTE, create_dream_agent
+        from novacode_cli.commands.dream_handler import handle_dream_command
+        from novacode_cli.config.model_create import create_model
+        from novacode_cli.ui_events import AssistantMessage, Done, Error
+
+        class _DreamSession:
+            thread_id = f"dream-{uuid.uuid4().hex[:12]}"
+            active_goal = None
+            plan_mode_enabled = False
+            auto_approve = True
+
+        prompt = await handle_dream_command(
+            _DreamSession(), self.assistant_id, agent_dir=agent_dir, emit=lambda *_: None
+        )
+        if not isinstance(prompt, str) or not prompt.strip():
+            return "nothing to do", None
+        model = await asyncio.to_thread(create_model)
+        agent = await asyncio.to_thread(create_dream_agent, model, agent_dir)
+        self._close_tool_group()
+        await self._transcript().mount(line)
+        report: list[str] = []
+        async for event in run_agent_stream(
+            prompt + "\n\n" + BACKGROUND_NOTE,
+            agent,
+            "dream-agent",
+            _DreamSession(),
+            backend=None,
+            seen_message_ids=set(),
+        ):
+            if isinstance(event, AssistantMessage):
+                report.append(event.text)
+            elif isinstance(event, Error):
+                # Not recorded: the gates stay open so the next start retries.
+                return "", Text(f"💭 The background dream stopped: {event.message[:200]}", "yellow")
+            elif isinstance(event, Done):
+                break
+        summary = " ".join((report[-1] if report else "").split())[:240]
+        return "completed", Text(f"💭 Dreamed: {summary or 'memory consolidated.'}", style="dim")
 
     async def _run_evolution(self) -> None:
         """Open the native evolution dashboard without tying up the turn."""

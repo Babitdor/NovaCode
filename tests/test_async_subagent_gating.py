@@ -44,21 +44,11 @@ def test_all_specs_when_the_server_answers(monkeypatch):
         monkeypatch.setenv(mod.ASYNC_AGENT_ROOT_VAR, str(settings.get_workspace_root()))
         assert mod.async_agents_available() is True
         specs = mod.retrieve_async_subagents()
-    # The 9 shipped graphs are always advertised. User agents marked
-    # ``async: true`` are appended after them, so this asserts the shipped set is
-    # present rather than that nothing else is: the count is not fixed once the
-    # user has any async agents of their own.
-    shipped = {
-        "documentation-update-agent",
-        "code-review-agent",
-        "test-generation-agent",
-        "dependency-audit-agent",
-        "refactoring-agent",
-        "plan-scout-agent",
-        "security-audit-agent",
-        "test-runner-agent",
-        "research-agent",
-    }
+    # The shipped graphs are always advertised. User agents marked ``async:``
+    # (the built-in specialists among them, once seeded) are appended after
+    # them, so this asserts the shipped set is present rather than that nothing
+    # else is.
+    shipped = {"general-purpose-async", "research-agent"}
     assert shipped <= {spec["name"] for spec in specs}
     assert all(spec["url"] for spec in specs), "a spec without a URL cannot be reached"
 
@@ -119,7 +109,9 @@ def test_the_prompt_omits_async_tools_when_the_server_is_down():
 def test_the_prompt_encourages_delegation_when_the_server_is_up():
     block = _subagents_block(available=True)
     assert "start_async_task" in block
-    assert "Default to async" in block, "the old wording only said when NOT to"
+    assert "useful independent work" in block
+    assert "general-purpose-async" in block
+    assert "Continue independent work" in block
     assert len(block) > len(_subagents_block(available=False))
 
 

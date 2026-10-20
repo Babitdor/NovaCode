@@ -759,6 +759,14 @@ async def _drive_create_agent_and_skill(tmp_path, monkeypatch):
             await pilot.pause(0.05)
         # Modal should be dismissed, back to AgentsScreen
         assert isinstance(app.screen, AgentsScreen)
+        # New agents are flat <name>.md files, Claude Code's form.
+        created = tmp_path / "agents" / "test-reviewer.md"
+        for _ in range(20):
+            if created.exists():
+                break
+            await pilot.pause(0.05)
+        assert created.exists()
+        assert not (tmp_path / "agents" / "test-reviewer").exists()
 
         # Close AgentsScreen
         app.screen.query_one("#close", Button).press()

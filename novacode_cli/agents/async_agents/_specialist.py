@@ -54,14 +54,20 @@ def build_specialist_graph(
         note: Anything the background form does differently from the prompt.
     """
     import novacode_cli.tools as nova_tools
+    from novacode_cli.agents.async_agents import _tools as background_tools
     from novacode_cli.agents.async_agents._mcp_tools import mcp_tools_for
     from novacode_cli.security.delegated_approval import DelegatedApprovalMiddleware
     from novacode_cli.skills.libraries import background_library
 
     declared = definition.get("tools", [])
     # File tools (ls / read_file / glob / grep / write_file) come from the
-    # backend, so only the names that are real Nova tools are looked up.
-    named = [getattr(nova_tools, n) for n in declared if hasattr(nova_tools, n)]
+    # backend, so only the names that are real Nova tools are looked up: the
+    # session's own, then the background-only ones (git, linters, run_tests).
+    named = [
+        getattr(source, n)
+        for n in declared
+        if (source := next((m for m in (nova_tools, background_tools) if hasattr(m, n)), None))
+    ]
     # MCP tools are not in novacode_cli.tools — they are discovered from the
     # user's MCP config — so they are resolved separately. Best-effort: an
     # unreachable MCP server yields fewer tools, never a graph that fails to

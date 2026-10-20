@@ -1,17 +1,7 @@
 {
   "graphs": {
     "general-purpose-async": "./general_purpose.py:graph",
-    "documentation-update-agent": "./documentation_update.py:graph",
-    "code-review-agent": "./code_review.py:graph",
-    "test-generation-agent": "./test_generation.py:graph",
-    "dependency-audit-agent": "./dependency_audit.py:graph",
-    "refactoring-agent": "./refactoring.py:graph",
-    "plan-scout-agent": "./plan_scout.py:graph",
-    "security-audit-agent": "./security_audit.py:graph",
-    "test-runner-agent": "./test_runner.py:graph",
-    "research-agent": "./research.py:graph",
-    "bug-investigation-agent": "./bug_investigation.py:graph",
-    "performance-audit-agent": "./performance_audit.py:graph"
+    "research-agent": "./research.py:graph"
   },
   "dependencies": [
     "."

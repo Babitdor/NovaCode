@@ -5,21 +5,8 @@ from __future__ import annotations
 import re
 from pathlib import PurePosixPath
 
+# Agents shipped as files (default_subagents/builtin/) name theirs in `skill_names:`.
 SPECIALIST_LIBRARIES: dict[str, tuple[str, ...]] = {
-    "code-explorer": ("codebase-explorer", "graphify"),
-    "plan-scout-agent": ("codebase-explorer", "graphify"),
-    "refactoring-specialist-agent": ("improve-codebase-architecture", "refactoring"),
-    "refactoring-agent": ("improve-codebase-architecture", "refactoring"),
-    "bug-fix-agent": ("systematic-debugging",),
-    "bug-investigation-agent": ("systematic-debugging",),
-    "browser-automation-agent": ("agent-browser", "browser-use", "web-research"),
-    "code-review-agent": ("code-review", "code-reviewer"),
-    "security-audit-agent": ("security-audit", "security-review", "security-best-practices"),
-    "dependency-audit-agent": ("dependency-audit", "security-audit"),
-    "performance-audit-agent": ("performance-audit", "profiling", "systematic-debugging"),
-    "test-generation-agent": ("test-driven-development", "testing", "pytest"),
-    "test-runner-agent": ("testing", "pytest", "verification-before-completion"),
-    "documentation-update-agent": ("documentation", "technical-writer"),
     "research-agent": ("web-research", "deep-research"),
     "web-researcher": ("web-research", "deep-research"),
     "fact-checker": ("fact-checking", "web-research"),

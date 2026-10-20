@@ -320,14 +320,9 @@ def test_graphs_come_from_the_packaged_langgraph_json():
         assert (config.parent / target.split(":")[0]).is_file(), target
     graphs = sl._graph_names(config)
 
-    assert "documentation-update-agent" in graphs
-    assert "plan-scout-agent" in graphs
-    assert set(graphs) == {
-        "general-purpose-async", "documentation-update-agent", "code-review-agent",
-        "test-generation-agent", "dependency-audit-agent", "refactoring-agent",
-        "plan-scout-agent", "security-audit-agent", "test-runner-agent", "research-agent",
-        "bug-investigation-agent", "performance-audit-agent",
-    }
+    # The other specialists are agent files (default_subagents/builtin/), served
+    # from the user's generated config like any `async: true` agent.
+    assert set(graphs) == {"general-purpose-async", "research-agent"}
     assert sl._graph_names(config.parent / "nope.json") == []
 
 

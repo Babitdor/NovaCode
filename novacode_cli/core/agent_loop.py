@@ -276,6 +276,19 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
 
     thread_id = session_state.thread_id
     config = build_agent_config(thread_id, assistant_id)
+    team_host = getattr(agent, "team_coordinator", None)
+    if team_host is None:
+        from novacode_cli.teams.host import TeamHost
+
+        team_host = next(
+            (
+                resource
+                for resource in getattr(agent, "runtime_resources", ())
+                if isinstance(resource, TeamHost)
+            ),
+            None,
+        )
+    team_runtime = team_host.bind_session(session_state) if team_host is not None else None
 
     agent_display_name = get_agent_display_name(assistant_id)
     agent_colors = (
@@ -315,7 +328,7 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
 
     # Drain any Nova events queued by the middleware (review cycles, skill
     # activity) into proper ContextMessage events for both UIs.
-    def _drain_nova_events() -> list[ev.ContextMessage]:
+    def _drain_nova_events() -> list:
         try:
             from novacode_cli.events import nova_event_log
 
@@ -325,6 +338,8 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                 events.append(
                     ev.ContextMessage(message=msg, event_type=etype, icon=icon, color=color)
                 )
+            if team_runtime is not None:
+                events.extend(team_runtime.drain_events())
             return events
         except Exception:
             return []

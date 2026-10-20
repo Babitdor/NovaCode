@@ -120,8 +120,19 @@ def is_async(front: dict[str, Any]) -> bool:
     if isinstance(value, (int, float)):
         return value != 0
     if isinstance(value, str):
-        return value.strip().lower() in {"true", "yes", "on", "1"}
+        return value.strip().lower() in {"true", "yes", "on", "1", BACKGROUND_ONLY}
     return False
+
+
+#: ``async: only`` serves the agent in the background without the in-process
+#: form an ``async: true`` agent also gets: its tools (git, linters, run_tests)
+#: exist only on the agent server.
+BACKGROUND_ONLY = "only"
+
+
+def is_background_only(front: dict[str, Any]) -> bool:
+    """Whether *front* marks an agent that runs only on the agent server."""
+    return str(front.get(ASYNC_KEY) or "").strip().lower() == BACKGROUND_ONLY
 
 
 def collect_user_async_agents() -> list[tuple[str, Path]]:
@@ -134,17 +145,18 @@ def collect_user_async_agents() -> list[tuple[str, Path]]:
 
     - its ``agent.md`` cannot be read, or does not set ``async: true``;
     - its name cannot be a graph id, or collides with a shipped agent;
-    - its name collides with another *user* agent (two agents named ``Alpha``
-      and ``alpha``, or one name present in both global and project scope, map
+    - its name collides with another *user* agent (``Alpha`` and ``alpha`` map
       to one graph id: one file would silently overwrite the other);
     - it has no system prompt, so there is no graph to build.
 
+    Project definitions shadow global namesakes before eligibility filtering.
     That last case is why this is not simply "every agent with the flag". The
     server loads every registered graph at startup and refuses to start if one
     of them fails to load, so registering an agent that cannot build would take
     the other graphs down with it. Excluding it here is the only place where
     the decision is cheap and per-agent.
     """
+    from novacode_cli.config.config import agent_md as _agent_md
     from novacode_cli.config.config import settings
 
     try:
@@ -155,8 +167,14 @@ def collect_user_async_agents() -> list[tuple[str, Path]]:
 
     out: list[tuple[str, Path]] = []
     seen: dict[str, str] = {}
+    resolved_names: set[str] = set()
     for name, agent_dir, _scope in sorted(found, key=lambda a: a[0].lower()):
-        agent_md = agent_dir / "agent.md"
+        # Enumeration is project-first. A project's async:false or invalid
+        # definition must not reactivate its shadowed global background agent.
+        if name in resolved_names:
+            continue
+        resolved_names.add(name)
+        agent_md = _agent_md(agent_dir)
         # read_agent_safe, not read_agent: an unreadable file must not raise here,
         # and an agent whose frontmatter does not parse at all simply is not an
         # async agent, which is the right reading of a file we cannot understand.

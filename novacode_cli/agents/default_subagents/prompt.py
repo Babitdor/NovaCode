@@ -1,61 +1,13 @@
 from novacode_cli.prompts import render_template
 
+# The other built-in specialists are agent files: default_subagents/builtin/*.md,
+# copied to ~/.nova/agents/ on first start (config.seed_builtin_agents).
+
 
 def _load_prompt(template_name: str) -> str:
     """Load a subagent prompt from a Jinja template."""
     return render_template(f"subagents/{template_name}")
 
-
-CODE_EXPLORER = {
-    "description": "Helps navigate, understand, and query large codebases efficiently.",
-    "prompt": _load_prompt("code_explorer.jinja"),
-    "tools": [
-        "fetch_url",
-        "duckduckgo_search",
-        "docs_search",
-        "package_info",
-    ],
-}
-
-REFACTORING_SPECIALIST_AGENT = {
-    "description": "Identifies code smells (long methods, duplication, dead code), prioritizes technical debt, and creates incremental refactoring plans. Applies design patterns and SOLID principles.",
-    "prompt": _load_prompt("refactoring_specialist_agent.jinja"),
-    "tools": [],
-}
-
-# ── Bug Fix Agent ──────────────────────────────────────────────────────────────
-
-BUG_FIX_AGENT = {
-    "description": "Systematically diagnoses and fixes bugs. Reproduces the issue, identifies root cause, applies minimal fix, and adds regression tests.",
-    "prompt": _load_prompt("bug_fix_agent.jinja"),
-    "tools": [],
-}
-
-# ── Test Agents ────────────────────────────────────────────────────────────────
-
-# ── Browser Automation Agent ───────────────────────────────────────────────────
-
-# NOTE: this agent receives `playwright_browser_*` MCP tools via
-# MCP_TOOLS_BY_SUBAGENT (see core_agent.py), so it can drive a real browser.
-# Its prompt used to describe `browser_automate` and `capture_browser_console`,
-# neither of which exists — so it confidently accepted tasks it could not
-# perform. MCP tools attach via MCPMiddleware.tools rather than the plain tool
-# list, so a subagent only receives them if it is named in that map.
-BROWSER_AUTOMATION_AGENT = {
-    "description": (
-        "Researches and extracts information from the web: plain HTTP (fetch + search) "
-        "for static pages, and a real browser (playwright) for JavaScript-rendered "
-        "pages, logins, interaction, screenshots, and console/network inspection. "
-        "Can also drive the desktop (cua-driver) for native dialogs and other apps."
-    ),
-    "prompt": _load_prompt("browser_automation_agent.jinja"),
-    "tools": [
-        "fetch_url",
-        "duckduckgo_search",
-    ],
-}
-
-# ── Domain-Specific Engineering Agents ─────────────────────────────────────────
 
 # ── Research Swarm Agents ──────────────────────────────────────────────────────
 # These are NOT in the default subagent roster (see subagents.py) to keep the

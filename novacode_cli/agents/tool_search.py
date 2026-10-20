@@ -37,7 +37,7 @@ from langchain_core.tools import StructuredTool
 from novacode_cli.skills.retrieval import first_sentence, get_index
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Sequence
 
     from langchain.agents.middleware.types import ModelRequest, ModelResponse
 
@@ -156,6 +156,45 @@ def _group(names: list[str]) -> str:
         else:
             lines.extend(f"- `{m}`" for m in members)
     return "\n".join(lines)
+
+
+class _AccountingRequest:
+    """Just enough of a ModelRequest for :func:`sent_tools`."""
+
+    def __init__(self, **fields: Any) -> None:
+        self.__dict__.update(fields)
+
+    def override(self, **changes: Any) -> _AccountingRequest:
+        return _AccountingRequest(**{**self.__dict__, **changes})
+
+
+def sent_tools(tools: Sequence[Any], messages: Sequence[Any]) -> list[Any]:
+    """The schemas a request binds for ``messages``: selected and trimmed as sent.
+
+    For accounting before any request exists (``/context`` at startup), where the
+    registered schemas overstate the request several times: the ``task`` tool
+    alone lists every subagent (~39k chars) until this middleware trims it. The
+    deferred roster is read back from the ``task`` and ``start_async_task``
+    descriptions; the user's frequently used tools are left out.
+    """
+    from novacode_cli.agents.default_subagents.subagents import LISTED_SUBAGENTS
+
+    def roster(name: str) -> list[str]:
+        tool = next((t for t in tools if _name(t) == name), None)
+        if tool is None:
+            return []
+        lines = _description(tool).splitlines()
+        return [m.group(1) for line in lines if (m := re.match(r"^[ \t]*- ([^:\s]+):", line))]
+
+    middleware = ToolSearchMiddleware(
+        deferred_subagents={n: "" for n in roster("task") if n not in LISTED_SUBAGENTS},
+        async_subagents=set(roster("start_async_task")),
+    )
+    middleware._frequent = set()
+    request = _AccountingRequest(
+        tools=list(tools), messages=list(messages), system_message=SystemMessage(""), state={}
+    )
+    return list(middleware._apply(request).tools)  # type: ignore[arg-type]
 
 
 class ToolSearchMiddleware(AgentMiddleware):

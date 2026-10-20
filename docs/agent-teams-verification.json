@@ -1,0 +1,264 @@
+{
+  "date": "2026-10-20",
+  "baseline_revision": "36e5c8369c4a3c58dadf48139042f7e4cd718218",
+  "feature_defaults": {
+    "agent_teams_enabled": false,
+    "swarm_enabled": false
+  },
+  "integrated_regression": {
+    "passed": 273,
+    "seconds": 109.63,
+    "manifest": [
+      "tests\\test_team_accounting.py",
+      "tests\\test_team_approvals.py",
+      "tests\\test_team_container.py",
+      "tests\\test_team_inprocess.py",
+      "tests\\test_team_lifecycle.py",
+      "tests\\test_team_output.py",
+      "tests\\test_team_process.py",
+      "tests\\test_team_properties.py",
+      "tests\\test_team_runtime.py",
+      "tests\\test_team_store.py",
+      "tests\\test_team_swarm.py",
+      "tests\\test_team_worktree.py",
+      "tests/test_agent_mailbox.py",
+      "tests/test_session_messaging.py",
+      "tests/test_session_supervisor.py",
+      "tests/test_session_worker.py",
+      "tests/test_subagent_registration.py",
+      "tests/test_subagent_resilience.py",
+      "tests/test_deepagents_compat.py",
+      "tests/test_checkpoint_coordinator.py",
+      "tests/test_worktree.py",
+      "tests/test_model_build.py",
+      "tests/test_model_capabilities.py",
+      "tests/test_role_models.py",
+      "tests/test_subagent_model_roles.py",
+      "tests/test_session_model_restore.py",
+      "tests/test_nova_avatar.py",
+      "tests/test_build_avatar.py"
+    ]
+  },
+  "subsequent_team_regression": {
+    "passed": 52,
+    "seconds": 23.59,
+    "overlaps_integrated": true,
+    "manifest": [
+      "tests\\test_team_accounting.py",
+      "tests\\test_team_approvals.py",
+      "tests\\test_team_container.py",
+      "tests\\test_team_inprocess.py",
+      "tests\\test_team_legacy.py",
+      "tests\\test_team_lifecycle.py",
+      "tests\\test_team_output.py",
+      "tests\\test_team_process.py",
+      "tests\\test_team_properties.py",
+      "tests\\test_team_recovery.py",
+      "tests\\test_team_runtime.py",
+      "tests\\test_team_store.py",
+      "tests\\test_team_swarm.py",
+      "tests\\test_team_worktree.py"
+    ]
+  },
+  "broad_attempt": {
+    "call_outcomes": {
+      "passed": 4594,
+      "skipped": 6,
+      "failed": 34
+    },
+    "setup_outcomes": {
+      "skipped": 11
+    },
+    "failed_calls": [
+      "tests/test_async_subagent_gating.py::test_the_prompt_encourages_delegation_when_the_server_is_up",
+      "tests/test_audio/test_speakable.py::TestCapability::test_install_hint_mentions_extra",
+      "tests/test_learning_recall.py::test_one_task_renaming_a_skill_does_not_fill_the_ledger",
+      "tests/test_nvidia_provider.py::test_build_chat_model_returns_a_configured_client",
+      "tests/test_nvidia_provider.py::test_effort_drives_the_thinking_flag_in_the_request[high-True]",
+      "tests/test_nvidia_provider.py::test_effort_drives_the_thinking_flag_in_the_request[medium-True]",
+      "tests/test_nvidia_provider.py::test_effort_drives_the_thinking_flag_in_the_request[off-False]",
+      "tests/test_nvidia_provider.py::test_no_effort_sends_no_thinking_flag",
+      "tests/test_nvidia_provider.py::test_building_the_model_does_not_warn_about_chat_template_kwargs",
+      "tests/test_nvidia_provider.py::test_the_token_limit_still_reaches_the_request",
+      "tests/test_session_reply_panels.py::test_reply_is_markdown_and_collapses_without_switching_tabs",
+      "tests/test_session_reply_panels.py::test_attach_preserves_draft_markdown_and_running_turn_without_sending",
+      "tests/test_session_reply_panels.py::test_open_button_navigates_only_when_explicitly_pressed",
+      "tests/test_skill_versioning.py::TestSkillManageVersioning::test_patch_creates_snapshot",
+      "tests/test_skill_versioning.py::TestSkillManageVersioning::test_rollback_restores_previous",
+      "tests/test_skill_versioning.py::TestSkillManageVersioning::test_history_lists_versions",
+      "tests/test_skill_versioning.py::TestSkillManageVersioning::test_delete_is_soft_and_recoverable",
+      "tests/test_task_discipline.py::test_unverifiable_is_a_last_resort_not_an_exit",
+      "tests/test_text_selection.py::test_part_of_a_markdown_reply_can_be_selected",
+      "tests/test_tui_app.py::test_tui_home_dashboard_matches_theme",
+      "tests/test_tui_app.py::test_tui_transcript_cap",
+      "tests/test_tui_app.py::test_tui_todo_dock_collapses",
+      "tests/test_tui_app.py::test_responsive_breakpoints_follow_width_and_height_changes",
+      "tests/test_tui_app.py::test_tui_todo_dock_scrolls_long_lists",
+      "tests/test_tui_crash_autosave.py::test_prompt_saved_before_stream_and_completed_state_saved",
+      "tests/test_tui_replay_layouts.py::test_replay_preserves_output_input_and_modals[centered]",
+      "tests/test_tui_sessions.py::test_home_banner_fits_the_header_width[260]",
+      "tests/test_tui_sessions.py::test_home_banner_fits_the_header_width[120]",
+      "tests/test_tui_sessions.py::test_home_banner_fits_the_header_width[50]",
+      "tests/test_user_async_agents.py::test_an_agent_named_after_a_shipped_graph_is_refused",
+      "tests/test_user_async_agents.py::test_the_real_server_loader_accepts_the_generated_config",
+      "tests/test_user_async_agents.py::test_an_agent_named_after_a_shipped_graph_is_not_offered",
+      "tests/test_ctrl_b_background.py::test_bang_command_background_handoff_keeps_process_and_finishes",
+      "tests/test_desktop_sleep.py::test_the_prompt_tells_the_agent_when_to_sleep_the_desktop"
+    ],
+    "teardown_failures": [
+      "tests/test_remote_sessions.py::test_child_session_turn_round_trip"
+    ],
+    "timeouts": [
+      "tests/test_tui_app.py::test_tui_home_dashboard_matches_theme",
+      "tests/test_tui_app.py::test_tui_todo_dock_scrolls_long_lists",
+      "tests/test_tui_replay_layouts.py::test_replay_preserves_output_input_and_modals[centered]",
+      "tests/test_ctrl_b_background.py::test_bang_command_background_handoff_keeps_process_and_finishes"
+    ]
+  },
+  "baseline_comparison_groups": [
+    {
+      "name": "model-order",
+      "exit": 1,
+      "tests": [
+        "tests/test_model_build.py",
+        "tests/test_model_capabilities.py",
+        "tests/test_role_models.py",
+        "tests/test_subagent_model_roles.py",
+        "tests/test_session_model_restore.py",
+        "tests/test_model_endpoint.py",
+        "tests/test_deepagents_compat.py",
+        "tests/test_worktree.py",
+        "tests/test_checkpoint_coordinator.py",
+        "tests/test_provider_usage.py",
+        "tests/test_usage_tree.py"
+      ]
+    },
+    {
+      "name": "other-failures",
+      "exit": 1,
+      "tests": [
+        "tests/test_skill_versioning.py",
+        "tests/test_task_discipline.py",
+        "tests/test_user_async_agents.py"
+      ]
+    },
+    {
+      "name": "ui-failures",
+      "exit": 1,
+      "tests": [
+        "tests/test_session_reply_panels.py",
+        "tests/test_text_selection.py",
+        "tests/test_tui_crash_autosave.py",
+        "tests/test_tui_sessions.py::test_home_banner_fits_the_header_width"
+      ]
+    },
+    {
+      "name": "timed-out",
+      "exit": 1,
+      "tests": [
+        "tests/test_ctrl_b_background.py::test_bang_command_background_handoff_keeps_process_and_finishes",
+        "tests/test_tui_app.py::test_tui_home_dashboard_matches_theme",
+        "tests/test_tui_app.py::test_tui_todo_dock_scrolls_long_lists",
+        "tests/test_tui_replay_layouts.py::test_replay_preserves_output_input_and_modals[centered]"
+      ]
+    }
+  ],
+  "mutation_results": [
+    {
+      "name": "root-isolation",
+      "test": "tests/test_team_store.py::test_foreign_root_and_forged_members_cannot_read_or_mutate",
+      "exit": 1,
+      "killed": true
+    },
+    {
+      "name": "claim-exclusion",
+      "test": "tests/test_team_store.py::test_concurrent_claim_has_exactly_one_winner_across_connections",
+      "exit": 1,
+      "killed": true
+    },
+    {
+      "name": "lease-fencing",
+      "test": "tests/test_team_store.py::test_dependencies_expiry_and_stale_completion_fail_closed",
+      "exit": 1,
+      "killed": true
+    },
+    {
+      "name": "inbox-ownership",
+      "test": "tests/test_team_store.py::test_message_idempotency_bound_identity_ack_and_restart",
+      "exit": 1,
+      "killed": true
+    },
+    {
+      "name": "approval-deny",
+      "test": "tests/test_team_approvals.py::test_readonly_allowed_but_explicit_deny_survives_auto_approve",
+      "exit": 1,
+      "killed": true
+    },
+    {
+      "name": "snapshot-independence",
+      "test": "tests/test_team_runtime.py::test_snapshot_is_independent_paired_and_preserves_corrections",
+      "exit": 1,
+      "killed": true
+    }
+  ],
+  "coverage": {
+    "parent_branch_aware_percent": 68,
+    "worker_subprocesses_instrumented": false,
+    "later_recovery_legacy_cases_included": false
+  },
+  "checks": {
+    "ruff_new_package_and_tests": "passed",
+    "format_new_package_and_tests": "passed",
+    "mypy_team_package_follow_imports_silent": "passed: 20 modules"
+  },
+  "limits": [
+    "No live Docker/image test",
+    "No real-model quality evaluation",
+    "Cleanup-only restart, no stream resume",
+    "Shared file-read cache deferred; no savings claim",
+    "Broad suite failures/timeouts unresolved; see evidence document",
+    "Concurrent unrelated workspace changes prevent broad frozen-final-revision claim"
+  ],
+  "raw_local_directories": [
+    "%TEMP%/nova-teams-final-nh8laa9p",
+    "%TEMP%/nova-team-suite-0hwbm93m",
+    "%TEMP%/nova-teams-baseline-6ev_xc9t",
+    "%TEMP%/nova-team-mutations-o60zm5g5"
+  ],
+  "sha256": {
+    "novacode_cli/teams/__init__.py": "1bde49d95d69034fc029a3a9cbdde44d77d02f79d75b4ea84345130a99bc2c78",
+    "novacode_cli/teams/adapters/__init__.py": "2559d88a3b8d43768d4fbaa990c5d680376bbdd5c8ca27bcbcf6abca31b8e0c5",
+    "novacode_cli/teams/adapters/container.py": "3402b62d33fb8f11042b9509f6485e8d39d1de08e11ab75fabe21461a87a6f96",
+    "novacode_cli/teams/adapters/inprocess.py": "18366e649ee61900e5adfcce26d1eaefc2351feb20bf2f8fd3b464ba19133a2a",
+    "novacode_cli/teams/adapters/process.py": "9c5c9c3152840c96571e494a605d04449c6ee0bcbbd68e27e23ee5fbefba0b14",
+    "novacode_cli/teams/bootstrap.py": "b1d3da4ad549735aaeb9f978ae1dc39d6aa2b37b30a4cbeefab707ee496b8bc1",
+    "novacode_cli/teams/container_git.py": "822b33277c859517406c4e805a925f9afe1216a8a7e0ce4cdbebf96ed4a54f86",
+    "novacode_cli/teams/context.py": "5235294cf2a4fdccf9570d159f114ab2f70a8b6da4fed452305be918813ea48e",
+    "novacode_cli/teams/coordinator.py": "af82dab4a304acaec2a9e3086156e8edd41b254a2a515604e97464e4f30a2a08",
+    "novacode_cli/teams/gateway.py": "1351a5bf561b239f1c26179c63b583bf6f8c8fd5215dee27737ef5eb42c1ad5b",
+    "novacode_cli/teams/host.py": "9f2e99ca0c9e1ef8c8889d682c96eb990f5b412c9123dfd0a4983d5435065a26",
+    "novacode_cli/teams/legacy.py": "e1ec4dd8d20f9f4ef69ac629258b5e74a9b330544e8093afcff51f7e5bfed440",
+    "novacode_cli/teams/middleware.py": "dcab54f44ea03469f6b833173f17d830115be4dfebbc4c66b7c57172a19d65e2",
+    "novacode_cli/teams/models.py": "470b810e49e09e6fff0ee085babfc8f592d1fd8b34b4444687ef191c1e7d6da0",
+    "novacode_cli/teams/output.py": "4c50f8be24d7be164b8ce6674a6274741128fed2783a2bebb4004bff01702f78",
+    "novacode_cli/teams/protocol.py": "7be26058daf97f8f70afc9d8a15e58c6f283ed3f9813b55b951b47ab5e10a300",
+    "novacode_cli/teams/recovery.py": "e78295ea008c5f3cc710fd3dd05db2b8fea02c784cfa6958869841686377ef88",
+    "novacode_cli/teams/scheduler.py": "3abfc9c8977e9a97e440d765a62ef43f0db9e669063af7864abe33787b552295",
+    "novacode_cli/teams/store.py": "3460866df644d51228daa5c7a1cfc512cce48ca05fb5f2e796e4146d09d2d284",
+    "novacode_cli/teams/worker.py": "8b32f4edf721304bfe37c86cf64d1b6ef98890c2ae7b299e2e27573bf60d0def",
+    "tests/test_team_accounting.py": "4286e4bb3a76c4ed3cbf6c3d4d3268ea0b73f67a0e512b76ebf767892a5f63d1",
+    "tests/test_team_approvals.py": "3f42bddc354600a8dedab3ada8356661ef5678e5f37f11295e54450561546eda",
+    "tests/test_team_container.py": "f599f9f194bd475784f3cb382341c75b4568df2269994e3af5f4de564ea62a44",
+    "tests/test_team_inprocess.py": "35efb59a0e55149fc0f1d82c7ef4ef45b738dd8a9ebe705f56679d09a1c429f8",
+    "tests/test_team_legacy.py": "d5b2245ea16bf9df0545c7429eafcc68fd83f24cf4d2988a669e932e6ccf4baf",
+    "tests/test_team_lifecycle.py": "7d311f8fb75cc74d8befc09cd92c2aee8a01e88ea23d12bbbbe0d6ba116f4e32",
+    "tests/test_team_output.py": "e1e12dadd2659458a08b462ee2bfa410024dabbbcbc994f01b9633aceea4cdd6",
+    "tests/test_team_process.py": "955fe89de3c4f63db7d67e8fd002bc0070f574ce605de6430276c600750201c3",
+    "tests/test_team_properties.py": "5a1e461c7eb2e5fea3780f4ac6f795d6f6e67175debef9edd90e24dd30481372",
+    "tests/test_team_recovery.py": "0e5ffebd121ccad85c6dcbce8696a1414a22c49de82ff303382b0d241c5bc1a6",
+    "tests/test_team_runtime.py": "94ccb1243a7a2dba9b5e2dce4b6f0fae8b4308e5abb1c7750339b9e7d26b8293",
+    "tests/test_team_store.py": "33357b94f923e9176aae3a5c431812a19ad8e841383d42ff890b6cfd3a922205",
+    "tests/test_team_swarm.py": "2bffc34fa49db78c261dabd37624d70de64e05c4bb5534699855185b1672b14e",
+    "tests/test_team_worktree.py": "14a9fc71e68f009261b48d89be6daa307c899716f93d68f48d57260a94e7cd62"
+  }
+}

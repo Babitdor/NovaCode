@@ -26,9 +26,12 @@ import re
 import socket
 import threading
 from http.server import HTTPServer
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from novacode_cli.config.config import Settings
+from novacode_cli.config.config import Settings, agent_md
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1659,83 +1662,44 @@ class CreateRequestHandler(LocalRequestHandler):
     # ── Agents CRUD ─────────────────────────────────────────────────
 
     def _list_agents(self) -> list[dict]:
-        """List all agents from global and project scopes."""
+        """List all agents from global and project scopes (folder or flat file)."""
         settings = self.settings
         if not settings:
             return []
 
-        result: list[dict] = []
-        seen: set[str] = set()
-
-        # Global agents (~/.nova/agents/)
-        global_dir = settings.get_agents_root_dir()
-        if global_dir.exists():
-            for agent_dir in sorted(global_dir.iterdir()):
-                if agent_dir.is_dir():
-                    agent_md = agent_dir / "agent.md"
-                    if agent_md.exists():
-                        content = agent_md.read_text(encoding="utf-8", errors="replace")
-                        name = _extract_frontmatter_field(content, "name") or agent_dir.name
-                        description = _extract_frontmatter_field(content, "description") or ""
-                        result.append({
-                            "name": name,
-                            "description": description[:120],
-                            "source": "global",
-                            "path": str(agent_dir),
-                        })
-                        seen.add(name)
-
-        # Project agents (.nova/agents/)
-        project_dir = settings.get_project_agents_dir()
-        if project_dir and project_dir.exists():
-            for agent_dir in sorted(project_dir.iterdir()):
-                if agent_dir.is_dir():
-                    agent_md = agent_dir / "agent.md"
-                    if agent_md.exists():
-                        content = agent_md.read_text(encoding="utf-8", errors="replace")
-                        name = _extract_frontmatter_field(content, "name") or agent_dir.name
-                        description = _extract_frontmatter_field(content, "description") or ""
-                        if name in seen:
-                            result = [r for r in result if r["name"] != name]
-                        result.append({
-                            "name": name,
-                            "description": description[:120],
-                            "source": "project",
-                            "path": str(agent_dir),
-                        })
-                        seen.add(name)
-
-        return result
+        # get_all_agents lists project agents first, so keeping the first of a
+        # name lets a project agent override its global namesake.
+        result: dict[str, dict] = {}
+        for found_name, path, scope in settings.get_all_agents():
+            content = agent_md(path).read_text(encoding="utf-8", errors="replace")
+            name = _extract_frontmatter_field(content, "name") or found_name
+            description = _extract_frontmatter_field(content, "description") or ""
+            result.setdefault(
+                name,
+                {
+                    "name": name,
+                    "description": description[:120],
+                    "source": scope,
+                    "path": str(path),
+                },
+            )
+        return list(result.values())
 
     def _get_agent(self, name: str) -> dict | None:
-        """Get an agent's full agent.md content by name.
+        """Get an agent's full file content by name (project first, then global).
 
         Returns the agent dict, or None if not found (caller sends 404).
         """
         settings = self.settings
-        if not settings:
+        found = settings.find_agent(name) if settings else None
+        if not found:
             return None
-
-        # Check project first, then global
-        project_dir = settings.get_project_agents_dir()
-        if project_dir:
-            agent_dir = project_dir / name
-            agent_md = agent_dir / "agent.md"
-            if agent_md.exists():
-                content = agent_md.read_text(encoding="utf-8", errors="replace")
-                return {"name": name, "content": content, "source": "project", "path": str(agent_dir)}
-
-        global_dir = settings.get_agents_root_dir()
-        agent_dir = global_dir / name
-        agent_md = agent_dir / "agent.md"
-        if agent_md.exists():
-            content = agent_md.read_text(encoding="utf-8", errors="replace")
-            return {"name": name, "content": content, "source": "global", "path": str(agent_dir)}
-
-        return None
+        path, scope = found
+        content = agent_md(path).read_text(encoding="utf-8", errors="replace")
+        return {"name": name, "content": content, "source": scope, "path": str(path)}
 
     def _create_agent(self, body: dict) -> None:
-        """Create a new agent."""
+        """Create a new agent as a flat ``<name>.md`` file."""
         name = body.get("name", "").strip()
         description = body.get("description", "").strip()
         content = body.get("content", "")
@@ -1762,32 +1726,34 @@ class CreateRequestHandler(LocalRequestHandler):
         else:
             base_dir = settings.get_agents_root_dir()
 
-        agent_dir = base_dir / name
-        if agent_dir.exists():
+        target = base_dir / f"{name}.md"
+        if target.exists() or (base_dir / name).exists():
             self._send_error(f"Agent '{name}' already exists", 409)
             return
 
         # Ensure content has frontmatter
         final_content = _ensure_frontmatter(content, name, description)
 
-        # Write atomically
-        agent_dir.mkdir(parents=True, exist_ok=True)
-        agent_md = agent_dir / "agent.md"
-        tmp_path = agent_dir / f".tmp.{os.getpid()}"
-        try:
-            tmp_path.write_text(final_content, encoding="utf-8")
-            tmp_path.replace(agent_md)
-        except Exception as e:
-            if tmp_path.exists():
-                tmp_path.unlink(missing_ok=True)
-            agent_dir.rmdir()
-            self._send_error(f"Failed to create agent: {e}", 500)
+        base_dir.mkdir(parents=True, exist_ok=True)
+        if not self._write_atomically(target, final_content, "Failed to create agent"):
             return
 
-        self._send_json({"name": name, "source": scope, "path": str(agent_dir)}, 201)
+        self._send_json({"name": name, "source": scope, "path": str(target)}, 201)
+
+    def _write_atomically(self, target: Path, content: str, failure: str) -> bool:
+        """Replace *target* with *content* via a temp file; send a 500 on failure."""
+        tmp_path = target.parent / f".tmp.{target.name}.{os.getpid()}"
+        try:
+            tmp_path.write_text(content, encoding="utf-8")
+            tmp_path.replace(target)
+        except Exception as e:
+            tmp_path.unlink(missing_ok=True)
+            self._send_error(f"{failure}: {e}", 500)
+            return False
+        return True
 
     def _update_agent(self, name: str, body: dict) -> None:
-        """Update an agent's agent.md content."""
+        """Update an agent's file content."""
         content = body.get("content", "")
         if not content:
             self._send_error("Content is required")
@@ -1798,40 +1764,18 @@ class CreateRequestHandler(LocalRequestHandler):
             self._send_error("Settings not available", 500)
             return
 
-        # Find the agent directory
-        project_dir = settings.get_project_agents_dir()
-        agent_dir = None
-        if project_dir:
-            candidate = project_dir / name
-            if (candidate / "agent.md").exists():
-                agent_dir = candidate
-
-        if not agent_dir:
-            global_dir = settings.get_agents_root_dir()
-            candidate = global_dir / name
-            if (candidate / "agent.md").exists():
-                agent_dir = candidate
-
-        if not agent_dir:
+        found = settings.find_agent(name)
+        if not found:
             self._send_error(f"Agent '{name}' not found", 404)
             return
 
-        # Write atomically
-        agent_md = agent_dir / "agent.md"
-        tmp_path = agent_dir / f".tmp.{os.getpid()}"
-        try:
-            tmp_path.write_text(content, encoding="utf-8")
-            tmp_path.replace(agent_md)
-        except Exception as e:
-            if tmp_path.exists():
-                tmp_path.unlink(missing_ok=True)
-            self._send_error(f"Failed to save: {e}", 500)
+        if not self._write_atomically(agent_md(found[0]), content, "Failed to save"):
             return
 
         self._send_json({"name": name, "status": "saved"})
 
     def _delete_agent(self, name: str) -> None:
-        """Delete an agent directory."""
+        """Delete an agent (its flat file, or its folder)."""
         settings = self.settings
         if not settings:
             self._send_error("Settings not available", 500)
@@ -1839,26 +1783,14 @@ class CreateRequestHandler(LocalRequestHandler):
 
         import shutil
 
-        # Find the agent directory
-        project_dir = settings.get_project_agents_dir()
-        agent_dir = None
-        if project_dir:
-            candidate = project_dir / name
-            if candidate.exists():
-                agent_dir = candidate
-
-        if not agent_dir:
-            global_dir = settings.get_agents_root_dir()
-            candidate = global_dir / name
-            if candidate.exists():
-                agent_dir = candidate
-
-        if not agent_dir:
+        found = settings.find_agent(name)
+        if not found:
             self._send_error(f"Agent '{name}' not found", 404)
             return
 
+        path = found[0]
         try:
-            shutil.rmtree(agent_dir)
+            path.unlink() if path.is_file() else shutil.rmtree(path)
         except Exception as e:
             self._send_error(f"Failed to delete: {e}", 500)
             return

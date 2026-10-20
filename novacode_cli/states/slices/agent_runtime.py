@@ -76,6 +76,8 @@ class AgentRuntimeState:
         new_model: Any,
         steering_instructions: list | None = None,
         session_id: str | None = None,
+        *,
+        notify_model_switch: bool = True,
     ) -> tuple[Any, Any]:
         """Switch to a new model dynamically by recreating the agent.
 
@@ -83,6 +85,7 @@ class AgentRuntimeState:
             new_model: The new model instance to use
             steering_instructions: Persistent user guidance (from SessionState)
             session_id: Session identifier for hook dispatch
+            notify_model_switch: Whether to emit a model-switch hook (false for roster reloads)
 
         Returns:
             Tuple of (new_agent, new_backend)
@@ -104,6 +107,7 @@ class AgentRuntimeState:
         # create_agent_with_config -> _build_subagent_roster -> plugin_agent_specs
         # on /model switches). create_agent_with_config is sync and only builds
         # objects, so running it in a worker thread is safe.
+        definition_options = getattr(self._agent, "agent_definition_options", {})
         new_agent, new_backend = await asyncio.to_thread(
             create_agent_with_config,
             model=new_model,
@@ -113,19 +117,28 @@ class AgentRuntimeState:
             sandbox_type=self._sandbox_type,
             # Same rule as the first build in main.py: Pattern A confines the
             # local shell. Omitting it dropped confinement on every rebuild.
-            exec_sandbox=self._sandbox is None and self._sandbox_type == "os",
+            exec_sandbox=definition_options.get(
+                "exec_sandbox", self._sandbox is None and self._sandbox_type == "os"
+            ),
             store=self._store,
             checkpointer=self._checkpointer,
             steering_instructions=(
                 steering_instructions if steering_instructions is not None else []
             ),
             session_id=session_id or getattr(self, "session_id", None),
+            workspace_root=getattr(self._agent, "agent_definitions_workspace", None),
+            system_prompt=definition_options.get("system_prompt"),
+            extra_middleware=definition_options.get("extra_middleware"),
+            auto_approve=definition_options.get("auto_approve", False),
         )
 
         # Update stored references
         self._agent = new_agent
         self._backend = new_backend
         self._model = new_model
+
+        if not notify_model_switch:
+            return new_agent, new_backend
 
         # Fire model.switch hook
         try:

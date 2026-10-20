@@ -17,7 +17,7 @@ from novacode_cli.bootstrap import VisionCaptionMiddleware
 from novacode_cli.security.middleware import SecurityMiddleware
 
 
-def test_roster_combines_sources_without_duplicate_names(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_roster_combines_sources_without_duplicate_tool_routes(monkeypatch: pytest.MonkeyPatch) -> None:
     import novacode_cli.agents.core_agent as core
     from novacode_cli.plugins import claude_plugins
 
@@ -34,9 +34,11 @@ def test_roster_combines_sources_without_duplicate_names(monkeypatch: pytest.Mon
         assistant_id="nova", tools=[], plugin_specs=[], skill_sources=[]
     )
     names = [s["name"] for s in result]
-    assert len(names) == len(set(names))
+    routes = [(s["name"], "graph_id" in s) for s in result]
+    assert len(routes) == len(set(routes))
     assert {"code-explorer", "general-purpose", "plugin-agent"} <= set(names)
     assert next(s for s in result if s["name"] == "code-explorer") is builtin
+    assert next(s for s in result if s.get("graph_id") == "explore") is remote
 
 
 def test_declarative_specs_get_retry_vision_security_first_and_no_interrupts():

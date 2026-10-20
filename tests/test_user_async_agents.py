@@ -107,7 +107,7 @@ def test_an_unreadable_agent_is_skipped_not_fatal(tmp_path, monkeypatch):
 
 def test_an_agent_named_after_a_shipped_graph_is_refused():
     with pytest.raises(ValueError, match="collides"):
-        ua.graph_id_for("code-review-agent")
+        ua.graph_id_for("research-agent")
 
 
 @pytest.mark.parametrize("name", ["", "has space", "sla/sh", "../escape", "dot.name"])
@@ -262,7 +262,7 @@ def test_the_real_server_loader_accepts_the_generated_config(tmp_path, monkeypat
     assert graph_exists("good"), "a valid user agent must be served"
     assert not graph_exists("bad"), "an unbuildable agent must not be served"
     # The whole point: the built-ins survive the presence of a broken agent.
-    for shipped in ("code-review-agent", "research-agent", "security-audit-agent"):
+    for shipped in ("general-purpose-async", "research-agent"):
         assert graph_exists(shipped), f"{shipped} died because of one bad user agent"
 
 
@@ -395,17 +395,17 @@ def test_an_agent_named_after_a_shipped_graph_is_not_offered(tmp_path, monkeypat
     from novacode_cli.agents.default_subagents import async_subagents as mod
     from novacode_cli.config.config import settings
 
-    agent_md = tmp_path / "security-audit-agent" / "agent.md"
+    agent_md = tmp_path / "research-agent" / "agent.md"
     write_agent(agent_md, {"description": "Mine", "async": True}, PROMPT)
     monkeypatch.setattr(
-        settings, "get_all_agents", _only(("security-audit-agent", agent_md, "global"))
+        settings, "get_all_agents", _only(("research-agent", agent_md, "global"))
     )
 
     assert mod._user_agent_specs() == []
 
 
 def test_the_shipped_count_is_unchanged_when_the_user_has_no_async_agents(tmp_path, monkeypatch):
-    """The twelve built-ins remain available when the user adds no async agents."""
+    """The shipped graphs remain available when the user adds no async agents."""
     import socket
 
     from novacode_cli.agents.default_subagents import async_subagents as mod
@@ -421,7 +421,7 @@ def test_the_shipped_count_is_unchanged_when_the_user_has_no_async_agents(tmp_pa
         monkeypatch.setenv("ASYNC_AGENT_BASE_URL", f"http://127.0.0.1:{srv.getsockname()[1]}")
         monkeypatch.setenv(mod.ASYNC_AGENT_ROOT_VAR, str(settings.get_workspace_root()))
         monkeypatch.setattr(mod, "_availability", None, raising=False)
-        assert len(mod.retrieve_async_subagents()) == 12
+        assert len(mod.retrieve_async_subagents()) == 2
 
 
 def test_a_user_async_agent_is_added_to_the_full_spec_list(tmp_path, monkeypatch):
@@ -443,7 +443,7 @@ def test_a_user_async_agent_is_added_to_the_full_spec_list(tmp_path, monkeypatch
         monkeypatch.setattr(mod, "_availability", None, raising=False)
         specs = mod.retrieve_async_subagents()
 
-    assert len(specs) == 13, "twelve built-ins plus the user's agent"
+    assert len(specs) == 3, "the two shipped graphs plus the user's agent"
     assert specs[-1]["name"] == "jeva"
     assert specs[-1]["graph_id"] == "jeva"
 

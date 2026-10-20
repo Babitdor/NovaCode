@@ -1,0 +1,227 @@
+{
+  "url": "http://127.0.0.1:4401/verify.html",
+  "errors": [],
+  "failed": [],
+  "desktop": {
+    "loadMs": 129,
+    "loaderMs": null,
+    "settledMs": 2362,
+    "vitals": {
+      "lcpMs": 116,
+      "lcpElement": "p.body",
+      "cls": 0
+    },
+    "height": 4494,
+    "overflowX": false,
+    "offenders": [],
+    "h1": [
+      "Every claim points at something you can run."
+    ],
+    "smallTargets": [],
+    "glHidden": [],
+    "title": "Verification record — NovaCode",
+    "glOn": false,
+    "scrollFps": {
+      "fps": 60,
+      "worstFrameMs": 17
+    },
+    "nav": {
+      "href": "/index.html",
+      "scrollYAfter": 0,
+      "title": "NovaCode — a coding agent that verifies its own work"
+    },
+    "idleMotion": false,
+    "idleAt": null
+  },
+  "mobile": {
+    "throttled": true,
+    "loadMs": 2336,
+    "loaderMs": null,
+    "settledMs": 4536,
+    "vitals": {
+      "lcpMs": 1408,
+      "lcpElement": "p.body",
+      "cls": 0
+    },
+    "height": 6418,
+    "overflowX": false,
+    "offenders": [],
+    "h1": [
+      "Every claim points at something you can run."
+    ],
+    "smallTargets": [],
+    "glHidden": [],
+    "title": "Verification record — NovaCode",
+    "glOn": false,
+    "scrollFps": {
+      "fps": 60,
+      "worstFrameMs": 17
+    }
+  },
+  "files": [
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\d-00-firstpaint.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\d-01-hero.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\d-02-scroll.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\d-03-scroll.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\d-04-scroll.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\d-05-scroll.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\d-06-scroll.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\d-07-scroll.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\d-90-transition-a.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\d-90-transition-b.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\d-90-transition-c.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\d-91-after-nav.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\d-92-back.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\k-01-focus.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\k-02-focus.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\k-03-focus.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\k-04-focus.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\h-01-rest.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\h-01-hover.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\h-02-rest.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\h-02-hover.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\h-03-rest.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\h-03-hover.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\h-04-rest.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\h-04-hover.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\h-05-rest.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\h-05-hover.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\h-06-rest.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\h-06-hover.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\h-07-rest.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\h-07-hover.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\m-01-hero.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\m-02-scroll.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\m-03-scroll.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\m-04-scroll.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\m-05-scroll.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\m-06-scroll.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\r-01-hero.png",
+    "B:\\Summer Project 2026\\Nova-Code\\nova-code-cli\\NovaCode\\.jury\\127.0.0.1-4401\\shots2\\verify_html\\r-02-mid.png"
+  ],
+  "notes": [
+    "desktop FPS runs headless on a software GPU: treat it as a floor, not a measurement of real hardware",
+    "mobile runs at 4x CPU slowdown on slow 4G: mobile.vitals and mobile.scrollFps are the numbers that count",
+    "loadMs: ms from navigation to the load event, null if it had not fired after 30 s (desktop) or 60 s (phone); a heavy page takes long, while visitors see content at vitals.lcpMs. loaderMs: ms until the #loader ended, null when the page has none",
+    "settledMs: ms from navigation by which the first screen stopped changing, never before the fixed wait. null: still changing at the cap, either a long intro or continuous motion (a live shader, video); d-01-hero / m-01-hero tell which. reduced.moving: the screen was still changing 1.5 s after load with reduced motion on"
+  ],
+  "keyboard": {
+    "stops": [
+      "a \"SKIP TO CONTENT\"",
+      "a \"NOVA.CODE\"",
+      "a \"PROOF\"",
+      "a \"LOOP\"",
+      "a \"CONTROLS\"",
+      "a \"VERIFY\"",
+      "a \"INSTALL\"",
+      "pre \"uv run pytest tests/test_context_compact\"",
+      "pre \"git clone https://github.com/Babitdor/No\"",
+      "a \"SEE THE PROOF\"",
+      "a \"INSTALL NOVA\"",
+      "a \"NOVA.CODE\""
+    ],
+    "skipLinkFirst": true,
+    "noVisibleFocus": [],
+    "invisibleFocus": [],
+    "stuck": false
+  },
+  "hover": {
+    "targets": [
+      {
+        "shot": "h-01",
+        "label": "a \"See the proof\"",
+        "interactive": true,
+        "primary": true,
+        "react": "moves",
+        "changed": [
+          "borderColor",
+          "transform"
+        ]
+      },
+      {
+        "shot": "h-02",
+        "label": "a \"Install Nova\"",
+        "interactive": true,
+        "primary": true,
+        "react": "moves",
+        "changed": [
+          "color",
+          "borderColor",
+          "textDecorationColor",
+          "transform"
+        ]
+      },
+      {
+        "shot": "h-03",
+        "label": "a \"NOVA. CODE\"",
+        "interactive": true,
+        "primary": true,
+        "react": "moves",
+        "changed": [
+          "transform"
+        ]
+      },
+      {
+        "shot": "h-04",
+        "label": "a \"Proof\"",
+        "interactive": true,
+        "primary": true,
+        "react": "moves",
+        "changed": [
+          "color",
+          "borderColor",
+          "textDecorationColor",
+          "transform"
+        ]
+      },
+      {
+        "shot": "h-05",
+        "label": "a \"Install\"",
+        "interactive": true,
+        "primary": true,
+        "react": "moves",
+        "changed": [
+          "borderColor",
+          "transform"
+        ]
+      },
+      {
+        "shot": "h-06",
+        "label": "a \"NOVA. CODE\"",
+        "interactive": true,
+        "primary": false,
+        "react": "moves",
+        "changed": [
+          "transform"
+        ]
+      },
+      {
+        "shot": "h-07",
+        "label": "a \"Proof\"",
+        "interactive": true,
+        "primary": false,
+        "react": "color",
+        "changed": [
+          "color",
+          "borderColor",
+          "textDecorationColor"
+        ]
+      }
+    ],
+    "noHoverChange": [],
+    "colorOnly": [],
+    "covered": [
+      "a \"Skip to content\""
+    ],
+    "cursorFollower": false
+  },
+  "reduced": {
+    "hiddenText": 0,
+    "moving": false
+  },
+  "a11y": {
+    "violations": [],
+    "serious": 0,
+    "contrastNeedsReview": 3
+  }
+}

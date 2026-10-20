@@ -35,6 +35,7 @@ from textual.widgets import (
 )
 from textual.widgets.option_list import Option
 
+from novacode_cli.config.config import agent_md as _agent_md
 from novacode_cli.tui.animations import animate_modal_screen
 from novacode_cli.tui.auth_display import format_auth_indicator
 from novacode_cli.tui.decision_settings import DecisionSettings
@@ -3108,6 +3109,16 @@ class ContextScreen(ModalScreen[None]):
             row.append("▰" * min(16, round(share / 100 * 16)), style=color)
             details.append_text(row)
             details.append("\n")
+        mcp_tools = int(getattr(breakdown, "mcp_tool_tokens", 0))
+        mcp_prompt = int(getattr(breakdown, "mcp_prompt_tokens", 0))
+        if mcp_tools or mcp_prompt:
+            count = int(getattr(breakdown, "mcp_tool_count", 0))
+            details.append(
+                f"  of which MCP       {mcp_tools + mcp_prompt:>9,}  "
+                f"{count} tool schema{'s' if count != 1 else ''} ~{mcp_tools:,}"
+                f" · server list in the prompt ~{mcp_prompt:,}\n",
+                style="dim #2ac3de",
+            )
         self.query_one("#context-breakdown", Static).update(details)
 
         try:
@@ -3137,10 +3148,50 @@ class ContextScreen(ModalScreen[None]):
             style="dim",
         )
         metrics.append(status, style="yellow" if compact_pct and pct >= compact_pct else "dim")
+        metrics.append_text(self._strategies_text(breakdown, window, compact_pct))
         cache_summary = tracker.cache_summary() if hasattr(tracker, "cache_summary") else None
         if cache_summary:
             metrics.append(f"\n{cache_summary}", style="dim")
         self.query_one("#context-metrics", Static).update(metrics)
+
+    @staticmethod
+    def _strategies_text(breakdown: object, window: int, compact_pct: float) -> Text:
+        """The three context strategies, cheapest first, and what each saved."""
+        from novacode_cli.config.nova_config import NovaConfig
+        from novacode_cli.context.strategies import COLLAPSE_AT
+
+        config = NovaConfig()
+        snip_on = config.get("context_snip", True) is not False
+        collapse_on = config.get("context_collapse", True) is not False
+        snipped = int(getattr(breakdown, "snipped_tokens", 0))
+        collapsed = int(getattr(breakdown, "collapsed_tokens", 0))
+        turns = int(getattr(breakdown, "collapsed_turns", 0))
+        out = Text("\n\nContext strategies (cheapest first)\n", style="dim")
+        if not snip_on:
+            out.append("  Snip        off\n", style="dim")
+        else:
+            out.append(
+                f"  Snip        ~{snipped:,} tokens of stale reads and zombie messages left out\n"
+                if snipped
+                else "  Snip        nothing stale to leave out yet\n",
+                style="dim",
+            )
+        if not collapse_on:
+            out.append("  Collapse    off\n", style="dim")
+        elif turns:
+            out.append(
+                f"  Collapse    {turns} earlier turn{'s' if turns != 1 else ''} folded "
+                f"into digests (~{collapsed:,} tokens)\n",
+                style="dim",
+            )
+        else:
+            at = int(window * COLLAPSE_AT)
+            out.append(f"  Collapse    starts at ~{COLLAPSE_AT:.0%} ({at:,} tokens)\n", style="dim")
+        out.append(
+            f"  Auto-compact summarizes at ~{compact_pct:.0f}%" if compact_pct else "",
+            style="dim",
+        )
+        return out
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "close":
@@ -3545,7 +3596,7 @@ class AgentsScreen(ModalScreen[None]):
         from novacode_cli.commands.agents_commands import agent_summary
 
         for name, path, scope in self._agents:
-            desc, is_async = agent_summary(path / "agent.md")
+            desc, is_async = agent_summary(_agent_md(path))
             label = Text.assemble(
                 (f"@{name} ", "bold #73daca"),
                 (" async ", "bold #f0b429") if is_async else (" sync ", "dim"),
@@ -3588,7 +3639,7 @@ class AgentsScreen(ModalScreen[None]):
             return
 
         name, path, scope = self._agents[idx]
-        agent_md = path / "agent.md"
+        agent_md = _agent_md(path)
 
         def _read() -> tuple[str, str, str, Any, bool]:
             """Every filesystem touch for this preview, on a worker thread."""
@@ -3672,7 +3723,7 @@ class AgentsScreen(ModalScreen[None]):
         if idx is None or not (0 <= idx < len(self._agents)):
             return
         name, path, _scope = self._agents[idx]
-        agent_md = path / "agent.md"
+        agent_md = _agent_md(path)
 
         # Sentinel, not None: `agent_tools` may legitimately return a falsy value,
         # and the original aborted only when reading agent.md raised OSError.
@@ -3707,7 +3758,7 @@ class AgentsScreen(ModalScreen[None]):
             self.query_one("#agents-hint", Static).update(
                 Text(
                     f"Tools for @{name}: {_tools_summary(result['tools'])} "
-                    "(applies from the next agent build: /clear or restart)",
+                    "(applies on the next turn)",
                     style="green",
                 )
             )
@@ -3729,11 +3780,13 @@ class AgentsScreen(ModalScreen[None]):
 
             if scope == "project":
                 agents_dir = settings.ensure_project_agents_dir()
-                agent_dir = agents_dir / name
             else:
-                agent_dir = settings.get_agents_root_dir() / name
+                agents_dir = settings.get_agents_root_dir()
+            # New agents are flat files (Claude Code's form); an older
+            # <name>/agent.md folder is the same agent, so it blocks the name too.
+            agent_md = agents_dir / f"{name}.md"
 
-            if agent_dir.exists():
+            if agent_md.exists() or (agents_dir / name).exists():
                 if self.is_mounted:
                     try:
                         hint = self.query_one("#agents-hint", Static)
@@ -3787,7 +3840,6 @@ class AgentsScreen(ModalScreen[None]):
 
                 from novacode_cli.agents.agent_file import write_agent
 
-                agent_md = agent_dir / "agent.md"
                 wants_async = bool(result.get("async"))
                 # The key is written only for an async agent: an in-process agent is
                 # the default, and `async: false` in every agent.md would be noise.
@@ -3882,11 +3934,11 @@ class AgentsScreen(ModalScreen[None]):
             try:
                 from novacode_cli.agents.user_async_agents import is_async, read_agent_safe
 
-                was_async = is_async(read_agent_safe(path / "agent.md")[0])
+                was_async = is_async(read_agent_safe(_agent_md(path))[0])
             except Exception:  # noqa: BLE001 — deleting must still work
                 was_async = False
             try:
-                shutil.rmtree(path)
+                path.unlink() if path.is_file() else shutil.rmtree(path)
                 if was_async:
                     self._notify_async_agents_changed()
                 self.app._log(Text(f"● Deleted subagent '@{name}'!", style="green"))

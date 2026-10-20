@@ -195,6 +195,16 @@ class ContextBreakdown:
     assistant_message_count: int = 0
     tool_call_count: int = 0
 
+    # MCP's share of the request (already inside the categories above)
+    mcp_tool_count: int = 0
+    mcp_tool_tokens: int = 0
+    mcp_prompt_tokens: int = 0
+
+    # What the cheap context strategies kept out of the request
+    snipped_tokens: int = 0
+    collapsed_tokens: int = 0
+    collapsed_turns: int = 0
+
     @property
     def baseline_tokens(self) -> int:
         """Tokens used by static/baseline content (system prompt, memory, tools)."""
@@ -241,6 +251,49 @@ class ContextBreakdown:
         (:func:`compact_threshold_pct`).
         """
         return self.usage_percentage >= compact_threshold_pct(self.context_window_size)
+
+    def anchored_to(self, snapshot: dict[str, object]) -> ContextBreakdown:
+        """Use the last request's measured system prompt and tool schemas.
+
+        The startup baseline is the core prompt alone: the MCP server list, tool
+        discovery notes and memory injected per request were missing from it, and
+        scaling every category to the request's total spread them across the
+        conversation. With the snapshot's own figures, only the conversation
+        categories are scaled, into what is left.
+        """
+        def number(key: str) -> int:
+            value = snapshot.get(key)
+            return value if isinstance(value, int) else 0
+
+        total = number("estimated_input_tokens")
+        system = number("estimated_system_tokens")
+        schemas = number("estimated_schema_tokens")
+        if total <= 0 or not system:
+            return self.scaled_to(total) if total > 0 else self
+        rest = max(0, total - system - schemas)
+        conversation = replace(
+            self,
+            system_prompt_tokens=0,
+            user_memory_tokens=0,
+            project_memory_tokens=0,
+            tool_definitions_tokens=0,
+        ).scaled_to(rest) if self.conversation_tokens else replace(
+            self,
+            user_message_tokens=0,
+            assistant_message_tokens=0,
+            tool_result_tokens=0,
+        )
+        return replace(
+            conversation,
+            system_prompt_tokens=system,
+            user_memory_tokens=0,
+            project_memory_tokens=0,
+            tool_definitions_tokens=schemas,
+            total_tokens=system + schemas + conversation.conversation_tokens,
+            mcp_tool_count=number("mcp_tools"),
+            mcp_tool_tokens=number("mcp_schema_tokens"),
+            mcp_prompt_tokens=number("mcp_prompt_tokens"),
+        )
 
     def scaled_to(self, total_tokens: int) -> ContextBreakdown:
         """This breakdown with the categories rescaled to a known real total.
@@ -584,6 +637,20 @@ def _tool_call_text(msg: BaseMessage) -> str:
     return " ".join(parts)
 
 
+def _tool_tokens(tools: list[Any]) -> int:
+    """Schema tokens with the request snapshot's estimator, so CTX does not jump.
+
+    Falls back to this module's own count for a definition the provider
+    converter cannot read.
+    """
+    from langchain_core.messages.utils import count_tokens_approximately
+
+    try:
+        return count_tokens_approximately([], tools=list(tools))
+    except Exception:  # noqa: BLE001 - accounting only
+        return _estimate_tokens(_tool_schema_text(tools))
+
+
 def _tool_schema_text(tools: list[Any]) -> str:
     """Serialize tool definitions (name + description + args schema) for counting.
 
@@ -708,13 +775,13 @@ def build_context_breakdown(
     # Tool schemas are bound to the model, not carried in the message list, but
     # they consume context on every request — count them into the baseline.
     if tools and any(getattr(t, "name", None) == "search_tools" for t in tools):
-        # Most schemas are deferred behind search_tools; count what is sent.
+        # Most schemas are deferred behind search_tools, and the bound ones are
+        # trimmed (the task tool's subagent roster): count them as sent.
         # ponytail: skips the middleware's "frequently used" extras (at most 10).
-        from novacode_cli.agents.tool_search import CORE_TOOLS, loaded_names
+        from novacode_cli.agents.tool_search import sent_tools
 
-        sent = CORE_TOOLS | loaded_names(messages)
-        tools = [t for t in tools if getattr(t, "name", None) in sent]
-    tool_def_tokens = _estimate_tokens(_tool_schema_text(tools)) if tools else 0
+        tools = sent_tools(tools, messages)
+    tool_def_tokens = _tool_tokens(tools) if tools else 0
 
     total = system_tokens + user_tokens + assistant_tokens + tool_tokens + tool_def_tokens
 

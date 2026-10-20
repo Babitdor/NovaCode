@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ from novacode_cli.context.observations import compact_observations
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
+    from pathlib import Path
 
     from novacode_cli.agents.context_compaction import ContextCompactionMiddleware
 
@@ -53,6 +55,12 @@ class ContextSnapshot:
     estimated_schema_tokens: int = 0
     estimated_multimodal_tokens: int = 0
     image_transport_chars: int = 0
+    estimated_system_tokens: int = 0
+    #: MCP tool schemas sent with this request, and their size.
+    mcp_tools: int = 0
+    mcp_schema_tokens: int = 0
+    #: The MCP server/tool list injected into the system prompt.
+    mcp_prompt_tokens: int = 0
 
     @classmethod
     def capture(cls, request: ModelRequest) -> ContextSnapshot:
@@ -85,6 +93,13 @@ class ContextSnapshot:
         tool_tokens = (
             count_tokens_approximately([], tools=list(request.tools)) if request.tools else 0
         )
+        mcp_tools = [
+            t
+            for t in request.tools or []
+            if (getattr(t, "metadata", None) or {}).get("nova_mcp_server")
+        ]
+        mcp_schema_tokens = count_tokens_approximately([], tools=mcp_tools) if mcp_tools else 0
+        mcp_prompt_tokens = _mcp_prompt_tokens(request.system_message)
         settings = getattr(request, "model_settings", None) or {}
         reserve = settings.get("max_tokens") or getattr(request.model, "max_tokens", None) or 0
         from collections.abc import Mapping
@@ -149,6 +164,10 @@ class ContextSnapshot:
             tool_tokens + structured_tokens,
             content_estimate.image_tokens,
             content_estimate.image_transport_chars,
+            system_tokens,
+            len(mcp_tools),
+            mcp_schema_tokens,
+            mcp_prompt_tokens,
         )
 
     def diagnostics(self) -> dict[str, object]:
@@ -164,6 +183,10 @@ class ContextSnapshot:
             "estimated_multimodal_tokens": self.estimated_multimodal_tokens,
             "multimodal_estimate_method": "fixed_85_per_image; dimensions_unobserved",
             "image_transport_chars": self.image_transport_chars,
+            "estimated_system_tokens": self.estimated_system_tokens,
+            "mcp_tools": self.mcp_tools,
+            "mcp_schema_tokens": self.mcp_schema_tokens,
+            "mcp_prompt_tokens": self.mcp_prompt_tokens,
             "purpose": request_purpose.get(),
             "retry_usage": "unavailable",
             "protected_tokens": self.protected_tokens,
@@ -186,6 +209,63 @@ class ContextSnapshot:
                 "the task constraints; history has been retained."
             )
             raise ProtectedContextOverflowError(message)
+
+
+def _remembered_path() -> Path:
+    from pathlib import Path
+
+    from novacode_cli.config.config import HOME_DIR
+
+    return Path(HOME_DIR) / "context_baseline.json"
+
+
+def remember_system_tokens(agent: str, tokens: int) -> None:
+    """Keep the last measured system prompt size, for /context before a request.
+
+    The prompt sent is the core prompt plus what middleware injects per request
+    (MCP servers, skills, memory): over twice the startup estimate, and nearly
+    the same from one session to the next.
+    """
+    path = _remembered_path()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    if data.get(agent) == tokens:
+        return
+    data[agent] = tokens
+    with contextlib.suppress(OSError):
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def remembered_system_tokens(agent: str) -> int:
+    """The last measured system prompt size for ``agent``, or 0."""
+    try:
+        value = json.loads(_remembered_path().read_text(encoding="utf-8")).get(agent)
+    except (OSError, ValueError, AttributeError):
+        return 0
+    return value if isinstance(value, int) else 0
+
+
+#: The heading the MCP middleware's prompt section starts with (prompts/mcp.jinja).
+_MCP_HEADING = "## MCP Tools"
+
+
+def _mcp_prompt_tokens(system_message: object) -> int:
+    """Size of the MCP section of the system prompt, up to the next ``## `` heading."""
+    if system_message is None:
+        return 0
+    content = getattr(system_message, "content", "")
+    if not isinstance(content, str):
+        content = "\n".join(
+            str(b.get("text", "")) for b in content or [] if isinstance(b, dict)
+        )
+    start = content.find(_MCP_HEADING)
+    if start < 0:
+        return 0
+    end = content.find("\n## ", start + len(_MCP_HEADING))
+    section = content[start : end if end >= 0 else len(content)]
+    return max(1, len(section) // 4)
 
 
 def _replace_snapshot(

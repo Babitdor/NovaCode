@@ -368,47 +368,8 @@ async def _shutdown_background_services(session_state) -> None:
         pass
 
 
-async def _run_agent_session(
-    model,
-    assistant_id: str,
-    session_state,
-    sandbox_backend=None,
-    sandbox_type: str | None = None,
-    setup_script_path: str | None = None,
-    initial_messages: list | None = None,
-    session_manager=None,
-    store: BaseStore | None = None,
-    checkpointer: InMemorySaver | None = None,
-    restored_session_data: tuple | None = None,
-    exec_sandbox: bool = False,
-    model_provider: str | None = None,
-) -> None:
-    """Build the agent/session for this run, then launch the TUI.
-
-    Not a REPL loop: it does the shared bootstrap (agent, tools, middleware,
-    voice, remote bridges, cron) for both the local and sandbox branches, then
-    ends by calling ``run_tui`` — the TUI is the only interactive UI.
-    Extracted so the sandbox and local modes share one setup path.
-
-    Args:
-        model: LLM model to use
-        assistant_id: Agent identifier for memory storage
-        session_state: Session state with auto-approve settings
-        sandbox_backend: Optional sandbox backend for remote execution
-        sandbox_type: Type of sandbox being used
-        exec_sandbox: When True (Pattern A, local mode), confine local shell
-            execution to the workspace via an OS kernel sandbox.
-        setup_script_path: Path to setup script that was run (if any)
-        initial_messages: Optional messages to inject for session continuation
-        session_manager: SessionManager for session persistence
-        restored_session_data: Tuple of (session_data, warnings, nova_md_loaded) for continuation
-        model_provider: Provider recorded on the resumed session, so the TUI
-            records that session's provider rather than the global default.
-    """
-    # Lazy import: core_agent pulls in deepagents (~4s) which we only need once
-    # we're actually building the agent, not at CLI startup.
-    from novacode_cli.agents.core_agent import create_agent_with_config
-
+def _session_tools(session_state: SessionState) -> list:
+    """Build the same tool inventory for interactive sessions and team workers."""
     # Create agent with conditional tools.
     # NOTE: several built-in tools are intentionally NOT registered to keep the
     # agent lean — browser automation
@@ -527,6 +488,52 @@ async def _run_agent_session(
     from novacode_cli.tools.python_kernel_tool import python_kernel
 
     tools.extend([python_kernel, daemon])
+
+    return tools
+
+
+async def _run_agent_session(
+    model,
+    assistant_id: str,
+    session_state,
+    sandbox_backend=None,
+    sandbox_type: str | None = None,
+    setup_script_path: str | None = None,
+    initial_messages: list | None = None,
+    session_manager=None,
+    store: BaseStore | None = None,
+    checkpointer: InMemorySaver | None = None,
+    restored_session_data: tuple | None = None,
+    exec_sandbox: bool = False,
+    model_provider: str | None = None,
+) -> None:
+    """Build the agent/session for this run, then launch the TUI.
+
+    Not a REPL loop: it does the shared bootstrap (agent, tools, middleware,
+    voice, remote bridges, cron) for both the local and sandbox branches, then
+    ends by calling ``run_tui`` — the TUI is the only interactive UI.
+    Extracted so the sandbox and local modes share one setup path.
+
+    Args:
+        model: LLM model to use
+        assistant_id: Agent identifier for memory storage
+        session_state: Session state with auto-approve settings
+        sandbox_backend: Optional sandbox backend for remote execution
+        sandbox_type: Type of sandbox being used
+        exec_sandbox: When True (Pattern A, local mode), confine local shell
+            execution to the workspace via an OS kernel sandbox.
+        setup_script_path: Path to setup script that was run (if any)
+        initial_messages: Optional messages to inject for session continuation
+        session_manager: SessionManager for session persistence
+        restored_session_data: Tuple of (session_data, warnings, nova_md_loaded) for continuation
+        model_provider: Provider recorded on the resumed session, so the TUI
+            records that session's provider rather than the global default.
+    """
+    # Lazy import: core_agent pulls in deepagents (~4s) which we only need once
+    # we're actually building the agent, not at CLI startup.
+    from novacode_cli.agents.core_agent import create_agent_with_config
+
+    tools = _session_tools(session_state)
 
     # Heavy initialization with live animated boot status.
     # The BootAnimation context wraps all boot_status() calls from agent
@@ -1782,6 +1789,11 @@ def cli_main() -> None:
         args = parse_args()
         if getattr(args, "safe_ui", False):
             os.environ["NOVA_SAFE_UI"] = "1"
+
+        # Nova's own specialists live as editable files in ~/.nova/agents/.
+        from novacode_cli.config.config import seed_builtin_agents
+
+        seed_builtin_agents(settings.get_agents_root_dir())
 
         # Headless (non-interactive) mode: resolve the prompt now and route all
         # Rich console output to stderr so stdout carries only the result.

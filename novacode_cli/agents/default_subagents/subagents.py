@@ -8,14 +8,10 @@ from deepagents.middleware.subagents import SubAgent
 from langchain.tools import BaseTool
 
 from .prompt import (
-    BROWSER_AUTOMATION_AGENT,
-    BUG_FIX_AGENT,
-    CODE_EXPLORER,
     FACT_CHECKER,
     FINANCIAL_ANALYST,
     LITERATURE_REVIEWER,
     MARKET_ANALYST,
-    REFACTORING_SPECIALIST_AGENT,
     RESEARCH_SYNTHESIZER,
     TECHNICAL_RESEARCHER,
     # Research-swarm agents (dispatched by /research; see RESEARCH_SWARM_AGENTS)
@@ -65,17 +61,18 @@ LISTED_SUBAGENTS = frozenset({"general-purpose"})
 
 
 def unique_subagent_specs(specs: list[SubAgent]) -> list[SubAgent]:
-    """Keep the first registration of each name without mutating cached specs."""
-    seen: set[str] = set()
+    """Keep the first name per tool namespace without mutating cached specs."""
+    seen: set[tuple[str, bool]] = set()
     result: list[SubAgent] = []
     for spec in specs:
         name = spec["name"]
-        if name in seen:
+        key = (name, "graph_id" in spec)
+        if key in seen:
             logging.getLogger(__name__).warning(
                 "Skipping duplicate subagent registration: %s", name
             )
             continue
-        seen.add(name)
+        seen.add(key)
         result.append(spec)
     return result
 
@@ -85,23 +82,16 @@ def retrieve_core_subagents(
 ) -> list[SubAgent]:
     all_tools: list[AnyTool] = tools or []
 
-    # The in-process specialists. One earns its place here by needing the
-    # session: its approvals, its sandbox, or an answer in the same turn. Work
-    # that is long and self-contained is an async agent instead
-    # (agents/async_agents/), and domain know-how is a skill the main agent loads.
+    # Only the research swarm stays in code: /research names it directly. The
+    # other in-process specialists are agent files in ~/.nova/agents/ (shipped
+    # in default_subagents/builtin/), loaded by build_named_subagents.
     subagent_configs = [
-        ("code-explorer", CODE_EXPLORER),
-        ("refactoring-specialist-agent", REFACTORING_SPECIALIST_AGENT),
-        ("bug-fix-agent", BUG_FIX_AGENT),
-        ("browser-automation-agent", BROWSER_AUTOMATION_AGENT),
         # Research-swarm agents. These were removed once as "niche, unreferenced
         # anywhere in the codebase" — but /research references all seven by name
         # (prompts/research_swarm.jinja), so removing them silently broke that
         # command: the orchestrator dispatched subagent types the graph no
-        # longer had. They are back, and the token objection that motivated the
-        # removal is answered by RESEARCH_SWARM_AGENTS below: they are registered
-        # in the graph but deferred out of the `task` description, so they cost
-        # nothing per turn and /research can still name them directly.
+        # longer had. They cost nothing per turn: RESEARCH_SWARM_AGENTS keeps
+        # them registered but deferred out of the `task` description.
         ("web-researcher", WEB_RESEARCHER),
         ("fact-checker", FACT_CHECKER),
         ("research-synthesizer", RESEARCH_SYNTHESIZER),

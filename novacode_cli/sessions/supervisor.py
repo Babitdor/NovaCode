@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
 
     from novacode_cli.image_utils import ImageData
+    from novacode_cli.teams.scheduler import ProcessBudget
 
 from novacode_cli.sessions import protocol
 
@@ -95,12 +96,25 @@ def _sweep_live_children() -> None:
 class SessionSupervisor:
     """Spawns and talks to child session processes."""
 
-    def __init__(self, on_message: Callable[[str, dict], Awaitable[None]]) -> None:
+    def __init__(
+        self,
+        on_message: Callable[[str, dict], Awaitable[None]],
+        *,
+        process_budget: ProcessBudget | None = None,
+    ) -> None:
         """*on_message* is awaited with ``(session_id, message)`` for every frame."""
         self._on_message = on_message
         self._children: dict[str, ChildSession] = {}
         self._starting: set[str] = set()
         self._prompt_ids = itertools.count(1)
+        self._process_budget = process_budget
+        if self._process_budget is None:
+            from novacode_cli.config.nova_config import NovaConfig, _config_bool
+
+            if _config_bool(NovaConfig().get("agent_teams_enabled")):
+                from novacode_cli.teams.scheduler import PROCESS_BUDGET
+
+                self._process_budget = PROCESS_BUDGET
 
         global _atexit_registered
         if not _atexit_registered:
@@ -116,7 +130,11 @@ class SessionSupervisor:
         return list(self._children.values())
 
     def at_capacity(self) -> bool:
-        return sum(c.alive for c in self._children.values()) + len(self._starting) >= MAX_SESSIONS
+        own = sum(c.alive for c in self._children.values()) + len(self._starting) >= MAX_SESSIONS
+        return own or (
+            self._process_budget is not None
+            and self._process_budget.used >= self._process_budget.limit
+        )
 
     # ── spawn ────────────────────────────────────────────────────────────
 
@@ -173,6 +191,7 @@ class SessionSupervisor:
         assistant_id: str = "nova-agent",
         argv: list[str] | None = None,
         resume_id: str | None = None,
+        env: dict[str, str] | None = None,
     ) -> ChildSession:
         """Launch a child bound to *worktree*.
 
@@ -190,7 +209,10 @@ class SessionSupervisor:
         # Reserve before the first await. Simultaneous launches must not start
         # more full agent/MCP processes than the resource limit permits.
         self._starting.add(session_id)
+        reservation = f"session:{id(self)}:{session_id}"
         try:
+            if self._process_budget is not None:
+                self._process_budget.reserve(reservation)
             proc = await asyncio.create_subprocess_exec(
                 *(argv or self._argv(session_id, assistant_id, resume_id)),
                 cwd=str(worktree),
@@ -198,8 +220,12 @@ class SessionSupervisor:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 limit=_STREAM_LIMIT,
-                env=self._child_env(),
+                env={**self._child_env(), **(env or {})},
             )
+        except BaseException:
+            if self._process_budget is not None:
+                self._process_budget.release(reservation)
+            raise
         finally:
             self._starting.discard(session_id)
         child.proc = proc
@@ -331,6 +357,10 @@ class SessionSupervisor:
         reference is enough for them to be collected.
         """
         self._children.pop(child.session_id, None)
+        if self._process_budget is not None and (
+            child.proc is None or child.proc.returncode is not None
+        ):
+            self._process_budget.release(f"session:{id(self)}:{child.session_id}")
         _live.discard(child)
         if child.proc is not None and child.proc.stdin is not None:
             # The app retains the ChildSession for its exited tab. Close the
@@ -435,6 +465,17 @@ class SessionSupervisor:
 
                     with contextlib.suppress(Exception):
                         _kill_pid_tree(proc.pid)
+
+        if proc is not None and proc.returncode is None:
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except TimeoutError:
+                # Keep identity, readers and capacity until termination is
+                # certain. A closed view is not proof that its process died.
+                self._children[session_id] = child
+                _live.add(child)
+                child.status = "disconnected"
+                return child
 
         for task in child.tasks:
             task.cancel()

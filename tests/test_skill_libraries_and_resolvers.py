@@ -31,7 +31,7 @@ def library(tmp_path, monkeypatch):
 
 
 def test_policy_defaults_and_explicit_overrides():
-    assert "systematic-debugging" in library_names("bug-investigation-agent")
+    assert "deep-research" in library_names("research-agent")
     assert library_names("general-purpose-async") is None
     assert library_names("custom") == ()
     assert library_names("custom", {"skill_names": ["review", "review"]}) == ("review",)

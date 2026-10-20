@@ -263,6 +263,7 @@ from novacode_cli.agents.default_subagents.async_subagents import (
 )
 from novacode_cli.config.config import (
     COLORS,
+    agent_md as _agent_md,
     boot_status,
     config,
     console,
@@ -344,6 +345,30 @@ def _extract_agent_description(agent_md_content: str) -> str:
     return "Agent with custom system prompt and tools"
 
 
+def _frontmatter_model(agent_name: str, written: str) -> BaseChatModel | None:
+    """The model for an agent file's ``model:``, or None to inherit the main one.
+
+    Only an explicit ``provider:model`` picks a model of its own. Anything else --
+    Claude Code's ``opus``/``sonnet``/``haiku``/``inherit``, a bare model id --
+    runs on the configured Dynamic role (then Subagents, then the main model), as
+    an agent naming no model does. One that cannot be built warns and does the same:
+    an agent file must never break the agent build.
+    """
+    from novacode_cli.config.model_create import build_chat_model, build_dynamic_role_model
+
+    provider, _, name = written.partition(":")
+    if not name:
+        return build_dynamic_role_model()
+    try:
+        return build_chat_model(provider, name)
+    except Exception as exc:  # noqa: BLE001 - a bad agent file must never brick the CLI
+        console.print(
+            f"[dim yellow]Agent '{agent_name}': could not use model '{written}' "
+            f"({type(exc).__name__}: {exc}); using the Dynamic agents model.[/dim yellow]"
+        )
+        return build_dynamic_role_model()
+
+
 def build_named_subagents(
     assistant_id: str,
     tools: list[BaseTool],
@@ -370,10 +395,14 @@ def build_named_subagents(
 
     # Collect valid candidates (path existence check is fast, no I/O for content yet)
     candidates: list[tuple[str, Path, str, Path]] = []
+    seen_names: set[str] = set()
     for agent_name, agent_dir, scope in all_agents:
-        if agent_name == assistant_id:
+        if agent_name == assistant_id or agent_name in seen_names:
             continue
-        agent_md_path = agent_dir / "agent.md"
+        # Resolve scope before validity or execution-mode filtering: an invalid
+        # or background-only project definition still shadows the global one.
+        seen_names.add(agent_name)
+        agent_md_path = _agent_md(agent_dir)
         if not agent_md_path.exists():
             console.print(
                 f"[dim yellow]Warning: Skipping agent '{agent_name}' - no agent.md file[/dim yellow]"
@@ -435,6 +464,11 @@ def build_named_subagents(
         # definition; offering it as a subagent adds a useless `task` entry.
         if system_prompt.lstrip().startswith("# Agent Memory"):
             continue
+        from novacode_cli.agents.agent_file import _split
+        from novacode_cli.agents.user_async_agents import is_background_only
+
+        if is_background_only(_split(system_prompt)[0]):
+            continue  # `async: only`: served by the agent server alone
 
         description = _extract_agent_description(system_prompt)
 
@@ -445,7 +479,7 @@ def build_named_subagents(
 
         # A `tools:` list in the frontmatter narrows the agent to those tools
         # (MCP ones are granted in _grant_mcp_tools); absent means all of them.
-        from novacode_cli.agents.agent_file import _split, agent_tools
+        from novacode_cli.agents.agent_file import _split, agent_tools, filesystem_allowlist
 
         chosen = agent_tools(system_prompt)
         subagent: SubAgent = {
@@ -457,6 +491,8 @@ def build_named_subagents(
         }
         if chosen is not None:
             subagent["_nova_tool_names"] = chosen  # type: ignore[typeddict-unknown-key]
+        if (fs_allow := filesystem_allowlist(chosen)) is not None:
+            subagent["_nova_fs_allow"] = fs_allow  # type: ignore[typeddict-unknown-key]
         if agent_color:
             subagent["color"] = agent_color  # type: ignore
 
@@ -467,13 +503,12 @@ def build_named_subagents(
         # The role resolves to a model *object* rather than a 'provider:model'
         # spec string: a string is resolved with langchain's `init_chat_model`,
         # which does not know Nova's own providers, so a role set to e.g.
-        # `opencode` broke the whole agent build. A frontmatter value is still
-        # passed through as the string its author wrote.
-        from novacode_cli.config.model_create import build_dynamic_role_model
-
-        agent_model = (
-            _parse_frontmatter_value(system_prompt, "model") or build_dynamic_role_model()
-        )
+        # `opencode` broke the whole agent build. A frontmatter value is built
+        # the same way, and a Claude alias (`model: opus`) follows the role
+        # (see _frontmatter_model). Async agents never get here: their graphs
+        # run on the Async role (user_async_agents.build_user_graph).
+        written = _parse_frontmatter_value(system_prompt, "model") or ""
+        agent_model = _frontmatter_model(agent_name, written)
         if agent_model:
             subagent["model"] = agent_model
 
@@ -529,7 +564,7 @@ def list_agents() -> None:
         console.print(f"    [dim]Path: ~/{relative_path}[/dim]")
 
         # Check for agent.md existence and show summary
-        agent_md = agent_path / "agent.md"
+        agent_md = _agent_md(agent_path)
         if agent_md.exists():
             content = agent_md.read_text(encoding="utf-8")
             # Extract first line or first sentence as description
@@ -738,6 +773,7 @@ def _harden_subagent_specs(
       remain supported, and the automatic second loader is disabled.
     """
     from novacode_cli.agents.model_retry import NovaModelRetryMiddleware as ModelRetryMiddleware
+    from novacode_cli.agents.agent_file import FilesystemToolFilter
     from novacode_cli.agents.agent_mailbox import read_agent_messages, send_agent_message
     from novacode_cli.sessions.gateway import SESSION_TOOLS
     from novacode_cli.bootstrap import VisionCaptionMiddleware
@@ -861,6 +897,12 @@ def _harden_subagent_specs(
         # instance per spec — the guard keeps per-instance history state.
         if not has_loopguard:
             mw_to_add.append(LoopGuardMiddleware(threshold=3))
+        # A Claude-style `tools:` allowlist also limits deepagents' file/shell tools.
+        fs_allow = new_spec.pop("_nova_fs_allow", None)
+        if fs_allow is not None and not any(
+            isinstance(m, FilesystemToolFilter) for m in existing
+        ):
+            mw_to_add.append(FilesystemToolFilter(fs_allow))
         # Agent-to-agent tools (see _async_mw above): the subagent can now message
         # remote agents on the LangGraph server, not just the orchestrator.
         if _async_mw is not None and not has_async:
@@ -1700,6 +1742,8 @@ def _build_middleware_stack(
             if _verdict_cache is not None
             else None,
             scorer=_verdict_scorer,
+            # Context collapse saves the results it folds away here (/cleared/).
+            offload_dir=cleared_dir(agent_dir) if agent_dir else None,
         )
     )
 
@@ -1884,6 +1928,7 @@ def create_agent_with_config(
     session_id: str | None = None,
     workspace_root: str | None = None,
     extra_middleware: list | None = None,
+    team_binding=None,
 ) -> tuple[Pregel, CompositeBackend]:
     """Create and configure an agent with the specified model and tools.
 
@@ -1910,6 +1955,13 @@ def create_agent_with_config(
     """
     # Lazy import for tracing (speeds up startup)
     from novacode_cli.tracking.tracing import is_tracing_enabled, get_tracing_config
+
+    definition_options = {
+        "system_prompt": system_prompt,
+        "extra_middleware": list(extra_middleware) if extra_middleware is not None else None,
+        "exec_sandbox": exec_sandbox,
+        "auto_approve": auto_approve,
+    }
 
     # Agent-to-agent mailbox on the orchestrator too: it can message its
     # subagents by name and read replies. Copy (never mutate the caller's list);
@@ -2214,6 +2266,9 @@ This file stores your preferences and context that persist across sessions.
     # from the plain tool list, so MCP tools (which attach via
     # ``MCPMiddleware.tools``) would otherwise be unreachable from any subagent.
     # Only the subagents that opt in via ``MCP_TOOLS_BY_SUBAGENT`` receive them.
+    from novacode_cli.agents.invocation import definition_signature
+
+    definitions_before_build = definition_signature() if team_binding is None else None
     subagents = _build_subagent_roster(
         assistant_id=assistant_id,
         tools=tools,
@@ -2223,6 +2278,22 @@ This file stores your preferences and context that persist across sessions.
         main_model_supports_images=_main_model_supports_images,
         skill_backend=composite_backend,
     )
+
+    # Teams are additive and feature-gated; legacy task() retains its semantics.
+    from novacode_cli.teams.bootstrap import attach as attach_teams
+
+    tools, team_middleware, team_coordinator = attach_teams(
+        wrapped_model,
+        assistant_id,
+        tools,
+        subagents,
+        workspace_root,
+        session_id,
+        team_binding,
+        restricted=bool(sandbox is not None or extra_middleware),
+    )
+    if team_middleware is not None:
+        agent_middleware.append(team_middleware)
 
     # Get the system prompt (sandbox-aware and with skills)
     if system_prompt is None:
@@ -2406,5 +2477,14 @@ This file stores your preferences and context that persist across sessions.
     learning_project = getattr(learning, "_project", "") or ""
     activation = ActivationManager(learning._agent_dir, learning_project) if learning and learning._agent_dir else None
     agent = CoordinatedGraph(agent, checkpoint_coordinator, learning_project, activation)
-    agent.runtime_resources = [*compactors, *([learning] if learning else [])]
+    agent.agent_definitions_signature = definitions_before_build
+    agent.agent_definitions_workspace = str(workspace_root)
+    agent.agent_definition_options = definition_options
+    agent.runtime_resources = [
+        *compactors,
+        *([learning] if learning else []),
+        *([team_coordinator] if team_coordinator else []),
+    ]
+    if team_coordinator is not None:
+        agent.team_coordinator = team_coordinator
     return agent, composite_backend

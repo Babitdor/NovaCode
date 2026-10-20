@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytest.importorskip("textual")
 
@@ -143,10 +147,10 @@ def test_create_with_chosen_tools(tmp_path, monkeypatch) -> None:
             modal.query_one("#do-create", Button).press()
             for _ in range(20):
                 await _settle(pilot)
-                if (tmp_path / "reviewer" / "agent.md").exists():
+                if (tmp_path / "reviewer.md").exists():
                     break
 
-        front, body = read_agent(tmp_path / "reviewer" / "agent.md")
+        front, body = read_agent(tmp_path / "reviewer.md")
         assert front["tools"] == ["serena_find_symbol"]
         assert front["description"] == "Reviews code: carefully", "a colon no longer breaks it"
         assert body.strip() == "You review code."
@@ -181,14 +185,17 @@ def test_named_subagent_gets_only_its_tools(tmp_path, monkeypatch) -> None:
     assert [t.name for t in spec["tools"]] == ["web_search", "serena_find_symbol"]
 
 
-def test_a_pasted_system_prompt_is_used_instead_of_generating_one(tmp_path, monkeypatch):
+@pytest.mark.parametrize("scope", ["global", "project"])
+def test_a_pasted_system_prompt_is_used_instead_of_generating_one(  # noqa: PLR0915 - Exercise the real modal for both scopes.
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scope: str
+) -> None:
     """The prompt field is the alternative to AI generation, not an input to it."""
     import asyncio
     import sys
 
     sys.path.insert(0, "tests")
     import test_tui_app as T
-    from textual.widgets import Button, Input, TextArea
+    from textual.widgets import Button, Input, Select, TextArea
 
     import novacode_cli.commands.agents_commands as ac
     from novacode_cli.config.config import settings
@@ -197,8 +204,13 @@ def test_a_pasted_system_prompt_is_used_instead_of_generating_one(tmp_path, monk
     from novacode_cli.ui.ui_elements import TokenTracker
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(settings, "get_agents_root_dir", lambda: tmp_path / "agents")
-    monkeypatch.setattr(settings, "get_project_agents_dir", lambda: None)
+    global_agents = tmp_path / "agents"
+    project_agents = tmp_path / ".nova" / "agents"
+    agents_root = project_agents if scope == "project" else global_agents
+    monkeypatch.setattr(settings, "get_agents_root_dir", lambda: global_agents)
+    monkeypatch.setattr(
+        settings, "get_project_agents_dir", lambda: project_agents if scope == "project" else None
+    )
 
     generated: list[str] = []
 
@@ -226,21 +238,26 @@ def test_a_pasted_system_prompt_is_used_instead_of_generating_one(tmp_path, monk
             for _ in range(4):
                 await pilot.pause(0.05)
             assert isinstance(app.screen, AgentCreateModal)
+            app.screen.query_one("#agent-scope", Select).value = scope
             app.screen.query_one("#agent-name", Input).value = name
             app.screen.query_one("#agent-desc", Input).value = "Reviews code"
             app.screen.query_one("#agent-prompt", TextArea).text = prompt
             app.screen.query_one("#do-create", Button).press()
-            target = tmp_path / "agents" / name / "agent.md"
+            target = agents_root / f"{name}.md"
             for _ in range(100):  # the create runs in a worker; poll rather than join
                 await pilot.pause(0.05)
                 if target.exists():
                     break
 
     asyncio.run(create("pasted-agent", mine))
-    body = (tmp_path / "agents" / "pasted-agent" / "agent.md").read_text(encoding="utf-8")
+    body = (agents_root / "pasted-agent.md").read_text(encoding="utf-8")
     assert mine in body, "the pasted prompt must be written as given, line breaks included"
     assert generated == [], "nothing may be generated when a prompt was supplied"
 
     asyncio.run(create("generated-agent", "   "))  # blank means "generate one"
-    body = (tmp_path / "agents" / "generated-agent" / "agent.md").read_text(encoding="utf-8")
+    body = (agents_root / "generated-agent.md").read_text(encoding="utf-8")
     assert "GENERATED PROMPT" in body and generated == ["generated-agent"]
+    other_root = global_agents if scope == "project" else project_agents
+    assert not (other_root / "pasted-agent.md").exists()
+    assert not (other_root / "generated-agent.md").exists()
+    assert not (agents_root / "pasted-agent").exists()

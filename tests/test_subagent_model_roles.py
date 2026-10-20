@@ -133,11 +133,17 @@ def test_frontmatter_model_beats_the_dynamic_role(monkeypatch, tmp_path):
         lambda *_a, **_k: object(),
         raising=True,
     )
+    # Built into a model object like a role, never handed on as a spec string.
+    monkeypatch.setattr(
+        "novacode_cli.config.model_create.build_chat_model",
+        lambda provider, name: f"built {provider}/{name}",
+        raising=True,
+    )
     core_agent.clear_named_subagents_cache()
 
     specs = core_agent.build_named_subagents("nova-agent", [])
     (spec,) = [s for s in specs if s["name"] == "custom-agent"]
-    assert spec["model"] == "anthropic:claude-sonnet-4-5-20250929"
+    assert spec["model"] == "built anthropic/claude-sonnet-4-5-20250929"
 
 
 def test_cache_clear_makes_a_role_change_take_effect(monkeypatch, tmp_path):

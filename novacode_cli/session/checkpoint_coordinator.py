@@ -337,6 +337,9 @@ class CoordinatedGraph:
             self.graph.with_config(*args, **kwargs), self.coordinator, self.project, self.activation
         )
         bound.runtime_resources = self.runtime_resources
+        bound.agent_definitions_signature = getattr(self, "agent_definitions_signature", None)
+        bound.agent_definitions_workspace = getattr(self, "agent_definitions_workspace", None)
+        bound.agent_definition_options = getattr(self, "agent_definition_options", {})
         return bound
 
     async def close_session(self, thread: str) -> None:

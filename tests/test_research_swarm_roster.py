@@ -102,8 +102,9 @@ def test_the_browser_agent_is_granted_playwright_and_cua_tools():
 
 
 def test_the_browser_agent_loads_the_skills_that_teach_driving_a_browser():
-    from novacode_cli.agents.default_subagents.subagents import retrieve_core_subagents
+    from novacode_cli.agents.agent_file import read_agent
+    from novacode_cli.config.config import BUILTIN_AGENTS_DIR
 
-    agent = next(s for s in retrieve_core_subagents([]) if s["name"] == "browser-automation-agent")
-    assert agent["skill_names"] == ["agent-browser", "browser-use", "web-research"]
-    assert "cua-driver_" in agent["system_prompt"] and "playwright_browser_" in agent["system_prompt"]
+    front, prompt = read_agent(BUILTIN_AGENTS_DIR / "browser-automation-agent.md")
+    assert front["skill_names"] == ["agent-browser", "browser-use", "web-research"]
+    assert "cua-driver_" in prompt and "playwright_browser_" in prompt

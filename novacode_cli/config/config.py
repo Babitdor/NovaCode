@@ -74,6 +74,47 @@ COLORS = {
 # Reserved agent ID for the main agent — not a user-created named subagent.
 MAIN_AGENT_ID = "nova-agent"
 
+
+def agent_md(path: Path) -> Path:
+    """The definition file of an agent: ``<name>/agent.md`` or a flat ``<name>.md``."""
+    return path if path.suffix == ".md" else path / "agent.md"
+
+
+#: Nova's own specialists, shipped as agent files and copied to ~/.nova/agents/.
+BUILTIN_AGENTS_DIR = (
+    Path(__file__).resolve().parents[1] / "agents" / "default_subagents" / "builtin"
+)
+
+
+def seed_builtin_agents(agents_dir: Path) -> list[str]:
+    """Copy each shipped agent file into *agents_dir* once; return the names written.
+
+    Every name is recorded in ``.builtin-seeded`` the first time it is seen, so a
+    file the user deletes stays deleted and one they edit is never overwritten.
+    An agent the user already has under that name (a ``<name>/`` folder or a
+    ``<name>.md``) is kept, and the shipped one is not written.
+    """
+    marker = agents_dir / ".builtin-seeded"
+    try:
+        done = set(marker.read_text(encoding="utf-8").split()) if marker.exists() else set()
+        shipped = sorted(BUILTIN_AGENTS_DIR.glob("*.md"))
+        new = [f for f in shipped if f.stem not in done]
+        if not new:
+            return []
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        written = []
+        for source in new:
+            if not (agents_dir / source.stem).exists() and not (agents_dir / source.name).exists():
+                (agents_dir / source.name).write_bytes(source.read_bytes())
+                written.append(source.stem)
+        marker.write_text("\n".join(sorted(done | {f.stem for f in new})) + "\n", encoding="utf-8")
+    except OSError:
+        import logging
+
+        logging.getLogger(__name__).warning("could not seed the built-in agents", exc_info=True)
+        return []
+    return written
+
 # Agent color registry - stores colors for custom agents
 _agent_colors: dict[str, str] = {}
 
@@ -1097,31 +1138,32 @@ class Settings:
         return agents_dir
 
     def get_all_agents(self) -> list[tuple[str, Path, str]]:
-        """Get all available agents from both global and project scopes.
+        """Get all available agents from both project and global scopes.
 
         Returns:
-            List of (agent_name, agent_dir_path, scope) tuples.
-            scope is either "global" or "project"
+            List of (agent_name, agent_path, scope) tuples, project agents first.
+            agent_path is a ``<name>/`` folder or a flat ``<name>.md``; scope is
+            either "global" or "project".
         """
         agents: list[tuple[str, Path, str]] = []
-
-        # Global agents (~/.nova/agents/)
-        global_agents_dir = self.get_agents_root_dir()
-        if global_agents_dir.exists():
-            for agent_dir in global_agents_dir.iterdir():
-                if agent_dir.is_dir() and (agent_dir / "agent.md").exists():
-                    if agent_dir.name == MAIN_AGENT_ID:
-                        continue  # reserved — not a user-created named agent
-                    agents.append((agent_dir.name, agent_dir, "global"))
-
-        # Project agents ({project_root}/.nova/agents/)
-        project_agents_dir = self.get_project_agents_dir()
-        if project_agents_dir and project_agents_dir.exists():
-            for agent_dir in project_agents_dir.iterdir():
-                if agent_dir.is_dir() and (agent_dir / "agent.md").exists():
-                    if agent_dir.name == MAIN_AGENT_ID:
-                        continue  # reserved — not a user-created named agent
-                    agents.append((agent_dir.name, agent_dir, "project"))
+        # Project ({project_root}/.nova/agents/) before global (~/.nova/agents/):
+        # consumers keep the first of a name, so a project agent overrides its
+        # global namesake, as find_agent already resolves it.
+        for root, scope in (
+            (self.get_project_agents_dir(), "project"),
+            (self.get_agents_root_dir(), "global"),
+        ):
+            if not root or not root.exists():
+                continue
+            found: dict[str, Path] = {}
+            for entry in sorted(root.iterdir()):
+                if entry.is_dir() and (entry / "agent.md").exists():
+                    found[entry.name] = entry
+            # Claude Code's flat form, <name>.md; a <name>/ directory wins.
+            for entry in sorted(root.glob("*.md")):
+                found.setdefault(entry.stem, entry)
+            # MAIN_AGENT_ID is reserved — not a user-created named agent.
+            agents += [(n, p, scope) for n, p in found.items() if n != MAIN_AGENT_ID]
 
         return agents
 
@@ -1136,17 +1178,14 @@ class Settings:
         Returns:
             Tuple of (agent_dir_path, scope) if found, None otherwise
         """
-        # Check project agents first (higher priority)
-        project_agents_dir = self.get_project_agents_dir()
-        if project_agents_dir:
-            project_agent_dir = project_agents_dir / agent_name
-            if project_agent_dir.exists() and (project_agent_dir / "agent.md").exists():
-                return (project_agent_dir, "project")
-
-        # Check global agents
-        global_agent_dir = self.get_agents_root_dir() / agent_name
-        if global_agent_dir.exists() and (global_agent_dir / "agent.md").exists():
-            return (global_agent_dir, "global")
+        # Project agents first (higher priority); <name>/agent.md before <name>.md.
+        for root, scope in ((self.get_project_agents_dir(), "project"),
+                            (self.get_agents_root_dir(), "global")):
+            if not root:
+                continue
+            for path in (root / agent_name, root / f"{agent_name}.md"):
+                if agent_md(path).is_file():
+                    return (path, scope)
 
         return None
 
