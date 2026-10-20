@@ -38,6 +38,19 @@ async def send_session_message(to_session: str, message: str) -> dict[str, Any]:
 
 
 @tool
+async def SendMessage(recipient: str, content: str) -> dict[str, Any]:  # noqa: N802 - Public tool name.
+    """Send a plain-text message or update to another connected NovaCode session.
+
+    Use list_sessions to find a recipient's stable ID or unique tab title.
+    Busy sessions queue delivery until their current turn finishes. Only content
+    is shared; the recipient uses its own project and permissions. Results are
+    linked automatically and available through read_session_messages; do not poll.
+    This tool connects tabs within one NovaCode TUI, not separate terminal instances.
+    """
+    return await request("send", {"target": recipient, "text": content})
+
+
+@tool
 async def read_session_messages() -> dict[str, Any]:
     """Read unread requests and linked results belonging to this project session."""
     return await request("read", {})
@@ -49,7 +62,13 @@ async def reply_session_message(request_id: str, message: str) -> dict[str, Any]
     return await request("reply", {"id": request_id, "text": message})
 
 
-SESSION_TOOLS = (list_sessions, send_session_message, read_session_messages, reply_session_message)
+SESSION_TOOLS = (
+    list_sessions,
+    SendMessage,
+    send_session_message,
+    read_session_messages,
+    reply_session_message,
+)
 
 
 async def session_events(

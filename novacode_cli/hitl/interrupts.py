@@ -69,6 +69,10 @@ class InterruptSpec:
 # ---------------------------------------------------------------------------
 
 INTERRUPT_SPECS: dict[str, InterruptSpec] = {
+    "EnterWorktreeTool": InterruptSpec(fields=[("name", FieldSpec("Worktree name"))]),
+    "ExitWorktreeTool": InterruptSpec(
+        static_lines=["Restore original workspace; keep worktree and branch."]
+    ),
     "shell": InterruptSpec(
         fields=[
             ("command", FieldSpec("Shell Command")),

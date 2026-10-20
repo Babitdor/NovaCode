@@ -3,6 +3,7 @@
 import asyncio
 
 from novacode_cli.sessions.gateway import (
+    SendMessage,
     endpoint,
     list_sessions,
     read_session_messages,
@@ -14,6 +15,7 @@ from novacode_cli.sessions.gateway import (
 
 async def test_tools_fail_clearly_outside_connected_session():
     assert "error" in await list_sessions.ainvoke({})
+    assert "error" in await SendMessage.ainvoke({"recipient": "b", "content": "Update"})
     assert "sender" not in send_session_message.args
     assert not read_session_messages.args
 
@@ -45,6 +47,9 @@ async def test_all_tools_forward_only_schema_arguments():
 
     token = endpoint.set(route)
     try:
+        assert await SendMessage.ainvoke({"recipient": "b", "content": "Update"}) == {
+            "ok": True
+        }
         assert await send_session_message.ainvoke({"to_session": "b", "message": "Q"}) == {
             "ok": True
         }
@@ -55,6 +60,7 @@ async def test_all_tools_forward_only_schema_arguments():
     finally:
         endpoint.reset(token)
     assert calls == [
+        ("send", {"target": "b", "text": "Update"}),
         ("send", {"target": "b", "text": "Q"}),
         ("read", {}),
         ("reply", {"id": "m1", "text": "A"}),

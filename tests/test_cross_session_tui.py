@@ -4,6 +4,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+from novacode_cli.sessions.gateway import SendMessage, endpoint
 from novacode_cli.sessions.tui_messaging import SessionCommunication
 from tests.test_tui_sessions import _add_pane, _app, isolated_session_config  # noqa: F401
 
@@ -26,9 +27,13 @@ async def test_cross_tab_request_preserves_sender_turn_and_target_approval(monke
         app._turn_active = True
         app._root_pane.status = "running"
         active = app._active_pane
-        result = await controller.handle(
-            "root", "send", {"target": "backend", "text": "Explain login"}
-        )
+        token = endpoint.set(controller.gateway("root"))
+        try:
+            result = await SendMessage.ainvoke(
+                {"recipient": "backend", "content": "Explain login"}
+            )
+        finally:
+            endpoint.reset(token)
         for _ in range(40):
             if send.await_count:
                 break

@@ -54,6 +54,39 @@ You can then run `nova` from your project's directory. After changing this check
 
 Attach files with `@`; use **Shift+Enter** for a new line. Nova applies workspace, tool and path permissions; review approvals before granting broader access.
 
+## Messages between sessions
+
+Open parallel project tabs with `/tabs`, then ask Nova to send a message to another
+tab, for example: “Tell the backend session that the frontend now expects an `id`
+field in the login response.”
+
+The built-in `SendMessage(recipient, content)` tool sends plain text to a session
+ID or unique tab title found with `list_sessions`. Busy tabs queue messages until
+their current turn finishes. The recipient processes the message in its own
+project with its own permissions; its reply is linked in both tabs and available
+through `read_session_messages`. Agents can also use `reply_session_message` for
+an explicit reply. The existing `send_session_message` tool remains available.
+
+Messaging connects tabs within one NovaCode TUI instance. Independently launched
+terminal instances and standalone headless runs are not connected.
+
+## Isolated worktrees
+
+Ask Nova to “enter a worktree named login-fix” to use the essential
+`EnterWorktreeTool(name="login-fix")`. It creates a fresh branch from `HEAD` and
+moves the current session's file and shell tools into that worktree. Git and at
+least one commit are required; uncommitted files stay in the original workspace.
+
+`ExitWorktreeTool()` returns to the original workspace and keeps the worktree,
+branch, commits and uncommitted changes. Nova reports the retained path for later
+review or merging. Both tools run alone, follow normal approvals, and are blocked
+in plan mode. They are always available alongside `SendMessage` without tool search.
+
+Switching supports local agents. MCP servers, existing background jobs and remote
+agents keep their own workspaces. Worktrees remain on disk after exit or restart;
+the active workspace switch belongs to the running agent and is not restored by
+resuming a saved conversation.
+
 ## Run from scripts
 
 ```bash

@@ -24,6 +24,8 @@ BLOCKED_TOOLS: frozenset[str] = frozenset({
     # Git operations (modifies repo)
     "git_branch",
     "git_stash",
+    "EnterWorktreeTool",
+    "ExitWorktreeTool",
     "memory_wiki",
 })
 

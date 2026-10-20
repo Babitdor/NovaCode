@@ -786,7 +786,11 @@ def _harden_subagent_specs(
     # so they must be removed from a subagent's tool list outright — otherwise a
     # subagent invoking one raises an unresolvable ``GraphInterrupt`` that crashes
     # the turn. The main agent keeps them; it's the sole HITL boundary.
-    _interrupting_tools = {"ask_user_question", "enter_plan_mode", "exit_plan_mode"}
+    # Workspace transitions also belong only to the owning session.
+    _interrupting_tools = {
+        "ask_user_question", "enter_plan_mode", "exit_plan_mode",
+        "EnterWorktreeTool", "ExitWorktreeTool",
+    }
 
     # Agent-to-agent: give each subagent the async-task tools (start / update /
     # check / cancel / list) so a SUBAGENT — not only the orchestrator — can
@@ -2278,6 +2282,18 @@ This file stores your preferences and context that persist across sessions.
         main_model_supports_images=_main_model_supports_images,
         skill_backend=composite_backend,
     )
+
+    # Workspace transitions belong to the current session, never a declarative
+    # subagent sharing its backend. Attach after building the subagent roster.
+    from novacode_cli.tools.worktree_tools import WorktreeToolsMiddleware
+
+    worktree_middleware = WorktreeToolsMiddleware(
+        workspace_root,
+        composite_backend,
+        agent_middleware,
+        enabled=sandbox is None and not extra_middleware,
+    )
+    agent_middleware.insert(0, worktree_middleware)
 
     # Teams are additive and feature-gated; legacy task() retains its semantics.
     from novacode_cli.teams.bootstrap import attach as attach_teams
