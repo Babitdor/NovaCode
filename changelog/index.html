@@ -265,7 +265,7 @@ footer{border-top:1px solid var(--line);padding-block:28px 72px}
       <p class="cmdline"><span class="ps">nova &#10095;</span><span class="c">cat changelog/CHANGELOG-v*.md</span></p>
       <h1>Changelog</h1>
       <!-- generated:changelog-summary -->
-<p class="lede">55 releases &middot; v1.0.0 &rarr; v1.0.54 &middot; from the repository's <code>changelog/</code> directory</p>
+<p class="lede">56 releases &middot; v1.0.0 &rarr; v1.0.55 &middot; from the repository's <code>changelog/</code> directory</p>
 <!-- /generated:changelog-summary -->
       <p class="body"><a class="gh" href="https://github.com/Babitdor/NovaCode/tree/main/changelog" rel="noopener">changelog/ on GitHub &#8599;</a></p>
     </div>
@@ -273,6 +273,21 @@ footer{border-top:1px solid var(--line);padding-block:28px 72px}
     <p id="release-status" role="status" aria-live="polite"></p>
     <div id="releases">
     <!-- generated:changelog-releases -->
+<details class="changelog-entry" id="v1-0-55" data-version="1.0.55" data-sha="9d5bf3f4d86e460f01cba84d23c6f9c88886894a">
+<summary class="entry-toggle"><h2 class="version">v1.0.55</h2><span class="release-summary">Fixed async subagent dispatch rejecting requests that combined Nova's run context with deepagents' redundant parent-thread configurable. Parent lookup continues through the child thread metadata.</span></summary>
+<div class="release-content"><h3>Fixed</h3>
+<ul>
+<li>Fixed async subagent dispatch rejecting requests that combined Nova's run context with deepagents' redundant parent-thread configurable. Parent lookup continues through the child thread metadata.</li>
+<li>Preserve unrelated configurable values and omit Nova context for those runs to avoid LangGraph's mutually exclusive <code>configurable</code> and <code>context</code> request fields.</li>
+</ul>
+<h3>Verification</h3>
+<ul>
+<li>18 async model context tests passed.</li>
+<li>15 configured async subagents accepted and completed through an isolated local Agent Server using scripted models.</li>
+<li>78 in-process and 78 dynamic subagent checks passed.</li>
+<li>Ruff formatting, focused lint and <code>git diff --check</code> passed.</li>
+</ul></div>
+</details>
 <details class="changelog-entry" id="v1-0-54" data-version="1.0.54" data-sha="5e46a796d5cc76eefc4ca17b43db69243d274708">
 <summary class="entry-toggle"><h2 class="version">v1.0.54</h2><span class="release-summary">Essential SendMessage(recipient, content) tool for plain-text messages between connected project tabs, using existing queued delivery and linked replies. list_sessions is also always available for recipient discovery.</span></summary>
 <div class="release-content"><h3>Added</h3>
