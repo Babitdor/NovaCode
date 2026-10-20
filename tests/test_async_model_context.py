@@ -335,6 +335,56 @@ def test_an_explicit_run_context_is_not_overwritten(monkeypatch):
     assert sent[0]["context"] is explicit
 
 
+def test_parent_reference_config_is_removed_when_context_is_attached(monkeypatch):
+    """Parent thread metadata already carries this reference for notifications."""
+    monkeypatch.setattr(
+        "novacode_cli.config.nova_config.NovaConfig.get_role_model",
+        lambda self, role: {"provider": "opencode", "model": "deepseek-v4.1-flash"},
+    )
+    sent: list[dict] = []
+
+    class _Runs:
+        def create(self, *args: object, **kwargs: object) -> dict[str, str]:  # noqa: ARG002
+            sent.append(dict(kwargs))
+            return {"run_id": "r"}
+
+    client = type("_C", (), {})()
+    client.runs = _Runs()
+    ac._bind_context(client).runs.create(
+        thread_id="child",
+        assistant_id="remote-agent",
+        input={},
+        config={"configurable": {"deepagents_parent": {"thread_id": "parent"}}},
+    )
+
+    assert sent[0]["context"] == NovaAsyncContext(provider="opencode", model="deepseek-v4.1-flash")
+    assert "config" not in sent[0]
+
+
+def test_unrelated_configurable_is_preserved_without_context(monkeypatch):
+    """Never drop caller configuration just to deliver the model override."""
+    monkeypatch.setattr(
+        "novacode_cli.config.nova_config.NovaConfig.get_role_model",
+        lambda self, role: {"provider": "opencode", "model": "deepseek-v4.1-flash"},
+    )
+    sent: list[dict] = []
+
+    class _Runs:
+        def create(self, *args: object, **kwargs: object) -> dict[str, str]:  # noqa: ARG002
+            sent.append(dict(kwargs))
+            return {"run_id": "r"}
+
+    client = type("_C", (), {})()
+    client.runs = _Runs()
+    config = {"configurable": {"custom": "value"}}
+    ac._bind_context(client).runs.create(
+        thread_id="child", assistant_id="agent", input={}, config=config
+    )
+
+    assert sent[0]["config"] == config
+    assert "context" not in sent[0]
+
+
 def test_an_auto_approve_session_stamps_its_async_launches(monkeypatch):
     """The run cannot ask the session later, so the answer travels with it."""
     from novacode_cli.tools.plan_mode_tools import _auto_approve_var

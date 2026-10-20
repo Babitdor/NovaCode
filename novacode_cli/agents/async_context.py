@@ -153,9 +153,7 @@ class AsyncModelOverrideMiddleware(AgentMiddleware):
             model = self._model_for(request)
         else:
             model = await asyncio.to_thread(self._model_for, request)
-        return await handler(
-            request if model is None else request.override(model=model)
-        )
+        return await handler(request if model is None else request.override(model=model))
 
 
 def current_async_context() -> NovaAsyncContext | None:
@@ -251,7 +249,29 @@ def _bind_context(client: Any) -> Any:
             if _auto_approve_var.get():
                 context = replace(context or NovaAsyncContext(), auto_approve=True)
             if context is not None:
-                kwargs["context"] = context
+                config = kwargs.get("config")
+                configurable = config.get("configurable") if isinstance(config, dict) else None
+                # deepagents uses this configurable only as a fallback for finding
+                # the parent. Its async launcher also puts parent_thread_id in the
+                # child thread metadata, which is the supported lookup path when a
+                # run context is present. LangGraph rejects a run containing both.
+                if isinstance(configurable, dict) and "deepagents_parent" in configurable:
+                    configurable = dict(configurable)
+                    configurable.pop("deepagents_parent", None)
+                    config = dict(config)
+                    if configurable:
+                        config["configurable"] = configurable
+                    else:
+                        config.pop("configurable", None)
+                    if config:
+                        kwargs["config"] = config
+                    else:
+                        kwargs.pop("config", None)
+                # Preserve unrelated configurable values. This run can still launch
+                # with its graph default, while avoiding the server's 400 response.
+                remaining = config.get("configurable") if isinstance(config, dict) else None
+                if not remaining:
+                    kwargs["context"] = context
         return original(*args, **kwargs)
 
     create._nova_context_bound = True  # type: ignore[attr-defined]
