@@ -24,9 +24,9 @@ _lock = threading.Lock()
 
 def enabled() -> bool:
     """Read the existing profile boolean without changing personal configuration."""
-    from novacode_cli.config.nova_config import NovaConfig, _config_bool
+    from novacode_cli.config.nova_config import NovaConfig
 
-    return _config_bool(NovaConfig().get("agent_teams_enabled"))
+    return NovaConfig().get_agent_team_settings()["enabled"]
 
 
 def attach(  # noqa: PLR0915 - Ordered runtime assembly.
@@ -41,7 +41,7 @@ def attach(  # noqa: PLR0915 - Ordered runtime assembly.
     restricted: bool = False,
 ) -> tuple[list, TeamMiddleware | None, TeamHost | None]:
     """Return unchanged tools while disabled, or a trusted root/child binding."""
-    from novacode_cli.config.nova_config import NovaConfig, _config_bool
+    from novacode_cli.config.nova_config import NovaConfig
 
     if binding is not None:
         names = {getattr(tool, "name", None) for tool in tools}
@@ -50,8 +50,18 @@ def attach(  # noqa: PLR0915 - Ordered runtime assembly.
             TeamMiddleware(binding),
             None,
         )
-    if not enabled() or restricted:
+    if restricted:
         return tools, None, None
+    root = session_id or uuid.uuid4().hex
+    project = hashlib.sha256(str(workspace.resolve()).encode()).hexdigest()
+    if not enabled():
+        # Keep ownership/lifecycle references when a live root disables teams.
+        # Existing work may finish, but no further swarm tasks are assigned.
+        with _lock:
+            host = _runtimes.get((project, root))
+            if host is not None:
+                host.roots[root].swarm_enabled = False
+        return tools, None, host
     from novacode_cli.agents.agent_file import ALWAYS_INCLUDED, FilesystemToolFilter
     from novacode_cli.teams.legacy import LegacyMailboxMiddleware
 
@@ -65,8 +75,6 @@ def attach(  # noqa: PLR0915 - Ordered runtime assembly.
             ]
     from novacode_cli.config.config import settings
 
-    root = session_id or uuid.uuid4().hex
-    project = hashlib.sha256(str(workspace.resolve()).encode()).hexdigest()
     profile = NovaConfig()
     base_tools = tuple(tools)
     specs = {
@@ -193,7 +201,7 @@ def attach(  # noqa: PLR0915 - Ordered runtime assembly.
             Identity(project, root_id),
             dict(adapters),
             workspace=workspace,
-            swarm_enabled=_config_bool(profile.get("swarm_enabled")),
+            swarm_enabled=profile.get_agent_team_settings()["swarm"],
             context_budget=max(1, int(_window_tokens(model) * 0.75)),
         )
         coordinator.capabilities = capabilities
@@ -216,6 +224,7 @@ def attach(  # noqa: PLR0915 - Ordered runtime assembly.
             coordinator = host.roots[root]
             coordinator.adapters = dict(adapters)
             coordinator.capabilities = capabilities
+            coordinator.swarm_enabled = profile.get_agent_team_settings()["swarm"]
 
     names = {getattr(tool, "name", None) for tool in tools}
     tools = [*tools, *(tool for tool in TEAM_TOOLS if tool.name not in names)]

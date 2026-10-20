@@ -958,6 +958,20 @@ class NovaConfig:
         self._config[key] = value
         self._save()
 
+    def get_agent_team_settings(self) -> dict[str, bool]:
+        """Read opt-in team gates; swarm requires teams to be enabled."""
+        enabled = _config_bool(self.get("agent_teams_enabled"))
+        return {
+            "enabled": enabled,
+            "swarm": enabled and _config_bool(self.get("swarm_enabled")),
+        }
+
+    def set_agent_team_settings(self, *, enabled: bool, swarm: bool) -> None:
+        """Save the dependent experimental gates together."""
+        self._config["agent_teams_enabled"] = enabled
+        self._config["swarm_enabled"] = enabled and swarm
+        self._save()
+
     def delete(self, key: str) -> None:
         """Delete a configuration value.
 

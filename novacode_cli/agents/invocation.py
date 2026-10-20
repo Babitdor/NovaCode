@@ -13,10 +13,12 @@ if TYPE_CHECKING:
 
 
 def definition_signature() -> str:
-    """Hash definition contents, including same-size edits and scope changes."""
+    """Hash definitions and opt-in team gates for safe next-turn rebuilding."""
     from novacode_cli.config.config import agent_md, settings
+    from novacode_cli.config.nova_config import NovaConfig
 
     digest = hashlib.sha256()
+    digest.update(str(NovaConfig().get_agent_team_settings()).encode())
     for name, path, scope in settings.get_all_agents():
         digest.update(str((name, str(path), scope)).encode())
         try:

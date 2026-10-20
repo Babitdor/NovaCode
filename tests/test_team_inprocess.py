@@ -236,3 +236,74 @@ async def test_peer_message_during_tool_arrives_once_before_next_model(
     finally:
         release.set()
         await host.close()
+
+
+async def test_profile_gates_attach_refresh_and_preserve_team_ownership(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    import pytest
+
+    from novacode_cli.config.config import settings
+    from novacode_cli.config.nova_config import NovaConfig
+    from novacode_cli.teams import bootstrap
+    from novacode_cli.teams.models import TeamError
+
+    monkeypatch.setattr(type(settings), "user_deepagents_dir", property(lambda _self: tmp_path))
+    profile = NovaConfig()
+    model = ScriptedModel(
+        metadata={"nova_provider": "scripted", "nova_model": "offline"},
+        responses=[AIMessage("Offline only.")],
+    )
+    tools, middleware, host = bootstrap.attach(model, "nova", [], [], tmp_path, "settings-root")
+    assert tools == []
+    assert middleware is None
+    assert host is None
+
+    profile.set_agent_team_settings(enabled=True, swarm=False)
+    tools, middleware, host = bootstrap.attach(model, "nova", [], [], tmp_path, "settings-root")
+    assert {tool.name for tool in TEAM_TOOLS} <= {tool.name for tool in tools}
+    assert middleware is not None
+    coordinator = host.initial
+    manual = await coordinator.request(coordinator.lead, "team_create", {"name": "manual"})
+    adapter = AsyncMock()
+    worker_handle = AsyncMock()
+    adapter.start.return_value = worker_handle
+    coordinator.adapters["default"] = adapter
+    worker = await coordinator.spawn(coordinator.lead, "Keep working", manual["id"])
+    with pytest.raises(TeamError, match="swarm"):
+        await coordinator.request(coordinator.lead, "team_create", {"name": "auto", "swarm": True})
+
+    try:
+        profile.set_agent_team_settings(enabled=True, swarm=True)
+        _, _, refreshed = bootstrap.attach(model, "nova", [], [], tmp_path, "settings-root")
+        assert refreshed is host
+        await coordinator.request(coordinator.lead, "team_create", {"name": "auto", "swarm": True})
+
+        profile.set_agent_team_settings(enabled=False, swarm=False)
+        tools, middleware, retained = bootstrap.attach(
+            model, "nova", [], [], tmp_path, "settings-root"
+        )
+        assert tools == []
+        assert middleware is None
+        assert retained is host
+        assert not coordinator.swarm_enabled
+        assert not coordinator._closed
+        assert coordinator._handles[worker["id"]] is worker_handle
+        worker_handle.stop.assert_not_awaited()
+
+        profile.set_agent_team_settings(enabled=True, swarm=False)
+        _, _, refreshed = bootstrap.attach(model, "nova", [], [], tmp_path, "settings-root")
+        assert refreshed is host
+        records = await coordinator.request(
+            coordinator.lead, "task_list", {"team_id": manual["id"]}
+        )
+        assert records is not None  # Existing team remains owned and accessible.
+        with pytest.raises(TeamError, match="swarm"):
+            await coordinator.request(
+                coordinator.lead, "team_create", {"name": "blocked", "swarm": True}
+            )
+    finally:
+        await coordinator.close()

@@ -124,6 +124,84 @@ async def test_a_hand_set_budget_stays_selectable():
         assert app.calls == []
 
 
+async def test_experimental_team_switches_persist_and_enforce_dependency() -> None:
+    app = Host()
+    async with app.run_test(size=(80, 30)) as pilot:
+        screen = await _open(app, pilot)
+        teams = screen.query_one("#agent-teams-toggle", Switch)
+        swarm = screen.query_one("#swarm-toggle", Switch)
+        assert not teams.value
+        assert not swarm.value
+        assert swarm.disabled
+        assert NovaConfig().get("agent_teams_enabled") is None
+        assert NovaConfig().get("swarm_enabled") is None
+
+        teams.value = True
+        await pilot.pause()
+        assert not swarm.disabled
+        assert NovaConfig().get_agent_team_settings() == {"enabled": True, "swarm": False}
+        swarm.value = True
+        await pilot.pause()
+        assert NovaConfig().get_agent_team_settings() == {"enabled": True, "swarm": True}
+
+        screen.dismiss()
+        await pilot.pause()
+        screen = await _open(app, pilot)
+        teams = screen.query_one("#agent-teams-toggle", Switch)
+        swarm = screen.query_one("#swarm-toggle", Switch)
+        assert teams.value
+        assert swarm.value
+        assert not swarm.disabled
+        teams.value = False
+        await pilot.pause()
+        assert not swarm.value
+        assert swarm.disabled
+        assert NovaConfig().get_agent_team_settings() == {"enabled": False, "swarm": False}
+        assert app.calls == [], "settings never interrupt the current agent to rebuild"
+        close = screen.query_one("#close")
+        assert close.region.bottom <= app.size.height
+
+
+async def test_experimental_team_save_failure_restores_saved_switches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail(*_args: object, **_kwargs: object) -> None:
+        message = "disk unavailable"
+        raise OSError(message)
+
+    app = Host()
+    async with app.run_test(size=(100, 40)) as pilot:
+        screen = await _open(app, pilot)
+        monkeypatch.setattr(NovaConfig, "set_agent_team_settings", fail)
+        screen.query_one("#agent-teams-toggle", Switch).value = True
+        await pilot.pause()
+        assert not screen.query_one("#agent-teams-toggle", Switch).value
+        assert screen.query_one("#swarm-toggle", Switch).disabled
+        assert NovaConfig().get("agent_teams_enabled") is None
+        assert NovaConfig().get("swarm_enabled") is None
+
+
+@pytest.mark.parametrize("enabled", [False, "false", "off", None])
+def test_swarm_cannot_be_enabled_without_teams(enabled: object) -> None:
+    config = NovaConfig()
+    config.set("agent_teams_enabled", enabled)
+    config.set("swarm_enabled", value=True)
+    assert config.get_agent_team_settings() == {"enabled": False, "swarm": False}
+
+
+def test_team_settings_preserve_unrelated_and_legacy_values() -> None:
+    config = NovaConfig()
+    config.set("agent_teams_enabled", "true")
+    config.set("swarm_enabled", "false")
+    assert config.get_agent_team_settings() == {"enabled": True, "swarm": False}
+    NovaConfig().set("model", "keep-this-model")
+    config.set_agent_team_settings(enabled=False, swarm=True)
+    saved = NovaConfig()
+    assert saved.get("model") == "keep-this-model"
+    assert saved.get("agent_teams_enabled") is False
+    assert saved.get("swarm_enabled") is False
+
+
 async def test_voice_settings_live_here_and_reset_the_pipeline():
     app = Host()
     app._voice_pipeline = "warm"

@@ -96,6 +96,35 @@ async def test_refresh_detects_same_size_edits_and_does_not_rebuild_unchanged_gr
 
 
 @pytest.mark.usefixtures("definitions")
+async def test_team_settings_refresh_at_next_turn_on_the_same_model(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from novacode_cli.config.nova_config import NovaConfig
+
+    monkeypatch.setattr("novacode_cli.config.config.HOME_DIR", tmp_path / ".nova")
+    config = NovaConfig()
+    graph = SimpleNamespace(agent_definitions_signature=definition_signature())
+    backend = object()
+    model = object()
+
+    async def rebuild() -> tuple[SimpleNamespace, object]:
+        return SimpleNamespace(agent_definitions_signature=definition_signature()), backend
+
+    reload = AsyncMock(side_effect=rebuild)
+    state = SimpleNamespace(_model=model, reload_agent_definitions=reload)
+    for enabled, swarm in ((True, False), (True, True), (True, False), (False, False)):
+        config.set_agent_team_settings(enabled=enabled, swarm=swarm)
+        graph, result_backend = await refresh_definitions(graph, backend, state)
+        assert result_backend is backend
+        assert state._model is model
+        count = reload.await_count
+        assert await refresh_definitions(graph, backend, state) == (graph, backend)
+        assert reload.await_count == count
+    assert reload.await_count == 4
+
+
+@pytest.mark.usefixtures("definitions")
 async def test_reload_failure_never_runs_stale_tools() -> None:
     graph = SimpleNamespace(agent_definitions_signature="old")
     state = SimpleNamespace(

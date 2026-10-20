@@ -2592,6 +2592,33 @@ class SettingsScreen(ModalScreen[None]):
                     classes="settings-description",
                 )
 
+                yield Static("EXPERIMENTAL", classes="settings-section")
+                teams = self._config.get_agent_team_settings()
+                with Horizontal(classes="settings-row"):
+                    yield Switch(value=teams["enabled"], id="agent-teams-toggle")
+                    yield Static("Agent teams", classes="settings-label")
+                yield Static(
+                    "Persistent teammates, a shared task board and agent messages. "
+                    "Ask Nova to create a team and delegate tasks.",
+                    classes="settings-description",
+                )
+                with Horizontal(classes="settings-row"):
+                    yield Switch(
+                        value=teams["swarm"], disabled=not teams["enabled"], id="swarm-toggle"
+                    )
+                    yield Static("Autonomous swarm", classes="settings-label")
+                yield Static(
+                    "Requires agent teams. Automatically assigns ready tasks to isolated "
+                    "worktree or configured container workers. Worktrees require a Git commit.",
+                    classes="settings-description",
+                )
+                yield Static(
+                    "Changes apply on the next prompt. Enabling starts no agents; "
+                    "disabling does not cancel existing workers. "
+                    "Ask Nova to delete a team before disabling to stop its workers.",
+                    classes="settings-description",
+                )
+
                 yield Static("APPEARANCE", classes="settings-section")
                 with Horizontal(classes="settings-row"):
                     yield Button("Theme & appearance…", id="settings-theme")
@@ -2718,6 +2745,27 @@ class SettingsScreen(ModalScreen[None]):
             self.call_after_refresh(self._scroll_to_voice)
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
+        if event.switch.id in ("agent-teams-toggle", "swarm-toggle"):
+            from novacode_cli.config.nova_config import NovaConfig
+
+            teams = self.query_one("#agent-teams-toggle", Switch)
+            swarm = self.query_one("#swarm-toggle", Switch)
+            try:
+                self._config.set_agent_team_settings(enabled=teams.value, swarm=swarm.value)
+            except Exception as exc:  # noqa: BLE001
+                self.app.notify(f"Could not save agent team settings: {exc}", severity="error")
+                self._config = NovaConfig()
+                saved = self._config.get_agent_team_settings()
+                with self.prevent(Switch.Changed):
+                    teams.value = saved["enabled"]
+                    swarm.value = saved["swarm"]
+                swarm.disabled = not teams.value
+                return
+            with self.prevent(Switch.Changed):
+                swarm.value = teams.value and swarm.value
+            swarm.disabled = not teams.value
+            self.app.notify("Agent team settings saved. Applies on the next prompt.")
+            return
         if event.switch.id in ("voice-enabled-toggle", "voice-speak-toggle"):
             key = "enabled" if event.switch.id == "voice-enabled-toggle" else "speak_responses"
             self._voice_changed(**{key: event.value})

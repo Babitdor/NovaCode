@@ -6,7 +6,15 @@ The existing delegation tools continue to work.
 
 ## Enable
 
-Merge these keys into your existing `~/.nova/Nova.config.json` and restart Nova:
+Open `/settings`, scroll to **Experimental**, and enable **Agent teams**.
+Optionally enable **Autonomous swarm** beneath it; that switch requires teams.
+The settings are saved globally and apply to each open session on its next prompt,
+without changing its model or clearing its conversation. Enabling starts no workers.
+Turning teams off also turns swarm off. Existing workers are not cancelled;
+automatic swarm assignments pause. Ask Nova to delete the team before disabling,
+or re-enable teams to manage existing workers.
+
+You can also merge these keys into your existing `~/.nova/Nova.config.json`:
 
 ```json
 {
@@ -65,12 +73,23 @@ delivered at safe model boundaries without racing a running tool. Read receipt
 and task completion are separate operations. Idle teammates wake on new work;
 the model does not need to poll them repeatedly.
 
-For swarm scheduling, also set `swarm_enabled` to true and ask the lead to create
-a team with `swarm=true`. Swarm accepts only `worktree` and `remote` workers.
+For swarm scheduling, enable **Autonomous swarm** in `/settings` and ask the lead
+to create a team with `swarm=true`. Swarm accepts only `worktree` and `remote` workers.
 The host assigns ready tasks and renews their leases. Waiting workers make no
 startup model call. A worker's final report records completion evidence with
 `lead_review_required`; this is not independent verification that its code works.
 Ordinary teams do not claim tasks automatically.
+
+For example, in a committed Git repository:
+
+> Create a swarm team with two worktree workers. Put these tasks on its board:
+> review the API error handling and review the test coverage. They are independent.
+> Have the workers report findings with file references. Review both reports and
+> summarize the results; do not merge or push changes.
+
+To stop the workers, ask: "Delete this team and stop its workers." Worktrees
+remain available for inspection. Swarm is the team scheduler described here;
+the existing `/research` command is a separate workflow.
 
 ## Permissions and lifecycle
 
