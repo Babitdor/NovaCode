@@ -278,6 +278,89 @@ def test_windows_launchers_come_back_when_uv_fails(
     assert (scripts / "nova.exe").read_bytes() == (bin_dir / "nova.exe").read_bytes() == b"old"
 
 
+def test_windows_locked_entrypoint_is_success_when_uv_installed_the_package(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _scripts, _bin_dir, _seen = _windows_tool(monkeypatch, tmp_path, "", rewrites=False)
+    monkeypatch.setattr(U, "installed_version", lambda _python: "1.1")
+    monkeypatch.setattr(
+        U,
+        "_run",
+        Mock(
+            side_effect=subprocess.CalledProcessError(
+                1,
+                "uv tool upgrade",
+                output=(
+                    "error: Failed to upgrade novacode-cli\n"
+                    "Caused by: Failed to install entrypoint\n"
+                    "The process cannot access the file because it is being used "
+                    "by another process. (os error 32)"
+                ),
+            )
+        ),
+    )
+    progress = Mock()
+
+    assert U.install_update(progress) is True
+    progress.done.assert_any_call("package updated; Windows could not replace the running nova.exe")
+
+
+def test_windows_locked_entrypoint_remains_failure_when_package_did_not_upgrade(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _windows_tool(monkeypatch, tmp_path, "", rewrites=False)
+    monkeypatch.setattr(U, "installed_version", lambda _python: "1.0")
+    monkeypatch.setattr(
+        U,
+        "_run",
+        Mock(
+            side_effect=subprocess.CalledProcessError(
+                1,
+                "uv tool upgrade",
+                output=(
+                    "Failed to install entrypoint: The process cannot access the file "
+                    "because it is being used by another process. (os error 32)"
+                ),
+            )
+        ),
+    )
+
+    with pytest.raises(subprocess.CalledProcessError):
+        U.install_update(Mock())
+
+
+def test_update_command_reports_success_for_installed_package_with_locked_launcher(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    _windows_tool(monkeypatch, tmp_path, "", rewrites=False)
+    monkeypatch.setattr(
+        U,
+        "check_for_update",
+        lambda **_kwargs: U.UpdateStatus(True, "1.0", "1.1"),
+    )
+    monkeypatch.setattr(U, "installed_version", lambda _python: "1.1")
+    monkeypatch.setattr(
+        U,
+        "_run",
+        Mock(
+            side_effect=subprocess.CalledProcessError(
+                1,
+                "uv tool upgrade",
+                output=(
+                    "Failed to install entrypoint: The process cannot access the file "
+                    "because it is being used by another process. (os error 32)"
+                ),
+            )
+        ),
+    )
+
+    assert U.update_main([]) == 0
+    captured = capsys.readouterr()
+    assert "NovaCode updated" in captured.out
+    assert "package updated; Windows could not replace the running nova.exe" in captured.out
+    assert "Update failed" not in captured.err
+
+
 def test_a_failed_step_prints_its_output_then_the_error(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:

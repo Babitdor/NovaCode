@@ -24,6 +24,7 @@ from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
 
 from novacode_cli.update_ui import Progress, installed_version, run_command, show_success
+from packaging.version import InvalidVersion, Version
 
 REPOSITORY = "Babitdor/NovaCode"
 REPO_URL = f"https://github.com/{REPOSITORY}.git"
@@ -279,6 +280,24 @@ def _restore_launchers(moved: list[tuple[Path, Path]]) -> None:
                 aside.rename(launcher)
 
 
+def _uv_package_was_installed(
+    installation: Installation, error: subprocess.CalledProcessError
+) -> bool:
+    """Recognize uv's Windows launcher-copy failure after the package upgrade."""
+    if sys.platform != "win32":
+        return False
+    output = str(error.output or "").casefold()
+    is_locked_entrypoint = "failed to install entrypoint" in output and (
+        "being used by another process" in output or "os error 32" in output
+    )
+    if not is_locked_entrypoint:
+        return False
+    try:
+        return Version(installed_version(sys.executable)) > Version(installation.version)
+    except InvalidVersion:
+        return False
+
+
 def install_update(progress: Progress | None = None) -> bool:
     """Update with the original manager; return whether anything changed."""
     progress = progress or Progress()
@@ -324,7 +343,13 @@ def install_update(progress: Progress | None = None) -> bool:
             moved = _move_launchers_aside(uv)
         progress.stage("Downloading and installing")
         try:
-            output = _run(arguments, progress=progress)
+            try:
+                output = _run(arguments, progress=progress)
+            except subprocess.CalledProcessError as error:
+                if not _uv_package_was_installed(installation, error):
+                    raise
+                progress.done("package updated; Windows could not replace the running nova.exe")
+                output = "Updated novacode-cli"
         finally:
             _restore_launchers(moved)
         changed = "nothing to upgrade" not in output.casefold()
