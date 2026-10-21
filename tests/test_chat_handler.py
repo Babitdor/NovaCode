@@ -280,8 +280,8 @@ def council_server(monkeypatch):
     loop.close()
 
 
-def _read_sse(url: str, topic: str) -> list[tuple[str, dict]]:
-    full = url + "/api/council?topic=" + urllib.parse.quote(topic)
+def _read_sse(url: str, topic: str, **parameters) -> list[tuple[str, dict]]:
+    full = url + "/api/council?" + urllib.parse.urlencode({"topic": topic, **parameters})
     out: list[tuple[str, dict]] = []
     event = None
     with urllib.request.urlopen(full, timeout=10) as resp:  # noqa: S310 - localhost
@@ -730,3 +730,28 @@ def test_web_settings_roundtrip_validates_and_preserves_main_model(council_serve
     assert external.value.code == 403
     with save(catalog['defaults']) as response:
         assert json.load(response)['settings'] == catalog['defaults']
+
+
+def test_workspace_preset_reaches_real_sse_without_saving_it(council_server, monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from novacode_cli.config import nova_config
+    from novacode_cli.council_settings import default_settings
+
+    monkeypatch.setattr(nova_config.Settings,'from_environment',lambda:SimpleNamespace(user_deepagents_dir=tmp_path))
+    original=default_settings().to_dict()
+    nova_config.NovaConfig().set('council',original)
+    seen=[]
+    async def advisor(persona, conversation, model):
+        seen.append(persona.name)
+        yield 'delta','Independent analysis.'
+    monkeypatch.setattr(council,'_stream_persona_turn',advisor)
+    with urllib.request.urlopen(council_server+'/api/council/panel?preset=code',timeout=5) as response:
+        panel=json.load(response)
+    assert 'The Security Reviewer' in [a['name'] for a in panel['agents']]
+    assert panel['chairman']['id']=='chairman'
+    frames=_read_sse(council_server,'Audit this boundary',preset='code')
+    start=next(data for kind,data in frames if kind=='council_start')
+    assert start['chairman']['model']=='Session model (inherit)'
+    assert set(seen)=={a['name'] for a in panel['agents']}
+    assert any(kind=='verdict' and data.get('synthesized') for kind,data in frames)
+    assert nova_config.NovaConfig().get('council')==original

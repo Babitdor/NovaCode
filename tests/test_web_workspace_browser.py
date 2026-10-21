@@ -362,3 +362,74 @@ def test_council_streams_chairman_before_showing_final_approval(ui):
     pw.expect(page.get_by_role('button',name='✓ Approve',exact=True)).to_be_visible()
     pw.expect(page.get_by_text('B is safer, subject to verification.',exact=True)).to_have_count(0)
     pw.expect(page.locator('#input')).to_be_enabled()
+
+
+def test_council_reference_workspace_tabs_presets_pipeline_and_clear_view(ui):
+    from novacode_cli.council_settings import default_settings
+    from novacode_cli.council_workspace import panel_descriptor, apply_web_preset
+    page=ui.page
+    def panel_api(route):
+        preset=parse_qs(urlsplit(route.request.url).query).get('preset',['saved'])[0]
+        route.fulfill(content_type='application/json',body=json.dumps(panel_descriptor(apply_web_preset(default_settings(),preset))))
+    page.route('http://nova.test/api/council/panel?*',panel_api)
+    page.add_init_script('''window.EventSource=class extends EventTarget{
+      constructor(url){super();this.url=url;this.readyState=1;window.workspaceStream=this;}
+      close(){this.readyState=2;}
+      emit(type,data){this.dispatchEvent(new MessageEvent(type,{data:JSON.stringify(data)}));}
+    };''')
+    page.goto('http://nova.test/council')
+    pw.expect(page.locator('#bench .seat')).to_have_count(6)
+    page.locator('#council-preset').select_option('code')
+    pw.expect(page.locator('#bench')).to_contain_text('The Security Reviewer')
+    pw.expect(page.locator('#bench')).to_contain_text('Session model (inherit)')
+    page.locator('#input').fill('Review the authentication boundary')
+    page.locator('#send-btn').click()
+    assert 'preset=code' in page.evaluate('workspaceStream.url')
+    pw.expect(page.locator('#clear-view')).to_be_disabled()
+    page.evaluate('''()=>{
+      workspaceStream.emit('council_start',{agents:[{id:'architect',name:'Architect'}],chairman:{id:'chairman',name:'Chairman'}});
+      workspaceStream.emit('agent_start',{id:'architect',name:'Architect'});
+      workspaceStream.emit('agent_delta',{id:'architect',text:'Advisor-specific analysis.'});
+      workspaceStream.emit('agent_done',{id:'architect',text:'Advisor-specific analysis.'});
+      workspaceStream.emit('vote_start',{});
+      workspaceStream.emit('vote',{voter:'architect',voter_name:'Architect',choice:'B',choice_name:'B',reason:'Safer boundary'});
+    }''')
+    pw.expect(page.locator('#pipeline-state')).to_contain_text('ballots')
+    pw.expect(page.locator('#metric-advisors')).to_have_text('1 / 1')
+    pw.expect(page.locator('#metric-votes')).to_have_text('1')
+    pw.expect(page.get_by_text('Advisor-specific analysis.',exact=True)).not_to_be_visible()
+    page.get_by_role('tab',name='Full debate',exact=True).click()
+    pw.expect(page.get_by_text('Advisor-specific analysis.',exact=True)).to_be_visible()
+    page.keyboard.press('ArrowLeft')
+    pw.expect(page.get_by_role('tab',name='Synthesized consensus',exact=True)).to_be_focused()
+    page.evaluate('''()=>{
+      workspaceStream.emit('chairman_start',{name:'Chairman'});
+      workspaceStream.emit('chairman_delta',{text:'Synthesizing the disagreement.'});
+      workspaceStream.emit('verdict',{synthesized:true,chairman_name:'Chairman',answer:'Final consolidated recommendation.',votes:1,tally:{}});
+      workspaceStream.emit('done',{});
+    }''')
+    pw.expect(page.locator('#pipeline-state')).to_have_text('Consolidated answer ready')
+    pw.expect(page.get_by_text('Final consolidated recommendation.',exact=True)).to_be_visible()
+    pw.expect(page.locator('#clear-view')).to_be_enabled()
+    page.locator('#clear-view').click()
+    pw.expect(page.locator('.verdict')).to_have_count(0)
+    assert not any(path=='/api/council/reset' for path,_,_ in ui.requests)
+    page.set_viewport_size({'width':320,'height':568})
+    assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+    assert page.locator('#input-area').bounding_box()['y']>0
+
+
+def test_council_workspace_stop_is_accessible_on_phone(ui):
+    page=ui.page
+    page.add_init_script("window.EventSource=class{constructor(url){this.readyState=1;}addEventListener(){}close(){this.readyState=2;}};")
+    page.set_viewport_size({'width':320,'height':568})
+    page.goto('http://nova.test/council')
+    page.locator('#input').fill('A pending discussion')
+    page.locator('#send-btn').click()
+    pw.expect(page.locator('#workspace-stop')).to_be_visible()
+    assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+    with page.expect_request('**/api/council/stop'):
+        page.locator('#workspace-stop').click()
+    pw.expect(page.locator('#input')).to_be_enabled()
+    pw.expect(page.locator('#pipeline-state')).to_have_text('Discussion stopped')
+    pw.expect(page.locator('#clear-view')).to_be_visible()

@@ -27,6 +27,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from novacode_cli.config.config import COLORS, console
+from novacode_cli.ui.council_workspace import (WORKSPACE_CONTROLS_HTML, WORKSPACE_CONTROLS_SCRIPT, WORKSPACE_CONTROLS_STYLE, WORKSPACE_METRICS_HTML)
 from novacode_cli.ui.council_web import COUNCIL_STYLE, COUNCIL_SETTINGS_HTML, COUNCIL_SETTINGS_SCRIPT
 from novacode_cli.ui.web_workspace import WORKSPACE_CSS, WORKSPACE_SCRIPT
 
@@ -284,6 +285,7 @@ def _make_chat_html() -> str:
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 __WORKSPACE_STYLE__
 __COUNCIL_STYLE__
+__WORKSPACE_CONTROLS_STYLE__
 </style>
 </head>
 <body class="workspace-app council-app">
@@ -306,16 +308,17 @@ __COUNCIL_STYLE__
   <h2 class="sidebar-label">How it works</h2>
   <ol class="workflow"><li>Independent perspectives</li><li>Questions, trade-offs, and voting</li><li>Chairman synthesis</li><li>The final decision is yours</li></ol>
 </div>
-<div class="sidebar-footer"><span>Follow-ups stay in this discussion.</span><span class="sid" id="sid"></span></div>
+<div class="sidebar-footer"><span>Follow-ups stay in this discussion.</span>__WORKSPACE_METRICS_HTML__<span class="sid" id="sid"></span></div>
 </aside>
 <main class="workspace-chat" id="conversation">
 <header class="chat-topbar"><button class="mobile-menu" id="sidebar-toggle" aria-controls="workspace-sidebar"
   aria-expanded="false" aria-label="Open sidebar">☰</button><div class="chat-heading"><h1>Council</h1>
   <p>A few perspectives. A clearer decision.</p></div><button type="button" class="settings-open" data-council-settings>Council settings</button><span id="run-badge" class="run-badge">● convening</span></header>
-<div id="messages" role="log" aria-label="Council conversation">
-  <div class="welcome"><div class="welcome-icon">THE DECISION TABLE</div>
-    <h2>Bring a question<br>to the table.</h2>
-    <p>Put your options on the table. Your advisors ask the missing questions, challenge assumptions, and vote. You make the final call.</p>
+__WORKSPACE_CONTROLS_HTML__
+<div id="messages" role="tabpanel" aria-labelledby="view-synthesis" aria-live="polite" tabindex="0">
+  <div class="welcome"><div class="welcome-icon">MULTI-AGENT DELIBERATION</div>
+    <h2>One question. Independent perspectives.</h2>
+    <p>Broadcast your task to specialist advisors in parallel. Review their debate or follow the chairman’s consolidated answer. Choose a preset or use your saved council.</p>
     <div class="prompt-options">
       <button class="prompt-option" data-prompt="Help me compare two approaches to ">Compare approaches</button>
       <button class="prompt-option" data-prompt="Review this decision and challenge my assumptions: ">Review a decision</button>
@@ -364,6 +367,7 @@ let agentMeta = {};     // id -> {name, avatar, color}
 function setStatus(m) { $('status-msg').textContent = m; }
 function setRun(on) {
   $('run-badge').classList.toggle('show', on);
+  $('council-preset').disabled=on; $('clear-view').disabled=on;$('clear-view').hidden=on;$('workspace-stop').hidden=!on;
   // Null-guarded: a status/render helper must never be able to wedge the
   // composer. This bug shipped twice by throwing from exactly here.
   const sr = $('stat-run');
@@ -411,6 +415,8 @@ function buildBench(agents) {
     const nm = el('div', 'seat-name'); nm.textContent = a.name || a.id;
     const st = el('div', 'seat-state'); st.textContent = 'waiting';
     seat.appendChild(av); seat.appendChild(nm); seat.appendChild(st);
+    if(a.id==='chairman'){seat.dataset.chairman='true';st.textContent='standby';}
+    if(a.model||a.role){const details=el('div','seat-details');const model=el('strong');model.textContent=a.model||'Session model (inherit)';const role=el('span');role.textContent=a.role||'';details.append(model,role);seat.appendChild(details);}
     bench.appendChild(seat);
     benchSeats[a.id] = { seat, badge, state: st, votes: 0 };
   });
@@ -613,6 +619,7 @@ function endRun() {
   messages.querySelectorAll('.clarification button,.clarification input').forEach(node=>node.disabled=true);
   input.disabled = false; sendBtn.disabled = false; input.focus();
   setRun(false);
+  workspaceEnd();
 }
 
 function convene() {
@@ -630,9 +637,10 @@ function convene() {
   dropWelcome();
   const banner = el('div', 'topic-banner'); banner.textContent = '“' + topic + '”';
   messages.appendChild(banner);
+  workspaceBegin();
   setStatus('convening the council…'); scrollDown(true);
 
-  const params = new URLSearchParams({topic, options:$('decision-options').value, criteria:$('decision-criteria').value});
+  const params = new URLSearchParams({topic, options:$('decision-options').value, criteria:$('decision-criteria').value,preset:$('council-preset').value});
   es = new EventSource('/api/council?' + params);
   es.addEventListener('question', e => {
     const d = JSON.parse(e.data), card = el('div', 'clarification');
@@ -654,7 +662,8 @@ function convene() {
 
   es.addEventListener('council_start', e => {
     const d = JSON.parse(e.data);
-    buildBench(d.agents || []);
+    buildBench([...(d.agents || []),...(d.chairman?[d.chairman]:[])]);
+    workspaceTotal=(d.agents||[]).length;updateWorkspaceMetrics();workspaceStage('analysis','Advisors are evaluating independently…');
     setStatus('the council deliberates independently…');
   });
   es.addEventListener('agent_start', e => {
@@ -664,27 +673,28 @@ function convene() {
   });
   es.addEventListener('agent_delta', e => { const d = JSON.parse(e.data); deltaAgent(d.id, d.text); });
   es.addEventListener('agent_tool', e => { const d = JSON.parse(e.data); agentSearch(d.id, d.query); });
-  es.addEventListener('agent_done', e => { const d = JSON.parse(e.data); finishAgent(d.id, d.text); });
+  es.addEventListener('agent_done', e => { const d = JSON.parse(e.data); finishAgent(d.id, d.text); workspaceAnswered.add(d.id);updateWorkspaceMetrics(); });
   es.addEventListener('vote_start', e => {
+    workspaceStage('voting','Collecting peer reviews and ballots…');
     addPhase('The Vote', JSON.parse(e.data).options ? 'each advisor votes for a decision option' : 'each advisor casts one vote for the best answer');
-    Object.keys(benchSeats).forEach(id => seatState(id, 'voting', 'voting…'));
+    Object.keys(benchSeats).forEach(id => {if(id!=='chairman'&&benchSeats[id].seat.dataset.state!=='failed')seatState(id, 'voting', 'voting…');});
     setStatus('the council is voting…');
   });
-  es.addEventListener('vote', e => { renderVote(JSON.parse(e.data)); });
+  es.addEventListener('vote', e => { const d=JSON.parse(e.data);renderVote(d);seatState(d.voter,'answered',d.choice?'voted':'abstained');if(d.choice)workspaceVotes++;updateWorkspaceMetrics(); });
   es.addEventListener('chairman_start', e => {
-    const d=JSON.parse(e.data); addPhase('Chairman synthesis', 'weighing agreement, disagreement, and evidence');
-    startAgent({id:'chairman',name:d.name,avatar:'⚖',color:'var(--primary)'});
+    const d=JSON.parse(e.data);workspaceStage('synthesis','Resolving disagreement and synthesizing…');messages.querySelectorAll('.synthesis-wait').forEach(node=>node.remove()); addPhase('Chairman synthesis', 'weighing agreement, disagreement, and evidence');
+    startAgent({id:'chairman',name:d.name,avatar:'⚖',color:'var(--accent)'});agentEls.chairman.wrap.classList.add('chairman-stream');seatState('chairman','speaking','synthesizing…');
     agentEls.chairman.wrap.querySelector('.who-tag').textContent='consensus synthesis';
     setStatus('the chairman is consolidating the council…');
   });
   es.addEventListener('chairman_delta', e => {deltaAgent('chairman',JSON.parse(e.data).text);});
   es.addEventListener('vote_result', e => {const d=JSON.parse(e.data);addPhase('Ballots collected', d.tied ? 'Split vote · the chairman will examine the disagreement' : d.votes+' valid votes · awaiting chairman synthesis');});
-  es.addEventListener('agent_failed', e => {const d=JSON.parse(e.data);seatState(d.id,'failed','unavailable');finishAgent(d.id,'Advisor unavailable for this round.');});
-  es.addEventListener('verdict', e => { if(agentEls.chairman){agentEls.chairman.wrap.remove();delete agentEls.chairman;} addPhase('The Verdict'); renderVerdict(JSON.parse(e.data)); });
+  es.addEventListener('agent_failed', e => {const d=JSON.parse(e.data);finishAgent(d.id,'Advisor unavailable for this round.');seatState(d.id,'failed','unavailable');});
+  es.addEventListener('verdict', e => { workspaceCompleted=true;workspaceStage('complete','Consolidated answer ready');seatState('chairman','answered','complete');messages.querySelectorAll('.synthesis-wait').forEach(node=>node.remove());if(agentEls.chairman){agentEls.chairman.wrap.remove();delete agentEls.chairman;} addPhase('The Verdict'); renderVerdict(JSON.parse(e.data)); });
   es.addEventListener('council_error', e => {
     let m = 'The council failed.';
     try { m = JSON.parse(e.data).message || m; } catch (_) {}
-    addError(m); setStatus('error');
+    addError(m); setStatus('error');workspaceStage('error','Discussion failed · see the message below');
     // endRun(), not setRun(false): an error has to close the stream and
     // re-enable the composer exactly like `done` does. Leaving `es` non-null
     // made convene() return immediately on every later send — the input stayed
@@ -723,16 +733,17 @@ function newThread() {
   w.innerHTML = '<h2>Fresh Council</h2><div class="divider"></div>' +
     '<p>Prior session cleared. Pose a new question to convene the council.</p>';
   messages.appendChild(w);
-  setStatus('ready'); setRun(false);
+  setStatus('ready'); setRun(false);workspaceAnswered.clear();workspaceVotes=0;workspaceElapsed=0;workspaceCompleted=false;workspaceStage('ready','Ready to convene');updateWorkspaceMetrics();loadCouncilPanel();
   input.focus();
 }
 newThreadBtn.addEventListener('click', newThread);
+__WORKSPACE_CONTROLS_SCRIPT__
 </script>
 <script>__WORKSPACE_SCRIPT__</script>
 __COUNCIL_SETTINGS_HTML__
 <script>__COUNCIL_SETTINGS_SCRIPT__</script>
 </body>
-</html>""".replace("__WORKSPACE_STYLE__", WORKSPACE_CSS).replace("__WORKSPACE_SCRIPT__", WORKSPACE_SCRIPT).replace("__COUNCIL_STYLE__", COUNCIL_STYLE).replace("__COUNCIL_SETTINGS_HTML__", COUNCIL_SETTINGS_HTML).replace("__COUNCIL_SETTINGS_SCRIPT__", COUNCIL_SETTINGS_SCRIPT)
+</html>""".replace("__WORKSPACE_STYLE__", WORKSPACE_CSS).replace("__WORKSPACE_SCRIPT__", WORKSPACE_SCRIPT).replace("__COUNCIL_STYLE__", COUNCIL_STYLE).replace("__COUNCIL_SETTINGS_HTML__", COUNCIL_SETTINGS_HTML).replace("__COUNCIL_SETTINGS_SCRIPT__", COUNCIL_SETTINGS_SCRIPT).replace("__WORKSPACE_CONTROLS_STYLE__", WORKSPACE_CONTROLS_STYLE).replace("__WORKSPACE_CONTROLS_HTML__", WORKSPACE_CONTROLS_HTML).replace("__WORKSPACE_CONTROLS_SCRIPT__", WORKSPACE_CONTROLS_SCRIPT).replace("__WORKSPACE_METRICS_HTML__", WORKSPACE_METRICS_HTML)
 
 
 # ---------------------------------------------------------------------------
@@ -753,6 +764,16 @@ class _ChatHandler(BaseHTTPRequestHandler):
             qs = parse_qs(parsed.query)
             topic = (qs.get("topic") or [""])[0]
             self._stream_council(topic)
+        elif parsed.path == "/api/council/panel":
+            from novacode_cli.council_settings import load_settings
+            from novacode_cli.council_workspace import apply_web_preset, panel_descriptor
+            try:
+                preset = parse_qs(parsed.query).get("preset", ["saved"])[0]
+                self._settings_reply(200, panel_descriptor(apply_web_preset(load_settings(), preset)))
+            except ValueError as exc:
+                self._settings_reply(400, {"error": str(exc)})
+            except Exception:
+                self._settings_reply(500, {"error": "Could not load the council panel"})
         elif parsed.path == "/api/council/settings":
             self._council_settings(save=False)
         elif parsed.path == "/api/council/reset":
@@ -981,6 +1002,8 @@ class _ChatHandler(BaseHTTPRequestHandler):
             try:
                 model = await asyncio.to_thread(get_council_model)
                 settings = await asyncio.to_thread(load_settings)
+                from novacode_cli.council_workspace import apply_web_preset, panel_descriptor
+                settings = apply_web_preset(settings, parameters.get("preset", ["saved"])[0])
                 models = await asyncio.to_thread(resolve_models, settings, model, debate=True)
                 from novacode_cli.council_consensus import resolve_chairman
                 chairman_model = await asyncio.to_thread(resolve_chairman, settings, model, models)
@@ -999,6 +1022,8 @@ class _ChatHandler(BaseHTTPRequestHandler):
                 from novacode_cli.council_consensus import run_web_consensus
                 stream = run_web_consensus(topic, stream, chairman_model, settings.judge)
                 async for event in stream:
+                    if event.get("type") == "council_start":
+                        event.update(panel_descriptor(settings))
                     if event.get("type") == "question":
                         event["token"] = secrets.token_urlsafe(24)
                     event = dict(event)

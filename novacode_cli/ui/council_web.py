@@ -107,7 +107,7 @@ COUNCIL_SETTINGS_SCRIPT = r"""
  byId('settings-save').onclick=async()=>{if(!draft||busy)return;capture();lock(true);message('Saving council settings…');
  try{const response=await fetch('/api/council/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(draft),signal:AbortSignal.timeout(10000)});
  const result=await response.json();if(!response.ok)throw Error(result.error||'Could not save settings.');message('Saved. Future councils will use these settings.');dialog.close();
- document.getElementById('status-msg').textContent='Council settings saved · applies to future runs';
+ document.getElementById('status-msg').textContent='Council settings saved · applies to future runs';if(typeof loadCouncilPanel==='function')loadCouncilPanel();
  }catch(error){message(error.message,true);}finally{lock(false);}};
 })();
 """
