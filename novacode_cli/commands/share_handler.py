@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import threading
 import time
@@ -215,6 +216,23 @@ def _local_origin(url: str) -> tuple[str, int]:
     return f"http://127.0.0.1:{parsed.port}", parsed.port
 
 
+def _wait_for_upstream(port: int, timeout: float = 4.0) -> None:
+    """Verify a local page is accepting connections before publishing a tunnel."""
+    deadline = time.monotonic() + timeout
+    last_error: OSError | None = None
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.4):
+                return
+        except OSError as exc:
+            last_error = exc
+            time.sleep(0.1)
+    raise RuntimeError(
+        f"Nova's local page is not accepting connections at "
+        f"http://127.0.0.1:{port}. Restart Nova and try /share again."
+    ) from last_error
+
+
 def _dashboard_html(links: dict[str, str | None]) -> str:
     """Build the compact link hub shown inside the artifact viewer sandbox."""
     descriptions = {
@@ -416,6 +434,7 @@ async def _start_share(service: str, ctx) -> str:
     """Start one page's tunnel and return its visitor URL."""
     local_url, server = await _get_local_page(service, ctx)
     _, port = _local_origin(local_url)
+    await asyncio.to_thread(_wait_for_upstream, port)
     public_origin = await asyncio.to_thread(
         _manager.start, service, port, server=server
     )

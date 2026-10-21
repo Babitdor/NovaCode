@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import socket
 from types import SimpleNamespace
 
 from novacode_cli.commands import share_handler
@@ -80,3 +81,23 @@ def test_share_all_starts_each_page_and_publishes_dashboard(monkeypatch) -> None
 
     assert asyncio.run(share_handler.handle_share_command(ctx)) is True
     assert started == ["artifacts", "council", "cowork", "create"]
+
+
+def test_upstream_readiness_check_accepts_a_listening_local_page() -> None:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        share_handler._wait_for_upstream(listener.getsockname()[1], timeout=0.2)
+
+
+def test_upstream_readiness_check_reports_a_closed_port() -> None:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+
+    try:
+        share_handler._wait_for_upstream(port, timeout=0.2)
+    except RuntimeError as exc:
+        assert f"127.0.0.1:{port}" in str(exc)
+    else:
+        raise AssertionError("a closed local port must not be published")
