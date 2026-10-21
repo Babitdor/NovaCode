@@ -46,7 +46,7 @@ You can then run `nova` from your project's directory. After changing this check
 | `/model`, `/auth` | Choose models and configure provider access |
 | `/plan`, `/council <task>` | Investigate a change or compare proposed plans |
 | `/share all` | Create a temporary public link for session artifacts |
-| `/share artifacts` | Host artifacts through Cloudflare Tunnel (ngrok fallback) |
+| `/share artifacts` | Host artifacts through Cloudflare Tunnel |
 | `/tabs`, `/resume` | Manage parallel sessions and reopen saved work |
 | `/dream`, `/learning` | Organize the memory wiki and review generated learning |
 | `/context`, `/compact`, `/usage` | Inspect context, compact history and view usage |

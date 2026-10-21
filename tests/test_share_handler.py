@@ -7,8 +7,134 @@ import io
 import socket
 from types import SimpleNamespace
 
+import pytest
+from rich.console import Console
+
+from novacode_cli.artifacts import registry as artifact_registry
+from novacode_cli.artifacts import server as artifact_server
 from novacode_cli.commands import share_handler
 from novacode_cli.commands.share_handler import ShareManager
+from novacode_cli.tools.artifact_tools import create_artifact, list_artifacts, update_artifact
+
+
+@pytest.fixture
+def cloudflare_runtime(monkeypatch, tmp_path):
+    """Run the real sharing pipeline, replacing only the external tunnel process."""
+    processes = []
+    output = io.StringIO()
+    manager = ShareManager()
+    registry = artifact_registry.ArtifactRegistry(
+        tmp_path / "sessions" / "current-session" / "artifacts.json"
+    )
+    server = artifact_server.ArtifactServer()
+
+    class FakeCloudflared:
+        def __init__(self, args, **kwargs):
+            self.args = args
+            self.returncode = None
+            self.stdout = io.StringIO(
+                "INF Your quick Tunnel has been created! Visit it at:\n"
+                "INF | https://nova-regression.trycloudflare.com |\n"
+            )
+            processes.append(self)
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.returncode = 0
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+    monkeypatch.setattr(share_handler, "_manager", manager)
+    monkeypatch.setattr(share_handler, "console", Console(file=output, color_system=None))
+    monkeypatch.setattr(artifact_registry, "_registry", registry)
+    monkeypatch.setattr(artifact_server, "_server", server)
+    monkeypatch.setattr(share_handler.shutil, "which", lambda name: f"{name}.exe")
+    monkeypatch.setattr(share_handler.subprocess, "Popen", FakeCloudflared)
+    try:
+        yield SimpleNamespace(
+            manager=manager, registry=registry, processes=processes, output=output
+        )
+    finally:
+        manager.stop_all()
+        server.stop()
+
+
+@pytest.mark.parametrize("command", ["artifacts", "all"])
+def test_share_command_executes_complete_cloudflare_pipeline(cloudflare_runtime, command):
+    ctx = SimpleNamespace(
+        cmd_args=command, session_state=SimpleNamespace(session_id="current-session")
+    )
+    assert asyncio.run(share_handler.handle_share_command(ctx)) is True
+    assert cloudflare_runtime.manager.list() == {
+        "artifacts": "https://nova-regression.trycloudflare.com/"
+    }
+    assert len(cloudflare_runtime.processes) == 1
+    assert cloudflare_runtime.processes[0].args[0] == "cloudflared.exe"
+    output = cloudflare_runtime.output.getvalue()
+    assert "https://nova-regression.trycloudflare.com/" in output
+    assert "Could not share" not in output
+    assert "could not be shared" not in output
+
+
+def test_artifact_creation_update_and_resume_use_cloudflare(cloudflare_runtime, monkeypatch):
+    import urllib.request
+
+    output = create_artifact.invoke(
+        {"title": "Cloudflare integration", "type": "html", "content": "<h1>Live test</h1>"}
+    )
+    artifact = cloudflare_runtime.registry.list()[0]
+    expected = f"https://nova-regression.trycloudflare.com/artifacts/{artifact.id}"
+    assert f"URL: {expected}" in output
+    assert cloudflare_runtime.registry.count() == 1  # No generated dashboard.
+    assert "hosting unavailable" not in output
+    with urllib.request.urlopen(artifact_server.artifact_url(artifact.id), timeout=3) as page:
+        assert "Live test" in page.read().decode()
+
+    updated = update_artifact.invoke({"id": artifact.id, "content": "<h1>Updated</h1>"})
+    assert expected in updated
+    assert expected in list_artifacts.invoke({})
+    assert len(cloudflare_runtime.processes) == 1  # Reuse the live tunnel.
+    assert share_handler.stop_session_shares("current-session") == {"artifacts"}
+    assert cloudflare_runtime.processes[0].poll() == 0
+    assert cloudflare_runtime.manager.list() == {}
+
+    restored = artifact_registry.ArtifactRegistry()
+    assert restored.bind(cloudflare_runtime.registry._path) == 1
+    monkeypatch.setattr(artifact_registry, "_registry", restored)
+    assert share_handler.ensure_artifact_share(artifact.id, "current-session") == expected
+    assert len(cloudflare_runtime.processes) == 2
+
+
+def test_missing_cloudflared_keeps_artifact_local_without_using_ngrok(
+    cloudflare_runtime, monkeypatch
+):
+    monkeypatch.setattr(
+        share_handler.shutil, "which", lambda name: "ngrok.exe" if name == "ngrok" else None
+    )
+    output = create_artifact.invoke(
+        {"title": "Offline artifact", "type": "html", "content": "<h1>Still saved</h1>"}
+    )
+    assert "URL: http://127.0.0.1:" in output
+    assert "Artifact sharing needs `cloudflared`" in output
+    assert cloudflare_runtime.registry.count() == 1
+    assert cloudflare_runtime.processes == []
+    assert cloudflare_runtime.manager.list() == {}
+
+
+def test_failed_cloudflare_startup_reports_error_and_cleans_tunnel(
+    cloudflare_runtime, monkeypatch
+):
+    process = SimpleNamespace(
+        stdout=io.StringIO("ERR cloudflared connection failed\n"), poll=lambda: 1
+    )
+    monkeypatch.setattr(share_handler.subprocess, "Popen", lambda *args, **kwargs: process)
+    with pytest.raises(RuntimeError, match="Tunnel did not create a public URL"):
+        share_handler.ensure_artifact_share(session_id="current-session")
+    assert cloudflare_runtime.manager.list() == {}
+    assert cloudflare_runtime.manager._tunnels == {}
 
 
 def test_ngrok_startup_avoids_removed_web_addr_flag(monkeypatch) -> None:

@@ -85,9 +85,8 @@ class ShareManager:
             if current:
                 self._stop_locked(service)
 
-            # Only artifact links use Cloudflare Quick Tunnels automatically.
-            # Other pages remain on their existing manually-shared ngrok path.
-            providers = ("cloudflared", "ngrok") if service == "artifacts" else ("ngrok",)
+            # Artifact hosting must use Cloudflare, never silently switch providers.
+            providers = ("cloudflared",) if service == "artifacts" else ("ngrok",)
             provider_name = None
             executable = None
             for candidate in providers:
@@ -104,7 +103,7 @@ class ShareManager:
                     )
                 if service == "artifacts":
                     raise RuntimeError(
-                        "Artifact sharing needs `cloudflared` or ngrok. Install "
+                        "Artifact sharing needs `cloudflared`. Install "
                         "cloudflared from https://developers.cloudflare.com/tunnel/downloads/ "
                         "to use the free Cloudflare Quick Tunnel."
                     )
@@ -434,22 +433,12 @@ async def handle_share_command(ctx) -> bool:
 
 async def _start_share(service: str, ctx) -> str:
     """Start one page's tunnel and return its visitor URL."""
-    local_url, server = await _get_local_page(service, ctx)
+    if service != "artifacts":
+        raise ValueError(f"Sharing is not supported for {service!r}.")
     return await asyncio.to_thread(
-        ensure_share_for_url,
-        service,
-        local_url,
-        server=server,
+        ensure_artifact_share,
         session_id=getattr(ctx.session_state, "session_id", None),
     )
-
-
-async def _get_local_page(service: str, ctx) -> tuple[str, Any]:
-    if service == "artifacts":
-        from novacode_cli.artifacts.server import ensure_server
-
-        return ensure_server(), None
-    raise ValueError(f"Sharing is not supported for {service!r}.")
 
 
 def register_commands(registry) -> None:

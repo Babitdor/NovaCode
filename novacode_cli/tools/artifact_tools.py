@@ -14,7 +14,7 @@ _TYPES = "html, markdown, or dashboard"
 
 
 def _host_artifact(art, registry) -> tuple[str, str | None]:
-    """Prefer a temporary public URL, retaining local access if ngrok is unavailable."""
+    """Host through Cloudflare, retaining local access when hosting is unavailable."""
     from novacode_cli.artifacts.server import artifact_url
 
     local_url = artifact_url(art.id)

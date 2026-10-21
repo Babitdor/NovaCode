@@ -9,11 +9,12 @@ Nova can expose session artifacts through a temporary public HTTPS URL:
 /share stop [artifacts|all]
 ```
 
-Nova prefers Cloudflare Quick Tunnels for artifacts. Install
+Nova uses Cloudflare Quick Tunnels for artifacts. Install
 [`cloudflared`](https://developers.cloudflare.com/tunnel/downloads/) to use a
 free temporary `trycloudflare.com` URL without an account or custom domain.
-If `cloudflared` is unavailable, Nova falls back to ngrok. The link works only
-while Nova and the local artifact viewer are running; `/share stop` revokes it.
+If `cloudflared` is unavailable, artifacts remain available locally and Nova
+reports how to install it. The public link works only while Nova and the local
+artifact viewer are running; `/share stop` revokes it.
 
 Anyone with the URL can open the shared artifacts while the tunnel is active.
 Cloudflare Quick Tunnel URLs change when restarted and have no uptime guarantee.

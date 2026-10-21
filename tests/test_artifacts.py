@@ -6,6 +6,8 @@ import json
 import re
 import urllib.request
 
+import pytest
+
 from novacode_cli.artifacts import registry as artifact_registry
 from novacode_cli.artifacts.registry import ArtifactRegistry
 from novacode_cli.artifacts.server import _viewer_html, ensure_server
@@ -16,6 +18,12 @@ from novacode_cli.tools.artifact_tools import (
     list_artifacts,
     update_artifact,
 )
+
+
+@pytest.fixture(autouse=True)
+def no_external_tunnel(monkeypatch):
+    """Local rendering tests must never launch a real tunnel on configured machines."""
+    monkeypatch.setattr("novacode_cli.commands.share_handler.shutil.which", lambda _name: None)
 
 
 def test_registry_create_update_observer() -> None:
@@ -201,11 +209,11 @@ def test_artifact_host_prefers_public_link_and_falls_back_locally(monkeypatch) -
     assert note is None
 
     def unavailable(*_args, **_kwargs):
-        raise RuntimeError("ngrok offline")
+        raise RuntimeError("cloudflared offline")
 
     monkeypatch.setattr(
         "novacode_cli.commands.share_handler.ensure_artifact_share", unavailable
     )
     local, note = artifact_tools._host_artifact(art, registry)
     assert local.startswith(ensure_server())
-    assert note == "Temporary public hosting unavailable: ngrok offline"
+    assert note == "Temporary public hosting unavailable: cloudflared offline"
