@@ -149,7 +149,7 @@ def test_council_sidebar_keeps_stream_followups_and_approval_working(ui):
     page.set_viewport_size({"width": 390, "height": 844})
     page.locator("#sidebar-toggle").click()
     page.keyboard.press("Shift+Tab")
-    pw.expect(page.locator("#new-thread")).to_be_focused()
+    pw.expect(page.locator("#stop-council")).to_be_focused()
     page.keyboard.press("Tab")
     pw.expect(page.locator("#sidebar-close")).to_be_focused()
     page.locator("#new-thread").click()
@@ -202,3 +202,32 @@ def test_cowork_sidebar_keeps_grants_chat_questions_and_stop_working(ui):
     page.get_by_role("button", name="revoke", exact=True).click()
     pw.expect(page.locator("#in")).to_be_disabled()
     assert page.evaluate("testSocket.readyState") == 3
+
+
+def test_council_decision_brief_and_question_controls(ui):
+    page = ui.page
+    page.add_init_script('''
+      window.EventSource = class extends EventTarget {
+        constructor(url) { super(); this.url=url; this.readyState=1; window.decisionStream=this; }
+        close() { this.readyState=2; }
+        emit(type, data) { this.dispatchEvent(new MessageEvent(type,{data:JSON.stringify(data)})); }
+      };
+    ''')
+    page.goto('http://nova.test/council')
+    page.locator('#decision-options').fill('Build\nBuy')
+    page.locator('#decision-criteria').fill('Time to market')
+    page.locator('#input').fill('Which approach?')
+    page.locator('#send-btn').click()
+    assert 'options=Build%0ABuy' in page.evaluate('window.decisionStream.url')
+    page.evaluate('''window.decisionStream.emit('question', {
+      id:'architect', name:'Architect', question:'What matters most?', choices:['Speed','Cost'],token:'test-token'
+    })''')
+    page.get_by_role('button', name='Speed', exact=True).click()
+    pw.expect(page.get_by_role('button', name='Speed', exact=True)).to_be_disabled()
+    assert any(path == '/api/council/answer' and payload['answer'] == 'Speed'
+               for path, headers, payload in ui.requests)
+    page.evaluate('''window.decisionStream.emit('verdict', {
+      winner_name:'Buy', option_tally:{Build:1,Buy:3},votes:4,answer:'Buy saves time.'
+    }); window.decisionStream.emit('done',{});''')
+    pw.expect(page.get_by_text('Council recommendation: Buy', exact=True)).to_be_visible()
+    pw.expect(page.locator('#input')).to_be_enabled()

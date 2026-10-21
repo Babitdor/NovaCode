@@ -571,3 +571,123 @@ def test_history_is_bounded():
         "keep at least what the prompt reads"
     )
     assert ch._MAX_KEPT_ROUNDS <= 50, "but still bounded"
+
+@pytest.mark.asyncio
+async def test_decision_clarifies_then_votes_on_options():
+    from types import SimpleNamespace
+    from novacode_cli.council_decision import run_decision
+
+    class DecisionModel:
+        async def ainvoke(self, messages):
+            if 'Ask at most' in messages[0][1]:
+                return SimpleNamespace(content=json.dumps({'question': 'What matters most?', 'choices': ['Speed', 'Cost']}))
+            return SimpleNamespace(content=json.dumps({'choice': 'Buy', 'reason': 'Speed is the priority.'}))
+
+        async def astream(self, messages):
+            assert 'Speed' in messages[1][1]
+            yield SimpleNamespace(content='Buy saves implementation time; check vendor risk.')
+
+    async def answer(question):
+        assert question['choices'] == ['Speed', 'Cost']
+        return 'Speed'
+
+    events = [e async for e in run_decision('Choose a strategy', DecisionModel(),
+              options=['Build', 'Buy'], criteria='Time to market', ask=answer,
+              personas=council.PERSONAS[:2])]
+    assert sum(e['type'] == 'question' for e in events) == 2
+    votes = [e for e in events if e['type'] == 'vote']
+    assert all(e['choice'] == 'Buy' for e in votes)
+    verdict = next(e for e in events if e['type'] == 'verdict')
+    assert verdict['option_tally'] == {'Build': 0, 'Buy': 2}
+    assert verdict['winner_name'] == 'Buy'
+    assert events[-1]['type'] == 'done'
+
+
+@pytest.mark.asyncio
+async def test_decision_invalid_ballots_do_not_invent_consensus():
+    from types import SimpleNamespace
+    from novacode_cli.council_decision import run_decision
+
+    class InvalidModel:
+        async def ainvoke(self, messages):
+            return SimpleNamespace(content='{}')
+        async def astream(self, messages):
+            yield SimpleNamespace(content='More information is needed.')
+
+    events = [e async for e in run_decision('Choose', InvalidModel(), options=['A', 'B'],
+              criteria='', ask=None, personas=council.PERSONAS[:1])]
+    verdict = next(e for e in events if e['type'] == 'verdict')
+    assert verdict['winner_name'] == 'No consensus'
+    assert verdict['votes'] == 0
+
+
+def test_sse_heartbeats_and_stop(council_server, monkeypatch):
+    async def slow(*args, **kwargs):
+        yield {'type': 'council_start', 'agents': []}
+        await asyncio.sleep(60)
+    monkeypatch.setattr(council, 'run_council', slow)
+    monkeypatch.setattr(ch, '_HEARTBEAT_SECONDS', .05)
+    with urllib.request.urlopen(council_server + '/api/council?topic=slow', timeout=5) as response:
+        lines = []
+        while True:
+            line = response.readline().decode()
+            lines.append(line)
+            if 'event: heartbeat' in line:
+                break
+        request = urllib.request.Request(council_server + '/api/council/stop', data=b'', method='POST')
+        assert urllib.request.urlopen(request, timeout=5).status == 204
+        while True:
+            line = response.readline().decode()
+            if 'event: done' in line:
+                break
+        assert _wait_for_council_idle(5)
+
+
+def test_question_answer_endpoint_validates_tokens(council_server):
+    token = 'synthetic-question-token'
+    target = __import__('queue').Queue(maxsize=1)
+    with ch._pending_lock:
+        ch._pending_answers[token] = target
+    try:
+        request = urllib.request.Request(council_server + '/api/council/answer',
+            data=json.dumps({'token': token, 'answer': 'Speed'}).encode(),
+            headers={'Content-Type': 'application/json'})
+        assert urllib.request.urlopen(request, timeout=5).status == 204
+        assert target.get_nowait() == 'Speed'
+    finally:
+        with ch._pending_lock:
+            ch._pending_answers.pop(token, None)
+    with pytest.raises(urllib.error.HTTPError) as error:
+        urllib.request.urlopen(request, timeout=5)
+    assert error.value.code == 409
+
+
+def test_decision_sse_accepts_clarification_then_finishes(council_server, monkeypatch):
+    async def decision(topic, model, *, ask, **kwargs):
+        question = {'type': 'question', 'id': 'architect', 'name': 'Architect',
+                    'question': 'Budget?', 'choices': ['Low', 'High']}
+        yield question
+        answer = await ask(question)
+        yield {'type': 'question_answered', 'id': 'architect', 'answer': answer}
+        yield {'type': 'done'}
+    from novacode_cli import council_decision
+    monkeypatch.setattr(council_decision, 'run_decision', decision)
+    query = urllib.parse.urlencode({'topic': 'Choose', 'options': 'A\nB'})
+    with urllib.request.urlopen(council_server + '/api/council?' + query, timeout=5) as response:
+        event = None
+        while True:
+            line = response.readline().decode().strip()
+            if line.startswith('event: '):
+                event = line[7:]
+            elif line.startswith('data: '):
+                data = json.loads(line[6:])
+                if event == 'question':
+                    request = urllib.request.Request(council_server + '/api/council/answer',
+                        data=json.dumps({'token': data['token'], 'answer': 'Low'}).encode())
+                    assert urllib.request.urlopen(request, timeout=5).status == 204
+                if event == 'question_answered':
+                    assert data['answer'] == 'Low'
+                if event == 'done':
+                    break
+    assert _wait_for_council_idle(5)
+    assert not ch._pending_answers

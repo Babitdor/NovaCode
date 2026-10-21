@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 import queue
+import secrets
 import socket
 import sys
 import threading
@@ -32,6 +33,11 @@ logger = logging.getLogger(__name__)
 
 # Sentinel pushed onto the event queue when the council run finishes.
 _STREAM_END = object()
+_pending_answers: dict[str, queue.Queue] = {}
+_pending_lock = threading.Lock()
+_producers: set = set()
+_HEARTBEAT_SECONDS = 10
+_IDLE_TIMEOUT = 300
 
 # ---------------------------------------------------------------------------
 # Module-level state shared with the background HTTP server thread.
@@ -233,6 +239,9 @@ def _make_chat_html() -> str:
     border-radius: 20px; color: var(--muted); }
 
   /* --- composer (TUI prompt dock) --- */
+  #decision-options, #decision-criteria { width:100%; box-sizing:border-box; background:var(--panel); color:var(--fg); border:1px solid var(--border); border-radius:8px; padding:10px; margin:8px 0 16px; font:inherit; }
+  .clarification { padding:20px; border:1px solid var(--primary); border-radius:12px; margin:16px 0; }
+  .clarification button, .clarification input { margin:8px 8px 0 0; padding:10px; max-width:100%; }
   #input-area { display: flex; align-items: stretch; border-top: 1px solid var(--border);
     background: var(--panel); flex-shrink: 0; }
   .mode-badge { display: flex; align-items: center; padding: 0 10px; font-size: 10px; font-weight: 700;
@@ -284,6 +293,13 @@ __WORKSPACE_STYLE__
   <h2 class="sidebar-label">Your advisors</h2>
   <div id="bench" aria-label="Council advisors"></div>
   <p class="sidebar-note advisor-placeholder">Your council assembles when you send a question. Follow each advisor's progress here.</p>
+  <h2 class="sidebar-label">Decision brief</h2>
+  <label for="decision-options">Options · one per line (2–8)</label>
+  <textarea id="decision-options" rows="4" placeholder="Build internally&#10;Buy a service&#10;Delay the decision"></textarea>
+  <label for="decision-criteria">Criteria and constraints</label>
+  <textarea id="decision-criteria" rows="3" placeholder="Budget, deadline, priorities, risk tolerance…"></textarea>
+  <p class="advisor-placeholder">Add options to enable advisor questions and option voting. Leave empty for an open discussion.</p>
+  <button id="stop-council" type="button">Stop discussion</button>
   <h2 class="sidebar-label">How it works</h2>
   <ol class="workflow"><li>Independent perspectives</li><li>A vote on the best answer</li><li>The final decision is yours</li></ol>
 </div>
@@ -481,17 +497,15 @@ function renderVerdict(ev) {
   }
 
   const h = el('h3');
-  h.innerHTML = '👑 The council chose ' +
-    '<span class="w-name">' + (wm.avatar ? wm.avatar + ' ' : '') +
-    (ev.winner_name || '') + '</span>';
+  h.textContent = 'Council recommendation: ' + (ev.winner_name || 'No consensus');
   card.appendChild(h);
 
   const sub = el('div', 'verdict-sub');
-  sub.textContent = 'by majority vote (' + (ev.tally ? (ev.tally[ev.winner_id] || 0) : 0) +
+  sub.textContent = ev.option_tally ? (ev.tied ? 'Split vote · review the trade-offs' : (ev.votes + ' valid option ballots')) : 'by plurality vote (' + (ev.tally ? (ev.tally[ev.winner_id] || 0) : 0) +
     ' of ' + (ev.votes || 0) + ' votes)';
   card.appendChild(sub);
 
-  const tally = ev.tally || {};
+  const tally = ev.option_tally || ev.tally || {};
   const max = Math.max(1, ...Object.values(tally));
   const board = el('div', 'leaderboard');
   Object.keys(tally).sort((a, b) => tally[b] - tally[a]).forEach(id => {
@@ -511,7 +525,8 @@ function renderVerdict(ev) {
   if (ev.answer) {
     const lbl = el('div', 'winner-label'); lbl.textContent = 'Winning answer';
     const ans = el('div', 'winner-answer');
-    ans.innerHTML = marked.parse(ev.answer); highlight(ans);
+    if (ev.option_tally) { ans.textContent = ev.answer; ans.style.whiteSpace = "pre-wrap"; }
+    else { ans.innerHTML = marked.parse(ev.answer); highlight(ans); }
     card.appendChild(lbl); card.appendChild(ans);
   }
   card.appendChild(buildApproval(ev));
@@ -590,6 +605,7 @@ function lastTopic() {
 
 function endRun() {
   if (es) { es.close(); es = null; }
+  messages.querySelectorAll('.clarification button,.clarification input').forEach(node=>node.disabled=true);
   input.disabled = false; sendBtn.disabled = false; input.focus();
   setRun(false);
 }
@@ -597,6 +613,8 @@ function endRun() {
 function convene() {
   const topic = input.value.trim();
   if (!topic || es) return;
+  const optionCount = new Set($('decision-options').value.split('\n').map(v=>v.trim()).filter(Boolean)).size;
+  if (optionCount === 1 || optionCount > 8) { setStatus('Please provide 2–8 distinct options, or leave options empty.'); return; }
   input.value = ''; input.style.height = 'auto';
   input.disabled = true; sendBtn.disabled = true;
   setRun(true);
@@ -609,7 +627,25 @@ function convene() {
   messages.appendChild(banner);
   setStatus('convening the council…'); scrollDown(true);
 
-  es = new EventSource('/api/council?topic=' + encodeURIComponent(topic));
+  const params = new URLSearchParams({topic, options:$('decision-options').value, criteria:$('decision-criteria').value});
+  es = new EventSource('/api/council?' + params);
+  es.addEventListener('question', e => {
+    const d = JSON.parse(e.data), card = el('div', 'clarification');
+    const title = el('h3'); title.textContent = d.name + ' asks';
+    const text = el('p'); text.textContent = d.question;
+    const field = el('input'); field.placeholder = 'Your answer or another option'; field.setAttribute('aria-label', d.question);
+    card.append(title, text, field);
+    const answer = async value => {
+      const response = await fetch('/api/council/answer', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:d.token, answer:value})}).catch(()=>null);
+      if (!response || !response.ok) { setStatus('Could not send answer. Try again.'); return; }
+      card.querySelectorAll('button,input').forEach(node=>node.disabled=true);
+      text.textContent = d.question + ' — ' + (value || 'Skipped');
+    };
+    [...(d.choices || []), 'Skip'].forEach(choice=>{const b=el('button');b.textContent=choice;b.onclick=()=>answer(choice==='Skip'?'':choice);card.appendChild(b);});
+    const submit=el('button');submit.textContent='Send answer';submit.onclick=()=>answer(field.value);card.appendChild(submit);
+    messages.appendChild(card); setStatus('waiting for your clarification…'); scrollDown(true);
+  });
+  es.addEventListener('question_answered', () => {messages.querySelectorAll('.clarification button,.clarification input').forEach(node=>node.disabled=true);});
 
   es.addEventListener('council_start', e => {
     const d = JSON.parse(e.data);
@@ -625,7 +661,7 @@ function convene() {
   es.addEventListener('agent_tool', e => { const d = JSON.parse(e.data); agentSearch(d.id, d.query); });
   es.addEventListener('agent_done', e => { const d = JSON.parse(e.data); finishAgent(d.id, d.text); });
   es.addEventListener('vote_start', e => {
-    addPhase('The Vote', 'each advisor casts one vote for the best answer');
+    addPhase('The Vote', JSON.parse(e.data).options ? 'each advisor votes for a decision option' : 'each advisor casts one vote for the best answer');
     Object.keys(benchSeats).forEach(id => seatState(id, 'voting', 'voting…'));
     setStatus('the council is voting…');
   });
@@ -643,6 +679,7 @@ function convene() {
   });
   es.addEventListener('done', e => { setStatus('the council has spoken'); endRun(); });
   es.onerror = () => {
+    if (es) { es.close(); }
     if (!es || es.readyState === EventSource.CLOSED) {
       setStatus('connection closed'); endRun();
     }
@@ -657,6 +694,7 @@ input.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); convene(); }
 });
 sendBtn.addEventListener('click', convene);
+$('stop-council').addEventListener('click', () => {fetch('/api/council/stop', {method:'POST'}).catch(()=>{});endRun(); setStatus('discussion stopped');});
 
 const newThreadBtn = $('new-thread');
 function newThread() {
@@ -718,6 +756,31 @@ class _ChatHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         """Record the user's decision on a round."""
         parsed = urlparse(self.path)
+        if parsed.path == "/api/council/stop":
+            with _pending_lock:
+                for producer in _producers:
+                    producer.cancel()
+            self._decision_reply(204)
+            return
+        if parsed.path == "/api/council/answer":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if not 0 < length <= _MAX_DECISION_BODY:
+                    raise ValueError()
+                payload = json.loads(self.rfile.read(length))
+                token, answer = payload.get("token"), payload.get("answer")
+                if not isinstance(token, str) or not isinstance(answer, str) or len(answer) > 4000:
+                    raise ValueError()
+                with _pending_lock:
+                    target = _pending_answers.get(token)
+                if target is None:
+                    self._decision_reply(409)
+                    return
+                target.put_nowait(answer.strip() or "Skipped; state assumptions explicitly.")
+                self._decision_reply(204)
+            except (ValueError, TypeError, AttributeError, queue.Full):
+                self._decision_reply(400)
+            return
         if parsed.path != "/api/council/decision":
             self.send_response(404)
             self.send_header("Content-Length", "0")
@@ -822,8 +885,32 @@ class _ChatHandler(BaseHTTPRequestHandler):
         Carries prior rounds in so the advisors can follow up, and records this
         round into the shared history once it completes.
         """
-        q: queue.Queue[Any] = queue.Queue()
+        q: queue.Queue[Any] = queue.Queue(maxsize=2048)
+        parameters = parse_qs(urlparse(self.path).query)
+        options = list(dict.fromkeys(o.strip()[:200] for o in parameters.get("options", [""])[0].split("\n") if o.strip()))[:8]
+        criteria = parameters.get("criteria", [""])[0][:2000]
+        tokens: list[str] = []
+        async def ask(event):
+            token = event["token"]
+            with _pending_lock:
+                answers = _pending_answers[token]
+            try:
+                deadline = time.monotonic() + 240
+                while time.monotonic() < deadline:
+                    try:
+                        return answers.get_nowait()
+                    except queue.Empty:
+                        await asyncio.sleep(.1)
+                return "No response before timeout; state assumptions explicitly."
+            finally:
+                with _pending_lock:
+                    _pending_answers.pop(token, None)
         history = list(_council_history)  # snapshot for this run
+
+        async def enqueue(item):
+            while q.full():
+                await asyncio.sleep(.02)
+            q.put_nowait(item)
 
         async def _produce() -> None:
             from novacode_cli.council import get_council_model, run_council
@@ -834,23 +921,50 @@ class _ChatHandler(BaseHTTPRequestHandler):
                 settings = await asyncio.to_thread(load_settings)
                 models = await asyncio.to_thread(resolve_models, settings, model, debate=True)
             except Exception as exc:  # noqa: BLE001
-                q.put(("council_error", {"message": f"Model unavailable: {exc}"}))
-                q.put(_STREAM_END)
+                await enqueue(("council_error", {"message": f"Model unavailable: {exc}"}))
+                await enqueue(_STREAM_END)
                 return
 
             try:
-                async for event in run_council(
-                    topic, model, personas=settings.personas(debate=True),
-                    history=history, member_models=models,
-                ):
+                kwargs = dict(personas=settings.personas(debate=True), history=history, member_models=models)
+                if len(options) >= 2:
+                    from novacode_cli.council_decision import run_decision
+                    stream = run_decision(topic, model, options=options, criteria=criteria, ask=ask, **kwargs)
+                else:
+                    stream = run_council(topic, model, **kwargs)
+                async for event in stream:
+                    if event.get("type") == "question":
+                        event["token"] = secrets.token_urlsafe(24)
+                    event = dict(event)
                     etype = event.pop("type")
-                    q.put((etype, event))
+                    if etype == "question":
+                        tokens.append(event["token"])
+                        # Register before delivery; the browser may answer immediately.
+                        with _pending_lock:
+                            _pending_answers[event["token"]] = queue.Queue(maxsize=1)
+                    await enqueue((etype, event))
             except Exception as exc:  # noqa: BLE001
-                q.put(("council_error", {"message": str(exc)}))
+                await enqueue(("council_error", {"message": str(exc)}))
             finally:
-                q.put(_STREAM_END)
+                # Cancellation must never block the event loop on a full queue.
+                if asyncio.current_task().cancelling():
+                    if q.full():
+                        q.get_nowait()
+                    q.put_nowait(_STREAM_END)
+                else:
+                    await enqueue(_STREAM_END)
 
         producer = asyncio.run_coroutine_threadsafe(_produce(), loop)
+        def producer_finished(future):
+            # Also wake the HTTP thread if cancelled during model setup.
+            if future.cancelled():
+                try:
+                    q.put_nowait(_STREAM_END)
+                except queue.Full:
+                    pass
+        producer.add_done_callback(producer_finished)
+        with _pending_lock:
+            _producers.add(producer)
 
         # Accumulate this round from the event stream so we can append it to the
         # shared history once it completes cleanly.
@@ -860,14 +974,21 @@ class _ChatHandler(BaseHTTPRequestHandler):
         winner_name: str | None = None
         completed = False
 
+        last_event = time.monotonic()
         while True:
             try:
-                item = q.get(timeout=300)
+                item = q.get(timeout=_HEARTBEAT_SECONDS)
             except queue.Empty:
-                self._sse("council_error", {"message": "The council timed out"})
-                producer.cancel()
-                break
-
+                if time.monotonic() - last_event >= _IDLE_TIMEOUT:
+                    self._sse("council_error", {"message": "The council timed out"})
+                    self._sse("done", {})
+                    producer.cancel()
+                    break
+                if not self._sse("heartbeat", {}):
+                    producer.cancel()
+                    break
+                continue
+            last_event = time.monotonic()
             if item is _STREAM_END:
                 # Record the round before signalling done, so a follow-up request
                 # (or a test) observing the terminal event sees it persisted.
@@ -897,9 +1018,17 @@ class _ChatHandler(BaseHTTPRequestHandler):
                 winner_name = data.get("winner_name")
                 completed = True
 
+            if etype == "done":
+                continue  # persist history before the single terminal frame
             if not self._sse(etype, data):
                 producer.cancel()  # client disconnected
                 break
+
+        producer.cancel()
+        with _pending_lock:
+            _producers.discard(producer)
+            for token in tokens:
+                _pending_answers.pop(token, None)
 
     def _sse(self, event: str, data: dict) -> bool:
         """Write one SSE frame. Returns False if the client has disconnected."""
@@ -1056,6 +1185,10 @@ def stop_chat_server() -> bool:
     if _server is None:
         return False
 
+    with _pending_lock:
+        for producer in _producers:
+            producer.cancel()
+        _pending_answers.clear()
     _server.shutdown()
     _server.server_close()
     _server = None

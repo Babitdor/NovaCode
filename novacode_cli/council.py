@@ -419,6 +419,7 @@ async def run_council(
     history: list[dict[str, Any]] | None = None,
     *,
     member_models: dict[str, Any] | None = None,
+    advice_only: bool = False,
 ) -> AsyncIterator[dict[str, Any]]:
     """Run a council debate over *topic* and yield event dicts.
 
@@ -499,6 +500,10 @@ async def run_council(
 
         answers[persona.id] = text
         yield {"type": "agent_done", "id": persona.id, "text": text}
+
+    if advice_only:
+        yield {"type": "done"}
+        return
 
     # --- Phase 2: democratic voting (one vote each) ----------------------
     # Only members who actually produced an answer are on the ballot or hold a
