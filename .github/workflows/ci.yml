@@ -1,0 +1,143 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUTF8: '1'
+  UV_PYTHON: '3.11'
+  DO_NOT_TRACK: '1'
+  LANGSMITH_TRACING: 'false'
+
+jobs:
+  regression:
+    name: Regression (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          enable-cache: true
+      - name: Install locked runtime and test dependencies
+        run: uv sync --locked --group dev
+      - name: Check release metadata and changelog
+        run: >-
+          uv run --no-sync python -c "import pathlib, tomllib;
+          version = tomllib.loads(pathlib.Path('pyproject.toml').read_text(encoding='utf-8'))['project']['version'];
+          lock = tomllib.loads(pathlib.Path('uv.lock').read_text(encoding='utf-8'));
+          assert any(p['name'] == 'novacode-cli' and p['version'] == version for p in lock['package']);
+          assert pathlib.Path('changelog', 'CHANGELOG-v' + version + '.md').is_file()"
+      - name: Check focused tool lint
+        run: >-
+          uv run --no-sync ruff check --select F,I
+          novacode_cli/agents/strict_tools.py
+          novacode_cli/agents/tool_search_variants.py
+          novacode_cli/mcp/generic.py
+          novacode_cli/tools/cron_tools.py
+          novacode_cli/tools/inspection_tools.py
+      - name: Run offline regression tests
+        run: >-
+          uv run --no-sync pytest -q --tb=short --junitxml=test-results/regression.xml
+          tests/test_release_version.py
+          tests/test_deepagents_compat.py
+          tests/test_async_model_context.py
+          tests/test_async_subagent_gating.py
+          tests/test_subagent_hitl.py
+          tests/test_local_backend_subagent_execute.py
+          tests/test_strict_tools.py
+          tests/test_tool_search_variants.py
+          tests/test_tool_search.py
+          tests/test_generic_mcp_tool.py
+          tests/test_essential_session_tools.py
+          tests/test_context_snapshot.py
+          tests/test_remote_cron.py
+          tests/test_approval_policy.py
+          tests/test_desktop_sleep.py
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: regression-${{ matrix.os }}
+          path: test-results/*.xml
+          if-no-files-found: warn
+
+  windows-install-update:
+    name: Windows install and update
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          enable-cache: true
+      - name: Install locked test dependencies
+        run: uv sync --locked --group dev
+      - name: Check updater regressions including locked launchers
+        run: >-
+          uv run --no-sync pytest -q --tb=short --junitxml=test-results/updater.xml
+          tests/test_updates.py
+          tests/test_update_release.py
+          tests/test_update_restart.py
+          tests/test_update_success_screen.py
+          tests/test_tui_update_release.py
+      - name: Build wheel and source distribution
+        run: uv build
+      - name: Isolate tool installation directories
+        run: |
+          "UV_TOOL_DIR=$(Join-Path $env:RUNNER_TEMP 'nova-tools')" >> $env:GITHUB_ENV
+          "UV_TOOL_BIN_DIR=$(Join-Path $env:RUNNER_TEMP 'nova-bin')" >> $env:GITHUB_ENV
+      - name: Install and reinstall the built wheel
+        run: |
+          $wheel = (Get-ChildItem -LiteralPath dist -Filter *.whl).FullName
+          if (@($wheel).Count -ne 1) { throw 'Expected exactly one wheel' }
+          uv tool install --python 3.11 $wheel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $launcher = Join-Path $env:UV_TOOL_BIN_DIR 'nova.exe'
+          $expected = uv run --no-sync python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Run outside the checkout so source files cannot hide packaging errors.
+          Push-Location $env:RUNNER_TEMP
+          try {
+            $output = & $launcher --version
+            if ($LASTEXITCODE -ne 0) { throw 'Installed launcher failed' }
+            if (($output -join "`n") -notmatch [regex]::Escape("v$expected")) {
+              throw "Installed launcher did not report v$expected"
+            }
+            uv tool install --python 3.11 --force --reinstall $wheel
+            if ($LASTEXITCODE -ne 0) { throw 'Wheel reinstall failed' }
+            $output = & $launcher --version
+            if ($LASTEXITCODE -ne 0) { throw 'Reinstalled launcher failed' }
+            if (($output -join "`n") -notmatch [regex]::Escape("v$expected")) {
+              throw "Reinstalled launcher did not report v$expected"
+            }
+          } finally {
+            Pop-Location
+          }
+      - name: Upload package and test artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-package-and-updater-results
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+            test-results/*.xml
+          if-no-files-found: warn
