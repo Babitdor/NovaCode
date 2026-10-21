@@ -766,13 +766,15 @@ def _harden_subagent_specs(
       transient provider 5xx/429/timeout during a subagent's model call would
       otherwise kill it (this is what broke /init's semantic-extraction
       subagents — the chunk fragment never got written). A fresh instance per
-      build; skipped if the spec already carries a retry middleware.
+      build; skipped if the spec already carries a retry middleware. Nova's
+      policy owns provider retries and bounds each async model turn to four
+      minutes, independently of tool work.
     - **Give isolated skill libraries** — with a skill backend, attach a fresh
       loader using the specialist's selected names and the user's enabled set.
       General-purpose agents retain the full library. Explicit source roots
       remain supported, and the automatic second loader is disabled.
     """
-    from novacode_cli.agents.model_retry import NovaModelRetryMiddleware as ModelRetryMiddleware
+    from novacode_cli.agents.model_retry import NovaSubagentRetryMiddleware as ModelRetryMiddleware
     from novacode_cli.agents.agent_file import FilesystemToolFilter
     from novacode_cli.agents.agent_mailbox import read_agent_messages, send_agent_message
     from novacode_cli.sessions.gateway import SESSION_TOOLS
@@ -840,7 +842,9 @@ def _harden_subagent_specs(
         )
 
         has_retry = any(
-            type(m).__name__ in {"ModelRetryMiddleware", "NovaModelRetryMiddleware"}
+            type(m).__name__ in {
+                "ModelRetryMiddleware", "NovaModelRetryMiddleware", "NovaSubagentRetryMiddleware",
+            }
             for m in existing
         )
         has_vision = any(type(m).__name__ == "VisionCaptionMiddleware" for m in existing)
@@ -880,7 +884,7 @@ def _harden_subagent_specs(
         if not has_retry:
             mw_to_add.append(
                 ModelRetryMiddleware(
-                    max_retries=3,
+                    max_retries=2,
                     retry_on=is_retryable_model_error,
                     on_failure="error",
                     backoff_factor=2.0,
@@ -2208,6 +2212,17 @@ This file stores your preferences and context that persist across sessions.
         main_model_supports_images=_main_model_supports_images,
         compaction_model=wrapped_model if isinstance(wrapped_model, BaseChatModel) else None,
     )
+
+    if team_binding is not None:
+        from novacode_cli.agents.model_retry import (
+            NovaModelRetryMiddleware,
+            NovaSubagentRetryMiddleware,
+        )
+
+        agent_middleware = [
+            NovaSubagentRetryMiddleware() if isinstance(m, NovaModelRetryMiddleware) else m
+            for m in agent_middleware
+        ]
 
     # Plugin middleware injection — discover and inject user-enabled plugins
     # from installed pip packages that register "nova.plugins" entry points.

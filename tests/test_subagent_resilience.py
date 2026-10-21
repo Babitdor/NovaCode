@@ -212,3 +212,63 @@ def test_compiled_and_remote_untouched_even_with_skill_sources():
     assert "skills" not in out[0]
     assert out[1] is specs[1]
     assert "skills" not in out[1]
+
+
+@pytest.mark.parametrize("name", ["builtin-probe", "dynamic-probe"])
+async def test_local_graph_has_one_retry_owner_and_preserves_shared_client(name):
+    import httpx
+    from langchain_openai import ChatOpenAI
+
+    from novacode_cli.agents.core_agent import _original_create_sub_agent
+    from novacode_cli.agents.model_retry import NovaSubagentRetryMiddleware
+
+    calls = []
+
+    async def rate_limited(request):
+        calls.append(request)
+        return httpx.Response(429, json={"error": {"message": "rate limit"}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(rate_limited)) as client:
+        model = ChatOpenAI(api_key="test", max_retries=5, http_async_client=client)
+        spec = _harden_subagent_specs([{
+            "name": name, "description": "probe", "system_prompt": "probe", "tools": [], "model": model,
+        }])[0]
+        retry = next(m for m in spec["middleware"] if isinstance(m, NovaSubagentRetryMiddleware))
+        retry.initial_delay = 0
+        retry.jitter = False
+        graph = _original_create_sub_agent(spec)
+        with pytest.raises(Exception, match="rate limit"):
+            await graph.ainvoke({"messages": [("user", "probe")]})
+        assert len(calls) == 3
+        assert model.root_async_client.max_retries == 5
+
+
+async def test_local_graph_deadline_cancels_provider_wait():
+    import asyncio
+
+    import httpx
+    from langchain_openai import ChatOpenAI
+
+    from novacode_cli.agents.core_agent import _original_create_sub_agent
+    from novacode_cli.agents.model_retry import NovaSubagentRetryMiddleware
+
+    cancelled = asyncio.Event()
+
+    async def stalled(request):
+        try:
+            await asyncio.sleep(60)
+        finally:
+            cancelled.set()
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(stalled)) as client:
+        model = ChatOpenAI(api_key="test", max_retries=5, http_async_client=client)
+        spec = _harden_subagent_specs([{
+            "name": "deadline-probe", "description": "probe", "system_prompt": "probe",
+            "tools": [], "model": model,
+        }])[0]
+        retry = next(m for m in spec["middleware"] if isinstance(m, NovaSubagentRetryMiddleware))
+        retry.call_budget = 0.05
+        graph = _original_create_sub_agent(spec)
+        with pytest.raises(TimeoutError, match="including retries"):
+            await graph.ainvoke({"messages": [("user", "probe")]})
+        assert cancelled.is_set()

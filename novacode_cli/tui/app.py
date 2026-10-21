@@ -176,11 +176,6 @@ _TRANSCRIPT_LOW_WATER = 150
 _MAX_TRANSCRIPT_CHARS = 2_000_000
 _TRANSCRIPT_CHARS_LOW_WATER = 1_500_000
 
-# How many subagent log lines to draw. The subagent card is a live progress view,
-# not a scrollback: only the tail is visible, and rendering every entry on every
-# event made subagent events O(n^2) (see _refresh_subagent_list).
-_SUBAGENT_LIST_TAIL = 100
-
 # Responsive breakpoints (terminal columns/rows). Below _NARROW_WIDTH the info
 # bar sheds its widest columns and the status line drops its right-side counts;
 # below the _MIN_* floor the layout can't fit and we surface a "too small" note.
@@ -990,7 +985,6 @@ def _paint(widget: Any, content: Any) -> None:
 _LIVE_OUTPUT_MAX_LINES = 200
 _LIVE_OUTPUT_MAX_CHARS = 20_000
 _LOG_MAX_LINES = 2_000
-_SUBAGENT_LOG_MAX_ENTRIES = 300
 _PENDING_JOB_NOTE_MAX = 100
 #: Cap on a failed tool call's stored output, so one enormous traceback cannot
 #: bloat the entry (and the group's repaint) without bound.
@@ -2244,8 +2238,9 @@ class NovaApp(App):
         # _schedule_tool_group_refresh): a burst of tool events paints once.
         self._tool_group_refresh_scheduled: bool = False
         self._tool_group_running: str | None = None
-        # subagent tracking: call_id -> (collapsible, body Static, type, start_time)
-        self._subagent_widgets: dict[str, tuple[Collapsible, Static, str, float]] = {}
+        # Active inline status lines, keyed by dispatch ID.
+        self._subagent_widgets: dict[str, tuple[Static, Static, str, float]] = {}
+        self._inline_subagents: dict[str, Static] = {}
         self._subagent_count: int = 0  # running total for display
         # Maps running subagent tool call_id -> subagent task call_id
         self._subagent_tool_to_task: dict[str, str] = {}
@@ -5956,7 +5951,12 @@ class NovaApp(App):
         self._tool_components.clear()
         self._last_tool = None
         self._close_tool_group()
-        self._subagent_widgets.clear()
+        # Cancellation resets streaming before the turn finalizer marks local
+        # delegates stopped. Keep their handles until that status is painted.
+        self._inline_subagents = {
+            key: widget for key, widget in self._inline_subagents.items()
+            if key in self._subagent_widgets
+        }
         self._subagent_count = 0
         self._subagent_tool_to_task.clear()
         # NB: the docked checklist is deliberately NOT cleared here — this
@@ -6188,7 +6188,7 @@ class NovaApp(App):
         self._todos_collapsed = not getattr(self, "_todos_collapsed", False)
         self._paint_todos(getattr(self, "_todos", None), getattr(self, "_todos_agent", None))
 
-    # ── dynamic subagents (persistent panel) ────────────────────────────────
+    # ── subagent tracking (local inline text, remote task panel) ────────────────────────────────
 
     def _ingest_subagent_task(self, task: ev.SubagentTask) -> None:
         """Upsert one dispatch row, then repaint.
@@ -6212,6 +6212,10 @@ class NovaApp(App):
                 key: log
                 for key, log in self._subagent_previews.items()
                 if key in self._subagent_rows
+            }
+            self._inline_subagents = {
+                key: widget for key, widget in self._inline_subagents.items()
+                if key in self._subagent_widgets
             }
             self._subagents_stale = False
         if existing is not None:
@@ -6243,7 +6247,10 @@ class NovaApp(App):
 
     def _subagent_task_list(self) -> list[Any]:
         """Active rows in arrival order, capped for a runaway fan-out."""
-        rows = [row for row in self._subagent_rows.values() if row.status == "running"]
+        rows = [
+            row for row in self._subagent_rows.values()
+            if row.status == "running" and row.phase_kind == "async"
+        ]
         if len(rows) > subagent_tasks.MAX_ROWS:
             rows = rows[-subagent_tasks.MAX_ROWS :]
         return rows
@@ -6343,6 +6350,8 @@ class NovaApp(App):
             self._subagents_paint_timer = None
         self._subagents_paint_due = 0.0
         self._subagent_rows.clear()
+        self._inline_subagents.clear()
+        self._subagent_widgets.clear()
         self._subagent_phase_order.clear()
         self._subagent_collapsed_phases.clear()
         self._subagent_previews.clear()
@@ -6357,6 +6366,17 @@ class NovaApp(App):
             if row.status == "running" and row.phase_kind != "async":
                 row.duration_ms = int(subagent_tasks.elapsed_for(row, now) * 1000)
                 row.status = "stopped"
+                widget = self._inline_subagents.get(row.task_id)
+                if widget is not None:
+                    _paint(widget, self._inline_subagent_text(row))
+                self._subagent_widgets.pop(row.task_id, None)
+        # A dispatch can be interrupted before its detailed task event arrives.
+        for task_id, (widget, _, name, started) in list(self._subagent_widgets.items()):
+            _paint(widget, self._inline_subagent_text(ev.SubagentTask(
+                task_id=task_id, subagent_type=name, status="stopped",
+                duration_ms=int(max(0, now - started) * 1000),
+            )))
+        self._subagent_widgets.clear()
         self._subagents_stale = True
         self._paint_subagents()
 
@@ -6953,255 +6973,70 @@ class NovaApp(App):
             body.scroll_end(animate=False)
         else:
             body.update(Text(out, style=body_style))
-    async def _handle_subagent(self, e: ev.SubagentActivity) -> None:
-        """Render subagent dispatch and completion with collapsible widgets."""
-        import time
-
-        cid = e.call_id or ""
-        color = e.color or "#bb9af7"
-
-        if e.kind == "dispatched" and cid:
-            self._subagent_count += 1
-            label = f"⟐ {e.subagent_type or 'subagent'}"
-            title = Text.assemble(
-                (label, f"bold {color}"),
-                (f"  · #{self._subagent_count} dispatched", "dim"),
-            )
-            # Create a Vertical container as the body
-            body = Vertical(classes="toolbody")
-            # Start expanded (collapsed=False) so dispatching subagents show live progress
-            comp = Collapsible(body, title=title, collapsed=False)  # type: ignore
-            comp.add_class("subagent")
-            await self._mount(comp)
-            animate_entrance(comp, "fade")
-
-            # Mount a Static for status text, a Static for subagent-list, and a OutputLog for the progress log
-            status_text = Text(e.detail or "", style="dim") if e.detail else Text("")
-            await body.mount(Static(status_text, id="subagent-status"))
-            await body.mount(Static("", id="subagent-list"))
-            await body.mount(
-                OutputLog(
-                    id="subagent-log",
-                    classes="terminal-log",
-                    highlight=True,
-                    markup=True,
-                    max_lines=_LOG_MAX_LINES,
-                )
-            )
-
-            # Initialize dynamic height tracking and entry lists
-            comp._log_lines = 0
-            comp._log_entries = []
-            comp._tool_lines = {}
-            try:
-                log_widget = body.query_one("#subagent-log", OutputLog)
-                log_widget.styles.height = 5
-            except Exception:
-                pass
-
-            self._subagent_widgets[cid] = (
-                comp,
-                body,
-                e.subagent_type or "subagent",
-                time.time(),
-            )
-
-        elif e.kind == "completed":
-            # Try matching by call_id first, then fallback to subagent_type
-            entry = None
-            matched_cid = cid
-            if cid and cid in self._subagent_widgets:
-                entry = self._subagent_widgets.pop(cid)
-            else:
-                # Fallback: find first matching by subagent type
-                for key, val in list(self._subagent_widgets.items()):
-                    if val[2] == (e.subagent_type or ""):
-                        entry = self._subagent_widgets.pop(key)
-                        matched_cid = key
-                        break
-
-            if entry is not None:
-                comp, body, stype, start_time = entry
-                elapsed = time.time() - start_time
-                dur = (
-                    f"{elapsed:.1f}s"
-                    if elapsed < 60
-                    else f"{int(elapsed // 60)}m {int(elapsed % 60)}s"
-                )
-                icon = e.message or f"{e.subagent_type}"
-                count = len(self._subagent_widgets)
-                remaining = f" · {count} active" if count > 0 else ""
-                comp.title = f"{_esc(str(icon))}  ({dur}){remaining}"
-                if e.detail:
-                    try:
-                        _paint(
-                            body.query_one("#subagent-status", Static),
-                            Text(e.detail, style="dim"),
-                        )
-                    except Exception:
-                        pass
-                else:
-                    try:
-                        _paint(body.query_one("#subagent-status", Static), Text(""))
-                    except Exception:
-                        pass
-                comp.collapsed = True
-                # Clean up tool calls mapping for this subagent
-                self._subagent_tool_to_task = {
-                    k: v for k, v in self._subagent_tool_to_task.items() if v != matched_cid
-                }
-                # Subagent completion is already reflected in the digest's task
-                # count, so no separate remote message is sent here.
-            else:
-                # No matching widget — log as a simple line
-                dur_part = ""
-                if e.detail:
-                    dur_part = f" — {e.detail}"
-                self._log(Text(f"{e.message}{dur_part}", style=color))
-
-        elif e.kind in ("status", "tool_start", "tool_result") and e.message:
-            if e.kind == "tool_start" and e.detail and cid:
-                self._subagent_tool_to_task[e.detail] = cid
-            elif e.kind == "tool_result" and e.detail:
-                self._subagent_tool_to_task.pop(e.detail, None)
-
-            if cid and cid in self._subagent_widgets:
-                comp, body, stype, start_time = self._subagent_widgets[cid]
-                log_entries = getattr(comp, "_log_entries", [])
-                tool_lines = getattr(comp, "_tool_lines", {})
-
-                if e.kind == "tool_start":
-                    if e.detail and e.detail in tool_lines:
-                        idx = tool_lines[e.detail]
-                        entry = log_entries[idx]
-                        entry["display"] = e.message
-                        entry.pop("_line", None)  # invalidate the cached render
-                    else:
-                        entry = {
-                            "type": "tool",
-                            "display": e.message,
-                            "mark": "running",
-                            "detail": "",
-                            "error": False,
-                        }
-                        idx = len(log_entries)
-                        log_entries.append(entry)
-                    if e.detail:
-                        tool_lines[e.detail] = idx
-                    comp._log_entries = log_entries
-                    comp._tool_lines = tool_lines
-                    self._trim_subagent_log(comp)
-                    self._refresh_subagent_list(cid)
-                elif e.kind == "tool_result":
-                    if e.detail and e.detail in tool_lines:
-                        idx = tool_lines[e.detail]
-                        entry = log_entries[idx]
-                        is_error = e.color == "#f7768e"
-                        entry["mark"] = "failed" if is_error else "done"
-                        entry["detail"] = e.message
-                        entry["error"] = is_error
-                        entry.pop("_line", None)  # invalidate the cached render
-                        tool_lines.pop(e.detail, None)
-                    comp._log_entries = log_entries
-                    comp._tool_lines = tool_lines
-                    self._trim_subagent_log(comp)
-                    self._refresh_subagent_list(cid)
-                else:  # status
-                    log_entries.append(
-                        {
-                            "type": "status",
-                            "display": e.message,
-                        }
-                    )
-                    comp._log_entries = log_entries
-                    self._trim_subagent_log(comp)
-                    self._refresh_subagent_list(cid)
-            else:
-                self._log(Text(f"  ⟐ {e.message}", style=color))
-
-    def _refresh_subagent_list(self, cid: str) -> None:
-        """Redraw the subagent Static list based on its current entries.
-
-        Mirrors ``_refresh_tool_group``: this runs on EVERY subagent event, and
-        ``comp._log_entries`` grows for the life of the subagent, so re-rendering
-        all of them each time made subagent events O(n^2). Each line is rendered
-        once and cached on its entry, and only the tail is drawn.
-        """
-        if cid not in self._subagent_widgets:
-            return
-        comp, body, stype, start_time = self._subagent_widgets[cid]
-        try:
-            list_widget = body.query_one("#subagent-list", Static)
-            log_entries = getattr(comp, "_log_entries", [])[-_SUBAGENT_LIST_TAIL:]
-            lines = []
-            for entry in log_entries:
-                line = entry.get("_line")
-                # The rendered line embeds theme colours, so a /theme switch must
-                # invalidate the cache — key it on the active theme name.
-                if line is None or entry.get("_line_theme") != self.theme:
-                    line = self._render_subagent_line(entry)
-                    entry["_line"] = line
-                    entry["_line_theme"] = self.theme
-                lines.append(line)
-            _paint(list_widget, "\n".join(lines))
-        except Exception:
-            pass
 
     @staticmethod
-    def _trim_subagent_log(comp: Any) -> None:
-        """Bound a subagent card's event history while retaining active calls."""
-        entries = getattr(comp, "_log_entries", [])
-        if len(entries) <= _SUBAGENT_LOG_MAX_ENTRIES:
-            return
-        keep_from = len(entries) - _SUBAGENT_LOG_MAX_ENTRIES
-        kept_indices = [
-            index
-            for index, entry in enumerate(entries)
-            if index >= keep_from or entry.get("mark") == "running"
-        ]
-        if len(kept_indices) == len(entries):
-            return
-        remap = {old: new for new, old in enumerate(kept_indices)}
-        comp._log_entries = [entries[index] for index in kept_indices]
-        comp._tool_lines = {
-            call_id: remap[index]
-            for call_id, index in getattr(comp, "_tool_lines", {}).items()
-            if index in remap
-        }
+    def _inline_subagent_text(task: ev.SubagentTask) -> Text:
+        """Literal, compact status text; no markup links or disclosure controls."""
+        name = " ".join((task.subagent_type or "subagent").split())
+        status = {"done": "completed", "failed": "failed", "stopped": "stopped"}.get(
+            task.status, "running"
+        )
+        style = "dim" if status == "running" else ("cyan" if status == "completed" else "yellow")
+        text = Text(f"  {name} · {status}", style=style)
+        label = " ".join(task.label.split())
+        if label and label != name:
+            text.append(f" — {label[:120]}", style="dim")
+        if task.duration_ms is not None:
+            text.append(f" ({task.duration_ms / 1000:.1f}s)", style="dim")
+        if task.error:
+            error = " ".join(task.error.split())
+            text.append(f" — {error[:180]}", style="yellow")
+        return text
 
-    def _render_subagent_line(self, entry: dict) -> str:
-        """Render one subagent log entry to a markup line (cached by the caller).
-
-        Colours come from the active theme rather than the tokyo-night hexes this
-        used to hardcode, and the status mark is a geometric glyph rather than
-        ``✓``/``✗`` — the emoji are painted by the terminal's own font, so
-        ``/theme`` could not move them.
-        """
-        if entry.get("type") == "status":
-            return f"⟐ {entry['display']}"
-        pal = self._palette
-        mark = entry["mark"]
-        display = entry["display"]
-        detail = entry["detail"]
-        error = entry["error"]
-        if error:
-            color = pal.tool_fail
-        elif mark in ("done", "●"):
-            color = pal.tool_ok
+    async def _show_inline_subagent(self, task: ev.SubagentTask) -> None:
+        widget = self._inline_subagents.get(task.task_id)
+        if widget is None:
+            widget = Static(classes="subagent-inline", markup=False)
+            self._inline_subagents[task.task_id] = widget
+            # Like _log, a status line must not hold up the agent stream while
+            # Textual drains mount/layout callbacks.
+            self._close_tool_group()
+            self._transcript().mount(widget)
+            self._schedule_prune()
+            self._scroll_end(force=False)
+        _paint(widget, self._inline_subagent_text(task))
+        if task.status == "running":
+            self._subagent_widgets.setdefault(task.task_id, (
+                widget, widget, task.subagent_type or "subagent", task.started_at or time.time(),
+            ))
         else:
-            color = pal.accent
-        glyph = "✖" if error else ("●" if mark in ("done", "●") else "◐")
+            self._subagent_widgets.pop(task.task_id, None)
 
-        line = f"[{color}]{glyph}[/{color}] {display}"
-        if detail:
-            clean_detail = detail
-            if clean_detail in ("●", "✖", "done", "failed"):
-                clean_detail = ""
-            if clean_detail.startswith(("● ", "✖ ")):
-                clean_detail = clean_detail[2:]
-            if clean_detail:
-                line += f" [dim]· {clean_detail}[/dim]"
-        return f"⟐ {line}"
+    async def _handle_subagent(self, e: ev.SubagentActivity) -> None:
+        """Local delegates get a single noninteractive line in the transcript."""
+        if e.kind not in {"dispatched", "completed"}:
+            return
+        cid = e.call_id or ""
+        if not cid:
+            cid = next((key for key, entry in self._subagent_widgets.items()
+                        if entry[2] == e.subagent_type), "")
+        if not cid:
+            return
+        # Detailed SubagentTask events update the same line immediately after
+        # these legacy activity events. Never mount a second copy of a dispatch.
+        if e.kind == "dispatched" and cid in self._inline_subagents:
+            return
+        entry = self._subagent_widgets.get(cid)
+        await self._show_inline_subagent(ev.SubagentTask(
+            task_id=cid,
+            subagent_type=e.subagent_type or "subagent",
+            status="running" if e.kind == "dispatched" else "done",
+            phase_kind="direct",
+            label=(e.detail or "") if e.kind == "dispatched" else "",
+            started_at=entry[3] if entry else time.time(),
+            duration_ms=(int((time.time() - entry[3]) * 1000)
+                         if entry and e.kind == "completed" else None),
+        ))
 
     async def _remove_reasoning(self) -> None:
         """Finalize the reasoning trace: collapse it and keep it in the transcript.
@@ -17571,14 +17406,17 @@ class NovaApp(App):
         elif isinstance(e, ev.SubagentActivity):
             await self._handle_subagent(e)
         elif isinstance(e, ev.SubagentTask):
-            # The panel's own row for the same dispatch: a fan-out is visible as
-            # a list while it runs, rather than as N cards.
+            # Keep tracking state, but render local tasks only as inline text.
             self._ingest_subagent_task(e)
+            if e.phase_kind != "async":
+                await self._show_inline_subagent(e)
         elif isinstance(e, ev.SubagentPreview):
             # Collected unseen; the preview screen reads it when a row is opened.
-            subagent_tasks.append_preview(
-                self._subagent_previews.setdefault(e.task_id, []), e.kind, e.text, e.call_id
-            )
+            row = self._subagent_rows.get(e.task_id)
+            if row is not None and row.phase_kind == "async":
+                subagent_tasks.append_preview(
+                    self._subagent_previews.setdefault(e.task_id, []), e.kind, e.text, e.call_id
+                )
         elif isinstance(e, ev.UsageUpdate):
             if self.token_tracker is not None:
                 try:

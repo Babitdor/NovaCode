@@ -4635,174 +4635,26 @@ def test_tui_chatmessage_pending_body():
     asyncio.run(_drive_chatmessage_pending_body())
 
 
-async def _drive_subagent_terminal_preview():
-    """Verify that subagent status/tool calls and live terminal output are routed and displayed correctly in the TUI."""
-    import novacode_cli.ui_events as ev
-    from rich.text import Text as RText
-    from novacode_cli.tui.widgets import OutputLog
-    from textual.widgets import Static
-
+async def test_tui_subagent_tool_bursts_keep_one_plain_status_line():
+    from novacode_cli import ui_events as ev
     from novacode_cli.tui.app import NovaApp
     from novacode_cli.ui.ui_elements import TokenTracker
 
-    app = NovaApp(
-        agent=_FakeAgent(),
-        assistant_id="nova-agent",
-        session_state=_SS(),
-        backend=None,
-        token_tracker=TokenTracker(),
-        image_tracker=None,
-        model_name="m",
-    )
-    async with app.run_test() as pilot:
-        # 1. Dispatch subagent
-        await app._render(
-            ev.SubagentActivity(
-                kind="dispatched",
-                subagent_type="researcher",
-                message="researcher is thinking…",
-                detail="Find all references to subagents",
-                color="#bb9af7",
-                call_id="subagent_task_1",
-            )
-        )
-        await pilot.pause()
-        assert "subagent_task_1" in app._subagent_widgets
-        comp, body, stype, start_time = app._subagent_widgets["subagent_task_1"]
-        assert comp.collapsed is False
-
-        # 2. Tool start within the subagent
-        await app._render(
-            ev.SubagentActivity(
-                kind="tool_start",
-                subagent_type="researcher",
-                message="🔧 grep_search",
-                detail="tool_call_1",
-                call_id="subagent_task_1",
-            )
-        )
-        await pilot.pause()
-        assert app._subagent_tool_to_task.get("tool_call_1") == "subagent_task_1"
-        list_widget = body.query_one("#subagent-list", Static)
-        assert "grep_search" in str(list_widget.render())
-
-        # 3. Stream live output to that tool
-        app._on_tool_output("tool_call_1", "searching codebase...\n")
-
-        # The native component retains logical lines even before layout/reveal.
-        log_widget = body.query_one("#subagent-log", OutputLog)
-        assert await _wait_until(
-            pilot, lambda: any("searching codebase..." in line.text for line in log_widget.lines)
-        ), "the live output buffer did not deliver to the component"
-
-        # 4. Tool result/completion
-        await app._render(
-            ev.SubagentActivity(
-                kind="tool_result",
-                subagent_type="researcher",
-                message="✓ grep_search (0.5s)",
-                detail="tool_call_1",
-                call_id="subagent_task_1",
-            )
-        )
-        await pilot.pause()
-        assert "tool_call_1" not in app._subagent_tool_to_task
-        # The status mark is a theme-coloured bullet, not the ✓ the event text
-        # carries (see _render_subagent_line).
-        assert "● 🔧 grep_search" in str(list_widget.render())
-
-        # 5. Complete subagent
-        await app._render(
-            ev.SubagentActivity(
-                kind="completed",
-                subagent_type="researcher",
-                message="researcher completed",
-                call_id="subagent_task_1",
-            )
-        )
-        await pilot.pause()
-        assert comp.collapsed is True
-        assert "subagent_task_1" not in app._subagent_widgets
-
-
-def test_tui_subagent_terminal_preview():
-    if not _HAS_TEXTUAL:
-        return
-    asyncio.run(_drive_subagent_terminal_preview())
-
-
-async def _drive_subagent_list_is_capped_and_cached():
-    """The subagent list must draw only a tail, and cache each rendered line.
-
-    _refresh_subagent_list runs on EVERY subagent event while comp._log_entries
-    grows for the life of the subagent, so re-rendering every entry each time
-    made subagent events O(n^2). Its sibling _refresh_tool_group already caps
-    ([-100:]) and caches (entry["_line"]); this pins the same contract here.
-    """
-    import novacode_cli.tui.app as appmod
-    from textual.widgets import Static
-
-    from novacode_cli.tui.app import NovaApp
-    from novacode_cli.ui.ui_elements import TokenTracker
-
-    app = NovaApp(
-        agent=_FakeAgent(),
-        assistant_id="nova-agent",
-        session_state=_SS(),
-        backend=None,
-        token_tracker=TokenTracker(),
-        image_tracker=None,
-        model_name="m",
-    )
-    async with app.run_test(size=(100, 30)) as pilot:
-        comp = Static("")
-        comp._log_entries = [
-            {"type": "tool", "display": f"tool {i}", "mark": "✓", "detail": "", "error": False}
-            for i in range(appmod._SUBAGENT_LIST_TAIL + 50)
-        ]
-        body = Static("")
-        await app._mount(body)
-        await body.mount(Static("", id="subagent-list"))
-        app._subagent_widgets["cid"] = (comp, body, "researcher", 0.0)
-
-        app._refresh_subagent_list("cid")
-        await pilot.pause()
-        rendered = str(body.query_one("#subagent-list", Static).render())
-        drawn = [ln for ln in rendered.splitlines() if ln.strip()]
-        assert len(drawn) <= appmod._SUBAGENT_LIST_TAIL, (
-            f"drew {len(drawn)} lines against a tail cap of {appmod._SUBAGENT_LIST_TAIL}"
-        )
-        # The tail is what's drawn: the newest entry must be present.
-        assert f"tool {appmod._SUBAGENT_LIST_TAIL + 49}" in rendered
-
-        # Caching: a second refresh must not re-render the entries.
-        calls = {"n": 0}
-        real = app._render_subagent_line
-
-        def counting(entry):
-            calls["n"] += 1
-            return real(entry)
-
-        app._render_subagent_line = staticmethod(counting)  # type: ignore[method-assign]
-        app._refresh_subagent_list("cid")
-        await pilot.pause()
-        assert calls["n"] == 0, (
-            f"re-rendered {calls['n']} lines on an unchanged refresh — the "
-            "per-entry cache is not being used"
-        )
-
-        # ...but a mutated entry must invalidate its cached line.
-        comp._log_entries[-1]["mark"] = "✗"
-        comp._log_entries[-1].pop("_line", None)
-        app._refresh_subagent_list("cid")
-        await pilot.pause()
-        assert calls["n"] == 1, f"expected 1 re-render after a mutation, got {calls['n']}"
-
-
-def test_tui_subagent_list_is_capped_and_cached():
-    if not _HAS_TEXTUAL:
-        return
-    asyncio.run(_drive_subagent_list_is_capped_and_cached())
+    app = NovaApp(agent=_FakeAgent(), assistant_id="nova-agent", session_state=_SS(),
+                  backend=None, token_tracker=TokenTracker(), image_tracker=None, model_name="m")
+    async with app.run_test(size=(100, 30)):
+        await app._render(ev.SubagentActivity("dispatched", subagent_type="researcher", call_id="a"))
+        widget = app._inline_subagents["a"]
+        for i in range(150):
+            await app._render(ev.SubagentActivity("tool_start", call_id="a", message=f"grep {i}"))
+            await app._render(ev.SubagentActivity("tool_result", call_id="a", message="done"))
+        assert len(app.query(".subagent-inline")) == 1
+        assert "running" in str(widget.render())
+        assert not app.query("#subagent-log")
+        assert not app.query("#subagent-list")
+        await app._render(ev.SubagentActivity("completed", subagent_type="researcher", call_id="a"))
+        assert "completed" in str(widget.render())
+        assert not app._subagent_widgets
 
 
 def test_tui_bg_agent_card_explains_progress():  # noqa: PLR0915 — one block per event type
@@ -5490,7 +5342,7 @@ if __name__ == "__main__":
         asyncio.run(_drive_context_warning())
         asyncio.run(_drive_live_steering())
         asyncio.run(_drive_startup_info())
-        asyncio.run(_drive_subagent_terminal_preview())
+        asyncio.run(test_tui_subagent_tool_bursts_keep_one_plain_status_line())
         asyncio.run(_drive_ralph_screen())
         asyncio.run(_drive_wiki_screen())
         print(

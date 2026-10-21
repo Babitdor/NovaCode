@@ -75,6 +75,9 @@ jobs:
           tests/test_async_on_demand.py
           tests/test_async_subagent_gating.py
           tests/test_subagent_hitl.py
+          tests/test_subagent_resilience.py
+          tests/test_subagent_model_roles.py
+          tests/test_tui_subagent_panel.py
           tests/test_delegated_auto_approve.py
           tests/test_local_backend_subagent_execute.py
           tests/test_strict_tools.py

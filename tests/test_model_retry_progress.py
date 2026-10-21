@@ -110,3 +110,42 @@ async def test_real_graph_stream_publishes_retry_progress_before_recovery():
     assert [event["phase"] for event in events] == ["retry", "recovered"]
     assert events[0]["attempt"] == 1 and events[0]["maximum"] == 3
     assert handler.await_count == 2
+
+
+async def test_subagent_budget_resets_per_model_call_and_excludes_tool_work():
+    import httpx
+    from langchain.agents import create_agent
+    from langchain.tools import tool
+    from langchain_openai import ChatOpenAI
+
+    from novacode_cli.agents.model_retry import NovaSubagentRetryMiddleware
+
+    calls = []
+    tool_calls = []
+
+    @tool
+    async def slow_tool() -> str:
+        """Do useful work slower than the model request budget."""
+        tool_calls.append(True)
+        await asyncio.sleep(0.2)
+        return "done"
+
+    async def respond(request):
+        calls.append(True)
+        message = ({"role": "assistant", "content": None, "tool_calls": [{
+            "id": "call_work", "type": "function",
+            "function": {"name": "slow_tool", "arguments": "{}"},
+        }]} if len(calls) == 1 else {"role": "assistant", "content": "finished"})
+        return httpx.Response(200, json={
+            "id": "probe", "object": "chat.completion", "created": 0, "model": "test",
+            "choices": [{"index": 0, "message": message,
+                         "finish_reason": "tool_calls" if len(calls) == 1 else "stop"}],
+        })
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        model = ChatOpenAI(api_key="test", http_async_client=client)
+        graph = create_agent(model, [slow_tool], middleware=[NovaSubagentRetryMiddleware(call_budget=0.1)])
+        result = await graph.ainvoke({"messages": [("user", "work")]})
+        assert result["messages"][-1].content == "finished"
+        assert len(calls) == 2
+        assert len(tool_calls) == 1
