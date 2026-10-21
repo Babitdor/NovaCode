@@ -27,6 +27,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from novacode_cli.config.config import COLORS, console
+from novacode_cli.ui.council_web import COUNCIL_STYLE, COUNCIL_SETTINGS_HTML, COUNCIL_SETTINGS_SCRIPT
 from novacode_cli.ui.web_workspace import WORKSPACE_CSS, WORKSPACE_SCRIPT
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,7 @@ _server_port: int | None = None
 
 # Only one council can be in session at a time (a single shared model/loop).
 _run_lock = threading.Lock()
+_settings_lock = threading.Lock()
 
 # Prior council rounds (this server's lifetime), so follow-up topics can build on
 # the earlier discussion. Each round: {"topic", "transcript": [[name, text]...],
@@ -281,6 +283,7 @@ def _make_chat_html() -> str:
   @keyframes pulse { 0%,100% { opacity: .75; } 50% { opacity: 1; } }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 __WORKSPACE_STYLE__
+__COUNCIL_STYLE__
 </style>
 </head>
 <body class="workspace-app council-app">
@@ -301,18 +304,18 @@ __WORKSPACE_STYLE__
   <p class="advisor-placeholder">Add options to enable advisor questions and option voting. Leave empty for an open discussion.</p>
   <button id="stop-council" type="button">Stop discussion</button>
   <h2 class="sidebar-label">How it works</h2>
-  <ol class="workflow"><li>Independent perspectives</li><li>A vote on the best answer</li><li>The final decision is yours</li></ol>
+  <ol class="workflow"><li>Independent perspectives</li><li>Questions, trade-offs, and voting</li><li>The final decision is yours</li></ol>
 </div>
 <div class="sidebar-footer"><span>Follow-ups stay in this discussion.</span><span class="sid" id="sid"></span></div>
 </aside>
 <main class="workspace-chat" id="conversation">
 <header class="chat-topbar"><button class="mobile-menu" id="sidebar-toggle" aria-controls="workspace-sidebar"
   aria-expanded="false" aria-label="Open sidebar">☰</button><div class="chat-heading"><h1>Council</h1>
-  <p>A few perspectives. A clearer decision.</p></div><span id="run-badge" class="run-badge">● convening</span></header>
+  <p>A few perspectives. A clearer decision.</p></div><button type="button" class="settings-open" data-council-settings>Council settings</button><span id="run-badge" class="run-badge">● convening</span></header>
 <div id="messages" role="log" aria-label="Council conversation">
-  <div class="welcome"><div class="welcome-icon" aria-hidden="true">◈</div>
+  <div class="welcome"><div class="welcome-icon">THE DECISION TABLE</div>
     <h2>Bring a question<br>to the table.</h2>
-    <p>Your advisors explore it independently and vote on the strongest answer. Review their perspectives, ask a follow-up, and make the final call.</p>
+    <p>Put your options on the table. Your advisors ask the missing questions, challenge assumptions, and vote. You make the final call.</p>
     <div class="prompt-options">
       <button class="prompt-option" data-prompt="Help me compare two approaches to ">Compare approaches</button>
       <button class="prompt-option" data-prompt="Review this decision and challenge my assumptions: ">Review a decision</button>
@@ -715,8 +718,10 @@ function newThread() {
 newThreadBtn.addEventListener('click', newThread);
 </script>
 <script>__WORKSPACE_SCRIPT__</script>
+__COUNCIL_SETTINGS_HTML__
+<script>__COUNCIL_SETTINGS_SCRIPT__</script>
 </body>
-</html>""".replace("__WORKSPACE_STYLE__", WORKSPACE_CSS).replace("__WORKSPACE_SCRIPT__", WORKSPACE_SCRIPT)
+</html>""".replace("__WORKSPACE_STYLE__", WORKSPACE_CSS).replace("__WORKSPACE_SCRIPT__", WORKSPACE_SCRIPT).replace("__COUNCIL_STYLE__", COUNCIL_STYLE).replace("__COUNCIL_SETTINGS_HTML__", COUNCIL_SETTINGS_HTML).replace("__COUNCIL_SETTINGS_SCRIPT__", COUNCIL_SETTINGS_SCRIPT)
 
 
 # ---------------------------------------------------------------------------
@@ -737,6 +742,8 @@ class _ChatHandler(BaseHTTPRequestHandler):
             qs = parse_qs(parsed.query)
             topic = (qs.get("topic") or [""])[0]
             self._stream_council(topic)
+        elif parsed.path == "/api/council/settings":
+            self._council_settings(save=False)
         elif parsed.path == "/api/council/reset":
             self._reset_history()
         else:
@@ -756,6 +763,9 @@ class _ChatHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         """Record the user's decision on a round."""
         parsed = urlparse(self.path)
+        if parsed.path == "/api/council/settings":
+            self._council_settings(save=True)
+            return
         if parsed.path == "/api/council/stop":
             with _pending_lock:
                 for producer in _producers:
@@ -787,6 +797,47 @@ class _ChatHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         self._record_decision()
+
+    def _council_settings(self, *, save: bool) -> None:
+        """Share the inline editor's validated settings, never credentials."""
+        from novacode_cli.council_web_settings import save_web_settings, settings_catalog
+
+        status = 200
+        try:
+            if save:
+                origin = self.headers.get("Origin")
+                if origin and urlparse(origin).netloc != self.headers.get("Host"):
+                    self._settings_reply(403, {"error": "Save settings from the Council page."})
+                    return
+                if self.headers.get_content_type() != "application/json":
+                    raise ValueError("Settings require application/json")
+                length = int(self.headers.get("Content-Length", "0"))
+                if not 0 < length <= 512 * 1024:
+                    raise ValueError("Settings body must be between 1 and 524288 bytes")
+                raw = json.loads(self.rfile.read(length))
+                with _settings_lock:
+                    result = {"settings": save_web_settings(raw)}
+            else:
+                with _settings_lock:
+                    result = settings_catalog()
+        except (ValueError, UnicodeDecodeError) as exc:
+            status, result = 400, {"error": str(exc)}
+        except Exception:
+            logger.exception("Could not access Council settings")
+            status, result = 500, {"error": "Could not read or save Council settings. Check Nova's configuration file permissions."}
+        self._settings_reply(status, result)
+
+    def _settings_reply(self, status: int, data: dict) -> None:
+        payload = json.dumps(data).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            self.wfile.write(payload)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
 
     def _record_decision(self) -> None:
         """Store one ``{"topic", "decision", ...}`` decision, bounded.

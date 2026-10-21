@@ -691,3 +691,45 @@ def test_decision_sse_accepts_clarification_then_finishes(council_server, monkey
                     break
     assert _wait_for_council_idle(5)
     assert not ch._pending_answers
+
+
+def test_web_settings_roundtrip_validates_and_preserves_main_model(council_server, monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from novacode_cli.config import nova_config
+    from novacode_cli.council_settings import load_settings
+
+    monkeypatch.setattr(nova_config.Settings, 'from_environment',
+        lambda: SimpleNamespace(user_deepagents_dir=tmp_path))
+    config = nova_config.NovaConfig()
+    config.set('model', {'provider': 'openai', 'model': 'keep-main'})
+    url = council_server + '/api/council/settings'
+    with urllib.request.urlopen(url, timeout=5) as response:
+        catalog = json.load(response)
+    assert len(catalog['settings']['members']) == 6
+    assert catalog['settings']['judge']['id'] == 'judge'
+    assert len(catalog['templates']) == 11
+    assert all(set(p) == {'id', 'name', 'models'} for p in catalog['providers'])
+    draft = catalog['settings']
+    draft['members'][0].update(name='Custom architect', provider='openai', model='custom-model')
+    draft['judge']['system'] = 'Prioritize evidence.'
+
+    def save(value, **headers):
+        request = urllib.request.Request(url, data=json.dumps(value).encode(),
+            headers={'Content-Type': 'application/json', **headers})
+        return urllib.request.urlopen(request, timeout=5)
+
+    with save(draft) as response:
+        assert json.load(response)['settings'] == draft
+    assert load_settings().members[0].model == 'custom-model'
+    assert load_settings().judge.system == 'Prioritize evidence.'
+    assert nova_config.NovaConfig().get('model')['model'] == 'keep-main'
+    draft['members'][1]['name'] = 'Custom architect'
+    with pytest.raises(urllib.error.HTTPError) as invalid:
+        save(draft)
+    assert invalid.value.code == 400
+    assert load_settings().members[1].name != 'Custom architect'
+    with pytest.raises(urllib.error.HTTPError) as external:
+        save(catalog['defaults'], Origin='https://untrusted.example')
+    assert external.value.code == 403
+    with save(catalog['defaults']) as response:
+        assert json.load(response)['settings'] == catalog['defaults']

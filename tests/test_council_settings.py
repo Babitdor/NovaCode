@@ -292,3 +292,15 @@ async def test_settings_opens_from_real_app_command_worker(monkeypatch: pytest.M
             assert button.region.right <= 80
         await pilot.press("escape")
         await worker.wait()
+
+
+def test_web_settings_offer_draft_recovery_for_invalid_saved_settings(monkeypatch):
+    from novacode_cli import council_web_settings as web
+    from novacode_cli.council_settings import default_settings
+
+    def invalid():
+        raise ValueError('Duplicate names')
+    monkeypatch.setattr(web, 'load_settings', invalid)
+    catalog = web.settings_catalog()
+    assert catalog['settings'] == default_settings().to_dict()
+    assert 'Duplicate names' in catalog['warning']

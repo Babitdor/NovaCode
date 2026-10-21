@@ -125,7 +125,7 @@ def check_drawer(page, composer):
         assert page.locator("#workspace-sidebar").evaluate("el => el.inert")
     page.set_viewport_size({"width": 1440, "height": 1000})
     assert not page.locator("#workspace-sidebar").evaluate("el => el.inert")
-    assert page.locator(".workspace-chat").bounding_box()["x"] == 280
+    assert page.locator(".workspace-chat").bounding_box()["x"] == page.locator("#workspace-sidebar").bounding_box()["width"]
 
 
 def test_council_sidebar_keeps_stream_followups_and_approval_working(ui):
@@ -231,3 +231,68 @@ def test_council_decision_brief_and_question_controls(ui):
     }); window.decisionStream.emit('done',{});''')
     pw.expect(page.get_by_text('Council recommendation: Buy', exact=True)).to_be_visible()
     pw.expect(page.locator('#input')).to_be_enabled()
+
+
+def test_council_web_settings_drafts_templates_models_and_mobile(ui):
+    from dataclasses import asdict
+    from novacode_cli.council_settings import default_settings, personality_templates
+
+    page = ui.page
+    stored = default_settings().to_dict()
+    saves = []
+    reject = [False]
+
+    def settings_api(route):
+        nonlocal stored
+        if route.request.method == 'POST':
+            if reject[0]:
+                route.fulfill(status=400, content_type='application/json', body=json.dumps({'error': 'Every council member needs a name and system prompt'}))
+                return
+            stored = json.loads(route.request.post_data)
+            saves.append(stored)
+            data = {'settings': stored}
+        else:
+            data = {'settings': stored, 'defaults': default_settings().to_dict(),
+                    'templates': [asdict(t) for t in personality_templates()],
+                    'providers': [{'id':'openai','name':'OpenAI','models':['example-model']}]}
+        route.fulfill(content_type='application/json', body=json.dumps(data))
+
+    page.route('http://nova.test/api/council/settings', settings_api)
+    page.goto('http://nova.test/council')
+    page.get_by_role('button', name='Council settings', exact=True).click()
+    pw.expect(page.locator('#settings-name')).to_have_value('The Architect')
+    pw.expect(page.locator('#settings-model')).to_be_disabled()
+    page.locator('#settings-name').fill('Draft voice')
+    page.locator('#settings-provider').select_option('openai')
+    page.locator('#settings-model').fill('custom-model')
+    page.locator('#settings-template').select_option('security')
+    page.get_by_role('button', name='Apply', exact=True).click()
+    pw.expect(page.locator('#settings-model')).to_have_value('custom-model')
+    page.locator('#settings-seats button').last.click()
+    pw.expect(page.locator('#settings-role')).to_have_text('Judge · planning councils only')
+    page.locator('#settings-system').fill('Evidence before confidence.')
+    page.locator('#settings-seats button').first.click()
+    pw.expect(page.locator('#settings-name')).to_have_value('The Security Reviewer')
+    page.get_by_role('button', name='Cancel', exact=True).click()
+    assert not saves
+    page.get_by_role('button', name='Council settings', exact=True).click()
+    pw.expect(page.locator('#settings-name')).to_have_value('The Architect')
+    page.locator('#settings-name').fill('Saved architect')
+    reject[0] = True
+    page.get_by_role('button', name='Save changes', exact=True).click()
+    pw.expect(page.locator('#settings-message')).to_contain_text('Every council member')
+    pw.expect(page.locator('#council-settings')).to_be_visible()
+    reject[0] = False
+    page.get_by_role('button', name='Save changes', exact=True).click()
+    pw.expect(page.locator('#council-settings')).not_to_be_visible()
+    assert saves[-1]['members'][0]['name'] == 'Saved architect'
+    for width in (320,390,760):
+        page.set_viewport_size({'width':width,'height':844})
+        page.get_by_role('button', name='Council settings', exact=True).click()
+        pw.expect(page.locator('#settings-name')).to_have_value('Saved architect')
+        assert page.locator('#council-settings').evaluate('el=>el.scrollWidth<=el.clientWidth')
+        page.locator('#settings-seats button').last.click()
+        page.get_by_role('button', name='Reset all', exact=True).click()
+        pw.expect(page.locator('#settings-system')).to_have_value(default_settings().judge.system)
+        page.keyboard.press('Escape')
+        pw.expect(page.get_by_role('button',name='Council settings',exact=True)).to_be_focused()
