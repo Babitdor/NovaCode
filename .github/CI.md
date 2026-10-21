@@ -6,6 +6,9 @@
   `uv.lock`, checks release metadata and changelog presence, lints the new tool
   modules, and runs focused offline regressions for subagents, approvals, MCP,
   discovery, strict schemas, cron, and context inspection.
+  Notebook editing and terminal-title activity indicators are covered too. Linux
+  installs `bfs` and `ugrep` and requires real native-search checks; Windows tests
+  fallback behavior without requiring these optional executables.
 - **Windows install and update:** runs updater regression tests, builds the wheel
   and source distribution, installs the wheel into an isolated uv tool directory,
   and checks the `nova.exe --version` launcher before and after a forced reinstall.

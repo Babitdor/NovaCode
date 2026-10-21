@@ -483,6 +483,9 @@ def _session_tools(session_state: SessionState) -> list:
 
     tools.extend(build_cron_tools(session_state))
     tools.extend(build_inspection_tools())
+    from novacode_cli.tools.notebook_tools import notebook_edit
+
+    tools.append(notebook_edit)
 
     return tools
 

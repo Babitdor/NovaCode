@@ -57,6 +57,19 @@ def test_read_allowed_after_grant(setup):
     assert _run(mw, _Req("write_file", file_path="/src/a.py", content="y"))[0] == "ALLOWED"
 
 
+def test_notebook_edits_need_a_write_grant(setup):
+    mw, pol, root, _ = setup
+    pol.grant(root, read=True, write=False, execute=False)
+    request = _Req("NotebookEditTool", file_path="/analysis.ipynb", cell_index=0, new_source="x")
+    assert _run(mw, request)[0] == "DENIED"
+    pol.grant(root, read=True, write=True, execute=False)
+    assert _run(mw, request)[0] == "ALLOWED"
+    request.tool_call["args"]["file_path"] = str(root / "analysis.ipynb")
+    assert _run(mw, request)[0] == "ALLOWED"
+    request.tool_call["args"]["file_path"] = "../outside.ipynb"
+    assert _run(mw, request)[0] == "DENIED"
+
+
 def test_execute_scope_enforced(setup):
     mw, pol, root, _ = setup
     pol.grant(root, read=True, write=True, execute=False)  # no execute

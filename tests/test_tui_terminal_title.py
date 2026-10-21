@@ -47,3 +47,47 @@ def test_terminal_driver_gets_one_safe_title_per_change():
     app._active_pane.title = "x" * 10000
     app._refresh_terminal_title()
     assert writes[-1] == "\x1b]0;NovaCode · " + "x" * 120 + "\x07"
+
+
+def test_terminal_title_spinner_advances_only_while_working(monkeypatch):
+    app = _app()
+    writes = []
+    app._driver = SimpleNamespace(is_headless=False, write=writes.append, flush=lambda: None)
+    app._active_pane = SimpleNamespace(title="Add SendMessage tool", status="running", kind="child")
+    monkeypatch.setattr("novacode_cli.tui.app.time.monotonic", lambda: 0)
+    app._refresh_terminal_title()
+    assert app.title == "◐ NovaCode · Add SendMessage tool"
+    app._refresh_terminal_title()
+    assert len(writes) == 1
+    monkeypatch.setattr("novacode_cli.tui.app.time.monotonic", lambda: 0.25)
+    app._refresh_terminal_title()
+    assert app.title == "◓ NovaCode · Add SendMessage tool"
+    assert len(writes) == 2
+    app._active_pane.status = "idle"
+    app._refresh_terminal_title()
+    assert app.title == "NovaCode · Add SendMessage tool"
+    assert len(writes) == 3
+    app._active_pane.kind = "root"
+    app._active_pane.status = "waiting"
+    app._turn_active = True
+    app._refresh_terminal_title()
+    assert app.title == "NovaCode · Add SendMessage tool"
+    app._active_pane.status = "starting"
+    app._refresh_terminal_title()
+    assert app.title.startswith("◓ ")
+
+
+async def test_single_session_title_animation_starts_and_stops_with_work():
+    app = _app()
+    async with app.run_test():
+        assert app._tab_refresh_timer is None
+        app._turn_active = True
+        app._refresh_tabs()
+        assert app._tab_refresh_period == 0.25
+        assert app._tab_refresh_timer is not None
+        assert app.title[0] in "◐◓◑◒"
+        app._turn_active = False
+        app._refresh_tabs()
+        assert app._tab_refresh_timer is None
+        assert app._tab_refresh_period is None
+        assert app.title.startswith("NovaCode · ")

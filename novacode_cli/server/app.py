@@ -140,6 +140,9 @@ def _create_server_agent(
     from novacode_cli.tools.inspection_tools import build_inspection_tools
 
     tools.extend(build_inspection_tools())
+    from novacode_cli.tools.notebook_tools import notebook_edit
+
+    tools.append(notebook_edit)
 
     # Conditionally add Semble-powered code search tools
     from novacode_cli.tools import code_search, find_related_code

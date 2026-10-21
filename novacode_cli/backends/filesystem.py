@@ -384,6 +384,22 @@ class OptimizedFilesystemBackend(FilesystemBackend):
         back to the Python search" (ripgrep missing, timed out, or errored);
         ``truncated`` is True when ``max_count`` capped the result set.
         """
+        from novacode_cli.backends.native_search import ugrep_search
+
+        native = ugrep_search(
+            pattern, base_full, include_glob, use_regex=use_regex,
+            skip_dirs=_SKIP_DIRS, timeout=_GREP_TIMEOUT,
+        )
+        if native is not None:
+            if self.virtual_mode:
+                virtual = {}
+                for p, lines in native.items():
+                    try:
+                        virtual["/" + Path(p).relative_to(self.cwd).as_posix()] = lines
+                    except ValueError:
+                        continue
+                native = virtual
+            return _cap_results(native, max_count)
         rg_path = _resolve_ripgrep_path()
         if rg_path is None:
             return None, False
@@ -487,7 +503,7 @@ class OptimizedFilesystemBackend(FilesystemBackend):
         on 0.6.x. Nova's own code should call :meth:`_py_impl`.
         """
         results, truncated, error = self._py_impl(
-            pattern, base_full, include_glob, max_count=max_count, timeout=timeout
+            re.escape(pattern), base_full, include_glob, max_count=max_count, timeout=timeout
         )
         return (results, truncated, error) if _PARENT_PY_V2 else (results, error)
 
@@ -544,7 +560,11 @@ class OptimizedFilesystemBackend(FilesystemBackend):
         matched = 0
 
         try:
-            for dirpath, dirnames, filenames in os.walk(str(root)):
+            walk = (
+                [(str(root), [], [base_full.name])] if base_full.is_file()
+                else os.walk(str(root))
+            )
+            for dirpath, dirnames, filenames in walk:
                 if probe is not None and matched >= probe:
                     break
                 if time.monotonic() > deadline:
@@ -566,9 +586,10 @@ class OptimizedFilesystemBackend(FilesystemBackend):
                     fp = Path(dirpath) / filename
 
                     if include_glob:
-                        rel_path = str(fp.relative_to(root))
+                        rel_path = fp.relative_to(root).as_posix()
                         if not wcglob.globmatch(
-                            rel_path, include_glob, flags=wcglob.BRACE | wcglob.GLOBSTAR
+                            rel_path, include_glob,
+                            flags=wcglob.BRACE | wcglob.GLOBSTAR | wcglob.MATCHBASE,
                         ):
                             continue
 
@@ -581,6 +602,9 @@ class OptimizedFilesystemBackend(FilesystemBackend):
                     try:
                         content = fp.read_text()
                     except (UnicodeDecodeError, PermissionError, OSError, RuntimeError):
+                        continue
+
+                    if "\x00" in content:
                         continue
 
                     for line_num, line in enumerate(content.splitlines(), 1):
@@ -736,7 +760,14 @@ class OptimizedFilesystemBackend(FilesystemBackend):
 
         matches: list[dict] = []
         try:
-            for dirpath, dirnames, filenames in os.walk(str(search_path)):
+            from novacode_cli.backends.native_search import bfs_files
+
+            native_files = bfs_files(search_path, _SKIP_DIRS)
+            walk = (
+                [(str(p.parent), [], [p.name]) for p in native_files]
+                if native_files is not None else os.walk(str(search_path))
+            )
+            for dirpath, dirnames, filenames in walk:
                 dirnames[:] = [
                     d for d in dirnames if d not in _SKIP_DIRS and not d.endswith(".egg-info")
                 ]

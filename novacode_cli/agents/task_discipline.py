@@ -45,7 +45,7 @@ DONE_GATE_MARKER = "Internal context: open todos."
 CUT_OFF_MARKER = "Internal context: truncated turn."
 VERIFY_GATE_MARKER = "Internal context: verification after edit."
 
-_EDIT_TOOLS = frozenset({"write_file", "edit_file"})
+_EDIT_TOOLS = frozenset({"write_file", "edit_file", "NotebookEditTool"})
 _COMMAND_TOOLS = frozenset({"bash", "execute", "powershell"})
 _CHECK_COMMAND = re.compile(
     r"(?:^|[;&|\n])\s*(?:(?:uv|poetry|pipenv)\s+run\s+)?"

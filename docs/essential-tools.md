@@ -1,7 +1,45 @@
-# MCP, scheduling and inspection tools
+# Essential tools
 
 These tools are discoverable through `search_tools`; their schemas are loaded
 when needed rather than added to every model request.
+
+## NotebookEditTool
+
+Edits an existing local `.ipynb` notebook in nbformat 4 without running code.
+Use `read_file` first to inspect cells, then discover `NotebookEditTool`.
+
+- `file_path`: relative, virtual-root (`/analysis.ipynb`), or absolute path inside
+  the local workspace. Remote sandbox notebooks are not supported.
+- `edit_mode="replace"`: select `cell_id` or zero-based `cell_index`, and provide
+  `new_source`. Omit `cell_type` to retain the existing type.
+- `edit_mode="insert"`: provide `cell_type` (`code`, `markdown`, or `raw`) and
+  `new_source`. Insert before `cell_index`, after `cell_id`, or append when neither
+  selector is given. Exactly one selector may be supplied.
+- `edit_mode="delete"`: select the existing cell; omit source and type changes.
+
+Notebook metadata and untouched cells are preserved. Changed code cells clear
+stale outputs and execution counts. New cells receive IDs when the format
+requires them. Edits use a temporary file and atomic replacement; invalid inputs
+and failed replacements leave the original intact. Concurrent calls within one
+process are serialized. The tool follows file-path approval rules and is blocked
+in plan mode. No Jupyter kernel or extra Python dependency is required.
+
+## GlobTool / GrepTool
+
+Nova exposes these capabilities as the existing `glob` and `grep` tools. Imported
+agent definitions can use `GlobTool`/`GrepTool` as aliases. This avoids registering
+duplicate tool schemas.
+
+Local file searches use `bfs` for traversal when available, preserving glob
+filtering, vendor-directory pruning and newest-first results. Content search
+tries `ugrep`, then ripgrep, then the Python fallback. These optional executables
+are discovered on PATH; Nova does not install them automatically. Native failures
+and timeouts fall back to the next engine. Searches invoke argument arrays without
+a shell. Existing remote sandbox search behavior is unchanged.
+
+Grep remains literal by default, with smart-case matching; the backend also
+supports explicit regular expressions. The Python fallback matches basename globs
+at any depth and respects single-file search paths.
 
 ## MCPTool
 

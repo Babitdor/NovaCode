@@ -49,6 +49,7 @@ from novacode_cli.tools.speak_tool import speak
 
 # Desktop power (suspend the machine when the user is done for the night)
 from novacode_cli.tools.desktop_tools import sleep_desktop
+from novacode_cli.tools.notebook_tools import notebook_edit
 
 # Skill management (agent-facing write path for self-improvement)
 from novacode_cli.tools.skill_tools import skill_manage

@@ -35,6 +35,13 @@ jobs:
           enable-cache: true
       - name: Install locked runtime and test dependencies
         run: uv sync --locked --group dev
+      - name: Install optional native search engines (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y bfs ugrep
+      - name: Require real native search coverage on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: echo "NOVA_REQUIRE_NATIVE_SEARCH=1" >> "$GITHUB_ENV"
       - name: Check release metadata and changelog
         run: >-
           uv run --no-sync python -c "import pathlib, tomllib;
@@ -50,6 +57,8 @@ jobs:
           novacode_cli/mcp/generic.py
           novacode_cli/tools/cron_tools.py
           novacode_cli/tools/inspection_tools.py
+          novacode_cli/tools/notebook_tools.py
+          novacode_cli/backends/native_search.py
       - name: Run offline regression tests
         run: >-
           uv run --no-sync pytest -q --tb=short --junitxml=test-results/regression.xml
@@ -68,6 +77,9 @@ jobs:
           tests/test_remote_cron.py
           tests/test_approval_policy.py
           tests/test_desktop_sleep.py
+          tests/test_notebook_tools.py
+          tests/test_native_search.py
+          tests/test_tui_terminal_title.py
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

@@ -3759,10 +3759,9 @@ class NovaApp(App):
                 tooltip += " · " + ", ".join(names[name] for name in platforms) + " connected"
             rows.append((pane.sid, i, glyph, pane.title, pane.unread, platforms, tooltip))
 
-        # No periodic work is needed while the tab bar is hidden. With multiple
-        # panes, idle state/remote indicators poll at 1 Hz; active spinners use
-        # 4 Hz. Lifecycle handlers also refresh immediately on state changes.
-        target_period = None if len(panes) <= 1 else (0.25 if animated else 1.0)
+        # A busy single session still animates its terminal title even though
+        # the internal tab bar is hidden. Idle single sessions need no timer.
+        target_period = 0.25 if animated else (1.0 if len(panes) > 1 else None)
         if target_period != self._tab_refresh_period:
             if self._tab_refresh_timer is not None:
                 self._tab_refresh_timer.stop()
@@ -3841,6 +3840,13 @@ class NovaApp(App):
             "".join(char for char in str(name) if char.isprintable() or char.isspace()).split()
         )[:120]
         title = f"NovaCode · {name or 'main'}"
+        status = getattr(pane, "status", "idle")
+        busy = status in ("running", "starting")
+        if getattr(pane, "kind", "root") == "root" and status == "idle":
+            busy = busy or getattr(self, "_turn_active", False)
+        if busy:
+            frames = "◐◓◑◒"
+            title = f"{frames[int(time.monotonic() * 4) % len(frames)]} {title}"
         self.title = title
         driver = self._driver
         if driver is None or driver.is_headless or title == getattr(self, "_terminal_title", None):

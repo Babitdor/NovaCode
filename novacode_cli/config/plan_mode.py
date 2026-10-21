@@ -29,6 +29,7 @@ BLOCKED_TOOLS: frozenset[str] = frozenset({
     "memory_wiki",
     "CronCreateTool",
     "CronDeleteTool",
+    "NotebookEditTool",
 })
 
 # ── Restricted write tools ─────────────────────────────────────────────

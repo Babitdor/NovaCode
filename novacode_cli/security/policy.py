@@ -64,7 +64,7 @@ _SHELL_TOOLS = frozenset(
 #: none, so gating them buys nothing and costs approval fatigue.
 _DAEMON_READONLY_ACTIONS = frozenset({"list", "status", "logs"})
 
-_PATH_TOOLS = frozenset({"write_file", "edit_file"})
+_PATH_TOOLS = frozenset({"write_file", "edit_file", "NotebookEditTool"})
 _URL_TOOLS = frozenset({"fetch_url"})
 
 # Per-tool default tier (the fallback when no specific rule matches).
@@ -80,6 +80,7 @@ _DEFAULT_TOOL_TIERS: dict[str, Tier] = {
     "execute": "ask",
     "write_file": "ask",
     "edit_file": "ask",
+    "NotebookEditTool": "ask",
     "fetch_url": "ask",
     "run_tests": "ask",
     "start_dev_server": "ask",

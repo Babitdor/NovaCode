@@ -2035,6 +2035,13 @@ def create_agent_with_config(
 
     # Determine workspace root for path containment (resolves to subdirectory if applicable)
     workspace_root = Path(workspace_root) if workspace_root else settings.get_workspace_root()
+    from novacode_cli.tools.notebook_tools import build_notebook_tool
+
+    tools = [
+        build_notebook_tool(workspace_root) if getattr(t, "name", "") == "NotebookEditTool" else t
+        for t in (tools or [])
+        if sandbox is None or getattr(t, "name", "") != "NotebookEditTool"
+    ]
 
     # Build list of allowed directories for filesystem access
     # This includes the workspace root plus user directories like skills, memory, etc.

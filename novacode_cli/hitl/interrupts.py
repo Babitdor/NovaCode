@@ -99,6 +99,16 @@ INTERRUPT_SPECS: dict[str, InterruptSpec] = {
             ("content", FieldSpec("Content Preview", truncate=200)),
         ],
     ),
+    "NotebookEditTool": InterruptSpec(
+        fields=[
+            ("file_path", FieldSpec("Notebook")),
+            ("edit_mode", FieldSpec("Cell action")),
+            ("cell_index", FieldSpec("Cell index (zero-based)")),
+            ("cell_id", FieldSpec("Cell ID")),
+            ("cell_type", FieldSpec("Cell type")),
+            ("new_source", FieldSpec("Source preview", truncate=200)),
+        ],
+    ),
     "edit_file": InterruptSpec(
         fields=[
             ("file_path", FieldSpec("File")),
@@ -202,6 +212,18 @@ INTERRUPT_SPECS: dict[str, InterruptSpec] = {
 # The single args_schema for each tool — still unique per tool.
 # Kept separate from InterruptSpec because schemas are JSON blobs, not formatting rules.
 _INTERRUPT_ARG_SCHEMAS: dict[str, dict[str, Any]] = {
+    "NotebookEditTool": {
+        "type": "object",
+        "properties": {
+            "file_path": {"type": "string"},
+            "new_source": {"type": ["string", "null"]},
+            "edit_mode": {"type": "string", "enum": ["replace", "insert", "delete"]},
+            "cell_index": {"type": ["integer", "null"], "minimum": 0},
+            "cell_id": {"type": ["string", "null"]},
+            "cell_type": {"type": ["string", "null"], "enum": ["code", "markdown", "raw", None]},
+        },
+        "required": ["file_path"],
+    },
     "MCPTool": {
         "type": "object",
         "properties": {

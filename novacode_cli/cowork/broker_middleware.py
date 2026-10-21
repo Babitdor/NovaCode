@@ -24,7 +24,9 @@ from novacode_cli.cowork.policy import get_policy
 # tool name -> op it needs (path-bearing tools). Shell/execute authorized for
 # execute on the workspace root.
 _READ_TOOLS = frozenset({"read_file", "ls", "glob", "grep"})
-_WRITE_TOOLS = frozenset({"write_file", "edit_file", "str_replace", "apply_patch", "delete_file"})
+_WRITE_TOOLS = frozenset({
+    "write_file", "edit_file", "str_replace", "apply_patch", "delete_file", "NotebookEditTool",
+})
 _EXEC_TOOLS = frozenset({"shell", "bash", "execute"})
 _PATH_KEYS = ("file_path", "path", "target", "dir", "directory")
 
@@ -76,7 +78,12 @@ class CoworkBrokerMiddleware(AgentMiddleware):
                 else:
                     return self._error(name, tc, "SANDBOX_UNAVAILABLE", "Missing filesystem path")
             try:
-                checks.append((self._to_real(raw), op))
+                if name == "NotebookEditTool":
+                    from novacode_cli.tools.notebook_tools import resolve_notebook_path
+
+                    checks.append((resolve_notebook_path(raw, self._root), op))
+                else:
+                    checks.append((self._to_real(raw), op))
             except Exception:  # noqa: BLE001
                 return self._error(name, tc, "SANDBOX_UNAVAILABLE", f"cannot resolve {raw!r}")
             # move/rename: also gate the destination for write.
