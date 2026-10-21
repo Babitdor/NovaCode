@@ -223,16 +223,20 @@ class RemoteStatusLine:
         parts = ["✅ **Done**" if done else "⚙️ **Working**"]
         if done and self._outcome != "done":
             parts[0] = "❌ **Failed**" if self._outcome == "failed" else "⏹ **Stopped**"
-        if self._label:
-            parts.insert(0, _code(self._label))
         if n:
             parts.append(f"{n} tool{'s' if n != 1 else ''}")
         parts.append(self._elapsed())
-        return " · ".join(parts)
+        header = " · ".join(parts)
+        return f"{_code(self._label)}\n\n{header}" if self._label else header
 
     def _todo_lines(self) -> list[str]:
         shown = self._todos[:_TODO_MAX]
-        lines = [f"{_TODO_GLYPH.get(status, '☐')} {content}" for content, status in shown]
+        lines = []
+        for content, status in shown:
+            content = " ".join(content.split())
+            if len(content) > 160:
+                content = content[:159].rstrip() + "…"
+            lines.append(f"{_TODO_GLYPH.get(status, '☐')} {content}")
         if len(self._todos) > len(shown):
             lines.append(f"… +{len(self._todos) - len(shown)} more")
         return lines
@@ -245,10 +249,12 @@ class RemoteStatusLine:
     def _content(self) -> str:
         """The live message."""
         lines = [self._header(done=False)]
-        lines += self._todo_lines()
+        if self._todos:
+            lines += ["", "**Plan**", *self._todo_lines(), ""]
         if self._reasoning.strip():
             lines.append(_quote(f"💭 _{_clip_tail(self._reasoning, _REASONING_LIVE)}_"))
         if self._calls:
+            lines += ["", "**Recent tools**"]
             hidden = len(self._calls) - _TOOLS_LIVE
             if hidden > 0:
                 lines.append(f"… {hidden} earlier")
@@ -264,7 +270,9 @@ class RemoteStatusLine:
         The reasoning is shown live only: once the answer is in, the model's
         working notes are noise beside it.
         """
-        sections = ["\n".join([self._header(done=True), *self._todo_lines()])]
+        sections = [self._header(done=True)]
+        if self._todos:
+            sections.append("**Plan**\n" + "\n".join(self._todo_lines()))
         if self._calls:
             log = [self._call_line(c) for c in self._calls[:_LOG_MAX]]
             if len(self._calls) > _LOG_MAX:

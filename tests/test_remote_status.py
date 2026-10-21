@@ -226,6 +226,18 @@ class TestActivityLog:
 
 
 class TestDiffsAndCompaction:
+    def test_mobile_status_separates_header_plan_and_tools(self):
+        s = RemoteStatusLine(_FakeEdit(), label="NOVA · 290d9bd9")
+        s.note_todos([{"content": "Write documentation " * 30, "status": "in_progress"}])
+        s.note("write_file", "write_file(DESIGN.md)", "c1")
+        content = s._content()
+        assert content.startswith("`NOVA · 290d9bd9`\n\n⚙️ **Working**")
+        assert "\n\n**Plan**\n" in content
+        assert "\n\n**Recent tools**\n" in content
+        assert len(s._todo_lines()[0]) <= 163
+        assert s._todo_lines()[0].endswith("…")
+        assert "**Plan**" in s._done_summary()
+
     async def test_each_edit_is_posted_as_a_diff_preview_in_order(self):
         from types import SimpleNamespace
 

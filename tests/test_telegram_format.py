@@ -25,8 +25,48 @@ def test_code_fences_tables_and_quotes() -> None:
         "> q1\n> q2\n> q3\n> q4\n"
     )[0]
     assert '<pre><code class="language-python">if a &lt; b:\n    pass</code></pre>' in out
-    assert "<pre>a | b\n--+--\n1 | 2</pre>" in out
+    assert "a: 1\nb: 2" in out
     assert "<blockquote expandable>q1" in out
+
+
+def test_long_diff_is_collapsed_without_losing_patch_text() -> None:
+    patch = "\n".join(f"+line {i} <tag> & value" for i in range(15))
+    out = render(f"✏️ `DESIGN.md` · +15\n\n```diff\n{patch}\n```")[0]
+    assert "<blockquote expandable><b>Diff preview</b>" in out
+    assert "<pre>" not in out
+    assert patch in to_plain(out)
+    assert "&lt;tag&gt; &amp; value" in out
+    assert "<code>DESIGN.md</code>" in out
+
+
+def test_short_diff_and_regular_code_keep_code_formatting() -> None:
+    assert 'class="language-diff"' in render("```diff\n-old\n+new\n```")[0]
+    out = render("```python\n" + "print(1)\n" * 15 + "```")[0]
+    assert 'class="language-python"' in out and "blockquote" not in out
+
+
+def test_mobile_tables_preserve_links_code_and_literal_tags() -> None:
+    out = render(
+        "| Tool | Result |\n|---|---|\n"
+        "| `read_file` | [docs](https://example.com) |\n"
+        "| <tag> | **done** |"
+    )[0]
+    assert "Tool: <code>read_file</code>" in out
+    assert 'Result: <a href="https://example.com">docs</a>' in out
+    assert "Tool: &lt;tag&gt;" in out
+    assert "Result: <b>done</b>" in out
+    assert "<pre>" not in out
+
+
+def test_task_lists_use_checkboxes() -> None:
+    out = render("- [x] Read source\n- [ ] Run tests")[0]
+    assert "✅ Read source" in out and "☐ Run tests" in out
+    assert "[x]" not in out and "[ ]" not in out
+
+
+def test_diff_inside_quote_does_not_create_nested_blockquotes() -> None:
+    out = render("> ```diff\n" + "> +line\n" * 15 + "> ```")[0]
+    assert out.count("<blockquote") == 1
 
 
 def test_unsafe_links_and_raw_html_are_neutralised() -> None:

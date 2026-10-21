@@ -7,7 +7,7 @@ message is refused. Its HTML mode needs only ``& < >`` escaped, so we parse the
 markdown properly (markdown-it, already installed via rich) and emit the tags
 Telegram supports: ``b i s code pre a blockquote``. What it cannot show becomes
 the nearest thing it can: headings -> bold, lists -> bullets, tables ->
-monospace, long quotes -> collapsed (``<blockquote expandable>``).
+stacked records, long quotes and diff previews -> collapsed quotes.
 
 Chunks are cut between blocks, never inside a tag, so every message is valid.
 """
@@ -80,17 +80,19 @@ def _table(node: SyntaxTreeNode) -> str:
     for section in node.children:  # thead / tbody
         for tr in section.children:
             rows.append(
-                [
-                    html.unescape(_inline(cell.children[0])) if cell.children else ""
-                    for cell in tr.children
-                ]
+                [_inline(cell.children[0]) if cell.children else "" for cell in tr.children]
             )
     if not rows:
         return ""
-    widths = [max(len(r[i]) if i < len(r) else 0 for r in rows) for i in range(max(map(len, rows)))]
-    lines = [" | ".join(c.ljust(w) for c, w in zip(r, widths)).rstrip() for r in rows]
-    lines.insert(1, "-+-".join("-" * w for w in widths))
-    return _pre("\n".join(lines))
+    headers, *entries = rows
+    # Stacked records fit a phone screen and retain links and inline formatting.
+    return "\n\n".join(
+        "\n".join(
+            f"{headers[i] if i < len(headers) else str(i + 1)}: {cell}"
+            for i, cell in enumerate(row)
+        )
+        for row in entries
+    ) or " · ".join(headers)
 
 
 def _block(node: SyntaxTreeNode, depth: int = 0, *, in_quote: bool = False) -> str:
@@ -100,6 +102,15 @@ def _block(node: SyntaxTreeNode, depth: int = 0, *, in_quote: bool = False) -> s
     if t == "heading":
         return f"<b>{_inline(node.children[0])}</b>" if node.children else ""
     if t in ("fence", "code_block"):
+        if (
+            not in_quote
+            and t == "fence"
+            and node.info.strip() == "diff"
+            and node.content.count("\n") > 8
+        ):
+            # Large preformatted patches consume the whole chat viewport.
+            # Keep the patch selectable and available behind Telegram's expander.
+            return f"<blockquote expandable><b>Diff preview</b>\n{esc(node.content.rstrip())}</blockquote>"
         return _pre(node.content, node.info if t == "fence" else "")
     if t in ("bullet_list", "ordered_list"):
         start = int(node.attrs.get("start", 1) or 1)
@@ -108,6 +119,10 @@ def _block(node: SyntaxTreeNode, depth: int = 0, *, in_quote: bool = False) -> s
             mark = f"{start + n}." if t == "ordered_list" else "•"
             parts = [_block(c, depth + 1, in_quote=in_quote) for c in item.children]
             body = "\n".join(p for p in parts if p)
+            task = re.match(r"^\[([ xX])\] (.*)", body, re.S)
+            if task:
+                mark = "✅" if task[1].lower() == "x" else "☐"
+                body = task[2]
             items.append("  " * depth + f"{mark} {body}")
         return "\n".join(items)
     if t == "blockquote":
