@@ -12,6 +12,7 @@ from novacode_cli.artifacts import registry as artifact_registry
 from novacode_cli.artifacts.registry import ArtifactRegistry
 from novacode_cli.artifacts.server import _viewer_html, ensure_server
 from novacode_cli.artifacts.server import artifact_url
+from novacode_cli.artifacts.server import _index_html
 from novacode_cli.tools import artifact_tools
 from novacode_cli.tools.artifact_tools import (
     create_artifact,
@@ -116,6 +117,36 @@ def test_api_exposes_only_safe_metadata() -> None:
     assert set(art.public_dict()) == {
         "id", "title", "type", "version", "status", "created_at", "updated_at"
     }
+
+
+def test_collection_preserves_duplicate_titles_and_escapes_authored_content(monkeypatch):
+    registry = ArtifactRegistry()
+    monkeypatch.setattr(artifact_registry, "_registry", registry)
+    first = registry.create('Design <script>alert("title")</script>', "html", "SECRET-BODY")
+    second = registry.create(first.title, "html", "SECOND-SECRET-BODY")
+    registry.update(first.id, content="UPDATED-SECRET-BODY")
+    page = _index_html()
+    assert f'href="/artifacts/{first.id}"' in page
+    assert f'href="/artifacts/{second.id}"' in page
+    assert f'#{first.id}' in page and f'#{second.id}' in page
+    assert "Version 2" in page
+    assert "2 artifacts" in page
+    assert page.index(f'href="/artifacts/{first.id}"') < page.index(
+        f'href="/artifacts/{second.id}"'
+    )
+    assert '<script>alert("title")</script>' not in page
+    assert "Design &lt;script&gt;" in page
+    assert "SECRET-BODY" not in page
+    assert 'name="viewport"' in page
+
+
+def test_collection_empty_state_gives_direction(monkeypatch):
+    monkeypatch.setattr(artifact_registry, "_registry", ArtifactRegistry())
+    page = _index_html()
+    assert "No artifacts yet" in page
+    assert "Artifacts created in this Nova session will appear here." in page
+    assert "0 artifacts" in page
+    assert '<a class="artifact"' not in page
 
 
 def test_tool_flow_serves_page_and_updates_in_place(monkeypatch) -> None:

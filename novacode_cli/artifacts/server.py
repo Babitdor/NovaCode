@@ -20,6 +20,7 @@ import re
 import socket
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import quote
 
 from novacode_cli.artifacts.registry import Artifact, get_registry
 
@@ -170,22 +171,168 @@ def _viewer_html(art: Artifact) -> str:
 </html>"""
 
 
+_INDEX_CSS = """
+:root{color-scheme:dark;--bg:#11141d;--panel:#191e2b;--line:#30384c;
+--text:#edf0fa;--muted:#a6afc4;--accent:#a5b6ff;--mono:'Cascadia Code',Consolas,monospace}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);
+font:15px/1.5 'Segoe UI',system-ui,sans-serif}button,input,select{font:inherit}
+[hidden]{display:none!important}a{color:inherit}svg{display:block;flex-shrink:0}
+.shell{width:min(1120px,calc(100% - 64px));margin:auto}
+.topbar{border-bottom:1px solid var(--line);background:#141824}
+.topbar .shell{min-height:76px;display:flex;align-items:center;justify-content:space-between;gap:16px}
+.brand{display:flex;align-items:center;gap:11px;text-decoration:none;font-size:16px;font-weight:650}
+.brand-mark{width:30px;height:30px;display:grid;place-items:center;border:1px solid #485583;
+border-radius:9px;color:var(--accent);background:#232c45}
+.brand-divider{height:17px;width:1px;background:#41495d;margin:0 3px}
+.brand-section{color:var(--muted);font-weight:400}
+.session-label{font:11px var(--mono);color:var(--muted);display:flex;align-items:center;gap:8px}
+.session-label::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--accent)}
+main{padding-top:56px;padding-bottom:48px}.intro{display:flex;align-items:flex-end;
+justify-content:space-between;gap:24px;margin-bottom:35px}.eyebrow{font:11px var(--mono);
+letter-spacing:.13em;text-transform:uppercase;color:var(--accent);margin:0 0 12px}
+h1{font-family:Bahnschrift,'Segoe UI',sans-serif;font-weight:600;font-size:clamp(34px,5vw,46px);
+letter-spacing:-.045em;line-height:1.12;margin:0 0 12px}.subtitle{color:var(--muted);margin:0;max-width:560px}
+.collection-count{font:12px var(--mono);color:var(--muted);white-space:nowrap;padding-bottom:3px}
+.toolbar{display:flex;align-items:center;gap:12px;margin:0 0 25px}
+.search{position:relative;flex:1;max-width:420px}.search svg{position:absolute;left:14px;
+top:50%;transform:translateY(-50%);color:var(--muted);pointer-events:none}
+input,select{min-height:46px;background:#171c28;border:1px solid var(--line);border-radius:8px;
+color:var(--text);font-size:13px}input{width:100%;padding:10px 14px 10px 43px}
+input::placeholder{color:#9aa5bf}select{padding:10px 35px 10px 13px;margin-left:auto;max-width:100%}
+input:focus-visible,select:focus-visible,.artifact:focus-visible,.brand:focus-visible{
+outline:2px solid var(--accent);outline-offset:4px}
+.collection{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
+.artifact{--tone:#a5b6ff;--tint:#252e49;display:flex;flex-direction:column;min-width:0;
+min-height:254px;padding:23px;background:var(--panel);border:1px solid var(--line);
+border-radius:12px;text-decoration:none;transition:border-color .18s,transform .18s,background .18s}
+.artifact:hover{border-color:#6474aa;background:#1d2333;transform:translateY(-3px)}
+.artifact[data-type=markdown]{--tone:#e1c18d;--tint:#373025}
+.artifact[data-type=dashboard]{--tone:#c5b1ed;--tint:#302a42}
+.artifact-top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:25px}
+.file-icon{width:45px;height:49px;position:relative;display:grid;place-items:center;
+background:var(--tint);color:var(--tone);border:1px solid color-mix(in srgb,var(--tone) 35%,transparent);
+border-radius:7px 0 7px 7px;font:600 13px var(--mono)}
+.file-icon::after{content:'';position:absolute;right:-1px;top:-1px;width:12px;height:12px;
+background:var(--panel);border-left:1px solid var(--tone);border-bottom:1px solid var(--tone);
+border-bottom-left-radius:3px}.format{font:10px var(--mono);letter-spacing:.08em;text-transform:uppercase;
+padding:5px 8px;background:var(--tint);color:var(--tone);border-radius:5px}
+.artifact h2{margin:0 0 6px;font-size:18px;font-weight:600;line-height:1.4;letter-spacing:-.02em;
+overflow-wrap:anywhere}.artifact-description{margin:0 0 22px;font-size:12px;color:var(--muted)}
+.artifact-bottom{margin-top:auto;padding-top:15px;border-top:1px solid var(--line)}
+.artifact-details{display:flex;flex-wrap:wrap;gap:6px 12px;font:10px/1.6 var(--mono);color:var(--muted)}
+.open-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:15px;
+color:var(--tone);font-size:12px;font-weight:600}.artifact-id{font:10px var(--mono);color:var(--muted)}
+.empty-state{grid-column:1/-1;text-align:center;padding:64px 24px;border:1px dashed var(--line);
+border-radius:12px;color:var(--muted)}.empty-state svg{margin:0 auto 18px;color:var(--accent)}
+.empty-state h2{font-size:20px;font-weight:550;margin:0 0 8px;color:var(--text)}
+.empty-state p{margin:0}.footer{margin-top:35px;padding-top:19px;border-top:1px solid var(--line);
+display:flex;justify-content:space-between;gap:16px;color:var(--muted);font:10px/1.6 var(--mono)}
+@media(min-width:761px){.artifact:only-child{max-width:calc((1120px - 36px)/3)}}
+@media(max-width:1000px){.collection{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:600px){.shell{width:calc(100% - 36px)}.topbar .shell{min-height:66px}
+.brand-section,.brand-divider{display:none}.session-label{font-size:10px}main{padding-top:34px}
+.intro{display:block;margin-bottom:25px}.collection-count{display:block;margin-top:18px}
+.toolbar{flex-wrap:wrap;gap:10px}.search{flex-basis:100%;max-width:none}select{width:100%;margin-left:0}
+.collection{grid-template-columns:1fr;gap:13px}.artifact{min-height:244px;padding:21px}
+.footer{flex-direction:column;gap:5px}.subtitle{font-size:14px}}
+@media(prefers-reduced-motion:reduce){.artifact{transition:none}.artifact:hover{transform:none}}
+"""
+
+_INDEX_SCRIPT = """
+const toolbar = document.getElementById('toolbar');
+const search = document.getElementById('search');
+const sort = document.getElementById('sort');
+const collection = document.getElementById('collection');
+const cards = Array.from(collection.querySelectorAll('.artifact'));
+const count = document.getElementById('collection-count');
+const noResults = document.getElementById('no-results');
+if (cards.length) toolbar.hidden = false;
+function updateCollection() {
+  const query = search.value.trim().toLocaleLowerCase();
+  cards.sort((a, b) => {
+    if (sort.value === 'title') return a.dataset.title.localeCompare(b.dataset.title);
+    if (sort.value === 'type') return a.dataset.type.localeCompare(b.dataset.type)
+      || a.dataset.title.localeCompare(b.dataset.title);
+    return Number(b.dataset.updated) - Number(a.dataset.updated);
+  });
+  let visible = 0;
+  for (const card of cards) {
+    card.hidden = !card.dataset.search.includes(query);
+    if (!card.hidden) visible++;
+    collection.appendChild(card);
+  }
+  count.textContent = query ? `${visible} of ${cards.length} artifacts`
+    : `${cards.length} artifact${cards.length === 1 ? '' : 's'}`;
+  noResults.hidden = visible !== 0 || cards.length === 0;
+}
+search.addEventListener('input', updateCollection);
+sort.addEventListener('change', updateCollection);
+"""
+
+
 def _index_html() -> str:
-    arts = get_registry().list()
-    if not arts:
-        rows = '<p class="empty">No artifacts yet.</p>'
-    else:
-        rows = "".join(
-            f'<p><a href="/artifacts/{a.id}">&#9670; {_html.escape(a.title)}</a> '
-            f'<span class="badge">{_html.escape(a.type)}</span></p>'
-            for a in arts
+    """Render the session collection without executing any artifact content."""
+    arts = sorted(get_registry().list(), key=lambda art: art.updated_at, reverse=True)
+    formats = {
+        "html": ("HTML", "</>", "Interactive web page"),
+        "markdown": ("Markdown", "M↓", "Markdown document"),
+        "dashboard": ("Dashboard", "▦", "Interactive dashboard"),
+    }
+    rows = []
+    for art in arts:
+        kind = art.type if art.type in formats else "markdown"
+        label, glyph, description = formats[kind]
+        title = _html.escape(art.title, quote=True)
+        artifact_id = _html.escape(art.id, quote=True)
+        search = _html.escape(f"{art.title} {art.type} {art.id}".lower(), quote=True)
+        when = _time_str(art.updated_at)
+        rows.append(
+            f'<a class="artifact" href="/artifacts/{quote(art.id, safe="")}" '
+            f'data-title="{title}" data-type="{kind}" '
+            f'data-search="{search}" data-updated="{art.updated_at}">'
+            f'<div class="artifact-top"><span class="file-icon" aria-hidden="true">'
+            f'{_html.escape(glyph)}</span><span class="format">{label}</span></div>'
+            f'<h2>{title}</h2><p class="artifact-description">{description}</p>'
+            f'<div class="artifact-bottom"><div class="artifact-details">'
+            f'<span>Version {art.version}</span><span>Updated {when}</span></div>'
+            f'<div class="open-row"><span>Open artifact <span aria-hidden="true">↗</span></span>'
+            f'<span class="artifact-id">#{artifact_id}</span></div></div></a>'
         )
-    return (
-        f"<!doctype html><html><head><meta charset='utf-8'><title>Artifacts</title>"
-        f"<style>{_PAGE_CSS}</style></head><body>"
-        f"<header><span class='glyph'>&#9670;</span><h1>Artifacts</h1></header>"
-        f"<main><div class='markdown'>{rows}</div></main></body></html>"
+    empty = (
+        '<div class="empty-state"><svg width="36" height="40" viewBox="0 0 24 28" '
+        'fill="none" stroke="currentColor" aria-hidden="true">'
+        '<path d="M5 1h9l6 6v19H5zM14 1v7h6M9 14h7M9 19h5"/></svg>'
+        '<h2>No artifacts yet</h2><p>Artifacts created in this Nova session will appear here.</p></div>'
+        if not arts else ""
     )
+    count = f"{len(arts)} artifact{'s' if len(arts) != 1 else ''}"
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark"><title>Artifacts · Nova</title>
+<style>{_INDEX_CSS}</style></head><body>
+<header class="topbar"><div class="shell">
+  <a class="brand" href="/" aria-label="Nova artifacts home"><span class="brand-mark" aria-hidden="true">◆</span>
+  <span>Nova</span><span class="brand-divider"></span><span class="brand-section">Artifacts</span></a>
+  <span class="session-label">Session collection</span>
+</div></header>
+<main class="shell"><div class="intro"><div><p class="eyebrow">Made with Nova</p>
+  <h1>Your artifacts.</h1><p class="subtitle">Pages, documents, and ideas brought to life in this session.</p>
+  </div><span class="collection-count" id="collection-count" role="status" aria-live="polite">{count}</span></div>
+<div class="toolbar" id="toolbar" hidden>
+  <div class="search"><svg width="17" height="17" viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/>
+    <path d="m16 16 5 5"/></svg><input id="search" type="search" aria-label="Search artifacts"
+    placeholder="Search by title, type, or ID…" autocomplete="off"></div>
+  <select id="sort" aria-label="Sort artifacts"><option value="updated">Recently updated</option>
+    <option value="title">Title A–Z</option><option value="type">File type</option></select>
+</div>
+<section class="collection" id="collection" aria-label="Session artifacts">{''.join(rows)}{empty}</section>
+<div class="empty-state" id="no-results" hidden><h2>No matching artifacts</h2>
+  <p>Try another title, file type, or artifact ID.</p></div>
+<footer class="footer"><span>Created in Nova. Ready to explore.</span>
+  <span>Choose an artifact to open its full preview ↗</span></footer></main>
+<script>{_INDEX_SCRIPT}</script></body></html>"""
 
 
 class _Handler(BaseHTTPRequestHandler):
