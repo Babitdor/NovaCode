@@ -296,3 +296,41 @@ def test_council_web_settings_drafts_templates_models_and_mobile(ui):
         pw.expect(page.locator('#settings-system')).to_have_value(default_settings().judge.system)
         page.keyboard.press('Escape')
         pw.expect(page.get_by_role('button',name='Council settings',exact=True)).to_be_focused()
+
+
+def test_cowork_sidebar_scrolls_whole_panels_on_short_and_mobile_screens(ui):
+    page = ui.page
+    grants = [dict(id=f'folder-{i}', display_path=f'/work/projects/project-{i}/deeply/nested/folder',
+                   read=True, write=True, execute=False, recursive=True) for i in range(35)]
+    page.route('http://nova.test/api/workspace', lambda route: route.fulfill(
+        content_type='application/json', body=json.dumps({'grants': grants})))
+    page.goto('http://nova.test/cowork')
+    pw.expect(page.locator('.grant')).to_have_count(35)
+    for width,height in ((1440,560),(390,568),(320,480)):
+        page.set_viewport_size({'width':width,'height':height})
+        if width <= 760:
+            page.locator('#sidebar-toggle').click()
+        page.get_by_role('tab',name='Workspace',exact=True).click()
+        region = page.get_by_role('region',name='Workspace folders',exact=True)
+        region.evaluate('el=>el.scrollTop=0')
+        pw.expect(page.locator('#path')).to_be_in_viewport()
+        assert region.evaluate('el=>el.scrollHeight>el.clientHeight')
+        assert page.locator('#grants').evaluate('el=>getComputedStyle(el).overflowY') == 'visible'
+        region.focus()
+        page.keyboard.press('Control+End')
+        pw.expect(page.locator('.grant').last).to_be_in_viewport()
+        pw.expect(page.locator('#workspace-tab')).to_be_in_viewport()
+        pw.expect(page.locator('#ws-state')).to_be_in_viewport()
+        page.get_by_role('tab',name='Activity',exact=True).click()
+        page.evaluate('''()=>{
+          testSocket.emit({type:'todo_update',data:{todos:Array.from({length:30},(_,i)=>({content:'Task '+i,status:'pending'}))}});
+          testSocket.emit({type:'tool_finished',data:{name:'read_file',output:'Last activity'}});
+        }''')
+        activity = page.get_by_role('region',name='Workspace activity',exact=True)
+        assert activity.evaluate('el=>el.scrollHeight>el.clientHeight')
+        activity.evaluate('el=>el.scrollTop=el.scrollHeight')
+        pw.expect(page.locator('#activity .act').last).to_be_in_viewport()
+        pw.expect(page.locator('#activity-tab')).to_be_in_viewport()
+        if width <= 760:
+            page.keyboard.press('Escape')
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')

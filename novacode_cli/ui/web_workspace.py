@@ -154,6 +154,21 @@ body .act{border-radius:7px}.chat-topbar .chat-heading h2::before{display:none}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 """
 
+# Keep fixed sidebar controls outside a single, keyboard-scrollable content area.
+WORKSPACE_CSS += """
+.workspace-sidebar .workspace-brand,.workspace-sidebar .sidebar-tabs,.workspace-sidebar .sidebar-footer,
+.workspace-panel .col-head{flex-shrink:0}
+.workspace-sidebar .sidebar-content,.workspace-sidebar .col-body{overscroll-behavior-y:contain;scrollbar-gutter:stable}
+.workspace-sidebar :is(.sidebar-content,.col-body,.scroll),.settings-body{
+scrollbar-width:thin;scrollbar-color:#536b72 transparent;scroll-padding-block:16px}
+.workspace-sidebar :is(.sidebar-content,.col-body,.scroll)::-webkit-scrollbar,.settings-body::-webkit-scrollbar{width:8px;height:8px}
+.workspace-sidebar :is(.sidebar-content,.col-body,.scroll)::-webkit-scrollbar-thumb,.settings-body::-webkit-scrollbar-thumb{
+background:#536b72;border-radius:8px;border:2px solid transparent;background-clip:padding-box}
+.workspace-sidebar :is(.sidebar-content,.col-body,.scroll)::-webkit-scrollbar-thumb:hover,.settings-body::-webkit-scrollbar-thumb:hover{background-color:#80979c}
+.workspace-sidebar .sidebar-footer .sid{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+@media(forced-colors:active){.workspace-sidebar :is(.sidebar-content,.col-body,.scroll),.settings-body{scrollbar-color:auto}}
+"""
+
 WORKSPACE_SCRIPT = """
 (() => {
   const sidebar = document.getElementById('workspace-sidebar');

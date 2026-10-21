@@ -10,6 +10,7 @@ Default-deny: the chat is disabled until at least one folder is granted.
 
 from __future__ import annotations
 
+from novacode_cli.ui.cowork_web import COWORK_STYLE
 from novacode_cli.ui.web_workspace import WORKSPACE_CSS, WORKSPACE_SCRIPT
 
 
@@ -19,6 +20,7 @@ def render_cowork_html(token: str = "") -> str:
     return (
         _HTML.replace("__WORKSPACE_STYLE__", WORKSPACE_CSS)
         .replace("__WORKSPACE_SCRIPT__", WORKSPACE_SCRIPT)
+        .replace("__COWORK_STYLE__", COWORK_STYLE)
         .replace("__COWORK_TOKEN__", token)
     )
 
@@ -238,6 +240,7 @@ _HTML = r"""<!doctype html>
  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 
 __WORKSPACE_STYLE__
+__COWORK_STYLE__
 </style></head>
 <body class="workspace-app cowork-app">
 <aside class="workspace-sidebar" id="workspace-sidebar" aria-label="Cowork sidebar">
@@ -252,9 +255,9 @@ __WORKSPACE_STYLE__
     <div class="col-head">
       <h2>Folder access</h2>
     </div>
-    <div class="col-body">
+    <div class="col-body" tabindex="0" role="region" aria-label="Workspace folders">
       <div class="picker">
-        <label for="path">grant a folder</label>
+        <label for="path">Workspace folder</label>
         <input type="text" id="path" placeholder="/absolute/path/to/folder" autocomplete="off" spellcheck="false" />
         <div class="perms">
           <label><input type="checkbox" id="perm-r" checked> Read</label>
@@ -273,13 +276,13 @@ __WORKSPACE_STYLE__
       <h2>Activity</h2>
       <button class="clear-btn" id="clear-activity" title="Clear activity">Clear</button>
     </div>
-    <div class="col-body">
+    <div class="col-body" tabindex="0" role="region" aria-label="Workspace activity">
       <div id="todos-panel" class="todos-panel">
         <div class="todos-head">▦ Todos<button class="clear-btn" id="todos-clear" title="Hide todos">✕</button></div>
         <div id="todos" class="todos-list"></div>
       </div>
       <div class="scroll" id="activity"></div>
-      <div id="activity-empty" class="empty">no activity yet — tool calls and file changes will appear here</div>
+      <div id="activity-empty" class="empty">Tool calls and file changes will appear here as Nova works.</div>
     </div>
   </section>
 <div class="sidebar-footer"><span id="ws-state" class="state deny">workspace: deny-all</span><span class="sid" id="sid"></span></div>
@@ -294,10 +297,10 @@ __WORKSPACE_STYLE__
 </header>
     <div class="chat-wrap">
       <div id="chat" role="log" aria-label="Cowork conversation"></div>
-      <div id="chat-empty" class="empty">▸ send a message to start — the agent works inside your granted folders</div>
+      <div id="chat-empty" class="empty">A shared space for your next task. Send a message to get started.</div>
     </div>
     <div id="deny-overlay">
-      <div class="lock" aria-hidden="true">⌘</div>
+      <div class="lock">YOUR WORKSPACE, YOUR RULES</div>
       <div class="big">Give Nova a place to work</div>
       <div class="sub">Choose a folder in the sidebar to start a conversation. Nova can only work inside the folders you grant.</div>
       <button class="choose-workspace" data-open-workspace>Choose a workspace</button>
