@@ -164,7 +164,10 @@ class InProcessHandle:
                     {
                         "full_output": "\n".join(summary),
                         "error": error,
-                        "model": getattr(self.state, "session_model_provider", None),
+                        "model": (
+                            getattr(self.state, "team_model_name", None)
+                            or getattr(self.state, "session_model_provider", None)
+                        ),
                         "usage": tree.to_dict(),
                         "usage_turn": turn_id,
                     },

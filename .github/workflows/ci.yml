@@ -86,6 +86,9 @@ jobs:
           tests/test_notebook_tools.py
           tests/test_native_search.py
           tests/test_tui_terminal_title.py
+          tests/test_team_inprocess.py
+          tests/test_team_process.py
+          tests/test_team_accounting.py
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
+import pytest
 from langchain.agents import create_agent
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage
@@ -20,7 +21,6 @@ from novacode_cli.teams.models import Identity, SpawnRequest
 if TYPE_CHECKING:
     from pathlib import Path
 
-    import pytest
 
 
 class ScriptedModel(FakeMessagesListChatModel):
@@ -141,6 +141,8 @@ async def test_enabled_bootstrap_registers_real_tools_and_scoped_legacy_roster(
         )
         return child_graph, None
 
+    from langgraph.store.memory import InMemoryStore
+    monkeypatch.setattr(core_agent, "get_shared_store", lambda: InMemoryStore())
     monkeypatch.setattr(core_agent, "create_agent_with_config", configured_graph)
     team = (await host.initial._db("teams", host.initial.lead))[0]
     child = await host.initial.spawn(host.initial.lead, "Verify callback attribution.", team["id"])
@@ -244,8 +246,6 @@ async def test_profile_gates_attach_refresh_and_preserve_team_ownership(
 ) -> None:
     from unittest.mock import AsyncMock
 
-    import pytest
-
     from novacode_cli.config.config import settings
     from novacode_cli.config.nova_config import NovaConfig
     from novacode_cli.teams import bootstrap
@@ -307,3 +307,70 @@ async def test_profile_gates_attach_refresh_and_preserve_team_ownership(
             )
     finally:
         await coordinator.close()
+
+
+@pytest.mark.timeout(60)
+async def test_five_bootstrap_teammates_with_learning_reach_the_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from langgraph.store.memory import InMemoryStore
+
+    from novacode_cli.agents import core_agent
+    from novacode_cli.config.config import settings
+    from novacode_cli.config.nova_config import NovaConfig
+    from novacode_cli.hermes.middleware import NovaLearningMiddleware
+    from novacode_cli.teams import bootstrap
+
+    monkeypatch.setattr(bootstrap, "enabled", lambda: True)
+    monkeypatch.setattr(NovaConfig, "get", lambda *_a, **_k: None)
+    monkeypatch.setattr(NovaConfig, "get_model_base_url", lambda _: None)
+    monkeypatch.setattr(type(settings), "user_deepagents_dir", property(lambda _: tmp_path))
+    store = InMemoryStore()
+    monkeypatch.setattr(core_agent, "get_shared_store", lambda: store)
+    built = []
+
+    def configured_graph(selected, assistant, tools, **options):
+        learning = NovaLearningMiddleware(
+            options.get("store"), agent_dir=tmp_path, enabled=True, review_mode="periodic"
+        )
+        graph = create_agent(
+            selected,
+            middleware=[TeamMiddleware(options["team_binding"]), learning],
+            checkpointer=InMemorySaver(),
+            store=options.get("store"),
+        )
+        built.append((graph, learning))
+        return graph, None
+
+    monkeypatch.setattr(core_agent, "create_agent_with_config", configured_graph)
+    model = ScriptedModel(
+        metadata={"nova_provider": "scripted", "nova_model": "offline"},
+        responses=[AIMessage("Verified offline research probe.")],
+    )
+    _, _, host = bootstrap.attach(
+        model, "nova", [], [{"name": "general-purpose", "tools": []}], tmp_path, "five-workers"
+    )
+    try:
+        team = await host.initial.request(host.initial.lead, "team_create", {"name": "five-probes"})
+        workers = await asyncio.gather(
+            *(
+                host.initial.spawn(host.initial.lead, "Verify this probe.", team["id"])
+                for _ in range(5)
+            )
+        )
+        await asyncio.wait_for(
+            asyncio.gather(*(host.initial._handles[w["id"]].queue.join() for w in workers)),
+            timeout=30,
+        )
+        records = [
+            await host.initial.request(host.initial.lead, "get_agent", {"agent_id": w["id"]})
+            for w in workers
+        ]
+        assert all(r["status"] == "idle" for r in records), [
+            (r["status"], r.get("error")) for r in records
+        ]
+        assert all(r["usage_totals"]["calls"] > 0 for r in records)
+        assert all("Verified offline" in r["summary"] for r in records)
+        assert all(r["model"] == "offline" for r in records)
+    finally:
+        await host.initial.close()

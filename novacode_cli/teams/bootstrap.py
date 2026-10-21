@@ -97,7 +97,7 @@ def attach(  # noqa: PLR0915 - Ordered runtime assembly.
         return list(base_tools if spec.get("tools") is None else spec["tools"])
 
     def builder(request: SpawnRequest, child_binding: Binding) -> tuple[Any, Any, Any]:
-        from novacode_cli.agents.core_agent import create_agent_with_config
+        from novacode_cli.agents.core_agent import create_agent_with_config, get_shared_store
         from novacode_cli.states.Session import SessionState
 
         spec = specs.get(request.agent_type)
@@ -108,6 +108,9 @@ def attach(  # noqa: PLR0915 - Ordered runtime assembly.
         state.session_id = state.thread_id = request.identity.agent
         state.workspace_root = str(request.cwd)
         selected_model = spec.get("model") or model
+        model_identity = descriptor(selected_model, spec)
+        state.session_model_provider = model_identity.get("provider")
+        state.team_model_name = model_identity.get("model")
         from novacode_cli.tracking.usage_tree import attach_usage_callback
 
         attach_usage_callback(selected_model)
@@ -116,6 +119,7 @@ def attach(  # noqa: PLR0915 - Ordered runtime assembly.
             assistant_id,
             role_tools(spec),
             system_prompt=spec.get("system_prompt"),
+            store=get_shared_store(),
             workspace_root=str(request.cwd),
             session_id=request.identity.agent,
             auto_approve=True,

@@ -18,7 +18,7 @@ async def serve(bootstrap: dict[str, Any], output_fd: int) -> int:  # noqa: PLR0
     from novacode_cli._lazy_heavy import install
 
     install()
-    from novacode_cli.agents.core_agent import create_agent_with_config
+    from novacode_cli.agents.core_agent import create_agent_with_config, get_shared_store
     from novacode_cli.config.model_create import build_chat_model
     from novacode_cli.config.nova_config import NovaConfig
     from novacode_cli.main import _session_tools
@@ -98,6 +98,7 @@ async def serve(bootstrap: dict[str, Any], output_fd: int) -> int:  # noqa: PLR0
         model,
         "nova-agent",
         tools,
+        store=get_shared_store(),
         workspace_root=str(Path.cwd()),
         session_id=identity.agent,
         team_binding=binding,

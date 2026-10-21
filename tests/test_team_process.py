@@ -156,9 +156,13 @@ def model(provider,name):
         AIMessage('Offline Nova worker verified.',usage_metadata={
             'input_tokens':15,'output_tokens':3,'total_tokens':18,
             'input_token_details':{'cache_read':10}})])
+from langgraph.store.memory import InMemoryStore
+from novacode_cli.hermes.middleware import NovaLearningMiddleware
+core_agent.get_shared_store=lambda:InMemoryStore()
 def graph(model,assistant_id,tools,**kwargs):
-    return create_agent(model, middleware=[TeamMiddleware(kwargs['team_binding'])],
-                        checkpointer=InMemorySaver()),None
+    learning=NovaLearningMiddleware(kwargs.get('store'),enabled=True,review_mode='periodic')
+    return create_agent(model, middleware=[TeamMiddleware(kwargs['team_binding']),learning],
+                        checkpointer=InMemorySaver(),store=kwargs.get('store')),None
 model_create.build_chat_model=model
 core_agent.create_agent_with_config=graph
 application._session_tools=lambda state:[]
@@ -167,6 +171,7 @@ raise SystemExit(main())
 """
 
 
+@pytest.mark.timeout(60)
 @pytest.mark.parametrize("result_size", ["small", "large"])
 async def test_nova_worker_entrypoint_runs_canonical_loop_and_reports_usage(
     tmp_path: Path, result_size: str
