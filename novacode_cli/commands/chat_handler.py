@@ -26,6 +26,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from novacode_cli.config.config import COLORS, console
+from novacode_cli.ui.web_workspace import WORKSPACE_CSS, WORKSPACE_SCRIPT
 
 logger = logging.getLogger(__name__)
 
@@ -80,76 +81,17 @@ _MAX_DECISION_BODY = 8 * 1024
 # ---------------------------------------------------------------------------
 
 def _make_chat_html() -> str:
-    """Return a self-contained council UI styled after the Nova Textual TUI.
-
-    Tokyo-night palette, JetBrains Mono, matrix-rain banner with the NOVA ASCII
-    logo, accent-bar message cards, and a prompt-dock composer with the ``>``
-    chevron — mirroring ``cowork/ui.py`` so the council feels like the TUI.
-    """
+    """Render the council with an advisor sidebar and a dedicated chat area."""
     return r"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Nova — Council</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <style>
-  :root{
-    --bg:#13141d; --surface:#1a1b26; --panel:#24283b; --boost:#2f3346;
-    --border:#3b4261; --fg:#c0caf5; --muted:#565f89;
-    --primary:#7aa2f7; --secondary:#9ece6a; --accent:#bb9af7;
-    --success:#73daca; --warning:#e0af68; --error:#f7768e;
-  }
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; }
-  body {
-    font-family: 'JetBrains Mono', ui-monospace, 'Cascadia Code', 'SF Mono', monospace;
-    background: var(--bg); color: var(--fg);
-    height: 100vh; display: flex; flex-direction: column; overflow: hidden;
-  }
-  ::selection { background: var(--primary); color: #0f0f16; }
-  ::-webkit-scrollbar { width: 8px; height: 8px; }
-  ::-webkit-scrollbar-track { background: var(--bg); }
-  ::-webkit-scrollbar-thumb { background: var(--border); }
-  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
-
-  /* --- matrix-rain banner (TUI home screen) --- */
-  .banner { position: relative; flex: 0 0 auto; height: clamp(120px, 15vw, 180px);
-    overflow: hidden; border-bottom: 1px solid var(--border); background: var(--bg);
-    animation: fadein .5s ease both; }
-  #rain { position: absolute; inset: 0; width: 100%; height: 100%; }
-  .logo { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-    padding-bottom: 18px; font-size: clamp(4.5px, 0.95vw, 11px); line-height: 1.3; white-space: pre;
-    color: var(--primary); text-shadow: 0 0 16px rgba(122,162,247,.45);
-    user-select: none; pointer-events: none; overflow: hidden; }
-  .bootline { position: absolute; left: 0; right: 0; bottom: 8px; text-align: center;
-    font-size: 11px; color: var(--muted); letter-spacing: .06em; min-height: 16px; }
-  .bootline .ok { color: var(--success); }
-
-  /* --- header (TUI info bar) --- */
-  header { display: flex; align-items: center; gap: 10px; padding: 8px 14px;
-    background: var(--surface); border-bottom: 1px solid var(--border); flex: 0 0 auto;
-    animation: rise .35s ease both; }
-  .mark { color: var(--primary); font-weight: 800; letter-spacing: .02em; white-space: nowrap; }
-  .mode { font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase;
-    color: #b4c6ef; background: #161f33; border: 1px solid var(--primary); padding: 2px 8px; white-space: nowrap; }
-  .state { font-size: 11px; padding: 2px 8px; border: 1px solid; white-space: nowrap; }
-  .state.ok { color: var(--success); border-color: var(--success); }
-  .state.deny { color: var(--warning); border-color: var(--warning); }
-  .run-badge { display: none; font-size: 11px; padding: 2px 8px; border: 1px solid var(--accent);
-    color: var(--accent); white-space: nowrap; animation: pulse 1.6s ease-in-out infinite; }
-  .run-badge.show { display: inline-block; }
-  .sid { margin-left: auto; color: var(--muted); font-size: 11px; white-space: nowrap; }
-  #new-thread { background: transparent; color: var(--muted); border: 1px solid var(--border);
-    font: inherit; font-size: 10px; padding: 3px 10px; cursor: pointer; text-transform: uppercase;
-    letter-spacing: .1em; transition: border-color .15s, color .15s; white-space: nowrap; }
-  #new-thread:hover { border-color: var(--primary); color: var(--fg); }
-
   /* --- the bench — advisor seats with live state + vote tally --- */
   #bench { display: none; flex-shrink: 0; gap: 8px; padding: 10px 14px;
     border-bottom: 1px solid var(--border); background: var(--surface); overflow-x: auto; }
@@ -323,88 +265,49 @@ def _make_chat_html() -> str:
     text-overflow: ellipsis; white-space: nowrap; color: var(--fg); opacity: .85; }
   .status-msg:empty { display: none; }
 
-  /* --- atmosphere --- */
-  .scanlines { position: fixed; inset: 0; pointer-events: none; z-index: 9998; opacity: .5;
-    background: repeating-linear-gradient(0deg, rgba(0,0,0,.14) 0 1px, transparent 1px 3px); }
-  .vignette { position: fixed; inset: 0; pointer-events: none; z-index: 9997;
-    background: radial-gradient(ellipse at center, transparent 58%, rgba(0,0,0,.38)); }
-
-  /* Keep the council readable and operable on narrow phone viewports. */
-  @media (max-width: 640px) {
-    html, body { height: 100%; height: 100dvh; }
-    body { min-height: 0; }
-    .banner { height: clamp(76px, 13vh, 112px); }
-    header { flex-wrap: wrap; gap: 6px 8px; padding: 8px 10px; }
-    .sid { display: none; }
-    #new-thread { margin-left: auto; min-height: 36px; }
-    #bench { gap: 6px; padding: 8px; }
-    #bench .seat { min-width: 74px; padding: 6px 4px; }
-    #messages { min-height: 0; padding: 12px 10px; gap: 10px; }
-    .topic-banner { max-width: 100%; font-size: 12px; padding: 6px 8px; }
-    .agent { max-width: 100%; padding: 9px 10px; }
-    .agent .body pre { max-width: 100%; overflow-x: auto; }
-    .leaderboard { overflow-x: auto; }
-    #input-area { align-items: stretch; }
-    .mode-badge { display: none; }
-    .prefix { padding: 0 8px; }
-    #input-area textarea { min-width: 0; padding: 12px 8px; font-size: 16px; }
-    #input-area button { min-width: 76px; padding: 0 10px; }
-    #status-bar { flex-wrap: wrap; gap: 4px 10px; padding: 6px 10px; font-size: 10px; }
-    #status-bar .hint { display: none; }
-    .status-msg { max-width: 48vw; }
-  }
-
   /* --- motion --- */
   @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
   @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
   @keyframes blink { 0%,49% { opacity: 1; } 50%,100% { opacity: 0; } }
   @keyframes pulse { 0%,100% { opacity: .75; } 50% { opacity: 1; } }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+__WORKSPACE_STYLE__
 </style>
 </head>
-<body>
-<div class="banner">
-  <canvas id="rain"></canvas>
-  <pre class="logo">⣿⣿⣿⣿⣟⠊⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⢿⣿         ███╗   ██╗  ██████╗  ██╗   ██╗  █████╗
-⣿⣿⣿⡏⠁⠀⠀⠀⠀⠀⠀⢀⣰⣶⣶⡄⠀⠀⠀⠀⠀⠀⢀⠀⠀⠈⢻        ████╗  ██║ ██╔═══██╗ ██║   ██║ ██╔══██╗
-⣿⣿⣿⠁⠄⠀⠀⠀⠀⠀⣤⣾⣿⣿⣿⣿⡂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠽       ██╔██╗ ██║ ██║   ██║ ██║   ██║ ███████║
-⣿⣿⡏⣸⠀⠀⠀⠀⢀⣼⣿⣿⣿⣿⣿⣿⣿⡆⠀⠀⠈⠀⠀⠀⠀⠀⠀⠰      ██║╚██╗██║ ██║   ██║ ╚██╗ ██╔╝ ██╔══██║
-⣿⣿⡇⠁⠀⠀⠀⣤⣍⣙⣿⣿⣏⣠⠄⠲⠲⠦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢻     ██║ ╚████║ ╚██████╔╝  ╚████╔╝  ██║  ██║
-⣿⣿⠁⠀⠀⠀⠀⠀⢤⠙⣿⣿⣿⣇⣀⡐⢂⣠⡄⠠⠀⠀⠀⠀⠀⠀⡀⢠⢸     ╚═╝  ╚═══╝  ╚═════╝    ╚═══╝   ╚═╝  ╚═╝
-⣿⣿⠀⠀⠐⠀⣶⣷⣷⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀⠀⠐⠈⠀⠀⠀⠉⠘⣼
-⣿⣿⠀⠈⠀⠀⣿⣿⣿⡿⣿⠿⢿⣿⣿⣿⣿⣿⣿⣧⡀⠀⢄⠲⠀⠀⠀⣱      ~ Five advisors. One question.
-⣿⣿⡆⠀⠀⠀⠈⣿⣿⣷⣶⣼⣾⣿⣿⣿⣿⣿⣿⣿⣷⠂⠀⠀⠂⢀⢲         Independent answers. One vote each.
-⣿⣿⣿⡆⠀⠀⠀⠙⣿⠋⠠⠄⢀⠉⣹⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⣿          The majority decides.
-⣿⣿⣿⣿⣦⠀⠀⠀⠘⣿⣤⣤⣶⣿⣿⣿⣿⣿⠟⣛⡽⠀⠀⠀⠠⣸            ♥︎ NOVA ~
-⣿⣿⣿⣿⣿⣷⡀⠀⠀⠈⠻⣿⣿⣿⠿⠛⠋⠐⠚⠛⠃   ⣰⣿</pre>
-  <div class="bootline"><span class="ok">✓</span> <span id="boot"></span></div>
+<body class="workspace-app council-app">
+<aside class="workspace-sidebar" id="workspace-sidebar" aria-label="Council sidebar">
+<div class="workspace-brand"><span class="brand-icon" aria-hidden="true">◆</span>
+  <span>Nova</span><span class="brand-product">Council</span>
+  <button class="sidebar-close" id="sidebar-close" aria-label="Close sidebar">×</button></div>
+<div class="sidebar-content">
+  <button id="new-thread" class="sidebar-primary" data-return-to-chat title="Clear the prior session and start fresh">＋ New discussion</button>
+  <h2 class="sidebar-label">Your advisors</h2>
+  <div id="bench" aria-label="Council advisors"></div>
+  <p class="sidebar-note advisor-placeholder">Your council assembles when you send a question. Follow each advisor's progress here.</p>
+  <h2 class="sidebar-label">How it works</h2>
+  <ol class="workflow"><li>Independent perspectives</li><li>A vote on the best answer</li><li>The final decision is yours</li></ol>
 </div>
-<header>
-  <span class="mark">◆ NOVA COUNCIL</span>
-  <span class="mode">council</span>
-  <span id="run-badge" class="run-badge">● convening</span>
-  <span class="sid" id="sid"></span>
-  <button id="new-thread" title="Clear the prior session and start fresh">⟲ New session</button>
-</header>
-<div id="bench"></div>
-<div id="messages">
-  <div class="welcome">
-    <h2>The Council Awaits</h2>
-    <div class="divider"></div>
-    <p>Pose a question. Five advisors each answer it <b>independently</b>, then cast a single <b>democratic vote</b> for the best answer. The <b>majority</b> choice becomes the verdict. Follow-ups remember the session; <b>New session</b> starts fresh.</p>
-    <div class="seats">
-      <span class="seat">🏛️ Architect</span>
-      <span class="seat">🛠️ Pragmatist</span>
-      <span class="seat">🔍 Skeptic</span>
-      <span class="seat">🚀 Innovator</span>
-      <span class="seat">✂️ Minimalist</span>
+<div class="sidebar-footer"><span>Follow-ups stay in this discussion.</span><span class="sid" id="sid"></span></div>
+</aside>
+<main class="workspace-chat" id="conversation">
+<header class="chat-topbar"><button class="mobile-menu" id="sidebar-toggle" aria-controls="workspace-sidebar"
+  aria-expanded="false" aria-label="Open sidebar">☰</button><div class="chat-heading"><h1>Council</h1>
+  <p>A few perspectives. A clearer decision.</p></div><span id="run-badge" class="run-badge">● convening</span></header>
+<div id="messages" role="log" aria-label="Council conversation">
+  <div class="welcome"><div class="welcome-icon" aria-hidden="true">◈</div>
+    <h2>Bring a question<br>to the table.</h2>
+    <p>Your advisors explore it independently and vote on the strongest answer. Review their perspectives, ask a follow-up, and make the final call.</p>
+    <div class="prompt-options">
+      <button class="prompt-option" data-prompt="Help me compare two approaches to ">Compare approaches</button>
+      <button class="prompt-option" data-prompt="Review this decision and challenge my assumptions: ">Review a decision</button>
+      <button class="prompt-option" data-prompt="What trade-offs should I consider for ">Explore trade-offs</button>
     </div>
   </div>
 </div>
 <div id="input-area">
   <span class="mode-badge">council</span>
   <span class="prefix">&gt;</span>
-  <textarea id="input" rows="1" placeholder="Pose a question to the council…" autofocus></textarea>
+  <textarea id="input" rows="1" placeholder="Ask your council a question…" aria-label="Message the council"></textarea>
   <button id="send-btn">Convene</button>
 </div>
 <div id="status-bar">
@@ -415,8 +318,9 @@ def _make_chat_html() -> str:
   <span class="hint">⏎ send · ⇧⏎ newline</span>
   <span id="clock"></span>
 </div>
-<div class="scanlines"></div>
-<div class="vignette"></div>
+</main>
+<button class="workspace-backdrop" id="workspace-backdrop" tabindex="-1"
+  aria-label="Close sidebar"></button>
 
 <script>
 const $ = id => document.getElementById(id);
@@ -429,8 +333,6 @@ let es = null;
 const agentEls = {};    // id -> {wrap, body, buf}
 const benchSeats = {};  // id -> {seat, badge, votes}
 let agentMeta = {};     // id -> {name, avatar, color}
-
-const REDUCED = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 // The running message lives in its OWN child span. Assigning
 // `statusBar.textContent` here instead would delete every child of the bar —
@@ -467,53 +369,6 @@ function addPhase(text, sub) {
   if (sub) { const s = el('span', 'phase-sub'); s.textContent = sub; e.appendChild(s); }
   messages.appendChild(e); scrollDown(true);
 }
-
-/* --- matrix rain (theme-tinted, like the TUI home screen) --- */
-(function(){
-  const cv = document.getElementById('rain');
-  if (!cv || !cv.getContext || REDUCED) return;
-  const cx = cv.getContext('2d');
-  const KATA = 'ｱｲｳｴｵｶｷｸｹｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜｦﾝ';
-  const FS = 15;
-  let cols = 0, drops = [];
-  function resize(){
-    cv.width = cv.clientWidth; cv.height = cv.clientHeight;
-    cols = Math.max(1, Math.ceil(cv.width / FS));
-    drops = Array.from({length: cols}, () => Math.floor(Math.random() * -40));
-  }
-  function frame(){
-    cx.fillStyle = 'rgba(19,20,29,0.10)';
-    cx.fillRect(0, 0, cv.width, cv.height);
-    cx.font = FS + 'px "JetBrains Mono", monospace';
-    for (let i = 0; i < cols; i++){
-      const ch = KATA[Math.floor(Math.random() * KATA.length)];
-      const y = drops[i] * FS;
-      cx.fillStyle = 'rgba(122,162,247,0.9)';
-      cx.fillText(ch, i * FS, y);
-      cx.fillStyle = 'rgba(122,162,247,0.22)';
-      cx.fillText(ch, i * FS, y - FS);
-      if (y > cv.height + 40 && Math.random() > 0.975) drops[i] = Math.floor(Math.random() * -20);
-      drops[i]++;
-    }
-    requestAnimationFrame(frame);
-  }
-  window.addEventListener('resize', resize);
-  resize();
-  frame();
-})();
-
-/* --- boot line typewriter --- */
-(function(){
-  const el = document.getElementById('boot');
-  if (!el) return;
-  const text = 'council chamber online · five advisors · one verdict';
-  if (REDUCED){ el.textContent = text; return; }
-  let i = 0;
-  (function type(){
-    el.textContent = text.slice(0, i);
-    if (i < text.length){ el.textContent += '▊'; i++; setTimeout(type, 16); }
-  })();
-})();
 
 /* --- clock --- */
 (function(){
@@ -821,8 +676,9 @@ function newThread() {
 }
 newThreadBtn.addEventListener('click', newThread);
 </script>
+<script>__WORKSPACE_SCRIPT__</script>
 </body>
-</html>"""
+</html>""".replace("__WORKSPACE_STYLE__", WORKSPACE_CSS).replace("__WORKSPACE_SCRIPT__", WORKSPACE_SCRIPT)
 
 
 # ---------------------------------------------------------------------------

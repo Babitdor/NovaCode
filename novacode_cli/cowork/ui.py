@@ -1,8 +1,7 @@
 """The Nova Cowork single-page desktop UI (served by the FastAPI server).
 
-Self-contained HTML/CSS/JS styled after the Nova TUI: tokyo-night palette,
-matrix-rain banner with the NOVA ASCII logo, accent-bar message cards, and a
-prompt-dock composer with the ``>`` chevron. Talks to the existing server:
+Self-contained HTML/CSS/JS with workspace and activity panels in a left sidebar
+and a dedicated conversation area on the right. Talks to the existing server:
 - POST /sessions + WS /ws/{id} for the agent chat (reused as-is).
 - /api/workspace[/grant|/revoke] + /api/authorize for the WorkspacePolicy broker.
 
@@ -11,101 +10,24 @@ Default-deny: the chat is disabled until at least one folder is granted.
 
 from __future__ import annotations
 
+from novacode_cli.ui.web_workspace import WORKSPACE_CSS, WORKSPACE_SCRIPT
+
 
 def render_cowork_html(token: str = "") -> str:
     """Render the SPA with the IPC token embedded so its fetch/WebSocket calls
     can authenticate against the token-gated server routes."""
-    return _HTML.replace("__COWORK_TOKEN__", token)
+    return (
+        _HTML.replace("__WORKSPACE_STYLE__", WORKSPACE_CSS)
+        .replace("__WORKSPACE_SCRIPT__", WORKSPACE_SCRIPT)
+        .replace("__COWORK_TOKEN__", token)
+    )
 
 
 _HTML = r"""<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Nova Cowork</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
 <style>
- :root{ --bg:#13141d; --surface:#1a1b26; --panel:#24283b; --boost:#2f3346;
-        --border:#3b4261; --fg:#c0caf5; --muted:#565f89;
-        --primary:#7aa2f7; --secondary:#9ece6a; --accent:#bb9af7;
-        --success:#73daca; --warning:#e0af68; --error:#f7768e; }
- *{box-sizing:border-box;margin:0;padding:0}
- html,body{height:100%}
- body{background:var(--bg);color:var(--fg);
-   font:14px/1.55 "JetBrains Mono",ui-monospace,"Cascadia Code","SF Mono",monospace;
-   display:flex;flex-direction:column;overflow:hidden}
- ::selection{background:var(--primary);color:#0f0f16}
- ::-webkit-scrollbar{width:8px;height:8px}
- ::-webkit-scrollbar-track{background:var(--bg)}
- ::-webkit-scrollbar-thumb{background:var(--border)}
- ::-webkit-scrollbar-thumb:hover{background:var(--muted)}
-
- /* --- matrix-rain banner --- */
- .banner{position:relative;flex:0 0 auto;height:clamp(140px,16vw,200px);overflow:hidden;
-   border-bottom:1px solid var(--border);background:var(--bg);animation:fadein .5s ease both}
- #rain{position:absolute;inset:0;width:100%;height:100%}
- .logo{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-   padding-bottom:20px;font-size:clamp(5px,1.05vw,12px);line-height:1.3;white-space:pre;
-   color:var(--primary);text-shadow:0 0 16px rgba(122,162,247,.45);
-   user-select:none;pointer-events:none;overflow:hidden}
- .bootline{position:absolute;left:0;right:0;bottom:8px;text-align:center;
-   font-size:11px;color:var(--muted);letter-spacing:.06em;min-height:16px}
- .bootline .ok{color:var(--success)}
-
- /* --- header (TUI info bar) --- */
- header{display:flex;align-items:center;gap:10px;padding:8px 14px;background:var(--surface);
-   border-bottom:1px solid var(--border);flex:0 0 auto;animation:rise .35s ease both}
- .mark{color:var(--primary);font-weight:800;letter-spacing:.02em;white-space:nowrap}
- .mode{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;
-   color:#b4c6ef;background:#161f33;border:1px solid var(--primary);padding:2px 8px;white-space:nowrap}
- .state{font-size:11px;padding:2px 8px;border:1px solid;white-space:nowrap}
- .state.ok{color:var(--success);border-color:var(--success)}
- .state.deny{color:var(--warning);border-color:var(--warning)}
- .run-badge{display:none;font-size:11px;padding:2px 8px;border:1px solid var(--accent);
-   color:var(--accent);white-space:nowrap;animation:pulse 1.6s ease-in-out infinite}
- .run-badge.show{display:inline-block}
- .sid{margin-left:auto;color:var(--muted);font-size:11px;white-space:nowrap}
-
- /* --- 3-column main (collapsible sidebars) --- */
- .main{flex:1;display:grid;grid-template-columns:300px 1fr 340px;min-height:0;
-   transition:grid-template-columns .2s ease}
- .main.collapsed-workspace{grid-template-columns:44px 1fr 340px}
- .main.collapsed-activity{grid-template-columns:300px 1fr 44px}
- .main.collapsed-workspace.collapsed-activity{grid-template-columns:44px 1fr 44px}
- .col{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--border);
-   animation:rise .4s ease both}
- .col:last-child{border-right:0;border-left:1px solid var(--border)}
- .col:nth-child(1){animation-delay:.05s}
- .col:nth-child(2){animation-delay:.12s}
- .col:nth-child(3){animation-delay:.19s}
- .col-head{display:flex;align-items:center;flex:0 0 auto;border-bottom:1px solid var(--border);
-   background:var(--surface)}
- .col h2{flex:1;font-size:10px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;
-   color:var(--muted);padding:10px 14px 9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
- .col h2::before{content:"▮";margin-right:7px}
- #col-workspace h2::before{color:var(--secondary)}
- #col-chat h2::before{color:var(--primary)}
- #col-activity h2::before{color:var(--accent)}
- .col-head .clear-btn{background:transparent;border:0;color:var(--muted);font:inherit;font-size:10px;
-   text-transform:uppercase;letter-spacing:.1em;padding:0 8px;cursor:pointer;height:100%;white-space:nowrap}
- .col-head .clear-btn:hover{color:var(--fg)}
- .collapse-btn{background:transparent;border:0;color:var(--muted);font:inherit;font-size:11px;
-   padding:0 10px;cursor:pointer;height:100%;align-self:stretch}
- .collapse-btn:hover{color:var(--fg)}
- .col-body{display:flex;flex-direction:column;flex:1;min-height:0;position:relative}
- .rail-label{display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;
-   flex:1;cursor:pointer;color:var(--muted);user-select:none;transition:color .15s}
- .rail-label:hover{color:var(--primary)}
- .rail-ic{font-size:12px}
- #col-workspace .rail-ic{color:var(--secondary)}
- #col-activity .rail-ic{color:var(--accent)}
- .rail-txt{writing-mode:vertical-rl;font-size:10px;letter-spacing:.2em;text-transform:uppercase}
- .col.rail .col-body{display:none}
- .col.rail .col-head{display:none}
- .col.rail .rail-label{display:flex}
- .scroll{overflow-y:auto;flex:1;padding:12px 14px 16px}
-
  /* --- workspace grants --- */
  .picker{padding:12px;border-bottom:1px solid var(--border);background:var(--surface)}
  .picker label{display:block;font-size:10px;color:var(--muted);text-transform:uppercase;
@@ -307,12 +229,6 @@ _HTML = r"""<!doctype html>
    font-size:11px;padding:1px 8px;cursor:pointer;transition:background .15s,color .15s}
  .reconnect:hover{background:var(--warning);color:#0f0f16}
 
- /* --- atmosphere --- */
- .scanlines{position:fixed;inset:0;pointer-events:none;z-index:9998;opacity:.5;
-   background:repeating-linear-gradient(0deg,rgba(0,0,0,.14) 0 1px,transparent 1px 3px)}
- .vignette{position:fixed;inset:0;pointer-events:none;z-index:9997;
-   background:radial-gradient(ellipse at center,transparent 58%,rgba(0,0,0,.38))}
-
  /* --- motion --- */
  @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
  @keyframes fadein{from{opacity:0}to{opacity:1}}
@@ -321,103 +237,70 @@ _HTML = r"""<!doctype html>
  @keyframes pulse{0%,100%{opacity:.75}50%{opacity:1}}
  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 
- /* --- responsive --- */
- @media (max-width:1100px){
-   .main{grid-template-columns:260px 1fr 280px}
-   .main.collapsed-workspace{grid-template-columns:44px 1fr 280px}
-   .main.collapsed-activity{grid-template-columns:260px 1fr 44px}
-   .main.collapsed-workspace.collapsed-activity{grid-template-columns:44px 1fr 44px}
- }
- @media (max-width:900px){
-   body{overflow:auto}
-   .main{grid-template-columns:1fr;min-height:auto}
-   .col{min-height:52vh;border-right:0;border-bottom:1px solid var(--border)}
-   .col:last-child{border-left:0}
-   #col-chat{order:-1}
-   .col.rail{min-height:44px}
-   .col.rail .rail-label{flex-direction:row;align-items:center;justify-content:center;gap:8px;padding:0}
-   .rail-txt{writing-mode:horizontal-tb}
- }
- @media (max-width:600px){
-   .banner{height:96px}
-   header{flex-wrap:wrap;gap:6px 8px;padding:8px 10px}
-   .sid{display:none}
-   .state{font-size:10px}
-   .col{min-height:58vh}
-   #chat{padding:12px 10px}
-   .msg{padding:9px 10px}
-   .composer{padding:8px;gap:6px}
-   .composer textarea{min-height:48px;height:48px;font-size:16px}
-   .composer button{min-width:68px;padding:0 10px}
-   .picker{padding:10px}
-   .scroll{padding:10px}
-   .qbox{width:calc(100% - 20px);max-height:calc(100dvh - 32px)}
- }
+__WORKSPACE_STYLE__
 </style></head>
-<body>
-<div class="banner">
-  <canvas id="rain"></canvas>
-  <pre class="logo">⣿⣿⣿⣿⣟⠊⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⢿⣿         ███╗   ██╗  ██████╗  ██╗   ██╗  █████╗
-⣿⣿⣿⡏⠁⠀⠀⠀⠀⠀⠀⢀⣰⣶⣶⡄⠀⠀⠀⠀⠀⠀⢀⠀⠀⠈⢻        ████╗  ██║ ██╔═══██╗ ██║   ██║ ██╔══██╗
-⣿⣿⣿⠁⠄⠀⠀⠀⠀⠀⣤⣾⣿⣿⣿⣿⡂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠽       ██╔██╗ ██║ ██║   ██║ ██║   ██║ ███████║
-⣿⣿⡏⣸⠀⠀⠀⠀⢀⣼⣿⣿⣿⣿⣿⣿⣿⡆⠀⠀⠈⠀⠀⠀⠀⠀⠀⠰      ██║╚██╗██║ ██║   ██║ ╚██╗ ██╔╝ ██╔══██║
-⣿⣿⡇⠁⠀⠀⠀⣤⣍⣙⣿⣿⣏⣠⠄⠲⠲⠦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢻     ██║ ╚████║ ╚██████╔╝  ╚████╔╝  ██║  ██║
-⣿⣿⠁⠀⠀⠀⠀⠀⢤⠙⣿⣿⣿⣇⣀⡐⢂⣠⡄⠠⠀⠀⠀⠀⠀⠀⡀⢠⢸     ╚═╝  ╚═══╝  ╚═════╝    ╚═══╝   ╚═╝  ╚═╝
-⣿⣿⠀⠀⠐⠀⣶⣷⣷⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀⠀⠐⠈⠀⠀⠀⠉⠘⣼
-⣿⣿⠀⠈⠀⠀⣿⣿⣿⡿⣿⠿⢿⣿⣿⣿⣿⣿⣿⣧⡀⠀⢄⠲⠀⠀⠀⣱      ~ Secrets, Locks, Firewalls
-⣿⣿⡆⠀⠀⠀⠈⣿⣿⣷⣶⣼⣾⣿⣿⣿⣿⣿⣿⣿⣷⠂⠀⠀⠂⢀⢲         Everything has a weakness.
-⣿⣿⣿⡆⠀⠀⠀⠙⣿⠋⠠⠄⢀⠉⣹⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⣿          The right code just knows where to look.
-⣿⣿⣿⣿⣦⠀⠀⠀⠘⣿⣤⣤⣶⣿⣿⣿⣿⣿⠟⣛⡽⠀⠀⠀⠠⣸            ♥︎ NOVA ~
-⣿⣿⣿⣿⣿⣷⡀⠀⠀⠈⠻⣿⣿⣿⠿⠛⠋⠐⠚⠛⠃   ⣰⣿</pre>
-  <div class="bootline"><span class="ok">✓</span> <span id="boot"></span></div>
+<body class="workspace-app cowork-app">
+<aside class="workspace-sidebar" id="workspace-sidebar" aria-label="Cowork sidebar">
+<div class="workspace-brand"><span class="brand-icon" aria-hidden="true">◆</span>
+  <span>Nova</span><span class="brand-product">Cowork</span>
+  <button class="sidebar-close" id="sidebar-close" aria-label="Close sidebar">×</button></div>
+<div class="sidebar-tabs" role="tablist" aria-label="Sidebar panels">
+  <button class="sidebar-tab" id="workspace-tab" data-sidebar-tab="workspace" role="tab" aria-selected="true" aria-controls="col-workspace">Workspace</button>
+  <button class="sidebar-tab" id="activity-tab" data-sidebar-tab="activity" role="tab" aria-selected="false" aria-controls="col-activity" tabindex="-1">Activity</button>
 </div>
-<header>
-  <span class="mark">◆ NOVA COWORK</span>
-  <span class="mode">cowork</span>
-  <span id="run-badge" class="run-badge">● running</span>
-  <span id="ws-state" class="state deny">workspace: deny-all</span>
-  <span class="sid" id="sid"></span>
-</header>
-<div class="main">
-  <div class="col" id="col-workspace">
+  <section class="workspace-panel" id="col-workspace" role="tabpanel" aria-labelledby="workspace-tab">
     <div class="col-head">
-      <h2>Workspace &amp; Permissions</h2>
-      <button class="collapse-btn" data-col="workspace" title="Collapse">◀</button>
+      <h2>Folder access</h2>
     </div>
     <div class="col-body">
       <div class="picker">
         <label for="path">grant a folder</label>
         <input type="text" id="path" placeholder="/absolute/path/to/folder" autocomplete="off" spellcheck="false" />
         <div class="perms">
-          <label><input type="checkbox" id="perm-r" checked> r</label>
-          <label><input type="checkbox" id="perm-w" checked> w</label>
-          <label><input type="checkbox" id="perm-x" checked> x</label>
-          <label><input type="checkbox" id="perm-rec" checked> recursive</label>
+          <label><input type="checkbox" id="perm-r" checked> Read</label>
+          <label><input type="checkbox" id="perm-w" checked> Write</label>
+          <label><input type="checkbox" id="perm-x" checked> Run</label>
+          <label><input type="checkbox" id="perm-rec" checked> Subfolders</label>
         </div>
         <button id="grant">Grant access</button>
       </div>
       <div id="deny" class="deny-note">⛔ No folder granted — access is denied everywhere.</div>
       <div class="scroll" id="grants"></div>
     </div>
-    <div class="rail-label" data-col="workspace" title="Expand">
-      <span class="rail-ic">▮</span>
-      <span class="rail-txt">Workspace</span>
-    </div>
-  </div>
-  <div class="col" id="col-chat">
+  </section>
+  <section class="workspace-panel" id="col-activity" role="tabpanel" aria-labelledby="activity-tab" hidden>
     <div class="col-head">
-      <h2>Chat</h2>
-      <button class="clear-btn" id="new-chat" title="Start a new session">New</button>
-      <button class="clear-btn" id="clear-chat" title="Clear messages">Clear</button>
+      <h2>Activity</h2>
+      <button class="clear-btn" id="clear-activity" title="Clear activity">Clear</button>
     </div>
+    <div class="col-body">
+      <div id="todos-panel" class="todos-panel">
+        <div class="todos-head">▦ Todos<button class="clear-btn" id="todos-clear" title="Hide todos">✕</button></div>
+        <div id="todos" class="todos-list"></div>
+      </div>
+      <div class="scroll" id="activity"></div>
+      <div id="activity-empty" class="empty">no activity yet — tool calls and file changes will appear here</div>
+    </div>
+  </section>
+<div class="sidebar-footer"><span id="ws-state" class="state deny">workspace: deny-all</span><span class="sid" id="sid"></span></div>
+</aside>
+  <main class="workspace-chat" id="col-chat">
+<header class="chat-topbar"><button class="mobile-menu" id="sidebar-toggle" aria-controls="workspace-sidebar"
+  aria-expanded="false" aria-label="Open sidebar">☰</button>
+  <div class="chat-heading"><h1>Cowork</h1><p>Your workspace. A shared conversation.</p></div>
+  <span id="run-badge" class="run-badge">● running</span>
+  <button class="header-action" id="new-chat" title="Start a new session">New session</button>
+  <button class="header-action" id="clear-chat" title="Clear messages">Clear</button>
+</header>
     <div class="chat-wrap">
-      <div id="chat"></div>
+      <div id="chat" role="log" aria-label="Cowork conversation"></div>
       <div id="chat-empty" class="empty">▸ send a message to start — the agent works inside your granted folders</div>
     </div>
     <div id="deny-overlay">
-      <div class="lock">🔒</div>
-      <div class="big">ACCESS DENIED</div>
-      <div class="sub">Grant a workspace folder to start chatting. The agent is confined to granted folders only, and access is denied everywhere else until you grant one.</div>
+      <div class="lock" aria-hidden="true">⌘</div>
+      <div class="big">Give Nova a place to work</div>
+      <div class="sub">Choose a folder in the sidebar to start a conversation. Nova can only work inside the folders you grant.</div>
+      <button class="choose-workspace" data-open-workspace>Choose a workspace</button>
     </div>
     <div id="qmodal" class="qmodal">
       <div class="qbox">
@@ -435,32 +318,11 @@ _HTML = r"""<!doctype html>
     <div class="composer" id="composer">
       <span class="mode-badge">cowork</span>
       <span class="prefix">&gt;</span>
-      <textarea id="in" placeholder="Message Nova…" disabled></textarea>
+      <textarea id="in" aria-label="Message Nova" placeholder="Message Nova…" disabled></textarea>
       <button id="send" disabled>Send</button>
       <button id="stop" class="stop" title="Stop the running agent">■ Stop</button>
     </div>
-  </div>
-  <div class="col" id="col-activity">
-    <div class="col-head">
-      <h2>Activity</h2>
-      <button class="clear-btn" id="clear-activity" title="Clear activity">Clear</button>
-      <button class="collapse-btn" data-col="activity" title="Collapse">▶</button>
-    </div>
-    <div class="col-body">
-      <div id="todos-panel" class="todos-panel">
-        <div class="todos-head">▦ Todos<button class="clear-btn" id="todos-clear" title="Hide todos">✕</button></div>
-        <div id="todos" class="todos-list"></div>
-      </div>
-      <div class="scroll" id="activity"></div>
-      <div id="activity-empty" class="empty">no activity yet — tool calls and file changes will appear here</div>
-    </div>
-    <div class="rail-label" data-col="activity" title="Expand">
-      <span class="rail-ic">▮</span>
-      <span class="rail-txt">Activity</span>
-    </div>
-  </div>
-</div>
-<footer class="statusbar">
+  <footer class="statusbar">
   <span id="conn" class="dot off">○ disconnected</span>
   <span id="stat-run" class="dot off">○ idle</span>
   <span id="stat-session"></span>
@@ -470,8 +332,10 @@ _HTML = r"""<!doctype html>
   <span class="hint">/ focus · ⏎ send · ⇧⏎ newline</span>
   <span id="clock"></span>
 </footer>
-<div class="scanlines"></div>
-<div class="vignette"></div>
+</main>
+
+<button class="workspace-backdrop" id="workspace-backdrop" tabindex="-1"
+  aria-label="Close sidebar"></button>
 <script>
 const qs = new URLSearchParams(location.search);
 const initialTask = qs.get('task') || '';
@@ -479,7 +343,6 @@ const TOKEN = "__COWORK_TOKEN__";
 const $ = id => document.getElementById(id);
 let ws = null, sessionId = null, curBubble = null, sentInitial = false, thinkingEl = null;
 let stick = true, intentionalClose = false, running = false;
-const REDUCED = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 // All server calls carry the IPC token (header for fetch, query param for WS).
 function api(url, opts){ opts = opts||{}; opts.headers = Object.assign({'X-Cowork-Token':TOKEN}, opts.headers||{}); return fetch(url, opts); }
 function esc(s){ return (s||'').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
@@ -491,68 +354,6 @@ function setRunning(on){
   $('stat-run').textContent = on ? '● running' : '○ idle';
   $('stat-run').className = 'dot ' + (on ? 'on' : 'off');
 }
-
-/* ---- matrix rain (theme-tinted, like the TUI home screen) ---- */
-(function(){
-  const cv = document.getElementById('rain');
-  if (!cv || !cv.getContext || REDUCED) return;
-  const cx = cv.getContext('2d');
-  const KATA = 'ｱｲｳｴｵｶｷｸｹｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜｦﾝ';
-  const FS = 15;
-  let cols = 0, drops = [];
-  function resize(){
-    cv.width = cv.clientWidth; cv.height = cv.clientHeight;
-    cols = Math.max(1, Math.ceil(cv.width / FS));
-    drops = Array.from({length: cols}, () => Math.floor(Math.random() * -40));
-  }
-  function frame(){
-    cx.fillStyle = 'rgba(19,20,29,0.10)';
-    cx.fillRect(0, 0, cv.width, cv.height);
-    cx.font = FS + 'px "JetBrains Mono", monospace';
-    for (let i = 0; i < cols; i++){
-      const ch = KATA[Math.floor(Math.random() * KATA.length)];
-      const y = drops[i] * FS;
-      cx.fillStyle = 'rgba(122,162,247,0.9)';
-      cx.fillText(ch, i * FS, y);
-      cx.fillStyle = 'rgba(122,162,247,0.22)';
-      cx.fillText(ch, i * FS, y - FS);
-      if (y > cv.height + 40 && Math.random() > 0.975) drops[i] = Math.floor(Math.random() * -20);
-      drops[i]++;
-    }
-    requestAnimationFrame(frame);
-  }
-  window.addEventListener('resize', resize);
-  resize();
-  frame();
-})();
-
-/* ---- boot line typewriter ---- */
-(function(){
-  const el = document.getElementById('boot');
-  if (!el) return;
-  const text = 'workspace broker online · default-deny enforced';
-  if (REDUCED){ el.textContent = text; return; }
-  let i = 0;
-  (function type(){
-    el.textContent = text.slice(0, i);
-    if (i < text.length){ el.textContent += '▊'; i++; setTimeout(type, 16); }
-  })();
-})();
-
-/* ---- collapsible sidebars ---- */
-function setColState(col, collapsed){
-  document.querySelector('.main').classList.toggle('collapsed-' + col, collapsed);
-  document.getElementById('col-' + col).classList.toggle('rail', collapsed);
-  localStorage.setItem('cowork-col-' + col, collapsed ? '1' : '0');
-}
-document.querySelectorAll('.collapse-btn').forEach(b => b.onclick = () => {
-  const col = b.dataset.col;
-  setColState(col, !document.querySelector('.main').classList.contains('collapsed-' + col));
-});
-document.querySelectorAll('.rail-label').forEach(r => r.onclick = () => setColState(r.dataset.col, false));
-['workspace','activity'].forEach(col => {
-  if (localStorage.getItem('cowork-col-' + col) === '1') setColState(col, true);
-});
 
 /* ---- chat ---- */
 function scrollChat(){
@@ -1018,4 +819,5 @@ $('sid').textContent = qs.get('session') ? ('session ' + qs.get('session').slice
 restoreChat();
 loadGrants();
 </script>
+<script>__WORKSPACE_SCRIPT__</script>
 </body></html>"""
