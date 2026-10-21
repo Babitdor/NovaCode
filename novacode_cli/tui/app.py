@@ -635,7 +635,7 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "context": SlashCommand("_run_context", "show context usage or manage imported context"),
     "cost": SlashCommand("_run_token_view", "show session token spend", wants_text=False),
     "verbose": SlashCommand("_run_verbose", "toggle internal-context display", wants_text=False),
-    "trace": SlashCommand("_run_trace", "tracing status"),
+    "trace": SlashCommand("_run_trace", "LangSmith tracing setup"),
     "log": SlashCommand("_run_log", "recent runs"),
     "theme": SlashCommand(
         "_run_theme", "switch color theme", wants_text=False, aliases=("themes",)
@@ -13248,105 +13248,142 @@ class NovaApp(App):
             self._log(Text(f"● NOVA.md ready → {nova_md_path}", style="green"))
 
     async def _run_trace(self, text: str) -> None:
-        """Native LangSmith tracing: status / enable / disable / projects / traces."""
-        import os
-
+        """Native LangSmith tracing: setup / status / enable / disable / projects / traces."""
         parts = text.split()
         args = parts[1:]
+        # Without a subcommand the status is shown: a bare /trace must never
+        # open a form, because that would block the command on user input.
         sub = parts[1].lower() if len(parts) > 1 else "status"
-        from novacode_cli.tracking.tracing import (
-            configure_tracing,
-            get_traces,
-            get_tracing_config,
-            get_tracing_status,
-            list_projects,
-        )
 
-        if sub in ("enable", "on"):
-            api_key = args[1] if len(args) > 1 and not args[1].startswith("-") else None
-            project_name = None
-            for i, a in enumerate(args):
-                if a == "--project" and i + 1 < len(args):
-                    project_name = args[i + 1]
-                    break
-            cfg = configure_tracing(api_key=api_key, project_name=project_name, enable=True)
-            if cfg.is_configured():
-                t = Text()
-                t.append("● LangSmith tracing enabled\n", style="green")
-                t.append(f"  project: {cfg.project_name}\n", style="dim")
-                t.append("  set LANGSMITH_API_KEY in .env to persist\n", style="dim")
-                self._log(t)
-            else:
-                self._log(
-                    Text(
-                        "Failed to enable tracing — LANGSMITH_API_KEY is required.",
-                        style="red",
-                    )
-                )
+        if sub in ("setup", "config"):
+            await self._open_langsmith_setup()
+        elif sub in ("enable", "on"):
+            await self._trace_enable(args)
+        elif sub in ("disable", "off"):
+            self._trace_disable()
+        elif sub == "projects":
+            self._trace_projects()
+        elif sub in ("traces", "recent"):
+            self._trace_traces(args)
+        elif sub in ("-h", "--help", "help"):
+            self._trace_help()
+        elif sub in ("status", ""):
+            self._trace_status()
+        else:
+            self._log(
+                Text(f"Unknown trace subcommand: {sub} (try /trace help)", style="yellow")
+            )
+
+    async def _trace_enable(self, args: list[str]) -> None:
+        """Enable tracing, asking for the environment when no key was given."""
+        from novacode_cli.tracking.tracing import apply_langsmith_env
+
+        api_key = args[1] if len(args) > 1 and not args[1].startswith("-") else None
+        project_name = None
+        for i, a in enumerate(args):
+            if a == "--project" and i + 1 < len(args):
+                project_name = args[i + 1]
+                break
+        if not api_key:
+            # No key on the command line: ask for the environment instead.
+            await self._open_langsmith_setup(project_name=project_name)
             return
-        if sub in ("disable", "off"):
-            os.environ["LANGSMITH_TRACING"] = "false"
+        # Only the values that were given are changed: an existing project in
+        # the environment stays in use.
+        values = {"LANGSMITH_TRACING": "true", "LANGSMITH_API_KEY": api_key}
+        if project_name:
+            values["LANGSMITH_PROJECT"] = project_name
+        cfg = apply_langsmith_env(values)
+        if cfg.is_configured():
+            t = Text()
+            t.append("● LangSmith tracing enabled\n", style="green")
+            t.append(f"  project: {cfg.project_name}\n", style="dim")
+            t.append("  set LANGSMITH_API_KEY in .env to persist\n", style="dim")
+            self._log(t)
+        else:
             self._log(
                 Text(
-                    "● LangSmith tracing disabled for this session "
-                    "(set LANGSMITH_TRACING=false in .env to persist).",
-                    style="green",
+                    "Failed to enable tracing — LANGSMITH_API_KEY is required.",
+                    style="red",
                 )
             )
-            return
-        if sub == "projects":
-            projects = list_projects()
-            t = Text()
-            t.append("LangSmith projects\n", style="bold")
-            if projects:
-                for p in projects[:20]:
-                    t.append(f"  {p['name']}", style="cyan")
-                    t.append(f"  {p['url']}\n", style="dim")
-            else:
-                t.append("  (none found or tracing not configured)\n", style="dim")
-            self._log(t)
-            return
-        if sub in ("traces", "recent"):
-            limit = 10
-            for i, a in enumerate(args):
-                if a in ("-n", "--limit") and i + 1 < len(args):
-                    try:
-                        limit = int(args[i + 1])
-                    except ValueError:
-                        pass
-            traces = get_traces(limit=limit)
-            t = Text()
-            t.append(f"Recent traces (last {limit})\n", style="bold")
-            if traces:
-                for tr in traces[:limit]:
-                    created = (tr.get("created_at", "") or "")[:19] or "unknown"
-                    inputs = str(tr.get("inputs", {}))[:40]
-                    t.append(f"  {tr['name']}", style="cyan")
-                    t.append(f"  {created}  {inputs}\n", style="dim")
-            else:
-                t.append(
-                    "  (none — make a request with tracing enabled first)\n",
-                    style="dim",
-                )
-            self._log(t)
-            return
-        if sub in ("-h", "--help", "help"):
-            t = Text()
-            t.append("/trace — LangSmith tracing\n", style="bold")
-            for name, desc in (
-                ("status", "show current tracing configuration"),
-                ("enable [KEY] [--project P]", "enable tracing"),
-                ("disable", "disable tracing for this session"),
-                ("projects", "list LangSmith projects"),
-                ("traces [--limit N]", "show recent traces"),
-            ):
-                t.append(f"  /trace {name}\n", style="cyan")
-                t.append(f"      {desc}\n", style="dim")
-            self._log(t)
-            return
-        if sub not in ("status", ""):
-            self._log(Text(f"Unknown trace subcommand: {sub} (try /trace help)", style="yellow"))
-            return
+
+    def _trace_disable(self) -> None:
+        """Turn tracing off for this session."""
+        from novacode_cli.tracking.tracing import apply_langsmith_env
+
+        # Goes through the helper so LangSmith's cached environment is
+        # cleared too — otherwise the tracer stays attached.
+        apply_langsmith_env({"LANGSMITH_TRACING": "false"})
+        self._log(
+            Text(
+                "● LangSmith tracing disabled for this session "
+                "(set LANGSMITH_TRACING=false in .env to persist).",
+                style="green",
+            )
+        )
+
+    def _trace_projects(self) -> None:
+        """List the LangSmith projects."""
+        from novacode_cli.tracking.tracing import list_projects
+
+        projects = list_projects()
+        t = Text()
+        t.append("LangSmith projects\n", style="bold")
+        if projects:
+            for p in projects[:20]:
+                t.append(f"  {p['name']}", style="cyan")
+                t.append(f"  {p['url']}\n", style="dim")
+        else:
+            t.append("  (none found or tracing not configured)\n", style="dim")
+        self._log(t)
+
+    def _trace_traces(self, args: list[str]) -> None:
+        """Show the most recent traces."""
+        from novacode_cli.tracking.tracing import get_traces
+
+        limit = 10
+        for i, a in enumerate(args):
+            if a in ("-n", "--limit") and i + 1 < len(args):
+                try:
+                    limit = int(args[i + 1])
+                except ValueError:
+                    pass
+        traces = get_traces(limit=limit)
+        t = Text()
+        t.append(f"Recent traces (last {limit})\n", style="bold")
+        if traces:
+            for tr in traces[:limit]:
+                created = (tr.get("created_at", "") or "")[:19] or "unknown"
+                inputs = str(tr.get("inputs", {}))[:40]
+                t.append(f"  {tr['name']}", style="cyan")
+                t.append(f"  {created}  {inputs}\n", style="dim")
+        else:
+            t.append(
+                "  (none — make a request with tracing enabled first)\n",
+                style="dim",
+            )
+        self._log(t)
+
+    def _trace_help(self) -> None:
+        """List the /trace subcommands."""
+        t = Text()
+        t.append("/trace — LangSmith tracing\n", style="bold")
+        for name, desc in (
+            ("setup", "enter the LangSmith environment and activate tracing"),
+            ("status", "show current tracing configuration"),
+            ("enable [KEY] [--project P]", "enable tracing"),
+            ("disable", "disable tracing for this session"),
+            ("projects", "list LangSmith projects"),
+            ("traces [--limit N]", "show recent traces"),
+        ):
+            t.append(f"  /trace {name}\n", style="cyan")
+            t.append(f"      {desc}\n", style="dim")
+        self._log(t)
+
+    def _trace_status(self) -> None:
+        """Show whether tracing is available, configured and enabled."""
+        from novacode_cli.tracking.tracing import get_tracing_config, get_tracing_status
 
         st = get_tracing_status()
         t = Text()
@@ -13362,7 +13399,38 @@ class NovaApp(App):
             t.append("  view: https://smith.langchain.com\n", style="dim")
         else:
             t.append("  ○ not configured\n", style="yellow")
-            t.append("  set LANGSMITH_API_KEY and LANGSMITH_TRACING=true\n", style="dim")
+            t.append("  run /trace setup to enter the environment\n", style="dim")
+        self._log(t)
+
+    async def _open_langsmith_setup(self, project_name: str | None = None) -> None:
+        """Ask for the LangSmith environment and activate tracing with it."""
+        import os
+
+        from novacode_cli.tracking.tracing import apply_langsmith_env
+        from novacode_cli.tui.screens import LangSmithSetupModal
+
+        current = {
+            "LANGSMITH_TRACING": os.environ.get("LANGSMITH_TRACING", ""),
+            "LANGSMITH_ENDPOINT": os.environ.get("LANGSMITH_ENDPOINT", ""),
+            "LANGSMITH_API_KEY": os.environ.get("LANGSMITH_API_KEY", ""),
+            "LANGSMITH_PROJECT": project_name or os.environ.get("LANGSMITH_PROJECT", ""),
+        }
+        values = await self.push_screen_wait(LangSmithSetupModal(current=current))
+        if values is None:
+            self._log(Text("LangSmith setup cancelled.", style="dim"))
+            return
+        cfg = apply_langsmith_env(values)
+        t = Text()
+        if cfg.is_configured():
+            t.append("● LangSmith tracing enabled\n", style="green")
+            t.append(f"  project: {cfg.project_name}\n", style="dim")
+            if cfg.endpoint:
+                t.append(f"  endpoint: {cfg.endpoint}\n", style="dim")
+            t.append("  view: https://smith.langchain.com\n", style="dim")
+        else:
+            t.append("● LangSmith tracing is off\n", style="yellow")
+            if not os.environ.get("LANGSMITH_API_KEY"):
+                t.append("  an API key is required to trace\n", style="dim")
         self._log(t)
 
     async def _run_log(self, text: str) -> None:

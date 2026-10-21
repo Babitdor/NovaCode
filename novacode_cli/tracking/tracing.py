@@ -39,8 +39,9 @@ Usage:
     model = wrap_openai_client(ChatOpenAI(model="gpt-4o"))
 """
 
+import contextlib
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from functools import wraps
 from typing import TYPE_CHECKING, Any
 
@@ -154,6 +155,86 @@ def configure_tracing(
         os.environ["LANGSMITH_TRACING"] = "false"
 
     return _tracing_config
+
+
+#: The LangSmith environment variables the ``/trace`` setup flow edits.
+LANGSMITH_ENV_VARS: tuple[str, ...] = (
+    "LANGSMITH_TRACING",
+    "LANGSMITH_ENDPOINT",
+    "LANGSMITH_API_KEY",
+    "LANGSMITH_PROJECT",
+)
+
+
+def reset_langsmith_caches() -> None:
+    """Make LangSmith forget what it already read from the environment.
+
+    ``langsmith.utils.get_env_var`` and ``langsmith.utils.get_tracer_project``
+    are ``lru_cache``d, and LangSmith keeps a global ``Client``. Both are read
+    before the first traced call, so changing the environment afterwards has no
+    effect at all: no tracer is attached and the old API key and endpoint keep
+    being used. Clearing them is what makes a runtime change take effect.
+    """
+    try:
+        from langsmith import run_trees as ls_run_trees
+        from langsmith import utils as ls_utils
+    except ImportError:  # pragma: no cover - langsmith is optional
+        return
+
+    for func in (
+        getattr(ls_utils, "get_env_var", None),
+        getattr(ls_utils, "get_tracer_project", None),
+    ):
+        cache_clear = getattr(func, "cache_clear", None)
+        if cache_clear is not None:
+            # A cache that refuses to clear must not stop the rest of the
+            # reset, or the tracer would keep the old endpoint and key.
+            with contextlib.suppress(Exception):
+                cache_clear()
+
+    # The cached client captured the API key and endpoint it was built with.
+    if getattr(ls_run_trees, "_CLIENT", None) is not None:
+        ls_run_trees._CLIENT = None  # type: ignore[attr-defined]
+
+
+def apply_langsmith_env(values: Mapping[str, str]) -> TracingConfig:
+    """Apply LangSmith environment variables and activate tracing right away.
+
+    Args:
+        values: The variables to set. Only the names in
+            :data:`LANGSMITH_ENV_VARS` are honoured; an empty value removes
+            the variable.
+
+    Returns:
+        The resulting :class:`TracingConfig`.
+    """
+    for name in LANGSMITH_ENV_VARS:
+        if name not in values:
+            continue
+        raw = (values.get(name) or "").strip()
+        if raw:
+            os.environ[name] = raw
+        else:
+            os.environ.pop(name, None)
+
+    # The environment is only read once per process, so it has to be re-read
+    # before the next call can pick the new values up.
+    reset_langsmith_caches()
+
+    api_key = os.environ.get("LANGSMITH_API_KEY")
+    # Tracing without a key cannot work: the client would fail to authenticate
+    # on every call, so report it as off instead of half-enabling it.
+    # "true" and "1" are the values LangSmith itself accepts.
+    tracing_on = (
+        os.environ.get("LANGSMITH_TRACING", "").strip().lower() in ("true", "1")
+        and bool(api_key)
+    )
+    return configure_tracing(
+        api_key=api_key,
+        project_name=os.environ.get("LANGSMITH_PROJECT") or "Nova-Code",
+        endpoint=os.environ.get("LANGSMITH_ENDPOINT"),
+        enable=tracing_on,
+    )
 
 
 def _setup_langsmith_env() -> None:

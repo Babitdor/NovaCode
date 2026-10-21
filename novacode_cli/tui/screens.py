@@ -1885,6 +1885,133 @@ class McpCustomModal(ModalScreen[dict | None]):
         self.dismiss(None)
 
 
+class LangSmithSetupModal(ModalScreen[dict[str, str] | None]):
+    """Modal to enter the LangSmith environment and activate tracing."""
+
+    BINDINGS = [
+        ("escape", "cancel", "Cancel"),
+    ]
+
+    DEFAULT_CSS = """
+    LangSmithSetupModal {
+        align: center middle;
+    }
+    LangSmithSetupModal #langsmith-hint {
+        height: auto;
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+    LangSmithSetupModal .langsmith-field-label {
+        height: auto;
+        margin-top: 1;
+    }
+    """
+
+    def __init__(self, current: dict[str, str] | None = None) -> None:
+        """Pre-fill the form with the LangSmith environment already in use."""
+        super().__init__()
+        self._current = dict(current or {})
+
+    def compose(self) -> ComposeResult:
+        """Build the form: tracing flag, endpoint, API key and project."""
+        current = self._current
+        tracing = (current.get("LANGSMITH_TRACING") or "true").strip().lower()
+        if tracing not in ("true", "false"):
+            tracing = "true"
+        with Vertical(id="modal-box"):
+            yield Static(Text("LangSmith tracing", style="bold"), id="modal-title")
+            yield Static(
+                Text(
+                    "Saved to the environment for this session; tracing starts immediately.",
+                    style="dim",
+                ),
+                id="langsmith-hint",
+            )
+            yield Static(
+                Text("LANGSMITH_TRACING:", style="bold"), classes="langsmith-field-label"
+            )
+            yield Select(
+                [("true", "true"), ("false", "false")],
+                id="langsmith-tracing",
+                value=tracing,
+            )
+            yield Static(
+                Text("LANGSMITH_ENDPOINT:", style="bold"), classes="langsmith-field-label"
+            )
+            yield Input(
+                value=current.get("LANGSMITH_ENDPOINT") or "",
+                placeholder="https://api.smith.langchain.com",
+                id="langsmith-endpoint",
+            )
+            yield Static(
+                Text("LANGSMITH_API_KEY:", style="bold"), classes="langsmith-field-label"
+            )
+            yield Input(
+                value=current.get("LANGSMITH_API_KEY") or "",
+                placeholder="lsv2_...",
+                password=True,
+                id="langsmith-api-key",
+            )
+            yield Static(
+                Text("LANGSMITH_PROJECT:", style="bold"), classes="langsmith-field-label"
+            )
+            yield Input(
+                value=current.get("LANGSMITH_PROJECT") or "",
+                placeholder="Nova-Code",
+                id="langsmith-project",
+            )
+            with Horizontal(id="modal-buttons"):
+                yield Button("Save", id="do-save", variant="primary")
+                yield Button("Cancel", id="cancel")
+
+    def on_mount(self) -> None:
+        """Animate the modal in and put the cursor on the API key."""
+        animate_modal_screen(self)
+        self.query_one("#langsmith-api-key", Input).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Save on *Save*, dismiss without changes on *Cancel*."""
+        if event.button.id == "cancel":
+            self.dismiss(None)
+        elif event.button.id == "do-save":
+            self._save()
+
+    def on_input_submitted(self, _event: Input.Submitted) -> None:
+        """Pressing enter in a field saves, like the Save button."""
+        self._save()
+
+    def _save(self) -> None:
+        """Hand the entered environment back to the caller."""
+        hint = self.query_one("#langsmith-hint", Static)
+        # A blank selection is falsy, so it falls back to "true".
+        tracing = str(self.query_one("#langsmith-tracing", Select).value or "true")
+        endpoint = self.query_one("#langsmith-endpoint", Input).value.strip()
+        api_key = self.query_one("#langsmith-api-key", Input).value.strip()
+        project = self.query_one("#langsmith-project", Input).value.strip()
+
+        if tracing == "true" and not api_key:
+            hint.update(
+                Text(
+                    "An API key is required to enable tracing (LANGSMITH_API_KEY).",
+                    style="red",
+                )
+            )
+            return
+
+        self.dismiss(
+            {
+                "LANGSMITH_TRACING": tracing,
+                "LANGSMITH_ENDPOINT": endpoint,
+                "LANGSMITH_API_KEY": api_key,
+                "LANGSMITH_PROJECT": project,
+            }
+        )
+
+    def action_cancel(self) -> None:
+        """Escape closes the form without applying anything."""
+        self.dismiss(None)
+
+
 class InfoListScreen(ModalScreen[None]):
     """A simple read-only list modal (used by /skills and /agents)."""
 

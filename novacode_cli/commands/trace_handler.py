@@ -17,6 +17,7 @@ async def handle_trace_command(cmd_args: list[str]) -> bool:
         True (always handled)
     """
     from novacode_cli.tracking.tracing import (
+        apply_langsmith_env,
         configure_tracing,
         get_traces,
         get_tracing_config,
@@ -79,6 +80,9 @@ async def handle_trace_command(cmd_args: list[str]) -> bool:
                 )
             )
 
+    elif subcmd in ("setup", "config"):
+        _setup_tracing_interactively()
+
     elif subcmd in ("enable", "on"):
         # Enable tracing
         api_key = cmd_args[1] if len(cmd_args) > 1 else None
@@ -88,11 +92,14 @@ async def handle_trace_command(cmd_args: list[str]) -> bool:
                 project_name = cmd_args[i + 1]
                 break
 
-        config = configure_tracing(
-            api_key=api_key,
-            project_name=project_name,  # type: ignore
-            enable=True,
-        )
+        # Only the values that were given are changed: an existing API key or
+        # project in the environment stays in use.
+        values = {"LANGSMITH_TRACING": "true"}
+        if api_key:
+            values["LANGSMITH_API_KEY"] = api_key
+        if project_name:
+            values["LANGSMITH_PROJECT"] = project_name
+        config = apply_langsmith_env(values)
 
         if config.is_configured():
             console.print(
@@ -112,7 +119,9 @@ async def handle_trace_command(cmd_args: list[str]) -> bool:
 
     elif subcmd in ("disable", "off"):
         # Disable tracing
-        os.environ["LANGSMITH_TRACING"] = "false"
+        # The helper also clears LangSmith's cached environment, so the tracer
+        # is really detached and not just flagged off.
+        apply_langsmith_env({"LANGSMITH_TRACING": "false"})
         console.print(
             "✅ [bold]LangSmith tracing disabled[/bold]", style=COLORS["success"]
         )
@@ -204,6 +213,7 @@ async def handle_trace_command(cmd_args: list[str]) -> bool:
                 Text(
                     "/trace - Manage LangSmith tracing for debugging and observability\n\n"
                     "[bold]Subcommands:[/bold]\n"
+                    "  setup       Enter the LangSmith environment and activate tracing\n"
                     "  status      Show current tracing configuration\n"
                     "  enable      Enable tracing (optionally with API key and project name)\n"
                     "              Usage: /trace enable [API_KEY] [--project PROJECT_NAME]\n"
@@ -214,6 +224,7 @@ async def handle_trace_command(cmd_args: list[str]) -> bool:
                     "  help        Show this help message\n\n"
                     "[bold]Environment Variables:[/bold]\n"
                     "  LANGSMITH_TRACING     Set to 'true' to enable tracing\n"
+                    "  LANGSMITH_ENDPOINT    LangSmith API endpoint\n"
                     "  LANGSMITH_API_KEY     Your LangSmith API key\n"
                     "  LANGSMITH_PROJECT     Project name (default: 'Nova-Code')\n"
                     "  LANGSMITH_WORKSPACE_ID Workspace ID for multi-tenant setups\n\n"
@@ -239,6 +250,49 @@ async def handle_trace_command(cmd_args: list[str]) -> bool:
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
+
+
+def _setup_tracing_interactively() -> None:
+    """Ask for the LangSmith environment and activate tracing with it."""
+    from novacode_cli.tracking.tracing import apply_langsmith_env
+
+    current = {
+        "LANGSMITH_TRACING": os.environ.get("LANGSMITH_TRACING", ""),
+        "LANGSMITH_ENDPOINT": os.environ.get("LANGSMITH_ENDPOINT", ""),
+        "LANGSMITH_API_KEY": os.environ.get("LANGSMITH_API_KEY", ""),
+        "LANGSMITH_PROJECT": os.environ.get("LANGSMITH_PROJECT", ""),
+    }
+    values: dict[str, str] = {}
+    for name, prompt in (
+        ("LANGSMITH_TRACING", "Enable tracing? (true/false)"),
+        ("LANGSMITH_ENDPOINT", "LangSmith endpoint"),
+        ("LANGSMITH_API_KEY", "LangSmith API key"),
+        ("LANGSMITH_PROJECT", "Project name"),
+    ):
+        default = current.get(name, "")
+        try:
+            answer = console.input(f"{prompt} [{default}]: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            console.print("Setup cancelled.", style=COLORS["warning"])
+            return
+        # An empty answer keeps the value that is already in use.
+        values[name] = answer or default
+
+    config = apply_langsmith_env(values)
+    if config.is_configured():
+        console.print(
+            "✅ [bold]LangSmith tracing enabled[/bold]", style=COLORS["success"]
+        )
+        console.print(f"   Project: {config.project_name}")
+        if config.endpoint:
+            console.print(f"   Endpoint: {config.endpoint}")
+    else:
+        console.print(
+            "⚠️  [bold]LangSmith tracing is not active[/bold]",
+            style=COLORS["warning"],
+        )
+        console.print("   An API key is required to enable tracing.")
+
 
 def register_commands(registry) -> None:
     from novacode_cli.commands import CommandContext

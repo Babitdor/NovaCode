@@ -12,11 +12,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from deepagents.backends import CompositeBackend, FilesystemBackend, StateBackend
+from deepagents.backends import CompositeBackend, StateBackend
 from deepagents.graph import create_deep_agent
 from langgraph.checkpoint.memory import InMemorySaver
 
 from novacode_cli.agents.model_retry import NovaModelRetryMiddleware as ModelRetryMiddleware
+from novacode_cli.backends.filesystem import OptimizedFilesystemBackend
 from novacode_cli.errors import is_retryable_model_error
 
 if TYPE_CHECKING:
@@ -47,21 +48,33 @@ BACKGROUND_NOTE = """\
 """
 
 
+def build_dream_backend(agent_dir: Path) -> CompositeBackend:
+    """Build the dream agent's backend: ``/memories/`` on disk, scratch in state.
+
+    The memory route uses Nova's backend, not upstream's: the upstream ripgrep
+    path decodes search output with the platform locale codec (cp1252 on
+    Windows), so a single non-ASCII character in a memory file raised
+    ``UnicodeDecodeError`` and killed the whole dream.
+    """
+    return CompositeBackend(
+        default=StateBackend(),
+        routes={
+            "/memories/": OptimizedFilesystemBackend(root_dir=str(agent_dir), virtual_mode=True)
+        },
+    )
+
+
 def create_dream_agent(model: BaseChatModel, agent_dir: Path) -> Pregel:
     """Build the dream agent over ``agent_dir`` (the agent's memory root)."""
     from novacode_cli.tools.memory_wiki_tools import create_memory_wiki_tool
 
-    backend = CompositeBackend(
-        default=StateBackend(),
-        routes={"/memories/": FilesystemBackend(root_dir=str(agent_dir), virtual_mode=True)},
-    )
     agent: Any = create_deep_agent(
         name="dream-agent",
         model=model,
         system_prompt=_SYSTEM_PROMPT,
         tools=[create_memory_wiki_tool(agent_dir)],
         checkpointer=InMemorySaver(),
-        backend=backend,
+        backend=build_dream_backend(agent_dir),
         store=None,
         interrupt_on={},  # background: never pause for approval
         subagents=[],

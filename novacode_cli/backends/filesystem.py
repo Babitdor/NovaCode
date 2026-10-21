@@ -208,6 +208,23 @@ def _cap_results(
     return capped, truncated
 
 
+def _decode_text_bytes(raw: bytes) -> str:
+    """Decode file bytes without depending on the platform's locale codec.
+
+    ``Path.read_text()`` uses the locale's preferred encoding, which is cp1252
+    on Windows: a UTF-8 file then fails to decode and the whole file is skipped
+    (silently losing matches). Try utf-8 first, then the same ladder the
+    ``read`` path uses; latin-1 always succeeds, so a search never dies on an
+    undecodable byte.
+    """
+    for enc in ("utf-8-sig", "cp1252"):
+        try:
+            return raw.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("latin-1", errors="replace")
+
+
 class OptimizedFilesystemBackend(FilesystemBackend):
     """FilesystemBackend with a non-hanging grep fallback and regex support."""
 
@@ -425,7 +442,13 @@ class OptimizedFilesystemBackend(FilesystemBackend):
             proc = subprocess.run(  # noqa: S603
                 cmd,
                 capture_output=True,
+                # ripgrep emits UTF-8. Without an explicit encoding Python decodes
+                # with the locale codec (cp1252 on Windows), and one non-ASCII
+                # character in a matched line raises UnicodeDecodeError inside the
+                # reader thread: the search then dies, or silently returns nothing.
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=_GREP_TIMEOUT,
                 check=False,
                 cwd=rg_cwd,
@@ -600,8 +623,8 @@ class OptimizedFilesystemBackend(FilesystemBackend):
                         continue
 
                     try:
-                        content = fp.read_text()
-                    except (UnicodeDecodeError, PermissionError, OSError, RuntimeError):
+                        content = _decode_text_bytes(fp.read_bytes())
+                    except (PermissionError, OSError, RuntimeError):
                         continue
 
                     if "\x00" in content:
