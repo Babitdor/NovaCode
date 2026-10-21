@@ -6,6 +6,7 @@ import json
 import re
 import urllib.request
 
+from novacode_cli.artifacts import registry as artifact_registry
 from novacode_cli.artifacts.registry import ArtifactRegistry
 from novacode_cli.artifacts.server import _viewer_html, ensure_server
 from novacode_cli.tools.artifact_tools import (
@@ -49,6 +50,24 @@ def test_registry_observer_can_be_removed() -> None:
 
     assert events == ["created"]
     assert r._observers == []
+
+
+def test_binding_another_session_replaces_then_restores_artifacts(tmp_path, monkeypatch) -> None:
+    registry = ArtifactRegistry()
+    monkeypatch.setattr(artifact_registry, "_registry", registry)
+    sessions_dir = tmp_path / "sessions"
+
+    assert artifact_registry.bind_session("first", sessions_dir) == 0
+    original = registry.create("First session", "html", "<h1>saved</h1>")
+
+    assert artifact_registry.bind_session("second", sessions_dir) == 0
+    assert registry.list() == []
+
+    assert artifact_registry.bind_session("first", sessions_dir) == 1
+    restored = registry.get(original.id)
+    assert restored is not None
+    assert restored.title == "First session"
+    assert restored.content == "<h1>saved</h1>"
 
 
 def test_html_artifact_is_sandboxed_and_escaped() -> None:

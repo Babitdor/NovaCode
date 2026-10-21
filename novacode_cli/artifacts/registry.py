@@ -71,10 +71,15 @@ class ArtifactRegistry:
         self._path: Path | None = Path(path) if path is not None else None
 
     # -- persistence -------------------------------------------------------
-    def bind(self, path: Path) -> None:
-        """Persist to *path* from now on, loading whatever is already there."""
-        self._path = Path(path)
-        self.load()
+    def bind(self, path: Path) -> int:
+        """Persist to *path*, replacing in-memory artifacts when sessions change."""
+        path = Path(path)
+        with self._lock:
+            if self._path != path:
+                self._by_id.clear()
+                self._order.clear()
+            self._path = path
+        return self.load()
 
     def load(self) -> int:
         """Merge artifacts from disk into this registry. Returns how many loaded.
@@ -216,9 +221,7 @@ def bind_session(session_id: str, sessions_dir: "Path | None" = None) -> int:
         return 0
     try:
         reg = get_registry()
-        before = reg.count()
-        reg.bind(store_path(session_id, sessions_dir))
-        return reg.count() - before
+        return reg.bind(store_path(session_id, sessions_dir))
     except Exception:  # noqa: BLE001 - never break startup on artifact restore
         logger.debug("artifacts: bind_session failed", exc_info=True)
         return 0

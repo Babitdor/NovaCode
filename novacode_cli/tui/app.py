@@ -12978,6 +12978,23 @@ class NovaApp(App):
         self.session_state.reset_conversation()  # fresh thread_id, cleared state
         self.session_state.session_id = resumed_id
         self._refresh_session_identity()
+        try:
+            from novacode_cli.artifacts.registry import bind_session as bind_artifacts
+
+            restored_artifacts = bind_artifacts(
+                resumed_id,
+                getattr(sm, "sessions_dir", None),
+            )
+            self._refresh_artifacts_component()
+            if restored_artifacts:
+                self._log(
+                    Text(
+                        f"◈ restored {restored_artifacts} artifact(s) from this session",
+                        style="dim",
+                    )
+                )
+        except Exception:  # noqa: BLE001 — artifact recovery must not block resume
+            pass
         self.session_state.is_continued = True
         if resumed_todos:
             self.session_state.todos = resumed_todos
@@ -16214,7 +16231,6 @@ class NovaApp(App):
             from novacode_cli.commands import CommandContext
             from novacode_cli.commands.share_handler import handle_share_command
             from novacode_cli.config.config import console
-            from rich.text import Text
 
             with console.capture() as captured:
                 await handle_share_command(
