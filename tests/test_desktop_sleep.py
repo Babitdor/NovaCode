@@ -103,22 +103,38 @@ def test_force_schedules_it_outside_the_window(
     assert "pid 4242" in message
 
 
+@pytest.mark.parametrize(
+    ("on_windows", "platform"),
+    [(True, "win32"), (False, "linux"), (False, "darwin")],
+)
 def test_the_overnight_call_suspends_with_a_grace_period(
-    spawned: list[list[str]], monkeypatch: pytest.MonkeyPatch
+    spawned: list[list[str]],
+    monkeypatch: pytest.MonkeyPatch,
+    on_windows: bool,
+    platform: str,
 ) -> None:
     _freeze(monkeypatch, _at(1, 30))
+    suspend_command = desktop_tools._suspend_command
+    monkeypatch.setattr(
+        desktop_tools,
+        "_suspend_command",
+        lambda delay: suspend_command(delay, on_windows=on_windows, platform=platform),
+    )
 
     message = sleep_desktop.invoke({"reason": "overnight session done"})
 
     assert len(spawned) == 1
     script = spawned[0][-1]
-    # A true suspend. The usual `rundll32 powrprof.dll,SetSuspendState` one-liner
-    # hibernates instead whenever hibernation is enabled, which loses the session.
-    assert "SetSuspendState" in script
-    assert "PowerState]::Suspend" in script
-    assert "powrprof" not in script
-    # The grace period is what lets the reply be read before the screen goes dark.
-    assert f"Start-Sleep -Seconds {desktop_tools.DEFAULT_DELAY_SECONDS}" in script
+    # The grace period lets the reply be read before the screen goes dark.
+    if on_windows:
+        # The rundll32 one-liner can hibernate instead of suspending.
+        assert "SetSuspendState" in script
+        assert "PowerState]::Suspend" in script
+        assert "powrprof" not in script
+        assert f"Start-Sleep -Seconds {desktop_tools.DEFAULT_DELAY_SECONDS}" in script
+    else:
+        target = "systemctl suspend" if platform == "linux" else "pmset sleepnow"
+        assert spawned[0] == ["sh", "-c", f"sleep {desktop_tools.DEFAULT_DELAY_SECONDS}; {target}"]
     # And the transcript has to say why, and how to call it off.
     assert "overnight session done" in message
     assert "taskkill /PID 4242" in message
