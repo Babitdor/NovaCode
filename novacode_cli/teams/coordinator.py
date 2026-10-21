@@ -455,7 +455,7 @@ class TeamCoordinator:
                 task_id=key,
                 status=terminal.get(status, "running"),
                 phase_id=record["team"],
-                phase_kind="async",
+                phase_kind="team",
                 subagent_type=record["name"],
                 label=record["name"],
                 description=metadata.get("summary", ""),

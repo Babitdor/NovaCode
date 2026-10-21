@@ -232,3 +232,53 @@ async def test_worker_cleanup_stops_rows_without_a_terminal_event(
         assert app._subagent_rows["unfinished"].status == "stopped"
         assert app._subagent_rows["unfinished"].duration_ms is not None
         assert app._subagents_tick is None
+
+
+async def test_spawned_teammate_uses_inline_lifecycle_without_agent_server(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock, Mock
+
+    from novacode_cli.teams.coordinator import TeamCoordinator
+    from novacode_cli.teams.models import Identity
+
+    server_specs = Mock(side_effect=AssertionError("Team display must not consult the agent server"))
+    monkeypatch.setattr(
+        "novacode_cli.agents.default_subagents.async_subagents.retrieve_async_subagents", server_specs
+    )
+    adapter = AsyncMock()
+    adapter.start.return_value.stop.return_value = True
+    host = TeamCoordinator(tmp_path, Identity("project", "root"), {"default": adapter})
+    app = _app()
+    try:
+        team = await host.request(host.lead, "team_create", {"name": "review"})
+        agent = await host.spawn(host.lead, "Review the code", team["id"])
+        await host.on_event(agent["id"], "running", {"model": "configured-model"})
+        events = host.drain_events()
+        assert events and all(event.phase_kind == "team" for event in events)
+        async with app.run_test(size=(120, 44)) as pilot:
+            for event in events:
+                await app._render(event)
+            await pilot.pause()
+            widget = app._inline_subagents[agent["id"]]
+            assert "running" in str(widget.render())
+            assert not app.query_one("#subagents-dock").has_class("active")
+            await app._render(ev.Done())
+            await app._render(ev.Cancelled())
+            assert app._subagent_rows[agent["id"]].status == "running"
+            assert agent["id"] in app._subagent_widgets
+            assert "running" in str(widget.render())
+            screen = app.screen
+            await pilot.click(widget)
+            app._open_subagent_preview(agent["id"])
+            await pilot.pause()
+            assert app.screen is screen
+            server_specs.assert_not_called()
+            await host.on_event(agent["id"], "idle", {"summary": "Review completed"})
+            for event in host.drain_events():
+                await app._render(event)
+            assert app._inline_subagents[agent["id"]] is widget
+            assert "completed" in str(widget.render())
+            assert app._subagent_rows[agent["id"]].model == "configured-model"
+            assert agent["id"] not in app._subagent_widgets
+            server_specs.assert_not_called()
+    finally:
+        await host.close()

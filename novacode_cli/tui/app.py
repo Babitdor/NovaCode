@@ -6363,7 +6363,7 @@ class NovaApp(App):
         """Freeze unfinished sync rows when their owning turn ends."""
         now = time.time()
         for row in self._subagent_rows.values():
-            if row.status == "running" and row.phase_kind != "async":
+            if row.status == "running" and row.phase_kind not in {"async", "team"}:
                 row.duration_ms = int(subagent_tasks.elapsed_for(row, now) * 1000)
                 row.status = "stopped"
                 widget = self._inline_subagents.get(row.task_id)
@@ -6372,11 +6372,14 @@ class NovaApp(App):
                 self._subagent_widgets.pop(row.task_id, None)
         # A dispatch can be interrupted before its detailed task event arrives.
         for task_id, (widget, _, name, started) in list(self._subagent_widgets.items()):
+            row = self._subagent_rows.get(task_id)
+            if row is not None and row.phase_kind == "team":
+                continue  # Teammates outlive the lead's current turn.
             _paint(widget, self._inline_subagent_text(ev.SubagentTask(
                 task_id=task_id, subagent_type=name, status="stopped",
                 duration_ms=int(max(0, now - started) * 1000),
             )))
-        self._subagent_widgets.clear()
+            self._subagent_widgets.pop(task_id, None)
         self._subagents_stale = True
         self._paint_subagents()
 
@@ -6415,7 +6418,7 @@ class NovaApp(App):
     def _open_subagent_preview(self, task_id: str) -> None:
         """Show what one row is doing, updating while it runs."""
         opened = self._subagent_rows.get(task_id)
-        if opened is None:
+        if opened is None or opened.phase_kind != "async":
             return
 
         # The same header the main page gives the agent's own turns.
@@ -6452,7 +6455,7 @@ class NovaApp(App):
         from novacode_cli.agents.default_subagents.async_subagents import retrieve_async_subagents
 
         row = self._subagent_rows.get(task_id)
-        if row is None:
+        if row is None or row.phase_kind != "async":
             return
         spec = next((s for s in retrieve_async_subagents() if s["name"] == row.subagent_type), None)
         if spec is None:

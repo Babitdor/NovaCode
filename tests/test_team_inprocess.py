@@ -55,6 +55,9 @@ async def test_real_inprocess_worker_inherits_context_and_keeps_private_checkpoi
     record = await host.request(host.lead, "get_agent", {"agent_id": worker["id"]})
     assert record["status"] == "idle"
     assert "Verified SQLite" in record["summary"]
+    lifecycle = host.drain_events()
+    assert lifecycle and {event.phase_kind for event in lifecycle} == {"team"}
+    assert any(event.status == "done" for event in lifecycle)
     snapshot = await graph.aget_state({"configurable": {"thread_id": state.thread_id}})
     assert any("SQLite only" in str(message.content) for message in snapshot.values["messages"])
     assert current_binding.get() is None
@@ -374,3 +377,46 @@ async def test_five_bootstrap_teammates_with_learning_reach_the_model(
         assert all(r["model"] == "offline" for r in records)
     finally:
         await host.initial.close()
+
+
+async def test_spawn_tool_launches_teammate_without_starting_agent_server(tmp_path, monkeypatch):
+    import json
+    from unittest.mock import AsyncMock
+
+    from langchain_core.messages import ToolMessage
+
+    from novacode_cli.agents.async_on_demand import AsyncServerOnDemandMiddleware
+
+    start_server = AsyncMock(side_effect=AssertionError("spawn_agent does not require an agent server"))
+    monkeypatch.setattr("novacode_cli.agents.server_launcher.ensure_started", start_server)
+    adapter = AsyncMock()
+    adapter.start.return_value.stop.return_value = True
+    host = TeamCoordinator(tmp_path, Identity("p", "r"), {"default": adapter})
+    try:
+        team = await host.request(host.lead, "team_create", {"name": "offline-team"})
+
+        async def endpoint(operation, payload):
+            return await host.request(host.lead, operation, payload)
+
+        binding = Binding(host.lead, endpoint, host)
+        model = ScriptedModel(responses=[
+            AIMessage("", tool_calls=[{
+                "name": "spawn_agent", "id": "spawn", "args": {
+                    "task": "Review the project", "team_id": team["id"],
+                },
+            }]),
+            AIMessage("Teammate launched."),
+        ])
+        graph = create_agent(model, TEAM_TOOLS, middleware=[
+            AsyncServerOnDemandMiddleware(), TeamMiddleware(binding),
+        ])
+        result = await graph.ainvoke({"messages": [HumanMessage("Launch a teammate")]})
+        reply = next(message for message in result["messages"] if isinstance(message, ToolMessage))
+        agent = json.loads(reply.content)
+        assert "error" not in agent
+        assert agent["mode"] == "default"
+        assert agent["id"] in host._handles
+        adapter.start.assert_awaited_once()
+        start_server.assert_not_awaited()
+    finally:
+        await host.close()

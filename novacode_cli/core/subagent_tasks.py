@@ -41,7 +41,7 @@ TASK_ID_METADATA_KEY = "nova_task_id"
 ASYNC_PHASE = "async"
 
 #: How a row was launched. Drives the phase grouping's fallback label.
-PHASE_KINDS = ("eval", "direct", "async")
+PHASE_KINDS = ("eval", "direct", "async", "team")
 
 #: Status glyphs, matching the vocabulary the rest of the TUI uses (✓ / ✗ from
 #: the tool cards, the hourglass from a running tool).
