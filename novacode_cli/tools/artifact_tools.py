@@ -21,8 +21,10 @@ def create_artifact(title: str, type: str = "markdown", content: str = "") -> st
     dashboard) or when the user asks for an artifact. DESIGN FIRST: for
     html/dashboard read the `frontend-design` skill, then write a designed
     page, not default-styled tags.
-    Write one standalone document with everything inline (it renders in a
-    srcdoc iframe; CDN web fonts load) and an explicit `body` background.
+    Write one standalone, mobile-responsive document with everything inline
+    (it renders in a srcdoc iframe; CDN web fonts load) and an explicit `body`
+    background. Include the viewport meta tag, flexible widths, and a narrow
+    screen layout; Nova adds overflow guards but cannot redesign fixed layouts.
 
     Args:
         title: Name shown in the TUI list and the page header.
@@ -59,8 +61,8 @@ def update_artifact(
     Prefer this over creating a new artifact when refining the same output.
 
     `content` REPLACES the whole body — it is not a patch. Re-send the complete
-    document, including its `<style>`, or the page loses its design. The same
-    design bar as `create_artifact` applies to the replacement.
+    document, including its `<style>`, or the page loses its design. Keep the
+    page mobile-responsive; the same design bar as `create_artifact` applies.
 
     Args:
         id: The artifact id returned by create_artifact / list_artifacts.

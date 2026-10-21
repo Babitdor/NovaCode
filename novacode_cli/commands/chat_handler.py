@@ -329,6 +329,31 @@ def _make_chat_html() -> str:
   .vignette { position: fixed; inset: 0; pointer-events: none; z-index: 9997;
     background: radial-gradient(ellipse at center, transparent 58%, rgba(0,0,0,.38)); }
 
+  /* Keep the council readable and operable on narrow phone viewports. */
+  @media (max-width: 640px) {
+    html, body { height: 100%; height: 100dvh; }
+    body { min-height: 0; }
+    .banner { height: clamp(76px, 13vh, 112px); }
+    header { flex-wrap: wrap; gap: 6px 8px; padding: 8px 10px; }
+    .sid { display: none; }
+    #new-thread { margin-left: auto; min-height: 36px; }
+    #bench { gap: 6px; padding: 8px; }
+    #bench .seat { min-width: 74px; padding: 6px 4px; }
+    #messages { min-height: 0; padding: 12px 10px; gap: 10px; }
+    .topic-banner { max-width: 100%; font-size: 12px; padding: 6px 8px; }
+    .agent { max-width: 100%; padding: 9px 10px; }
+    .agent .body pre { max-width: 100%; overflow-x: auto; }
+    .leaderboard { overflow-x: auto; }
+    #input-area { align-items: stretch; }
+    .mode-badge { display: none; }
+    .prefix { padding: 0 8px; }
+    #input-area textarea { min-width: 0; padding: 12px 8px; font-size: 16px; }
+    #input-area button { min-width: 76px; padding: 0 10px; }
+    #status-bar { flex-wrap: wrap; gap: 4px 10px; padding: 6px 10px; font-size: 10px; }
+    #status-bar .hint { display: none; }
+    .status-msg { max-width: 48vw; }
+  }
+
   /* --- motion --- */
   @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
   @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
@@ -1211,6 +1236,9 @@ async def handle_chat_command() -> bool:
 
 async def handle_chat_stop_command() -> bool:
     """Handle the /chat stop command — stop the council web UI (CLI entry)."""
+    from novacode_cli.commands.share_handler import stop_share
+
+    stop_share("council")
     if not is_server_running():
         console.print("[yellow]Council server is not running.[/yellow]")
         return True

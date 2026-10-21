@@ -338,6 +338,21 @@ _HTML = r"""<!doctype html>
    .col.rail .rail-label{flex-direction:row;align-items:center;justify-content:center;gap:8px;padding:0}
    .rail-txt{writing-mode:horizontal-tb}
  }
+ @media (max-width:600px){
+   .banner{height:96px}
+   header{flex-wrap:wrap;gap:6px 8px;padding:8px 10px}
+   .sid{display:none}
+   .state{font-size:10px}
+   .col{min-height:58vh}
+   #chat{padding:12px 10px}
+   .msg{padding:9px 10px}
+   .composer{padding:8px;gap:6px}
+   .composer textarea{min-height:48px;height:48px;font-size:16px}
+   .composer button{min-width:68px;padding:0 10px}
+   .picker{padding:10px}
+   .scroll{padding:10px}
+   .qbox{width:calc(100% - 20px);max-height:calc(100dvh - 32px)}
+ }
 </style></head>
 <body>
 <div class="banner">

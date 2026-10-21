@@ -60,6 +60,10 @@ jobs:
           novacode_cli/tools/notebook_tools.py
           novacode_cli/backends/native_search.py
           novacode_cli/security/delegated_approval.py
+          novacode_cli/security/local_http.py
+          novacode_cli/commands/share_handler.py
+          novacode_cli/artifacts/server.py
+          novacode_cli/tools/artifact_tools.py
       - name: Run offline regression tests
         run: >-
           uv run --no-sync pytest -q --tb=short --junitxml=test-results/regression.xml

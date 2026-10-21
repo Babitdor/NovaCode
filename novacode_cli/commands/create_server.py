@@ -885,11 +885,24 @@ HTML_PAGE = r"""<!DOCTYPE html>
   /* ── Responsive ──────────────────────────────────────── */
 
   @media (max-width: 768px) {
-    .sidebar { width: 100%; min-width: 0; border-right: none; border-bottom: 1px solid var(--border-subtle); }
-    .app-container { flex-direction: column; }
+    .sidebar { width: 100%; min-width: 0; flex: 0 0 min(36vh, 280px); border-right: none; border-bottom: 1px solid var(--border-subtle); }
+    body { overflow-y: auto; }
+    .app-container { flex: 1 0 auto; min-height: calc(100dvh - 80px); flex-direction: column; }
+    .main-pane { flex: 1 0 auto; min-height: 58vh; }
     header { flex-direction: column; align-items: flex-start; gap: 10px; }
     .pane-header { flex-direction: column; align-items: flex-start; gap: 10px; }
     .pane-actions { flex-wrap: wrap; }
+    .pane-content { padding: 18px 14px; }
+  }
+
+  @media (max-width: 480px) {
+    header { padding: 14px 16px; }
+    .sidebar { flex-basis: 32vh; }
+    .tab-bar { padding: 8px 8px 0; }
+    .tab-btn { min-height: 42px; }
+    .pane-header { padding: 14px 16px; }
+    .pane-header h2 { overflow-wrap: anywhere; }
+    .pane-actions .btn { min-height: 40px; }
   }
 </style>
 </head>

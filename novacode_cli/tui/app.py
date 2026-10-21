@@ -619,8 +619,7 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "export": SlashCommand("_run_export", "export the session tree to HTML (/export [file])"),
     "share": SlashCommand(
         "_run_share",
-        "upload the session as a secret GitHub gist and get a link",
-        wants_text=False,
+        "temporary web links: /share artifacts|council|cowork|create; empty shares a gist",
     ),
     "rewind": SlashCommand(
         "_run_rewind", "go back to before an earlier message: conversation, code, or both"
@@ -16207,8 +16206,33 @@ class NovaApp(App):
         uri = target.as_uri()
         self._log(Text.assemble(("● Exported to ", "green"), (str(target), f"link {uri}")))
 
-    async def _run_share(self) -> None:
-        """Upload the HTML export as a secret gist and print a link that renders it."""
+    async def _run_share(self, text: str = "/share") -> None:
+        """Share a Nova web page temporarily, or upload the session as a gist."""
+        parts = text.split(maxsplit=1)
+        args = parts[1].strip() if len(parts) > 1 else ""
+        if args:
+            from novacode_cli.commands import CommandContext
+            from novacode_cli.commands.share_handler import handle_share_command
+            from novacode_cli.config.config import console
+            from rich.text import Text
+
+            with console.capture() as captured:
+                await handle_share_command(
+                    CommandContext(
+                        cmd="share",
+                        cmd_args=args,
+                        agent=self.agent,
+                        token_tracker=self.token_tracker,
+                        session_state=self.session_state,
+                        assistant_id=self.assistant_id,
+                        session_manager=self.session_manager,
+                        model_name=self.model_name,
+                        image_tracker=self.image_tracker,
+                    )
+                )
+            self._log(Text.from_markup(captured.get()))
+            return
+
         import shutil
         import tempfile
 
@@ -16636,6 +16660,9 @@ class NovaApp(App):
 
         # Subcommand: stop
         if args == "stop":
+            from novacode_cli.commands.share_handler import stop_share
+
+            stop_share("create")
             server: CreateServer | None = getattr(self.session_state, "create_server", None)
             if server and server.is_running:
                 server.stop()
@@ -17042,6 +17069,9 @@ class NovaApp(App):
         )
 
         if sub == "stop":
+            from novacode_cli.commands.share_handler import stop_share
+
+            stop_share("council")
             if not is_server_running():
                 self._log(Text("Council server is not running.", style="yellow"))
                 return

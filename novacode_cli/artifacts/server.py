@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import html as _html
 import json
+import re
 import socket
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -67,7 +68,52 @@ iframe { width: 100%; height: calc(100vh - 49px); border: 0; background: #fff; d
 .markdown table { border-collapse: collapse; }
 .markdown th,.markdown td { border: 1px solid #2a2b3c; padding: 6px 10px; }
 .empty { padding: 40px; text-align: center; color: #565f89; }
+@media (max-width: 600px) {
+  header { flex-wrap: wrap; gap: 8px; padding: 10px 12px; }
+  header h1 { flex: 1 1 45%; font-size: 14px; }
+  .meta { display: none; }
+  header button { min-height: 38px; }
+  iframe { height: calc(100dvh - 60px); }
+  .markdown { padding: 20px 14px; overflow-wrap: anywhere; }
+  .markdown table { display: block; max-width: 100%; overflow-x: auto; }
+  .markdown pre { max-width: 100%; }
+}
 """
+
+_ARTIFACT_MOBILE_BASELINE = """
+<style id="nova-mobile-baseline">
+@media (max-width: 640px) {
+  html, body { max-width: 100%; overflow-x: hidden; }
+  body { min-width: 0 !important; }
+  img, video, canvas, svg, iframe { max-width: 100% !important; }
+  pre, code { max-width: 100%; overflow-x: auto; }
+  table { display: block; max-width: 100%; overflow-x: auto; }
+  a, p, li, h1, h2, h3 { overflow-wrap: anywhere; }
+}
+</style>
+"""
+
+
+def _responsive_artifact_html(content: str) -> str:
+    """Add viewport metadata and overflow guards to user-authored previews."""
+    additions = ""
+    if not re.search(r"<meta\b[^>]*name=[\"']viewport[\"']", content, re.IGNORECASE):
+        additions += '<meta name="viewport" content="width=device-width, initial-scale=1">'
+    additions += _ARTIFACT_MOBILE_BASELINE
+    head = re.search(r"<head\b[^>]*>", content, re.IGNORECASE)
+    if head:
+        closing_head = re.search(r"</head\s*>", content[head.end() :], re.IGNORECASE)
+        if closing_head:
+            index = head.end() + closing_head.start()
+            return content[:index] + additions + content[index:]
+        return content[: head.end()] + additions + content[head.end() :]
+    html = re.search(r"<html\b[^>]*>", content, re.IGNORECASE)
+    if html:
+        return content[: html.end()] + "<head>" + additions + "</head>" + content[html.end() :]
+    doctype = re.search(r"<!doctype\b[^>]*>", content, re.IGNORECASE)
+    if doctype:
+        return content[: doctype.end()] + additions + content[doctype.end() :]
+    return additions + content
 
 
 def _viewer_html(art: Artifact) -> str:
@@ -80,7 +126,7 @@ def _viewer_html(art: Artifact) -> str:
     if art.type in ("html", "dashboard"):
         # srcdoc value is HTML-entity-decoded by the browser, then parsed inside
         # the sandbox — so escaping &<>\" here is correct and safe.
-        srcdoc = _html.escape(art.content or "", quote=True)
+        srcdoc = _html.escape(_responsive_artifact_html(art.content or ""), quote=True)
         body = (
             f'<iframe sandbox="allow-scripts allow-popups" '
             f'title="{_html.escape(art.title)}" srcdoc="{srcdoc}"></iframe>'

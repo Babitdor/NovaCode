@@ -1,7 +1,7 @@
 """Browser-origin protection for loopback Nova editing services."""
 
-from http.server import BaseHTTPRequestHandler
 import secrets
+from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlsplit
 
 
@@ -50,7 +50,10 @@ class LocalRequestHandler(BaseHTTPRequestHandler):
             f"[::1]:{self.server.server_port}",
         }
         origin = self.headers.get("Origin")
-        if authority not in allowed or (origin and origin != f"http://{authority}"):
+        shared_origins = getattr(self.server, "nova_share_origins", set())
+        if authority not in allowed or (
+            origin and origin != f"http://{authority}" and origin not in shared_origins
+        ):
             self._reject(403, "Local origin required")
             return False
         parsed = urlsplit(self.path)

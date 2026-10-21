@@ -89,6 +89,9 @@ def _handle_stop(session_state: Any) -> bool:
     from novacode_cli.commands.create_server import CreateServer
 
     server: CreateServer | None = getattr(session_state, "create_server", None)
+    from novacode_cli.commands.share_handler import stop_share
+
+    stop_share("create")
     if server and server.is_running:
         server.stop()
         session_state.create_server = None
