@@ -70,7 +70,6 @@ _BUILTIN_TOOLS: frozenset[str] = frozenset(
         "code_search",
         "find_related_code",
         "fetch_url",
-        "package_info",
     }
 )
 

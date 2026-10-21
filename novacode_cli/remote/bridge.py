@@ -272,7 +272,6 @@ _TOOL_CATEGORY: dict[str, str] = {
     "duckduckgo_search": "web",
     "fetch_url": "web",
     "docs_search": "web",
-    "package_info": "web",
     "task": "subagent",
     "think": "think",
 }

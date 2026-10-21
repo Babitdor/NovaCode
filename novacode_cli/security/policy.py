@@ -58,7 +58,7 @@ Tier = Literal["allow", "ask", "deny"]
 # have denied. Actions without a command (list/status/logs) carry no command to
 # judge and fall through to the tool default.
 _SHELL_TOOLS = frozenset(
-    {"shell", "execute", "run_tests", "start_dev_server", "daemon"}
+    {"shell", "bash", "execute", "run_tests", "start_dev_server", "daemon"}
 )
 #: `daemon` actions that only read state — they start no process and kill
 #: none, so gating them buys nothing and costs approval fatigue.
@@ -69,7 +69,14 @@ _URL_TOOLS = frozenset({"fetch_url"})
 
 # Per-tool default tier (the fallback when no specific rule matches).
 _DEFAULT_TOOL_TIERS: dict[str, Tier] = {
+    "MCPTool": "ask",
+    "CronCreateTool": "ask",
+    "CronDeleteTool": "ask",
+    "CronListTool": "allow",
+    "CtxInspectTool": "allow",
+    "TerminalCaptureTool": "allow",
     "shell": "ask",
+    "bash": "ask",
     "execute": "ask",
     "write_file": "ask",
     "edit_file": "ask",
@@ -207,7 +214,12 @@ class ApprovalPolicy:
         Such tools must stay gated even if their default tier is ``allow``,
         because a specific call may still ``ask``/``deny``.
         """
-        return tool_name in _SHELL_TOOLS or tool_name in _PATH_TOOLS or tool_name in _URL_TOOLS
+        return (
+            tool_name == "MCPTool"
+            or tool_name in _SHELL_TOOLS
+            or tool_name in _PATH_TOOLS
+            or tool_name in _URL_TOOLS
+        )
 
     # -- evaluation ---------------------------------------------------------
 
@@ -216,6 +228,21 @@ class ApprovalPolicy:
         args = args or {}
         if self.tool_default(tool_name) == "deny":
             return ApprovalDecision("deny", rule="tool-default")
+        if tool_name == "MCPTool":
+            if args.get("action", "list") in ("list", "describe"):
+                return ApprovalDecision("allow", rule="mcp-discovery")
+            server, name = args.get("server_name"), args.get("tool_name")
+            arguments = args.get("arguments", {})
+            if (
+                args.get("action") != "call"
+                or not isinstance(server, str)
+                or not isinstance(name, str)
+                or not server.strip()
+                or not name.strip()
+                or not isinstance(arguments, dict)
+            ):
+                return ApprovalDecision("deny", "Invalid MCP routing arguments", "mcp-routing")
+            return self.evaluate(f"{server}_{name}", arguments)
         if tool_name in _SHELL_TOOLS:
             return self._eval_shell(tool_name, args)
         if tool_name in _PATH_TOOLS:

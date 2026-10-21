@@ -160,14 +160,9 @@ from novacode_cli.tools import (
     fetch_url,
     find_related_code,
     forget,
-    github_trending,
-    hacker_news,
-    linkedin_jobs,
     list_memories,
-    package_info,
     read_memory,
     recall,
-    reddit_posts,
     oracle,
     remember,
     skill_manage,
@@ -398,7 +393,6 @@ def _session_tools(session_state: SessionState) -> list:
         wiki_update_index,
         wiki_write,
         # Utility tools
-        package_info,
         think,
         speak,
         oracle,
@@ -411,11 +405,6 @@ def _session_tools(session_state: SessionState) -> list:
         # Web search (always available, no API key needed)
         duckduckgo_search,
         docs_search,
-        # Web scraping (GitHub trending, HN, LinkedIn, Reddit)
-        github_trending,
-        hacker_news,
-        linkedin_jobs,
-        reddit_posts,
         # Memory management (persist across sessions)
         write_memory,
         read_memory,
@@ -488,6 +477,12 @@ def _session_tools(session_state: SessionState) -> list:
     from novacode_cli.tools.python_kernel_tool import python_kernel
 
     tools.extend([python_kernel, daemon])
+
+    from novacode_cli.tools.cron_tools import build_cron_tools
+    from novacode_cli.tools.inspection_tools import build_inspection_tools
+
+    tools.extend(build_cron_tools(session_state))
+    tools.extend(build_inspection_tools())
 
     return tools
 

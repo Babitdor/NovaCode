@@ -34,6 +34,15 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from langchain_core.tools import StructuredTool
 
+from novacode_cli.agents.tool_search_variants import (
+    BM25_TOOL,
+    REGEX_TOOL,
+    SEARCH_VARIANTS,
+    BM25Search,
+    SearchInput,
+    parameter_text,
+    regex_matches,
+)
 from novacode_cli.skills.retrieval import first_sentence, get_index
 
 if TYPE_CHECKING:
@@ -73,6 +82,8 @@ CORE_TOOLS = frozenset(
         "skills_search",
         "skills_load",
         "search_tools",
+        REGEX_TOOL,
+        BM25_TOOL,
         "memory_search",
         # The prompt delegates background work proactively and collects it with
         # one short wait, so starting, checking and waiting stay bound.
@@ -81,8 +92,6 @@ CORE_TOOLS = frozenset(
         "wait_for_task",
         # The prompt asks for artifacts proactively.
         "create_artifact",
-        # The prompt ends an overnight session by suspending the machine.
-        "sleep_desktop",
     }
 )
 #: Never bound by use alone: `execute` duplicates `shell` locally (both run
@@ -109,7 +118,7 @@ DESCRIPTIONS = {
 LOADED_MARKER = "Loaded tools:"
 #: Tools whose result can load others with a LOADED_MARKER line: the search,
 #: and create_artifact, whose natural next step is update_artifact.
-LOADING_TOOLS = frozenset({"search_tools", "tool_search", "create_artifact"})
+LOADING_TOOLS = frozenset({"search_tools", "tool_search", "create_artifact"}) | SEARCH_VARIANTS
 MAX_SEARCH_LIMIT = 50
 
 
@@ -220,10 +229,12 @@ class ToolSearchMiddleware(AgentMiddleware):
         self._note: str | None = None  # frozen: a changing prompt re-bills the cache
         self._inventory: tuple = ()
         self._catalog: list[dict] = []
+        self._bm25 = BM25Search()
         self.tools = [
             StructuredTool.from_function(
                 self._tool_search,
                 name="search_tools",
+                args_schema=SearchInput,
                 description=(
                     "Find and load any available tool or subagent, including loaded tools. "
                     "Search by capability, exact names separated by commas, partial names, "
@@ -231,7 +242,23 @@ class ToolSearchMiddleware(AgentMiddleware):
                     "Use limit and offset to page through results. Found tools are callable "
                     "from your next step on."
                 ),
-            )
+            ),
+            StructuredTool.from_function(
+                self._regex_search,
+                name=REGEX_TOOL,
+                args_schema=SearchInput,
+                description="Find and load tools/subagents using a case-insensitive Python regex. "
+                "Searches names, descriptions and parameters. Maximum pattern length: 200 characters. "
+                "Use query, limit and offset to page results.",
+            ),
+            StructuredTool.from_function(
+                self._bm25_search,
+                name=BM25_TOOL,
+                args_schema=SearchInput,
+                description="Find and load tools/subagents using natural-language BM25 keyword ranking. "
+                "Searches names, descriptions and parameters without embeddings. Maximum query length: "
+                "500 characters. Use query, limit and offset to page results.",
+            ),
         ]
 
     # ── search_tools ───────────────────────────────────────────────────────
@@ -278,7 +305,15 @@ class ToolSearchMiddleware(AgentMiddleware):
             hits.setdefault((item["kind"], item["name"]), item)
         return list(hits.values())
 
-    def _tool_search(self, query: str, limit: int = 5, offset: int = 0) -> str:
+    def _regex_search(self, query: str, limit: int = 5, offset: int = 0) -> str:
+        """Load regex matches through the same checkpoint markers as legacy search."""
+        return self._tool_search(query, limit, offset, _mode="regex")
+
+    def _bm25_search(self, query: str, limit: int = 5, offset: int = 0) -> str:
+        """Load BM25 matches without starting a dense-model download."""
+        return self._tool_search(query, limit, offset, _mode="bm25")
+
+    def _tool_search(self, query: str, limit: int = 5, offset: int = 0, *, _mode: str = "hybrid") -> str:
         """Find and load available tools and subagents.
 
         Args:
@@ -289,14 +324,23 @@ class ToolSearchMiddleware(AgentMiddleware):
         if not 1 <= limit <= MAX_SEARCH_LIMIT or offset < 0:
             message = "limit must be between 1 and 50, and offset must be nonnegative."
             raise ValueError(message)
-        query = query.strip()
+        if _mode != "regex":
+            query = query.strip()
         if not query:
             return (
                 "Enter a capability or tool name, or use query='*' to browse all available tools."
             )
         if not self._catalog:
             return "No tools are currently registered for discovery."
-        matches = self._search_matches(query)
+        try:
+            if _mode == "regex":
+                matches = regex_matches(self._catalog, query)
+            elif _mode == "bm25":
+                matches = self._bm25.search(self._catalog, query)
+            else:
+                matches = self._search_matches(query)
+        except (ValueError, re.error, TimeoutError) as exc:
+            return f"Tool search failed: {exc}"
         if not matches:
             return (
                 f"No registered tools match {query!r}. "
@@ -423,7 +467,10 @@ class ToolSearchMiddleware(AgentMiddleware):
         # Discovery covers the full available inventory, regardless of which
         # schemas this particular model call already has loaded.
         self._catalog = [
-            {"name": _name(t), "description": _description(t), "kind": "tool"}
+            {
+                "name": _name(t), "description": _description(t),
+                "kind": "tool", "parameters": parameter_text(t),
+            }
             for t in request.tools
             if _name(t)
         ] + [
@@ -431,7 +478,8 @@ class ToolSearchMiddleware(AgentMiddleware):
             for n, description in self._deferred_subagents.items()
         ]
         inventory = tuple(
-            (item["kind"], item["name"], item["description"]) for item in self._catalog
+            (item["kind"], item["name"], item["description"], item.get("parameters", ""))
+            for item in self._catalog
         )
         if inventory != self._inventory:
             self._note = None
@@ -472,6 +520,8 @@ class ToolSearchMiddleware(AgentMiddleware):
                 f"{len(self._deferred_subagents)} specialist subagents are searchable.\n"
                 f"{_group(optional_names)}\n\n"
                 'Call `search_tools("<what you need>")` or `search_tools("name1, name2")`; '
+                f"Use `{REGEX_TOOL}` for regex or `{BM25_TOOL}` "
+                "for natural-language keyword ranking. "
                 'Search covers all available tools. Use query="*" or a wildcard '
                 'such as "playwright_*" '
                 "to browse; limit and offset retrieve further matches. "

@@ -27,6 +27,8 @@ BLOCKED_TOOLS: frozenset[str] = frozenset({
     "EnterWorktreeTool",
     "ExitWorktreeTool",
     "memory_wiki",
+    "CronCreateTool",
+    "CronDeleteTool",
 })
 
 # ── Restricted write tools ─────────────────────────────────────────────

@@ -51,15 +51,11 @@ def spawned(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
     return calls
 
 
-def test_sleep_desktop_is_bound_every_turn() -> None:
-    """A deferred tool needs a `search_tools` round-trip, which this one cannot have.
-
-    The prompt ends an overnight session with it, and a prompt instruction naming a
-    tool the model cannot see is a dead instruction.
-    """
+def test_sleep_desktop_is_available_on_demand() -> None:
+    """The machine-power tool is deferred until the user explicitly requests it."""
     from novacode_cli.agents.tool_search import CORE_TOOLS
 
-    assert "sleep_desktop" in CORE_TOOLS
+    assert "sleep_desktop" not in CORE_TOOLS
 
 
 def test_the_prompt_tells_the_agent_when_to_sleep_the_desktop() -> None:
@@ -70,12 +66,9 @@ def test_the_prompt_tells_the_agent_when_to_sleep_the_desktop() -> None:
     assert "<desktop_power>" in out
     assert "</desktop_power>" in out
     assert "sleep_desktop" in out
-    # The window is the whole safety story, so it has to be stated outright.
-    assert "23:00-07:00" in out
-    # And the clock is not in context, so the agent must be told to look at it.
-    assert "Get-Date" in out
-    # The triggers are useless without the non-triggers.
-    assert "Do not call it" in out
+    assert 'search_tools("sleep_desktop")' in out
+    assert "explicit request to sleep now" in out
+    assert "Never infer a request from silence or inactivity" in out
 
 
 @pytest.mark.parametrize(

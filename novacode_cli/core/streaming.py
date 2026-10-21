@@ -54,7 +54,6 @@ TOOL_ICONS: dict[str, str] = {
     # Code quality - Analysis themed
     "lint_code": "🔍",
     "check_types": "🔎",
-    "package_info": "📦",
     # Question/Plan - Interaction themed
     "ask_question": "❓",
     "exit_plan_mode": "✅",

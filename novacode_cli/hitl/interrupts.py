@@ -69,6 +69,14 @@ class InterruptSpec:
 # ---------------------------------------------------------------------------
 
 INTERRUPT_SPECS: dict[str, InterruptSpec] = {
+    "MCPTool": InterruptSpec(fields=[
+        ("action", FieldSpec("Action")), ("server_name", FieldSpec("MCP server")),
+        ("tool_name", FieldSpec("MCP tool")), ("arguments", FieldSpec("Arguments")),
+    ]),
+    "CronCreateTool": InterruptSpec(fields=[
+        ("cron_expr", FieldSpec("Schedule (local time)")), ("task", FieldSpec("Recurring task")),
+    ]),
+    "CronDeleteTool": InterruptSpec(fields=[("job_id", FieldSpec("Job ID"))]),
     "EnterWorktreeTool": InterruptSpec(fields=[("name", FieldSpec("Worktree name"))]),
     "ExitWorktreeTool": InterruptSpec(
         static_lines=["Restore original workspace; keep worktree and branch."]
@@ -194,6 +202,24 @@ INTERRUPT_SPECS: dict[str, InterruptSpec] = {
 # The single args_schema for each tool — still unique per tool.
 # Kept separate from InterruptSpec because schemas are JSON blobs, not formatting rules.
 _INTERRUPT_ARG_SCHEMAS: dict[str, dict[str, Any]] = {
+    "MCPTool": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["list", "describe", "call"]},
+            "server_name": {"type": "string"},
+            "tool_name": {"type": "string"},
+            "arguments": {"type": "object"},
+        },
+    },
+    "CronCreateTool": {
+        "type": "object",
+        "properties": {"cron_expr": {"type": "string"}, "task": {"type": "string"}},
+        "required": ["cron_expr", "task"],
+    },
+    "CronDeleteTool": {
+        "type": "object", "properties": {"job_id": {"type": "string"}},
+        "required": ["job_id"],
+    },
     "shell": {
         "type": "object",
         "properties": {

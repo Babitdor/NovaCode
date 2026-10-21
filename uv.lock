@@ -3801,7 +3801,7 @@ wheels = [
 
 [[package]]
 name = "novacode-cli"
-version = "1.0.55"
+version = "1.0.56"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -3818,6 +3818,7 @@ dependencies = [
     { name = "graphifyy" },
     { name = "httpx" },
     { name = "jinja2" },
+    { name = "jsonschema" },
     { name = "keyring" },
     { name = "langchain" },
     { name = "langchain-anthropic" },
@@ -3845,6 +3846,8 @@ dependencies = [
     { name = "python-telegram-bot" },
     { name = "pywinpty", marker = "sys_platform == 'win32'" },
     { name = "pyyaml" },
+    { name = "referencing" },
+    { name = "regex" },
     { name = "requests" },
     { name = "rich" },
     { name = "runloop-api-client" },
@@ -3920,6 +3923,7 @@ requires-dist = [
     { name = "graphifyy", specifier = ">=0.4.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "jinja2", specifier = ">=3.1.0" },
+    { name = "jsonschema", specifier = ">=4.18" },
     { name = "keyring", specifier = ">=24.0.0" },
     { name = "langchain", specifier = ">=1.2.13" },
     { name = "langchain-anthropic", specifier = ">=1.4.0" },
@@ -3954,6 +3958,8 @@ requires-dist = [
     { name = "python-telegram-bot", specifier = ">=21.0.0" },
     { name = "pywinpty", marker = "sys_platform == 'win32'", specifier = ">=2.0.15,<3" },
     { name = "pyyaml", specifier = ">=6.0" },
+    { name = "referencing", specifier = ">=0.28.4" },
+    { name = "regex", specifier = ">=2024.11.6" },
     { name = "requests" },
     { name = "rich", specifier = ">=13.0.0" },
     { name = "runloop-api-client", specifier = ">=0.69.0" },

@@ -52,7 +52,6 @@ _TRIVIAL_BUILTINS: frozenset[str] = frozenset(
         "duckduckgo_search",
         "docs_search",
         "fetch_url",
-        "package_info",
     }
 )
 # A burst of failures in the window is worth reviewing *early* (before the count

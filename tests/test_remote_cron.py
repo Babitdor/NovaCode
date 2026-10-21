@@ -31,9 +31,9 @@ class FakeStore:
     async def adelete(self, namespace, key):
         self.data.get(tuple(namespace), {}).pop(key, None)
 
-    async def asearch(self, namespace):
+    async def asearch(self, namespace, *, limit=10, offset=0):
         ns = self.data.get(tuple(namespace), {})
-        return [SimpleNamespace(key=k, value=dict(v)) for k, v in ns.items()]
+        return [SimpleNamespace(key=k, value=dict(v)) for k, v in ns.items()][offset:offset + limit]
 
 
 # ── cron parsing ─────────────────────────────────────────────────────────────

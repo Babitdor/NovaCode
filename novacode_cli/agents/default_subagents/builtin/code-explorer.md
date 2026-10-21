@@ -1,6 +1,6 @@
 ---
 description: "Helps navigate, understand, and query large codebases efficiently."
-tools: ["fetch_url", "duckduckgo_search", "docs_search", "package_info"]
+tools: ["fetch_url", "duckduckgo_search", "docs_search"]
 skill_names: ["codebase-explorer", "graphify"]
 ---
 

@@ -8,7 +8,7 @@ description: |
   - You want a severity-ranked report to act on later
 
   It only reads and searches; it changes nothing.
-tools: ["duckduckgo_search", "docs_search", "fetch_url", "package_info"]
+tools: ["duckduckgo_search", "docs_search", "fetch_url"]
 async: "only"
 skill_names: ["security-audit", "security-review", "security-best-practices"]
 ---

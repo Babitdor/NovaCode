@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from novacode_cli.agents.context_compaction import ContextCompactionMiddleware
+    from novacode_cli.agents.strict_tools import StrictToolMiddleware
 
 
 class ProtectedContextOverflowError(RuntimeError):
@@ -355,13 +356,14 @@ class ContextSnapshotMiddleware(AgentMiddleware[SnapshotState]):
 
 
 def background_context_middleware() -> list[
-    ContextCompactionMiddleware | ContextSnapshotMiddleware
+    ContextCompactionMiddleware | ContextSnapshotMiddleware | StrictToolMiddleware
 ]:
     """Give packaged remote agents the same protection and accounting contract."""
     from deepagents.backends.filesystem import FilesystemBackend
 
     from novacode_cli.agents.async_workspace import workspace_root
     from novacode_cli.agents.context_compaction import ContextCompactionMiddleware
+    from novacode_cli.agents.strict_tools import StrictToolMiddleware
 
     backend = FilesystemBackend(root_dir=str(workspace_root()), virtual_mode=True)
-    return [ContextCompactionMiddleware(backend=backend), ContextSnapshotMiddleware()]
+    return [ContextCompactionMiddleware(backend=backend), StrictToolMiddleware(), ContextSnapshotMiddleware()]

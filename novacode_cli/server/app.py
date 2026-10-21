@@ -92,15 +92,10 @@ def _create_server_agent(
         duckduckgo_search,
         fetch_url,
         forget,
-        github_trending,
-        hacker_news,
-        linkedin_jobs,
         list_memories,
         oracle,
-        package_info,
         read_memory,
         recall,
-        reddit_posts,
         remember,
         skill_manage,
         speak,
@@ -128,17 +123,12 @@ def _create_server_agent(
         wiki_search,
         wiki_update_index,
         wiki_write,
-        package_info,
         think,
         speak,
         oracle,
         skill_manage,
         duckduckgo_search,
         docs_search,
-        github_trending,
-        hacker_news,
-        linkedin_jobs,
-        reddit_posts,
         write_memory,
         read_memory,
         remember,
@@ -146,6 +136,10 @@ def _create_server_agent(
         list_memories,
         forget,
     ]
+
+    from novacode_cli.tools.inspection_tools import build_inspection_tools
+
+    tools.extend(build_inspection_tools())
 
     # Conditionally add Semble-powered code search tools
     from novacode_cli.tools import code_search, find_related_code

@@ -931,8 +931,14 @@ def _harden_subagent_specs(
 
             mw_to_add.append(ContextCompactionMiddleware(backend=skill_backend))
 
+        from novacode_cli.agents.strict_tools import StrictToolMiddleware
         from novacode_cli.context.snapshot import ContextSnapshotMiddleware
-        new_spec["middleware"] = mw_to_add + existing + [ContextSnapshotMiddleware()]
+
+        strict = (
+            [] if any(isinstance(m, StrictToolMiddleware) for m in existing)
+            else [StrictToolMiddleware()]
+        )
+        new_spec["middleware"] = mw_to_add + existing + strict + [ContextSnapshotMiddleware()]
         out.append(new_spec)
     return out
 
@@ -2283,6 +2289,13 @@ This file stores your preferences and context that persist across sessions.
         skill_backend=composite_backend,
     )
 
+    # Generic calls require this graph's routing middleware. Children receive
+    # their explicitly allowed namespaced tools rather than this broad router.
+    if _has_mcp:
+        from novacode_cli.mcp.generic import build_mcp_tool
+
+        tools = [*(tools or []), build_mcp_tool(mcp_middleware)]
+
     # Workspace transitions belong to the current session, never a declarative
     # subagent sharing its backend. Attach after building the subagent roster.
     from novacode_cli.tools.worktree_tools import WorktreeToolsMiddleware
@@ -2443,6 +2456,9 @@ This file stores your preferences and context that persist across sessions.
     compactors = [m for m in agent_middleware if isinstance(m, ContextCompactionMiddleware)]
     agent_middleware = [m for m in agent_middleware if not isinstance(m, ContextCompactionMiddleware)]
     agent_middleware.extend(compactors)
+    from novacode_cli.agents.strict_tools import StrictToolMiddleware
+
+    agent_middleware.append(StrictToolMiddleware())
     agent_middleware.append(ContextSnapshotMiddleware())
 
     agent = create_deep_agent(

@@ -419,6 +419,53 @@ class MCPMiddleware(AgentMiddleware):
 
     state_schema = MCPState
 
+    def _generic_error(self, request, exc):
+        """Keep routing/selection failures attached to the original tool call."""
+        from langchain_core.messages import ToolMessage
+
+        return ToolMessage(
+            content=f"MCPTool failed: {exc}", name="MCPTool",
+            tool_call_id=request.tool_call["id"], status="error",
+        )
+
+    def wrap_tool_call(self, request, handler):
+        """Route generic execution through downstream middleware, synchronously."""
+        if (
+            request.tool_call["name"] != "MCPTool"
+            or (request.tool_call.get("args") or {}).get("action") != "call"
+        ):
+            return handler(request)
+        from novacode_cli.mcp.generic import bounded_result, routed_request
+
+        try:
+            routed, params = routed_request(self, request)
+        except (ValueError, TypeError) as exc:
+            return self._generic_error(request, exc)
+        result = handler(routed)
+        try:
+            return bounded_result(result, params)
+        except (ValueError, TypeError, KeyError, IndexError) as exc:
+            return self._generic_error(request, f"Result selection failed: {exc}")
+
+    async def awrap_tool_call(self, request, handler):
+        """Route generic execution through downstream middleware, asynchronously."""
+        if (
+            request.tool_call["name"] != "MCPTool"
+            or (request.tool_call.get("args") or {}).get("action") != "call"
+        ):
+            return await handler(request)
+        from novacode_cli.mcp.generic import bounded_result, routed_request
+
+        try:
+            routed, params = routed_request(self, request)
+        except (ValueError, TypeError) as exc:
+            return self._generic_error(request, exc)
+        result = await handler(routed)
+        try:
+            return bounded_result(result, params)
+        except (ValueError, TypeError, KeyError, IndexError) as exc:
+            return self._generic_error(request, f"Result selection failed: {exc}")
+
     def __init__(self, config_path: Path | None = None) -> None:
         """Initialize the MCP middleware.
 

@@ -3,12 +3,10 @@
 This package provides various tools for the CLI agent, organized into submodules:
 - web_tools: Web search tools (Tavily, DuckDuckGo, docs search)
 - fetch_tools: URL fetching and content conversion (merged from http_tools)
-- package_tools: Package information from registries
 - memory_tools: Memory management tools
 - reflection_tools: Reflection tools for strategic thinking
 - graph_tools: Project knowledge-graph query tool
 - code_search_tools: Semantic code search (Semble-powered, optional)
-- scraper_tools: Web scraping tools (GitHub trending, HN, LinkedIn, Reddit)
 """
 
 # URL fetching tools (covers all HTTP methods — http_request merged into fetch_url)
@@ -27,9 +25,6 @@ from novacode_cli.tools.store_memory_tools import (
     recall,
     remember,
 )
-
-# Package information tools
-from novacode_cli.tools.package_tools import package_info
 
 # Code search tools (Semble-powered, optional — gracefully degrades)
 try:
@@ -65,14 +60,6 @@ from novacode_cli.tools.web_tools import (
     web_search,
 )
 
-# Web scraping tools (GitHub trending, HN, LinkedIn, Reddit)
-from novacode_cli.tools.scraper_tools import (
-    github_trending,
-    hacker_news,
-    linkedin_jobs,
-    reddit_posts,
-)
-
 # Wiki tools (agent-accessible project wiki)
 from novacode_cli.tools.wiki_tools import (
     wiki_read,
@@ -86,8 +73,6 @@ __all__ = [
     "duckduckgo_search",
     # URL fetching tools
     "fetch_url",
-    # Package information tools
-    "package_info",
     "read_memory",
     # Structured durable memory (LangGraph store)
     "remember",
@@ -110,11 +95,6 @@ __all__ = [
     # Code search tools (Semble-powered, optional)
     "code_search",
     "find_related_code",
-    # Web scraping tools
-    "github_trending",
-    "hacker_news",
-    "linkedin_jobs",
-    "reddit_posts",
     # Wiki tools (agent-accessible project wiki)
     "wiki_read",
     "wiki_search",

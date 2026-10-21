@@ -139,16 +139,18 @@ class CronScheduler:
         self._jobs: dict[str, dict[str, Any]] = {}
         self._last_fired: dict[str, str] = {}
         self._task: asyncio.Task | None = None
+        self._start_lock = asyncio.Lock()
 
     # -- Lifecycle ----------------------------------------------------------
 
     async def start(self) -> None:
         """Load persisted jobs and begin the tick loop (idempotent)."""
-        if self._task is not None and not self._task.done():
-            return
-        await self._load_jobs()
-        await self._ensure_builtin_jobs()
-        self._task = asyncio.create_task(self._run(), name="cron-scheduler")
+        async with self._start_lock:
+            if self._task is not None and not self._task.done():
+                return
+            await self._load_jobs()
+            await self._ensure_builtin_jobs()
+            self._task = asyncio.create_task(self._run(), name="cron-scheduler")
 
     async def stop(self) -> None:
         """Cancel the tick loop."""
@@ -178,17 +180,17 @@ class CronScheduler:
             "task": task,
             "created_at": time.time(),
         }
-        self._jobs[jid] = record
         await self._persist(jid, record)
+        self._jobs[jid] = record
         return jid
 
     async def remove_job(self, job_id: str) -> bool:
         """Remove a job by id; returns whether it existed."""
-        existed = self._jobs.pop(job_id, None) is not None
-        self._last_fired.pop(job_id, None)
+        existed = job_id in self._jobs
         if existed and self._store is not None:
-            with contextlib.suppress(Exception):
-                await self._store.adelete(config.CRON_SCHEDULES_NS, job_id)
+            await self._store.adelete(config.CRON_SCHEDULES_NS, job_id)
+        self._jobs.pop(job_id, None)
+        self._last_fired.pop(job_id, None)
         return existed
 
     def list_jobs(self) -> list[dict[str, Any]]:
@@ -244,17 +246,23 @@ class CronScheduler:
     async def _persist(self, job_id: str, record: dict[str, Any]) -> None:
         if self._store is None:
             return
-        with contextlib.suppress(Exception):
-            await self._store.aput(config.CRON_SCHEDULES_NS, job_id, record)
+        await self._store.aput(config.CRON_SCHEDULES_NS, job_id, record)
 
     async def _load_jobs(self) -> None:
         if self._store is None:
             return
         try:
-            items = await self._store.asearch(config.CRON_SCHEDULES_NS)
+            items = []
+            offset = 0
+            while True:
+                page = await self._store.asearch(config.CRON_SCHEDULES_NS, limit=100, offset=offset)
+                items.extend(page)
+                if len(page) < 100:
+                    break
+                offset += len(page)
         except Exception:
             logger.exception("Failed to load persisted cron jobs")
-            return
+            raise
         for item in items or []:
             value = getattr(item, "value", None)
             if isinstance(value, dict) and value.get("cron_expr") and value.get("task"):

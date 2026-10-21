@@ -20,13 +20,13 @@ def build_graph() -> Any:
     from novacode_cli.security.delegated_approval import DelegatedApprovalMiddleware
     from novacode_cli.shell.middleware import ShellMiddleware
     from novacode_cli.skills.libraries import background_library
-    from novacode_cli.tools import docs_search, fetch_url, package_info, web_search
+    from novacode_cli.tools import docs_search, fetch_url, web_search
 
     root = workspace_root()
     return create_deep_agent(
         name="general-purpose-async",
         model=build_async_agent_model(),
-        tools=[web_search, docs_search, fetch_url, package_info],
+        tools=[web_search, docs_search, fetch_url],
         backend=FilesystemBackend(root_dir=str(root), virtual_mode=True),
         system_prompt=render_template("async_agents/general_purpose.jinja") + BACKGROUND_NOTE,
         middleware=[

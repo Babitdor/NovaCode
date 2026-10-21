@@ -288,13 +288,8 @@ _TOOL_CATEGORIES: tuple[tuple[str, str, frozenset[str]], ...] = (
                 "fetch_url",
                 "duckduckgo_search",
                 "docs_search",
-                "github_trending",
-                "hacker_news",
-                "reddit_posts",
                 "twitter_search",
                 "twitter_trending",
-                "linkedin_jobs",
-                "package_info",
                 "oracle",
             }
         ),
