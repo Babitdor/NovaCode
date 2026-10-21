@@ -47,7 +47,7 @@ def test_ngrok_startup_avoids_removed_web_addr_flag(monkeypatch) -> None:
     assert not any(arg.startswith("--web-addr") for arg in args)
 
 
-def test_other_services_prefer_cloudflare_quick_tunnels(monkeypatch) -> None:
+def test_artifacts_prefer_cloudflare_quick_tunnels(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     class FakeProcess:
@@ -84,26 +84,7 @@ def test_other_services_prefer_cloudflare_quick_tunnels(monkeypatch) -> None:
     ]
 
 
-def test_dashboard_lists_all_pages_and_keeps_unshared_pages_clear() -> None:
-    page = share_handler._dashboard_html(
-        {
-            "artifacts": "https://artifacts.example/",
-            "council": None,
-            "cowork": "https://cowork.example/?token=a&b=c",
-            "create": None,
-        }
-    )
-
-    for title in ("Artifacts", "Council", "Cowork", "Create"):
-        assert title in page
-    assert "https://artifacts.example/" in page
-    assert "https://cowork.example/?token=a&amp;b=c" in page
-    assert page.count("Not shared yet") == 2
-    assert "@media(max-width:620px)" in page
-    assert 'rel="noopener"' in page
-
-
-def test_share_all_starts_each_page_and_publishes_dashboard(monkeypatch) -> None:
+def test_share_all_only_starts_artifacts(monkeypatch) -> None:
     started: list[str] = []
 
     async def start(service, _ctx):
@@ -111,13 +92,10 @@ def test_share_all_starts_each_page_and_publishes_dashboard(monkeypatch) -> None
         return f"https://{service}.example/"
 
     monkeypatch.setattr(share_handler, "_start_share", start)
-    monkeypatch.setattr(
-        share_handler, "_publish_dashboard", lambda: "https://artifacts.example/dashboard"
-    )
     ctx = SimpleNamespace(cmd_args="all")
 
     assert asyncio.run(share_handler.handle_share_command(ctx)) is True
-    assert started == ["artifacts", "council", "cowork", "create"]
+    assert started == ["artifacts"]
 
 
 def test_upstream_readiness_check_accepts_a_listening_local_page() -> None:
@@ -177,7 +155,7 @@ def test_stop_session_revokes_only_owned_shares_and_honors_exclusions() -> None:
     assert manager.list() == {"artifacts": "https://a.ngrok.app", "create": "https://x.ngrok.app"}
 
 
-def test_service_share_preserves_cowork_route_and_session_owner(monkeypatch) -> None:
+def test_artifact_share_records_session_owner(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(share_handler, "_wait_for_upstream", lambda _port: None)
@@ -190,10 +168,27 @@ def test_service_share_preserves_cowork_route_and_session_owner(monkeypatch) -> 
     monkeypatch.setattr(share_handler._manager, "set_public_url", lambda service, url: None)
 
     url = share_handler.ensure_share_for_url(
-        "cowork",
-        "http://127.0.0.1:43123/cowork?session=abc&task=review",
-        session_id="session-1",
+        "artifacts", "http://127.0.0.1:43123/", session_id="session-1"
     )
 
-    assert url == "https://share.ngrok.app/cowork?session=abc&task=review"
-    assert captured == {"service": "cowork", "port": 43123, "session_id": "session-1"}
+    assert url == "https://share.ngrok.app/"
+    assert captured == {"service": "artifacts", "port": 43123, "session_id": "session-1"}
+
+
+def test_share_command_rejects_council_cowork_and_create(monkeypatch) -> None:
+    started: list[str] = []
+
+    async def start(service: str, _ctx) -> str:
+        started.append(service)
+        return "https://example.test"
+
+    monkeypatch.setattr(share_handler, "_start_share", start)
+
+    async def run(service: str) -> None:
+        ctx = SimpleNamespace(cmd_args=service)
+        assert await share_handler.handle_share_command(ctx) is True
+
+    for service in ("council", "cowork", "create"):
+        asyncio.run(run(service))
+
+    assert started == []

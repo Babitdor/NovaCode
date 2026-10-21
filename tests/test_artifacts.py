@@ -61,6 +61,11 @@ def test_binding_another_session_replaces_then_restores_artifacts(tmp_path, monk
 
     assert artifact_registry.bind_session("first", sessions_dir) == 0
     original = registry.create("First session", "html", "<h1>saved</h1>")
+    registry.create(
+        "Nova Share Dashboard",
+        "html",
+        "<section>Shared pages</section><footer>NOVACODE · PRIVATE SESSION LINKS</footer>",
+    )
 
     assert artifact_registry.bind_session("second", sessions_dir) == 0
     assert registry.list() == []
@@ -70,6 +75,7 @@ def test_binding_another_session_replaces_then_restores_artifacts(tmp_path, monk
     assert restored is not None
     assert restored.title == "First session"
     assert restored.content == "<h1>saved</h1>"
+    assert [artifact.title for artifact in registry.list()] == ["First session"]
 
 
 def test_html_artifact_is_sandboxed_and_escaped() -> None:

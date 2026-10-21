@@ -179,6 +179,17 @@ class ArtifactRegistry:
         self._notify("updated", art)
         return art
 
+    def remove(self, artifact_id: str) -> bool:
+        """Remove one artifact from the active session store."""
+        with self._lock:
+            art = self._by_id.pop(artifact_id, None)
+            if art is None:
+                return False
+            self._order.remove(artifact_id)
+        self._save()
+        self._notify("deleted", art)
+        return True
+
     def get(self, artifact_id: str) -> Artifact | None:
         with self._lock:
             return self._by_id.get(artifact_id)
@@ -227,7 +238,17 @@ def bind_session(session_id: str, sessions_dir: "Path | None" = None) -> int:
         return 0
     try:
         reg = get_registry()
-        return reg.bind(store_path(session_id, sessions_dir))
+        restored = reg.bind(store_path(session_id, sessions_dir))
+        legacy_dashboards = [
+            artifact.id
+            for artifact in reg.list()
+            if artifact.title == "Nova Share Dashboard"
+            and "NOVACODE · PRIVATE SESSION LINKS" in artifact.content
+            and "Shared pages" in artifact.content
+        ]
+        for artifact_id in legacy_dashboards:
+            reg.remove(artifact_id)
+        return max(0, restored - len(legacy_dashboards))
     except Exception:  # noqa: BLE001 - never break startup on artifact restore
         logger.debug("artifacts: bind_session failed", exc_info=True)
         return 0

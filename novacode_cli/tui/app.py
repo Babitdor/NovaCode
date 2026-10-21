@@ -619,7 +619,7 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "export": SlashCommand("_run_export", "export the session tree to HTML (/export [file])"),
     "share": SlashCommand(
         "_run_share",
-        "temporary web links: /share all|artifacts|council|cowork|create; empty shares a gist",
+        "temporary artifact link: /share [all|artifacts]; empty shares a gist",
     ),
     "rewind": SlashCommand(
         "_run_rewind", "go back to before an earlier message: conversation, code, or both"
