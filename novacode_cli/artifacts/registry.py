@@ -81,6 +81,12 @@ class ArtifactRegistry:
             self._path = path
         return self.load()
 
+    @property
+    def session_id(self) -> str | None:
+        """The session whose artifact store is currently bound, if any."""
+        with self._lock:
+            return self._path.parent.name if self._path is not None else None
+
     def load(self) -> int:
         """Merge artifacts from disk into this registry. Returns how many loaded.
 

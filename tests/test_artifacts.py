@@ -9,6 +9,8 @@ import urllib.request
 from novacode_cli.artifacts import registry as artifact_registry
 from novacode_cli.artifacts.registry import ArtifactRegistry
 from novacode_cli.artifacts.server import _viewer_html, ensure_server
+from novacode_cli.artifacts.server import artifact_url
+from novacode_cli.tools import artifact_tools
 from novacode_cli.tools.artifact_tools import (
     create_artifact,
     list_artifacts,
@@ -102,7 +104,13 @@ def test_api_exposes_only_safe_metadata() -> None:
     }
 
 
-def test_tool_flow_serves_page_and_updates_in_place() -> None:
+def test_tool_flow_serves_page_and_updates_in_place(monkeypatch) -> None:
+    # Keep the integration test local and deterministic; public hosting is
+    # covered separately without starting a real ngrok process.
+    monkeypatch.setattr(
+        artifact_tools, "_host_artifact",
+        lambda art, _registry: (artifact_url(art.id), None),
+    )
     out = create_artifact.invoke(
         {"title": "Arch Dashboard", "type": "dashboard", "content": "<h1>Arch</h1>"}
     )
@@ -154,8 +162,12 @@ def test_update_artifact_warns_content_is_a_full_replacement() -> None:
     assert "full document" in desc
 
 
-def test_styled_html_survives_into_the_served_page() -> None:
+def test_styled_html_survives_into_the_served_page(monkeypatch) -> None:
     """The design the model writes must actually reach the browser."""
+    monkeypatch.setattr(
+        artifact_tools, "_host_artifact",
+        lambda art, _registry: (artifact_url(art.id), None),
+    )
     css = "body{background:#0d0d12;color:#e8e8f0}"
     out = create_artifact.invoke(
         {
@@ -167,3 +179,27 @@ def test_styled_html_survives_into_the_served_page() -> None:
     url = re.search(r"URL: (\S+)", out).group(1)
     page = urllib.request.urlopen(url, timeout=5).read().decode()
     assert "background:#0d0d12" in page.replace("&#x27;", "'").replace("&quot;", '"')
+
+
+def test_artifact_host_prefers_public_link_and_falls_back_locally(monkeypatch) -> None:
+    registry = ArtifactRegistry()
+    art = registry.create("Hosted", "html", "<h1>hosted</h1>")
+    monkeypatch.setattr(
+        "novacode_cli.commands.share_handler.ensure_artifact_share",
+        lambda artifact_id, session_id: f"https://public.example/artifacts/{artifact_id}",
+        raising=False,
+    )
+
+    public, note = artifact_tools._host_artifact(art, registry)
+    assert public == f"https://public.example/artifacts/{art.id}"
+    assert note is None
+
+    def unavailable(*_args, **_kwargs):
+        raise RuntimeError("ngrok offline")
+
+    monkeypatch.setattr(
+        "novacode_cli.commands.share_handler.ensure_artifact_share", unavailable
+    )
+    local, note = artifact_tools._host_artifact(art, registry)
+    assert local.startswith(ensure_server())
+    assert note == "Temporary public hosting unavailable: ngrok offline"

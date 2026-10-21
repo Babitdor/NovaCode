@@ -37,7 +37,7 @@ def test_ngrok_startup_avoids_removed_web_addr_flag(monkeypatch) -> None:
     manager = ShareManager()
 
     try:
-        assert manager.start("artifacts", 43123) == "https://nova.ngrok-free.app"
+        assert manager.start("council", 43123) == "https://nova.ngrok-free.app"
     finally:
         manager.stop_all()
 
@@ -45,6 +45,43 @@ def test_ngrok_startup_avoids_removed_web_addr_flag(monkeypatch) -> None:
     assert isinstance(args, list)
     assert "--inspect=false" in args
     assert not any(arg.startswith("--web-addr") for arg in args)
+
+
+def test_other_services_prefer_cloudflare_quick_tunnels(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeProcess:
+        stdout = io.StringIO(
+            "Quick Tunnel created: https://quiet-moon.trycloudflare.com\n"
+        )
+
+        def __init__(self, args, **kwargs):
+            captured["args"] = args
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            return None
+
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(
+        "novacode_cli.commands.share_handler.shutil.which",
+        lambda name: "cloudflared.exe" if name == "cloudflared" else None,
+    )
+    monkeypatch.setattr("novacode_cli.commands.share_handler.subprocess.Popen", FakeProcess)
+    manager = ShareManager()
+
+    try:
+        assert manager.start("artifacts", 43123) == "https://quiet-moon.trycloudflare.com"
+    finally:
+        manager.stop_all()
+
+    assert captured["args"] == [
+        "cloudflared.exe", "tunnel", "--url", "http://127.0.0.1:43123"
+    ]
 
 
 def test_dashboard_lists_all_pages_and_keeps_unshared_pages_clear() -> None:
@@ -101,3 +138,62 @@ def test_upstream_readiness_check_reports_a_closed_port() -> None:
         assert f"127.0.0.1:{port}" in str(exc)
     else:
         raise AssertionError("a closed local port must not be published")
+
+
+def test_stop_session_revokes_only_owned_shares_and_honors_exclusions() -> None:
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.stopped = False
+
+        def poll(self) -> int | None:
+            return 0 if self.stopped else None
+
+        def terminate(self) -> None:
+            self.stopped = True
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 0
+
+    manager = ShareManager()
+    artifact = FakeProcess()
+    council = FakeProcess()
+    other_session = FakeProcess()
+    manager._tunnels = {
+        "artifacts": share_handler._Tunnel(
+            "artifacts", 1, artifact, "https://a.ngrok.app", session_id="old"
+        ),
+        "council": share_handler._Tunnel(
+            "council", 2, council, "https://c.ngrok.app", session_id="old"
+        ),
+        "create": share_handler._Tunnel(
+            "create", 3, other_session, "https://x.ngrok.app", session_id="new"
+        ),
+    }
+
+    assert manager.stop_session("old", exclude=frozenset({"artifacts"})) == {"council"}
+    assert not artifact.stopped
+    assert council.stopped
+    assert not other_session.stopped
+    assert manager.list() == {"artifacts": "https://a.ngrok.app", "create": "https://x.ngrok.app"}
+
+
+def test_service_share_preserves_cowork_route_and_session_owner(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(share_handler, "_wait_for_upstream", lambda _port: None)
+
+    def start(service, port, *, server=None, session_id=None):
+        captured.update(service=service, port=port, session_id=session_id)
+        return "https://share.ngrok.app"
+
+    monkeypatch.setattr(share_handler._manager, "start", start)
+    monkeypatch.setattr(share_handler._manager, "set_public_url", lambda service, url: None)
+
+    url = share_handler.ensure_share_for_url(
+        "cowork",
+        "http://127.0.0.1:43123/cowork?session=abc&task=review",
+        session_id="session-1",
+    )
+
+    assert url == "https://share.ngrok.app/cowork?session=abc&task=review"
+    assert captured == {"service": "cowork", "port": 43123, "session_id": "session-1"}

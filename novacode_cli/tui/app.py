@@ -2774,6 +2774,13 @@ class NovaApp(App):
                         style="dim",
                     )
                 )
+                self.run_worker(
+                    self._auto_start_artifact_share(
+                        getattr(self.session_state, "session_id", "") or ""
+                    ),
+                    group="artifact_share",
+                    exclusive=True,
+                )
         except Exception:  # noqa: BLE001
             pass
         self._refresh_artifacts_component()
@@ -9398,6 +9405,17 @@ class NovaApp(App):
             t = Text("Artifacts", style=pal.dim)
         self._set_info("#info-artifacts", t)
 
+    async def _auto_start_artifact_share(self, session_id: str) -> None:
+        """Restore a resumed session's public artifact endpoint in the background."""
+        try:
+            from novacode_cli.commands.share_handler import ensure_artifact_share
+
+            url = await asyncio.to_thread(ensure_artifact_share, None, session_id)
+        except Exception as exc:  # noqa: BLE001 — local artifact use remains available
+            self._log(Text(f"Artifact hosting unavailable: {exc}", style="yellow"))
+            return
+        self._log(Text(f"◈ Session artifacts are hosted at {url}", style="green"))
+
     def _on_artifact_event_threadsafe(self, event: str, art: Any) -> None:
         """Registry observer — fires on whichever thread created/updated the
         artifact (tools run in worker threads). Marshal to the UI thread."""
@@ -12973,6 +12991,13 @@ class NovaApp(App):
         # clean slate (fresh thread_id → empty checkpointer) and adopt the
         # resumed session's identity + todos.
         await self._save_session()
+        previous_session_id = getattr(self.session_state, "session_id", "") or ""
+        try:
+            from novacode_cli.commands.share_handler import stop_session_shares
+
+            stop_session_shares(previous_session_id, exclude=("artifacts",))
+        except Exception:  # noqa: BLE001
+            pass
         resumed_id = session_data.meta.session_id
         resumed_todos = session_data.todos
         self.session_state.reset_conversation()  # fresh thread_id, cleared state
@@ -12980,6 +13005,7 @@ class NovaApp(App):
         self._refresh_session_identity()
         try:
             from novacode_cli.artifacts.registry import bind_session as bind_artifacts
+            from novacode_cli.artifacts.registry import get_registry as get_artifact_registry
 
             restored_artifacts = bind_artifacts(
                 resumed_id,
@@ -12993,6 +13019,16 @@ class NovaApp(App):
                         style="dim",
                     )
                 )
+            if get_artifact_registry().count():
+                self.run_worker(
+                    self._auto_start_artifact_share(resumed_id),
+                    group="artifact_share",
+                    exclusive=True,
+                )
+            else:
+                from novacode_cli.commands.share_handler import stop_session_shares
+
+                stop_session_shares(previous_session_id)
         except Exception:  # noqa: BLE001 — artifact recovery must not block resume
             pass
         self.session_state.is_continued = True
@@ -14517,9 +14553,29 @@ class NovaApp(App):
             except Exception:  # noqa: BLE001
                 pass
 
+        cleared_session_id = getattr(self.session_state, "session_id", "") or ""
+        try:
+            from novacode_cli.commands.share_handler import stop_session_shares
+
+            stop_session_shares(cleared_session_id)
+        except Exception:  # noqa: BLE001 — clearing the chat must still succeed
+            pass
         # Total reset of session/conversation state: new thread+session id
         # (empty checkpointer state), cleared todos / steering / plan mode.
         self.session_state.reset_conversation()
+
+        try:
+            from novacode_cli.artifacts.registry import bind_session as bind_artifacts
+            from novacode_cli.artifacts.registry import get_registry as get_artifact_registry
+
+            bind_artifacts(
+                getattr(self.session_state, "session_id", "") or "",
+                getattr(self.session_manager, "sessions_dir", None),
+            )
+            self._artifact_registry = get_artifact_registry()
+            self._refresh_artifacts_component()
+        except Exception:  # noqa: BLE001
+            pass
 
         self._refresh_session_identity()
 

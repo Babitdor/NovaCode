@@ -19,7 +19,10 @@ from urllib.parse import urlsplit
 
 from novacode_cli.config.config import console
 
-_URL = re.compile(r"https://[a-zA-Z0-9-]+\.ngrok(?:-[a-zA-Z0-9-]+)?\.(?:app|io|dev)")
+_URL = re.compile(
+    r"https://(?:[a-zA-Z0-9-]+\.ngrok(?:-[a-zA-Z0-9-]+)?\.(?:app|io|dev)"
+    r"|[a-zA-Z0-9-]+\.trycloudflare\.com)"
+)
 _READY_TIMEOUT = 30.0
 _SHARE_SERVICES = ("artifacts", "council", "cowork", "create")
 _DASHBOARD_TITLE = "Nova Share Dashboard"
@@ -34,6 +37,8 @@ class _Tunnel:
     log_tail: list[str] | None = None
     server: Any = None
     public_url: str | None = None
+    session_id: str | None = None
+    provider: str = "ngrok"
 
 
 class ShareManager:
@@ -41,9 +46,32 @@ class ShareManager:
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
+        self._start_locks: dict[str, threading.Lock] = {}
         self._tunnels: dict[str, _Tunnel] = {}
 
-    def start(self, service: str, port: int, *, server: Any = None) -> str:
+    def start(
+        self,
+        service: str,
+        port: int,
+        *,
+        server: Any = None,
+        session_id: str | None = None,
+    ) -> str:
+        with self._lock:
+            start_lock = self._start_locks.setdefault(service, threading.Lock())
+        with start_lock:
+            return self._start_once(
+                service, port, server=server, session_id=session_id
+            )
+
+    def _start_once(
+        self,
+        service: str,
+        port: int,
+        *,
+        server: Any = None,
+        session_id: str | None = None,
+    ) -> str:
         with self._lock:
             current = self._tunnels.get(service)
             if (
@@ -52,28 +80,58 @@ class ShareManager:
                 and current.process.poll() is None
                 and current.public_origin
             ):
+                if session_id:
+                    current.session_id = session_id
                 self._allow_origin(server, current.public_origin, True)
                 return current.public_origin
             if current:
                 self._stop_locked(service)
 
-            executable = shutil.which("ngrok")
+            # Only artifact links use Cloudflare Quick Tunnels automatically.
+            # Other pages remain on their existing manually-shared ngrok path.
+            providers = ("cloudflared", "ngrok") if service == "artifacts" else ("ngrok",)
+            provider_name = None
+            executable = None
+            for candidate in providers:
+                executable = shutil.which(candidate)
+                if executable:
+                    provider_name = candidate
+                    break
             if not executable:
+                if service == "council":
+                    raise RuntimeError(
+                        "Council uses Server-Sent Events, which Cloudflare Quick Tunnels "
+                        "do not support. Install ngrok and configure its auth token to "
+                        "share Council."
+                    )
+                if service == "artifacts":
+                    raise RuntimeError(
+                        "Artifact sharing needs `cloudflared` or ngrok. Install "
+                        "cloudflared from https://developers.cloudflare.com/tunnel/downloads/ "
+                        "to use the free Cloudflare Quick Tunnel."
+                    )
                 raise RuntimeError(
-                    "ngrok is required for temporary sharing. Install it from "
-                    "https://ngrok.com/download, add your account token with "
-                    "`ngrok config add-authtoken <token>`, then run /share again."
+                    "ngrok is required for temporary sharing of this page. Install it "
+                    "from https://ngrok.com/download and configure its auth token."
                 )
 
-            args = [
-                executable,
-                "http",
-                f"http://127.0.0.1:{port}",
-                f"--host-header=127.0.0.1:{port}",
-                "--inspect=false",
-                "--log=stdout",
-                "--log-format=json",
-            ]
+            if provider_name == "cloudflared":
+                args = [
+                    executable,
+                    "tunnel",
+                    "--url",
+                    f"http://127.0.0.1:{port}",
+                ]
+            else:
+                args = [
+                    executable,
+                    "http",
+                    f"http://127.0.0.1:{port}",
+                    f"--host-header=127.0.0.1:{port}",
+                    "--inspect=false",
+                    "--log=stdout",
+                    "--log-format=json",
+                ]
             options: dict[str, Any] = {
                 "stdout": subprocess.PIPE,
                 "stderr": subprocess.STDOUT,
@@ -84,7 +142,15 @@ class ShareManager:
             if os.name == "nt":
                 options["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             process = subprocess.Popen(args, **options)
-            tunnel = _Tunnel(service, port, process, log_tail=[], server=server)
+            tunnel = _Tunnel(
+                service,
+                port,
+                process,
+                log_tail=[],
+                server=server,
+                session_id=session_id,
+                provider=provider_name or "ngrok",
+            )
             self._tunnels[service] = tunnel
             ready = threading.Event()
             reader = threading.Thread(
@@ -177,6 +243,29 @@ class ShareManager:
             for service in tuple(self._tunnels):
                 self._stop_locked(service)
 
+    def stop_session(self, session_id: str, *, exclude: frozenset[str] = frozenset()) -> set[str]:
+        """Stop tunnels owned by a session, optionally preserving selected services."""
+        if not session_id:
+            return set()
+        with self._lock:
+            stopped = {
+                name
+                for name, tunnel in self._tunnels.items()
+                if tunnel.session_id == session_id and name not in exclude
+            }
+            for service in stopped:
+                self._stop_locked(service)
+            return stopped
+
+    def adopt(self, service: str, session_id: str) -> bool:
+        """Transfer a live tunnel to a resumed session."""
+        with self._lock:
+            tunnel = self._tunnels.get(service)
+            if tunnel is None or tunnel.process.poll() is not None:
+                return False
+            tunnel.session_id = session_id
+            return True
+
     def list(self) -> dict[str, str]:
         with self._lock:
             return {
@@ -209,6 +298,13 @@ def stop_share(service: str) -> bool:
     return _manager.stop(service)
 
 
+def stop_session_shares(
+    session_id: str, *, exclude: tuple[str, ...] = ()
+) -> set[str]:
+    """Revoke every temporary endpoint owned by a session."""
+    return _manager.stop_session(session_id, exclude=frozenset(exclude))
+
+
 def _local_origin(url: str) -> tuple[str, int]:
     parsed = urlsplit(url)
     if parsed.port is None:
@@ -231,6 +327,72 @@ def _wait_for_upstream(port: int, timeout: float = 4.0) -> None:
         f"Nova's local page is not accepting connections at "
         f"http://127.0.0.1:{port}. Restart Nova and try /share again."
     ) from last_error
+
+
+def ensure_share_for_url(
+    service: str,
+    local_url: str,
+    *,
+    server: Any = None,
+    session_id: str | None = None,
+) -> str:
+    """Expose an already running Nova page and return its visitor URL."""
+    _, port = _local_origin(local_url)
+    _wait_for_upstream(port)
+    origin = _manager.start(
+        service,
+        port,
+        server=server,
+        session_id=session_id,
+    )
+    if service == "create" and server is not None:
+        public_url = f"{origin}/?token={server._server.auth_token}"
+    elif service == "cowork":
+        from urllib.parse import parse_qsl, urlencode
+
+        parsed = urlsplit(local_url)
+        query = urlencode(dict(parse_qsl(parsed.query)))
+        public_url = f"{origin}{parsed.path}" + (f"?{query}" if query else "")
+    else:
+        public_url = f"{origin}/"
+    _manager.set_public_url(service, public_url)
+    return public_url
+
+
+def ensure_service_share(
+    service: str,
+    local_url: str,
+    *,
+    server: Any = None,
+    session_id: str | None = None,
+) -> str:
+    """Start a session-owned share and refresh the dashboard if it exists."""
+    public_url = ensure_share_for_url(
+        service,
+        local_url,
+        server=server,
+        session_id=session_id,
+    )
+    _publish_dashboard()
+    return public_url
+
+
+def ensure_artifact_share(artifact_id: str | None = None, session_id: str | None = None) -> str:
+    """Start/reuse the artifact tunnel and optionally return an artifact deep link."""
+    from novacode_cli.artifacts.server import ensure_server
+
+    origin = ensure_share_for_url(
+        "artifacts",
+        ensure_server(),
+        session_id=session_id,
+    ).rstrip("/")
+    if artifact_id:
+        url = f"{origin}/artifacts/{artifact_id}"
+        _manager.set_public_url("artifacts", url)
+    else:
+        url = origin + "/"
+    _publish_dashboard()
+    return url
 
 
 def _dashboard_html(links: dict[str, str | None]) -> str:
@@ -433,23 +595,13 @@ async def handle_share_command(ctx) -> bool:
 async def _start_share(service: str, ctx) -> str:
     """Start one page's tunnel and return its visitor URL."""
     local_url, server = await _get_local_page(service, ctx)
-    _, port = _local_origin(local_url)
-    await asyncio.to_thread(_wait_for_upstream, port)
-    public_origin = await asyncio.to_thread(
-        _manager.start, service, port, server=server
+    return await asyncio.to_thread(
+        ensure_share_for_url,
+        service,
+        local_url,
+        server=server,
+        session_id=getattr(ctx.session_state, "session_id", None),
     )
-    if service == "create":
-        token = server._server.auth_token
-        public_url = f"{public_origin}/?token={token}"
-    elif service == "cowork":
-        from urllib.parse import parse_qsl, urlencode, urlsplit
-
-        parsed = urlsplit(local_url)
-        public_url = f"{public_origin}{parsed.path}?{urlencode(dict(parse_qsl(parsed.query)))}"
-    else:
-        public_url = public_origin + "/"
-    _manager.set_public_url(service, public_url)
-    return public_url
 
 
 async def _get_local_page(service: str, ctx) -> tuple[str, Any]:
