@@ -1,5 +1,11 @@
 # Essential tools
 
+Subagents automatically approve ordinary tool calls independently of the parent
+session's approval mode. This applies to in-process, dynamic, and async agents,
+including skill loading, commands, and file edits. Explicit approval-policy denies
+remain enforced; this does not change workspace grants, tool allowlists, or the
+main session's approval setting.
+
 These tools are discoverable through `search_tools`; their schemas are loaded
 when needed rather than added to every model request.
 

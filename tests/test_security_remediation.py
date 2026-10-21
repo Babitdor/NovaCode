@@ -58,7 +58,7 @@ def test_shell_prefix_cannot_authorize_compound_operations(command):
     assert policy.evaluate("shell", {"command": command}).tier != "allow"
 
 
-def test_unattended_delegate_refuses_write_and_allows_read(monkeypatch):
+def test_unattended_delegate_auto_approves_write_and_read(monkeypatch):
     from novacode_cli.security.delegated_approval import DelegatedApprovalMiddleware
     from novacode_cli.security.policy import ApprovalPolicy
 
@@ -83,13 +83,13 @@ def test_unattended_delegate_refuses_write_and_allows_read(monkeypatch):
             lambda _: calls.append(name),
         )
 
-    assert invoke("write_file").status == "error"
+    invoke("write_file")
     invoke("read_file")
-    assert calls == ["read_file"]
+    assert calls == ["write_file", "read_file"]
 
 
-def test_a_delegate_follows_the_parent_sessions_auto_approve(monkeypatch):
-    """Sync/dynamic agents read the turn's flag; async ones their run context."""
+def test_delegate_auto_approval_is_independent_of_parent_and_keeps_denies(monkeypatch):
+    """Manual parent sessions must not strand local or async child tool calls."""
     from novacode_cli.security.delegated_approval import DelegatedApprovalMiddleware
     from novacode_cli.security.policy import ApprovalPolicy
     from novacode_cli.tools.plan_mode_tools import _auto_approve_var
@@ -110,7 +110,7 @@ def test_a_delegate_follows_the_parent_sessions_auto_approve(monkeypatch):
         )
         return middleware.wrap_tool_call(request, lambda _: "ran") == "ran"
 
-    assert not ran("https://docs.python.org/3/")  # ask-tier, nobody to ask
+    assert ran("https://docs.python.org/3/")
     token = _auto_approve_var.set(True)
     try:
         assert ran("https://docs.python.org/3/")
@@ -118,7 +118,8 @@ def test_a_delegate_follows_the_parent_sessions_auto_approve(monkeypatch):
     finally:
         _auto_approve_var.reset(token)
     assert ran("https://docs.python.org/3/", {"auto_approve": True})
-    assert not ran("https://docs.python.org/3/", {"auto_approve": False})
+    assert ran("https://docs.python.org/3/", {"auto_approve": False})
+    assert not ran("https://evil.example/x", {"auto_approve": False})
 
 
 def test_browser_origin_and_mutation_protection():

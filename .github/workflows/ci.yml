@@ -59,6 +59,7 @@ jobs:
           novacode_cli/tools/inspection_tools.py
           novacode_cli/tools/notebook_tools.py
           novacode_cli/backends/native_search.py
+          novacode_cli/security/delegated_approval.py
       - name: Run offline regression tests
         run: >-
           uv run --no-sync pytest -q --tb=short --junitxml=test-results/regression.xml
@@ -67,6 +68,7 @@ jobs:
           tests/test_async_model_context.py
           tests/test_async_subagent_gating.py
           tests/test_subagent_hitl.py
+          tests/test_delegated_auto_approve.py
           tests/test_local_backend_subagent_execute.py
           tests/test_strict_tools.py
           tests/test_tool_search_variants.py

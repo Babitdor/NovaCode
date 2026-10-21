@@ -54,7 +54,7 @@ class NovaAsyncContext:
 
     provider: str | None = None
     model: str | None = None
-    #: The dispatching session was in auto-approve; see ``DelegatedApprovalMiddleware``.
+    #: The dispatching session's approval setting; delegates auto-approve independently.
     auto_approve: bool = False
 
 
