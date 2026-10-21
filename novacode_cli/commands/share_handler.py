@@ -8,7 +8,6 @@ import json
 import os
 import re
 import shutil
-import socket
 import subprocess
 import threading
 import time
@@ -67,7 +66,7 @@ class ShareManager:
                 "http",
                 f"http://127.0.0.1:{port}",
                 f"--host-header=127.0.0.1:{port}",
-                f"--web-addr=127.0.0.1:{self._free_port()}",
+                "--inspect=false",
                 "--log=stdout",
                 "--log-format=json",
             ]
@@ -106,12 +105,6 @@ class ShareManager:
         details = "\n".join(tunnel.log_tail or [])[-1200:]
         suffix = f" ngrok output: {details}" if details else ""
         raise RuntimeError(f"ngrok did not create a public URL.{suffix}")
-
-    @staticmethod
-    def _free_port() -> int:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.bind(("127.0.0.1", 0))
-            return int(sock.getsockname()[1])
 
     @staticmethod
     def _read_output(tunnel: _Tunnel, ready: threading.Event) -> None:

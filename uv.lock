@@ -3801,7 +3801,7 @@ wheels = [
 
 [[package]]
 name = "novacode-cli"
-version = "1.0.59"
+version = "1.0.60"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
