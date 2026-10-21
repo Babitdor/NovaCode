@@ -70,6 +70,9 @@ jobs:
           tests/test_release_version.py
           tests/test_deepagents_compat.py
           tests/test_async_model_context.py
+          tests/test_async_task_watcher.py
+          tests/test_model_retry_progress.py
+          tests/test_async_on_demand.py
           tests/test_async_subagent_gating.py
           tests/test_subagent_hitl.py
           tests/test_delegated_auto_approve.py

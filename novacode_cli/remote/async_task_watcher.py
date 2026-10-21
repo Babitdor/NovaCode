@@ -21,7 +21,7 @@ logger = logging.getLogger("nova.async_task_watcher")
 # LangGraph Run.status values that mean "no longer running".
 _TERMINAL = frozenset({"success", "error", "timeout", "interrupted", "cancelled"})
 _POLL_INTERVAL = 6.0
-_MAX_WATCH_SECONDS = 1800.0  # stop watching a task after 30 min
+_MAX_WATCH_SECONDS = 300.0  # warn once after five minutes; keep watching
 _RUN_TIMEOUT = 10.0
 _MAX_CONCURRENT_POLLS = 8
 _MAX_PENDING_POLLS = 256
@@ -39,6 +39,7 @@ class AsyncTaskWatcher:
         self._pending: deque[tuple[str, dict]] = deque()
         self._pending_ids: set[str] = set()
         self._closed = False
+        self._poll_slots = asyncio.Semaphore(_MAX_CONCURRENT_POLLS)
         self._specs: dict[str, dict] | None = None
         # Currently-running tasks, for the TUI indicator: task_id -> {agent_name, started}.
         self._running: dict[str, dict] = {}
@@ -53,7 +54,7 @@ class AsyncTaskWatcher:
 
                 self._specs = {s["name"]: s for s in retrieve_async_subagents()}
             except Exception:  # noqa: BLE001
-                self._specs = {}
+                return None
         return self._specs.get(agent_name)
 
     def sync_from_state(self, async_tasks: dict[str, Any] | None) -> None:
@@ -86,7 +87,7 @@ class AsyncTaskWatcher:
         while (
             not self._closed
             and self._pending
-            and len(self._tasks) < _MAX_CONCURRENT_POLLS
+            and len(self._tasks) < _MAX_PENDING_POLLS
         ):
             task_id, task = self._pending.popleft()
             self._pending_ids.discard(task_id)
@@ -127,6 +128,7 @@ class AsyncTaskWatcher:
         task_id = str(task.get("task_id") or task.get("thread_id") or "?")
         agent_name = task.get("agent_name") or "async agent"
         client = None
+        completed = False
         try:
             spec = self._spec_for(agent_name)
             if spec is None:
@@ -141,21 +143,41 @@ class AsyncTaskWatcher:
             thread_id, run_id = task.get("thread_id"), task.get("run_id")
             loop = asyncio.get_event_loop()
             deadline = loop.time() + _MAX_WATCH_SECONDS
+            warned_slow = False
+            failures = 0
             while True:
                 await asyncio.sleep(_POLL_INTERVAL)
                 try:
-                    run = await asyncio.wait_for(
-                        client.runs.get(thread_id, run_id), timeout=_RUN_TIMEOUT
-                    )
+                    # Limit concurrent HTTP calls, not entire task lifetimes:
+                    # eight slow agents must not hide every later completion.
+                    async with self._poll_slots:
+                        run = await asyncio.wait_for(
+                            client.runs.get(thread_id, run_id), timeout=_RUN_TIMEOUT
+                        )
                     status = (run or {}).get("status", "running")
-                except Exception:  # noqa: BLE001 — transient; keep polling until deadline
+                    if failures >= 3:
+                        self._notice(agent_name, task_id, "Connection restored", "Monitoring has resumed.")
+                    failures = 0
+                except Exception:  # noqa: BLE001 - transient; keep monitoring
+                    failures += 1
+                    if failures == 3:
+                        self._notice(
+                            agent_name, task_id, "Connection interrupted",
+                            "Cannot reach the agent server. Nova is retrying status checks; "
+                            "the task may still be running.",
+                        )
                     status = "running"
                 if status in _TERMINAL:
+                    completed = True
                     self._emit(agent_name, task_id, status)
                     return
-                if loop.time() > deadline:
-                    logger.debug("async task %s watch timed out", task_id)
-                    return
+                if not warned_slow and loop.time() >= deadline:
+                    warned_slow = True
+                    self._notice(
+                        agent_name, task_id, "Taking longer than expected",
+                        "The task is still active. Provider retries or slow tools may be delaying it. "
+                        "Nova will keep monitoring until it finishes or the session closes.",
+                    )
         finally:
             if client is not None:
                 try:
@@ -164,6 +186,16 @@ class AsyncTaskWatcher:
                     logger.debug("async task client close failed", exc_info=True)
             # Drop from the running set on every exit path so the TUI indicator clears.
             self._running.pop(task_id, None)
+            if not completed:
+                # Failed setup/cancelled monitoring is not a completed remote run.
+                self._watched.pop(task_id, None)
+
+    def _notice(self, agent_name: str, task_id: str, title: str, detail: str) -> None:
+        """Nonterminal progress must not trigger automatic result fetching."""
+        try:
+            self._notify("warning", f"Async agent: {title}", f"{agent_name} ({task_id[:8]}): {detail}")
+        except Exception:  # noqa: BLE001
+            logger.debug("async task notification failed", exc_info=True)
 
     def _emit(self, agent_name: str, task_id: str, status: str) -> None:
         level = "success" if status == "success" else "warning"

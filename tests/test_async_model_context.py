@@ -490,3 +490,70 @@ def test_the_async_path_builds_the_model_off_the_event_loop(monkeypatch, fake_ch
     assert seen == [fake_chat_model, fake_chat_model]
     assert len(built_on) == 1, "built once, then served from the cache"
     assert built_on[0] != loop_thread, "the build must not run on the event loop"
+
+
+async def test_async_provider_retries_are_not_multiplied(monkeypatch):
+    import httpx
+    from langchain_openai import ChatOpenAI
+
+    from novacode_cli.agents.model_retry import NovaModelRetryMiddleware
+
+    calls = []
+
+    async def respond(request):
+        calls.append(request)
+        return httpx.Response(429, json={"error": {"message": "rate limit"}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        model = ChatOpenAI(api_key="test", max_retries=5, http_async_client=client)
+        original_init = NovaModelRetryMiddleware.__init__
+
+        def no_wait(self, **kwargs):
+            original_init(self, initial_delay=0, jitter=False, **kwargs)
+
+        monkeypatch.setattr(NovaModelRetryMiddleware, "__init__", no_wait)
+        with pytest.raises(Exception, match="rate limit"):
+            await AsyncModelOverrideMiddleware().awrap_model_call(
+                _request(None, model), lambda req: req.model.ainvoke("hi")
+            )
+        assert len(calls) == 3
+        assert model.max_retries == model.root_async_client.max_retries == 5
+
+
+async def test_async_deadline_cancels_stalled_request(monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr(ac, "_MODEL_CALL_BUDGET", 0.02)
+    cancelled = asyncio.Event()
+
+    async def stalled(request):
+        try:
+            await asyncio.sleep(60)
+        finally:
+            cancelled.set()
+
+    with pytest.raises(TimeoutError, match="including retries"):
+        await AsyncModelOverrideMiddleware().awrap_model_call(_request(None), stalled)
+    assert cancelled.is_set()
+
+
+async def test_async_cancellation_is_not_retried():
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    handler = AsyncMock(side_effect=asyncio.CancelledError)
+    with pytest.raises(asyncio.CancelledError):
+        await AsyncModelOverrideMiddleware().awrap_model_call(_request(None), handler)
+    assert handler.await_count == 1
+
+
+def test_bounded_anthropic_copy_discards_cached_clients():
+    from langchain_anthropic import ChatAnthropic
+
+    original = ChatAnthropic(model="test", api_key="test", max_retries=5)
+    cached = original._async_client
+    bounded = ac._bounded_model(original)
+    assert bounded.max_retries == bounded._async_client.max_retries == 0
+    assert bounded._async_client.timeout == ac._MODEL_REQUEST_TIMEOUT
+    assert original._async_client is cached
+    assert original.max_retries == 5

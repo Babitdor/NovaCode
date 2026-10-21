@@ -14,7 +14,6 @@ def build_graph() -> Any:
     from novacode_cli.agents.async_agents._specialist import BACKGROUND_NOTE
     from novacode_cli.agents.async_context import AsyncModelOverrideMiddleware, NovaAsyncContext
     from novacode_cli.agents.async_workspace import workspace_root
-    from novacode_cli.agents.model_retry import NovaModelRetryMiddleware
     from novacode_cli.config.model_create import build_async_agent_model
     from novacode_cli.prompts import render_template
     from novacode_cli.security.delegated_approval import DelegatedApprovalMiddleware
@@ -31,7 +30,6 @@ def build_graph() -> Any:
         system_prompt=render_template("async_agents/general_purpose.jinja") + BACKGROUND_NOTE,
         middleware=[
             AsyncModelOverrideMiddleware(),
-            NovaModelRetryMiddleware(),
             DelegatedApprovalMiddleware(),
             ShellMiddleware(workspace_root=str(root)),
             background_library("general-purpose-async"),
