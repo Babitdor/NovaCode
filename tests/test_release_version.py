@@ -13,6 +13,10 @@ def test_release_metadata_and_banner_use_shared_version():
     root = Path(__file__).resolve().parents[1]
     project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
     assert project["project"]["version"] == __version__
+    lock = tomllib.loads((root / "uv.lock").read_text(encoding="utf-8"))
+    package = next(p for p in lock["package"] if p["name"] == "novacode-cli")
+    assert package["version"] == __version__, "Run uv lock after bumping the release version"
+    assert (root / "changelog" / f"CHANGELOG-v{__version__}.md").is_file()
     assert Settings.__dataclass_fields__["version"].default == __version__
     assert settings.version == __version__
     for width in (50, 80, 120, 200):
