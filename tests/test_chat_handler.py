@@ -306,9 +306,18 @@ def test_sse_round_trip(council_server):
     types = [t for t, _ in frames]
     assert types[0] == "council_start"
     assert "vote_start" in types
+    assert "chairman_start" in types
+    assert "chairman_delta" in types
+    assert types.count("done") == 1
     assert types[-1] == "done"
     verdict = next(d for t, d in frames if t == "verdict")
     assert verdict["winner_id"] == "architect"
+    assert verdict["synthesized"] is True
+    assert _council_chairman_in_history()
+
+
+def _council_chairman_in_history():
+    return any(name == "The Judge" for name, text in ch._council_history[-1]["transcript"])
 
 
 def test_sse_loads_configured_council(council_server: str, monkeypatch: pytest.MonkeyPatch):
@@ -348,19 +357,6 @@ def test_sse_empty_topic_errors(council_server):
     assert types[-1] == "done"
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "Known pre-existing race in the council pipeline, NOT in this test: a "
-        "round intermittently finishes without `completed` set, so "
-        "_pump_council's `if completed and texts` guard (chat_handler.py:795) "
-        "records nothing and history stays empty. Failing runs are ~1.5s faster "
-        "than passing ones, i.e. the round bails early. Reproduces at roughly "
-        "50% with or without history-clearing fixtures. Needs a focused fix in "
-        "the council/SSE producer; xfail(strict=False) so it reports without "
-        "destabilising the suite."
-    ),
-)
 def test_sse_run_records_and_resets_history(council_server):
     # Assert on the DELTA, not on absolute contents: `_council_history` is a
     # process-global list appended to from the council's own server thread, so a
@@ -371,7 +367,8 @@ def test_sse_run_records_and_resets_history(council_server):
     assert len(ch._council_history) == before + 1
     recorded = ch._council_history[-1]
     assert recorded["topic"] == "topic one"
-    assert recorded["winner"] == "The Architect"
+    assert recorded["winner"] == "The Judge"
+    assert any(name == "The Judge" for name, text in recorded["transcript"])
     # The reset endpoint clears it.
     with urllib.request.urlopen(  # noqa: S310 - localhost
         council_server + "/api/council/reset", timeout=10

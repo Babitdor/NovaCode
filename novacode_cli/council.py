@@ -371,7 +371,7 @@ async def _stream_persona_turn(
             args = call.get("args", {}) or {}
             query = str(args.get("query", "")).strip()
             yield ("tool", query)
-            result = _run_council_tool(call.get("name", ""), args)
+            result = await asyncio.to_thread(_run_council_tool, call.get("name", ""), args)
             messages.append(
                 {"role": "tool", "content": result, "tool_call_id": call.get("id", "")}
             )
@@ -426,7 +426,7 @@ async def run_council(
     *history* carries prior rounds of the same session so the advisors can build
     on an earlier discussion (follow-up questions).
 
-    Flow: every member answers the topic **independently** (no peer context),
+    Flow: members answer concurrently and **independently** (no peer context),
     then each casts a **single democratic vote** for the best answer (never its
     own); the **majority** answer is the verdict.
 
@@ -450,11 +450,10 @@ async def run_council(
         ],
     }
 
-    # --- Phase 1: independent answers ------------------------------------
-    # Each member analyzes the topic on its own; it does NOT see the others'
-    # answers (only prior-round history, for follow-ups).
+    # Independent streams share only the output queue, never peer answers.
     answers: dict[str, str] = {}
-    for persona in members:
+
+    async def respond(persona: Persona) -> AsyncIterator[dict[str, Any]]:
         yield {
             "type": "agent_start",
             "id": persona.id,
@@ -496,10 +495,41 @@ async def run_council(
                 "name": persona.name,
                 "message": failed,
             }
-            continue  # not in `answers`, so excluded from the ballot entirely
+            return  # Failed members are excluded from voting.
 
         answers[persona.id] = text
         yield {"type": "agent_done", "id": persona.id, "text": text}
+
+    events: asyncio.Queue = asyncio.Queue(maxsize=256)
+
+    async def collect(persona: Persona) -> None:
+        try:
+            async with asyncio.timeout(180):
+                async for event in respond(persona):
+                    await events.put(event)
+        except Exception as exc:
+            answers.pop(persona.id, None)
+            await events.put({
+                "type": "agent_failed", "id": persona.id,
+                "name": persona.name, "message": str(exc),
+            })
+        finally:
+            if not asyncio.current_task().cancelling():
+                await events.put(None)
+
+    tasks = [asyncio.create_task(collect(persona)) for persona in members]
+    remaining = len(tasks)
+    try:
+        while remaining:
+            event = await events.get()
+            if event is None:
+                remaining -= 1
+            else:
+                yield event
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     if advice_only:
         yield {"type": "done"}

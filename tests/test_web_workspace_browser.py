@@ -269,7 +269,7 @@ def test_council_web_settings_drafts_templates_models_and_mobile(ui):
     page.get_by_role('button', name='Apply', exact=True).click()
     pw.expect(page.locator('#settings-model')).to_have_value('custom-model')
     page.locator('#settings-seats button').last.click()
-    pw.expect(page.locator('#settings-role')).to_have_text('Judge · planning councils only')
+    pw.expect(page.locator('#settings-role')).to_have_text('Chairman · web synthesis; judge · planning councils')
     page.locator('#settings-system').fill('Evidence before confidence.')
     page.locator('#settings-seats button').first.click()
     pw.expect(page.locator('#settings-name')).to_have_value('The Security Reviewer')
@@ -334,3 +334,31 @@ def test_cowork_sidebar_scrolls_whole_panels_on_short_and_mobile_screens(ui):
         if width <= 760:
             page.keyboard.press('Escape')
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+
+
+def test_council_streams_chairman_before_showing_final_approval(ui):
+    page=ui.page
+    page.add_init_script('''window.EventSource=class extends EventTarget{
+      constructor(url){super();this.readyState=1;window.councilStream=this;}
+      close(){this.readyState=2;}
+      emit(type,data){this.dispatchEvent(new MessageEvent(type,{data:JSON.stringify(data)}));}
+    };''')
+    page.goto('http://nova.test/council')
+    page.locator('#input').fill('Which option is safer?')
+    page.locator('#send-btn').click()
+    page.evaluate('''()=>{
+      councilStream.emit('vote_result',{tied:true,votes:2});
+      councilStream.emit('chairman_start',{name:'Chairman'});
+      councilStream.emit('chairman_delta',{text:'B is safer, subject to verification.'});
+    }''')
+    pw.expect(page.get_by_text('B is safer, subject to verification.',exact=True)).to_be_visible()
+    pw.expect(page.get_by_role('button',name='✓ Approve',exact=True)).to_have_count(0)
+    page.evaluate('''()=>{
+      councilStream.emit('verdict',{synthesized:true,chairman_name:'Chairman',winner_name:'No consensus',
+        option_tally:{A:1,B:1},votes:2,tied:true,answer:'Prefer B. Verify isolation before committing.'});
+      councilStream.emit('done',{});
+    }''')
+    pw.expect(page.get_by_text('Final consolidated answer',exact=True)).to_be_visible()
+    pw.expect(page.get_by_role('button',name='✓ Approve',exact=True)).to_be_visible()
+    pw.expect(page.get_by_text('B is safer, subject to verification.',exact=True)).to_have_count(0)
+    pw.expect(page.locator('#input')).to_be_enabled()

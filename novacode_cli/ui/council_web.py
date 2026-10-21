@@ -60,7 +60,7 @@ COUNCIL_SETTINGS_HTML = r"""
   <div class="settings-pair"><label>Model provider<select id="settings-provider"></select></label>
   <label>Model ID<input id="settings-model" maxlength="240" list="settings-models" placeholder="Inherit session model"><datalist id="settings-models"></datalist></label></div>
   <div><label for="settings-template">Personality template</label><div class="settings-template"><select id="settings-template"></select><button type="button" id="settings-apply">Apply</button></div></div>
-  <label>System prompt / judge perspective<textarea id="settings-system" rows="7" maxlength="12000"></textarea></label>
+  <label>System prompt / chairman perspective<textarea id="settings-system" rows="7" maxlength="12000"></textarea></label>
  </div></div>
  <div class="settings-foot"><p id="settings-message" role="status" aria-live="polite">Loading council settings…</p>
  <button type="button" id="settings-reset">Reset all</button><button type="button" id="settings-cancel">Cancel</button>
@@ -82,10 +82,10 @@ COUNCIL_SETTINGS_SCRIPT = r"""
  byId('settings-models').replaceChildren(...(catalog.providers.find(p=>p.id===provider)?.models||[]).map(model=>new Option(model,model)));}
  function show(){const entry=entries()[current];byId('settings-name').value=entry.name;byId('settings-system').value=entry.system;
  byId('settings-provider').value=entry.provider;byId('settings-model').value=entry.model;models();
- byId('settings-role').textContent=entry.id==='judge'?'Judge · planning councils only':entry.id==='ux'?'Sixth advisor · planning councils only':'Advisor · web debates and planning councils';
+ byId('settings-role').textContent=entry.id==='judge'?'Chairman · web synthesis; judge · planning councils':entry.id==='ux'?'Sixth advisor · planning councils only':'Advisor · web debates and planning councils';
  seats();}
  function seats(){byId('settings-seats').replaceChildren(...entries().map((entry,index)=>{const button=document.createElement('button');
- button.type='button';button.textContent=entry.avatar+' '+(entry.name||'Unnamed voice');button.setAttribute('aria-pressed',String(current===index));
+ button.type='button';button.textContent=entry.avatar+' '+(entry.name||'Unnamed voice')+(entry.id==='judge'?' · Chairman':'');button.setAttribute('aria-pressed',String(current===index));
  button.onclick=()=>{if(busy)return;capture();current=index;show();};return button;}));}
  function lock(value){busy=value;dialog.querySelectorAll('button,input,select,textarea').forEach(control=>control.disabled=value);
  if(!value&&draft)models();}
@@ -94,7 +94,7 @@ COUNCIL_SETTINGS_SCRIPT = r"""
  try{const response=await fetch('/api/council/settings',{signal:AbortSignal.timeout(10000)});const result=await response.json();if(!response.ok)throw Error(result.error||'Could not load settings.');
  catalog=result;draft=clone(catalog.settings);byId('settings-provider').replaceChildren(new Option('Session model (inherit)',''),...catalog.providers.map(p=>new Option(p.name,p.id)));
  byId('settings-template').replaceChildren(...catalog.templates.map(p=>new Option(p.name,p.id)));byId('settings-form').hidden=false;show();
- message(catalog.warning || 'The five debate voices join web discussions. The sixth voice and judge also serve planning councils.',Boolean(catalog.warning));
+ message(catalog.warning || 'Five advisors debate, then the chairman synthesizes their votes. The sixth advisor participates only in planning councils.',Boolean(catalog.warning));
  }catch(error){message(error.message,true);}finally{lock(false);if(!draft){byId('settings-save').disabled=true;byId('settings-reset').disabled=true;byId('settings-cancel').focus();}else{byId('settings-seats').querySelector('[aria-pressed=true]')?.focus();}}}
  document.querySelectorAll('[data-council-settings]').forEach(button=>button.addEventListener('click',open));
  byId('settings-provider').onchange=()=>{byId('settings-model').value='';models();};

@@ -304,7 +304,7 @@ __COUNCIL_STYLE__
   <p class="advisor-placeholder">Add options to enable advisor questions and option voting. Leave empty for an open discussion.</p>
   <button id="stop-council" type="button">Stop discussion</button>
   <h2 class="sidebar-label">How it works</h2>
-  <ol class="workflow"><li>Independent perspectives</li><li>Questions, trade-offs, and voting</li><li>The final decision is yours</li></ol>
+  <ol class="workflow"><li>Independent perspectives</li><li>Questions, trade-offs, and voting</li><li>Chairman synthesis</li><li>The final decision is yours</li></ol>
 </div>
 <div class="sidebar-footer"><span>Follow-ups stay in this discussion.</span><span class="sid" id="sid"></span></div>
 </aside>
@@ -496,16 +496,17 @@ function renderVerdict(ev) {
   const card = el('div', 'verdict');
   card.style.setProperty('--seat', wm.color || 'var(--warning)');
   if (ev.winner_id && benchSeats[ev.winner_id]) {
-    seatState(ev.winner_id, 'winner', 'chosen');
+    seatState(ev.winner_id, 'winner', ev.synthesized ? 'vote leader' : 'chosen');
   }
 
   const h = el('h3');
-  h.textContent = 'Council recommendation: ' + (ev.winner_name || 'No consensus');
+  h.textContent = ev.synthesized ? 'Final consolidated answer' : 'Council recommendation: ' + (ev.winner_name || 'No consensus');
   card.appendChild(h);
 
   const sub = el('div', 'verdict-sub');
   sub.textContent = ev.option_tally ? (ev.tied ? 'Split vote · review the trade-offs' : (ev.votes + ' valid option ballots')) : 'by plurality vote (' + (ev.tally ? (ev.tally[ev.winner_id] || 0) : 0) +
     ' of ' + (ev.votes || 0) + ' votes)';
+  if (ev.synthesized) { sub.textContent = ev.chairman_name + ' · synthesized from advisor analyses and votes'; }
   card.appendChild(sub);
 
   const tally = ev.option_tally || ev.tally || {};
@@ -526,7 +527,7 @@ function renderVerdict(ev) {
   card.appendChild(board);
 
   if (ev.answer) {
-    const lbl = el('div', 'winner-label'); lbl.textContent = 'Winning answer';
+    const lbl = el('div', 'winner-label'); lbl.textContent = ev.synthesized ? 'Chairman synthesis' : 'Winning answer';
     const ans = el('div', 'winner-answer');
     if (ev.option_tally) { ans.textContent = ev.answer; ans.style.whiteSpace = "pre-wrap"; }
     else { ans.innerHTML = marked.parse(ev.answer); highlight(ans); }
@@ -572,8 +573,8 @@ function buildApproval(ev) {
       body: JSON.stringify({
         topic: topic,
         decision: decision,
-        winner: ev.winner_name || '',
-        winner_id: ev.winner_id || '',
+        winner: ev.chairman_name || ev.winner_name || '',
+        winner_id: ev.synthesized ? 'chairman' : (ev.winner_id || ''),
       }),
     }).catch(() => {
       const warn = el('div', 'approval-note');
@@ -608,6 +609,7 @@ function lastTopic() {
 
 function endRun() {
   if (es) { es.close(); es = null; }
+  messages.querySelectorAll('.agent.streaming').forEach(node=>node.classList.remove('streaming'));
   messages.querySelectorAll('.clarification button,.clarification input').forEach(node=>node.disabled=true);
   input.disabled = false; sendBtn.disabled = false; input.focus();
   setRun(false);
@@ -669,7 +671,16 @@ function convene() {
     setStatus('the council is voting…');
   });
   es.addEventListener('vote', e => { renderVote(JSON.parse(e.data)); });
-  es.addEventListener('verdict', e => { addPhase('The Verdict'); renderVerdict(JSON.parse(e.data)); });
+  es.addEventListener('chairman_start', e => {
+    const d=JSON.parse(e.data); addPhase('Chairman synthesis', 'weighing agreement, disagreement, and evidence');
+    startAgent({id:'chairman',name:d.name,avatar:'⚖',color:'var(--primary)'});
+    agentEls.chairman.wrap.querySelector('.who-tag').textContent='consensus synthesis';
+    setStatus('the chairman is consolidating the council…');
+  });
+  es.addEventListener('chairman_delta', e => {deltaAgent('chairman',JSON.parse(e.data).text);});
+  es.addEventListener('vote_result', e => {const d=JSON.parse(e.data);addPhase('Ballots collected', d.tied ? 'Split vote · the chairman will examine the disagreement' : d.votes+' valid votes · awaiting chairman synthesis');});
+  es.addEventListener('agent_failed', e => {const d=JSON.parse(e.data);seatState(d.id,'failed','unavailable');finishAgent(d.id,'Advisor unavailable for this round.');});
+  es.addEventListener('verdict', e => { if(agentEls.chairman){agentEls.chairman.wrap.remove();delete agentEls.chairman;} addPhase('The Verdict'); renderVerdict(JSON.parse(e.data)); });
   es.addEventListener('council_error', e => {
     let m = 'The council failed.';
     try { m = JSON.parse(e.data).message || m; } catch (_) {}
@@ -971,6 +982,8 @@ class _ChatHandler(BaseHTTPRequestHandler):
                 model = await asyncio.to_thread(get_council_model)
                 settings = await asyncio.to_thread(load_settings)
                 models = await asyncio.to_thread(resolve_models, settings, model, debate=True)
+                from novacode_cli.council_consensus import resolve_chairman
+                chairman_model = await asyncio.to_thread(resolve_chairman, settings, model, models)
             except Exception as exc:  # noqa: BLE001
                 await enqueue(("council_error", {"message": f"Model unavailable: {exc}"}))
                 await enqueue(_STREAM_END)
@@ -983,6 +996,8 @@ class _ChatHandler(BaseHTTPRequestHandler):
                     stream = run_decision(topic, model, options=options, criteria=criteria, ask=ask, **kwargs)
                 else:
                     stream = run_council(topic, model, **kwargs)
+                from novacode_cli.council_consensus import run_web_consensus
+                stream = run_web_consensus(topic, stream, chairman_model, settings.judge)
                 async for event in stream:
                     if event.get("type") == "question":
                         event["token"] = secrets.token_urlsafe(24)
@@ -1066,7 +1081,11 @@ class _ChatHandler(BaseHTTPRequestHandler):
             elif etype == "agent_done":
                 texts[data["id"]] = data.get("text", "")
             elif etype == "verdict":
-                winner_name = data.get("winner_name")
+                winner_name = data.get("chairman_name") or data.get("winner_name")
+                if data.get("synthesized"):
+                    id_to_name["chairman"] = data.get("chairman_name", "Chairman")
+                    texts["chairman"] = data.get("answer", "")
+                    order.append("chairman")
                 completed = True
 
             if etype == "done":

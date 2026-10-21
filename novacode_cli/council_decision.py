@@ -76,14 +76,18 @@ async def run_decision(
     brief += "\nUser clarifications: " + json.dumps(clarifications)
     brief += "\nCompare the options against the criteria. Include benefits, risks, assumptions, your preferred option, a concrete next step, and what would change your mind."
     transcript = []
-    async for event in run_council(
+    analysis = run_council(
         brief, model, personas=members, history=history, member_models=models, advice_only=True
-    ):
-        if event["type"] == "agent_done" and event.get("text", "").strip():
-            transcript.append(event)
-        if event["type"] in ("vote_start", "vote", "verdict", "done"):
-            continue
-        yield event
+    )
+    try:
+        async for event in analysis:
+            if event["type"] == "agent_done" and event.get("text", "").strip():
+                transcript.append(event)
+            if event["type"] in ("vote_start", "vote", "verdict", "done"):
+                continue
+            yield event
+    finally:
+        await analysis.aclose()
     if not transcript:
         yield {"type": "council_error", "message": "No advisor produced an answer. Check the configured models."}
         yield {"type": "done"}
