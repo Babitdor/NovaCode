@@ -128,7 +128,7 @@ def _viewer_html(art: Artifact) -> str:
         # the sandbox — so escaping &<>\" here is correct and safe.
         srcdoc = _html.escape(_responsive_artifact_html(art.content or ""), quote=True)
         body = (
-            f'<iframe sandbox="allow-scripts allow-popups" '
+            f'<iframe sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" '
             f'title="{_html.escape(art.title)}" srcdoc="{srcdoc}"></iframe>'
         )
     else:

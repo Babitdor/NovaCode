@@ -76,6 +76,7 @@ def test_html_artifact_is_sandboxed_and_escaped() -> None:
     page = _viewer_html(art)
     # Rendered inside a sandboxed iframe with no same-origin access.
     assert '<iframe sandbox="allow-scripts' in page
+    assert "allow-popups-to-escape-sandbox" in page
     assert "allow-same-origin" not in page  # cannot reach the viewer origin
     # The raw HTML is escaped into srcdoc (not injected into the outer document).
     assert "&lt;script&gt;steal()" in page
