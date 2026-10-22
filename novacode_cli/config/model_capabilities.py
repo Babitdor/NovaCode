@@ -11,10 +11,10 @@ This module answers one question — *can the main model see images?* — so the
 middleware can pass images straight through when it can, and only caption when
 it genuinely cannot.
 
-Detection is a **static pattern list** (mirroring ``MODEL_CONTEXT_WINDOWS`` in
-``context/_analysis.py``) plus an explicit user override stored in
-``~/.nova/Nova.config.json`` (``main_model_multimodal``). The override wins, so
-an unlisted multimodal model can be declared without a code change.
+Detection combines explicit model-profile metadata, common vision-family/name
+markers, and an explicit user override stored in ``~/.nova/Nova.config.json``
+(``main_model_multimodal``). The override wins, so an unlisted or aliased model
+can always be declared without a code change.
 
 The answer is also written back onto the bound model's ``ModelProfile`` by
 :func:`declare_multimodal_profile`, because deepagents gates every multimodal
@@ -93,6 +93,11 @@ MULTIMODAL_MODEL_PATTERNS: tuple[str, ...] = (
     "granite-vision",
 )
 
+# Provider wrappers do not always publish a full LangChain ModelProfile. These
+# explicit declarations are used when their profile does provide capabilities.
+_IMAGE_PROFILE_KEYS = ("image_inputs", "supports_images", "supports_vision")
+_MODALITY_PROFILE_KEYS = ("input_modalities", "modalities")
+
 
 #: What the *bound* model's own ``ModelProfile`` says about image input, as
 #: recorded by :func:`note_bound_model` when the agent is built. ``None`` means
@@ -143,17 +148,50 @@ def note_bound_model(model: object) -> None:
     the only thing left and writes a script to inspect the pixels.
     """
     global _bound_profile_support
-    profile = getattr(model, "profile", None)
-    if isinstance(profile, dict) and "image_inputs" in profile:
-        _bound_profile_support = bool(profile["image_inputs"])
-    else:
-        _bound_profile_support = None
+    _bound_profile_support = _profile_image_support(getattr(model, "profile", None))
+
+
+def _profile_image_support(profile: object) -> bool | None:
+    """Read image support from common provider/model profile shapes.
+
+    LangChain's standard key is ``image_inputs``. Custom OpenAI-compatible
+    providers sometimes use ``supports_vision`` or list input modalities; accept
+    those too so they don't need to be added to Nova's model-name registry.
+    """
+    if not isinstance(profile, dict):
+        return None
+    for key in _IMAGE_PROFILE_KEYS:
+        if isinstance(profile.get(key), bool):
+            return profile[key]
+    for key in _MODALITY_PROFILE_KEYS:
+        modalities = profile.get(key)
+        if isinstance(modalities, dict):
+            modalities = modalities.get("input", modalities.get("inputs"))
+        if isinstance(modalities, (list, tuple, set)):
+            normalized = {str(item).lower() for item in modalities}
+            if any(
+                item in {"image", "images", "vision"} or item.startswith("image/")
+                for item in normalized
+            ):
+                return True
+            if normalized and normalized <= {"text", "audio", "video"}:
+                return False
+    return None
 
 
 def _matches_pattern(model_name: str) -> bool:
-    """True when *model_name* matches a known multimodal pattern."""
+    """Recognize named multimodal families and portable vision markers.
+
+    Keep family patterns for models whose public names don't say "vision" (for
+    example Gemini and Claude), then recognize common ``-VL``/``-vision``/``-omni``
+    suffixes used by newer open models and third-party routed aliases.
+    """
+    import re
+
     low = (model_name or "").lower()
-    return any(pattern in low for pattern in MULTIMODAL_MODEL_PATTERNS)
+    if any(pattern in low for pattern in MULTIMODAL_MODEL_PATTERNS):
+        return True
+    return re.search(r"(?:^|[-_.])(?:vl|vlm|vision|multimodal|omni)(?:$|[-_.:])", low) is not None
 
 
 def model_supports_images(
@@ -161,6 +199,7 @@ def model_supports_images(
     model_name: str,
     *,
     override: bool | None = None,
+    profile: object = None,
 ) -> bool:
     """Whether the main model can accept image input.
 
@@ -171,12 +210,20 @@ def model_supports_images(
         model_name: The model identifier.
         override: Explicit user setting. ``True``/``False`` forces the answer;
             ``None`` (default) falls back to pattern detection.
+        profile: Optional provider-declared model capabilities.
 
     Returns:
         ``True`` when images may be sent to the main model directly.
     """
     if override is not None:
         return bool(override)
+    profile_support = _profile_image_support(profile)
+    # A positive family/name match beats stale negative metadata from a generic
+    # OpenAI-compatible provider. An explicit user override still wins above.
+    if _matches_pattern(model_name):
+        return True
+    if profile_support is not None:
+        return profile_support
     name = model_name or ""
     if provider == "ollama":
         # Ollama model ids are ``name:tag`` (e.g. ``qwen3-vl:235b-cloud``); the
@@ -214,8 +261,6 @@ def resolve_main_model_multimodal(model: object) -> bool:
         override = NovaConfig().get_main_model_multimodal()
         if override is not None:
             return bool(override)
-        if _bound_profile_support is not None:
-            return _bound_profile_support
         cfg = NovaConfig().get_model_config() or {}
         provider = cfg.get("provider", "") if isinstance(cfg, dict) else ""
         name = cfg.get("model") if isinstance(cfg, dict) else None
@@ -225,6 +270,12 @@ def resolve_main_model_multimodal(model: object) -> bool:
                 if isinstance(model, str)
                 else getattr(model, "model_name", getattr(model, "model", ""))
             )
+        # A recognized model family should survive an incomplete or stale
+        # provider profile; otherwise trust explicit profile metadata.
+        if _matches_pattern(str(name)):
+            return True
+        if _bound_profile_support is not None:
+            return _bound_profile_support
         return model_supports_images(str(provider), str(name))
     except Exception:  # noqa: BLE001 — capability detection must never break a turn
         return False

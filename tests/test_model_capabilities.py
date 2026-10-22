@@ -26,6 +26,8 @@ class TestModelSupportsImages:
             "gemma4:31b-cloud",
             "deepseek-v4.1-flash:cloud",
             "minimax/minimax-m3.1-flash:free",
+            "openrouter/acme-model-vlm:free",
+            "provider/new-model-omni-2026",
             "pixtral-12b",
         ],
     )
@@ -51,6 +53,18 @@ class TestModelSupportsImages:
 
     def test_minimax_m3_1_flash_is_multimodal_for_commandcode(self):
         assert model_supports_images("commandcode", "minimax/minimax-m3.1-flash:free") is True
+
+    @pytest.mark.parametrize(
+        "profile",
+        [
+            {"image_inputs": True},
+            {"supports_vision": True},
+            {"modalities": {"input": ["text", "image"]}},
+            {"input_modalities": ["text", "image/png"]},
+        ],
+    )
+    def test_provider_profile_can_describe_unlisted_vision_models(self, profile):
+        assert model_supports_images("custom-provider", "unknown-model", profile=profile) is True
 
     def test_empty_model_name(self):
         assert model_supports_images("ollama", "") is False

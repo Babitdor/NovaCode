@@ -512,7 +512,7 @@ class _Profiled:
             self.profile["image_inputs"] = image_inputs
 
 
-def _fresh_caps(monkeypatch, *, override=None, model="some/unlisted-vl-model"):
+def _fresh_caps(monkeypatch, *, override=None, model="some/custom-model"):
     from novacode_cli.config import model_capabilities as mc
 
     monkeypatch.setattr(mc, "_bound_profile_support", None, raising=False)
@@ -537,10 +537,16 @@ def test_an_unlisted_model_is_believed_when_its_profile_says_it_sees_images(monk
     assert mc.resolve_main_model_multimodal(None) is True
 
 
-def test_a_profile_saying_no_is_believed_too(monkeypatch):
-    mc = _fresh_caps(monkeypatch, model="gpt-4o")
+def test_a_profile_saying_no_is_believed_for_an_unknown_model(monkeypatch):
+    mc = _fresh_caps(monkeypatch, model="some-text-only-model")
     mc.note_bound_model(_Profiled(image_inputs=False))
     assert mc.resolve_main_model_multimodal(None) is False
+
+
+def test_known_vision_family_beats_a_stale_provider_profile(monkeypatch):
+    mc = _fresh_caps(monkeypatch, model="gpt-4o")
+    mc.note_bound_model(_Profiled(image_inputs=False))
+    assert mc.resolve_main_model_multimodal(None) is True
 
 
 def test_a_model_without_a_profile_falls_back_to_the_pattern_list(monkeypatch):
