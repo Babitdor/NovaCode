@@ -22,7 +22,11 @@ def test_main_templates_ignore_global_overrides_and_activated_artifacts(
             autoescape=select_autoescape(default=False),
         ),
     )
-    for name in ("core_agent_system.jinja", "System_Prompt_Nova.jinja"):
+    for name in (
+        "core_agent_system.jinja",
+        "System_Prompt_Nova.jinja",
+        "nova_standing_instructions.jinja",
+    ):
         folder = tmp_path / name.removesuffix(".jinja")
         folder.mkdir()
         (folder / "active.jinja").write_text("OVERRIDE MAIN IDENTITY", encoding="utf-8")
@@ -45,3 +49,23 @@ def test_non_main_template_keeps_explicit_activation():
         assert prompts.render_template("longterm_memory.jinja") == "custom memory instructions"
     finally:
         active_artifacts.reset(token)
+
+
+def test_main_and_continuation_share_packaged_standing_rules():
+    standing = prompts.render_template("nova_standing_instructions.jinja")
+    for template in ("core_agent_system.jinja", "System_Prompt_Nova.jinja"):
+        rendered = prompts.render_template(template)
+        assert rendered.count("<standing_instructions>") == 1
+        assert standing in rendered
+        for rule in (
+            "write_memory",
+            "append=True",
+            "recent_plans",
+            "3\u20137 concrete outcomes",
+            "/memories/HABITS.md",
+            "memory_wiki",
+            "Never replace a document with a small note",
+            "existing authorization",
+            "the checks that actually passed",
+        ):
+            assert rule in rendered

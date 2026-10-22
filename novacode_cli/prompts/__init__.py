@@ -140,7 +140,9 @@ def render_template(name: str, **kwargs: Any) -> str:
     # Main-agent identity and execution rules are release-controlled. Global
     # prompt history and activated experiments may customize other templates,
     # but must never replace the base instructions shipped with Nova.
-    if name in {"core_agent_system.jinja", "System_Prompt_Nova.jinja"}:
+    if name in {
+        "core_agent_system.jinja", "System_Prompt_Nova.jinja", "nova_standing_instructions.jinja",
+    }:
         return _env.get_template(name).render(**kwargs)
 
     from novacode_cli.hermes.activation import active_artifacts

@@ -13,6 +13,13 @@ from novacode_cli import updates
 @pytest.fixture(autouse=True)
 def clear_request(monkeypatch):
     monkeypatch.setattr(updates, "restart_request", None)
+    # App mounts must not leave a live network task in the test executor.
+    # Individual update-screen tests explicitly stub the manual check.
+    monkeypatch.setenv("NOVA_DISABLE_UPDATE_CHECK", "1")
+    network = Mock(side_effect=AssertionError("Offline update test attempted a network request"))
+    monkeypatch.setattr(updates, "_get_json", network)
+    yield
+    network.assert_not_called()
 
 
 @pytest.mark.parametrize(("update_code", "relaunched"), [(0, True), (1, True), (130, False)])

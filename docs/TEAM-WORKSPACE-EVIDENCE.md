@@ -66,3 +66,21 @@ folder grants. External file calls remain possible through explicit parent
 approval or configured path allow rules. Global agent.md continues to supply
 memory; it is not loaded as the base main-agent definition. The user's Codex.md
 reference was read and preserved without adding it to this change.
+
+## Follow-up: supplied standing-instructions reference
+
+The user subsequently supplied `novacode_cli/prompts/agent.md` as the desired
+default style. Its general standing rules were adapted into the packaged
+`nova_standing_instructions.jinja`, shared by startup and continuation. Neither
+reference file was modified or committed. The private/global memory surface
+remains separate from these release-controlled templates.
+
+- Main prompt, contract, version and related updater checks: **32 passed**.
+- Entire updater workflow test selection after isolating automatic background
+  requests: **54 passed**. An explicit mock guard asserts no real update JSON
+  request occurs in update-restart tests.
+- On the v1.0.80 push, GitHub regressions passed on Linux (**418 passed**) and
+  Windows (**417 passed, 1 skipped**). The Windows install/update job exposed an
+  existing unmocked automatic update request during TUI test teardown. It timed
+  out in Windows certificate loading. The follow-up disables automatic update
+  checks in those offline tests; manual checks remain explicitly mocked.
