@@ -230,9 +230,13 @@ def test_saved_setup_is_restored_for_the_next_session():
     for name in LANGSMITH_ENV_VARS:
         os.environ.pop(name, None)
 
+    from langsmith import run_trees
+
+    run_trees._CLIENT = object()
     config = load_persisted_langsmith_settings()
 
     assert config.is_configured()
+    assert run_trees._CLIENT is None
     assert os.environ["LANGSMITH_API_KEY"] == "lsv2_persisted"
     assert os.environ["LANGSMITH_PROJECT"] == "SavedProject"
     assert os.environ["LANGSMITH_ENDPOINT"] == "https://api.smith.langchain.com"
@@ -240,3 +244,18 @@ def test_saved_setup_is_restored_for_the_next_session():
     assert os.environ["LANGSMITH_AGENT_ID"] == "novacode-cli"
     assert os.environ["LANGSMITH_AGENT_ENVIRONMENT"] == "production"
     assert "lsv2_persisted" not in NovaConfig().config_path.read_text(encoding="utf-8")
+
+
+def test_clearing_workspace_removes_the_saved_value():
+    from novacode_cli.config.nova_config import NovaConfig
+    from novacode_cli.tracking.tracing import persist_langsmith_settings
+
+    persist_langsmith_settings(
+        {
+            "LANGSMITH_TRACING": "true",
+            "LANGSMITH_WORKSPACE_ID": "stale-invalid-value",
+        }
+    )
+    persist_langsmith_settings({"LANGSMITH_WORKSPACE_ID": ""})
+
+    assert "workspace_id" not in NovaConfig().get_langsmith_settings()

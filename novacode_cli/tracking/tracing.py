@@ -272,9 +272,13 @@ def persist_langsmith_settings(values: Mapping[str, str]) -> list[str]:
     config = NovaConfig()
     fields = config.get_langsmith_settings()
     for env_name, field in names.items():
+        if env_name not in values:
+            continue
         value = (values.get(env_name) or "").strip()
         if value:
             fields[field] = value.lower() if field == "enabled" else value
+        else:
+            fields.pop(field, None)
     config.set_langsmith_settings(fields)
     return warnings
 
@@ -300,6 +304,9 @@ def load_persisted_langsmith_settings() -> TracingConfig:
             os.environ.setdefault(name, value)
     if not os.environ.get("LANGSMITH_API_KEY"):
         apply_credential_to_env("LANGSMITH_API_KEY")
+    # Startup may have imported LangSmith before the credential-store pass and
+    # cached a disabled tracer or a client built without these settings.
+    reset_langsmith_caches()
     return auto_configure()
 
 

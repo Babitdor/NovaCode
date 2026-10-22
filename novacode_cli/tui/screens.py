@@ -1929,7 +1929,8 @@ class LangSmithSetupModal(ModalScreen[dict[str, str] | None]):
             yield Static(
                 Text(
                     "Applies to new turns in this session. Project is the trace destination; "
-                    "agent ID and environment are optional metadata labels.",
+                    "agent ID and environment are optional metadata labels. Leave Workspace ID "
+                    "blank unless your LangSmith workspace requires it.",
                     style="dim",
                 ),
                 id="langsmith-hint",

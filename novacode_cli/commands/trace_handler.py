@@ -267,7 +267,7 @@ def _setup_tracing_interactively() -> None:
         ("LANGSMITH_ENDPOINT", "LangSmith endpoint"),
         ("LANGSMITH_API_KEY", "LangSmith API key"),
         ("LANGSMITH_PROJECT", "Project name"),
-        ("LANGSMITH_WORKSPACE_ID", "Workspace ID (optional)"),
+        ("LANGSMITH_WORKSPACE_ID", "Workspace ID (optional; type 'clear' to remove)"),
         ("LANGSMITH_AGENT_ID", "Agent ID label (optional)"),
         ("LANGSMITH_AGENT_ENVIRONMENT", "Agent environment label (optional)"),
     ):
@@ -281,8 +281,16 @@ def _setup_tracing_interactively() -> None:
         except (EOFError, KeyboardInterrupt):
             console.print("Setup cancelled.", style=COLORS["warning"])
             return
-        # An empty answer keeps the value that is already in use.
-        values[name] = answer or default
+        # An empty answer keeps the current value. Optional fields accept an
+        # explicit clear command to remove stale settings.
+        if name in {
+            "LANGSMITH_WORKSPACE_ID",
+            "LANGSMITH_AGENT_ID",
+            "LANGSMITH_AGENT_ENVIRONMENT",
+        } and answer.lower() == "clear":
+            values[name] = ""
+        else:
+            values[name] = answer or default
 
     warnings = persist_langsmith_settings(values)
     config = apply_langsmith_env(values)
