@@ -80,6 +80,7 @@ class _FakeConfig:
 
     recent: list[str] = []
     voice: dict = {}
+    vision: dict[str, str] = {"provider": "ollama", "model": "gemma4:31b-cloud"}
 
     def __init__(self, *args, **kwargs) -> None:
         pass
@@ -89,6 +90,9 @@ class _FakeConfig:
 
     def get_voice_config(self) -> dict:
         return dict(type(self).voice or FAKE_VOICE)
+
+    def get_vision_model_config(self) -> dict[str, str]:
+        return dict(type(self).vision)
 
     def get_role_model(self, role: str) -> dict | None:
         return None  # every role inherits: these tests are not about roles
@@ -106,19 +110,20 @@ def _stubbed(monkeypatch):
     monkeypatch.setattr(catalog, "get_all_models", lambda **kwargs: dict(FAKE_MODELS))
     _FakeConfig.recent = []
     _FakeConfig.voice = {}
+    _FakeConfig.vision = {"provider": "anthropic", "model": "claude-sonnet-5"}
     monkeypatch.setattr(nova_config, "NovaConfig", _FakeConfig)
     # The role rows resolve their config through role_models, by its own name.
     monkeypatch.setattr("novacode_cli.config.role_models.NovaConfig", _FakeConfig)
 
 
-async def _open(pilot, app, **kwargs):
+async def _open(pilot, app, *, callback=None, **kwargs):
     """Push a ModelScreen and wait for its background load to land."""
     from textual.widgets import OptionList
 
     from novacode_cli.tui.screens import ModelScreen
 
     screen = ModelScreen(**kwargs)
-    app.push_screen(screen)
+    app.push_screen(screen, callback)
     for _ in range(120):
         await pilot.pause()
         try:
@@ -138,7 +143,7 @@ async def _tab(pilot: Pilot, screen: ModelScreen, tab_id: str) -> None:
     from textual.widgets import Tabs
 
     screen.query_one("#model-tabs", Tabs).active = tab_id
-    wanted = "voice" if tab_id == "tab-voice" else "model"
+    wanted = {"tab-voice": "voice", "tab-vision": "vision"}.get(tab_id, "model")
     for _ in range(60):
         await pilot.pause()
         if screen._tab == wanted:
@@ -232,6 +237,33 @@ async def test_the_models_tab_lists_every_chat_provider():
             f"{provider}:{model}" for provider, models in FAKE_MODELS.items() for model in models
         }
         assert not _voice_ids(screen)
+
+
+async def test_vision_tab_selects_an_independent_model_without_switching_main_model():
+    app = _host()
+    selected: list = []
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _open(pilot, app, callback=selected.append)
+        await _tab(pilot, screen, "tab-vision")
+
+        vision_rows = [pick for pick in screen._targets.values() if pick.kind == "vision"]
+        assert vision_rows
+        assert all(pick.kind != "model" for pick in screen._targets.values())
+        current = next(pick for pick in vision_rows if screen._is_current(pick))
+        assert current.spec == "anthropic:claude-sonnet-5"
+
+        pick = next(pick for pick in vision_rows if pick.spec == "anthropic:claude-opus-5")
+        screen._choose(pick)
+        await pilot.pause()
+
+    assert selected == [
+        {
+            "kind": "vision",
+            "provider": "anthropic",
+            "model": "claude-opus-5",
+            "role": "main",
+        }
+    ]
 
 
 async def test_headers_carry_the_credential_indicator():

@@ -198,34 +198,11 @@ async def prepare_input_content(
         images.extend(tracked)
 
     if images:
-        # A multimodal main model reads the image itself, so it is handed the
-        # image content blocks directly. Captioning it through the auxiliary
-        # vision model would both lose detail AND fail the whole paste when
-        # no vision model is configured — the reported
-        # "[image: vision captioning failed]" on a model that can see
-        # perfectly well.
-        if _main_model_can_see_images():
-            return _image_content_blocks(cleaned_input, images)
-        try:
-            from novacode_cli.bootstrap.vision_router import caption_images
-
-            # caption_images takes data: URL *strings* — passing the
-            # ImageData objects instead made the vision model raise
-            # "Only string image_url ... supported", which surfaced to the
-            # user as "[image: vision captioning failed]".
-            image_urls = [img.to_data_url() for img in images]
-            captions = await caption_images(image_urls)
-            # Only a real description counts. The failure placeholders ARE
-            # truthy strings, so `if captions` accepted them and returned a
-            # "[image: ...]" notice as if it were a caption, making the
-            # image-blocks fallback below unreachable.
-            if captions and not _is_vision_failure(captions):
-                return f"{cleaned_input}\n\n[Attached image: {captions}]"
-        except Exception:  # noqa: BLE001
-            logger.warning("Clipboard image captioning failed", exc_info=True)
-        # Captioning failed, or returned no description: pass the images
-        # through so a multimodal model still sees them, instead of sending a
-        # failure notice in their place.
+        # Keep the image in graph state. A multimodal main model receives it
+        # directly; for a text-only model the vision middleware removes it from
+        # the main request and offers the VISION side-call. That makes inspection
+        # the model's choice and avoids a side-call when it does not need visual
+        # details.
         return _image_content_blocks(cleaned_input, images)
 
     return cleaned_input

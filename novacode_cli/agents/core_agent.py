@@ -1463,7 +1463,7 @@ def _resolve_main_model_multimodal(model: str | BaseChatModel) -> bool:
     Thin wrapper over :func:`~novacode_cli.config.model_capabilities.
     resolve_main_model_multimodal`, which is the single source of truth. It is
     shared with prompt preparation so the middleware and the ingestion path
-    cannot disagree about whether a pasted image should be captioned.
+    cannot disagree about whether a pasted image goes to the main model or VISION.
     """
     from novacode_cli.config.model_capabilities import resolve_main_model_multimodal
 
@@ -1625,11 +1625,11 @@ def _build_middleware_stack(
             backoff_factor=2.0,
             initial_delay=1.0,
         ),
-        # Vision captioning — converts images to TEXT so a text-only main model
-        # never receives image blocks. A read_file on an image is captioned by the
-        # vision model at the tool-result layer (awrap_tool_call); pasted images
-        # are captioned upstream at ingestion. awrap_model_call here is a pure
-        # safety net that strips any residual image blocks from history.
+        # Vision routing — a text-only main model receives a note and can call
+        # VISION when visual details matter. The tool side-calls the configured
+        # vision model; the main session model never changes. This middleware
+        # strips image blocks from text-only requests while preserving them in
+        # graph state for the side-call.
         #
         # When the MAIN model is multimodal (main_model_supports_images), this
         # middleware is a pass-through: images go straight to the main model,
@@ -2145,7 +2145,7 @@ This file stores your preferences and context that persist across sessions.
     )
 
     # Whether the main model can see images. When it can, images are passed
-    # straight through instead of being captioned by the auxiliary vision model
+    # straight through instead of being routed through the auxiliary vision model
     # (see _resolve_main_model_multimodal). Computed once and shared by the main
     # stack and every subagent — subagents inherit the main model.
     from novacode_cli.config.model_capabilities import note_bound_model
@@ -2156,6 +2156,13 @@ This file stores your preferences and context that persist across sessions.
         # Not redundant with the line above: that decides what NOVA does, this
         # tells DEEPAGENTS not to strip the image on the way to the model.
         _declare_image_support(model)
+    elif not any(getattr(existing_tool, "name", "") == "VISION" for existing_tool in tools):
+        # A text-only main model never receives the image bytes. It can choose
+        # to inspect them through one bounded side-call without switching the
+        # session model or paying for vision work it does not need.
+        from novacode_cli.bootstrap.vision_router import build_vision_tool
+
+        tools = [*tools, build_vision_tool()]
 
     # Resolve the bound model's effective window exactly ONCE per build and pass
     # it to both consumers: the window-relative context-editing trigger below and

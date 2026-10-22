@@ -395,6 +395,7 @@ class ModelScreen(ModalScreen[dict | None]):
     #: chat models above them.
     _STT_LABEL = "Speech to text"
     _TTS_LABEL = "Text to speech"
+    _VISION_LABEL = "Vision side-call"
 
     #: What the free-text field will do, per axis: a model id for chat, a voice id
     #: or voice name for speech. Kept here so the field's first paint and every
@@ -403,7 +404,11 @@ class ModelScreen(ModalScreen[dict | None]):
     _VOICE_PLACEHOLDER = "…or type any voice id (uses the highlighted provider)"
 
     def __init__(
-        self, current_provider: str | None = None, current_model: str | None = None
+        self,
+        current_provider: str | None = None,
+        current_model: str | None = None,
+        *,
+        initial_tab: str = "model",
     ) -> None:
         super().__init__()
         self._current_provider = current_provider
@@ -413,9 +418,15 @@ class ModelScreen(ModalScreen[dict | None]):
         self._models: dict[str, list[str]] = {}
         self._recent: list[str] = []
         self._voice_cfg: dict[str, Any] = {}
+        self._vision_cfg: dict[str, str] = {}
         #: Which axis the list is showing: ``"model"`` or ``"voice"``. The tabs
         #: drive it; the two never share a list.
         self._tab = "model"
+        self._initial_tab = (
+            initial_tab
+            if initial_tab in {"model", "voice", "vision", "decision"}
+            else "model"
+        )
         #: Option index -> what that row selects. `OptionList.highlighted`
         #: reports an index, so this is the mapping back to a choice.
         self._targets: dict[int, _Pick] = {}
@@ -434,6 +445,7 @@ class ModelScreen(ModalScreen[dict | None]):
             yield Tabs(
                 Tab("Models", id="tab-models"),
                 Tab("Voice", id="tab-voice"),
+                Tab("Vision", id="tab-vision"),
                 Tab("Decisions", id="tab-decisions"),
                 id="model-tabs",
             )
@@ -466,6 +478,11 @@ class ModelScreen(ModalScreen[dict | None]):
     def on_mount(self) -> None:
         animate_modal_screen(self)
         self.query_one("#model-filter", Input).focus()
+        if self._initial_tab != "model":
+            tab_id = {"model": "tab-models", "voice": "tab-voice"}.get(
+                self._initial_tab, f"tab-{self._initial_tab}"
+            )
+            self.query_one("#model-tabs", Tabs).active = tab_id
         self._load()
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
@@ -476,15 +493,24 @@ class ModelScreen(ModalScreen[dict | None]):
         list before the loader has anything to put in it).
         """
         tab_id = getattr(getattr(event, "tab", None), "id", "") or ""
-        kind = {"tab-voice": "voice", "tab-decisions": "decision"}.get(tab_id, "model")
+        kind = {
+            "tab-voice": "voice",
+            "tab-vision": "vision",
+            "tab-decisions": "decision",
+        }.get(tab_id, "model")
         if kind == self._tab:
             return
         self._tab = kind
         decisions = kind == "decision"
+        self.query_one("#modal-title", Static).update(
+            "Configure vision model" if kind == "vision" else "Switch model"
+        )
         self.query_one("#model-decisions", DecisionSettings).display = decisions
         for selector in ("#model-filter", "#modelinfo", "#model-options", "#model-custom-row"):
             self.query_one(selector).display = not decisions
-        self.query_one("#switch", Button).label = "Save" if decisions else "Switch"
+        self.query_one("#switch", Button).label = (
+            "Save" if decisions else "Set vision model" if kind == "vision" else "Switch"
+        )
         if decisions:
             self.query_one("#model-decisions", DecisionSettings).load()
             self._show_hint("Save to apply · Esc cancel")
@@ -501,13 +527,19 @@ class ModelScreen(ModalScreen[dict | None]):
     def _sync_free_text_placeholder(self) -> None:
         """Point the free-text field at whatever this tab's rows select."""
         field = self.query_one("#model", Input)
-        field.placeholder = (
-            self._VOICE_PLACEHOLDER if self._tab == "voice" else self._MODEL_PLACEHOLDER
-        )
+        field.placeholder = {
+            "voice": self._VOICE_PLACEHOLDER,
+            "vision": "…or type a vision model id, or provider:model",
+        }.get(self._tab, self._MODEL_PLACEHOLDER)
         # A voice id belongs to the highlighted voice row, so the chat-provider
         # dropdown has nothing to say on that tab.
         try:
-            self.query_one("#model-provider", Select).display = self._tab != "voice"
+            select = self.query_one("#model-provider", Select)
+            select.display = self._tab != "voice"
+            if self._tab == "vision" and self._vision_cfg.get("provider"):
+                select.value = self._vision_cfg["provider"]
+            elif self._tab == "model" and self._current_provider:
+                select.value = self._current_provider
         except Exception:  # noqa: BLE001 — cosmetic
             pass
 
@@ -527,6 +559,7 @@ class ModelScreen(ModalScreen[dict | None]):
             models = {}
         recent: list[str] = []
         voice_cfg: dict[str, Any] = {}
+        vision_cfg: dict[str, str] = {}
         try:
             from novacode_cli.config.nova_config import NovaConfig
 
@@ -540,8 +573,12 @@ class ModelScreen(ModalScreen[dict | None]):
                 recent = config.get_recent_models()
             with contextlib.suppress(Exception):
                 voice_cfg = config.get_voice_config()
+            with contextlib.suppress(Exception):
+                vision_cfg = config.get_vision_model_config()
         with contextlib.suppress(Exception):
-            self.app.call_from_thread(self._apply, statuses, models, recent, voice_cfg)
+            self.app.call_from_thread(
+                self._apply, statuses, models, recent, voice_cfg, vision_cfg
+            )
 
     def _apply(
         self,
@@ -549,6 +586,7 @@ class ModelScreen(ModalScreen[dict | None]):
         models: dict[str, list[str]],
         recent: list[str],
         voice_cfg: dict[str, Any] | None = None,
+        vision_cfg: dict[str, str] | None = None,
     ) -> None:
         """Record the loaded data and paint the list.
 
@@ -562,6 +600,7 @@ class ModelScreen(ModalScreen[dict | None]):
         self._models = models
         self._recent = recent
         self._voice_cfg = voice_cfg or {}
+        self._vision_cfg = vision_cfg or {}
         self._fill_provider_select()
         self._repaint()
 
@@ -575,8 +614,13 @@ class ModelScreen(ModalScreen[dict | None]):
             return
         options = [(str(preset.get("name") or pid), pid) for pid, preset in MODEL_PRESETS.items()]
         select.set_options(options)
-        if self._current_provider in MODEL_PRESETS:
-            select.value = self._current_provider
+        preferred = (
+            self._vision_cfg.get("provider")
+            if self._tab == "vision"
+            else self._current_provider
+        )
+        if preferred in MODEL_PRESETS:
+            select.value = preferred
 
     def _custom_provider(self) -> str | None:
         """The provider chosen in the dropdown, or None when there is none."""
@@ -605,7 +649,7 @@ class ModelScreen(ModalScreen[dict | None]):
         if event.option_list.id != "model-options":
             return
         target = self._targets.get(event.option_index)
-        if target is None or target.kind != "model":
+        if target is None or target.kind not in {"model", "vision"}:
             return
         try:
             select = self.query_one("#model-provider", Select)
@@ -653,6 +697,8 @@ class ModelScreen(ModalScreen[dict | None]):
         """What to say when the active tab has no rows to show."""
         if self._tab == "voice":
             return "No voice options match your filter."
+        if self._tab == "vision":
+            return "No vision models match your filter."
         return "No models match your filter."
 
     def _add_role_section(self, option_list: OptionList) -> int:
@@ -703,14 +749,14 @@ class ModelScreen(ModalScreen[dict | None]):
         # Roles first, because they decide what a model pick *means*. Only on an
         # unfiltered list: while someone is typing a model name, four role rows
         # between them and the matches are just noise.
-        if not needle:
+        if not needle and self._tab == "model":
             shown += self._add_role_section(option_list)
 
         # Recent picks are a personal signal, so they stay pinned above the
         # providers and are de-duplicated from the sections below. Suppressed
         # while the curated-only subset is active, where recents can name models
         # the subset deliberately excludes.
-        if not self._curated_only:
+        if not self._curated_only and self._tab == "model":
             recent = [
                 spec
                 for spec in self._recent
@@ -736,7 +782,8 @@ class ModelScreen(ModalScreen[dict | None]):
                 continue
             option_list.add_option(self._header_row(provider))
             for model in models:
-                self._add_pick(option_list, _Pick("model", provider, model))
+                pick_kind = "vision" if self._tab == "vision" else "model"
+                self._add_pick(option_list, _Pick(pick_kind, provider, model))
                 shown += 1
         return shown
 
@@ -873,6 +920,11 @@ class ModelScreen(ModalScreen[dict | None]):
         """Whether this row is the model, the voice, or the targeted role."""
         if pick.kind == "model":
             return self._is_current_model(pick)
+        if pick.kind == "vision":
+            return (
+                pick.provider == self._vision_cfg.get("provider")
+                and pick.name == self._vision_cfg.get("model")
+            )
         if pick.kind == "role":
             return pick.name == self._role_target
         return self._is_current_voice(pick)
@@ -920,7 +972,7 @@ class ModelScreen(ModalScreen[dict | None]):
             (
                 position
                 for position, pick in self._targets.items()
-                if pick.kind == "model" and self._is_current_model(pick)
+                if pick.kind in {"model", "vision"} and self._is_current(pick)
             ),
             None,
         )
@@ -929,7 +981,12 @@ class ModelScreen(ModalScreen[dict | None]):
                 (
                     position
                     for position, pick in self._targets.items()
-                    if pick.provider == self._current_provider
+                    if pick.provider
+                    == (
+                        self._vision_cfg.get("provider")
+                        if self._tab == "vision"
+                        else self._current_provider
+                    )
                 ),
                 None,
             )
@@ -961,6 +1018,17 @@ class ModelScreen(ModalScreen[dict | None]):
             info.append(
                 f"{len(voices)} voice option(s) from "
                 f"{len({pick.provider for pick in voices})} provider(s)",
+                style="dim",
+            )
+        elif self._tab == "vision":
+            models = [pick for pick in picks if pick.kind == "vision"]
+            info.append(
+                f"{len(models)} vision model(s) from "
+                f"{len({pick.provider for pick in models})} provider(s)",
+                style="dim",
+            )
+            info.append(
+                "  ·  called only when the main model requests image inspection",
                 style="dim",
             )
         else:
@@ -1038,9 +1106,8 @@ class ModelScreen(ModalScreen[dict | None]):
         target = self._highlighted_target()
 
         if typed:
-            if target is not None and target.kind == "voice":
-                # The free-text field follows whatever row is highlighted, so a
-                # voice id the registry does not list can still be set.
+            if target is not None and target.kind in {"voice", "vision"}:
+                # The free-text field follows whichever non-main axis is active.
                 self._choose(replace(target, name=typed, label=""))
                 return
             # In order: a provider typed with the model, the dropdown, then the
@@ -1055,7 +1122,8 @@ class ModelScreen(ModalScreen[dict | None]):
             if provider is None:
                 self._show_hint("Choose a provider in the dropdown, then retry.", error=True)
                 return
-            self._choose(_Pick("model", provider, model_id))
+            kind = "vision" if self._tab == "vision" else "model"
+            self._choose(_Pick(kind, provider, model_id))
             return
 
         if target is None:

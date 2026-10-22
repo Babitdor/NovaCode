@@ -172,21 +172,21 @@ async def test_image_mention_is_attached_as_an_image_block(workspace, monkeypatc
     assert "binary file" not in str(out)
 
 
-async def test_image_mention_is_captioned_for_a_text_only_model(workspace, monkeypatch):
-    """A text-only model gets a caption for an ``@image`` mention, not blocks."""
+async def test_image_mention_is_available_for_an_on_demand_vision_call(workspace, monkeypatch):
+    """A text-only model defers the auxiliary call until it invokes VISION."""
     import novacode_cli.bootstrap.vision_router as vr
 
     _write_png(workspace)
     monkeypatch.setattr(ip, "_main_model_can_see_images", lambda: False)
 
     async def fake_captions(urls, *args, **kwargs):  # noqa: ANN002, ANN003
-        return "a dark blue square"
+        pytest.fail("image mention was captioned before the model requested VISION")
 
     monkeypatch.setattr(vr, "caption_images", fake_captions)
 
     out = await ip.prepare_input_content("what is @shot.png?")
-    assert isinstance(out, str)
-    assert "a dark blue square" in out
+    assert isinstance(out, list)
+    assert any(b.get("type") == "image_url" for b in out)
     assert "binary file" not in out
 
 

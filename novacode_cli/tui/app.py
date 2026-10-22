@@ -12406,9 +12406,12 @@ class NovaApp(App):
 
         mm = ModelManager()
         current_id = mm.get_current_provider_id()
+        picker_tab = "model"
 
         while True:
-            result = await self.push_screen_wait(ModelScreen(current_id, self.model_name))
+            result = await self.push_screen_wait(
+                ModelScreen(current_id, self.model_name, initial_tab=picker_tab)
+            )
             if not result:
                 return
             if result.get("needs_auth"):
@@ -12417,8 +12420,14 @@ class NovaApp(App):
                 # Reopen with the same provider highlighted: the user's next
                 # action is picking a model now that the key exists.
                 current_id = provider
+                if result.get("kind") in {"vision", "voice"}:
+                    picker_tab = str(result["kind"])
                 continue
             break
+
+        if result.get("kind") == "vision":
+            self._apply_vision_pick(result)
+            return
 
         if result.get("kind") == "voice":
             self._apply_voice_pick(result)
@@ -12634,6 +12643,27 @@ class NovaApp(App):
         self._log(Text(f"● {label} · {name} for {axis}", style="green"))
         if meta.get("requires_key"):
             self._log(Text("Used on the next capture; /voice test to check it.", style="dim"))
+
+    def _apply_vision_pick(self, result: dict) -> None:
+        """Save the independently selected model used by the VISION side-call."""
+        from novacode_cli.config.nova_config import NovaConfig
+
+        provider = str(result.get("provider") or "")
+        model = str(result.get("model") or "")
+        if not provider or not model:
+            self._log(Text("That row had no usable vision model to save.", style="red"))
+            return
+        try:
+            NovaConfig().set_vision_model_config(provider, model)
+        except Exception as ex:  # noqa: BLE001 — a config failure must be visible
+            self._log(Text(f"Could not save the vision model: {ex}", style="red"))
+            return
+        self._log(
+            Text(
+                f"● Vision side-call → {provider}:{model} — used only when the main model calls VISION",
+                style="green",
+            )
+        )
 
     @staticmethod
     def _credential_base_url(provider: str) -> str:

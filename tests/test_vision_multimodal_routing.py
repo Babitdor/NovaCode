@@ -1,26 +1,10 @@
-"""A pasted image goes to whichever model can actually read it.
-
-Two defects, both user-visible as "[image: vision captioning failed]" while
-running a model that can see images perfectly well:
-
-1. ``prepare_input_content`` force-captioned through the auxiliary vision model
-   regardless of whether the main model was multimodal, so a capable model was
-   bypassed and a missing/broken vision model broke the paste outright.
-2. A *failure* placeholder is a truthy string, so ``if captions`` accepted it and
-   returned the notice as though it were a description — making the existing
-   "fall back to image blocks" path unreachable.
-
-The content shape is the contract: a ``list`` means "image blocks, the model
-reads it"; a ``str`` means "already captioned to text".
-"""
+"""Pasted images flow directly or stay available for an on-demand VISION call."""
 
 from __future__ import annotations
 
 import asyncio
 import base64
 import io
-
-import pytest
 
 
 def _tracker():
@@ -86,44 +70,18 @@ def test_multimodal_path_does_not_call_the_vision_model(monkeypatch):
 # ── a text-only model still captions ────────────────────────────────────────
 
 
-def test_text_only_model_still_gets_a_caption(monkeypatch):
-    out = _prepare(monkeypatch, multimodal=False, caption_fn=_real_caption)
-    assert isinstance(out, str), "a text-only model cannot receive image blocks"
-    assert "[Attached image: a PDF viewer showing page 9]" in out
-    assert "what is this?" in out
+def test_text_only_model_defers_inspection_until_the_vision_tool_is_called(monkeypatch):
+    calls: list = []
 
+    async def spy(image_urls, *args, **kwargs):
+        calls.append(image_urls)
+        return "a screenshot description"
 
-# ── a FAILED caption must fall through, not become the answer ───────────────
-
-
-@pytest.mark.parametrize(
-    "placeholder_name",
-    ["_VISION_FAILED", "_VISION_UNAVAILABLE", "_VISION_EMPTY"],
-)
-def test_a_failure_placeholder_falls_through_to_image_blocks(monkeypatch, placeholder_name):
-    """A truthy failure string must not be mistaken for a caption."""
-    from novacode_cli.bootstrap import vision_router
-
-    placeholder = getattr(vision_router, placeholder_name)
-
-    async def returns_placeholder(image_urls, *args, **kwargs):
-        return placeholder
-
-    out = _prepare(monkeypatch, multimodal=False, caption_fn=returns_placeholder)
-    assert isinstance(out, list), (
-        f"{placeholder_name} is a truthy string and was returned as if it were a "
-        "caption; the image blocks should have been passed through instead"
-    )
-    assert out[1]["type"] == "image_url"
-
-
-def test_a_raising_caption_falls_through_to_image_blocks(monkeypatch):
-    async def boom(image_urls, *args, **kwargs):
-        raise RuntimeError("vision exploded")
-
-    out = _prepare(monkeypatch, multimodal=False, caption_fn=boom)
+    out = _prepare(monkeypatch, multimodal=False, caption_fn=spy)
     assert isinstance(out, list)
+    assert out[0]["text"] == "what is this?"
     assert out[1]["type"] == "image_url"
+    assert calls == [], "image inspection must wait for an explicit VISION tool call"
 
 
 # ── the capability answer has one source of truth ───────────────────────────

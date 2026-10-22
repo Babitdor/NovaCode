@@ -1,36 +1,15 @@
-"""Clipboard images reach the vision model as data URLs.
-
-Regression: ``prepare_input_content`` passed ``ImageData`` *objects* to
-``caption_images``, which takes ``data:`` URL *strings*. ``langchain_ollama``
-rejected the objects with "Only string image_url or dict with string 'url'
-inside content parts are supported", and the surrounding bare ``except: pass``
-turned that into the user-facing placeholder
-"[image: vision captioning failed ...]" — with a working vision model.
-"""
+"""Clipboard images stay in graph state until VISION is explicitly called."""
 
 from __future__ import annotations
 
 import asyncio
 import base64
 import io
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
-
-
-@pytest.fixture(autouse=True)
-def _text_only_main_model(monkeypatch):
-    """Force the captioning path on.
-
-    This module tests the caption path, which only runs for a text-only main
-    model — a multimodal one gets image blocks instead (see
-    ``test_vision_multimodal_routing.py``). Pinning it keeps these tests
-    independent of whichever model happens to be configured on this machine.
-    """
-    from novacode_cli.core import input_preparation
-
-    monkeypatch.setattr(
-        input_preparation, "_main_model_can_see_images", lambda: False
-    )
+from langchain_core.messages import HumanMessage
 
 
 def _image_data():
@@ -47,138 +26,105 @@ def _image_data():
     )
 
 
-# ── the ImageData contract ──────────────────────────────────────────────────
-
-
-def test_to_data_url_is_the_form_multimodal_apis_accept():
-    img = _image_data()
-    url = img.to_data_url()
-    assert url.startswith("data:image/png;base64,")
-    assert url == f"data:image/png;base64,{img.base64_data}"
-
-
-def test_to_message_content_uses_the_same_url():
-    img = _image_data()
-    part = img.to_message_content()
-    assert part["type"] == "image_url"
-    # The value must be a *string* — a nested object is rejected by the client.
-    assert isinstance(part["image_url"]["url"], str)
-    assert part["image_url"]["url"] == img.to_data_url()
-
-
-# ── the caller must pass strings, not objects ───────────────────────────────
-
-
-def test_caption_images_is_given_url_strings_not_objects(monkeypatch):
-    """The exact bug: objects were passed where URL strings were required."""
+def test_input_preparation_defers_auxiliary_call(monkeypatch: pytest.MonkeyPatch):
     from novacode_cli.core import input_preparation
     from novacode_cli.input_utils import ImageTracker
 
     tracker = ImageTracker()
     tracker.add_image(_image_data())
-
-    seen: list = []
-
-    async def fake_caption(image_urls, *args, **kwargs):
-        seen.append(image_urls)
-        return "a small blue square"
-
-    monkeypatch.setattr(
-        "novacode_cli.bootstrap.vision_router.caption_images", fake_caption
-    )
+    caption = AsyncMock(return_value="a small blue square")
+    monkeypatch.setattr("novacode_cli.bootstrap.vision_router.caption_images", caption)
 
     out = asyncio.run(
-        input_preparation.prepare_input_content("what is this?", image_tracker=tracker)
-    )
-
-    assert isinstance(out, str), "captioning should have produced text"
-    assert "a small blue square" in out
-    assert seen, "caption_images was never called"
-    for item in seen[0]:
-        assert isinstance(item, str), (
-            f"caption_images expects URL strings, got {type(item).__name__}"
+        input_preparation.prepare_input_content(
+            "describe this", image_tracker=tracker, skip_file_mentions=True
         )
-        assert item.startswith("data:image/")
-
-
-def test_a_successful_caption_is_attached_to_the_prompt(monkeypatch):
-    """The caption is wrapped and appended, with the user's text intact."""
-    from novacode_cli.core import input_preparation
-    from novacode_cli.input_utils import ImageTracker
-
-    tracker = ImageTracker()
-    tracker.add_image(_image_data())
-
-    async def fake_caption(image_urls, *args, **kwargs):
-        return "a small blue square"
-
-    monkeypatch.setattr(
-        "novacode_cli.bootstrap.vision_router.caption_images", fake_caption
     )
 
-    out = asyncio.run(
-        input_preparation.prepare_input_content("describe this", image_tracker=tracker)
-    )
-    assert isinstance(out, str)
-    assert "describe this" in out
-    assert "[Attached image: a small blue square]" in out
+    assert isinstance(out, list)
+    assert out[0]["text"] == "describe this"
+    assert out[1]["type"] == "image_url"
+    assert isinstance(out[1]["image_url"]["url"], str)
+    caption.assert_not_awaited()
 
 
-# ── a caption failure must be visible, not silent ───────────────────────────
+async def test_vision_tool_reads_latest_image_only_when_invoked(monkeypatch: pytest.MonkeyPatch):
+    from novacode_cli.bootstrap import vision_router as vr
 
-
-def test_captioning_failure_is_logged_not_silently_swallowed(monkeypatch, caplog):
-    """The swallowed exception is why this bug hid for so long."""
-    import logging
-
-    from novacode_cli.core import input_preparation
-    from novacode_cli.input_utils import ImageTracker
-
-    tracker = ImageTracker()
-    tracker.add_image(_image_data())
-
-    async def boom(*args, **kwargs):
-        raise RuntimeError("vision exploded")
-
-    monkeypatch.setattr(
-        "novacode_cli.bootstrap.vision_router.caption_images", boom
-    )
-
-    with caplog.at_level(logging.WARNING):
-        out = asyncio.run(
-            input_preparation.prepare_input_content("hi", image_tracker=tracker)
+    caption = AsyncMock(return_value="a small blue square")
+    monkeypatch.setattr(vr, "caption_images", caption)
+    image_url = _image_data().to_data_url()
+    tool = vr.build_vision_tool()
+    result = await tool.coroutine(
+        runtime=SimpleNamespace(
+            state={
+                "messages": [
+                    HumanMessage(
+                        content=[
+                            {"type": "text", "text": "describe this"},
+                            {"type": "image_url", "image_url": {"url": image_url}},
+                        ]
+                    )
+                ]
+            }
         )
-    assert "Clipboard image captioning failed" in caplog.text, (
-        "a captioning failure must be logged, not silently discarded"
     )
-    # And it still degrades safely: the image blocks are passed through.
-    assert out is not None
+
+    assert result == "a small blue square"
+    caption.assert_awaited_once_with([image_url], "describe this")
+    assert tool.name == "VISION"
 
 
-# ── sensitivity: the fix is what makes it work ──────────────────────────────
+async def test_vision_tool_does_not_reuse_an_image_from_an_earlier_turn(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from novacode_cli.bootstrap import vision_router as vr
+
+    caption = AsyncMock(return_value="description")
+    monkeypatch.setattr(vr, "caption_images", caption)
+    old_image = _image_data().to_data_url()
+    tool = vr.build_vision_tool()
+    result = await tool.coroutine(
+        runtime=SimpleNamespace(
+            state={
+                "messages": [
+                    HumanMessage(
+                        content=[{"type": "image_url", "image_url": {"url": old_image}}]
+                    ),
+                    HumanMessage(content="What is the weather today?"),
+                ]
+            }
+        )
+    )
+
+    assert "could not find" in result
+    caption.assert_not_awaited()
 
 
-@pytest.mark.parametrize("bad_input", ["objects"])
-def test_passing_objects_is_what_broke_it(bad_input):
-    """Confirms the mechanism: raw ImageData objects are not acceptable.
+def test_text_only_model_request_strips_image_but_preserves_vision_hint():
+    from novacode_cli.bootstrap.vision_router import _collect_image_urls, _strip_image_content
 
-    This pins *why* the fix was needed — if a future refactor passes the
-    objects again, this documents the failure it causes.
-    """
-    from langchain_core.messages import HumanMessage
-
-    from novacode_cli.image_utils import ImageData
-
-    img = _image_data()
-    # A well-formed content part uses the string URL.
-    good = HumanMessage(
+    message = HumanMessage(
         content=[
-            {"type": "text", "text": "x"},
-            img.to_message_content(),
+            {"type": "text", "text": "fix this"},
+            {"type": "image_url", "image_url": {"url": _image_data().to_data_url()}},
         ]
     )
-    assert isinstance(good.content[1]["image_url"]["url"], str)  # type: ignore[index]
+    forwarded = _strip_image_content(message)
 
-    # And the object itself is not a string URL (the old, broken call site).
-    assert not isinstance(img, str)
-    assert not isinstance(ImageData, str)
+    assert _collect_image_urls(forwarded) == []
+    assert "fix this" in forwarded.text
+    assert "VISION" in forwarded.text
+
+
+def test_vision_tool_returns_visible_failure_reason(monkeypatch: pytest.MonkeyPatch):
+    from novacode_cli.bootstrap import vision_router as vr
+
+    model = AsyncMock()
+    model.ainvoke.side_effect = TimeoutError
+    monkeypatch.setattr(vr, "get_vision_model", lambda: model)
+    vr._vision_cooldown_remaining = 0
+    result = asyncio.run(vr.caption_images([_image_data().to_data_url()], "inspect"))
+
+    assert "timed out" in result
+    assert vr.is_vision_failure(result)

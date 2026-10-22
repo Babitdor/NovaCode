@@ -40,10 +40,12 @@ def _reset_vision_globals() -> Iterator[None]:
     vr._vision_model_instance = None
     vr._vision_model_errored = False
     vr._vision_cooldown_remaining = 0
+    vr._vision_failure_reason = None
     yield
     vr._vision_model_instance = None
     vr._vision_model_errored = False
     vr._vision_cooldown_remaining = 0
+    vr._vision_failure_reason = None
 
 
 # =========================================================================
@@ -232,7 +234,7 @@ class TestStripAllImages:
 
 
 # =========================================================================
-# VisionCaptionMiddleware — tool-result captioning
+# VisionCaptionMiddleware — images remain available to the on-demand tool
 # =========================================================================
 
 
@@ -244,10 +246,9 @@ def _tool_request(name: str, args: dict, state_messages: list | None = None) -> 
 
 
 class TestVisionCaptionToolHook:
-    async def test_read_file_image_captioned_to_text(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setattr(
-            vr, "caption_images", AsyncMock(return_value="screenshot of a login form")
-        )
+    async def test_read_file_image_is_deferred_to_vision_tool(self, monkeypatch: pytest.MonkeyPatch):
+        caption = AsyncMock(return_value="screenshot of a login form")
+        monkeypatch.setattr(vr, "caption_images", caption)
         mw = VisionCaptionMiddleware()
         image_tm = ToolMessage(
             content="",
@@ -260,10 +261,9 @@ class TestVisionCaptionToolHook:
             "read_file", {"file_path": "/login.png"}, [HumanMessage(content="check the login UI")]
         )
         out = await mw.awrap_tool_call(req, handler)
-        assert isinstance(out, ToolMessage)
-        assert "screenshot of a login form" in out.content
-        assert "/login.png" in out.content
-        assert _collect_image_urls(out) == []  # no image leaks downstream
+        assert out is image_tm
+        assert _collect_image_urls(out) == ["data:image/png;base64,abc"]
+        caption.assert_not_awaited()
 
     async def test_non_read_file_passthrough(self):
         mw = VisionCaptionMiddleware()
@@ -279,11 +279,9 @@ class TestVisionCaptionToolHook:
         out = await mw.awrap_tool_call(_tool_request("read_file", {"file_path": "/a.py"}), handler)
         assert out is tm
 
-    async def test_vision_unavailable_returns_text_not_image(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setattr(
-            vr, "caption_images", AsyncMock(return_value="[image: vision model unavailable]")
-        )
-        mw = VisionCaptionMiddleware()
+    async def test_read_file_image_not_captioned_eagerly(self, monkeypatch: pytest.MonkeyPatch):
+        caption = AsyncMock(return_value="should not run yet")
+        monkeypatch.setattr(vr, "caption_images", caption)
         image_tm = ToolMessage(
             content="",
             name="read_file",
@@ -291,10 +289,11 @@ class TestVisionCaptionToolHook:
             content_blocks=[{"type": "image", "base64": "abc", "mime_type": "image/png"}],
         )
         handler = AsyncMock(return_value=image_tm)
-        out = await mw.awrap_tool_call(_tool_request("read_file", {"file_path": "/a.png"}), handler)
-        assert isinstance(out, ToolMessage)
-        assert _collect_image_urls(out) == []
-        assert "unavailable" in out.content
+        out = await VisionCaptionMiddleware().awrap_tool_call(
+            _tool_request("read_file", {"file_path": "/a.png"}), handler
+        )
+        assert out is image_tm
+        caption.assert_not_awaited()
 
 
 class TestVisionCaptionModelHook:
@@ -402,13 +401,13 @@ class TestVisionCooldown:
 
 
 class TestPasteIngestionCaptioning:
-    async def test_pasted_image_becomes_text(self, monkeypatch: pytest.MonkeyPatch):
+    async def test_pasted_image_waits_for_explicit_vision_tool_call(self, monkeypatch: pytest.MonkeyPatch):
         import novacode_cli.core.input_preparation as ip
 
-        # Captioning only applies to a TEXT-ONLY main model; a multimodal one is
-        # handed the image blocks instead (test_vision_multimodal_routing.py).
+        # A text-only model must not trigger an eager auxiliary call.
         monkeypatch.setattr(ip, "_main_model_can_see_images", lambda: False)
-        monkeypatch.setattr(vr, "caption_images", AsyncMock(return_value="a bar chart of sales"))
+        caption = AsyncMock(return_value="a bar chart of sales")
+        monkeypatch.setattr(vr, "caption_images", caption)
 
         class _FakeImg:
             def to_data_url(self) -> str:
@@ -423,10 +422,10 @@ class TestPasteIngestionCaptioning:
         out = await ip.prepare_input_content(
             "describe this chart", image_tracker=tracker, skip_file_mentions=True
         )
-        assert isinstance(out, str)
-        assert "describe this chart" in out
-        assert "a bar chart of sales" in out
-        assert "data:image" not in out  # image never enters the conversation
+        assert isinstance(out, list)
+        assert out[0]["text"] == "describe this chart"
+        assert out[1]["type"] == "image_url"
+        caption.assert_not_awaited()
 
     async def test_multimodal_main_model_gets_image_blocks_not_a_caption(
         self, monkeypatch: pytest.MonkeyPatch

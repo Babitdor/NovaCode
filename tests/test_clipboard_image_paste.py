@@ -96,30 +96,10 @@ def test_pasted_image_is_attached_to_the_conversation():
     tracker = ImageTracker()
     tracker.add_image(_image())
 
-    # The image must reach the model either way: as image blocks for a multimodal
-    # main model, or as a caption for a text-only one. This machine's configured
-    # model is multimodal, so pin text-only to exercise the captioning branch.
-    import novacode_cli.core.input_preparation as ip
-
-    orig_can_see = ip._main_model_can_see_images
-    ip._main_model_can_see_images = lambda: False
-
-    async def fake_captions(_images, *a, **k):  # noqa: ANN002, ANN003, ANN002
-        return "a small red square"
-
-    import novacode_cli.bootstrap.vision_router as vr
-
-    orig = vr.caption_images
-    vr.caption_images = fake_captions
-    try:
-        out = _asyncio.run(
-            prepare_input_content("what is this?", image_tracker=tracker)
-        )
-    finally:
-        vr.caption_images = orig
-        ip._main_model_can_see_images = orig_can_see
-    assert "a small red square" in out
-    assert "what is this?" in out
+    out = _asyncio.run(prepare_input_content("what is this?", image_tracker=tracker))
+    assert isinstance(out, list)
+    assert out[0]["text"] == "what is this?"
+    assert out[1]["type"] == "image_url"
 
 
 # ── the fallback: Ctrl+V must not break text paste ───────────────────────────

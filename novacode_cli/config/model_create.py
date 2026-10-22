@@ -771,7 +771,7 @@ def create_model_from_config(provider: str, model_name: str) -> BaseChatModel | 
 
     Unlike :func:`create_model`, this function only tries the exact provider/model
     requested and returns ``None`` if the required API key is missing — it never
-    falls back to another provider.  This is used for vision captioning (gemma).
+    falls back to another provider. This is used for the on-demand vision model.
 
     Args:
         provider: An Ollama, OpenAI, Anthropic, Google, OpenRouter or OpenCode provider.

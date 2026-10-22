@@ -1,9 +1,9 @@
 """Handler for the /vision command — configure image handling.
 
-Nova routes images through an auxiliary ``vision_model`` when the main model is
-text-only. When the main model is multimodal, images go straight to it. This
-command shows and edits both settings, so a user no longer has to hand-edit
-``~/.nova/Nova.config.json``.
+Nova routes images through the selected main model when it is multimodal. For a
+text-only model, the agent can request a separate VISION side-call when it needs
+visual details. ``/model`` → ``Vision`` selects that model; this command remains
+the direct command-line escape hatch and capability override.
 """
 
 from __future__ import annotations
@@ -54,11 +54,16 @@ def _print_status() -> None:
             f"  Auxiliary vision model: "
             f"[bold cyan]{vision_cfg['provider']}/{vision_cfg['model']}[/bold cyan]"
         )
-        console.print("  [dim]Images are captioned to text by the vision model.[/dim]")
+        console.print("  [dim]The agent can call VISION when it needs visual details.[/dim]")
+    console.print(
+        f"  Vision side-call:  [bold cyan]{vision_cfg['provider']}/{vision_cfg['model']}[/bold cyan]"
+    )
+    console.print("  [dim]Text-only models call it only when visual details are needed.[/dim]")
     console.print()
     console.print("[bold]Usage:[/bold]")
     console.print("  /vision                       - Show this status")
-    console.print("  /vision <provider> <model>    - Set the auxiliary vision model")
+    console.print("  /model → Vision               - Choose the vision side-call model")
+    console.print("  /vision <provider> <model>    - Set the vision side-call model directly")
     console.print("  /vision on                    - Force: main model is multimodal")
     console.print("  /vision off                   - Force: main model is text-only")
     console.print("  /vision auto                  - Auto-detect from the model name")
@@ -96,7 +101,7 @@ async def handle_vision_command(ctx: CommandContext) -> bool:
         console.print()
         return True
 
-    # ── Set the auxiliary vision model: /vision <provider> <model> ──────────
+    # ── Set the vision side-call model: /vision <provider> <model> ──────────
     if len(parts) >= 2:
         provider, model = parts[0], " ".join(parts[1:])
         nova_config.set_vision_model_config(provider, model)

@@ -415,12 +415,18 @@ class NovaConfig:
             "model": model,
         }
         self._save()
+        from novacode_cli.bootstrap.vision_router import reset_vision_model_cache
+
+        reset_vision_model_cache()
 
     def clear_vision_model_config(self) -> None:
         """Clear saved vision model configuration (reverts to default)."""
         if "vision_model" in self._config:
             del self._config["vision_model"]
             self._save()
+            from novacode_cli.bootstrap.vision_router import reset_vision_model_cache
+
+            reset_vision_model_cache()
 
     # ── Main-model multimodal override ──────────────────────────────────────
 
@@ -429,7 +435,7 @@ class NovaConfig:
 
         Returns ``None`` (auto-detect via the pattern registry), ``True``
         (force multimodal — images go straight to the main model), or ``False``
-        (force text-only — images are captioned by the auxiliary vision model).
+        (force text-only — images are available through the VISION side-call).
         """
         value = self._config.get("main_model_multimodal")
         if isinstance(value, bool):

@@ -30,6 +30,8 @@ uv run nova
 
 First-run setup guides you through provider configuration and workspace approval. Provider API keys can be stored in the OS keychain. Hosted providers may charge for model usage.
 
+When the selected chat model is text-only, it can inspect an attached image on demand with the `VISION` tool. Configure that independent vision model in `/model` → **Vision**; Nova does not switch the model answering your conversation. Multimodal chat models receive images directly.
+
 To install a global `nova` command from this checkout:
 
 ```bash
@@ -43,7 +45,7 @@ You can then run `nova` from your project's directory. After changing this check
 | Command | Purpose |
 |---|---|
 | `/help` | Discover commands and keyboard shortcuts |
-| `/model`, `/auth` | Choose models and configure provider access |
+| `/model`, `/auth` | Choose models, configure a separate vision model and provider access |
 | `/plan`, `/council <task>` | Investigate a change or compare proposed plans |
 | `/share all` | Create a temporary public link for session artifacts |
 | `/share artifacts` | Host artifacts through Cloudflare Tunnel |

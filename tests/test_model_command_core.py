@@ -227,6 +227,16 @@ class _RecordingVoiceConfig:
         return {}
 
 
+class _RecordingVisionConfig:
+    vision_calls: list[tuple[str, str]] = []
+
+    def __init__(self, *a, **k):
+        pass
+
+    def set_vision_model_config(self, provider, model):
+        type(self).vision_calls.append((provider, model))
+
+
 class _AppStub:
     """The bits of NovaApp `_apply_voice_pick` touches."""
 
@@ -337,6 +347,22 @@ def test_an_empty_voice_name_is_ignored(voice_config):
     assert voice_config.provider_calls == []
     assert voice_config.voice_calls == []
     assert app._voice_pipeline == "warmed-pipeline"
+
+
+def test_vision_pick_saves_the_sidecall_model(monkeypatch):
+    from novacode_cli.tui.app import NovaApp
+
+    _RecordingVisionConfig.vision_calls = []
+    monkeypatch.setattr(
+        "novacode_cli.config.nova_config.NovaConfig", _RecordingVisionConfig
+    )
+    app = _AppStub()
+    NovaApp._apply_vision_pick(
+        app, {"kind": "vision", "provider": "anthropic", "model": "claude-haiku-4-5"}
+    )
+
+    assert _RecordingVisionConfig.vision_calls == [("anthropic", "claude-haiku-4-5")]
+    assert any("VISION" in line for line in app.logged)
 
 
 def test_a_config_failure_is_reported_not_raised(voice_config):
