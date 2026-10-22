@@ -47,7 +47,7 @@ def attach(  # noqa: PLR0915 - Ordered runtime assembly.
         names = {getattr(tool, "name", None) for tool in tools}
         return (
             [*tools, *(tool for tool in TEAM_TOOLS if tool.name not in names)],
-            TeamMiddleware(binding),
+            TeamMiddleware(binding, workspace=workspace),
             None,
         )
     if restricted:

@@ -35,7 +35,8 @@ def fixed_policy(monkeypatch: pytest.MonkeyPatch):
 async def setup_worker(tmp_path: Path):
     adapter = AsyncMock()
     adapter.start.return_value.stop.return_value = True
-    host = TeamCoordinator(tmp_path, Identity("p", "r"), {"default": adapter})
+    adapter.start.return_value.request.cwd = tmp_path
+    host = TeamCoordinator(tmp_path, Identity("p", "r"), {"default": adapter}, workspace=tmp_path)
     team = await host.request(host.lead, "team_create", {"name": "test"})
     member = await host.spawn(host.lead, "read", team["id"])
     return host, Identity("p", "r", member["id"], team["id"])
@@ -167,4 +168,96 @@ async def test_granted_call_id_cannot_authorize_a_second_execution(tmp_path: Pat
     call = {"tool": "read_file", "args": {"file_path": "/a"}, "tool_call_id": "once"}
     assert (await host.authorize(member, call))["allowed"]
     assert not (await host.authorize(member, call))["allowed"]
+    await host.close()
+
+
+async def test_external_write_requires_real_approval_even_in_auto_mode(tmp_path: Path):
+    host, member = await setup_worker(tmp_path)
+    host.session_state = SessionState(auto_approve=True)
+    external = tmp_path.parent / "Research" / "report.md"
+    result = await host.authorize(
+        member,
+        {
+            "tool": "write_file",
+            "args": {"file_path": str(external)},
+            "tool_call_id": "outside",
+            "write_paths": [str(external)],
+        },
+    )
+    assert not result["allowed"]
+    assert "outside the project" in result["reason"]
+    await host.close()
+
+
+async def test_explicit_external_call_approval_is_preserved(tmp_path: Path):
+    host, member = await setup_worker(tmp_path)
+    state = host.session_state = SessionState(auto_approve=True)
+    external = tmp_path.parent / "Research" / "report.md"
+    notices = []
+
+    def approve(notification: Notification) -> None:
+        notices.append(notification)
+        state.resolve_approval(notification.action_id, approve=True)
+
+    state._notification_callback = approve
+    call = {
+        "tool": "write_file",
+        "args": {"file_path": str(external)},
+        "tool_call_id": "approved-external",
+        "write_paths": [str(external)],
+    }
+    assert (await host.authorize(member, call))["allowed"]
+    assert len(notices) == 1
+    assert not (await host.authorize(member, call))["allowed"]
+    await host.close()
+
+
+async def test_explicit_path_allow_grants_external_destination(tmp_path: Path):
+    from novacode_cli.security.policy import get_policy
+
+    host, member = await setup_worker(tmp_path)
+    host.session_state = SessionState(auto_approve=True)
+    external = tmp_path.parent / "Research" / "report.md"
+    get_policy().path_allow.append(external.as_posix())
+    assert (
+        await host.authorize(
+            member,
+            {
+                "tool": "write_file",
+                "args": {"file_path": str(external)},
+                "tool_call_id": "allowed-root",
+                "write_paths": [str(external)],
+            },
+        )
+    )["allowed"]
+    get_policy().path_deny.append(external.as_posix())
+    assert not (
+        await host.authorize(
+            member,
+            {
+                "tool": "write_file",
+                "args": {"file_path": str(external)},
+                "tool_call_id": "denied-root",
+                "write_paths": [str(external)],
+            },
+        )
+    )["allowed"]
+    await host.close()
+
+
+async def test_in_project_write_stays_automatic(tmp_path: Path):
+    host, member = await setup_worker(tmp_path)
+    host.session_state = SessionState(auto_approve=True)
+    root = host.workspace
+    assert (
+        await host.authorize(
+            member,
+            {
+                "tool": "write_file",
+                "args": {"file_path": "/notes/report.md"},
+                "tool_call_id": "inside",
+                "write_paths": [str(root / "notes/report.md")],
+            },
+        )
+    )["allowed"]
     await host.close()

@@ -692,12 +692,21 @@ class TeamCoordinator:
                 "reason": "Denied by parent approval policy",
                 "digest": digest,
             }
+        from novacode_cli.teams.workspace import write_boundary
+
+        try:
+            destinations, outside = await asyncio.to_thread(
+                write_boundary, name, args, Path(member.get("cwd") or self.workspace),
+                payload.get("write_paths"), policy,
+            )
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return {"allowed": False, "reason": "Team write path could not be resolved"}
         auto = (
             self.session_state.auto_approve
             if self.session_state is not None
             else member.get("auto_approve", False)
         )
-        if verdict.tier == "allow" or auto:
+        if not outside and (verdict.tier == "allow" or auto):
             allowed = grant()
             return {
                 "allowed": allowed,
@@ -708,7 +717,10 @@ class TeamCoordinator:
         if state is None or not callable(getattr(state, "_notification_callback", None)):
             return {
                 "allowed": False,
-                "reason": "Requires parent authorization; ask the lead to perform this action",
+                "reason": (
+                    "Write outside the project requires explicit parent approval" if outside
+                    else "Requires parent authorization; ask the lead to perform this action"
+                ),
             }
         action = f"team-approval-{caller.agent}-{uuid.uuid4().hex}"
         future = asyncio.get_running_loop().create_future()
@@ -722,7 +734,9 @@ class TeamCoordinator:
                 {
                     "agent": caller.agent,
                     "tool_call_id": call_id,
-                    "workspace": str(self.workspace),
+                    "workspace": str(member.get("cwd") or self.workspace),
+                    "write_paths": [str(path) for path in destinations],
+                    "outside_workspace": outside,
                     "tool": name,
                     "args": args,
                 },

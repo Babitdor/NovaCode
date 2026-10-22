@@ -17,6 +17,8 @@ docs/*
 !docs/COUNCIL-SETTINGS.md
 !docs/WORKTREE-TOOLS-SPEC.md
 !docs/WORKTREE-TOOLS-EVIDENCE.md
+!docs/TEAM-WORKSPACE-SPEC.md
+!docs/TEAM-WORKSPACE-EVIDENCE.md
 !docs/essential-tools.md
 !docs/temporary-sharing.md
 # Any nested docs/ folder stays ignored, as the old bare docs/ rule had it.

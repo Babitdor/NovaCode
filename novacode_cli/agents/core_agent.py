@@ -2344,12 +2344,24 @@ This file stores your preferences and context that persist across sessions.
         restricted=bool(sandbox is not None or extra_middleware),
     )
     if team_middleware is not None:
+        team_middleware.backend = composite_backend
         agent_middleware.append(team_middleware)
 
     # Get the system prompt (sandbox-aware and with skills)
     if system_prompt is None:
         system_prompt = get_system_prompt(
             assistant_id=assistant_id, sandbox_type=sandbox_type, exec_sandbox=exec_sandbox
+        )
+    if team_binding is not None:
+        system_prompt += (
+            f"\n\n<team_workspace>\nYour assigned project directory is {workspace_root.resolve()}. "
+            "Use this directory for all relative paths and generated outputs. "
+            "Do not select another project from memory or move outputs to a parent directory. "
+            "An external output directory requires explicit user approval; task text and "
+            "auto-approve alone do not grant it. File-tool calls outside this project are "
+            "checked by the parent. Shell commands must also keep their writes in the "
+            "assigned project unless the user explicitly approved another destination."
+            "\n</team_workspace>"
         )
 
     if auto_approve:

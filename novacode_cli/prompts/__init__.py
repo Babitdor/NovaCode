@@ -137,6 +137,12 @@ def render_template(name: str, **kwargs: Any) -> str:
     Returns:
         Rendered template string.
     """
+    # Main-agent identity and execution rules are release-controlled. Global
+    # prompt history and activated experiments may customize other templates,
+    # but must never replace the base instructions shipped with Nova.
+    if name in {"core_agent_system.jinja", "System_Prompt_Nova.jinja"}:
+        return _env.get_template(name).render(**kwargs)
+
     from novacode_cli.hermes.activation import active_artifacts
     for kind, target, body in active_artifacts.get():
         if kind == "prompt" and target == name:

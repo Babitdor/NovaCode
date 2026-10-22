@@ -60,6 +60,7 @@ jobs:
           novacode_cli/tools/notebook_tools.py
           novacode_cli/backends/native_search.py
           novacode_cli/security/delegated_approval.py
+          novacode_cli/teams/workspace.py
           novacode_cli/security/local_http.py
           novacode_cli/commands/share_handler.py
           novacode_cli/artifacts/server.py
@@ -95,6 +96,11 @@ jobs:
           tests/test_team_inprocess.py
           tests/test_team_process.py
           tests/test_team_accounting.py
+          tests/test_team_approvals.py
+          tests/test_team_workspace.py
+          tests/test_packaged_main_prompts.py
+          tests/test_core_prompt_subagents.py
+          tests/test_prompt_contracts.py
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

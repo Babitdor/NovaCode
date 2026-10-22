@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
+    from pathlib import Path
 
     from langchain.agents.middleware.types import AgentState, ToolCallRequest
     from langchain_core.messages import ToolMessage
@@ -13,6 +15,7 @@ if TYPE_CHECKING:
     from langgraph.types import Command
 
     from novacode_cli.teams.host import TeamHost
+    from novacode_cli.teams.workspace import RoutedBackend
 
 from langchain.agents.middleware.types import AgentMiddleware
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -24,10 +27,18 @@ from novacode_cli.teams.models import operation_digest
 class TeamMiddleware(AgentMiddleware):
     """A fresh instance per agent; identity never comes from tool arguments."""
 
-    def __init__(self, binding: Binding, *, host: TeamHost | None = None) -> None:
+    def __init__(
+        self,
+        binding: Binding,
+        *,
+        host: TeamHost | None = None,
+        workspace: Path | None = None,
+    ) -> None:
         """Keep immutable identity and a parent-owned RPC endpoint."""
         self.binding = binding
         self.host = host
+        self.workspace = workspace
+        self.backend: RoutedBackend | None = None
 
     def _binding(self) -> Binding:
         if self.host is None:
@@ -59,12 +70,30 @@ class TeamMiddleware(AgentMiddleware):
         try:
             name = request.tool_call.get("name", "")
             if binding.identity.agent != "lead" and name not in TEAM_TOOL_NAMES:
+                from novacode_cli.teams.workspace import resolve_write_paths
+
+                try:
+                    paths = await asyncio.to_thread(
+                        resolve_write_paths,
+                        name,
+                        request.tool_call.get("args", {}),
+                        self.workspace,
+                        self.backend,
+                    )
+                except (OSError, RuntimeError, ValueError) as exc:
+                    return ToolMessage(
+                        f"Team write path could not be resolved: {exc}",
+                        tool_call_id=request.tool_call["id"],
+                        name=name,
+                        status="error",
+                    )
                 authorization = await binding.endpoint(
                     "authorize",
                     {
                         "tool": name,
                         "args": request.tool_call.get("args", {}),
                         "tool_call_id": request.tool_call.get("id", ""),
+                        "write_paths": [str(path) for path in paths],
                     },
                 )
                 matches = authorization.get("digest") == operation_digest(
@@ -73,6 +102,25 @@ class TeamMiddleware(AgentMiddleware):
                 if not authorization.get("allowed") or not matches:
                     return ToolMessage(
                         authorization.get("reason", "Requires parent authorization"),
+                        tool_call_id=request.tool_call["id"],
+                        name=name,
+                        status="error",
+                    )
+                # A symlink moved while the parent was deciding: never spend
+                # an approval on a different destination.
+                try:
+                    unchanged = paths == await asyncio.to_thread(
+                        resolve_write_paths,
+                        name,
+                        request.tool_call.get("args", {}),
+                        self.workspace,
+                        self.backend,
+                    )
+                except (OSError, RuntimeError, ValueError):
+                    unchanged = False
+                if not unchanged:
+                    return ToolMessage(
+                        "Team write destination changed during approval; request it again.",
                         tool_call_id=request.tool_call["id"],
                         name=name,
                         status="error",
