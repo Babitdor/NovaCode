@@ -25,6 +25,7 @@ class TestModelSupportsImages:
             "minicpm-v4.6:1b",
             "gemma4:31b-cloud",
             "deepseek-v4.1-flash:cloud",
+            "minimax/minimax-m3.1-flash:free",
             "pixtral-12b",
         ],
     )
@@ -47,6 +48,9 @@ class TestModelSupportsImages:
 
     def test_case_insensitive(self):
         assert model_supports_images("openai", "GPT-4O") is True
+
+    def test_minimax_m3_1_flash_is_multimodal_for_commandcode(self):
+        assert model_supports_images("commandcode", "minimax/minimax-m3.1-flash:free") is True
 
     def test_empty_model_name(self):
         assert model_supports_images("ollama", "") is False

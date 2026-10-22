@@ -63,6 +63,9 @@ MULTIMODAL_MODEL_PATTERNS: tuple[str, ...] = (
     "claude-haiku",
     # Google
     "gemini-",
+    # MiniMax M3 family (M3.1 Flash accepts image and video input).
+    # Keep this specific to M3; earlier MiniMax coding models are text-only.
+    "minimax-m3",
     # Ollama / open-weight vision models
     "qwen3-vl",
     "qwen2.5-vl",
