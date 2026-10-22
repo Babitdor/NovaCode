@@ -64,6 +64,33 @@ def _collect(agent, user_input="hi", on_interrupt=None, session_state=None):
     return asyncio.run(_run())
 
 
+def test_agent_stream_applies_runtime_tracing_despite_an_old_disabled_context(monkeypatch):
+    import langsmith
+    from langsmith import utils
+
+    from novacode_cli.tracking import tracing
+
+    monkeypatch.setattr(tracing, "_tracing_config", tracing.TracingConfig(
+        enabled=True, api_key="fake", project_name="fresh-project",
+    ))
+    monkeypatch.setattr(tracing, "get_client", lambda: None)
+    checked = []
+
+    class Agent:
+        async def aget_state(self, _config: object) -> _State:
+            return _State([])
+
+        async def astream(self, _inp: object, **_kw: object) -> AsyncIterator[object]:
+            checked.append(utils.tracing_is_enabled())
+            assert langsmith.get_tracing_context()["project_name"] == "fresh-project"
+            yield ((), "messages", (_Chunk("trace", [{"type": "text", "text": "done"}]), {}))
+
+    with langsmith.tracing_context(enabled=False, project_name="stale-project"):
+        _collect(Agent())
+        assert not utils.tracing_is_enabled()
+    assert checked == [True]
+
+
 def test_usage_sums_calls_but_context_uses_latest_call():
     class Agent:
         async def aget_state(self, config):

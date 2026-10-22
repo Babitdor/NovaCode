@@ -27,6 +27,9 @@ def _clean_langsmith_env(monkeypatch):
     ``apply_langsmith_env`` writes to ``os.environ`` directly, and
     ``monkeypatch`` does not see that, so the variables are put back by hand.
     """
+    from novacode_cli.tracking import tracing
+
+    monkeypatch.setattr(tracing, "_tracing_config", tracing.TracingConfig())
     saved = {name: os.environ.get(name) for name in LANGSMITH_ENV_VARS}
     for name in LANGSMITH_ENV_VARS:
         monkeypatch.delenv(name, raising=False)
@@ -134,7 +137,7 @@ class _FakeConsole:
         self._answers = list(answers)
         self.printed: list = []
 
-    def input(self, prompt=""):
+    def input(self, prompt="", **kwargs):
         return self._answers.pop(0) if self._answers else ""
 
     def print(self, *args, **kwargs):

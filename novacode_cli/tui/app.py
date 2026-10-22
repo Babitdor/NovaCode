@@ -13406,15 +13406,12 @@ class NovaApp(App):
         """Ask for the LangSmith environment and activate tracing with it."""
         import os
 
-        from novacode_cli.tracking.tracing import apply_langsmith_env
+        from novacode_cli.tracking.tracing import LANGSMITH_ENV_VARS, apply_langsmith_env
         from novacode_cli.tui.screens import LangSmithSetupModal
 
-        current = {
-            "LANGSMITH_TRACING": os.environ.get("LANGSMITH_TRACING", ""),
-            "LANGSMITH_ENDPOINT": os.environ.get("LANGSMITH_ENDPOINT", ""),
-            "LANGSMITH_API_KEY": os.environ.get("LANGSMITH_API_KEY", ""),
-            "LANGSMITH_PROJECT": project_name or os.environ.get("LANGSMITH_PROJECT", ""),
-        }
+        current = {name: os.environ.get(name, "") for name in LANGSMITH_ENV_VARS}
+        if project_name:
+            current["LANGSMITH_PROJECT"] = project_name
         values = await self.push_screen_wait(LangSmithSetupModal(current=current))
         if values is None:
             self._log(Text("LangSmith setup cancelled.", style="dim"))

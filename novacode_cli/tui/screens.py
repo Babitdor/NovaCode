@@ -1896,6 +1896,12 @@ class LangSmithSetupModal(ModalScreen[dict[str, str] | None]):
     LangSmithSetupModal {
         align: center middle;
     }
+    LangSmithSetupModal #modal-box {
+        max-height: 90%;
+    }
+    LangSmithSetupModal #modal-buttons {
+        height: 3;
+    }
     LangSmithSetupModal #langsmith-hint {
         height: auto;
         color: $text-muted;
@@ -1918,11 +1924,12 @@ class LangSmithSetupModal(ModalScreen[dict[str, str] | None]):
         tracing = (current.get("LANGSMITH_TRACING") or "true").strip().lower()
         if tracing not in ("true", "false"):
             tracing = "true"
-        with Vertical(id="modal-box"):
+        with VerticalScroll(id="modal-box"):
             yield Static(Text("LangSmith tracing", style="bold"), id="modal-title")
             yield Static(
                 Text(
-                    "Saved to the environment for this session; tracing starts immediately.",
+                    "Applies to new turns in this session. Project is the trace destination; "
+                    "agent ID and environment are optional metadata labels.",
                     style="dim",
                 ),
                 id="langsmith-hint",
@@ -1960,6 +1967,13 @@ class LangSmithSetupModal(ModalScreen[dict[str, str] | None]):
                 placeholder="Nova-Code",
                 id="langsmith-project",
             )
+            for name, field_id in (
+                ("LANGSMITH_WORKSPACE_ID", "langsmith-workspace"),
+                ("LANGSMITH_AGENT_ID", "langsmith-agent-id"),
+                ("LANGSMITH_AGENT_ENVIRONMENT", "langsmith-agent-environment"),
+            ):
+                yield Static(Text(f"{name} (optional):", style="bold"), classes="langsmith-field-label")
+                yield Input(value=current.get(name) or "", id=field_id)
             with Horizontal(id="modal-buttons"):
                 yield Button("Save", id="do-save", variant="primary")
                 yield Button("Cancel", id="cancel")
@@ -2004,6 +2018,9 @@ class LangSmithSetupModal(ModalScreen[dict[str, str] | None]):
                 "LANGSMITH_ENDPOINT": endpoint,
                 "LANGSMITH_API_KEY": api_key,
                 "LANGSMITH_PROJECT": project,
+                "LANGSMITH_WORKSPACE_ID": self.query_one("#langsmith-workspace", Input).value.strip(),
+                "LANGSMITH_AGENT_ID": self.query_one("#langsmith-agent-id", Input).value.strip(),
+                "LANGSMITH_AGENT_ENVIRONMENT": self.query_one("#langsmith-agent-environment", Input).value.strip(),
             }
         )
 

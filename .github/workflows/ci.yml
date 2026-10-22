@@ -101,6 +101,12 @@ jobs:
           tests/test_packaged_main_prompts.py
           tests/test_core_prompt_subagents.py
           tests/test_prompt_contracts.py
+          tests/test_langsmith_runtime.py
+          tests/test_langsmith_setup.py
+          tests/test_langsmith_setup_modal.py
+          tests/test_tui_trace_command.py
+          tests/test_agent_stream.py
+          tests/test_usage_tree.py
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

@@ -315,8 +315,13 @@ async def scoped_stream(source: AsyncIterator[Any], name: str) -> AsyncIterator[
     exact duration of the wrapped model stream.
     """
     with usage_scope(name):
-        async for item in source:
-            yield item
+        try:
+            async for item in source:
+                yield item
+        finally:
+            close = getattr(source, "aclose", None)
+            if close is not None:
+                await close()
 
 
 # ═══════════════════════════════════════════════════════════════════════════

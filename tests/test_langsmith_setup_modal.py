@@ -30,6 +30,9 @@ async def test_save_returns_the_entered_environment():
             "LANGSMITH_ENDPOINT": "https://api.smith.langchain.com",
             "LANGSMITH_API_KEY": "lsv2_old",
             "LANGSMITH_PROJECT": "Nova-Code",
+            "LANGSMITH_WORKSPACE_ID": "workspace-1",
+            "LANGSMITH_AGENT_ID": "novacode-cli",
+            "LANGSMITH_AGENT_ENVIRONMENT": "production",
         }
     )
     host = Host(modal)
@@ -47,6 +50,9 @@ async def test_save_returns_the_entered_environment():
         "LANGSMITH_ENDPOINT": "https://example.test",
         "LANGSMITH_API_KEY": "lsv2_new",
         "LANGSMITH_PROJECT": "MyProject",
+        "LANGSMITH_WORKSPACE_ID": "workspace-1",
+        "LANGSMITH_AGENT_ID": "novacode-cli",
+        "LANGSMITH_AGENT_ENVIRONMENT": "production",
     }
 
 
@@ -95,3 +101,15 @@ async def test_cancel_dismisses_without_values():
         await pilot.pause()
 
     assert host.result is None
+
+
+async def test_setup_save_is_reachable_in_small_terminal():
+    modal = LangSmithSetupModal(current={"LANGSMITH_API_KEY": "fake"})
+    host = Host(modal)
+    async with host.run_test(size=(80, 24)) as pilot:
+        modal.query_one("#do-save", Button).focus()
+        await pilot.pause()
+        await pilot.wait_for_scheduled_animations()
+        await pilot.click("#do-save")
+        await pilot.pause()
+    assert host.result["LANGSMITH_API_KEY"] == "fake"

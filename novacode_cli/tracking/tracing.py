@@ -41,7 +41,7 @@ Usage:
 
 import contextlib
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from functools import wraps
 from typing import TYPE_CHECKING, Any
 
@@ -112,10 +112,10 @@ def get_tracing_config() -> TracingConfig:
 
 def configure_tracing(
     api_key: str | None = None,
-    project_name: str = "Nova-Code",
+    project_name: str | None = None,
     workspace_id: str | None = None,
     endpoint: str | None = None,
-    enable: bool = True,
+    enable: bool | None = None,
 ) -> TracingConfig:
     """Configure LangSmith tracing with the provided settings.
 
@@ -141,8 +141,12 @@ def configure_tracing(
     env_workspace = os.environ.get("LANGSMITH_WORKSPACE_ID")
     env_endpoint = os.environ.get("LANGSMITH_ENDPOINT")
 
+    key = api_key or env_api_key
+    requested = enable if enable is not None else (
+        env_tracing in {"true", "1"} if env_tracing else bool(key)
+    )
     _tracing_config = TracingConfig(
-        enabled=enable and (env_tracing == "true" or (api_key or env_api_key)),  # type: ignore
+        enabled=bool(requested and key),
         api_key=api_key or env_api_key,
         project_name=project_name or env_project,
         workspace_id=workspace_id or env_workspace,
@@ -163,6 +167,9 @@ LANGSMITH_ENV_VARS: tuple[str, ...] = (
     "LANGSMITH_ENDPOINT",
     "LANGSMITH_API_KEY",
     "LANGSMITH_PROJECT",
+    "LANGSMITH_WORKSPACE_ID",
+    "LANGSMITH_AGENT_ID",
+    "LANGSMITH_AGENT_ENVIRONMENT",
 )
 
 
@@ -233,6 +240,7 @@ def apply_langsmith_env(values: Mapping[str, str]) -> TracingConfig:
         api_key=api_key,
         project_name=os.environ.get("LANGSMITH_PROJECT") or "Nova-Code",
         endpoint=os.environ.get("LANGSMITH_ENDPOINT"),
+        workspace_id=os.environ.get("LANGSMITH_WORKSPACE_ID"),
         enable=tracing_on,
     )
 
@@ -264,10 +272,46 @@ def get_client() -> Client | None:  # type: ignore
     if _tracing_config._client is None:
         _tracing_config._client = Client(  # type: ignore
             api_key=_tracing_config.api_key,
-            endpoint=_tracing_config.endpoint,  # type: ignore
+            api_url=_tracing_config.endpoint,
+            workspace_id=_tracing_config.workspace_id,
         )
 
     return _tracing_config._client
+
+
+async def traced_stream(source: AsyncIterator[Any]) -> AsyncIterator[Any]:
+    """Apply the latest setup inside the task actually driving the agent.
+
+    Async tasks retain context variables from their creation. Environment cache
+    resets alone cannot override an old tracing_context(enabled=False), or
+    replace its client/project. Snapshot current Nova configuration per stream.
+    """
+    if not _TRACING_AVAILABLE:
+        async with contextlib.aclosing(source):
+            async for item in source:
+                yield item
+        return
+    from langsmith import tracing_context
+
+    config = get_tracing_config()
+    enabled = is_tracing_enabled()
+    metadata = {
+        label: os.environ[name]
+        for label, name in (
+            ("agent_id", "LANGSMITH_AGENT_ID"),
+            ("agent_environment", "LANGSMITH_AGENT_ENVIRONMENT"),
+        )
+        if os.environ.get(name)
+    }
+    with tracing_context(
+        enabled=enabled,
+        project_name=config.project_name,
+        client=get_client() if enabled else None,
+        metadata=metadata,
+    ):
+        async with contextlib.aclosing(source):
+            async for item in source:
+                yield item
 
 
 def wrap_openai_client(model: "ChatOpenAI") -> "ChatOpenAI":
@@ -561,22 +605,7 @@ def auto_configure() -> TracingConfig:
     Returns:
         The configured TracingConfig.
     """
-    from novacode_cli.config.config import Settings
-
-    settings = Settings.from_environment()
-
-    # Check if there's a langsmith config in settings
-    langsmith_api_key = os.environ.get("LANGSMITH_API_KEY")
-
-    # Only configure if we have an API key
-    if langsmith_api_key:
-        return configure_tracing(
-            api_key=langsmith_api_key,
-            project_name=os.environ.get("LANGSMITH_PROJECT", "Nova-Code"),
-        )
-
-    # Return default configuration (disabled)
-    return _tracing_config
+    return configure_tracing()
 
 
 # Convenience exports

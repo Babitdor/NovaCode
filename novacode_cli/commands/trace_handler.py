@@ -1,6 +1,7 @@
 """Handler for the /trace command for LangSmith tracing management."""
 
 import os
+
 from rich.panel import Panel
 from rich.text import Text
 
@@ -18,7 +19,6 @@ async def handle_trace_command(cmd_args: list[str]) -> bool:
     """
     from novacode_cli.tracking.tracing import (
         apply_langsmith_env,
-        configure_tracing,
         get_traces,
         get_tracing_config,
         get_tracing_status,
@@ -254,24 +254,26 @@ async def handle_trace_command(cmd_args: list[str]) -> bool:
 
 def _setup_tracing_interactively() -> None:
     """Ask for the LangSmith environment and activate tracing with it."""
-    from novacode_cli.tracking.tracing import apply_langsmith_env
+    from novacode_cli.tracking.tracing import LANGSMITH_ENV_VARS, apply_langsmith_env
 
-    current = {
-        "LANGSMITH_TRACING": os.environ.get("LANGSMITH_TRACING", ""),
-        "LANGSMITH_ENDPOINT": os.environ.get("LANGSMITH_ENDPOINT", ""),
-        "LANGSMITH_API_KEY": os.environ.get("LANGSMITH_API_KEY", ""),
-        "LANGSMITH_PROJECT": os.environ.get("LANGSMITH_PROJECT", ""),
-    }
+    current = {name: os.environ.get(name, "") for name in LANGSMITH_ENV_VARS}
     values: dict[str, str] = {}
     for name, prompt in (
         ("LANGSMITH_TRACING", "Enable tracing? (true/false)"),
         ("LANGSMITH_ENDPOINT", "LangSmith endpoint"),
         ("LANGSMITH_API_KEY", "LangSmith API key"),
         ("LANGSMITH_PROJECT", "Project name"),
+        ("LANGSMITH_WORKSPACE_ID", "Workspace ID (optional)"),
+        ("LANGSMITH_AGENT_ID", "Agent ID label (optional)"),
+        ("LANGSMITH_AGENT_ENVIRONMENT", "Agent environment label (optional)"),
     ):
         default = current.get(name, "")
         try:
-            answer = console.input(f"{prompt} [{default}]: ").strip()
+            if name == "LANGSMITH_API_KEY":
+                marker = "set; Enter to keep" if default else "not set"
+                answer = console.input(f"{prompt} [{marker}]: ", password=True).strip()
+            else:
+                answer = console.input(f"{prompt} [{default}]: ").strip()
         except (EOFError, KeyboardInterrupt):
             console.print("Setup cancelled.", style=COLORS["warning"])
             return

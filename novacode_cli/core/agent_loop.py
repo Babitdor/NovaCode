@@ -46,6 +46,7 @@ from novacode_cli.core.streaming import (
     looks_like_summarization_output,
 )
 from novacode_cli.tracking.loop_guard import TextRepetitionGuard
+from novacode_cli.tracking.tracing import traced_stream
 from novacode_cli.tracking.usage_tree import scoped_stream
 from novacode_cli.ui import status_phrases
 from novacode_cli.core.subagent_tracking import (
@@ -504,15 +505,17 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
             preview_streamed: set = set()
 
             _current_stream_gen = scoped_stream(
-                agent.astream(
-                    stream_input,
-                    # "custom" carries the quickjs eval bridge's per-dispatch
-                    # subagent events, which is how a fan-out is visible while it
-                    # runs. Anything else on that stream is ignored downstream.
-                    stream_mode=["updates", "messages", "custom"],
-                    subgraphs=True,
-                    config=config,
-                    durability="exit",
+                traced_stream(
+                    agent.astream(
+                        stream_input,
+                        # "custom" carries the quickjs eval bridge's per-dispatch
+                        # subagent events, which is how a fan-out is visible while it
+                        # runs. Anything else on that stream is ignored downstream.
+                        stream_mode=["updates", "messages", "custom"],
+                        subgraphs=True,
+                        config=config,
+                        durability="exit",
+                    )
                 ),
                 "main",
             )

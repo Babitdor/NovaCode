@@ -59,8 +59,11 @@ def _app():
 
 
 @pytest.fixture
-def clean_langsmith_env():
+def clean_langsmith_env(monkeypatch):
     """Restore the LangSmith environment the test changed."""
+    from novacode_cli.tracking import tracing
+
+    monkeypatch.setattr(tracing, "_tracing_config", tracing.TracingConfig())
     saved = {name: os.environ.get(name) for name in LANGSMITH_ENV_VARS}
     for name in LANGSMITH_ENV_VARS:
         os.environ.pop(name, None)
