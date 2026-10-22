@@ -57,6 +57,7 @@ API_KEY_NAMES = {
     "elevenlabs": "elevenlabs_api_key",
     "jev": "typesafe_api_key",
     "systemone": "system_one_api_key",
+    "langsmith": "langsmith_api_key",
 }
 
 

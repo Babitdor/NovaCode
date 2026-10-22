@@ -961,6 +961,12 @@ async def main(
 
     load_secrets_into_env()
 
+    # Load saved non-secret tracing settings and the LangSmith key from the
+    # credential store before any agent is created.
+    from novacode_cli.tracking.tracing import load_persisted_langsmith_settings
+
+    load_persisted_langsmith_settings()
+
     # Voice keys were once written in plaintext to Nova.config.json. Move any
     # that are still there into the keychain, before the pipeline reads them.
     from novacode_cli.config.credentials import migrate_voice_keys

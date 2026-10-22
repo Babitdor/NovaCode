@@ -23,6 +23,7 @@ async def handle_trace_command(cmd_args: list[str]) -> bool:
         get_tracing_config,
         get_tracing_status,
         list_projects,
+        persist_langsmith_settings,
     )
 
     console.print()
@@ -99,6 +100,7 @@ async def handle_trace_command(cmd_args: list[str]) -> bool:
             values["LANGSMITH_API_KEY"] = api_key
         if project_name:
             values["LANGSMITH_PROJECT"] = project_name
+        persist_langsmith_settings(values)
         config = apply_langsmith_env(values)
 
         if config.is_configured():
@@ -107,9 +109,7 @@ async def handle_trace_command(cmd_args: list[str]) -> bool:
                 style=COLORS["success"],
             )
             console.print(f"   Project: {config.project_name}")
-            console.print(
-                "   [dim]Configure LANGSMITH_API_KEY in .env for persistent settings[/dim]"
-            )
+            console.print("   New prompts will be traced to this project.")
         else:
             console.print(
                 "❌ [bold]Failed to enable tracing[/bold]",
@@ -122,12 +122,12 @@ async def handle_trace_command(cmd_args: list[str]) -> bool:
         # The helper also clears LangSmith's cached environment, so the tracer
         # is really detached and not just flagged off.
         apply_langsmith_env({"LANGSMITH_TRACING": "false"})
+        persist_langsmith_settings({"LANGSMITH_TRACING": "false"})
         console.print(
             "✅ [bold]LangSmith tracing disabled[/bold]", style=COLORS["success"]
         )
         console.print(
-            "   [dim]This only affects the current session. "
-            "Remove or set LANGSMITH_TRACING=false in .env for persistent effect.[/dim]"
+            "   [dim]This setting will stay off in future sessions.[/dim]"
         )
 
     elif subcmd == "projects":
@@ -254,7 +254,11 @@ async def handle_trace_command(cmd_args: list[str]) -> bool:
 
 def _setup_tracing_interactively() -> None:
     """Ask for the LangSmith environment and activate tracing with it."""
-    from novacode_cli.tracking.tracing import LANGSMITH_ENV_VARS, apply_langsmith_env
+    from novacode_cli.tracking.tracing import (
+        LANGSMITH_ENV_VARS,
+        apply_langsmith_env,
+        persist_langsmith_settings,
+    )
 
     current = {name: os.environ.get(name, "") for name in LANGSMITH_ENV_VARS}
     values: dict[str, str] = {}
@@ -280,14 +284,18 @@ def _setup_tracing_interactively() -> None:
         # An empty answer keeps the value that is already in use.
         values[name] = answer or default
 
+    warnings = persist_langsmith_settings(values)
     config = apply_langsmith_env(values)
     if config.is_configured():
         console.print(
             "✅ [bold]LangSmith tracing enabled[/bold]", style=COLORS["success"]
         )
         console.print(f"   Project: {config.project_name}")
+        console.print("   New prompts will be traced to this project.")
         if config.endpoint:
             console.print(f"   Endpoint: {config.endpoint}")
+        for warning in warnings:
+            console.print(f"   ⚠ {warning}", style=COLORS["warning"])
     else:
         console.print(
             "⚠️  [bold]LangSmith tracing is not active[/bold]",

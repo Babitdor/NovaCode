@@ -305,6 +305,50 @@ class NovaConfig:
             del self._config["credentials"]
         self._save()
 
+    def get_langsmith_settings(self) -> dict[str, str]:
+        """Return the non-secret LangSmith tracing settings."""
+        self._load()
+        raw = self._config.get("langsmith")
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            key: value.strip()
+            for key, value in raw.items()
+            if key
+            in {
+                "enabled",
+                "endpoint",
+                "project",
+                "workspace_id",
+                "agent_id",
+                "agent_environment",
+            }
+            and isinstance(value, str)
+            and value.strip()
+        }
+
+    def set_langsmith_settings(self, values: dict[str, str]) -> None:
+        """Save non-secret LangSmith settings, preserving unrelated config."""
+        allowed = {
+            "enabled",
+            "endpoint",
+            "project",
+            "workspace_id",
+            "agent_id",
+            "agent_environment",
+        }
+        normalized = {
+            key: value.strip()
+            for key, value in values.items()
+            if key in allowed and isinstance(value, str) and value.strip()
+        }
+        self._load()
+        if normalized:
+            self._config["langsmith"] = normalized
+        else:
+            self._config.pop("langsmith", None)
+        self._save()
+
     # ── Recent model picks ──────────────────────────────────────────────────
 
     #: How many recent picks are remembered. Enough to cover the handful of

@@ -13260,7 +13260,7 @@ class NovaApp(App):
         elif sub in ("enable", "on"):
             await self._trace_enable(args)
         elif sub in ("disable", "off"):
-            self._trace_disable()
+            await self._trace_disable()
         elif sub == "projects":
             self._trace_projects()
         elif sub in ("traces", "recent"):
@@ -13276,7 +13276,10 @@ class NovaApp(App):
 
     async def _trace_enable(self, args: list[str]) -> None:
         """Enable tracing, asking for the environment when no key was given."""
-        from novacode_cli.tracking.tracing import apply_langsmith_env
+        from novacode_cli.tracking.tracing import (
+            apply_langsmith_env,
+            persist_langsmith_settings,
+        )
 
         api_key = args[1] if len(args) > 1 and not args[1].startswith("-") else None
         project_name = None
@@ -13293,12 +13296,13 @@ class NovaApp(App):
         values = {"LANGSMITH_TRACING": "true", "LANGSMITH_API_KEY": api_key}
         if project_name:
             values["LANGSMITH_PROJECT"] = project_name
+        await asyncio.to_thread(persist_langsmith_settings, values)
         cfg = apply_langsmith_env(values)
         if cfg.is_configured():
             t = Text()
             t.append("● LangSmith tracing enabled\n", style="green")
             t.append(f"  project: {cfg.project_name}\n", style="dim")
-            t.append("  set LANGSMITH_API_KEY in .env to persist\n", style="dim")
+            t.append("  new prompts will be traced to this project\n", style="dim")
             self._log(t)
         else:
             self._log(
@@ -13308,17 +13312,22 @@ class NovaApp(App):
                 )
             )
 
-    def _trace_disable(self) -> None:
+    async def _trace_disable(self) -> None:
         """Turn tracing off for this session."""
-        from novacode_cli.tracking.tracing import apply_langsmith_env
+        from novacode_cli.tracking.tracing import (
+            apply_langsmith_env,
+            persist_langsmith_settings,
+        )
 
         # Goes through the helper so LangSmith's cached environment is
         # cleared too — otherwise the tracer stays attached.
         apply_langsmith_env({"LANGSMITH_TRACING": "false"})
+        await asyncio.to_thread(
+            persist_langsmith_settings, {"LANGSMITH_TRACING": "false"}
+        )
         self._log(
             Text(
-                "● LangSmith tracing disabled for this session "
-                "(set LANGSMITH_TRACING=false in .env to persist).",
+                "● LangSmith tracing disabled; this setting will stay off in future sessions.",
                 style="green",
             )
         )
@@ -13397,6 +13406,7 @@ class NovaApp(App):
             if getattr(cfg, "workspace_id", None):
                 t.append(f"  workspace: {cfg.workspace_id}\n", style="dim")
             t.append("  view: https://smith.langchain.com\n", style="dim")
+            t.append("  send a new prompt to create a trace in this project\n", style="dim")
         else:
             t.append("  ○ not configured\n", style="yellow")
             t.append("  run /trace setup to enter the environment\n", style="dim")
@@ -13406,7 +13416,11 @@ class NovaApp(App):
         """Ask for the LangSmith environment and activate tracing with it."""
         import os
 
-        from novacode_cli.tracking.tracing import LANGSMITH_ENV_VARS, apply_langsmith_env
+        from novacode_cli.tracking.tracing import (
+            LANGSMITH_ENV_VARS,
+            apply_langsmith_env,
+            persist_langsmith_settings,
+        )
         from novacode_cli.tui.screens import LangSmithSetupModal
 
         current = {name: os.environ.get(name, "") for name in LANGSMITH_ENV_VARS}
@@ -13416,6 +13430,7 @@ class NovaApp(App):
         if values is None:
             self._log(Text("LangSmith setup cancelled.", style="dim"))
             return
+        warnings = await asyncio.to_thread(persist_langsmith_settings, values)
         cfg = apply_langsmith_env(values)
         t = Text()
         if cfg.is_configured():
@@ -13424,6 +13439,8 @@ class NovaApp(App):
             if cfg.endpoint:
                 t.append(f"  endpoint: {cfg.endpoint}\n", style="dim")
             t.append("  view: https://smith.langchain.com\n", style="dim")
+            for warning in warnings:
+                t.append(f"  warning: {warning}\n", style="yellow")
         else:
             t.append("● LangSmith tracing is off\n", style="yellow")
             if not os.environ.get("LANGSMITH_API_KEY"):

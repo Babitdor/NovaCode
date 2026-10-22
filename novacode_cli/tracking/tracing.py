@@ -245,6 +245,64 @@ def apply_langsmith_env(values: Mapping[str, str]) -> TracingConfig:
     )
 
 
+def persist_langsmith_settings(values: Mapping[str, str]) -> list[str]:
+    """Persist tracing settings, keeping the API key in Nova's secret store.
+
+    The key itself is never written to ``Nova.config.json``. Other LangSmith
+    values are ordinary settings and live there so ``/trace setup`` survives a
+    restart. Returns any credential-store warnings for the UI to display.
+    """
+    from novacode_cli.config.credentials import set_credential
+    from novacode_cli.config.nova_config import NovaConfig
+
+    key = (values.get("LANGSMITH_API_KEY") or "").strip()
+    warnings: list[str] = []
+    if key:
+        outcome = set_credential("LANGSMITH_API_KEY", key)
+        warnings.extend(outcome.warnings)
+
+    names = {
+        "LANGSMITH_TRACING": "enabled",
+        "LANGSMITH_ENDPOINT": "endpoint",
+        "LANGSMITH_PROJECT": "project",
+        "LANGSMITH_WORKSPACE_ID": "workspace_id",
+        "LANGSMITH_AGENT_ID": "agent_id",
+        "LANGSMITH_AGENT_ENVIRONMENT": "agent_environment",
+    }
+    config = NovaConfig()
+    fields = config.get_langsmith_settings()
+    for env_name, field in names.items():
+        value = (values.get(env_name) or "").strip()
+        if value:
+            fields[field] = value.lower() if field == "enabled" else value
+    config.set_langsmith_settings(fields)
+    return warnings
+
+
+def load_persisted_langsmith_settings() -> TracingConfig:
+    """Hydrate saved LangSmith settings after the credential store is loaded."""
+    from novacode_cli.config.credentials import apply_credential_to_env
+    from novacode_cli.config.nova_config import NovaConfig
+
+    saved = NovaConfig().get_langsmith_settings()
+    # A shell/.env value takes priority over Nova's saved UI setting.
+    env_names = {
+        "enabled": "LANGSMITH_TRACING",
+        "endpoint": "LANGSMITH_ENDPOINT",
+        "project": "LANGSMITH_PROJECT",
+        "workspace_id": "LANGSMITH_WORKSPACE_ID",
+        "agent_id": "LANGSMITH_AGENT_ID",
+        "agent_environment": "LANGSMITH_AGENT_ENVIRONMENT",
+    }
+    for field, name in env_names.items():
+        value = saved.get(field)
+        if value:
+            os.environ.setdefault(name, value)
+    if not os.environ.get("LANGSMITH_API_KEY"):
+        apply_credential_to_env("LANGSMITH_API_KEY")
+    return auto_configure()
+
+
 def _setup_langsmith_env() -> None:
     """Set environment variables for LangSmith tracing."""
     os.environ["LANGSMITH_TRACING"] = "true"

@@ -20,15 +20,37 @@ from novacode_cli.tracking.tracing import (
 )
 
 
+class _StubSecretManager:
+    store: dict[str, str] = {}
+
+    def __init__(self):
+        pass
+
+    def get_secret(self, name):
+        return self.store.get(name)
+
+    def store_secret(self, name, value):
+        self.store[name] = value
+        return True
+
+    def delete_secret(self, name):
+        self.store.pop(name, None)
+        return True
+
+
 @pytest.fixture(autouse=True)
-def _clean_langsmith_env(monkeypatch):
+def _clean_langsmith_env(monkeypatch, tmp_path):
     """Keep the developer's LangSmith environment out of these tests.
 
     ``apply_langsmith_env`` writes to ``os.environ`` directly, and
     ``monkeypatch`` does not see that, so the variables are put back by hand.
     """
+    import novacode_cli.config.config as config_mod
     from novacode_cli.tracking import tracing
 
+    monkeypatch.setattr(config_mod, "HOME_DIR", tmp_path / ".nova")
+    monkeypatch.setattr("novacode_cli.onboarding.SecretManager", _StubSecretManager)
+    _StubSecretManager.store = {}
     monkeypatch.setattr(tracing, "_tracing_config", tracing.TracingConfig())
     saved = {name: os.environ.get(name) for name in LANGSMITH_ENV_VARS}
     for name in LANGSMITH_ENV_VARS:
@@ -165,6 +187,11 @@ async def test_the_cli_setup_applies_what_was_typed(monkeypatch):
     assert os.environ["LANGSMITH_API_KEY"] == "lsv2_cli_key"
     assert os.environ["LANGSMITH_PROJECT"] == "CliProject"
     assert get_tracing_config().is_configured()
+    assert _StubSecretManager.store["langsmith_api_key"] == "lsv2_cli_key"
+    from novacode_cli.config.nova_config import NovaConfig
+
+    saved = NovaConfig().get_langsmith_settings()
+    assert saved["project"] == "CliProject"
 
 
 async def test_the_cli_setup_keeps_the_current_value_when_the_answer_is_empty(
@@ -180,3 +207,36 @@ async def test_the_cli_setup_keeps_the_current_value_when_the_answer_is_empty(
     await trace_handler.handle_trace_command(["setup"])
 
     assert os.environ["LANGSMITH_PROJECT"] == "KeptProject"
+
+
+def test_saved_setup_is_restored_for_the_next_session():
+    from novacode_cli.config.nova_config import NovaConfig
+    from novacode_cli.tracking.tracing import (
+        load_persisted_langsmith_settings,
+        persist_langsmith_settings,
+    )
+
+    persist_langsmith_settings(
+        {
+            "LANGSMITH_TRACING": "true",
+            "LANGSMITH_API_KEY": "lsv2_persisted",
+            "LANGSMITH_ENDPOINT": "https://api.smith.langchain.com",
+            "LANGSMITH_PROJECT": "SavedProject",
+            "LANGSMITH_WORKSPACE_ID": "workspace-1",
+            "LANGSMITH_AGENT_ID": "novacode-cli",
+            "LANGSMITH_AGENT_ENVIRONMENT": "production",
+        }
+    )
+    for name in LANGSMITH_ENV_VARS:
+        os.environ.pop(name, None)
+
+    config = load_persisted_langsmith_settings()
+
+    assert config.is_configured()
+    assert os.environ["LANGSMITH_API_KEY"] == "lsv2_persisted"
+    assert os.environ["LANGSMITH_PROJECT"] == "SavedProject"
+    assert os.environ["LANGSMITH_ENDPOINT"] == "https://api.smith.langchain.com"
+    assert os.environ["LANGSMITH_WORKSPACE_ID"] == "workspace-1"
+    assert os.environ["LANGSMITH_AGENT_ID"] == "novacode-cli"
+    assert os.environ["LANGSMITH_AGENT_ENVIRONMENT"] == "production"
+    assert "lsv2_persisted" not in NovaConfig().config_path.read_text(encoding="utf-8")

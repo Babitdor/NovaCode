@@ -59,10 +59,30 @@ def _app():
 
 
 @pytest.fixture
-def clean_langsmith_env(monkeypatch):
+def clean_langsmith_env(monkeypatch, tmp_path):
     """Restore the LangSmith environment the test changed."""
+    import novacode_cli.config.config as config_mod
     from novacode_cli.tracking import tracing
 
+    class StubSecretManager:
+        store = {}
+
+        def __init__(self):
+            pass
+
+        def get_secret(self, name):
+            return self.store.get(name)
+
+        def store_secret(self, name, value):
+            self.store[name] = value
+            return True
+
+        def delete_secret(self, name):
+            self.store.pop(name, None)
+            return True
+
+    monkeypatch.setattr(config_mod, "HOME_DIR", tmp_path / ".nova")
+    monkeypatch.setattr("novacode_cli.onboarding.SecretManager", StubSecretManager)
     monkeypatch.setattr(tracing, "_tracing_config", tracing.TracingConfig())
     saved = {name: os.environ.get(name) for name in LANGSMITH_ENV_VARS}
     for name in LANGSMITH_ENV_VARS:
