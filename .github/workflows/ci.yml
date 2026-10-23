@@ -58,6 +58,8 @@ jobs:
           novacode_cli/tui/caveman_screen.py
           novacode_cli/agents/tool_search_variants.py
           novacode_cli/mcp/generic.py
+          novacode_cli/mcp/code_mode.py
+          novacode_cli/mcp/code_runtime.py
           novacode_cli/tools/cron_tools.py
           novacode_cli/tools/inspection_tools.py
           novacode_cli/tools/notebook_tools.py
@@ -80,6 +82,8 @@ jobs:
           novacode_cli/remote/discord_bridge.py
           novacode_cli/remote/rootapp_setup.py
           novacode_cli/commands/rootapp_remote.py
+      - name: Verify MCP Code Mode boundaries
+        run: uv run --no-sync python scripts/verify_mcp_code_mode.py
       - name: Run offline regression tests
         run: >-
           uv run --no-sync pytest -q --tb=short --junitxml=test-results/regression.xml
@@ -103,6 +107,7 @@ jobs:
           tests/test_tool_search_variants.py
           tests/test_tool_search.py
           tests/test_generic_mcp_tool.py
+          tests/test_mcp_code_mode.py
           tests/test_essential_session_tools.py
           tests/test_context_snapshot.py
           tests/test_remote_cron.py

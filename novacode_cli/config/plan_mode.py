@@ -16,6 +16,7 @@ BLOCKED_TOOLS: frozenset[str] = frozenset({
     "shell",
     "execute_bash",
     "execute",
+    "MCPCode",  # Scripts can compose writes; use individual read-only MCP calls while planning.
     # Server management
     "start_dev_server",
     "stop_server",

@@ -69,6 +69,7 @@ _URL_TOOLS = frozenset({"fetch_url"})
 
 # Per-tool default tier (the fallback when no specific rule matches).
 _DEFAULT_TOOL_TIERS: dict[str, Tier] = {
+    "MCPCode": "allow",  # Isolated JS; each nested MCP call has its own policy check.
     "MCPTool": "ask",
     "CronCreateTool": "ask",
     "CronDeleteTool": "ask",

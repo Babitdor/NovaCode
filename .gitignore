@@ -17,6 +17,7 @@ docs/*
 !docs/security-guardrails.md
 !docs/caveman-mode.md
 !docs/prompt-audit.md
+!docs/mcp-code-mode.md
 !docs/context-learning/
 !docs/reasoning-support.md
 !docs/COUNCIL-SETTINGS.md

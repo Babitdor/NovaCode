@@ -2514,6 +2514,13 @@ This file stores your preferences and context that persist across sessions.
     agent_middleware.append(StrictToolMiddleware())
     agent_middleware.append(ContextSnapshotMiddleware())
 
+    # Programmatic calls must start before every tool guard. Each nested MCP
+    # request re-enters the remaining chain with its original namespaced tool.
+    if _has_mcp:
+        from novacode_cli.mcp.code_mode import MCPCodeModeMiddleware
+
+        agent_middleware.insert(0, MCPCodeModeMiddleware(mcp_middleware, auto_approve=auto_approve))
+
     agent = create_deep_agent(
         name=assistant_id,
         model=wrapped_model,
