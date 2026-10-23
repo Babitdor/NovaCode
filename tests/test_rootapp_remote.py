@@ -243,7 +243,9 @@ async def test_cancelling_devhost_stops_its_forked_companion(bridge, monkeypatch
     monkeypatch.setattr(rootapp_bridge, "node_executable", lambda: node)
     task = asyncio.create_task(bridge.run())
     try:
-        assert await bridge.wait_for_ready(timeout=4)
+        # Includes Windows ACL setup and two real Node process starts. Loaded
+        # CI runners can exceed four seconds; production allows 45 seconds.
+        assert await bridge.wait_for_ready(timeout=20), bridge.last_error
         pid = int((bridge._runtime / "child-pid").read_text())
         runtime = bridge._runtime
         assert psutil.pid_exists(pid)
