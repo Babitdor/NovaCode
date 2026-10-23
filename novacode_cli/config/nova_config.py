@@ -991,6 +991,15 @@ class NovaConfig:
         self._save()
         return pcfg
 
+    def get_attribution(self) -> dict[str, bool]:
+        """Independent AI attribution preferences, enabled for existing installs."""
+        saved = self.get("attribution", {})
+        saved = saved if isinstance(saved, dict) else {}
+        return {
+            name: _config_bool(saved.get(name), default=True)
+            for name in ("commits", "pullRequests")
+        }
+
     def get_caveman_enabled(self) -> bool:
         """Whether replies should use the opt-in terse prose style."""
         return _config_bool(self.get("caveman_enabled"))

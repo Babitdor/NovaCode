@@ -53,6 +53,7 @@ jobs:
         run: >-
           uv run --no-sync ruff check --select F,I
           novacode_cli/agents/strict_tools.py
+          novacode_cli/agents/attribution.py
           novacode_cli/agents/caveman.py
           novacode_cli/agents/caveman_support.py
           novacode_cli/tui/caveman_screen.py
@@ -88,6 +89,7 @@ jobs:
         run: >-
           uv run --no-sync pytest -q --tb=short --junitxml=test-results/regression.xml
           tests/test_release_version.py
+          tests/test_attribution.py
           tests/test_deepagents_compat.py
           tests/test_async_model_context.py
           tests/test_async_task_watcher.py

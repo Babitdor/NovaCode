@@ -18,6 +18,7 @@ docs/*
 !docs/caveman-mode.md
 !docs/prompt-audit.md
 !docs/mcp-code-mode.md
+!docs/attribution.md
 !docs/context-learning/
 !docs/reasoning-support.md
 !docs/COUNCIL-SETTINGS.md

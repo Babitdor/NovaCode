@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from pathlib import Path
 
+    from novacode_cli.agents.attribution import AttributionMiddleware
     from novacode_cli.agents.context_compaction import ContextCompactionMiddleware
     from novacode_cli.agents.strict_tools import StrictToolMiddleware
     from novacode_cli.security.prompt_injection import PromptInjectionMiddleware
@@ -357,12 +358,17 @@ class ContextSnapshotMiddleware(AgentMiddleware[SnapshotState]):
 
 
 def background_context_middleware() -> list[
-    ContextCompactionMiddleware | ContextSnapshotMiddleware | StrictToolMiddleware | PromptInjectionMiddleware
+    ContextCompactionMiddleware
+    | ContextSnapshotMiddleware
+    | StrictToolMiddleware
+    | PromptInjectionMiddleware
+    | AttributionMiddleware
 ]:
     """Give packaged remote agents the same protection and accounting contract."""
     from deepagents.backends.filesystem import FilesystemBackend
 
     from novacode_cli.agents.async_workspace import workspace_root
+    from novacode_cli.agents.attribution import AttributionMiddleware
     from novacode_cli.agents.context_compaction import ContextCompactionMiddleware
     from novacode_cli.agents.strict_tools import StrictToolMiddleware
     from novacode_cli.security.prompt_injection import PromptInjectionMiddleware
@@ -370,6 +376,7 @@ def background_context_middleware() -> list[
     backend = FilesystemBackend(root_dir=str(workspace_root()), virtual_mode=True)
     return [
         ContextCompactionMiddleware(backend=backend),
+        AttributionMiddleware(),
         PromptInjectionMiddleware(),
         StrictToolMiddleware(),
         ContextSnapshotMiddleware(),
