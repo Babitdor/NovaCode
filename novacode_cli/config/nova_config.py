@@ -862,6 +862,11 @@ class NovaConfig:
             base_url = route.get("base_url")
             if isinstance(base_url, str) and base_url.strip():
                 entry["base_url"] = base_url.strip()
+            effort = route.get("reasoning_effort")
+            if effort is not None:
+                if not isinstance(effort, str) or effort not in {"off", "low", "medium", "high"}:
+                    raise ValueError(f"Route {route_id!r} has invalid reasoning effort.")
+                entry["reasoning_effort"] = effort
             cleaned.append(entry)
 
         block = self._router_block()
@@ -985,6 +990,31 @@ class NovaConfig:
         self._config["voice"] = cfg
         self._save()
         return pcfg
+
+    def get_caveman_enabled(self) -> bool:
+        """Whether replies should use the opt-in terse prose style."""
+        return _config_bool(self.get("caveman_enabled"))
+
+    def set_caveman_enabled(self, enabled: bool) -> None:
+        """Persist the response style independently of model and routing choices."""
+        self.set("caveman_enabled", bool(enabled))
+
+    def get_caveman_features(self) -> dict[str, bool]:
+        """Read independent switches, effective only while the master mode is on."""
+        saved = self.get("caveman_features", {})
+        saved = saved if isinstance(saved, dict) else {}
+        master = self.get_caveman_enabled()
+        return {
+            name: master and _config_bool(saved.get(name), default=True)
+            for name in ("say", "read", "auto", "blocks", "waste", "browse")
+        }
+
+    def set_caveman_features(self, features: dict[str, bool]) -> None:
+        """Save all six independent preferences without changing the master toggle."""
+        names = {"say", "read", "auto", "blocks", "waste", "browse"}
+        if set(features) != names or any(not isinstance(v, bool) for v in features.values()):
+            raise ValueError("Expected a boolean switch for each of the six Caveman features.")
+        self.set("caveman_features", features)
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get a configuration value.

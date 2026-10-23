@@ -74,6 +74,7 @@ _DEFAULT_TOOL_TIERS: dict[str, Tier] = {
     "CronDeleteTool": "ask",
     "CronListTool": "allow",
     "CtxInspectTool": "allow",
+    "caveman": "allow",  # Read-only recovery/audit of the invoking thread's state.
     "TerminalCaptureTool": "allow",
     "shell": "ask",
     "bash": "ask",

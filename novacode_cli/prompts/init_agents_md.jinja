@@ -19,28 +19,17 @@
 
 ## Build and Test
 
-```bash
-# Install
-pip install -e .
-
-# Test
-make test
-
-# Lint
-make lint
-
-# Format
-make format
-```
 {% if commands %}
 
-### Available Commands
+Commands discovered from this project's configuration, documentation or CI:
 
 | Task | Command |
 |------|---------|
 {% for cmd in commands %}
 | {{ cmd.task }} | `{{ cmd.command }}` |
 {% endfor %}
+{% else %}
+Build and test commands have not been established. Inspect the project's configuration, README and CI before running or documenting a command; do not substitute generic Python or Make commands.
 {% endif %}
 
 ## Conventions

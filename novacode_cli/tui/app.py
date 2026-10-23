@@ -635,6 +635,7 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "context": SlashCommand("_run_context", "show context usage or manage imported context"),
     "cost": SlashCommand("_run_token_view", "show session token spend", wants_text=False),
     "verbose": SlashCommand("_run_verbose", "toggle internal-context display", wants_text=False),
+    "caveman": SlashCommand("_run_caveman", "token efficiency: on / off / settings / status / audit / blocks"),
     "trace": SlashCommand("_run_trace", "LangSmith tracing setup"),
     "log": SlashCommand("_run_log", "recent runs"),
     "theme": SlashCommand(
@@ -1568,6 +1569,34 @@ class NovaApp(App):
            two never read as one run-on line on a mid-width terminal. */
         padding: 0 0 0 2;
     }
+    #composer-actions {
+        height: 1;
+        padding: 0 2;
+        background: $surface;
+    }
+    #caveman-toggle {
+        width: 16;
+        min-width: 16;
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+        border: none;
+        background: $surface;
+        color: $text-muted;
+    }
+    #caveman-toggle.enabled {
+        color: $accent;
+        text-style: bold;
+    }
+    #caveman-toggle:focus, #caveman-toggle:hover {
+        background: $panel;
+        text-style: bold;
+    }
+    #caveman-options {
+        width: 10; min-width: 10; height: 1; min-height: 1;
+        border: none; padding: 0 1; color: $text-muted; background: $surface;
+    }
+    #caveman-options:hover, #caveman-options:focus { background: $panel; color: $accent; }
     #prompt {
         width: 1fr;
         background: $panel; color: $text;
@@ -2502,6 +2531,16 @@ class NovaApp(App):
             # Input-mode badge (normal / bash / plan / goal). Empty and 1 row
             # tall in normal mode, so it costs nothing until a mode is active.
             yield Static("", id="mode-badge")
+            with Horizontal(id="composer-actions"):
+                yield Button(
+                    "Caveman: off",
+                    id="caveman-toggle",
+                    tooltip=(
+                        "Activate selected Caveman features. Click or use /caveman on|off. "
+                        "Saved across launches."
+                    ),
+                )
+                yield Button("Options", id="caveman-options", tooltip="Choose Caveman features")
             yield Static("", id="home-composer-meta")
             yield Static(
                 "/ commands   @ files   Shift+Enter new line   /settings styles",
@@ -2656,6 +2695,7 @@ class NovaApp(App):
         import threading
 
         await asyncio.to_thread(self._load_ui_preferences)
+        self._refresh_caveman_toggle()
         self.screen_change_signal.subscribe(self, self._on_interface_screen_changed, immediate=True)
         self._thread_id = threading.get_ident()
         # Log what the loop was running whenever the UI freezes for >1s
@@ -11843,6 +11883,7 @@ class NovaApp(App):
 
         config = NovaConfig()
         self._ui_preferences_config = config
+        self._caveman_enabled = config.get_caveman_enabled()
         self._home_style = home_style(
             config.get("home_style"), legacy_dashboard=config.get("home_dashboard_enabled", True)
         )
@@ -11858,6 +11899,93 @@ class NovaApp(App):
             saved_rain
             if isinstance(saved_rain, bool)
             else os.environ.get("NOVA_ANIMATIONS", "").strip().lower() in {"1", "true", "yes"}
+        )
+
+    def _refresh_caveman_toggle(self) -> None:
+        toggle = self.query_one("#caveman-toggle", Button)
+        enabled = getattr(self, "_caveman_enabled", False)
+        toggle.label = f"Caveman: {'on' if enabled else 'off'}"
+        toggle.set_class(enabled, "enabled")
+
+    async def _set_caveman_enabled(self, enabled: bool) -> None:
+        from novacode_cli.config.nova_config import NovaConfig
+
+        def save() -> None:
+            NovaConfig().set_caveman_enabled(enabled)
+
+        try:
+            await asyncio.to_thread(save)
+        except OSError as exc:
+            self.notify(f"Could not save Caveman preference: {exc}", severity="error")
+            return
+        self._caveman_enabled = enabled
+        self._refresh_caveman_toggle()
+        self.query_one("#prompt", PromptInput).focus()
+
+    @on(Button.Pressed, "#caveman-toggle")
+    async def _caveman_toggle_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self._set_caveman_enabled(not self._caveman_enabled)
+
+    @on(Button.Pressed, "#caveman-options")
+    async def _caveman_options_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self._run_caveman("/caveman settings")
+
+    async def _run_caveman(self, text: str) -> None:
+        parts = text.split(maxsplit=1)
+        arg = parts[1].strip().lower() if len(parts) > 1 else ""
+        if arg == "settings":
+            from novacode_cli.config.nova_config import NovaConfig
+            from novacode_cli.tui.caveman_screen import CavemanScreen
+
+            config = await asyncio.to_thread(NovaConfig)
+
+            async def save_features(features: dict[str, bool] | None) -> None:
+                if features is None:
+                    return
+                try:
+                    await asyncio.to_thread(config.set_caveman_features, features)
+                except (OSError, ValueError) as exc:
+                    self.notify(f"Could not save Caveman options: {exc}", severity="error")
+
+            saved = config.get("caveman_features", {})
+            self.push_screen(CavemanScreen(
+                saved if isinstance(saved, dict) else {},
+                router_ready=bool(config.get_router_routes()),
+            ), save_features)
+            return
+        if arg in {"audit", "blocks"}:
+            from novacode_cli.agents.caveman_support import inspect_session
+
+            agent, _ = self._active_agent()
+            try:
+                state = await self._read_state(
+                    agent, {"configurable": {"thread_id": self.session_state.thread_id}}, timeout=5,
+                )
+                values = state.values or {}
+                result = await asyncio.to_thread(
+                    inspect_session, values.get("messages", []), arg,
+                    sources=values.get("caveman_sources"), saved_blocks=values.get("caveman_blocks"),
+                )
+                import json
+
+                self._log(Text(json.dumps(result, indent=2)))
+            except (OSError, ValueError, TimeoutError) as exc:
+                self.notify(f"Could not read Caveman report: {exc}", severity="error")
+            return
+        if arg == "status":
+            from novacode_cli.config.nova_config import NovaConfig
+
+            config = await asyncio.to_thread(NovaConfig)
+            active = ", ".join(k for k, v in config.get_caveman_features().items() if v)
+            self.notify(f"Caveman: {'on' if self._caveman_enabled else 'off'} · {active or 'none active'}")
+            return
+        if arg not in {"", "on", "off"}:
+            self.notify("Usage: /caveman [on|off|settings|status|audit|blocks]", severity="warning")
+            return
+        await self._set_caveman_enabled(
+            not self._caveman_enabled if not arg else arg == "on"
         )
 
     def _set_home_style(self, style: str) -> None:

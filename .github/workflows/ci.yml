@@ -53,6 +53,9 @@ jobs:
         run: >-
           uv run --no-sync ruff check --select F,I
           novacode_cli/agents/strict_tools.py
+          novacode_cli/agents/caveman.py
+          novacode_cli/agents/caveman_support.py
+          novacode_cli/tui/caveman_screen.py
           novacode_cli/agents/tool_search_variants.py
           novacode_cli/mcp/generic.py
           novacode_cli/tools/cron_tools.py
@@ -93,6 +96,8 @@ jobs:
           tests/test_tui_subagent_panel.py
           tests/test_delegated_auto_approve.py
           tests/test_prompt_injection_guardrails.py
+          tests/test_caveman.py
+          tests/test_caveman_features.py
           tests/test_local_backend_subagent_execute.py
           tests/test_strict_tools.py
           tests/test_tool_search_variants.py

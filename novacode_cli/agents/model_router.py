@@ -44,10 +44,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: Models already built, keyed by ``(provider, model)``. A route is re-resolved on
+#: Models already built, keyed by ``(provider, model, effort)``. A route is re-resolved on
 #: every run, so building per run would rebuild a client each turn. A concurrent
 #: miss builds twice and the last write wins: one extra object, no harm.
-_MODEL_CACHE: dict[tuple[str, str], BaseChatModel] = {}
+_MODEL_CACHE: dict[tuple[str, str, str], BaseChatModel] = {}
 
 #: How many trailing messages are sent to the classifier as state.
 #:
@@ -314,7 +314,14 @@ def build_route_model(route: dict[str, Any]) -> BaseChatModel | None:
     if not provider or not model_name:
         return None
 
-    key = (provider, model_name)
+    from novacode_cli.config.nova_config import NovaConfig
+
+    effort = route.get("reasoning_effort", NovaConfig().get("reasoning_effort"))
+    if effort is not None and (
+        not isinstance(effort, str) or effort not in {"off", "low", "medium", "high"}
+    ):
+        return None
+    key = (provider, model_name, str(effort))
     cached = _MODEL_CACHE.get(key)
     if cached is not None:
         return cached
@@ -322,7 +329,10 @@ def build_route_model(route: dict[str, Any]) -> BaseChatModel | None:
     from novacode_cli.config.model_create import build_chat_model
 
     try:
-        built = build_chat_model(provider, model_name)
+        built = (
+            build_chat_model(provider, model_name, reasoning_effort=effort)
+            if effort is not None else build_chat_model(provider, model_name)
+        )
     except Exception:
         logger.warning(
             "Route %s:%s could not be built; leaving the run on its current model",

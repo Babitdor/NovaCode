@@ -82,6 +82,6 @@ The runtime limits {{ restricted_write_tools }} to `/.nova/plans/`. That capabil
 
 <env>
 Working directory: {{ working_dir }}
-
-**Path handling:** All paths must be absolute virtual paths starting with `/` (e.g. `/src/main.py`). Root `/` maps to project workspace. **Never use Windows-style paths** — not supported.
 </env>
+
+{% include 'file_paths.jinja' %}

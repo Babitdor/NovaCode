@@ -314,9 +314,18 @@ def reasoning_setting_note(  # noqa: PLR0911 — each provider has a different c
     )
 
 
-def build_chat_model(provider: str, model_name: str) -> BaseChatModel:
-    """Build a provider model, attaching local diagnostics only when requested."""
-    model = _build_chat_model(provider, model_name)
+def build_chat_model(
+    provider: str, model_name: str, *, reasoning_effort: str | None = None,
+) -> BaseChatModel:
+    """Build a provider model, with an optional per-route effort override.
+
+    The override uses the same capability mappings as the session setting and
+    never saves a new global preference.
+    """
+    model = (
+        _build_chat_model(provider, model_name, reasoning_effort=reasoning_effort)
+        if reasoning_effort is not None else _build_chat_model(provider, model_name)
+    )
     # Lossless model identity for new worker processes; never infer a gateway
     # provider from its OpenAI-compatible model class or change its defaults.
     model.metadata = {**(model.metadata or {}), "nova_provider": provider, "nova_model": model_name}
@@ -343,7 +352,9 @@ def ollama_openai_base_url() -> str:
     return f"{host}/v1"
 
 
-def _build_chat_model(provider: str, model_name: str) -> BaseChatModel:
+def _build_chat_model(
+    provider: str, model_name: str, *, reasoning_effort: str | None = None,
+) -> BaseChatModel:
     """THE model constructor — every ChatX(...) in Nova is built here.
 
     One deep module for provider construction: reasoning-effort / thinking
@@ -361,7 +372,7 @@ def _build_chat_model(provider: str, model_name: str) -> BaseChatModel:
     from novacode_cli.config.nova_config import NovaConfig
 
     nova_config = NovaConfig()
-    effort = nova_config.get("reasoning_effort")
+    effort = reasoning_effort if reasoning_effort is not None else nova_config.get("reasoning_effort")
 
     if provider == "ollama":
         # Ollama is driven through its OpenAI-compatible endpoint (`/v1`) with

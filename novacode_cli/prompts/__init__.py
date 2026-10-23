@@ -142,6 +142,7 @@ def render_template(name: str, **kwargs: Any) -> str:
     # but must never replace the base instructions shipped with Nova.
     if name in {
         "core_agent_system.jinja", "System_Prompt_Nova.jinja", "nova_standing_instructions.jinja",
+        "coding_workflow.jinja", "file_paths.jinja",
     }:
         return _env.get_template(name).render(**kwargs)
 

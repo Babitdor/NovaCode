@@ -6702,6 +6702,12 @@ class RouterScreen(ModalScreen[dict | None]):
                 yield Select([], id="router-provider", allow_blank=True)
                 yield Static("Model", id="router-model-label")
                 yield Input(placeholder="gpt-5-mini, qwen3-vl:235b-cloud, …", id="router-model")
+                yield Static("Reasoning effort (provider capability permitting)")
+                yield Select(
+                    [("Use session effort", "inherit"), ("Off", "off"), ("Low", "low"),
+                     ("Medium", "medium"), ("High", "high")],
+                    value="inherit", allow_blank=False, id="router-effort",
+                )
                 yield Static("Criteria — when should this route be chosen?", id="router-criteria-label")
                 yield Input(placeholder="Direct lookups and small edits.", id="router-criteria")
                 yield Static("Decision model", id="router-decision-label")
@@ -6784,6 +6790,7 @@ class RouterScreen(ModalScreen[dict | None]):
         self.query_one("#router-provider", Select).value = str(route["provider"])
         self.query_one("#router-model", Input).value = str(route["model"])
         self.query_one("#router-criteria", Input).value = str(route["criteria"])
+        self.query_one("#router-effort", Select).value = route.get("reasoning_effort", "inherit")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Add, remove, save or cancel."""
@@ -6912,12 +6919,16 @@ class RouterScreen(ModalScreen[dict | None]):
         if not route_id or not model or not criteria or provider in (Select.BLANK, Select.NULL):
             self._hint("A route needs an id, a provider, a model and criteria.", error=True)
             return None
-        return {
+        route = {
             "id": route_id,
             "provider": str(provider),
             "model": model,
             "criteria": criteria,
         }
+        effort = self.query_one("#router-effort", Select).value
+        if effort != "inherit":
+            route["reasoning_effort"] = str(effort)
+        return route
 
     def _add_route(self) -> None:
         """Append a new route without accidentally replacing a selection."""
@@ -6969,6 +6980,7 @@ class RouterScreen(ModalScreen[dict | None]):
         """Empty the route fields, so the next Add starts clean."""
         for field in ("#router-id", "#router-model", "#router-criteria"):
             self.query_one(field, Input).value = ""
+        self.query_one("#router-effort", Select).value = "inherit"
 
     def _hint(self, message: str, *, error: bool = False) -> None:
         """Show a one-line message under the list."""

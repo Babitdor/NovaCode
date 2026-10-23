@@ -2502,9 +2502,13 @@ This file stores your preferences and context that persist across sessions.
     compactors = [m for m in agent_middleware if isinstance(m, ContextCompactionMiddleware)]
     agent_middleware = [m for m in agent_middleware if not isinstance(m, ContextCompactionMiddleware)]
     agent_middleware.extend(compactors)
+    from novacode_cli.agents.caveman import CavemanMiddleware
+    from novacode_cli.agents.caveman_support import caveman_tool
     from novacode_cli.agents.strict_tools import StrictToolMiddleware
     from novacode_cli.security.prompt_injection import PromptInjectionMiddleware
 
+    agent_middleware.append(CavemanMiddleware())
+    tools = [*tools, caveman_tool]
     if not any(isinstance(m, PromptInjectionMiddleware) for m in agent_middleware):
         agent_middleware.append(PromptInjectionMiddleware())
     agent_middleware.append(StrictToolMiddleware())
