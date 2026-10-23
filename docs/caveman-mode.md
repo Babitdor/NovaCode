@@ -8,6 +8,13 @@ Click it, focus it and press Enter, or use `/caveman`, `/caveman on`,
 `/caveman settings` open six independent switches. Each is selected by default;
 the master mode remains opt-in. Save applies options; Cancel discards them.
 
+Say less follows the installed Caveman skill's **full** intensity by default.
+Select `lite`, `full`, `ultra`, `wenyan-lite`, `wenyan-full`, or `wenyan-ultra`
+in Options, or run `/caveman <level>` to select a level and enable the master
+switch. The level is saved as `caveman_level`, independently of the six switches.
+Changing intensity does not re-enable a separately disabled Say less switch.
+Options saves intensity and switches together; Cancel saves neither.
+
 The preference is off by default and saved as `caveman_enabled` in the user's
 `Nova.config.json`. It applies to subsequent model calls through Nova's core
 agent builder, including existing graphs; an answer already streaming finishes
@@ -24,6 +31,72 @@ it leaves the saved session model and global effort setting alone.
 Async calls read preferences on a worker thread, keeping filesystem access off
 the TUI event loop. No new package, proxy, account or background request is added.
 Actual model compliance and token savings depend on the model and task.
+
+### Skill alignment audit, 2026-10-24
+
+The local `caveman/SKILL.md` specifies response style, rather than the six-part
+compression/routing system. Nova's Say less now implements its rules:
+
+- `full` drops articles and filler; `lite` keeps full sentences; `ultra` compresses
+  prose further. Wenyan levels explicitly request classical Chinese; other
+  levels preserve the user's dominant language.
+- No tool-call narration, decorative tables/emoji, invented abbreviations,
+  style announcements, duplicate recaps, or unsolicited raw log dumps.
+- Preserve exact code, identifiers, commands, paths, errors, negations, numbers,
+  units, qualifications, and technical substance. Code, commits, and PRs use
+  normal prose and exact syntax.
+- Use full clarity for security warnings, irreversible confirmations, ambiguous
+  procedure ordering, and repeated questions/requests for clarification. Resume
+  terseness afterward. Honor requests for normal mode or to stop the style.
+- Apply the selected rule on every model call, without storing it in chat
+  history. Nova-managed local, dynamic, background, and team agents receive the
+  selected prose style. Local/background subagents retain their configured
+  models and tool behavior; they do not gain routing or compression from this
+  style-only integration.
+
+When the system prompt contains Nova's exact bundled `<response_style>` block,
+Say less replaces it in the request copy instead of appending a second style
+directive. Custom style blocks are preserved. Security rules, original history,
+and structured system-block metadata remain intact. This reduces duplicated
+instruction overhead; it does not mechanically enforce the generated prose.
+
+Nova intentionally keeps its existing opt-in, globally persisted toggle and
+preferences, rather than enabling itself automatically from a keyword. The
+skill's session-only level lifetime is extended to persist across Nova sessions.
+Use `/caveman off` or the composer toggle to disable all six features; asking
+for normal prose changes the requested response style, not compression settings.
+Levels are instructions, not a post-generation rewrite, so model compliance
+requires live evaluation. The upstream percentage is not a Nova guarantee.
+
+Run the optional paired provider check with:
+
+```powershell
+.venv/Scripts/python.exe -m scripts.check_caveman_style --live
+```
+
+It makes nine bounded calls using the saved main model: three synthetic tasks
+with mode off, full, and ultra. It reads saved credentials through normal startup
+loading and never saves configuration changes. Responses and provider-reported
+input/output/cache/total usage go to ignored `reports/caveman-style-live.json`.
+Review correctness and finish reasons, and compare **total** tokens as well as
+output tokens: the style instruction adds input tokens, especially for short
+requests. A character reduction or one paired result does not establish savings
+across a session. Auto is not used in this check so every pair uses the same model.
+The script uses Nova's packaged core and security instructions. Use, for example,
+`--levels off full --case clarity` for a smaller check. `/caveman audit` now also
+reports provider output/total/reasoning counts and the number of usage observations,
+so a missing usage report can be distinguished from observed zero usage.
+
+The audit's saved `commandcode / Qwen/Qwen3.7-Flash` model produced variable
+compliance. One final mutable-default pair using the replacement path consumed
+6,751 total tokens with mode off and 5,526 with Full (18.1% fewer). Provider output
+tokens fell from 1,887 to 495, including reasoning falling from 1,557 to 229;
+visible output fell from 330 to 266 tokens. Both produced a corrected `add_item`
+function with a `None` default. The model still used more conventional prose than
+the skill's article-dropping Full style. Earlier probes sometimes increased total
+usage despite shorter visible answers. These are synthetic individual samples,
+not a session benchmark, correctness certification, or cost guarantee; cache-hit
+patterns also differed. Raw local evidence: `reports/caveman-style-replacement.json`.
 
 ## Research: the six features
 

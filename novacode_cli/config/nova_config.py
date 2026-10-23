@@ -10,12 +10,14 @@ from typing import Any
 
 from novacode_cli.config.config import Settings, console
 
-
 #: The agent roles a model can be chosen for. ``main`` is the agent the user talks
 #: to; ``subagent`` the in-process roster it delegates to; ``async`` the remote
 #: graphs on the LangGraph server; ``dynamic`` the agents discovered in the agent
 #: directories (which is also what an ``/eval`` fan-out dispatches).
 ROLE_NAMES: tuple[str, ...] = ("main", "subagent", "async", "dynamic")
+CAVEMAN_LEVELS: tuple[str, ...] = (
+    "lite", "full", "ultra", "wenyan-lite", "wenyan-full", "wenyan-ultra",
+)
 
 #: Strings a hand-edited boolean key may hold. Python treats every non-empty
 #: string as true, so a bare ``bool(...)`` reads ``"false"`` as "on" -- switching
@@ -1008,6 +1010,17 @@ class NovaConfig:
         """Persist the response style independently of model and routing choices."""
         self.set("caveman_enabled", bool(enabled))
 
+    def get_caveman_level(self) -> str:
+        """Read the skill's default intensity, tolerating older configurations."""
+        saved = self.get("caveman_level", "full")
+        return saved if isinstance(saved, str) and saved in CAVEMAN_LEVELS else "full"
+
+    def set_caveman_level(self, level: str) -> None:
+        """Persist a supported intensity without changing the master switch."""
+        if level not in CAVEMAN_LEVELS:
+            raise ValueError("Unsupported Caveman intensity.")
+        self.set("caveman_level", level)
+
     def get_caveman_features(self) -> dict[str, bool]:
         """Read independent switches, effective only while the master mode is on."""
         saved = self.get("caveman_features", {})
@@ -1020,10 +1033,17 @@ class NovaConfig:
 
     def set_caveman_features(self, features: dict[str, bool]) -> None:
         """Save all six independent preferences without changing the master toggle."""
+        self.set_caveman_options(features, self.get_caveman_level())
+
+    def set_caveman_options(self, features: dict[str, bool], level: str) -> None:
+        """Save a validated Options draft together in one configuration write."""
         names = {"say", "read", "auto", "blocks", "waste", "browse"}
         if set(features) != names or any(not isinstance(v, bool) for v in features.values()):
             raise ValueError("Expected a boolean switch for each of the six Caveman features.")
-        self.set("caveman_features", features)
+        if level not in CAVEMAN_LEVELS:
+            raise ValueError("Unsupported Caveman intensity.")
+        self._config.update(caveman_features=features, caveman_level=level)
+        self._save()
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get a configuration value.

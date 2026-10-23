@@ -83,6 +83,7 @@ jobs:
           novacode_cli/remote/discord_bridge.py
           novacode_cli/remote/rootapp_setup.py
           novacode_cli/commands/rootapp_remote.py
+          scripts/check_caveman_style.py
       - name: Verify MCP Code Mode boundaries
         run: uv run --no-sync python scripts/verify_mcp_code_mode.py
       - name: Run offline regression tests

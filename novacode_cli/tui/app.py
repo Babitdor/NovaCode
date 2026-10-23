@@ -635,7 +635,7 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "context": SlashCommand("_run_context", "show context usage or manage imported context"),
     "cost": SlashCommand("_run_token_view", "show session token spend", wants_text=False),
     "verbose": SlashCommand("_run_verbose", "toggle internal-context display", wants_text=False),
-    "caveman": SlashCommand("_run_caveman", "token efficiency: on / off / settings / status / audit / blocks"),
+    "caveman": SlashCommand("_run_caveman", "token efficiency: on / off / lite / full / ultra / wenyan-* / settings / status / audit / blocks"),
     "trace": SlashCommand("_run_trace", "LangSmith tracing setup"),
     "log": SlashCommand("_run_log", "recent runs"),
     "theme": SlashCommand(
@@ -11933,19 +11933,31 @@ class NovaApp(App):
         await self._run_caveman("/caveman settings")
 
     async def _run_caveman(self, text: str) -> None:
+        from novacode_cli.config.nova_config import CAVEMAN_LEVELS, NovaConfig
+
         parts = text.split(maxsplit=1)
         arg = parts[1].strip().lower() if len(parts) > 1 else ""
+        if arg in CAVEMAN_LEVELS:
+            try:
+                config = await asyncio.to_thread(NovaConfig)
+                await asyncio.to_thread(config.set_caveman_level, arg)
+            except (OSError, ValueError) as exc:
+                self.notify(f"Could not save Caveman intensity: {exc}", severity="error")
+                return
+            await self._set_caveman_enabled(True)
+            return
         if arg == "settings":
-            from novacode_cli.config.nova_config import NovaConfig
-            from novacode_cli.tui.caveman_screen import CavemanScreen
+            from novacode_cli.tui.caveman_screen import CavemanOptions, CavemanScreen
 
             config = await asyncio.to_thread(NovaConfig)
 
-            async def save_features(features: dict[str, bool] | None) -> None:
-                if features is None:
+            async def save_features(options: CavemanOptions | None) -> None:
+                if options is None:
                     return
                 try:
-                    await asyncio.to_thread(config.set_caveman_features, features)
+                    await asyncio.to_thread(
+                        config.set_caveman_options, options.features, options.level,
+                    )
                 except (OSError, ValueError) as exc:
                     self.notify(f"Could not save Caveman options: {exc}", severity="error")
 
@@ -11953,6 +11965,7 @@ class NovaApp(App):
             self.push_screen(CavemanScreen(
                 saved if isinstance(saved, dict) else {},
                 router_ready=bool(config.get_router_routes()),
+                level=config.get_caveman_level(),
             ), save_features)
             return
         if arg in {"audit", "blocks"}:
@@ -11975,14 +11988,18 @@ class NovaApp(App):
                 self.notify(f"Could not read Caveman report: {exc}", severity="error")
             return
         if arg == "status":
-            from novacode_cli.config.nova_config import NovaConfig
-
             config = await asyncio.to_thread(NovaConfig)
             active = ", ".join(k for k, v in config.get_caveman_features().items() if v)
-            self.notify(f"Caveman: {'on' if self._caveman_enabled else 'off'} · {active or 'none active'}")
+            self.notify(
+                f"Caveman: {'on' if config.get_caveman_enabled() else 'off'} "
+                f"· {config.get_caveman_level()} · {active or 'none active'}"
+            )
             return
         if arg not in {"", "on", "off"}:
-            self.notify("Usage: /caveman [on|off|settings|status|audit|blocks]", severity="warning")
+            self.notify(
+                "Usage: /caveman [on|off|lite|full|ultra|wenyan-lite|wenyan-full|wenyan-ultra|"
+                "settings|status|audit|blocks]", severity="warning",
+            )
             return
         await self._set_caveman_enabled(
             not self._caveman_enabled if not arg else arg == "on"

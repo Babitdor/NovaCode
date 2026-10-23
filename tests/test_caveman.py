@@ -7,10 +7,15 @@ from langchain.agents.middleware.types import ModelRequest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.outputs import ChatResult
-from textual.widgets import Button
+from textual.widgets import Button, Select
 
-from novacode_cli.agents.caveman import CAVEMAN_INSTRUCTIONS, CavemanMiddleware
-from novacode_cli.config.nova_config import NovaConfig
+from novacode_cli.agents.caveman import (
+    CAVEMAN_INSTRUCTIONS,
+    CAVEMAN_STYLES,
+    CavemanMiddleware,
+    caveman_instructions,
+)
+from novacode_cli.config.nova_config import CAVEMAN_LEVELS, NovaConfig
 from tests.test_tui_app import _disable_live_update_checks  # noqa: F401
 from tests.test_tui_home_preferences import _app
 
@@ -53,6 +58,135 @@ def test_style_preserves_original_history_and_system_metadata(system: SystemMess
         assert CAVEMAN_INSTRUCTIONS not in system.text
         if isinstance(system.content, list):
             assert prepared.system_message.content[0] == system.content[0]
+
+
+@pytest.mark.parametrize("level", CAVEMAN_LEVELS)
+def test_skill_intensities_persist_and_apply_without_loading_other_levels(level: str):
+    config = NovaConfig()
+    assert config.get_caveman_level() == "full"
+    config.set_caveman_level(level)
+    assert NovaConfig().get_caveman_level() == level
+    assert not config.get_caveman_enabled()
+    config.set_caveman_enabled(True)
+    middleware = CavemanMiddleware()
+    prepared = middleware._prepare_live(_request())
+    assert caveman_instructions(level) in prepared.system_message.text
+    for other, style in CAVEMAN_STYLES.items():
+        if other != level:
+            assert "Intensity: " + style not in prepared.system_message.text
+    # Every later response gets the same instruction; nothing is written to history.
+    assert middleware._prepare_live(_request()).system_message == prepared.system_message
+    assert prepared.messages == _request().messages
+
+
+@pytest.mark.parametrize("invalid", [None, "invalid", [], 2])
+def test_legacy_or_malformed_intensity_defaults_to_full(invalid: object):
+    NovaConfig().set("caveman_level", invalid)
+    assert NovaConfig().get_caveman_level() == "full"
+
+
+def test_options_validation_does_not_partially_save_a_draft():
+    config = NovaConfig()
+    with pytest.raises(ValueError, match="intensity"):
+        config.set_caveman_options({k: False for k in config.get_caveman_features()}, "bad")
+    assert NovaConfig().get("caveman_features") is None
+    assert NovaConfig().get_caveman_level() == "full"
+    with pytest.raises(ValueError, match="intensity"):
+        config.set_caveman_level("bad")
+
+
+def test_skill_boundaries_and_auto_clarity_are_explicit_at_every_intensity():
+    for level in CAVEMAN_LEVELS:
+        note = caveman_instructions(level)
+        for boundary in (
+            "No tool-call narration", "dominant language", "negations",
+            "Code stays exact; commit messages and PR descriptions use normal prose",
+            "Never announce or name this style", "normal mode or to stop caveman",
+            "security warnings", "irreversible confirmations", "order could be misread",
+            "clarify/repeated question", "Resume terse prose", "skip verification",
+        ):
+            assert boundary in note
+        assert note.index("These boundaries override intensity") > note.index("Intensity:")
+
+
+@pytest.mark.parametrize("structured", [True, False])
+def test_selected_style_replaces_default_without_dropping_other_rules(*, structured: bool):
+    from novacode_cli.prompts import TEMPLATES_DIR
+
+    default = (TEMPLATES_DIR / "response_style.jinja").read_text(encoding="utf-8").strip()
+    text = "<security>Keep checks</security>" + default + "End"
+    content = [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}] if structured else text
+    system = SystemMessage(content=content)
+    prepared = CavemanMiddleware.prepare(_request(system), enabled=True)
+    result = prepared.system_message.text
+    assert default not in result
+    assert result.startswith("<security>Keep checks</security>")
+    assert result.endswith("End")
+    assert result.count(CAVEMAN_INSTRUCTIONS) == 1
+    assert system.text == text
+    if structured:
+        assert prepared.system_message.content[0]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_custom_style_blocks_are_preserved_as_user_instructions():
+    text = "<response_style>Include security constraints in answers.</response_style>"
+    system = SystemMessage(content=text)
+    prepared = CavemanMiddleware.prepare(_request(system), enabled=True)
+    assert prepared.system_message.text.startswith(text)
+
+
+def test_subagents_get_style_without_routing_compression_or_recovery_requirements():
+    from novacode_cli.agents.core_agent import _harden_subagent_specs
+    from novacode_cli.context.snapshot import background_context_middleware
+
+    config = NovaConfig()
+    config.set_caveman_enabled(True)
+    config.set_caveman_level("ultra")
+    specs = [{"name": "test", "system_prompt": "p", "middleware": []}]
+    hardened = _harden_subagent_specs(_harden_subagent_specs(specs))
+    for middlewares in (hardened[0]["middleware"], background_context_middleware()):
+        instances = [m for m in middlewares if isinstance(m, CavemanMiddleware)]
+        assert len(instances) == 1
+        middleware = instances[0]
+        assert middleware.before_agent({}, None) == {"caveman_route": None}
+        assert middleware.before_model({}, None) is None
+        original = _request()
+        prepared = middleware._prepare_live(original)
+        assert prepared.model is original.model
+        assert prepared.messages == original.messages
+        assert caveman_instructions("ultra") in prepared.system_message.text
+        assert "Caveman utilities" not in prepared.system_message.text
+
+
+@pytest.mark.timeout(30)
+@pytest.mark.parametrize("size", [(80, 32), (45, 25)])
+async def test_intensity_commands_and_options_save_cancel(
+    size: tuple[int, int], monkeypatch: pytest.MonkeyPatch,
+):
+    app = _app()
+    monkeypatch.setattr(type(app), "_sample_home_system", Mock())
+    async with app.run_test(size=size) as pilot:
+        for level in CAVEMAN_LEVELS:
+            await app._run_caveman("/caveman " + level)
+            assert NovaConfig().get_caveman_level() == level
+            assert NovaConfig().get_caveman_enabled()
+        await app._run_caveman("/caveman settings")
+        await pilot.pause()
+        picker = app.screen.query_one("#caveman-level", Select)
+        assert picker.value == "wenyan-ultra"
+        picker.value = "lite"
+        await pilot.click("#caveman-save")
+        await pilot.pause()
+        assert NovaConfig().get_caveman_level() == "lite"
+        await app._run_caveman("/caveman settings")
+        await pilot.pause()
+        app.screen.query_one("#caveman-level", Select).value = "full"
+        await pilot.press("escape")
+        await pilot.pause()
+        assert NovaConfig().get_caveman_level() == "lite"
+        await app._run_caveman("/caveman off")
+        assert not NovaConfig().get_caveman_enabled()
+        assert NovaConfig().get_caveman_level() == "lite"
 
 
 async def test_existing_middleware_observes_toggle_on_next_sync_or_async_call():

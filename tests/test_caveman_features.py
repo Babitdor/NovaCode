@@ -169,6 +169,22 @@ def test_waste_fix_deduplicates_only_repeats_with_recovery():
     assert text not in json.dumps(report)
 
 
+def test_audit_separates_provider_input_output_total_from_text_estimates():
+    report = audit_messages([AIMessage(content="Short response", usage_metadata={
+        "input_tokens": 120, "output_tokens": 20, "total_tokens": 140,
+        "input_token_details": {"cache_read": 100},
+        "output_token_details": {"reasoning": 12},
+    })])
+    assert report["reported_input_tokens"] == 120
+    assert report["reported_output_tokens"] == 20
+    assert report["reported_total_tokens"] == 140
+    assert report["reported_reasoning_tokens"] == 12
+    assert report["reported_cache_read_tokens"] == 100
+    assert report["usage_observations"] == 1
+    assert "estimated" in report["basis"]
+    assert audit_messages([])["usage_observations"] == 0
+
+
 def test_source_storage_failure_or_capacity_never_causes_lossy_compression():
     enable("read")
     text = "line\n" * 1000

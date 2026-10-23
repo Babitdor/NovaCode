@@ -936,12 +936,15 @@ def _harden_subagent_specs(
             mw_to_add.append(ContextCompactionMiddleware(backend=skill_backend))
 
         from novacode_cli.agents.attribution import AttributionMiddleware
+        from novacode_cli.agents.caveman import CavemanMiddleware
         from novacode_cli.agents.strict_tools import StrictToolMiddleware
         from novacode_cli.context.snapshot import ContextSnapshotMiddleware
         from novacode_cli.security.prompt_injection import PromptInjectionMiddleware
 
         if not any(isinstance(m, AttributionMiddleware) for m in existing):
             mw_to_add.append(AttributionMiddleware())
+        if not any(isinstance(m, CavemanMiddleware) for m in existing):
+            mw_to_add.append(CavemanMiddleware(style_only=True))
 
         strict = (
             [] if any(isinstance(m, StrictToolMiddleware) for m in existing)

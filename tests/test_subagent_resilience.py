@@ -254,8 +254,10 @@ async def test_local_graph_deadline_cancels_provider_wait():
     from novacode_cli.agents.model_retry import NovaSubagentRetryMiddleware
 
     cancelled = asyncio.Event()
+    started = asyncio.Event()
 
     async def stalled(request):
+        started.set()
         try:
             await asyncio.sleep(60)
         finally:
@@ -268,8 +270,12 @@ async def test_local_graph_deadline_cancels_provider_wait():
             "tools": [], "model": model,
         }])[0]
         retry = next(m for m in spec["middleware"] if isinstance(m, NovaSubagentRetryMiddleware))
-        retry.call_budget = 0.05
+        # Leave enough time for config-reading middleware to reach the transport.
+        # The deadline still interrupts a 60-second provider wait, rather than
+        # expiring before an HTTP request has started on slower Windows runners.
+        retry.call_budget = 1.0
         graph = _original_create_sub_agent(spec)
         with pytest.raises(TimeoutError, match="including retries"):
             await graph.ainvoke({"messages": [("user", "probe")]})
+        assert started.is_set()
         assert cancelled.is_set()

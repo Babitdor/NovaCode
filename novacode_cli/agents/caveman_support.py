@@ -252,14 +252,19 @@ def audit_messages(messages: list) -> dict[str, Any]:
 
     by_tool: Counter = Counter()
     duplicates: Counter = Counter()
-    input_tokens = cache_read = 0
+    input_tokens = output_tokens = total_tokens = cache_read = usage_observations = 0
+    reasoning_tokens = 0
     for message in messages:
         if isinstance(message, ToolMessage):
             by_tool[message.name or "unknown"] += count_tokens_approximately([message])
             duplicates[reference(str(message.content))] += 1
         if isinstance(message, AIMessage) and message.usage_metadata:
             usage = message.usage_metadata
+            usage_observations += 1
             input_tokens += usage.get("input_tokens", 0)
+            output_tokens += usage.get("output_tokens", 0)
+            total_tokens += usage.get("total_tokens", 0)
+            reasoning_tokens += (usage.get("output_token_details") or {}).get("reasoning", 0)
             cache_read += (usage.get("input_token_details") or {}).get("cache_read", 0)
     return {
         "basis": "estimated text tokens; cache counts are provider-reported when present",
@@ -268,6 +273,10 @@ def audit_messages(messages: list) -> dict[str, Any]:
         "estimated_tool_tokens": dict(by_tool.most_common()),
         "duplicate_tool_results": sum(count - 1 for count in duplicates.values()),
         "reported_input_tokens": input_tokens,
+        "reported_output_tokens": output_tokens,
+        "reported_total_tokens": total_tokens,
+        "reported_reasoning_tokens": reasoning_tokens,
+        "usage_observations": usage_observations,
         "reported_cache_read_tokens": cache_read,
         "suggestions": [
             "Use recovery references instead of repeating large tool output.",

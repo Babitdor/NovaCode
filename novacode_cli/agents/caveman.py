@@ -10,22 +10,74 @@ from langchain.agents.middleware.types import AgentMiddleware, AgentState, Model
 from langchain_core.messages import SystemMessage, ToolMessage
 
 from novacode_cli.config.nova_config import NovaConfig
+from novacode_cli.prompts import TEMPLATES_DIR
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from langchain.agents.middleware.types import ModelResponse
 
-CAVEMAN_INSTRUCTIONS = """Caveman response style is enabled. Answer first. Use short,
-direct sentences and omit filler, greetings, repeated summaries and unnecessary
-narration. Fragments are fine when clear. Preserve the user's language, every
-negation, number, unit, qualification and technical detail needed for correctness.
-Keep code, commands, paths, API names and exact error messages verbatim. Do not
-shorten implementations, skip verification or omit necessary evidence to save
-tokens. User requests for detail take precedence over brevity. Use full, clear
-sentences for security warnings, irreversible actions and ambiguous procedures.
-This is a prose preference only; keep all security and approval rules in force.
+CAVEMAN_RULES = """Answer first. Stop once complete. Compress prose, not technical substance.
+Drop filler, pleasantries, redundant hedging and repeated summaries. Use short synonyms.
+No tool-call narration, decorative tables/emoji or long raw logs unless asked;
+quote the shortest decisive error exactly. Standard tech acronyms are fine;
+never invent abbreviations. Preserve the user's dominant language, negations,
+numbers, units, qualifications and technical terms. Never abbreviate real code
+symbols, function/API names, commands, paths, commit-type keywords or errors.
+Never announce or name this style, use caveman self-reference, or append a
+second recap. Keep this style each response until disabled; honor requests for
+normal mode or to stop caveman. User requests for detail still get needed detail.
 """
+CAVEMAN_CLARITY = """These boundaries override intensity. Do not invent facts or rationale.
+Keep factual uncertainty. Code stays exact; commit messages and PR descriptions use normal prose.
+Surrounding explanations still use the selected terse style.
+Use full, clear sentences for security warnings, irreversible confirmations,
+multi-step procedures whose order could be misread, when compression itself creates
+technical ambiguity, or a request to clarify/repeated question.
+Resume terse prose after that clear part.
+Never shorten implementations, skip verification or drop necessary evidence to
+save tokens. All security and approval rules remain in force.
+"""
+CAVEMAN_STYLES = {
+    "lite": "Keep articles and full sentences. Professional, tight prose.",
+    "full": (
+        "Drop articles (a/an/the). Fragments OK. Short synonyms; no invented abbreviations. "
+        "Example prose: 'New object ref each render. Wrap in useMemo.'"
+    ),
+    "ultra": (
+        "Abbreviate prose words only (DB/auth/config/req/res/fn/impl). "
+        "Strip conjunctions; use arrows for clear causality. One word when sufficient. "
+        "Never abbreviate real code symbols or technical identifiers."
+    ),
+    "wenyan-lite": "Use semi-classical Chinese, retaining grammatical structure; drop filler.",
+    "wenyan-full": (
+        "Use terse classical Chinese (文言文), classical sentence patterns and particles; "
+        "omit subjects when clear, verbs before objects. Technical terms stay verbatim."
+    ),
+    "wenyan-ultra": (
+        "Use maximally terse classical Chinese, abbreviating prose while preserving clarity "
+        "and exact technical terms."
+    ),
+}
+
+
+def caveman_instructions(level: str = "full") -> str:
+    """Build only the selected intensity, keeping unused levels out of context."""
+    level = level if level in CAVEMAN_STYLES else "full"
+    return (
+        f'<nova_caveman_style level="{level}">\n'
+        "Selected user prose preference; overrides default response styling only.\n"
+        + CAVEMAN_RULES
+        + "\nIntensity: "
+        + CAVEMAN_STYLES[level]
+        + "\n\n"
+        + CAVEMAN_CLARITY
+        + "</nova_caveman_style>"
+    )
+
+
+CAVEMAN_INSTRUCTIONS = caveman_instructions()
+_DEFAULT_STYLE = (TEMPLATES_DIR / "response_style.jinja").read_text(encoding="utf-8").strip()
 
 MIN_DUPLICATE_CHARS = 500
 MAX_RECOVERY_CHARS = 8_000_000
@@ -46,11 +98,19 @@ class CavemanMiddleware(AgentMiddleware):
 
     state_schema = CavemanState
 
+    def __init__(self, *, style_only: bool = False) -> None:
+        """Let subagents share prose preferences without routing or recovery tools."""
+        self._style_only = style_only
+
     def before_agent(self, state: Any, runtime: Any) -> dict[str, Any]:  # noqa: ARG002
         """Choose a configured model/effort route once per run, without double routing."""
         config = NovaConfig()
         route = None
-        if not config.get_caveman_features()["auto"] or config.get_router_enabled():
+        if (
+            self._style_only
+            or not config.get_caveman_features()["auto"]
+            or config.get_router_enabled()
+        ):
             return {"caveman_route": None}
         multimodal = any(
             isinstance(m.content, list)
@@ -90,6 +150,8 @@ class CavemanMiddleware(AgentMiddleware):
         )
 
         features = NovaConfig().get_caveman_features()
+        if self._style_only:
+            return None
         if not any(features[k] for k in ("read", "browse", "waste", "blocks")):
             return None
         sources = dict(state.get("caveman_sources") or {})
@@ -141,7 +203,10 @@ class CavemanMiddleware(AgentMiddleware):
             structured_reads,
         )
 
-        features = NovaConfig().get_caveman_features()
+        config = NovaConfig()
+        features = config.get_caveman_features()
+        if self._style_only:
+            return self.prepare(request, enabled=features["say"], level=config.get_caveman_level())
         if not any(features.values()):
             return request
         state = request.state or {}
@@ -185,7 +250,7 @@ class CavemanMiddleware(AgentMiddleware):
             messages.append(message)
         if messages != request.messages:
             request = request.override(messages=messages)
-        request = self.prepare(request, enabled=features["say"])
+        request = self.prepare(request, enabled=features["say"], level=config.get_caveman_level())
         if any(features[k] for k in ("read", "browse", "blocks", "waste")):
             original = request.system_message
             content = original.content if original else ""
@@ -211,16 +276,38 @@ class CavemanMiddleware(AgentMiddleware):
         return request
 
     @staticmethod
-    def prepare(request: ModelRequest, *, enabled: bool) -> ModelRequest:
-        """Append style instructions without editing the original request."""
+    def prepare(request: ModelRequest, *, enabled: bool, level: str = "full") -> ModelRequest:
+        """Apply the selected style to a copy, replacing only Nova's bundled default."""
         if not enabled:
             return request
         original = request.system_message
         content = original.content if original else ""
+        instructions = caveman_instructions(level)
         if isinstance(content, str):
-            content = content + "\n\n" + CAVEMAN_INSTRUCTIONS
+            if _DEFAULT_STYLE in content:
+                content = content.replace(_DEFAULT_STYLE, instructions, 1)
+            else:
+                content += "\n\n" + instructions
         else:
-            content = [*content, {"type": "text", "text": CAVEMAN_INSTRUCTIONS}]
+            blocks = []
+            replaced = False
+            for block in content:
+                prepared_block = block
+                if (
+                    isinstance(block, dict)
+                    and isinstance(block.get("text"), str)
+                    and not replaced
+                    and _DEFAULT_STYLE in block["text"]
+                ):
+                    prepared_block = {
+                        **block,
+                        "text": block["text"].replace(_DEFAULT_STYLE, instructions, 1),
+                    }
+                    replaced = True
+                blocks.append(prepared_block)
+            if not replaced:
+                blocks.append({"type": "text", "text": instructions})
+            content = blocks
         system = (
             original.model_copy(update={"content": content})
             if original
