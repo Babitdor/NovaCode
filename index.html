@@ -833,7 +833,7 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
         <div class="dock-row">
           <p class="cmdline">
             <span class="ps" aria-hidden="true">&#10095;</span>
-            <span class="typed" style="--n:11">uv run nova</span>
+            <span class="typed" style="--n:5">nova</span>
             <span class="caret" aria-hidden="true"></span>
           </p>
           <a class="btn btn-primary" href="#install">Install Nova
@@ -1212,7 +1212,7 @@ status: awaiting your decision">
       <div class="head rv">
         <p class="cmdline"><span class="ps">nova &#10095;</span><span class="typed" style="--n:13">cat README.md</span></p>
         <h2>Three commands and you are running.</h2>
-        <p class="body">Python 3.11 or newer and uv. Nothing is installed globally.</p>
+        <p class="body">Python 3.11 or newer and uv. The recommended install is a <code>uv tool</code> install — once installed, the command is <code>nova</code>. For local development you <code>git clone</code>, sync, and use <code>uv run nova</code>.</p>
       </div>
       <div class="install-box win rv">
         <div class="tabs" role="tablist" aria-label="Install method">
@@ -1224,11 +1224,13 @@ status: awaiting your decision">
           <div class="cmd"><code>git clone https://github.com/Babitdor/NovaCode.git</code><button class="copy" type="button" data-copy="git clone https://github.com/Babitdor/NovaCode.git"><svg class="i-copy" aria-hidden="true"><use href="#i-copy"/></svg><svg class="i-check" aria-hidden="true"><use href="#i-check"/></svg><span>Copy</span></button></div>
           <div class="cmd"><code>cd NovaCode &amp;&amp; uv sync</code><button class="copy" type="button" data-copy="cd NovaCode &amp;&amp; uv sync"><svg class="i-copy" aria-hidden="true"><use href="#i-copy"/></svg><svg class="i-check" aria-hidden="true"><use href="#i-check"/></svg><span>Copy</span></button></div>
           <div class="cmd"><code>uv run nova</code><button class="copy" type="button" data-copy="uv run nova"><svg class="i-copy" aria-hidden="true"><use href="#i-copy"/></svg><svg class="i-check" aria-hidden="true"><use href="#i-check"/></svg><span>Copy</span></button></div>
+          <p class="install-note">For an installed copy (not development), install as a <code>uv tool</code> — the command is <code>nova</code>.</p>
         </div>
         <div class="pane" id="p-win" role="tabpanel" aria-labelledby="t-win">
           <div class="cmd"><code>git clone https://github.com/Babitdor/NovaCode.git</code><button class="copy" type="button" data-copy="git clone https://github.com/Babitdor/NovaCode.git"><svg class="i-copy" aria-hidden="true"><use href="#i-copy"/></svg><svg class="i-check" aria-hidden="true"><use href="#i-check"/></svg><span>Copy</span></button></div>
           <div class="cmd"><code>cd NovaCode; uv sync</code><button class="copy" type="button" data-copy="cd NovaCode; uv sync"><svg class="i-copy" aria-hidden="true"><use href="#i-copy"/></svg><svg class="i-check" aria-hidden="true"><use href="#i-check"/></svg><span>Copy</span></button></div>
           <div class="cmd"><code>uv run nova</code><button class="copy" type="button" data-copy="uv run nova"><svg class="i-copy" aria-hidden="true"><use href="#i-copy"/></svg><svg class="i-check" aria-hidden="true"><use href="#i-check"/></svg><span>Copy</span></button></div>
+          <p class="install-note">For an installed copy (not development), install as a <code>uv tool</code> — the command is <code>nova</code>.</p>
         </div>
         <div class="pane" id="p-tool" role="tabpanel" aria-labelledby="t-tool">
           <div class="cmd"><code>uv tool install "novacode-cli @ git+https://github.com/Babitdor/NovaCode.git"</code><button class="copy" type="button" data-copy='uv tool install "novacode-cli @ git+https://github.com/Babitdor/NovaCode.git"'><svg class="i-copy" aria-hidden="true"><use href="#i-copy"/></svg><svg class="i-check" aria-hidden="true"><use href="#i-check"/></svg><span>Copy</span></button></div>
