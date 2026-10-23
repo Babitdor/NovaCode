@@ -14,6 +14,22 @@ from novacode_cli.daemons import registry
 
 
 class DaemonRuntimeTest(unittest.TestCase):
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux zombie process state")
+    def test_exited_unreaped_child_is_not_alive(self):
+        child = subprocess.Popen([sys.executable, "-c", "pass"])
+        try:
+            state = ""
+            for _ in range(100):
+                stat = Path(f"/proc/{child.pid}/stat").read_text()
+                state = stat[stat.rindex(")") + 2 :].split()[0]
+                if state == "Z":
+                    break
+                time.sleep(0.01)
+            self.assertEqual(state, "Z", "Child did not reach the unreaped state")
+            self.assertFalse(registry.is_alive(child.pid))
+        finally:
+            child.wait(timeout=5)
+
     def test_daemon_survives_launcher_and_stops_its_children(self):
         source = Path(__file__).resolve().parents[1]
         tool_path = source / "novacode_cli/tools/daemon_tool.py"

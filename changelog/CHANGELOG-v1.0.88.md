@@ -15,7 +15,8 @@
 - Correct saved path approval validation, root grants and Windows case handling;
   persist grants with restrictive atomic file permissions.
 - Refuse daemon stop operations when process identity cannot be verified, tighten
-  PID reuse checks, and use the Windows system taskkill executable for cleanup.
+  PID reuse checks, treat exited Linux zombie processes as stopped, and use the
+  Windows system taskkill executable for cleanup.
 - Isolate vision configuration tests and block accidental writes to live user settings.
 - Update vulnerable Python dependencies and the Root companion's locked dependencies.
   One OpenTelemetry advisory remains constrained by the optional agent server's

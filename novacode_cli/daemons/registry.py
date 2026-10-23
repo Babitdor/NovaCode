@@ -289,6 +289,16 @@ def is_alive(pid: int) -> bool:
             return True  # exists, owned by another user
         except OSError:
             return True  # indeterminate — assume alive
+        # kill(pid, 0) also succeeds for Linux zombies. A shell spawned by
+        # this process can remain unreaped until another Popen cleans up, but
+        # it has exited and cannot run or respond to another stop signal.
+        try:
+            stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+            state = stat[stat.rindex(")") + 2:].split()[0]
+            if state in {"Z", "X", "x"}:
+                return False
+        except (OSError, ValueError, IndexError):
+            pass  # non-Linux POSIX or an indeterminate probe: keep liveness
         return True
     try:
         import ctypes
