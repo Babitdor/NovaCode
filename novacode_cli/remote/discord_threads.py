@@ -26,6 +26,22 @@ class DiscordSessionThreads:
         channel = self._client.get_channel(channel_id) or self._thread_channels.get(channel_id)
         return channel if channel is not None else await self._client.fetch_channel(channel_id)
 
+    async def _discord_parent(self):
+        """Distinguish an inaccessible configured parent from a deleted session thread."""
+        import discord
+
+        try:
+            return await self._discord_channel(int(self._config.chat_id))
+        except (discord.NotFound, discord.Forbidden) as error:
+            raise RuntimeError(
+                f"Discord parent channel {self._config.chat_id} is unavailable "
+                f"(HTTP {error.status}, Discord code {error.code}). "
+                "Check that the channel still exists and the bot is in its server with "
+                "View Channel permission. In Discord, enable Developer Mode, right-click "
+                "the intended text or forum channel and select Copy Channel ID "
+                "(not the server ID). Update the channel in /remote, then restart Discord."
+            ) from error
+
     async def _usable_thread(self, thread, title: str | None = None):
         import discord
 
@@ -71,7 +87,7 @@ class DiscordSessionThreads:
             return None
         async with self._thread_lock:
             self._session_thread_names[sid] = name
-            parent = await self._discord_channel(int(self._config.chat_id))
+            parent = await self._discord_parent()
             if not isinstance(parent, (discord.TextChannel, discord.ForumChannel)):
                 return None  # DMs and explicitly configured threads retain legacy behavior.
             label = " ".join(name.split()) or session_id[:8]
@@ -193,7 +209,7 @@ class DiscordSessionThreads:
             return await self._usable_thread(thread)
         if sid != "root":
             return None
-        parent = await self._discord_channel(int(self._config.chat_id))
+        parent = await self._discord_parent()
         return None if isinstance(parent, discord.ForumChannel) else parent
 
     def _incoming_destination(self, channel) -> tuple[str | int, int | None] | None:

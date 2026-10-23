@@ -201,6 +201,8 @@ class SessionPane:
     head receives the child's events and is answered at its ``turn_done``."""
     remote_snapshot: Any = None
     """Bounded current response, including while no remote client is connected."""
+    remote_prompt: str | None = None
+    """Current terminal prompt, mirrored when a remote joins the running turn."""
     remote_mirrors: dict = field(default_factory=dict)
     remote_attach_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 

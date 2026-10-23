@@ -96,6 +96,25 @@ async def test_concurrent_sync_creates_one_thread_and_avoids_repeated_api_calls(
     assert not kit.channels[1000].edit.await_count
 
 
+@pytest.mark.parametrize("status,kind", [(404, discord.NotFound), (403, discord.Forbidden)])
+async def test_inaccessible_parent_explains_how_to_repair_connection(kit, status, kind):
+    bot = kit.bridge()
+    del kit.channels[123]
+    kit.client.fetch_channel.side_effect = api_error(kind, status)
+    for operation in (
+        lambda: bot.ensure_session_topic("root", "session-alpha", "Main"),
+        bot.stream_target,
+    ):
+        with pytest.raises(RuntimeError, match="Discord parent channel 123") as error:
+            await operation()
+        assert "Copy Channel ID" in str(error.value)
+        assert "/remote" in str(error.value)
+        assert "View Channel" in str(error.value)
+        assert isinstance(error.value.__cause__, kind)
+    kit.parent.create_thread.assert_not_awaited()
+    assert not bot._session_threads
+
+
 async def test_reconnect_resume_rename_and_archive_keep_the_same_history(kit):
     first = kit.bridge()
     tid = await first.ensure_session_topic("root", "session-alpha", "Old title")

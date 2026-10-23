@@ -36,6 +36,10 @@ Send a prompt directly inside the thread. It routes to that session automaticall
 with replies, progress messages and streamed answers staying in the thread.
 The existing remote slash commands and explicit `@tab:name` routing remain
 available. Local work in Nova also streams into the matching session thread.
+Terminal prompts appear in full as **You · terminal** messages, followed by live
+tool activity and Nova's streamed reply. This also applies to local prompts in
+child session tabs. Connecting Discord during a running turn attaches its current
+prompt and response to the session thread automatically.
 
 `/remote status` and the native `/remote` screen show the active thread IDs.
 Session tabs display **DC** when connected.
@@ -65,6 +69,20 @@ thread keep their original behavior; Nova cannot create nested threads there.
 
 `/remote stop` disconnects the bot. It preserves thread history and mappings for
 the next connection.
+
+## Troubleshooting
+
+If Nova reports that the parent channel is unavailable (HTTP 404, Discord code
+10003 / Unknown Channel), Discord cannot resolve the saved channel for this bot.
+It may have been deleted, the saved ID may be incorrect, or the bot may lack
+access. This happens before Nova can create a session thread.
+
+Enable Developer Mode in Discord, right-click the intended text or forum channel
+and select **Copy Channel ID**. Use that ID in `/remote`, then stop and start the
+Discord connection. A server ID or message ID cannot be used as the parent channel.
+Ensure the bot is in that server and has **View Channel** access, including any
+channel-specific permission overrides. Nova does not create a replacement parent
+channel or redirect session messages when the configured channel is unavailable.
 
 References: [Discord threads](https://docs.discord.com/developers/topics/threads)
 and [discord.py channel/thread APIs](https://discordpy.readthedocs.io/en/stable/api.html).

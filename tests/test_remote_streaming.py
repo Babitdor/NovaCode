@@ -170,6 +170,7 @@ async def test_new_topic_joins_current_local_response_and_keeps_streaming(monkey
     async with app.run_test():
         pane = app._root_pane
         pane.status = "running"
+        pane.remote_prompt = "Original terminal prompt"
         app._feed_remote(pane, ev.TextDelta("Already running"))
         await asyncio.gather(app._open_remote_topics(pane), app._open_remote_topics(pane))
         await asyncio.wait_for(painted.wait(), 5)
@@ -195,7 +196,7 @@ async def test_new_topic_joins_current_local_response_and_keeps_streaming(monkey
         assert sum(final for _text, final in updates) == 1
         assert not pane.remote_mirrors
         assert pane.remote_snapshot is None
-        target.reply_fn.assert_not_awaited()
+        target.reply_fn.assert_awaited_once_with("**You · terminal**\n\nOriginal terminal prompt")
 
 
 async def test_hidden_child_topic_streams_its_own_response_and_cancellation():
@@ -254,7 +255,52 @@ async def test_topic_attachment_discards_a_turn_that_finished_during_setup():
         target.answer_edit_fn.assert_not_awaited()
 
 
-async def test_local_tui_turn_streams_answer_and_tools_to_both_platforms(monkeypatch):
+async def test_gateway_attachment_during_local_prompt_does_not_duplicate_stream(monkeypatch):
+    app = _app()
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def reply(text):
+        entered.set()
+        await release.wait()
+
+    target = SimpleNamespace(
+        chat_id=123, route={"thread": 42}, reply_fn=AsyncMock(side_effect=reply),
+        edit_fn=AsyncMock(), answer_edit_fn=AsyncMock(),
+    )
+
+    class Connection:
+        _config = SimpleNamespace(chat_id=123)
+        stream_target = AsyncMock(return_value=target)
+
+    monkeypatch.setattr(app, "_sync_remote_topics", AsyncMock())
+    async with app.run_test():
+        app.session_state._remote_bridge_manager = SimpleNamespace(
+            stream_targets=AsyncMock(return_value=[target]),
+        )
+        pane = app._root_pane
+        pane.status = "running"
+        pane.remote_prompt = "Local prompt"
+        app._feed_remote(pane, ev.TextDelta("Live answer"))
+        starting = asyncio.create_task(app._start_local_remote_stream("Local prompt"))
+        await asyncio.wait_for(entered.wait(), 5)
+        attaching = asyncio.create_task(app._attach_running_remote_topic(pane, Connection(), 42))
+        release.set()
+        try:
+            await asyncio.wait_for(asyncio.gather(starting, attaching), 5)
+            assert not pane.remote_mirrors
+            assert len(app._local_remote_streams) == 1
+            target.reply_fn.assert_awaited_once()
+            app._feed_remote(pane, ev.TextDelta("More output"))
+        finally:
+            await app._finish_remote_mirrors(pane)
+            await app._finish_local_remote_stream()
+        assert sum(call.args[1] for call in target.answer_edit_fn.await_args_list) == 1
+
+
+@pytest.mark.parametrize("prompt_delivery_fails", [False, True])
+async def test_local_tui_turn_streams_answer_and_tools_to_both_platforms(
+    monkeypatch, prompt_delivery_fails
+):
     app = _app()
     outputs = {"discord": [], "telegram": []}
     live = {key: asyncio.Event() for key in outputs}
@@ -270,7 +316,12 @@ async def test_local_tui_turn_streams_answer_and_tools_to_both_platforms(monkeyp
                 live[key].set()
 
         targets.append(
-            SimpleNamespace(edit_fn=edit_status, answer_edit_fn=edit_answer, reply_fn=AsyncMock())
+            SimpleNamespace(
+                edit_fn=edit_status, answer_edit_fn=edit_answer,
+                reply_fn=AsyncMock(
+                    side_effect=RuntimeError("Discord unavailable") if prompt_delivery_fails else None
+                ),
+            )
         )
 
     async def fake_stream(text, assistant_id=None):
@@ -310,7 +361,10 @@ async def test_local_tui_turn_streams_answer_and_tools_to_both_platforms(monkeyp
             stream_targets=AsyncMock(return_value=targets),
             bridges=lambda *_args: [],
         )
-        await app._stream_prompt("Inspect a.py")
+        prompt = "Inspect a.py\n\n" + "Keep every detail. " * 150
+        await app._stream_prompt(prompt)
+        for target in targets:
+            target.reply_fn.assert_awaited_once_with(f"**You · terminal**\n\n{prompt}")
         for records in outputs.values():
             assert any(
                 kind == "status" and "read_file(a.py)" in text for kind, text, _final in records
@@ -321,6 +375,37 @@ async def test_local_tui_turn_streams_answer_and_tools_to_both_platforms(monkeyp
                 for kind, text, final in records
             )
         assert app._local_remote_streams == []
+
+
+async def test_local_child_prompt_attaches_its_thread_without_reconnect():
+    app = _app()
+    target = SimpleNamespace(
+        chat_id=123, route={"thread": 43}, edit_fn=AsyncMock(),
+        answer_edit_fn=AsyncMock(), reply_fn=AsyncMock(),
+    )
+
+    class Connection:
+        _config = SimpleNamespace(chat_id=123, platform=RemotePlatform.DISCORD)
+        ensure_session_topic = AsyncMock(return_value=43)
+        post = AsyncMock()
+        stream_target = AsyncMock(return_value=target)
+
+    connection = Connection()
+    async with app.run_test():
+        app.session_state._remote_bridge_manager = SimpleNamespace(
+            bridges=lambda platform=None: [connection] if platform == RemotePlatform.DISCORD else [],
+        )
+        pane = await _add_pane(app, sid="review", title="Reviewer")
+        pane.child = object()
+        app._session_supervisor = SimpleNamespace(send_prompt=AsyncMock(return_value="p1"))
+        await app._dispatch_to_child(pane, "Review my changes")
+        try:
+            connection.stream_target.assert_awaited_once_with(sid="review")
+            target.reply_fn.assert_awaited_once_with("**You · terminal**\n\nReview my changes")
+            app._feed_remote(pane, ev.TextDelta("Child answer"))
+        finally:
+            await app._finish_remote_mirrors(pane)
+        assert target.answer_edit_fn.await_args.args[0] == "Child answer"
 
 
 async def test_discord_status_and_answer_have_independent_pages_and_no_mentions():

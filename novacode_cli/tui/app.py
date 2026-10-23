@@ -3374,6 +3374,7 @@ class NovaApp(App):
         pane.status = "running"
         self._sync_child_activity(pane)
         self._refresh_tabs()
+        await self._open_remote_topics(pane)
 
     async def _run_tabs_command(self, text: str) -> None:
         """``/tabs launch|resume|new|list|close`` for parallel session tabs."""
@@ -5139,7 +5140,12 @@ class NovaApp(App):
             options["prompt_id"] = prompt_id
         if images:
             options["images"] = images
-        return await self._supervisor().send_prompt(pane.sid, text, **options)
+        result = await self._supervisor().send_prompt(pane.sid, text, **options)
+        if result is not None and prompt_id is None:
+            pane.remote_prompt = text
+            for target, _status, _answer in list(pane.remote_mirrors.values()):
+                await self._mirror_terminal_prompt(target, text)
+        return result
 
     async def _remote_child_turn(self, pane, msg: Any) -> None:
         """Run a remote prompt in a spawned session; answer at its turn_done."""
@@ -5424,6 +5430,13 @@ class NovaApp(App):
                 or pane.remote_snapshot is not snapshot
             ):
                 return
+            if prompt := getattr(pane, "remote_prompt", None):
+                await self._mirror_terminal_prompt(target, prompt)
+                if (
+                    pane.status not in ("running", "needs-approval")
+                    or pane.remote_snapshot is not snapshot
+                ):
+                    return
             status = RemoteStatusLine(
                 target.edit_fn, label=f"NOVA · {pane.title}", send_fn=target.reply_fn
             )
@@ -5444,6 +5457,7 @@ class NovaApp(App):
         streams = list(pane.remote_mirrors.values())
         pane.remote_mirrors.clear()
         pane.remote_snapshot = None
+        pane.remote_prompt = None
         for _target, _status, answer in streams:
             if error:
                 answer.error = error
@@ -9760,6 +9774,7 @@ class NovaApp(App):
             from novacode_cli.remote.streaming import RemoteAnswerStream
 
             turn_pane.remote_snapshot = RemoteAnswerStream(None)
+            turn_pane.remote_prompt = text if self._remote_msg is None else None
         self._turn_start = time.monotonic()
         if turn_pane is not None:
             turn_pane.status = "running"
@@ -11731,7 +11746,26 @@ class NovaApp(App):
             )
 
     async def _start_local_remote_stream(self, prompt: str) -> None:
-        self._local_remote_streams.extend(await self._create_local_remote_streams(prompt))
+        root = getattr(self, "_root_pane", None)
+        if root is None:
+            self._local_remote_streams.extend(await self._create_local_remote_streams(prompt))
+            return
+        # Gateway-ready callbacks can attach the same turn while the prompt is
+        # being sent. Publish its streams before allowing another attachment.
+        async with root.remote_attach_lock:
+            self._local_remote_streams.extend(await self._create_local_remote_streams(prompt))
+
+    async def _mirror_terminal_prompt(self, target, prompt: str) -> None:
+        """Keep the full local message alongside streamed remote replies."""
+        try:
+            await asyncio.wait_for(
+                target.reply_fn(f"**You · terminal**\n\n{prompt}"), timeout=10
+            )
+        except Exception:
+            self.notify(
+                "Terminal prompt could not be mirrored. Check /remote status.",
+                severity="warning",
+            )
 
     async def _create_local_remote_streams(self, prompt: str, *, label: str = "main") -> list:
         from novacode_cli.remote.status import RemoteStatusLine
@@ -11753,6 +11787,8 @@ class NovaApp(App):
                     for bridge, tid in root.remote_mirrors
                 ):
                     continue
+            if label == "main":
+                await self._mirror_terminal_prompt(target, prompt)
             status = RemoteStatusLine(
                 target.edit_fn,
                 label=f"NOVA · {label} · " + " ".join(prompt.split())[:80],
