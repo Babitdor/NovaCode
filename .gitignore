@@ -14,6 +14,7 @@ dist/
 docs/*
 !docs/rootapp-remote.md
 !docs/discord-session-threads.md
+!docs/security-guardrails.md
 !docs/context-learning/
 !docs/reasoning-support.md
 !docs/COUNCIL-SETTINGS.md

@@ -66,6 +66,7 @@ def build_dream_backend(agent_dir: Path) -> CompositeBackend:
 
 def create_dream_agent(model: BaseChatModel, agent_dir: Path) -> Pregel:
     """Build the dream agent over ``agent_dir`` (the agent's memory root)."""
+    from novacode_cli.security.prompt_injection import PromptInjectionMiddleware
     from novacode_cli.tools.memory_wiki_tools import create_memory_wiki_tool
 
     agent: Any = create_deep_agent(
@@ -86,6 +87,7 @@ def create_dream_agent(model: BaseChatModel, agent_dir: Path) -> Pregel:
                 backoff_factor=1.5,
                 initial_delay=0.5,
             ),
+            PromptInjectionMiddleware(),
         ],
     )
     return agent

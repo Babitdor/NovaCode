@@ -937,12 +937,17 @@ def _harden_subagent_specs(
 
         from novacode_cli.agents.strict_tools import StrictToolMiddleware
         from novacode_cli.context.snapshot import ContextSnapshotMiddleware
+        from novacode_cli.security.prompt_injection import PromptInjectionMiddleware
 
         strict = (
             [] if any(isinstance(m, StrictToolMiddleware) for m in existing)
             else [StrictToolMiddleware()]
         )
-        new_spec["middleware"] = mw_to_add + existing + strict + [ContextSnapshotMiddleware()]
+        guard = (
+            [] if any(isinstance(m, PromptInjectionMiddleware) for m in existing)
+            else [PromptInjectionMiddleware()]
+        )
+        new_spec["middleware"] = mw_to_add + existing + guard + strict + [ContextSnapshotMiddleware()]
         out.append(new_spec)
     return out
 
@@ -2498,7 +2503,10 @@ This file stores your preferences and context that persist across sessions.
     agent_middleware = [m for m in agent_middleware if not isinstance(m, ContextCompactionMiddleware)]
     agent_middleware.extend(compactors)
     from novacode_cli.agents.strict_tools import StrictToolMiddleware
+    from novacode_cli.security.prompt_injection import PromptInjectionMiddleware
 
+    if not any(isinstance(m, PromptInjectionMiddleware) for m in agent_middleware):
+        agent_middleware.append(PromptInjectionMiddleware())
     agent_middleware.append(StrictToolMiddleware())
     agent_middleware.append(ContextSnapshotMiddleware())
 

@@ -73,8 +73,9 @@ def test_existing_subagent_middleware_is_preserved_after_hardening():
     assert isinstance(mw[1], VisionCaptionMiddleware)
     assert isinstance(mw[2], SecurityMiddleware)
     assert isinstance(mw[3], LoopGuardMiddleware)
-    # Preserve caller middleware before strict validation and the final observer.
-    assert mw[-3] is sentinel
+    # Preserve caller middleware before the new input guard and wire observers.
+    assert mw[-4] is sentinel
+    assert type(mw[-3]).__name__ == "PromptInjectionMiddleware"
     assert type(mw[-2]).__name__ == "StrictToolMiddleware"
     assert type(mw[-1]).__name__ == "ContextSnapshotMiddleware"
 

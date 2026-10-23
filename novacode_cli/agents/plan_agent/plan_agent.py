@@ -327,6 +327,9 @@ def create_plan_agent_with_config(
     except Exception:  # noqa: BLE001 — never break plan mode on scout wiring
         logger.debug("async scout middleware unavailable; plan agent runs read-only", exc_info=True)
 
+    from novacode_cli.security.prompt_injection import PromptInjectionMiddleware
+
+    plan_middleware.append(PromptInjectionMiddleware())
     agent = create_deep_agent(
         name=assistant_id,
         model=wrapped_model,

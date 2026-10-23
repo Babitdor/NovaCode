@@ -44,6 +44,8 @@ def create_btw_agent(model: BaseChatModel) -> tuple[Pregel, Any]:
 
     tools = [duckduckgo_search, web_search]
 
+    from novacode_cli.security.prompt_injection import PromptInjectionMiddleware
+
     agent = create_deep_agent(
         name="btw-agent",
         model=model,
@@ -62,6 +64,7 @@ def create_btw_agent(model: BaseChatModel) -> tuple[Pregel, Any]:
                 backoff_factor=1.5,
                 initial_delay=0.5,
             ),
+            PromptInjectionMiddleware(),
         ],
     )
 
