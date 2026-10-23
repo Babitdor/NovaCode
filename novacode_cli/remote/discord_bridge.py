@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections import OrderedDict
 from typing import Any, Awaitable, Callable
 
 from novacode_cli.remote.bridge import (
@@ -34,12 +35,13 @@ from novacode_cli.remote.bridge import (
     RemoteMessage,
     RemotePlatform,
 )
+from novacode_cli.remote.discord_threads import DiscordSessionThreads
 from novacode_cli.remote.processor import _debug_log
 
 logger = logging.getLogger(__name__)
 
 
-class DiscordBridge:
+class DiscordBridge(DiscordSessionThreads):
     """Discord bot bridge for Nova-Code.
 
     Connects to Discord via the gateway and listens for messages in
@@ -63,6 +65,8 @@ class DiscordBridge:
         self._last_error: str | None = None
         self._bot_user: str | None = None
         self._msg_count: int = 0  # messages received and forwarded
+        self._init_session_threads()
+        self._outgoing_owners: OrderedDict[int, str] = OrderedDict()
 
     @property
     def is_connected(self) -> bool:
@@ -84,7 +88,14 @@ class DiscordBridge:
             except Exception:
                 pass
 
-    def _editor(self, channel):
+    def _remember_owner(self, message, route: dict) -> None:
+        mid = getattr(message, "id", None)
+        if isinstance(mid, int):
+            self._outgoing_owners[mid] = str(route.get("sid", "root"))
+            if len(self._outgoing_owners) > 2000:
+                self._outgoing_owners.popitem(last=False)
+
+    def _editor(self, channel, *, route: dict | None = None):
         import discord
 
         from novacode_cli.remote.discord_format import render
@@ -93,7 +104,9 @@ class DiscordBridge:
         mentions = discord.AllowedMentions.none()
 
         async def send(body):
-            return await channel.send(body, allowed_mentions=mentions)
+            message = await channel.send(body, allowed_mentions=mentions)
+            self._remember_owner(message, route if route is not None else {})
+            return message
 
         async def edit(message, body):
             await message.edit(content=body, allowed_mentions=mentions)
@@ -106,9 +119,12 @@ class DiscordBridge:
     async def stream_target(self, *, sid: str = "root") -> RemoteMessage | None:
         if not self.is_connected or self._client is None:
             return None
-        channel = self._client.get_channel(int(self._config.chat_id))
+        channel = await self._session_destination(sid)
         if channel is None:
-            channel = await self._client.fetch_channel(int(self._config.chat_id))
+            return None
+        binding = self._session_threads.get(sid)
+        tid = binding[1] if binding else None
+        route = {"sid": sid, "thread": tid}
         from novacode_cli.remote.discord_format import render
 
         async def reply(text):
@@ -117,7 +133,8 @@ class DiscordBridge:
             if not self.is_connected:
                 return
             for page in render(text):
-                await channel.send(page, allowed_mentions=discord.AllowedMentions.none())
+                message = await channel.send(page, allowed_mentions=discord.AllowedMentions.none())
+                self._remember_owner(message, route)
 
         from novacode_cli.remote.streaming import connected_editor
 
@@ -127,10 +144,26 @@ class DiscordBridge:
             user_name="Nova",
             text="",
             reply_fn=reply,
-            edit_fn=connected_editor(self, self._editor(channel)),
-            answer_edit_fn=connected_editor(self, self._editor(channel)),
-            route={"sid": sid},
+            edit_fn=connected_editor(self, self._editor(channel, route=route)),
+            answer_edit_fn=connected_editor(self, self._editor(channel, route=route)),
+            thread_id=tid,
+            route=route,
         )
+
+    async def post(self, text: str, *, thread_id: int | None = None, sid: str = "root") -> None:
+        """Post a session lifecycle message to its thread."""
+        import discord
+
+        from novacode_cli.remote.discord_format import render
+
+        channel = await self._discord_channel(thread_id) if thread_id is not None else await self._session_destination(sid)
+        if channel is None:
+            return
+        if thread_id is not None:
+            channel = await self._usable_thread(channel)
+        for page in render(text):
+            message = await channel.send(page, allowed_mentions=discord.AllowedMentions.none())
+            self._remember_owner(message, {"sid": sid})
 
     async def run(self) -> None:
         """Start the Discord bot and run until cancelled."""
@@ -159,7 +192,20 @@ class DiscordBridge:
             guilds = len(client.guilds)
             logger.info(f"Discord bridge connected as {client.user} (guilds: {guilds})")
             await self._status(f"Discord bridge connected as {client.user} ({guilds} server(s))")
+            for sid, (session_id, _tid) in list(self._session_threads.items()):
+                try:
+                    await self.ensure_session_topic(
+                        sid, session_id, self._session_thread_names.get(sid, sid), verify=True,
+                    )
+                except Exception as error:
+                    await self._status(f"Discord session thread could not reconnect: {error}")
             self._ready_event.set()
+
+        @client.event
+        async def on_raw_thread_delete(payload) -> None:
+            self._thread_channels.pop(payload.thread_id, None)
+            self._thread_titles.pop(payload.thread_id, None)
+            self._joined_threads.discard(payload.thread_id)
 
         @client.event
         async def on_message(message: discord.Message) -> None:
@@ -183,18 +229,19 @@ class DiscordBridge:
             }:
                 return
 
-            # Only process messages in the allowlisted channel
-            channel_id_str = str(message.channel.id)
-            allowed = {str(self._config.chat_id)} | {str(i) for i in self._config.allowed_ids}
-
-            if channel_id_str not in allowed:
-                # Log filtered messages at debug level for troubleshooting
-                logger.debug(
-                    f"Discord: filtered message from {message.author} "
-                    f"in channel {message.channel.id} "
-                    f"(allowed: {allowed})"
-                )
+            # Parent authorization does not grant access to arbitrary sibling
+            # threads: accept only threads registered to this Nova process.
+            destination = self._incoming_destination(message.channel)
+            if destination is None:
                 return
+            chat_id, thread_id = destination
+            route = {"thread": thread_id}
+            if thread_id is not None:
+                route["thread_session"] = next(
+                    (sid for sid, (_session, tid) in self._session_threads.items() if tid == thread_id), None,
+                )
+            reference = getattr(message, "reference", None)
+            reply_owner = self._outgoing_owners.get(getattr(reference, "message_id", None))
 
             # Check message content
             content = message.content.strip()
@@ -230,9 +277,10 @@ class DiscordBridge:
                 chunks = render(response_text)
                 for chunk in chunks:
                     try:
-                        await message.channel.send(
+                        sent = await message.channel.send(
                             chunk, allowed_mentions=discord.AllowedMentions.none()
                         )
+                        self._remember_owner(sent, route)
                     except discord.HTTPException as e:
                         logger.error(f"Discord send error: {e}")
                     except Exception as e:
@@ -245,8 +293,8 @@ class DiscordBridge:
                 except Exception as e:  # noqa: BLE001 — reactions are optional
                     logger.debug(f"Discord reaction failed: {e}")
 
-            edit_fn = self._editor(message.channel)
-            answer_edit_fn = self._editor(message.channel)
+            edit_fn = self._editor(message.channel, route=route)
+            answer_edit_fn = self._editor(message.channel, route=route)
 
             ping_enabled = getattr(self._config, "ping", True)
             user_mention = message.author.mention if ping_enabled else None
@@ -254,7 +302,7 @@ class DiscordBridge:
             try:
                 remote_msg = RemoteMessage(
                     platform=RemotePlatform.DISCORD,
-                    chat_id=message.channel.id,
+                    chat_id=chat_id,
                     user_name=str(message.author),
                     text=content,
                     reply_fn=reply_fn,
@@ -263,13 +311,18 @@ class DiscordBridge:
                     edit_fn=edit_fn,
                     answer_edit_fn=answer_edit_fn,
                     user_mention=user_mention,
+                    sender_id=message.author.id,
+                    message_id=message.id,
+                    thread_id=thread_id,
+                    reply_to_owner=reply_owner,
+                    route=route,
                 )
             except Exception as _e:
                 logger.error(f"Failed to create RemoteMessage: {_e}")
                 # Fallback: create without typing_fn
                 remote_msg = RemoteMessage(
                     platform=RemotePlatform.DISCORD,
-                    chat_id=message.channel.id,
+                    chat_id=chat_id,
                     user_name=str(message.author),
                     text=content,
                     reply_fn=reply_fn,
@@ -277,6 +330,11 @@ class DiscordBridge:
                     edit_fn=edit_fn,
                     answer_edit_fn=answer_edit_fn,
                     user_mention=user_mention,
+                    sender_id=message.author.id,
+                    message_id=message.id,
+                    thread_id=thread_id,
+                    reply_to_owner=reply_owner,
+                    route=route,
                 )
 
             await self._queue.put(remote_msg)

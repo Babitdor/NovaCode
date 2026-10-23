@@ -694,20 +694,28 @@ async def _handle_remote_command(cmd_args: str | None, session_state, console) -
     manager: RemoteBridgeManager = session_state._remote_bridge_manager
     args = (cmd_args or "").strip()
 
+    from novacode_cli.commands.rootapp_remote import handle_rootapp_remote
+
+    if await handle_rootapp_remote(args, session_state, manager, console):
+        return True
+
     # Sender authorization is managed from the local Nova UI only.
     if args.lower().startswith(("allow-user", "deny-user")):
         match = re.fullmatch(
-            r"(allow-user|deny-user)\s+(telegram|discord)\s+([1-9][0-9]*)",
+            r"(allow-user|deny-user)\s+(telegram|discord|rootapp)\s+([A-Za-z0-9_-]{1,128})",
             args,
             re.IGNORECASE,
         )
         if not match:
-            console.print("Usage: /remote allow-user telegram <USER_ID> (or deny-user)")
+            console.print("Usage: /remote allow-user <telegram|discord|rootapp> <USER_ID> (or deny-user)")
             return True
         from novacode_cli.remote.config import async_save_remote_config
 
         action, platform, user_id = match.groups()
         platform = platform.lower()
+        if platform != "rootapp" and not re.fullmatch(r"[1-9][0-9]*", user_id):
+            console.print("Telegram and Discord user IDs must be positive numbers.")
+            return True
         saved = await async_load_remote_config()
         values = saved.get(platform, {}).get("allowed_user_ids", [])
         users = {str(value) for value in values} if isinstance(values, list) else set()
@@ -748,11 +756,16 @@ async def _handle_remote_command(cmd_args: str | None, session_state, console) -
                     f"  {icon} [bold]{b['platform']}[/bold]{bot_info} "
                     f"\u2014 chat: {b['chat_id']} \u2014 {status}"
                 )
+                for thread in b.get("session_threads", []):
+                    console.print(f"    Session {thread['session_id']} → Thread {thread['thread_id']}", markup=False)
 
         # Show saved config
         if saved:
             console.print()
             console.print("[dim]Saved configuration:[/dim]")
+            if "rootapp" in saved:
+                root = saved["rootapp"]
+                console.print(f"Rootapp: token {'configured' if root.get('token') else 'missing'} · bot {root.get('bot_id', '—')} · channel {root.get('channel_id', '—')}", markup=False)
             if "discord" in saved:
                 d = saved["discord"]
                 has_token = "\u2713" if d.get("token") else "\u2717"
@@ -769,6 +782,7 @@ async def _handle_remote_command(cmd_args: str | None, session_state, console) -
         console.print("  [dim]/remote start discord    (uses saved token & channel)[/dim]")
         console.print("  [dim]/remote start discord --token TOKEN --channel ID[/dim]")
         console.print("  [dim]/remote start telegram --token TOKEN --chat ID[/dim]")
+        console.print("  [dim]/remote setup rootapp  |  /remote start rootapp --token DEV_TOKEN --bot-id BOT_ID --channel ID --user-id USER_ID[/dim]")
         console.print("  [dim]/remote allow-user telegram USER_ID  |  /remote deny-user telegram USER_ID[/dim]")
         console.print("  [dim]/remote test  |  /remote stop  |  /remote forget[/dim]")
 
@@ -831,22 +845,24 @@ async def _handle_remote_command(cmd_args: str | None, session_state, console) -
                 continue
 
             if b["platform"] == "discord" and hasattr(bridge_obj, "_client") and bridge_obj._client:
-                client = bridge_obj._client
-                channel_id = int(b["chat_id"])
-                channel = client.get_channel(channel_id)
-                if channel is None:
-                    try:
-                        channel = await client.fetch_channel(channel_id)
-                    except Exception as e:
-                        console.print(f"  [red]Channel {channel_id} not found: {e}[/red]")
-                        continue
-                if channel:
-                    try:
-                        await channel.send(test_msg)
-                        console.print(f"  [green]\u2713[/green] Test message sent to Discord channel {channel_id}")
+                try:
+                    target = await bridge_obj.stream_target(sid="root")
+                    if target is not None:
+                        await target.reply_fn(test_msg)
+                        console.print(f"  [green]\u2713[/green] Test message sent to Discord {target.thread_id or target.chat_id}")
                         sent = True
-                    except Exception as e:
-                        console.print(f"  [red]Failed to send: {e}[/red]")
+                except Exception as e:
+                    console.print(f"  [red]Failed to send: {e}[/red]")
+
+            elif b["platform"] == "rootapp":
+                try:
+                    target = await bridge_obj.stream_target()
+                    if target is not None:
+                        await target.reply_fn(test_msg)
+                        console.print("Rootapp test message sent.")
+                        sent = True
+                except Exception:
+                    console.print("Rootapp test failed; check /remote status.")
 
             elif b["platform"] == "telegram" and hasattr(bridge_obj, "_session"):
                 config = entry_dict.get("config")
@@ -873,7 +889,7 @@ async def _handle_remote_command(cmd_args: str | None, session_state, console) -
         return True
 
     # ── /remote forget [discord|telegram] ──────────────────────────
-    forget_match = re.match(r"forget(?:\s+(discord|telegram))?$", args, re.IGNORECASE)
+    forget_match = re.match(r"forget(?:\s+(discord|telegram|rootapp))?$", args, re.IGNORECASE)
     if forget_match:
         platform = (forget_match.group(1) or "").lower()
         saved = await async_load_remote_config()
@@ -1089,8 +1105,9 @@ async def _handle_remote_command(cmd_args: str | None, session_state, console) -
     console.print("[dim]Usage:[/dim]")
     console.print("  [dim]/remote start discord [--token TOKEN] [--channel ID][/dim]")
     console.print("  [dim]/remote start telegram [--token TOKEN] [--chat ID][/dim]")
+    console.print("  [dim]/remote setup rootapp  |  /remote start rootapp [--token DEV_TOKEN] [--bot-id BOT_ID] [--channel ID] [--user-id USER_ID][/dim]")
     console.print("  [dim]/remote allow-user telegram USER_ID  |  /remote deny-user telegram USER_ID[/dim]")
     console.print("  [dim]/remote status  |  /remote test  |  /remote stop[/dim]")
-    console.print("  [dim]/remote forget [discord|telegram][/dim]")
+    console.print("  [dim]/remote forget [discord|telegram|rootapp][/dim]")
     console.print()
     return True

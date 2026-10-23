@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "novacode-cli"
-version = "1.0.87"
+version = "1.0.88"
 description = "Agentic Coding Tool that runs in your terminal"
 authors = [{ name = "Babitdor", email = "babitdorbryan14@gmail.com" }]
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -22,6 +22,10 @@ classifiers = [
  ]
 dependencies = [
     "requests",
+    # Security floors for existing transitive HTTP dependencies; wheel installs
+    # do not consult uv.lock.
+    "certifi>=2026.10.19",
+    "brotli>=1.2.1",
     "jinja2>=3.1.0",
     "rich>=13.0.0",
     "textual>=1.0.0",
@@ -61,7 +65,7 @@ dependencies = [
     "mcp>=1.28.1,<2",
     "docker>=7.0.0",
     "keyring>=24.0.0",
-    "pillow",
+    "pillow>=13.0.0",
     "aiosqlite>=0.19.0",
     # Format conversion and code formatting tools
     "pyyaml>=6.0",
@@ -172,6 +176,7 @@ llama-cpp-python = { index = "llama-cpp-cpu" }
 "*" = ["*.jinja", "langgraph.json"]
 "novacode_cli.agents.default_subagents" = ["builtin/*.md"]
 novacode_cli = ["assets/Nova.png", "assets/nova-avatar.png"]
+"novacode_cli.remote" = ["rootapp_bot/*.cjs", "rootapp_bot/*.json"]
 
 [tool.ruff]
 line-length = 100
@@ -263,7 +268,7 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
     "pytest-timeout>=2.3",
-    "black>=24.0.0",
+    "black>=26.10.1",
     "ruff>=0.8.0",
     "mypy>=1.13.0",
     # Test-only guard that fails a test when the TUI makes a blocking call on its

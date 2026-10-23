@@ -228,6 +228,14 @@ def _stop_daemon(name: str) -> str:
         unregister(name)
         return f"Daemon '{name}' was not running; removed from the registry."
 
+    # Legacy entries and failed OS probes provide liveness, not ownership.
+    # Keep them visible, but never force-kill a possibly recycled live PID.
+    if info.create_time <= 0 or process_created_at(info.pid) is None:
+        return (
+            f"Error: cannot verify process identity for daemon '{name}' (pid {info.pid}). "
+            "Nothing was killed. Left registered for manual inspection."
+        )
+
     # A live pid is NOT proof it is still our daemon — pids are reused and this
     # registry outlives reboots. Killing on liveness alone would force-kill an
     # unrelated process tree (`taskkill /T /F`) that merely inherited the number.
@@ -240,8 +248,10 @@ def _stop_daemon(name: str) -> str:
 
     try:
         if os.name == "nt":
+            from novacode_cli.utils.windows import taskkill_executable
+
             proc = subprocess.run(  # noqa: S603 — terminating a daemon we started
-                ["taskkill", "/PID", str(info.pid), "/T", "/F"],  # noqa: S607
+                [taskkill_executable(), "/PID", str(info.pid), "/T", "/F"],
                 capture_output=True,
                 timeout=10,
                 check=False,

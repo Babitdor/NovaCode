@@ -16,8 +16,8 @@ never be loosened away.
 Precedence inside :meth:`ApprovalPolicy.evaluate` is **deny → ask → allow →
 per-tool default**, with deny winning first for security.
 
-Path note: in local mode NOVA uses virtual ``/``-rooted (workspace-relative)
-paths, so writes are already sandboxed to the workspace. We therefore keep
+Path note: local file tools accept virtual paths and approved host paths.
+These rules are an approval gate, not an operating-system sandbox. We keep
 ``write_file``/``edit_file`` at the ``ask`` default and only *deny* paths that
 match system/secret globs (meaningful for real absolute paths); auto-allowing
 writes is opt-in via config.
@@ -28,14 +28,14 @@ from __future__ import annotations
 import fnmatch
 import json
 import logging
+import os
+import posixpath
 from dataclasses import dataclass, field
+from pathlib import Path
 from re import Pattern
 from re import compile as _re_compile
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 from urllib.parse import urlparse
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 from novacode_cli.config.config import HOME_DIR
 from novacode_cli.git_safety import (
@@ -64,7 +64,7 @@ _SHELL_TOOLS = frozenset(
 #: none, so gating them buys nothing and costs approval fatigue.
 _DAEMON_READONLY_ACTIONS = frozenset({"list", "status", "logs"})
 
-_PATH_TOOLS = frozenset({"write_file", "edit_file", "NotebookEditTool"})
+_PATH_TOOLS = frozenset({"write_file", "edit_file", "NotebookEditTool", "write_memory"})
 _URL_TOOLS = frozenset({"fetch_url"})
 
 # Per-tool default tier (the fallback when no specific rule matches).
@@ -297,12 +297,52 @@ class ApprovalPolicy:
         return ApprovalDecision(self.tool_default(tool_name), rule="tool-default")
 
     def _eval_path(self, tool_name: str, args: dict[str, Any]) -> ApprovalDecision:
-        raw = str(args.get("file_path") or "")
+        raw = str(args.get("file_path") or (args.get("path") if tool_name == "write_memory" else "") or "")
+        if not raw and tool_name == "write_memory":
+            from novacode_cli.tools.memory_tools import _resolve_memory_path
+
+            try:
+                target, _ = _resolve_memory_path(args.get("memory_type", "user"))
+                raw = str(target)
+            except (OSError, ValueError, RuntimeError):
+                return ApprovalDecision("deny", "Cannot resolve memory destination", "path-resolution")
         if not raw:
             return ApprovalDecision(self.tool_default(tool_name), rule="tool-default")
         norm = raw.replace("\\", "/")
+        if "\x00" in norm or norm.startswith(("//?/", "//./", "/??/")):
+            return ApprovalDecision("deny", "Invalid or device namespace path", "path-syntax")
+        candidates = {norm, posixpath.normpath(norm)}
+        try:
+            candidates.add(Path(raw).resolve().as_posix())
+            if tool_name == "write_memory":
+                from novacode_cli.tools.memory_tools import _resolve_memory_path
+
+                target, _ = _resolve_memory_path(args.get("memory_type", "user"), raw)
+                candidates.add(target.resolve().as_posix())
+            elif norm.startswith("/"):
+                from novacode_cli.config.config import MAIN_AGENT_ID, settings
+                from novacode_cli.utils.backend_paths import virtual_to_real_path
+
+                target = virtual_to_real_path(
+                    norm, agent_id=MAIN_AGENT_ID, workspace_root=settings.get_workspace_root()
+                )
+                if target is None:
+                    return ApprovalDecision("deny", "Cannot resolve virtual write destination", "path-resolution")
+                candidates.add(target.as_posix())
+        except (OSError, ValueError, RuntimeError):
+            return ApprovalDecision("deny", "Cannot resolve write destination", "path-resolution")
+        if os.name == "nt":
+            # Win32 aliases trim trailing spaces/dots and expose ADS on the
+            # same underlying file. Check the base file as well as the stream.
+            for candidate in tuple(candidates):
+                parts = candidate.split("/")
+                candidates.add("/".join(
+                    part if i == 0 and len(part) == 2 and part[1] == ":"
+                    else part.split(":", 1)[0].rstrip(" .")
+                    for i, part in enumerate(parts)
+                ))
         for glob in self.path_deny:
-            if _glob_match(norm, glob):
+            if any(_glob_match(candidate, glob) for candidate in candidates):
                 return ApprovalDecision("deny", f"Path matches a denied glob: {glob}", glob)
         for glob in self.path_allow:
             if _glob_match(norm, glob):
@@ -340,6 +380,9 @@ def _compile_all(patterns: list[str]) -> list[Pattern[str]]:
 
 def _glob_match(path: str, pattern: str) -> bool:
     """fnmatch-based glob match that also lets ``/etc/**`` cover ``/etc``."""
+    path, pattern = path.replace("\\", "/"), pattern.replace("\\", "/")
+    if os.name == "nt":
+        path, pattern = path.lower(), pattern.lower()
     if fnmatch.fnmatch(path, pattern):
         return True
     base = pattern.rstrip("/*")

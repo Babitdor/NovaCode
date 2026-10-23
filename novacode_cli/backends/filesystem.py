@@ -293,11 +293,9 @@ class OptimizedFilesystemBackend(FilesystemBackend):
             return super()._resolve_path(key)
         from deepagents.backends.filesystem import _raise_if_symlink_loop
 
-        vpath = key if key.startswith("/") else "/" + key
-        if ".." in vpath or vpath.startswith("~"):
-            msg = "Path traversal not allowed"
-            raise ValueError(msg)
-        full = (self.cwd / vpath.lstrip("/")).resolve()
+        from novacode_cli.security.paths import virtual_relative_path
+
+        full = (self.cwd / virtual_relative_path(key)).resolve()
         _raise_if_symlink_loop(full)
         return full
 

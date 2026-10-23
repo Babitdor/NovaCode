@@ -275,7 +275,7 @@ COMMANDS = {
     "plan": "Toggle plan mode (e.g., /plan, /plan on, /plan off)",
     "verbose": "Toggle verbose mode - show/hide internal agent context",
     "steer": "Add persistent steering instructions (e.g., /steer focus on database layer)",
-    "remote": "Manage remote bridges to Discord or Telegram (start/stop/status/test)",
+    "remote": "Manage Discord, Telegram or Rootapp bridges (setup/start/stop/status/test)",
     "cron": 'Schedule recurring agent tasks (e.g., /cron add "0 9 * * *" "review project")',
     "webhook": "Manage the webhook ingress server (start/stop/register/status)",
     "prompt": "Manage evolving system-prompt templates (status/rollback/accept/reject)",

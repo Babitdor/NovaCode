@@ -58,6 +58,14 @@ You can then run `nova` from your project's directory. After changing this check
 
 Attach files with `@`; use **Shift+Enter** for a new line. Nova applies workspace, tool and path permissions; review approvals before granting broader access.
 
+Connect a Root community channel with `/remote` → **Setup Rootapp**, then
+**Start Rootapp**. See the [Rootapp setup guide](docs/rootapp-remote.md) for the
+Dev Token, Bot ID, sender authorization and `/nova` commands.
+
+Discord remotes create a separate thread for each Nova session. Connect a parent
+text or forum channel through `/remote`; see [Discord session threads](docs/discord-session-threads.md)
+for permissions, routing and session history.
+
 Temporary web links require the [ngrok agent](https://ngrok.com/download) and
 `ngrok config add-authtoken <token>`. Anyone with a share link can access that
 page until you stop it with `/share stop`; see [temporary sharing](docs/temporary-sharing.md).

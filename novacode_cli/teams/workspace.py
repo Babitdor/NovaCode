@@ -22,6 +22,7 @@ WRITE_TOOLS = frozenset(
         "str_replace",
         "delete_file",
         "NotebookEditTool",
+        "write_memory",
     }
 )
 
@@ -39,6 +40,11 @@ def resolve_write_paths(
     """
     if name not in WRITE_TOOLS:
         return []
+    if name == "write_memory":
+        from novacode_cli.tools.memory_tools import _resolve_memory_path
+
+        target, _ = _resolve_memory_path(args.get("memory_type", "user"), args.get("path"))
+        return [target.resolve()]
     raw = args.get("file_path")
     if not isinstance(raw, str) or not raw.strip():
         message = "Missing file path for team write"

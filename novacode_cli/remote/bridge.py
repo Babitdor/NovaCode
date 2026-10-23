@@ -1,4 +1,4 @@
-"""Remote bridge — send messages to the Nova-Code agent from Discord or Telegram.
+"""Remote bridges for Discord, Telegram and Rootapp.
 
 Architecture
 ------------
@@ -22,6 +22,7 @@ Lifecycle
 ---------
 - ``/remote start discord  --token TOKEN --channel ID`` starts the bridge.
 - ``/remote start telegram --token TOKEN --chat   ID`` starts the bridge.
+- ``/remote setup rootapp`` installs Root's optional SDK; ``start rootapp`` connects it.
 - ``/remote stop``  gracefully shuts down all bridges.
 - ``/remote status`` shows what's running.
 """
@@ -49,14 +50,15 @@ logger = logging.getLogger(__name__)
 class RemotePlatform(str, Enum):
     """Supported remote platforms / message sources.
 
-    DISCORD and TELEGRAM are interactive chat bridges. CRON and WEBHOOK are
+    DISCORD, TELEGRAM and ROOTAPP are interactive chat bridges. CRON and WEBHOOK are
     one-way *event sources* (Enhancement 3 / 5): they push ``RemoteMessage``s
     onto the same queue but have no chat to reply to (their ``reply_fn`` is a
-    no-op). The processor handles all four identically.
+    no-op). The processor handles them through the same queue.
     """
 
     DISCORD = "discord"
     TELEGRAM = "telegram"
+    ROOTAPP = "rootapp"
     CRON = "cron"
     WEBHOOK = "webhook"
 
@@ -123,6 +125,7 @@ class BridgeConfig:
         chat_id: Specific channel/chat to listen on and respond in.
         allowed_ids: Set of additional IDs that are allowed to interact.
         ping: Whether to ping/mention the user when the task is done (Discord).
+        bot_id: Root Bot ID used by the DevHost manifest (Rootapp).
     """
 
     platform: RemotePlatform
@@ -131,6 +134,7 @@ class BridgeConfig:
     allowed_ids: set[str | int] = field(default_factory=set)
     ping: bool = True
     allowed_user_ids: set[str | int] = field(default_factory=set)
+    bot_id: str = ""
 
     def __post_init__(self) -> None:
         """Read shared-chat sender permissions from the existing remote config."""
@@ -151,6 +155,8 @@ class BridgeConfig:
 MAX_MESSAGE_LENGTH: dict[RemotePlatform, int] = {
     RemotePlatform.DISCORD: 2000,
     RemotePlatform.TELEGRAM: 4096,
+    # Conservative page size; Root's SDK accepts Markdown content strings.
+    RemotePlatform.ROOTAPP: 2000,
 }
 
 
@@ -432,6 +438,11 @@ class RemoteBridgeManager:
                     {"session_id": session_id, "topic_id": topic_id}
                     for session_id, topic_id in getattr(bridge, "_session_topics", {}).values()
                 ]
+            if config.platform == RemotePlatform.DISCORD and bridge is not None:
+                entry_info["session_threads"] = [
+                    {"session_id": session_id, "thread_id": thread_id}
+                    for session_id, thread_id in getattr(bridge, "_session_threads", {}).values()
+                ]
             info.append(entry_info)
         return info
 
@@ -462,6 +473,31 @@ class RemoteBridgeManager:
             except Exception:
                 logger.warning("Could not initialize remote streaming target", exc_info=True)
         return targets
+
+    async def start_rootapp(self, token: str, channel_id: str, bot_id: str) -> tuple[bool, str]:
+        """Run Root's local SDK companion and await its authenticated handshake."""
+        from novacode_cli.remote.rootapp_bridge import RootappBridge
+
+        if not token or not channel_id or not bot_id:
+            return False, "Rootapp needs a Dev Token, channel ID and Bot ID."
+        bridge_id = self._make_bridge_id(RemotePlatform.ROOTAPP, channel_id)
+        if bridge_id in self._bridges:
+            await self.stop_bridge(bridge_id)
+        config = BridgeConfig(RemotePlatform.ROOTAPP, token, channel_id, bot_id=bot_id)
+        bridge = RootappBridge(config, self._queue, on_status=self._on_status)
+        task = asyncio.create_task(bridge.run(), name=f"rootapp-bridge-{bridge_id}")
+        self._bridges[bridge_id] = {"config": config, "bridge": bridge, "task": task}
+        self._running = True
+        try:
+            if await bridge.wait_for_ready():
+                self._ensure_watchdog()
+                return True, ""
+            error = bridge.last_error or "Rootapp startup timed out. Check the Dev Token, Bot ID and network."
+        except BaseException:
+            await self.stop_bridge(bridge_id)
+            raise
+        await self.stop_bridge(bridge_id)
+        return False, error
 
     async def start_discord(
         self, token: str, channel_id: str | int, ping: bool = True
@@ -799,9 +835,18 @@ class RemoteBridgeManager:
                                 message_queue=self._queue,
                                 on_status=self._on_status,
                             )
+                            previous = entry.get("bridge")
+                            bridge._session_threads = dict(getattr(previous, "_session_threads", {}))
+                            bridge._session_thread_names = dict(getattr(previous, "_session_thread_names", {}))
+                            bridge._outgoing_owners.update(getattr(previous, "_outgoing_owners", {}))
                             new_task = asyncio.create_task(
                                 bridge.run(), name=f"discord-bridge-{bridge_id}"
                             )
+                        elif config.platform == RemotePlatform.ROOTAPP:
+                            from novacode_cli.remote.rootapp_bridge import RootappBridge
+
+                            bridge = RootappBridge(config, self._queue, on_status=self._on_status)
+                            new_task = asyncio.create_task(bridge.run(), name=f"rootapp-bridge-{bridge_id}")
                         else:
                             from novacode_cli.remote.telegram_bridge import TelegramBridge
 

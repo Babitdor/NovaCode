@@ -23,7 +23,6 @@ import asyncio
 import contextlib
 import logging
 import os
-import shutil
 import signal
 import socket
 import subprocess  # this module exists to launch one
@@ -349,9 +348,9 @@ def _taskkill_tree(pid: int) -> None:
     server in the same console group, so an escalated kill without this can leave
     a process holding the port.
     """
-    taskkill = shutil.which("taskkill")
-    if taskkill is None:
-        return
+    from novacode_cli.utils.windows import taskkill_executable
+
+    taskkill = taskkill_executable()
     with contextlib.suppress(OSError, subprocess.SubprocessError):
         subprocess.run(  # noqa: S603
             [taskkill, "/PID", str(pid), "/T", "/F"],

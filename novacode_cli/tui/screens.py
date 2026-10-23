@@ -5808,6 +5808,11 @@ class RemoteScreen(ModalScreen[None]):
     RemoteScreen #remote-access-buttons Button { margin-right: 1; }
     RemoteScreen #remote-access-hint { margin-top: 1; color: $text-muted; }
     RemoteScreen #remote-authorized-users { height: auto; color: $text-muted; }
+    RemoteScreen #modal-buttons {
+        layout: grid; grid-size: 3; grid-columns: 1fr 1fr 1fr;
+        grid-gutter: 1; height: auto;
+    }
+    RemoteScreen #modal-buttons Button { width: 1fr; min-width: 0; margin: 0; }
     """
 
     def __init__(
@@ -5830,14 +5835,18 @@ class RemoteScreen(ModalScreen[None]):
                 yield Static("", id="remote-status")
             yield Static(Text("Start / Connect Bridge", style="bold"), id="remote-section-title")
             yield Input(
-                placeholder="Bot token (blank = use saved config)",
+                placeholder="Bot token / Root Dev Token (blank = saved)",
                 password=True,
                 id="remote-token",
             )
             yield Input(placeholder="Channel/Chat ID (blank = saved/auto)", id="remote-chat")
+            yield Static("Discord: sessions get their own threads in the configured text/forum channel. Grant Create Public Threads, Send Messages in Threads and Read Message History; Manage Threads supports locked threads.", id="discord-threads-hint")
+            yield Input(placeholder="Rootapp Bot ID (blank = saved)", id="rootapp-bot-id")
+            yield Static("Rootapp: install the SDK once with Setup Rootapp (Node.js 22+), then enter Dev Token, Bot ID and channel. Send /nova <prompt> in Root.", id="rootapp-hint")
             yield Static("Telegram: each Nova window gets a session topic. Enable Topics for the bot's private chat, or use a Topics-enabled group with Manage Topics permission.", id="remote-topics-hint")
-            yield Static("Telegram sender access · enter your personal user ID from Nova's blocked-message notice", id="remote-access-hint")
-            yield Input(placeholder="Telegram user ID (e.g. 123456789)", id="remote-user-id")
+            yield Static("Sender access · authorize your personal user ID for the selected platform", id="remote-access-hint")
+            yield Select([("Telegram", "telegram"), ("Discord", "discord"), ("Rootapp", "rootapp")], value="telegram", allow_blank=False, id="remote-access-platform")
+            yield Input(placeholder="Personal user ID (Root GUID or numeric chat account ID)", id="remote-user-id")
             yield Static("", id="remote-authorized-users")
             with Horizontal(id="remote-access-buttons"):
                 yield Button("Authorize", id="remote-authorize", variant="success")
@@ -5845,6 +5854,8 @@ class RemoteScreen(ModalScreen[None]):
             with Horizontal(id="modal-buttons"):
                 yield Button("Start Discord", id="start-discord", variant="success")
                 yield Button("Start Telegram", id="start-telegram", variant="success")
+                yield Button("Start Rootapp", id="start-rootapp", variant="success")
+                yield Button("Setup Rootapp", id="setup-rootapp")
                 yield Button("Test", id="test")
                 yield Button("Stop All", id="stop", variant="error")
                 yield Button("Close", id="close")
@@ -5886,18 +5897,25 @@ class RemoteScreen(ModalScreen[None]):
                 t.append("\n")
                 for topic in b.get("session_topics", []):
                     t.append(f"    {topic['session_id']} → Topic {topic['topic_id']}\n")
+                for thread in b.get("session_threads", []):
+                    t.append(f"    {thread['session_id']} → Thread {thread['thread_id']}\n")
         else:
             t.append("📭 No bridges active.\n", style="dim italic")
         try:
             saved = load_remote_config()
         except Exception:  # noqa: BLE001
             saved = {}
-        users = saved.get("telegram", {}).get("allowed_user_ids", [])
+        access_platform = self._access_platform()
+        users = saved.get(access_platform, {}).get("allowed_user_ids", [])
         self.query_one("#remote-authorized-users", Static).update(
-            Text("Authorized Telegram users: " + (", ".join(map(str, users)) if users else "none"))
+            Text(f"Authorized {access_platform.title()} users: " + (", ".join(map(str, users)) if users else "none"))
         )
         if saved:
             t.append("\n💾 Saved Configurations:\n", style="bold magenta")
+            if "rootapp" in saved:
+                root = saved["rootapp"]
+                t.append("  Rootapp", style="bold green")
+                t.append(f" · Token: {'configured' if root.get('token') else 'missing'} · Channel: {root.get('channel_id', '—')} · Bot: {root.get('bot_id', '—')}\n")
             if "discord" in saved:
                 d = saved["discord"]
                 tok = "● Configured" if d.get("token") else "✖ Missing Token"
@@ -5928,8 +5946,20 @@ class RemoteScreen(ModalScreen[None]):
         if token:
             args += f" --token {token}"
         if chat:
-            args += f" --channel {chat}" if platform == "discord" else f" --chat {chat}"
+            args += f" --channel {chat}" if platform in {"discord", "rootapp"} else f" --chat {chat}"
+        if platform == "rootapp":
+            bot_id = self.query_one("#rootapp-bot-id", Input).value.strip()
+            if bot_id:
+                args += f" --bot-id {bot_id}"
         return args
+
+    def _access_platform(self) -> str:
+        value = self.query_one("#remote-access-platform", Select).value
+        return value if value in {"telegram", "discord", "rootapp"} else "telegram"
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id == "remote-access-platform" and self.is_mounted:
+            self._refresh()
 
     @work
     async def _run_remote(self, args: str) -> None:
@@ -5977,17 +6007,25 @@ class RemoteScreen(ModalScreen[None]):
             self._run_remote(self._build_args("discord"))
         elif bid == "start-telegram":
             self._run_remote(self._build_args("telegram"))
+        elif bid == "start-rootapp":
+            self._run_remote(self._build_args("rootapp"))
+        elif bid == "setup-rootapp":
+            self._run_remote("setup rootapp")
         elif bid == "test":
             self._run_remote("test")
         elif bid == "stop":
             self._run_remote("stop")
         elif bid in {"remote-authorize", "remote-revoke"}:
             user_id = self.query_one("#remote-user-id", Input).value.strip()
-            if not user_id.isascii() or not user_id.isdigit() or int(user_id) <= 0:
-                self.query_one("#remote-result", Static).update(Text("Enter a valid numeric Telegram user ID.", style="red"))
+            platform = self._access_platform()
+            from novacode_cli.commands.rootapp_remote import valid_root_id
+
+            valid = valid_root_id(user_id) if platform == "rootapp" else bool(re.fullmatch(r"[1-9][0-9]*", user_id))
+            if not valid:
+                self.query_one("#remote-result", Static).update(Text(f"Enter a valid {platform.title()} user ID.", style="red"))
                 return
             action = "allow-user" if bid == "remote-authorize" else "deny-user"
-            self._run_remote(f"{action} telegram {user_id}")
+            self._run_remote(f"{action} {platform} {user_id}")
 
     def action_close(self) -> None:
         self.dismiss(None)

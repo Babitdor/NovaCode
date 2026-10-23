@@ -247,7 +247,7 @@ def test_tail_handles_small_and_empty_logs(tmp_path):
 
 def test_stop_keeps_the_entry_when_the_process_survives(monkeypatch):
     """Unregistering a live daemon makes it permanently untrackable."""
-    reg.register(_info(name="stubborn", pid=os.getpid()))
+    reg.register(_info(name="stubborn", pid=os.getpid(), create_time=reg.process_created_at(os.getpid()) or 1.0))
     monkeypatch.setattr(reg, "is_ours", lambda info: True)
     monkeypatch.setattr(daemon_tool, "is_ours", lambda info: True)
     monkeypatch.setattr(daemon_tool, "is_alive", lambda pid: True)  # never dies

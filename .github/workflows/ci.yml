@@ -62,9 +62,20 @@ jobs:
           novacode_cli/security/delegated_approval.py
           novacode_cli/teams/workspace.py
           novacode_cli/security/local_http.py
+          novacode_cli/security/paths.py
+          novacode_cli/utils/windows.py
+          novacode_cli/security/policy.py
+          novacode_cli/utils/backend_paths.py
+          novacode_cli/integrations/host_path.py
+          novacode_cli/path_approval.py
           novacode_cli/commands/share_handler.py
           novacode_cli/artifacts/server.py
           novacode_cli/tools/artifact_tools.py
+          novacode_cli/remote/rootapp_bridge.py
+          novacode_cli/remote/discord_threads.py
+          novacode_cli/remote/discord_bridge.py
+          novacode_cli/remote/rootapp_setup.py
+          novacode_cli/commands/rootapp_remote.py
       - name: Run offline regression tests
         run: >-
           uv run --no-sync pytest -q --tb=short --junitxml=test-results/regression.xml
@@ -88,7 +99,20 @@ jobs:
           tests/test_essential_session_tools.py
           tests/test_context_snapshot.py
           tests/test_remote_cron.py
+          tests/test_rootapp_remote.py
+          tests/test_discord_session_threads.py
+          tests/test_rootapp_ui.py
           tests/test_approval_policy.py
+          tests/test_security_paths_audit.py
+          tests/test_user_config_guard.py
+          tests/test_vision_router.py
+          tests/test_image_utils.py
+          tests/test_portable_paths_stdlib.py
+          tests/test_security_remediation.py
+          tests/test_daemon_tool.py
+          tests/test_daemon_hardening.py
+          tests/test_daemon_security_identity.py
+          tests/test_portable_daemon_runtime.py
           tests/test_desktop_sleep.py
           tests/test_notebook_tools.py
           tests/test_native_search.py

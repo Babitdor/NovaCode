@@ -78,6 +78,10 @@ def host_path_to_virtual(
         return path
 
     norm = path.replace("\\", "/")
+    # Never fold traversal across a route boundary. The filesystem validator
+    # must see and reject it, rather than receive a different virtual target.
+    if ".." in norm.split("/") or "\x00" in norm:
+        return path
 
     # Mounted roots first — they're more specific than the project root.
     for host_root, prefix in mounts or []:

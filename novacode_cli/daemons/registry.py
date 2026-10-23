@@ -30,9 +30,9 @@ import json
 import os
 import threading
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from collections.abc import Iterator
 from typing import Any
 
 #: Directory holding daemon logs + the registry.
@@ -48,7 +48,7 @@ _LOCK_TIMEOUT = 5.0
 #: Tolerance when matching a recorded creation time against the live process.
 #: Windows FILETIME and the epoch conversion round; the value only needs to be
 #: far tighter than the gap between a pid dying and being reissued.
-_CREATE_TIME_TOLERANCE = 2.0
+_CREATE_TIME_TOLERANCE = 0.001
 
 
 def _lock_path() -> Path:

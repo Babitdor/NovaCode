@@ -12,6 +12,8 @@ build/
 develop-eggs/
 dist/
 docs/*
+!docs/rootapp-remote.md
+!docs/discord-session-threads.md
 !docs/context-learning/
 !docs/reasoning-support.md
 !docs/COUNCIL-SETTINGS.md
@@ -168,6 +170,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 package-lock.json
+!novacode_cli/remote/rootapp_bot/package-lock.json
 yarn.lock
 
 # Graphify — the /graphify skill writes its knowledge-graph output + AST cache
@@ -205,6 +208,8 @@ tmp/
 /SECURITY_AUDIT.md
 /SECURITY_REMEDIATION.md
 /SECURITY_REMEDIATION_SPEC.md
+/SECURITY_PATHS_AUDIT.md
+/SECURITY_PATHS_SPEC.md
 
 # Context/learning verification outputs (scripts/*context_learning*.py); local only
 /reports/

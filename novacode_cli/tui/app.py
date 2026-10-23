@@ -3719,15 +3719,13 @@ class NovaApp(App):
             ):
                 platforms.append("TG")
                 break
-        if pane.kind == "root":
-            from novacode_cli.remote.bridge import RemotePlatform
-
-            manager = getattr(self._remote_owner_state(), "_remote_bridge_manager", None)
-            if manager is not None and hasattr(manager, "bridges") and any(
-                getattr(bridge, "is_connected", False)
-                for bridge in manager.bridges(RemotePlatform.DISCORD)
+        for bridge in NovaApp._remote_discord_bridges(self):
+            if getattr(bridge, "is_connected", False) and (
+                pane.kind == "root"
+                or (router is not None and router.topic_of(bridge._config.chat_id, pane.sid))
             ):
                 platforms.append("DC")
+                break
         return platforms
 
     def _refresh_tabs(self) -> None:
@@ -5270,6 +5268,21 @@ class NovaApp(App):
             "origin_thread_id": thread_id,
         }
 
+    def _remote_discord_bridges(self) -> list:
+        from novacode_cli.remote.bridge import RemotePlatform
+
+        state = getattr(self, "session_state", None)
+        manager = getattr(state, "_remote_bridge_manager", None)
+        if manager is None:
+            root = getattr(self, "_root_pane", None)
+            state = root.state.get("session_state") if root is not None else None
+            manager = getattr(state, "_remote_bridge_manager", None)
+        return manager.bridges(RemotePlatform.DISCORD) if manager is not None and hasattr(manager, "bridges") else []
+
+    def _remote_topic_bridges(self) -> list:
+        """Adapters implementing per-session topics or Discord threads."""
+        return [*self._remote_telegram_bridges(), *NovaApp._remote_discord_bridges(self)]
+
     def _remote_owner_state(self):
         """The root owns the connection even while a child tab is visible."""
         root = getattr(self, "_root_pane", None)
@@ -5336,7 +5349,7 @@ class NovaApp(App):
             logger.debug("Telegram command menu refresh failed", exc_info=True)
 
     async def _open_remote_topics(self, pane, *, attach_running: bool = True) -> None:
-        """Bind every live session to its own stable Telegram topic."""
+        """Bind every live session to a stable Telegram topic or Discord thread."""
         from novacode_cli.remote.routing import RemoteRouter
 
         router = getattr(self, "_remote_router", None)
@@ -5346,20 +5359,22 @@ class NovaApp(App):
             self._remote_owner_state() if pane.kind == "root" else pane.state.get("session_state")
         )
         session_id = str(getattr(state, "session_id", "") or pane.sid)
-        for bridge in self._remote_telegram_bridges():
+        for bridge in NovaApp._remote_topic_bridges(self):
+            platform = getattr(getattr(bridge._config, "platform", None), "value", "telegram")
             try:
                 tid = await bridge.ensure_session_topic(pane.sid, session_id, pane.title)
                 if tid is None:
-                    self.notify(
-                        "Enable Telegram Topics (or private bot topic mode), and grant Manage Topics permission in groups.",
-                        severity="warning",
-                    )
+                    if platform == "telegram":
+                        self.notify(
+                            "Enable Telegram Topics (or private bot topic mode), and grant Manage Topics permission in groups.",
+                            severity="warning",
+                        )
                     continue
                 previous = router.topic_of(bridge._config.chat_id, pane.sid)
                 router.topics[(bridge._config.chat_id, pane.sid)] = tid
                 if previous != tid:
                     await bridge.post(
-                        f"Session **{session_id}** connected. Messages in this topic go to **{pane.title}**.",
+                        f"Session **{session_id}** connected. Messages in this {'thread' if platform == 'discord' else 'topic'} go to **{pane.title}**.",
                         thread_id=tid,
                         sid=pane.sid,
                     )
@@ -5367,7 +5382,7 @@ class NovaApp(App):
                     await self._attach_running_remote_topic(pane, bridge, tid)
             except Exception as error:
                 self.notify(
-                    f"Telegram session topic could not connect: {error}", severity="warning"
+                    f"{platform.title()} session {'thread' if platform == 'discord' else 'topic'} could not connect: {error}", severity="warning"
                 )
 
     async def _attach_running_remote_topic(self, pane, bridge, tid: int) -> None:
@@ -5441,12 +5456,13 @@ class NovaApp(App):
         if router is None:
             return
         gone = router.forget(pane.sid)
-        for bridge in self._remote_telegram_bridges():
+        for bridge in NovaApp._remote_topic_bridges(self):
             for chat, tid in gone:
                 if chat != bridge._config.chat_id:
                     continue
                 with contextlib.suppress(Exception):
                     await bridge.post(f"○ Session **{pane.title}** closed.", thread_id=tid)
+                with contextlib.suppress(Exception):
                     await bridge.close_topic(tid)
 
     async def _defer_remote_image_turn(self, msg: Any, queue: Any) -> None:
@@ -11698,6 +11714,10 @@ class NovaApp(App):
 
             async def status_callback(message: str) -> None:
                 self._log(Text(f"🔗 Remote: {message}", style="dim"))
+                # A slow gateway connection can finish after the initial topic
+                # sync. Bind its sessions as soon as Discord is actually ready.
+                if message.startswith("Discord bridge connected") and self.is_running:
+                    self.run_worker(self._sync_remote_topics(), group="remote_topics", exclusive=False)
 
             manager.set_status_callback(status_callback)
             self._remote_status_callback = status_callback

@@ -383,8 +383,10 @@ def _kill_pid_tree(pid: int) -> None:
 
     try:
         if sys.platform == "win32":
+            from novacode_cli.utils.windows import taskkill_executable
+
             subprocess.run(
-                ["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, timeout=5
+                [taskkill_executable(), "/PID", str(pid), "/T", "/F"], capture_output=True, timeout=5
             )
         else:
             os.killpg(os.getpgid(pid), signal.SIGKILL)

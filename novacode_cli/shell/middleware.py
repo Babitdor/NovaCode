@@ -21,8 +21,8 @@ if TYPE_CHECKING:
 
 from langchain.agents.middleware.types import AgentMiddleware, AgentState
 from langchain.tools import ToolRuntime
-from langchain_core.tools import StructuredTool
 from langchain_core.messages import ToolMessage
+from langchain_core.tools import StructuredTool
 from langchain_core.tools.base import ToolException
 
 from novacode_cli.shell.os_sandbox import OSSandboxPolicy, detect_backend, wrap_command
@@ -37,7 +37,6 @@ from novacode_cli.shell.utils import (
     is_long_running_command,
     is_server_ready,
 )
-
 
 # The shell's OWN "I don't understand this" diagnostics — the small, stable
 # error vocabulary of cmd.exe / PowerShell / bash, NOT an enumeration of
@@ -1014,10 +1013,12 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
         # Windows terminate() kills only the shell. Once it exits taskkill /T
         # cannot find the descendants, so stop the tree while its root exists.
         if sys.platform == "win32":
+            from novacode_cli.utils.windows import taskkill_executable
+
             killer = None
             try:
                 killer = await asyncio.create_subprocess_exec(
-                    "taskkill", "/PID", str(proc.pid), "/T", "/F",
+                    taskkill_executable(), "/PID", str(proc.pid), "/T", "/F",
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
                     creationflags=subprocess.CREATE_NO_WINDOW,

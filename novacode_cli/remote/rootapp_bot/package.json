@@ -1,0 +1,18 @@
+{
+  "name": "nova-rootapp-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {"node": ">=22"},
+  "dependencies": {
+    "@rootsdk/dev-tools": "0.21.3",
+    "@rootsdk/server-bot": "0.21.3",
+    "ws": "8.22.0"
+  },
+  "overrides": {
+    "@rootsdk/server-bot": {
+      "sqlite3": "6.0.1",
+      "uuid": "11.1.1"
+    },
+    "tar": "7.5.22"
+  }
+}

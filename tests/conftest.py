@@ -170,10 +170,24 @@ def _guard_the_real_user_config() -> Iterator[None]:
     untouched, so that mistake surfaces as a failure instead of as lost data.
     """
     from pathlib import Path
+    from novacode_cli.config.nova_config import NovaConfig
 
     path = Path.home() / ".nova" / "Nova.config.json"
     before = path.read_bytes() if path.exists() else None
-    yield
+    original_save = NovaConfig._save
+
+    def guarded_save(config):
+        if config.config_path.resolve() == path.resolve():
+            raise AssertionError(
+                "test attempted to write the real user config; isolate NovaConfig first"
+            )
+        return original_save(config)
+
+    NovaConfig._save = guarded_save
+    try:
+        yield
+    finally:
+        NovaConfig._save = original_save
     after = path.read_bytes() if path.exists() else None
     assert before == after, (
         f"a test modified the real user config at {path}; "

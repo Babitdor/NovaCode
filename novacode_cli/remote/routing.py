@@ -78,6 +78,13 @@ class RemoteRouter:
         thread = getattr(msg, "thread_id", None)
         if thread is not None:
             sid = self.sid_of_topic(chat, thread)
+            if getattr(getattr(msg, "platform", None), "value", None) == "discord":
+                # A Discord gateway restart may recreate a deleted session
+                # thread before the TUI refreshes its routing table. The bridge
+                # supplies this hint only for its own registered session threads.
+                route = getattr(msg, "route", None) or {}
+                if "thread_session" in route:
+                    sid = route["thread_session"]
             return Route(sid, text, "topic") if sid in sessions else None
 
         owner = getattr(msg, "reply_to_owner", None)

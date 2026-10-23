@@ -74,11 +74,41 @@ def virtual_to_real_path(
     if not virtual_path or not virtual_path.startswith("/"):
         return None
 
+    from novacode_cli.security.paths import resolve_beneath, virtual_relative_path
+
+    try:
+        virtual_relative_path(virtual_path)
+    except ValueError:
+        return None
+
+    def confined(root: Path, key: str) -> Path | None:
+        try:
+            return resolve_beneath(Path(root), key)
+        except (ValueError, OSError, RuntimeError):
+            return None
+
+    def from_backend(selected, key: str) -> Path | None:
+        root = getattr(selected, "cwd", None) or getattr(selected, "root_dir", None)
+        if root is None:
+            return None
+        target = confined(Path(root), key)
+        if target is None:
+            return None
+        resolver = getattr(selected, "_resolve_path", None)
+        if callable(resolver):
+            resolved = Path(resolver(key)).resolve()
+            return resolved if resolved == target else None
+        return target
+
     # When backend is available, let it handle the resolution.
     # The backend's FilesystemBackend._resolve_path() converts virtual
     # paths to real paths using its root_dir and virtual_mode settings.
     if backend is not None:
         try:
+            router = getattr(backend, "_get_backend_and_key", None)
+            if callable(router):
+                selected, key = router(virtual_path)
+                return from_backend(selected, key)
             # Try to use the backend's internal path resolution.
             # CompositeBackend routes to the correct sub-backend.
             if hasattr(backend, "default"):
@@ -86,17 +116,17 @@ def virtual_to_real_path(
                 for prefix, sub_backend in _get_routes(backend):
                     if virtual_path.startswith(prefix):
                         # Strip the prefix and resolve within the sub-backend.
-                        relative = virtual_path[len(prefix) :].lstrip("/")
-                        if hasattr(sub_backend, "root_dir") and hasattr(
-                            sub_backend, "virtual_mode"
-                        ):
-                            return Path(sub_backend.root_dir) / relative
+                        relative = "/" + virtual_path[len(prefix) :].lstrip("/")
+                        return from_backend(sub_backend, relative)
                 # Fall through to default backend.
                 default = backend.default
-                if hasattr(default, "root_dir"):
-                    return Path(default.root_dir) / virtual_path.lstrip("/")
+                return from_backend(default, virtual_path)
+            elif hasattr(backend, "root_dir") or hasattr(backend, "cwd"):
+                return from_backend(backend, virtual_path)
+            return None
         except Exception:
             logger.debug("backend path resolution failed for %s", virtual_path)
+            return None
 
     # Manual fallback: resolve based on known route prefixes.
     if virtual_path.startswith("/memories/"):
@@ -107,7 +137,17 @@ def virtual_to_real_path(
         aid = agent_id or MAIN_AGENT_ID
         agent_dir = settings.get_agent_dir(aid)
         relative = virtual_path.removeprefix("/memories/").lstrip("/")
-        return agent_dir / relative
+        return confined(agent_dir, relative)
+
+    for prefix, getter in (
+        ("/skills/", "get_user_skills_dir"),
+        ("/claude-skills/", "get_global_claude_skills_dir"),
+        ("/shared-skills/", "get_shared_skills_dir"),
+    ):
+        if virtual_path.startswith(prefix):
+            from novacode_cli.config.config import settings
+
+            return confined(getattr(settings, getter)(), virtual_path[len(prefix):])
 
     if virtual_path.startswith("/project-memory/"):
         if not workspace_root:
@@ -115,7 +155,7 @@ def virtual_to_real_path(
 
             workspace_root = settings.project_root or Path.cwd()
         relative = virtual_path.removeprefix("/project-memory/").lstrip("/")
-        return workspace_root / ".nova" / relative
+        return confined(workspace_root / ".nova", relative)
 
     if virtual_path.startswith("/.nova/plans/"):
         if not workspace_root:
@@ -123,14 +163,14 @@ def virtual_to_real_path(
 
             workspace_root = settings.project_root or Path.cwd()
         relative = virtual_path.removeprefix("/.nova/plans/").lstrip("/")
-        return workspace_root / ".nova" / "plans" / relative
+        return confined(workspace_root / ".nova" / "plans", relative)
 
     # Default: workspace root
     if not workspace_root:
         from novacode_cli.config.config import settings
 
         workspace_root = settings.project_root or Path.cwd()
-    return workspace_root / virtual_path.lstrip("/")
+    return confined(workspace_root, virtual_path)
 
 
 def real_to_virtual_path(
@@ -410,10 +450,6 @@ def resolve_memory_virtual_path(
     if path and path.startswith("/"):
         # Already a virtual path.
         return path
-
-    from novacode_cli.config.config import MAIN_AGENT_ID
-
-    aid = agent_id or MAIN_AGENT_ID
 
     if path:
         # Custom path provided — resolve based on memory_type.

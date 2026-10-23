@@ -35,6 +35,17 @@ from novacode_cli.config.nova_config import NovaConfig
 
 
 @pytest.fixture(autouse=True)
+def _isolate_vision_config(tmp_path, monkeypatch):
+    """Config round-trips must never clear the developer's saved vision model."""
+    from novacode_cli.config import nova_config
+
+    monkeypatch.setattr(
+        nova_config, "Settings",
+        SimpleNamespace(from_environment=lambda: SimpleNamespace(user_deepagents_dir=tmp_path)),
+    )
+
+
+@pytest.fixture(autouse=True)
 def _reset_vision_globals() -> Iterator[None]:
     """Isolate the process-wide vision-model cache between tests."""
     vr._vision_model_instance = None

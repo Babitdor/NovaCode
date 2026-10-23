@@ -31,11 +31,24 @@ class PathApprovalManager:
         enabling O(1) lookup instead of O(n) iteration.
         """
         self._recursive_prefixes: set[str] = set()
+        self._exact_paths: set[str] = set()
+        validated = {}
         for path_str, config in self._approved_paths.items():
-            if config.get("recursive", False):
+            if not isinstance(config, dict) or type(config.get("recursive", False)) is not bool:
+                continue
+            try:
+                path = Path(path_str)
+                if not path.is_absolute():
+                    continue
+                normalized = os.path.normcase(str(path.resolve()))
+            except (OSError, ValueError, RuntimeError):
+                continue
+            validated[normalized] = config
+            self._exact_paths.add(normalized)
+            if config.get("recursive") is True:
                 # Store normalized path with trailing separator for prefix matching
-                normalized = str(Path(path_str).resolve())
                 self._recursive_prefixes.add(normalized)
+        self._approved_paths = validated
 
     def _check_file_permissions(self) -> bool:
         """Check if config file has secure permissions.
@@ -92,14 +105,9 @@ class PathApprovalManager:
     def _save_approved_paths(self) -> None:
         """Save approved paths to config file with secure permissions."""
         self.config_dir.mkdir(parents=True, exist_ok=True)
-        with open(self.config_file, "w") as f:
-            json.dump(self._approved_paths, f, indent=2)
+        from novacode_cli.security.secret_files import write_secret_json
 
-        # Set secure permissions (owner read/write only)
-        try:
-            os.chmod(self.config_file, 0o600)
-        except OSError:
-            pass  # Windows doesn't support Unix permissions
+        write_secret_json(self.config_file, self._approved_paths)
 
     def is_path_approved(self, path: Path) -> bool:
         """Check if a path is approved for access.
@@ -113,19 +121,21 @@ class PathApprovalManager:
             True if the path or any parent is approved, False otherwise
         """
         path = path.resolve()
-        path_str = str(path)
+        path_str = os.path.normcase(str(path))
 
         # O(1) exact match check
-        if path_str in self._approved_paths:
+        if path_str in self._exact_paths:
             return True
 
         # O(d) parent check where d = path depth (typically < 10)
         # Walk up the directory tree and check each parent
         current = path
-        while current != current.parent:  # Stop at root
-            current_str = str(current)
+        while True:
+            current_str = os.path.normcase(str(current))
             if current_str in self._recursive_prefixes:
                 return True
+            if current == current.parent:
+                break
             current = current.parent
 
         return False
@@ -138,7 +148,7 @@ class PathApprovalManager:
             recursive: If True, also approve all subdirectories
         """
         path = path.resolve()
-        path_str = str(path)
+        path_str = os.path.normcase(str(path))
 
         self._approved_paths[path_str] = {
             "recursive": recursive,
@@ -157,7 +167,7 @@ class PathApprovalManager:
             True if path was revoked, False if it wasn't approved
         """
         path = path.resolve()
-        path_str = str(path)
+        path_str = os.path.normcase(str(path))
 
         if path_str in self._approved_paths:
             del self._approved_paths[path_str]

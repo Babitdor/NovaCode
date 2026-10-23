@@ -1,6 +1,6 @@
 """Persistent configuration for remote bridges.
 
-Stores Discord/Telegram tokens and channel IDs so the user doesn't have
+Stores Discord/Telegram/Rootapp tokens and channel IDs so the user doesn't have
 to re-type them every session.  Config is saved to ``~/.nova/remote.json``.
 
 Format::
