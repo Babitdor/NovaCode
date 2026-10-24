@@ -51,6 +51,7 @@ __all__ = [
     "compact_mark",
     "get_accent_hex",
     "lockup",
+    "portrait",
     "responsive_art",
     "version_line",
     "wordmark",
@@ -235,6 +236,12 @@ def lockup() -> tuple[str, ...]:
 
 
 @lru_cache(maxsize=1)
+def portrait() -> tuple[str, ...]:
+    """Return the canonical character alone, without wordmark or caption."""
+    return tuple(_pad(row, PORTRAIT_WIDTH) for row in _PORTRAIT)
+
+
+@lru_cache(maxsize=1)
 def compact_art() -> tuple[str, ...]:
     """The portrait with the name beneath it, for terminals too narrow to lockup.
 
@@ -245,7 +252,7 @@ def compact_art() -> tuple[str, ...]:
     Returns:
         One string per row, every row exactly :data:`PORTRAIT_WIDTH` cells wide.
     """
-    rows = [_pad(row, PORTRAIT_WIDTH) for row in _PORTRAIT]
+    rows = list(portrait())
     rows.append(" " * PORTRAIT_WIDTH)
     rows.append(_pad(_NAME_LINE.center(PORTRAIT_WIDTH), PORTRAIT_WIDTH))
     return tuple(rows)

@@ -12,6 +12,8 @@ from textual.containers import Horizontal, VerticalScroll
 from textual.message import Message
 from textual.widgets import Button, Static
 
+from novacode_cli.tui.home_scene import PORTRAIT_HOME_MIN_WIDTH
+
 if TYPE_CHECKING:
     from textual import events
     from textual.app import ComposeResult
@@ -28,8 +30,25 @@ HOME_STYLES = (
     ("Classic · Matrix banner and chat", "classic"),
     ("Centered · wordmark and focused composer", "centered"),
     ("Banner · bold wordmark and open conversation", "banner"),
+    ("Terminal · shell prompt and unboxed output", "terminal"),
+    ("Workbench · character portrait and tool desk", "workbench"),
+    ("Notebook · ruled entries and generous reading space", "notebook"),
+    ("Outline · ASCII frames and plain controls", "outline"),
+    ("Focus · narrow reading column and quiet chrome", "focus"),
+    ("Studio · constellation portrait and soft controls", "studio"),
+    ("Ledger · dense entries and compact command desk", "ledger"),
+    ("Blueprint · scanning schematic and double rules", "blueprint"),
     ("Minimal · compact conversation and controls", "minimal"),
 )
+
+# These layouts use the shared, lightweight home widgets and continue into chat.
+CONVERSATION_STYLES = frozenset(key for _, key in HOME_STYLES) - {
+    "dashboard",
+    "classic",
+    "centered",
+}
+STYLED_HOME_STYLES = CONVERSATION_STYLES | {"centered"}
+LAUNCHPAD_STYLES = CONVERSATION_STYLES - {"banner", "minimal"}
 
 
 def home_style(value: object, *, legacy_dashboard: object = True) -> str:
@@ -68,7 +87,7 @@ def home_presentation(
     palette: FooterPalette,
 ) -> HomePresentation:
     """Apply Nova's branding to each layout without inventing session metrics."""
-    from novacode_cli.brand import WORDMARK_LINES, compact_mark, wordmark
+    from novacode_cli.brand import WORDMARK_LINES, compact_mark, lockup, portrait, wordmark
 
     logo = wordmark() if width >= _WORDMARK_MIN_WIDTH else compact_mark()
     details = f"Nova Code  v{identity.version}"
@@ -84,6 +103,46 @@ def home_presentation(
         details = (
             f"Started session {identity.session_id[:12]}" if identity.session_id else "New session"
         )
+    introductions = {
+        "terminal": ("> NOVA CODE", "A workspace, a prompt, and room to think."),
+        "workbench": ("NOVA / WORKBENCH", "Inspect the project. Build the next change."),
+        "notebook": ("Nova / working notes", "Start with a question. Keep the reasoning readable."),
+        "outline": ("[ NOVA CODE ]", "Plain frames. Clear boundaries. Your next task."),
+        "focus": ("Nova", "One conversation. One next step."),
+        "studio": ("NOVA STUDIO", "Make something worth shipping."),
+        "ledger": ("NOVA  /  SESSION LEDGER", "Describe a task to open the first entry."),
+        "blueprint": ("NOVA :: BLUEPRINT", "Turn a specification into a working change."),
+    }
+    if style in introductions:
+        title = introductions[style][0]
+        art = Text(title, style=f"bold {palette.accent}")
+        details = f"v{identity.version}  /  {identity.model}\n{identity.workspace}"
+        if width >= _WORDMARK_MIN_WIDTH:
+            drawings = {
+                "terminal": "$ nova\n  Your next change starts here.",
+                "workbench": "\n".join(portrait()),
+                "notebook": (
+                    "Nova / field notes\n────────────────────────────\n"
+                    "A fresh page for the next idea."
+                ),
+                "outline": "+  N O V A  +\n\n[ explore ]   [ build ]   [ refine ]",
+                "focus": wordmark(),
+                "studio": "\n".join(lockup())
+                if width >= PORTRAIT_HOME_MIN_WIDTH
+                else "\n".join(portrait()),
+                "ledger": "NOVA / SESSION LEDGER\n────────────────────────────────",
+                "blueprint": (
+                    "     NOVA :: BLUEPRINT\n─────┼──────────────────────────\n"
+                    "     ├── SPEC → BUILD → VERIFY\n     └── Your workspace, in focus."
+                ),
+            }
+            art = Text(drawings[style], style=f"bold {palette.accent}")
+        if style == "ledger":
+            details = (
+                f"MODEL      {identity.model}\n"
+                f"WORKSPACE  {identity.workspace}\n"
+                f"SESSION    {identity.session_id[:12] or 'New session'}"
+            )
     tip = (
         "Build. Think. Refine. Together."
         if style == "centered"
@@ -92,6 +151,8 @@ def home_presentation(
             "Type to begin   / commands   @ files   /help"
         )
     )
+    if style in introductions:
+        tip = introductions[style][1]
     metadata = Text("Nova", style=palette.accent)
     metadata.append(f"  ·  {identity.provider}  ·  {identity.model}", style=palette.text)
     if identity.context_percent is not None:
@@ -250,4 +311,22 @@ class HomeActions(Horizontal):
             ("[b]Build[/b]\n[dim]New feature[/dim]", "build"),
             ("[b]Debug[/b]\n[dim]Fix a problem[/dim]", "debug"),
         ):
-            yield Button(label, id=f"home-action-{identifier}", classes="home-action")
+            prefix = "home-action" if self.id == "home-actions" else "home-style-action"
+            yield Button(label, id=f"{prefix}-{identifier}", name=identifier, classes="home-action")
+
+    def set_presentation(self, style: str) -> None:
+        """Use compact command labels or descriptive task cards for each home."""
+        labels = {
+            "explain": ("Explain", "Read the code"),
+            "refactor": ("Refactor", "Clean it up"),
+            "build": ("Build", "New feature"),
+            "debug": ("Debug", "Fix a problem"),
+        }
+        for button in self.query(Button):
+            if button.name not in labels:
+                continue
+            title, description = labels[button.name]
+            if style in {"workbench", "studio"}:
+                button.label = f"[b]{title}[/b]\n[dim]{description}[/dim]"
+            else:
+                button.label = f"> {title}" if style == "terminal" else title

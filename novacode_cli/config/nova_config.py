@@ -1034,6 +1034,10 @@ class NovaConfig:
         """Persist the live Code Mode preference."""
         self.set("code_mode_enabled", bool(enabled))
 
+    def get_edit_diagnostics_enabled(self) -> bool:
+        """Whether file edits are followed by the project's own lint/type checks."""
+        return _config_bool(self.get("edit_diagnostics_enabled", True), default=True)
+
     def get_caveman_enabled(self) -> bool:
         """Whether replies should use the opt-in terse prose style."""
         return _config_bool(self.get("caveman_enabled"))

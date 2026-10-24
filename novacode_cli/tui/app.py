@@ -21,6 +21,11 @@ from novacode_cli.core import subagent_tasks
 from novacode_cli.prompts import render_template
 from novacode_cli.ui import status_phrases
 from novacode_cli.tui.avatar import NovaAvatar
+from novacode_cli.tui.home_scene import (
+    ANIMATED_HOME_STYLES, HOME_SCENE_FPS, HOME_MOTION_MIN_WIDTH, HOME_MOTION_MIN_HEIGHT,
+    PORTRAIT_HOME_MIN_WIDTH,
+    PORTRAIT_HOME_MIN_HEIGHT, HomeScene,
+)
 from novacode_cli.tui.voice_downloads import VoiceDownloads, VoiceModelProgress
 from novacode_cli.tui.output_buffer import MAX_PENDING_CALLS, OutputTail
 
@@ -61,7 +66,10 @@ if TYPE_CHECKING:
 from textual.binding import Binding
 from novacode_cli.tui.harness import HarnessDock, UIHarness, UIHarnessRequest
 from novacode_cli.tui.home import (
+    CONVERSATION_STYLES,
     HOME_STYLES,
+    LAUNCHPAD_STYLES,
+    STYLED_HOME_STYLES,
     HomeActions,
     HomeIdentity,
     HomeNavItem,
@@ -593,6 +601,9 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
         "_run_voice", "voice settings (opens /settings → Voice) · /voice test|download|doctor"
     ),
     "research": SlashCommand("_run_research", "launch a multi-agent research swarm"),
+    "ci-fix": SlashCommand(
+        "_run_ci_fix", "fix the latest failed GitHub Actions run on this branch (/ci-fix [run-id])"
+    ),
     "dream": SlashCommand(
         "_run_dream", "consolidate the memory wiki now (/dream status · /dream auto on|off)"
     ),
@@ -1078,6 +1089,8 @@ class NovaApp(App):
     # Colors come from the active Textual theme (default: tokyo-night, registered
     # in on_mount). Do NOT redefine $primary/$surface/etc. here — CSS variable
     # definitions override the theme and break /theme switching.
+    CSS_PATH = "interface_styles.tcss"
+
     CSS = """
     /* --- App chrome --- */
     Screen { background: $background; }
@@ -2158,6 +2171,7 @@ class NovaApp(App):
         self._submit_on_enter = True
         self._autocomplete_enabled = True
         self._low_resource_mode = False
+        self._home_animations_enabled = True
         from novacode_cli.tui.animation_rate import DEFAULT_ANIMATION_FPS
 
         self._animation_fps = DEFAULT_ANIMATION_FPS
@@ -2470,9 +2484,10 @@ class NovaApp(App):
                 "NOVA CODE   /   BUILD · THINK · REFINE", id="home-banner-caption"
             )
         with Vertical(id="home-style-header"):
-            yield Static("", id="home-style-art")
+            yield HomeScene(id="home-style-art")
             yield Static("", id="home-style-details")
             yield Static("", id="home-style-tip")
+            yield HomeActions(id="home-style-actions")
         with Horizontal(id="workspace-layout"):
             yield HomeSidebar(id="home-left")
             with Vertical(id="conversation-column"):
@@ -7162,7 +7177,9 @@ class NovaApp(App):
         if not self.is_mounted:
             self._status_timer = None
             return
-        if self._turn_active and self._os_focused:
+        if self._home_scene_can_animate():
+            delay = 1 / min(HOME_SCENE_FPS, self._animation_fps)
+        elif self._turn_active and self._os_focused:
             delay = 0.2 if self._low_resource_mode else 1 / self._animation_fps
         else:
             delay = 0.5
@@ -7332,7 +7349,7 @@ class NovaApp(App):
     def _refresh_status(self) -> None:
         pal = self._palette
         line = Text()
-        compact_ui = self._home_style in {"banner", "minimal"}
+        compact_ui = self._home_style in CONVERSATION_STYLES
 
         # Activity segment — animated spinner + elapsed while live, else a ● dot.
         # Rebuilt every animation frame; the heavier state below is cached.
@@ -7404,7 +7421,7 @@ class NovaApp(App):
         selected = set(self._statusline_fields if fields is None else fields)
         line = Text()
         right = Text()
-        compact_ui = self._home_style in {"banner", "minimal"}
+        compact_ui = self._home_style in CONVERSATION_STYLES
 
         def _divider() -> None:
             if line or "activity" in selected:
@@ -7576,7 +7593,7 @@ class NovaApp(App):
         if selector == "#info-branch":
             self._status_branch = renderable.plain
             self._status_tail = None
-        if self._home_style in {"banner", "minimal"} and selector in {
+        if self._home_style in CONVERSATION_STYLES and selector in {
             "#info-workspace", "#info-model", "#info-branch",
         }:
             renderable = Text(renderable.plain, style=self._palette.muted)
@@ -7652,7 +7669,7 @@ class NovaApp(App):
         """
         parts: list[tuple[str, str]] = []
         pal = self._palette
-        compact_ui = self._home_style in {"banner", "minimal"}
+        compact_ui = self._home_style in CONVERSATION_STYLES
 
         # Context-window fill (bounded; drops on compaction).
         try:
@@ -7686,6 +7703,7 @@ class NovaApp(App):
 
     def _tick(self) -> None:
         self._paint_avatar()
+        self._paint_home_scene()
         refresh = False
         tail_dirty = False
         if self._turn_active and self._os_focused:
@@ -11909,6 +11927,7 @@ class NovaApp(App):
         self._submit_on_enter = config.get("submit_on_enter", True) is True
         self._autocomplete_enabled = config.get("autocomplete_enabled", True) is True
         self._low_resource_mode = config.get("low_resource_mode", False) is True
+        self._home_animations_enabled = config.get("home_animations_enabled", True) is True
         from novacode_cli.tui.animation_rate import animation_fps
 
         self._animation_fps = animation_fps(config.get("animation_fps"))
@@ -12063,15 +12082,26 @@ class NovaApp(App):
 
     def _apply_interface_style(self) -> None:
         """Carry conversation styles into the root screen and active dialogs."""
+        style_classes = {f"{style}-ui" for _, style in HOME_STYLES} | {
+            "conversation-style", "launchpad-ui",
+        }
+        selected = {f"{self._home_style}-ui"}
+        if self._home_style in CONVERSATION_STYLES:
+            selected.add("conversation-style")
+        if self._home_style in LAUNCHPAD_STYLES:
+            selected.add("launchpad-ui")
         for screen in self.screen_stack:
             if screen is not None:
-                screen.set_class(self._home_style in {"banner", "minimal"}, "conversation-style")
-                for _, style in HOME_STYLES:
-                    screen.set_class(self._home_style == style, f"{style}-ui")
+                classes = (screen.classes - style_classes) | selected
+                if classes != screen.classes:
+                    screen.set_classes(classes)
 
     def _on_interface_screen_changed(self, _screen: Screen) -> None:
         """Style every modal on entry, including dialogs that do not resize."""
         self._apply_responsive_layout()
+        if self.is_mounted:
+            self._paint_home_scene()
+            self._schedule_status_tick()
 
     def _matrix_rain_enabled(self) -> bool:
         """Return the loaded Matrix Rain preference."""
@@ -12083,9 +12113,42 @@ class NovaApp(App):
 
         self._animation_fps = animation_fps(fps)
         self._schedule_status_tick()
+        self._paint_home_scene()
         rain_fps = min(15, self._animation_fps) if self._low_resource_mode else self._animation_fps
         for rain in self.query(MatrixRain):
             rain.set_frame_rate(rain_fps)
+
+    def _home_scene_can_animate(self) -> bool:
+        """Run home-only motion when visible, focused, and permitted by preferences."""
+        return bool(
+            self._home_visible
+            and self._home_style in ANIMATED_HOME_STYLES
+            and self._home_animations_enabled
+            and not self._low_resource_mode
+            and self._os_focused
+            and len(self.screen_stack) == 1
+            and self.size.width >= HOME_MOTION_MIN_WIDTH
+            and self.size.height >= HOME_MOTION_MIN_HEIGHT
+            and (
+                self._home_style != "studio" or (
+                    self.size.width >= PORTRAIT_HOME_MIN_WIDTH
+                    and self.size.height >= PORTRAIT_HOME_MIN_HEIGHT
+                )
+            )
+        )
+
+    def _paint_home_scene(self) -> None:
+        """Share the status clock; no hidden-home or modal animation workers."""
+        with suppress(NoMatches):
+            self._w("#home-style-art", HomeScene).advance(
+                time.monotonic(), animated=self._home_scene_can_animate()
+            )
+
+    def _set_home_animations_enabled(self, *, enabled: bool) -> None:
+        """Apply reduced motion immediately without losing the selected home style."""
+        self._home_animations_enabled = enabled
+        self._paint_home_scene()
+        self._schedule_status_tick()
 
     def _set_matrix_rain_enabled(self, enabled: bool) -> None:
         """Apply a Matrix Rain preference immediately to the visible banner."""
@@ -14890,16 +14953,28 @@ class NovaApp(App):
         """Keep the dashboard tied to the empty-chat state."""
         self._home_visible = visible
         root = self._root_screen or self.screen
-        styled = visible and self._home_style in {"centered", "banner", "minimal"}
+        styled = visible and self._home_style in STYLED_HOME_STYLES
+        home_classes = {f"{style}-home" for style in STYLED_HOME_STYLES} | {
+            "home", "classic-home", "styled-home", "scene-roomy",
+        }
+        classes = set(root.classes) - home_classes
+        if visible and self._home_dashboard_enabled:
+            classes.add("home")
+        if visible and self._home_style == "classic":
+            classes.add("classic-home")
+        if styled:
+            classes.update({"styled-home", f"{self._home_style}-home"})
+        if (
+            visible and self.size.width >= PORTRAIT_HOME_MIN_WIDTH
+            and self.size.height >= PORTRAIT_HOME_MIN_HEIGHT
+        ):
+            classes.add("scene-roomy")
+        if classes != root.classes:
+            root.set_classes(classes)
         self._apply_interface_style()
-        root.set_class(visible and self._home_dashboard_enabled, "home")
-        root.set_class(visible and self._home_style == "classic", "classic-home")
-        root.set_class(styled, "styled-home")
-        for style in ("centered", "banner", "minimal"):
-            root.set_class(visible and self._home_style == style, f"{style}-home")
         self.query_one("#prompt", PromptInput).placeholder = (
             "Ask Nova anything…  @file or /command"
-            if self._home_style in {"centered", "banner", "minimal"}
+            if self._home_style in STYLED_HOME_STYLES
             else "Type your message or @path/to/file. (Shift+Enter for a new line)"
         )
         rain = self._home_banner
@@ -14911,10 +14986,12 @@ class NovaApp(App):
         if visible:
             self._apply_responsive_layout()
             self._refresh_home_dashboard()
+        self._paint_home_scene()
+        self._schedule_status_tick()
 
     def _refresh_home_dashboard(self) -> None:
         """Refresh session facts and schedule one local resource sample."""
-        if not self._home_visible and self._home_style not in {"banner", "minimal"}:
+        if not self._home_visible and self._home_style not in CONVERSATION_STYLES:
             return
         self._refresh_home_style()
         if not self._home_visible or not self._home_dashboard_enabled:
@@ -14972,16 +15049,17 @@ class NovaApp(App):
 
     def _refresh_home_style(self) -> None:
         """Render the reference-inspired layouts with real session details."""
-        if self._home_style not in {"centered", "banner", "minimal"}:
+        if self._home_style not in STYLED_HOME_STYLES:
             return
         # A periodic refresh may arrive while shutdown removes the layout.
+        root = self._root_screen or self.screen
         try:
-            art = self.query_one("#home-style-art", Static)
-            details = self.query_one("#home-style-details", Static)
-            tip = self.query_one("#home-style-tip", Static)
-            metadata = self.query_one("#home-composer-meta", Static)
-            heading_widget = self.query_one("#conversation-style-heading", Static)
-            shortcuts = self.query_one("#home-shortcuts", Static)
+            art = root.query_one("#home-style-art", HomeScene)
+            details = root.query_one("#home-style-details", Static)
+            tip = root.query_one("#home-style-tip", Static)
+            metadata = root.query_one("#home-composer-meta", Static)
+            heading_widget = root.query_one("#conversation-style-heading", Static)
+            shortcuts = root.query_one("#home-shortcuts", Static)
         except NoMatches:
             return
         from novacode_cli._version import __version__
@@ -14996,9 +15074,12 @@ class NovaApp(App):
             if self.token_tracker else None,
         )
         presentation = home_presentation(self._home_style, self.size.width, identity, pal)
-        art.update(presentation.art)
+        art.configure(self._home_style, presentation.art, pal, time.monotonic())
+        art.advance(time.monotonic(), animated=self._home_scene_can_animate())
         details.update(presentation.details)
         tip.update(presentation.tip)
+        if self._home_style in LAUNCHPAD_STYLES:
+            root.query_one("#home-style-actions", HomeActions).set_presentation(self._home_style)
         metadata.update(presentation.metadata)
         heading = Text("Nova Code", style=pal.accent)
         heading.append(f"  ·  {identity.workspace}", style=pal.muted)
@@ -15049,7 +15130,7 @@ class NovaApp(App):
     @on(Button.Pressed, ".home-action")
     def _prepare_home_prompt(self, event: Button.Pressed) -> None:
         """Put a suggested task in the composer for the user to edit and send."""
-        action = (event.button.id or "").removeprefix("home-action-")
+        action = event.button.name or (event.button.id or "").removeprefix("home-action-")
         draft = {
             "explain": "Explain how this codebase works.",
             "refactor": "Refactor this code for clarity and performance: ",
@@ -15130,6 +15211,9 @@ class NovaApp(App):
                 target.set_class(compact, "compact")
                 target.set_class(short, "short")
                 target.set_class(tiny, "tiny")
+                roomy = width >= PORTRAIT_HOME_MIN_WIDTH and height >= PORTRAIT_HOME_MIN_HEIGHT
+                if target.has_class("scene-roomy") != roomy:
+                    target.set_class(roomy, "scene-roomy")
                 if getattr(self, "_home_visible", False):
                     target.set_class(width < _HOME_RIGHT_MIN_WIDTH, "dashboard-narrow")
                     target.set_class(width < _HOME_LEFT_MIN_WIDTH, "dashboard-compact")
@@ -15659,6 +15743,23 @@ class NovaApp(App):
                 cmd_args=args,
                 execute_fn=self._tui_execute_fn,
             )
+
+    async def _run_ci_fix(self, text: str) -> None:
+        """Fetch a failed GitHub Actions run's log and ask the agent to fix it."""
+        from novacode_cli.commands.ci_fix import CIFixError, build_ci_fix_prompt
+        from novacode_cli.config.config import settings
+
+        parts = text.split(maxsplit=1)
+        run_id = parts[1].strip() if len(parts) > 1 else None
+        self._log(Text("Fetching the failed GitHub Actions run…", style="dim"))
+        try:
+            prompt = await asyncio.to_thread(
+                build_ci_fix_prompt, settings.get_workspace_root() or Path.cwd(), run_id
+            )
+        except CIFixError as exc:
+            self._log(Text(str(exc), style="red"))
+            return
+        await self._stream_prompt(prompt)
 
     async def _run_ingest(self, text: str) -> None:
         """Ingest a raw source into the wiki."""

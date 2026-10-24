@@ -295,6 +295,7 @@ async def test_failed_save_keeps_current_toggle(monkeypatch: pytest.MonkeyPatch)
         assert str(app.query_one("#caveman-toggle", Button).label) == "Caveman: off"
 
 
+@pytest.mark.timeout(40)
 async def test_toggle_stays_visible_across_home_styles(monkeypatch: pytest.MonkeyPatch):
     from novacode_cli.tui.home import HOME_STYLES
 

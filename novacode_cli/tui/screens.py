@@ -2555,9 +2555,15 @@ class ThemeScreen(ModalScreen[None]):
                     id="home-style-select",
                 )
                 yield Static(
-                    "Banner and Minimal also style conversations, tools, and controls.",
+                    "Styles change layout, borders, and spacing. Color themes apply independently.",
                     classes="theme-description",
                 )
+                with Horizontal():
+                    yield Switch(
+                        value=config.get("home_animations_enabled", True) is True,
+                        id="home-animations-toggle",
+                    )
+                    yield Static(" Animated home scenes (quiet in low-resource mode)")
                 with Horizontal():
                     yield Switch(value=_matrix_rain_enabled(config), id="matrix-rain-toggle")
                     yield Static(" Matrix Rain animation on the Dashboard and Classic banners")
@@ -2581,6 +2587,12 @@ class ThemeScreen(ModalScreen[None]):
         self.app._set_home_style(style)
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
+        if event.switch.id == "home-animations-toggle":
+            from novacode_cli.config.nova_config import NovaConfig
+
+            NovaConfig().set("home_animations_enabled", event.value)
+            self.app._set_home_animations_enabled(enabled=event.value)
+            return
         if event.switch.id != "matrix-rain-toggle":
             return
         from novacode_cli.config.nova_config import NovaConfig

@@ -1,0 +1,253 @@
+/* Geometry only: every preset follows the active light or dark color theme. */
+
+#home-style-actions { display: none; height: auto; }
+Screen.styled-home.launchpad-ui #home-style-actions {
+    display: block; layout: grid; grid-size: 4 1;
+    grid-columns: 1fr 1fr 1fr 1fr; grid-rows: 3; grid-gutter: 1;
+    height: 3; margin-top: 2;
+}
+Screen.launchpad-ui #home-style-actions .home-action {
+    height: 3; min-height: 1; margin: 0; padding: 0 1;
+    background: transparent; border: solid $border; content-align: center middle;
+}
+Screen.launchpad-ui #home-style-actions .home-action:hover,
+Screen.launchpad-ui #home-style-actions .home-action:focus {
+    background: $accent 12%; border: solid $accent; color: $text;
+}
+
+/* Terminal: a command transcript with a shell-like composer. */
+Screen.terminal-ui #home-style-header { padding: 1 2; }
+Screen.terminal-ui #home-style-details { margin-top: 0; }
+Screen.terminal-ui #home-style-tip { margin-top: 1; }
+Screen.conversation-style.terminal-ui ChatMessage { padding: 0; margin: 0 0 1 0; }
+Screen.conversation-style.terminal-ui ChatMessage > .role { color: $text-muted; }
+Screen.conversation-style.terminal-ui #prompt-row.normal-mode {
+    border: none; border-top: solid $accent; background: transparent; padding: 0;
+}
+Screen.terminal-ui #home-composer-meta { background: transparent; padding: 0; }
+Screen.terminal-ui #transcript > .tool { background: transparent; padding: 0; }
+ModalScreen.conversation-style.terminal-ui #modal-box,
+ModalScreen.conversation-style.terminal-ui #reference-shell {
+    border: solid $border; background: $background;
+}
+ModalScreen.terminal-ui Input { border: none; border-bottom: solid $border; }
+ModalScreen.terminal-ui Input:focus { border-bottom: solid $accent; }
+Screen.terminal-ui.launchpad-ui #home-style-actions {
+    grid-size: 1 4; grid-rows: 1 1 1 1; grid-gutter: 0; height: 4; margin-top: 1;
+}
+Screen.terminal-ui #home-style-actions .home-action {
+    border: none; height: 1; content-align: left middle; text-align: left; padding: 0;
+}
+
+/* Workbench: stable workspace frames and visibly bounded tools. */
+Screen.workbench-ui #home-style-header {
+    margin: 1 2; padding: 1 2; border: round $accent; width: 1fr;
+}
+Screen.workbench-ui #home-style-art { text-style: bold; }
+Screen.conversation-style.workbench-ui ChatMessage {
+    padding: 0 1; margin: 0 0 1 0; border-left: solid $border;
+}
+Screen.conversation-style.workbench-ui #prompt-row.normal-mode {
+    border: solid $accent; background: $panel; padding: 0;
+}
+Screen.conversation-style.workbench-ui #prompt.normal-mode,
+Screen.conversation-style.workbench-ui #prompt:focus.normal-mode,
+Screen.workbench-ui #prompt-prefix.normal-mode { background: $panel; }
+Screen.workbench-ui #transcript > .tool {
+    border: round $border; padding: 0 1; margin: 0 0 1 0;
+}
+Screen.workbench-ui #conversation-style-heading { background: $panel; }
+ModalScreen.conversation-style.workbench-ui #modal-box,
+ModalScreen.conversation-style.workbench-ui #reference-shell { border: solid $accent; }
+Screen.workbench-ui.launchpad-ui #home-style-actions,
+Screen.studio-ui.launchpad-ui #home-style-actions {
+    grid-size: 2 2; grid-columns: 1fr 1fr; grid-rows: 4 4; height: 9;
+}
+Screen.workbench-ui #home-style-actions .home-action {
+    height: 4; border: solid $border; background: $panel;
+}
+
+/* Notebook: prose on ruled entries, without nested cards. */
+Screen.notebook-ui #home-style-header {
+    padding: 1 3; border-bottom: solid $border;
+}
+Screen.conversation-style.notebook-ui ChatMessage {
+    padding: 1 2; margin: 0; border-bottom: solid $border;
+}
+Screen.conversation-style.notebook-ui ChatMessage > .role { color: $text; text-style: bold; }
+Screen.conversation-style.notebook-ui #prompt-row.normal-mode {
+    border: none; border-bottom: solid $accent; padding: 1 0; background: transparent;
+}
+Screen.notebook-ui #home-composer-meta { background: transparent; }
+Screen.notebook-ui #transcript > .tool {
+    background: transparent; border-left: solid $border; padding: 0 2;
+}
+ModalScreen.conversation-style.notebook-ui #modal-box,
+ModalScreen.conversation-style.notebook-ui #reference-shell {
+    border: none; border-top: solid $accent; border-bottom: solid $border;
+}
+Screen.notebook-ui.launchpad-ui #home-style-actions {
+    grid-size: 1 4; grid-rows: 2 2 2 2; grid-gutter: 0; height: 8; margin-top: 1;
+}
+Screen.notebook-ui #home-style-actions .home-action {
+    height: 2; border: none; border-bottom: solid $border;
+    content-align: left middle; text-align: left;
+}
+
+/* Outline: ordinary ASCII frame glyphs, useful on basic terminal fonts. */
+Screen.outline-ui #home-style-header {
+    border: ascii $border; margin: 1 2; padding: 1; width: 1fr;
+}
+Screen.conversation-style.outline-ui ChatMessage {
+    border: ascii $border; padding: 0 1; margin: 0 0 1 0;
+}
+Screen.conversation-style.outline-ui #prompt-row.normal-mode {
+    border: ascii $accent; background: transparent; padding: 0;
+}
+Screen.outline-ui #cmdpalette { border: ascii $accent; }
+Screen.outline-ui #transcript > .tool { border: ascii $border; padding: 0 1; }
+ModalScreen.conversation-style.outline-ui #modal-box,
+ModalScreen.conversation-style.outline-ui #reference-shell { border: ascii $accent; }
+ModalScreen.outline-ui Input,
+ModalScreen.outline-ui Input:focus { border: ascii $accent; }
+Screen.outline-ui #home-style-actions .home-action,
+Screen.outline-ui #home-style-actions .home-action:focus { border: ascii $accent; }
+
+/* Focus: a reading column with a restrained prompt and centered identity. */
+Screen.focus-home #home-style-header {
+    width: 88; max-width: 96%; padding: 2 1; align-horizontal: center;
+}
+Screen.focus-home { align-horizontal: center; }
+Screen.focus-ui #home-style-art,
+Screen.focus-ui #home-style-details,
+Screen.focus-ui #home-style-tip { text-align: center; }
+Screen.focus-ui #panes > VerticalScroll { align-horizontal: center; }
+Screen.conversation-style.focus-ui ChatMessage,
+Screen.focus-ui #transcript > .tool {
+    width: 88; max-width: 100%; padding: 0 1; margin: 1 0;
+}
+Screen.conversation-style.focus-ui #prompt-row.normal-mode {
+    border: none; border-top: solid $border; padding: 1 0; background: transparent;
+}
+Screen.focus-ui #prompt-dock { padding: 0 3; }
+Screen.focus-ui #home-composer-meta { background: transparent; text-align: center; }
+ModalScreen.conversation-style.focus-ui #modal-box,
+ModalScreen.conversation-style.focus-ui #reference-shell {
+    border: none; border-top: solid $border; border-bottom: solid $border;
+}
+Screen.focus-ui #home-style-actions .home-action {
+    border: none; border-bottom: solid $border; height: 2;
+}
+
+/* Studio: rounded, softly filled messages and a generous composer. */
+Screen.studio-ui #home-style-header { padding: 2 3; }
+Screen.conversation-style.studio-ui ChatMessage {
+    background: $panel; border: round $border; padding: 1 2; margin: 0 0 1 0;
+}
+Screen.conversation-style.studio-ui ChatMessage.user {
+    background: $accent 8%; border: round $accent 40%;
+}
+Screen.conversation-style.studio-ui #prompt-row.normal-mode {
+    border: round $accent; background: $panel; padding: 1 0;
+}
+Screen.conversation-style.studio-ui #prompt.normal-mode,
+Screen.conversation-style.studio-ui #prompt:focus.normal-mode,
+Screen.studio-ui #prompt-prefix.normal-mode { background: $panel; }
+Screen.studio-ui #transcript > .tool { background: $surface; padding: 1 2; }
+ModalScreen.conversation-style.studio-ui #modal-box,
+ModalScreen.conversation-style.studio-ui #reference-shell {
+    border: round $accent 50%; background: $surface;
+}
+Screen.studio-home #home-style-header {
+    width: 92; max-width: 96%; padding: 1 2; align-horizontal: center;
+}
+Screen.studio-home { align-horizontal: center; }
+Screen.studio-home #home-style-art,
+Screen.studio-home #home-style-tip { text-align: center; }
+Screen.studio-ui #home-style-actions .home-action {
+    height: 4; border: round $border; background: $panel;
+}
+
+/* Ledger: compact rows, explicit roles, and a firm command-desk rule. */
+Screen.ledger-ui #home-style-header { padding: 1 2; border-bottom: double $border; }
+Screen.ledger-ui #home-style-details { margin-top: 0; }
+Screen.ledger-ui #home-style-tip { display: none; }
+Screen.conversation-style.ledger-ui ChatMessage {
+    padding: 0 1; margin: 0; border-left: solid $border;
+}
+Screen.conversation-style.ledger-ui ChatMessage > .role { text-style: bold; }
+Screen.conversation-style.ledger-ui #prompt-row.normal-mode {
+    border: none; border-top: double $accent; padding: 0; background: transparent;
+}
+Screen.ledger-ui #home-composer-meta { background: transparent; padding: 0; }
+Screen.ledger-ui #transcript > .tool { padding: 0 1; margin: 0; background: $panel; }
+Screen.ledger-ui #conversation-style-heading { background: $panel; text-style: bold; }
+ModalScreen.conversation-style.ledger-ui #modal-box,
+ModalScreen.conversation-style.ledger-ui #reference-shell { border: double $border; padding: 1; }
+Screen.ledger-ui.launchpad-ui #home-style-actions {
+    grid-size: 4 1; grid-rows: 1; height: 1; margin-top: 1;
+}
+Screen.ledger-ui #home-style-actions .home-action {
+    height: 1; border: none; background: $panel;
+}
+
+/* Blueprint: double rules and technical labels, always colored by theme. */
+Screen.blueprint-ui #home-style-header {
+    margin: 1 2; padding: 1 2; border: double $accent; width: 1fr;
+}
+Screen.conversation-style.blueprint-ui ChatMessage {
+    border-left: double $accent; padding: 0 2; margin: 1 0;
+}
+Screen.conversation-style.blueprint-ui #prompt-row.normal-mode {
+    border: double $accent; padding: 0; background: transparent;
+}
+Screen.blueprint-ui #home-composer-meta { background: transparent; }
+Screen.blueprint-ui #transcript > .tool {
+    border-top: solid $border; border-bottom: solid $border; padding: 0 1;
+}
+ModalScreen.conversation-style.blueprint-ui #modal-box,
+ModalScreen.conversation-style.blueprint-ui #reference-shell { border: double $accent; }
+ModalScreen.blueprint-ui #modal-title { text-style: bold; color: $accent; }
+Screen.blueprint-ui #home-style-actions .home-action {
+    border: double $border; text-style: bold;
+}
+
+/* Four choices remain reachable on narrow terminals; short terminals favor typing. */
+Screen.launchpad-ui.narrow #home-style-actions {
+    grid-size: 2 2; grid-columns: 1fr 1fr; grid-rows: 3 3; height: 7;
+}
+Screen.launchpad-ui.short #home-style-actions { display: none; }
+
+/* The same composer and mode styles remain in charge at small sizes. */
+Screen.conversation-style.short #home-style-header {
+    margin: 0; border: none; padding: 0 1;
+}
+Screen.conversation-style.short #prompt-dock { padding: 0 1; }
+Screen.conversation-style.short ChatMessage { padding: 0 1; }
+
+/* Character scenes use Nova's canonical portrait, not a dashboard card variant. */
+Screen.workbench-home.scene-roomy #home-style-header {
+    layout: grid; grid-size: 2 3; grid-columns: 32 1fr;
+    grid-rows: 3 2 1fr; grid-gutter: 1 2; height: 21; padding: 1;
+}
+Screen.workbench-home.scene-roomy #home-style-art {
+    row-span: 3; height: 15; width: 29; margin: 0; padding: 0;
+}
+Screen.workbench-home #home-style-art { display: none; }
+Screen.workbench-home.scene-roomy #home-style-art { display: block; }
+Screen.workbench-home.scene-roomy #home-style-details,
+Screen.workbench-home.scene-roomy #home-style-tip,
+Screen.workbench-home.scene-roomy #home-style-actions { margin: 0; }
+
+Screen.studio-home #home-style-header { padding: 0 2; }
+Screen.studio-home #home-style-art { display: none; }
+Screen.studio-home.scene-roomy #home-style-art { display: block; height: 15; }
+Screen.studio-home #home-style-details,
+Screen.studio-home #home-style-tip { margin-top: 0; text-align: center; }
+Screen.studio-home.launchpad-ui #home-style-actions {
+    grid-size: 4 1; grid-columns: 1fr 1fr 1fr 1fr; grid-rows: 3; height: 3; margin-top: 1;
+}
+Screen.studio-home #home-style-actions .home-action {
+    height: 3; border: round $border; background: $panel;
+}
+Screen.studio-home.scene-roomy #home-style-art:hover { text-style: bold; }

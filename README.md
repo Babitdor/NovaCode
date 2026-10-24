@@ -56,6 +56,16 @@ You can then run `nova` from your project's directory. After changing this check
 | `/mcp` | Manage external tool servers |
 | `/restore` | Browse recoverable file snapshots |
 
+Open `/theme` → **Interface style** for Dashboard, Classic, Centered, Banner,
+Minimal, and eight additional designs: **Terminal, Workbench, Notebook, Outline,
+Focus, Studio, Ledger, and Blueprint**. Each new home has its own composition and
+keyboard-accessible Explain / Refactor / Build / Debug starters. Starters fill
+an editable prompt; sending remains your choice. Conversation, tool and dialog
+styling follows your selection while colors follow the independent color theme.
+Workbench and Studio feature Nova's character art. Terminal, Studio, and
+Blueprint add animated home scenes, controllable through `/theme`; low-resource
+mode pauses them. Short terminals favor the composer and hide large artwork.
+
 Attach files with `@`; use **Shift+Enter** for a new line. Nova applies workspace, tool and path permissions; review approvals before granting broader access.
 
 Connect a Root community channel with `/remote` → **Setup Rootapp**, then

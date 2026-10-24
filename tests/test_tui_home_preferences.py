@@ -10,6 +10,7 @@ from textual.widgets import Select, Static
 from novacode_cli.config.nova_config import NovaConfig
 from novacode_cli.states.Session import SessionState
 from novacode_cli.tui.app import NovaApp
+from novacode_cli.tui.home import STYLED_HOME_STYLES
 from novacode_cli.tui.screens import ThemeScreen
 from novacode_cli.tui.widgets import MatrixRain
 from novacode_cli.ui.ui_elements import TokenTracker
@@ -188,6 +189,7 @@ async def test_reference_layouts_use_the_real_composer_and_leave_room_for_it(
         assert prompt.value == "First line\nSecond line"
 
 
+@pytest.mark.timeout(40)
 async def test_style_selector_preserves_draft_and_allows_keyboard_switching() -> None:
     from novacode_cli.tui.home import HOME_STYLES
     from novacode_cli.tui.widgets import PromptInput
@@ -210,7 +212,7 @@ async def test_style_selector_preserves_draft_and_allows_keyboard_switching() ->
             assert app.query_one("#prompt", PromptInput) is prompt
             assert NovaConfig().get("home_style") == style
             assert not screen.has_class("styled-home")
-            assert root.has_class("styled-home") is (style in {"centered", "banner", "minimal"})
+            assert root.has_class("styled-home") is (style in STYLED_HOME_STYLES)
         selector.value = "classic"
         selector.focus()
         await pilot.press("enter", "down", "enter")
@@ -371,7 +373,8 @@ async def test_conversation_styles_keep_usage_modes_and_dialogs_usable(style: st
 
 @pytest.mark.parametrize("style", ["banner", "minimal"])
 async def test_model_modal_inherits_interface_style(
-    style: str, monkeypatch: pytest.MonkeyPatch,
+    style: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from textual.widgets import Input, OptionList
 

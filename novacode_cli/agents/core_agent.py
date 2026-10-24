@@ -1745,6 +1745,13 @@ def _build_middleware_stack(
             ),
         )
 
+    # Append the project's own lint/type errors to successful edits. Local mode
+    # only: a remote sandbox's files are not on this machine.
+    if sandbox is None:
+        from novacode_cli.agents.edit_diagnostics import EditDiagnosticsMiddleware
+
+        agent_middleware.append(EditDiagnosticsMiddleware(workspace_root))
+
     # Context compaction: prune old tool results (by age, or by System One
     # verdicts when enabled), trim old tool-call arguments, then summarize. It
     # takes the place of the summarizer create_deep_agent builds in, so it runs

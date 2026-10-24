@@ -191,6 +191,7 @@ llama-cpp-python = { index = "llama-cpp-cpu" }
 "novacode_cli.agents.default_subagents" = ["builtin/*.md"]
 novacode_cli = ["assets/Nova.png", "assets/nova-avatar.png"]
 "novacode_cli.remote" = ["rootapp_bot/*.cjs", "rootapp_bot/*.json"]
+"novacode_cli.tui" = ["*.tcss"]
 
 [tool.ruff]
 line-length = 100

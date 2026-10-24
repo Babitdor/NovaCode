@@ -68,6 +68,7 @@ async def test_classic_canvas_fills_viewport_and_follows_composer(tmp_path: Path
         assert app.screen.has_class("classic-ui")
 
 
+@pytest.mark.timeout(40)
 async def test_design_switch_updates_composer_and_stacked_dialogs() -> None:
     app = _app()
     async with app.run_test(size=(140, 44)) as pilot:
@@ -88,6 +89,14 @@ async def test_design_switch_updates_composer_and_stacked_dialogs() -> None:
             "banner": "round",
             "minimal": "",
             "dashboard": "round",
+            "terminal": "solid",
+            "workbench": "solid",
+            "notebook": "",
+            "outline": "ascii",
+            "focus": "solid",
+            "studio": "round",
+            "ledger": "double",
+            "blueprint": "double",
         }
         for _, style in HOME_STYLES:
             settings.query_one("#home-style-select", Select).value = style
@@ -140,6 +149,7 @@ async def test_palette_chosen_after_mount_survives_design_switch() -> None:
         assert app.theme == "nova-classic"
 
 
+@pytest.mark.timeout(40)
 async def test_completion_menu_tracks_each_design_and_multiline_drafts() -> None:
     app = _app()
     async with app.run_test(size=(140, 44)) as pilot:
