@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "novacode-cli"
-version = "1.0.97"
+version = "1.0.98"
 description = "Agentic Coding Tool that runs in your terminal"
 authors = [{ name = "Babitdor", email = "babitdorbryan14@gmail.com" }]
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -151,6 +151,15 @@ agents-server = [
 ]
 voice-whistle = [
     "cactus-needle>=3.2.1,<4",
+]
+# CPU-only quantized Kokoro. 0.4.9 shares phonemizer-fork with sanoTTS;
+# newer releases depend on the overlapping phonemizer distribution.
+voice-kokoro = [
+    "kokoro-onnx==0.4.9",
+]
+# Tiny NumPy TTS; keep voice weights opt-in and download only the chosen voice.
+voice-sano = [
+    "sanotts==0.3.0",
 ]
 
 [project.urls]

@@ -61,8 +61,8 @@ async def run_speech(operation: Callable[[], None]) -> None:
         _CURRENT.reset(token)
 
 
-def play_and_wait(pcm: np.ndarray, samplerate: int) -> None:
-    """Play buffered PCM only if its owning speech request is still active."""
+def play_and_wait(pcm: np.ndarray, samplerate: int) -> bool:
+    """Play owned PCM; return False if empty or cancelled, to stop further synthesis."""
     import numpy as np
     import sounddevice as sd
 
@@ -70,12 +70,12 @@ def play_and_wait(pcm: np.ndarray, samplerate: int) -> None:
 
     speech = _CURRENT.get() or _Speech()
     if not len(pcm):
-        return
+        return False
     # Retain existing padding and buffering to avoid cutoff and stuttering.
     audio = np.concatenate([pcm, np.zeros(int(samplerate * 0.25), dtype=pcm.dtype)])
     with _OUTPUT_LOCK:
         if speech.cancelled.is_set():
-            return
+            return False
         sd.play(audio, samplerate, latency="high")
         _active = speech
     try:
@@ -84,3 +84,4 @@ def play_and_wait(pcm: np.ndarray, samplerate: int) -> None:
         with _OUTPUT_LOCK:
             if _active is speech:
                 _active = None
+    return not speech.cancelled.is_set()

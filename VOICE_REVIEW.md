@@ -132,3 +132,94 @@ Install the base audio stack and optional provider:
 Then select `/voice settings stt whistle`. Whistle downloads its model and native
 runtime on first use. Existing `/voice` controls and short TTS summaries are
 preserved; Piper or the user's selected TTS provider still handles speech output.
+
+
+## Download visibility and speech startup follow-up
+
+Added separate STT/TTS progress rows above the composer for first use, warmup,
+and `/voice download`. Direct Piper/Parakeet transfers report real bytes;
+voice-scoped Hugging Face public progress hooks report bytes when exposed by
+the installed backend. Unknown totals or older/previously imported vendor hooks
+fall back to indeterminate preparation. Cached operations stay quiet. Errors do
+not announce readiness, cancelled scopes ignore late thread updates, and an
+operation sequence prevents stale updates on Windows clocks with coarse timing.
+The widget handles messages independently so progress renders even while the
+app's push-to-talk action awaits transcription. No new dependency was added.
+
+Speech startup review found and fixed:
+
+- Long replies awaited an unbounded second LLM request. Model setup and summary
+  invocation now share a two-second budget; slow calls fall back to short,
+  filtered reply prose. Short replies still bypass the summary model.
+- Piper accumulated every sentence before playing audio. It now plays each
+  complete sentence immediately, retaining cancellation ownership, serialization,
+  sample rate and output padding. Cancellation stops further sentence generation.
+- Resetting the voice pipeline during summarization could route an old reply to
+  the new pipeline. Identity checks now discard that reply. Preparation and
+  download reporting are owned by `VoicePipeline.speak`, avoiding duplicate TUI
+  download/warmup logic.
+
+Verification: `uv run --no-sync python scripts/verify_voice.py` exited zero:
+151 passed, one optional-dependency skip, 89% combined statement/branch coverage
+for the three gated voice modules, and all three deliberate negative controls
+failed their assertions as expected. After the final cancellation regression,
+21 summary/playback tests passed; the final command/progress/TUI selection passed
+25 tests. New source/test lint and source mypy passed; legacy-file lint did not
+worsen. Tests use fake transfers, models and audio devices.
+
+Limits: this bounds summary waiting, not total end-to-end speech latency.
+First model download/load and first sentence synthesis still take their native
+time. Piper sentence boundaries retain safe playback padding and incur the next
+sentence's synthesis time; optional Pocket/Orpheus/cloud providers retain their
+existing buffered synthesis. No live microphone/speaker timing or real network
+model-download test was performed in this follow-up.
+
+
+## Lightweight TTS choices from the supplied model list
+
+Selected two model families, exposed as optional CPU providers with ten English
+voice choices. Existing providers and the saved/default selection are unchanged.
+
+- **Kokoro 82M INT8**: 92,361,271-byte quantized weights plus 28,214,398-byte
+  voice pack, via `kokoro-onnx`. Original hexgrad and ONNX-community entries are
+  the same family, so they do not become duplicate providers. Nova uses the
+  runtime publisher's compatible v1.0 INT8 export, forces CPUExecutionProvider,
+  and limits inference to two intra-op threads and one inter-op thread.
+- **sanoTTS**: four English piperlite voices, 1.08-1.83M parameters with roughly
+  2-4 MB weights each. Default `amy-1p1m` favors the smallest practical voice.
+  Native NumPy runtime, no PyTorch or GPU. Download only the selected pack;
+  runtime validates its published size/hash. Lower-quality nano voices are not
+  exposed for assistant speech.
+
+Sources: [Kokoro ONNX model card](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX),
+[runtime v1.0 assets](https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.0),
+[sanoTTS model card](https://huggingface.co/ampixa/sanoTTS).
+Other listed families were not added: heavyweight generators require more
+compute; model collections, tuners, and standalone vocoders are not independent
+lightweight assistant backends. VieNeu remains a possible language-specific
+follow-up; no complete low-resource memory assessment was performed for its
+backbone, codec and frontend.
+
+New optional extras: `voice-kokoro` pins `kokoro-onnx==0.4.9`; `voice-sano` pins
+`sanotts==0.3.0`. Both use `phonemizer-fork` and bundled espeak-ng. The newer
+Kokoro runtime depends on the separate overlapping `phonemizer` distribution;
+using the validated version avoids competing distributions writing that module.
+The extras resolve together and do not change the default installation. Kokoro
+weights/runtime are Apache-2.0/MIT respectively; sanoTTS is GPL-3.0.
+
+Both providers reuse shared atomic byte-progress downloads, speech cancellation,
+serialization and sentence playback. `/voice settings`, `/model` and `/settings`
+use the existing registry. Missing optional runtimes produce installation hints
+that preserve a uv tool installation's source/extras.
+
+Proof: full offline voice verifier exited zero with **166 passed, 1 skipped**,
+all deliberate negative controls killed, source mypy and new-file lint/format
+passed. Focused selection/voice-command tests passed after hint consolidation.
+Separate disposable environments exercised actual provider wrappers and real
+weights on Windows CPU with audio output captured instead of played. sanoTTS
+produced 22,050 Hz audio (about 4.33 s cold including download, 0.16 s warm for
+`Tests passed.`); Kokoro produced 24,000 Hz audio (about 21.66 s cold including
+120 MB download, 1.83 s warm). These short samples are not a standardized speed
+comparison, nor a claim of real-time speed on every low-resource machine.
+Physical speaker playback and peak process RAM were not measured. Weight sizes
+are download footprints, not total RAM requirements. Nothing was pushed.

@@ -269,3 +269,53 @@ class TestVoiceCommand:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+@pytest.mark.usefixtures("isolated_config")
+async def test_failed_warmup_never_prints_models_ready(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "novacode_cli.commands.voice_handler.audio.is_voice_available", lambda: True
+    )
+
+    class Pipeline:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def downloads_pending(self) -> list[str]:
+            return ["STT"]
+
+        async def warmup(self) -> bool:
+            return False
+
+    monkeypatch.setattr("novacode_cli.audio.pipeline.VoicePipeline", Pipeline)
+    console = _Console()
+    await handle_voice_command("download", SimpleNamespace(), console)
+    assert "failed" in console.text.lower()
+    assert "models ready" not in console.text.lower()
+
+
+@pytest.mark.parametrize(
+    ("provider", "voice", "package"),
+    [
+        ("kokoro", "bf_emma", "kokoro-onnx"),
+        ("sano", "amy", "sanotts"),
+    ],
+)
+async def test_lightweight_tts_selection_saves_voice_and_offers_install_hint(
+    provider: str,
+    voice: str,
+    package: str,
+    isolated_config: NovaConfig,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        f"novacode_cli.commands.voice_handler.audio.is_{provider}_available", lambda: False
+    )
+    console = _Console()
+    await handle_voice_command(
+        f"settings tts {provider} --voice {voice}", SimpleNamespace(), console
+    )
+    assert isolated_config.get_voice_config()["tts_provider"] == provider
+    assert isolated_config.get_voice_provider_config(provider)["voice"] == voice
+    assert package in console.text
+    assert "install" in console.text.lower()

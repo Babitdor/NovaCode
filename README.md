@@ -123,10 +123,12 @@ uv tool install --upgrade "novacode-cli[voice,browser,agents-server] @ git+https
 To include all extras:
 
 ```bash
-uv tool install --upgrade "novacode-cli[voice,voice-orpheus,voice-parakeet,voice-pocket,browser,bedrock,server,agents-server] @ git+https://github.com/Babitdor/NovaCode.git"
+uv tool install --upgrade "novacode-cli[voice,voice-orpheus,voice-parakeet,voice-whistle,voice-pocket,voice-kokoro,voice-sano,browser,bedrock,server,agents-server] @ git+https://github.com/Babitdor/NovaCode.git" --index https://abetlen.github.io/llama-cpp-python/whl/cpu
 ```
 
-From a local checkout, use `uv tool install --upgrade ".[voice,browser,agents-server]"` instead. After installing the tool, launch it with `nova` from any project directory. Keep your desired extras in the install command when updating.
+The `--index` flag is needed whenever `voice-orpheus` is included: it fetches a prebuilt `llama-cpp-python` wheel instead of compiling it, which fails without a C++ toolchain (`CMAKE_C_COMPILER not set`).
+
+From a local checkout, use `uv tool install --upgrade ".[voice,browser,agents-server]"` instead. After installing the tool, launch it with `nova` from any project directory. Keep your desired extras in the install command when updating; the extras list replaces the previous one, so omitted extras are uninstalled.
 
 | Extra | Capability |
 |---|---|
@@ -135,6 +137,8 @@ From a local checkout, use `uv tool install --upgrade ".[voice,browser,agents-se
 | `voice-parakeet` | Optional Parakeet speech input |
 | `voice-whistle` | Optional Whistle speech input (local Cactus runtime) |
 | `voice-pocket` | Optional Pocket-TTS speech output |
+| `voice-kokoro` | Kokoro 82M INT8 CPU speech (~92 MB weights + 28 MB voices) |
+| `voice-sano` | Tiny sanoTTS CPU speech (~2–4 MB per English voice) |
 | `browser` | Browser-use integration |
 | `bedrock` | Amazon Bedrock provider |
 | `server` | FastAPI and Uvicorn server dependencies |
@@ -147,6 +151,20 @@ uv sync --extra voice          # Local speech input and output
 uv sync --extra agents-server  # On-demand background-agent server
 uv sync --extra browser        # Browser-use integration
 ```
+
+For lightweight English TTS, install `voice` plus `voice-kokoro` or `voice-sano`:
+
+```bash
+uv sync --extra voice --extra voice-kokoro --extra voice-sano
+```
+
+Select with `/voice settings tts kokoro --voice af_heart` or
+`/voice settings tts sano --voice amy-1p1m`, then `/voice test`.
+Both run on CPU, load only on first use, reuse cached weights, and report model
+download progress above the composer. `/model` and `/settings` also list their
+voices. Piper remains the default. File sizes describe downloads, not total RAM.
+Kokoro is Apache-2.0; sanoTTS is GPL-3.0. Voice weights download from their
+upstream publishers on first use.
 
 Combine `--extra` flags to keep multiple extras installed. Voice models may need an initial download; browser integrations may need additional browser setup. Without the agent-server extra, in-process delegation remains available.
 

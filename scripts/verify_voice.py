@@ -12,13 +12,21 @@ ROOT = Path(__file__).resolve().parents[1]
 TESTS = [
     "tests/test_audio",
     "tests/test_tui_voice_output.py",
+    "tests/test_tui_voice_downloads.py",
     "tests/test_voice_catalog.py",
     "tests/test_voice_credentials.py",
     "tests/test_remote_voice_notes.py",
     "tests/test_telegram_voice.py",
     "tests/test_code_mode_toggle.py",
 ]
-NEW_SOURCES = ["novacode_cli/audio/stt_whistle.py", "novacode_cli/audio/playback.py"]
+NEW_SOURCES = [
+    "novacode_cli/audio/stt_whistle.py",
+    "novacode_cli/audio/playback.py",
+    "novacode_cli/audio/tts_kokoro.py",
+    "novacode_cli/audio/tts_sano.py",
+    "novacode_cli/audio/downloads.py",
+    "novacode_cli/tui/voice_downloads.py",
+]
 SOURCES = [
     *NEW_SOURCES,
     *[
@@ -28,8 +36,11 @@ SOURCES = [
 ]
 NEW_TESTS = [
     "tests/test_audio/test_whistle.py",
+    "tests/test_audio/test_lightweight_tts.py",
+    "tests/test_audio/test_download_progress.py",
     "tests/test_audio/test_voice_safety.py",
     "tests/test_tui_voice_output.py",
+    "tests/test_tui_voice_downloads.py",
 ]
 
 

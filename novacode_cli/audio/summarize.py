@@ -31,6 +31,8 @@ _SHORT_REPLY_CHARS = 200
 #: Hard cap on the spoken summary (a paragraph; defence against a chatty model).
 #: ~90 words ≈ 600 chars, with headroom so a full paragraph isn't cut mid-sentence.
 _SUMMARY_MAX_CHARS = 700
+#: Speech must not wait indefinitely for a second model round-trip.
+_SUMMARY_TIMEOUT_S = 2.0
 
 #: Process-wide cache of the summarization model. ``create_model()`` does config
 #: file I/O (+ provider probing), so building it once and reusing it avoids that
@@ -51,8 +53,9 @@ async def _get_summary_model() -> BaseChatModel:
 async def summarize_for_speech(text: str, *, model: BaseChatModel | None = None) -> str:
     """Return a 1-2 sentence spoken summary of an assistant reply (fail-open).
 
-    Short replies are returned as-is (no model call). Any failure falls back to
-    a trimmed :func:`speakable_text` slice so TTS always has something to say.
+    Short replies skip the model. Model setup and invocation share a two-second
+    budget. Timeout or failure falls back to a trimmed :func:`speakable_text`
+    slice so TTS always has something to say.
     """
     base = speakable_text(text)
     if not base:
@@ -61,19 +64,23 @@ async def summarize_for_speech(text: str, *, model: BaseChatModel | None = None)
         return base
 
     try:
-        chat = model if model is not None else await _get_summary_model()
-        prompt = render_template("voice_summary.jinja", response=base)
-        resp = await chat.ainvoke(
-            [HumanMessage(content=prompt)],
-            config={
-                "run_name": "nova_voice_summary",
-                "tags": ["nova", "voice"],
-                # nova_oob: drop this call's streamed output in the agent loop.
-                "metadata": {"nova_oob": True},
-            },
-        )
+        async with asyncio.timeout(_SUMMARY_TIMEOUT_S):
+            chat = model if model is not None else await _get_summary_model()
+            prompt = render_template("voice_summary.jinja", response=base)
+            resp = await chat.ainvoke(
+                [HumanMessage(content=prompt)],
+                config={
+                    "run_name": "nova_voice_summary",
+                    "tags": ["nova", "voice"],
+                    # nova_oob: drop this call's streamed output in the agent loop.
+                    "metadata": {"nova_oob": True},
+                },
+            )
         raw = resp.text if isinstance(resp, BaseMessage) else getattr(resp, "content", "")
         summary = raw.strip() if isinstance(raw, str) else ""
+    except TimeoutError:
+        logger.debug("Voice summary exceeded speech budget; using reply prose")
+        return speakable_text(text, max_chars=_SUMMARY_MAX_CHARS)
     except Exception:
         logger.exception("Voice summary failed; speaking a short slice instead")
         return speakable_text(text, max_chars=_SUMMARY_MAX_CHARS)

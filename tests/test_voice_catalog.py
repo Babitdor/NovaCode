@@ -30,6 +30,8 @@ _EXPECTED_FIELD = {
     "elevenlabs": "voice_id",
     "orpheus": "voice",
     "pocket": "voice",
+    "kokoro": "voice",
+    "sano": "voice",
 }
 
 _ALL = {**STT_PROVIDERS, **TTS_PROVIDERS}

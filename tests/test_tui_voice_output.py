@@ -56,3 +56,27 @@ async def test_voice_disabled_during_summary_does_not_speak(monkeypatch: pytest.
         release.set()
         await worker.wait()
         pipeline.speak.assert_not_called()
+
+
+async def test_pipeline_replaced_during_summary_does_not_speak(monkeypatch: pytest.MonkeyPatch):
+    app = _app()
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def summary(_text: str) -> str:
+        started.set()
+        await release.wait()
+        return "Stale reply."
+
+    monkeypatch.setattr("novacode_cli.audio.summarize.summarize_for_speech", summary)
+    async with app.run_test():
+        original = SimpleNamespace(speak=AsyncMock())
+        replacement = SimpleNamespace(speak=AsyncMock())
+        app._voice_pipeline = original
+        app._voice_speak_responses = True
+        worker = app._speak_reply("A response.")
+        await started.wait()
+        app._voice_pipeline = replacement
+        release.set()
+        await worker.wait()
+        original.speak.assert_not_called()
+        replacement.speak.assert_not_called()

@@ -105,6 +105,25 @@ STT_PROVIDERS: dict[str, dict[str, Any]] = {
 }
 
 TTS_PROVIDERS: dict[str, dict[str, Any]] = {
+    "kokoro": {
+        "name": "Kokoro 82M (INT8 CPU)",
+        "description": "Local English TTS — ~92 MB weights + 28 MB voices, CPU only",
+        "local": True,
+        "requires_key": False,
+        "default_voice": "af_heart",
+        "option_field": "voice",
+        "options": ["af_heart", "af_bella", "af_nova", "am_michael", "bf_emma", "bm_george"],
+    },
+    "sano": {
+        "name": "sanoTTS (tiny CPU)",
+        "description": "Local English TTS — 1.1-1.8M parameters, ~2-4 MB per voice",
+        "local": True,
+        "requires_key": False,
+        "default_voice": "amy-1p1m",
+        "option_field": "voice",
+        "options": ["amy-1p1m", "amy", "kristin", "hfc"],
+        "option_labels": {"amy-1p1m": "amy-1p1m (smallest)", "amy": "amy (clearer)"},
+    },
     "piper": {
         "name": "Piper",
         "description": "Local, low-latency TTS (CPU)",

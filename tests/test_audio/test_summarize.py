@@ -5,9 +5,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from langchain_core.messages import AIMessage
 
 from novacode_cli.audio.summarize import _SHORT_REPLY_CHARS, summarize_for_speech
-from langchain_core.messages import AIMessage
 
 
 class FakeModel:
@@ -136,3 +136,58 @@ class TestModelCache:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+async def test_slow_summary_falls_back_within_budget(monkeypatch: pytest.MonkeyPatch):
+    import asyncio
+
+    import novacode_cli.audio.summarize as mod
+
+    monkeypatch.setattr(mod, "_SUMMARY_TIMEOUT_S", 0.02)
+    cancelled = asyncio.Event()
+
+    class SlowModel:
+        async def ainvoke(self, *_args: object, **_kwargs: object) -> None:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+    result = await asyncio.wait_for(
+        summarize_for_speech(_long_reply(), model=SlowModel()), timeout=0.5
+    )
+    assert "parser" in result
+    assert len(result) <= mod._SUMMARY_MAX_CHARS
+    assert cancelled.is_set()
+
+
+async def test_summary_budget_includes_model_setup(monkeypatch: pytest.MonkeyPatch):
+    import asyncio
+
+    import novacode_cli.audio.summarize as mod
+
+    monkeypatch.setattr(mod, "_SUMMARY_TIMEOUT_S", 0.02)
+
+    async def slow_setup() -> None:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(mod, "_get_summary_model", slow_setup)
+    result = await asyncio.wait_for(summarize_for_speech(_long_reply()), timeout=0.5)
+    assert "parser" in result
+
+
+async def test_summary_cancellation_propagates():
+    import asyncio
+
+    started = asyncio.Event()
+
+    class SlowModel:
+        async def ainvoke(self, *_args: object, **_kwargs: object) -> None:
+            started.set()
+            await asyncio.Event().wait()
+
+    task = asyncio.create_task(summarize_for_speech(_long_reply(), model=SlowModel()))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task

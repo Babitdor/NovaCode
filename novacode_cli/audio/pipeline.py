@@ -13,9 +13,12 @@ import logging
 import threading
 from typing import TYPE_CHECKING, Any
 
+from novacode_cli.audio.downloads import watch_downloads
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    from novacode_cli.audio.downloads import DownloadCallback
     from novacode_cli.audio.providers import VoiceSTT, VoiceTTS
 
 logger = logging.getLogger("nova.audio.pipeline")
@@ -135,12 +138,14 @@ class VoicePipeline:
         stt_model: str = "base",
         stt_device: str = "auto",
         tts_voice: str = "en_US-lessac-medium",
+        on_download_progress: DownloadCallback | None = None,
     ) -> None:
         """Record component config; nothing is loaded until first use."""
         global _ACTIVE_PIPELINE
         _ACTIVE_PIPELINE = self
         self._stt_provider = stt_provider
         self._tts_provider = tts_provider
+        self.on_download_progress = on_download_progress
         _pc = dict(provider_configs or {})
         _pc.setdefault("faster-whisper", {})
         _pc["faster-whisper"].setdefault("model", stt_model)
@@ -186,10 +191,18 @@ class VoicePipeline:
         """Create the STT provider selected by ``stt_provider``."""
         return build_stt(self._stt_provider, self._provider_configs)
 
-    def _build_tts(self) -> VoiceTTS:
+    def _build_tts(self) -> VoiceTTS:  # noqa: PLR0911 -- explicit lazy provider branches.
         """Create the TTS provider selected by ``tts_provider``."""
         provider = self._tts_provider
         cfg = self._provider_configs.get(provider, {})
+        if provider == "kokoro":
+            from novacode_cli.audio.tts_kokoro import KokoroSpeaker
+
+            return KokoroSpeaker(voice=cfg.get("voice", "af_heart"))
+        if provider == "sano":
+            from novacode_cli.audio.tts_sano import SanoSpeaker
+
+            return SanoSpeaker(voice=cfg.get("voice", "amy-1p1m"))
         if provider == "piper":
             from novacode_cli.audio.tts import Speaker
 
@@ -228,32 +241,42 @@ class VoicePipeline:
         msg = f"Unknown TTS provider: {provider!r}"
         raise ValueError(msg)
 
-    async def warmup(self, *, input_audio: bool = True) -> None:
+    async def warmup(self, *, input_audio: bool = True) -> bool:
         """Pre-load VAD + STT + TTS models off the loop so first use isn't laggy.
 
         Only the local providers have models to pre-load (cloud providers have
         nothing to warm up). Best-effort: any load error is logged and ignored —
-        the model simply loads on first real use instead.
+        the model simply loads on first real use instead. Return False if any
+        component failed, so callers do not announce readiness incorrectly.
         """
         if input_audio:
             self._ensure_components()
         else:
             self._ensure_tts()
-        # (label, awaitable-or-None) — cloud providers expose no eager loader.
+        # Cloud providers expose no eager loader.
         _stt_load = getattr(self._stt, "_ensure_model", None)
         _tts_load = getattr(self._tts, "_ensure_voice", None)
         tasks: list[tuple[str, Any]] = []
         if input_audio:
-            tasks.append(("VAD", self._vad.ensure_model_async()))
+            tasks.append(("VAD", self._vad.ensure_model_async))
         if input_audio and _stt_load is not None:
-            tasks.append(("STT", asyncio.to_thread(_stt_load)))
+            tasks.append(("STT", _stt_load))
         if _tts_load is not None:
-            tasks.append(("TTS", asyncio.to_thread(_tts_load)))
+            tasks.append(("TTS", _tts_load))
+        ready = True
         for label, loader in tasks:
             try:
-                await loader
+                if label == "VAD":
+                    await loader()
+                    continue
+                backend = self._stt if label == "STT" else self._tts
+                provider = self._stt_provider if label == "STT" else self._tts_provider
+                async with watch_downloads(label, provider, backend, self.on_download_progress):
+                    await asyncio.to_thread(loader)
             except Exception:
+                ready = False
                 logger.exception("Voice warmup failed for %s; will load on first use", label)
+        return ready
 
     async def capture_utterance(
         self, *, should_stop: Callable[[], bool] | None = None
@@ -270,7 +293,8 @@ class VoicePipeline:
             self._capture.stop()  # PTT releases the mic between utterances
         if pcm is None or len(pcm) == 0:
             return None
-        return (await self._stt.transcribe(pcm)) or None
+        async with watch_downloads("STT", self._stt_provider, self._stt, self.on_download_progress):
+            return (await self._stt.transcribe(pcm)) or None
 
     async def speak(self, text: str) -> None:
         """Speak ``text`` aloud, flagging ``tts_active`` for the duration."""
@@ -283,7 +307,10 @@ class VoicePipeline:
             self._ensure_tts()
             self._tts_active = True
             try:
-                await self._tts.speak(text)
+                async with watch_downloads(
+                    "TTS", self._tts_provider, self._tts, self.on_download_progress
+                ):
+                    await self._tts.speak(text)
             finally:
                 self._tts_active = False
         finally:
@@ -317,7 +344,10 @@ class VoicePipeline:
                 # Discard anything captured if TTS started or we were cancelled.
                 if pcm is None or len(pcm) == 0 or self._tts_active:
                     continue
-                text = await self._stt.transcribe(pcm)
+                async with watch_downloads(
+                    "STT", self._stt_provider, self._stt, self.on_download_progress
+                ):
+                    text = await self._stt.transcribe(pcm)
                 if self._tts_active or (should_stop is not None and should_stop()):
                     continue
                 if not text:

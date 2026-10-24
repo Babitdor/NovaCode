@@ -173,3 +173,69 @@ async def test_pipeline_speech_can_be_called_from_another_event_loop():
     await asyncio.gather(first, second)
     assert calls == ["first", "second"]
     assert not pipeline.tts_active
+
+
+async def test_piper_plays_first_chunk_before_synthesizing_rest(monkeypatch: pytest.MonkeyPatch):
+    played = []
+    first = np.array([1, 2], dtype=np.int16)
+    second = np.array([3, 4], dtype=np.int16)
+
+    class Voice:
+        def synthesize(self, _text: str) -> Iterator[SimpleNamespace]:
+            yield SimpleNamespace(audio_int16_array=first)
+            assert len(played) == 1, "First sentence must play before later synthesis"
+            yield SimpleNamespace(audio_int16_array=second)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "sounddevice",
+        SimpleNamespace(
+            play=lambda pcm, *_a, **_kw: played.append(pcm.copy()),
+            wait=lambda: None,
+            stop=lambda: None,
+        ),
+    )
+    speaker = Speaker()
+    speaker._voice = Voice()
+    await speaker.speak("First sentence. Second sentence.")
+    assert len(played) == 2
+    np.testing.assert_array_equal(played[0][:2], first)
+    np.testing.assert_array_equal(played[1][:2], second)
+
+
+async def test_piper_stops_generating_sentences_when_playback_cancelled(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    started, stopped, finished = threading.Event(), threading.Event(), threading.Event()
+    generated = []
+
+    class Voice:
+        def synthesize(self, _text: str) -> Iterator[SimpleNamespace]:
+            try:
+                for sentence in range(3):
+                    generated.append(sentence)
+                    yield SimpleNamespace(audio_int16_array=np.array([1, 2], dtype=np.int16))
+            finally:
+                finished.set()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "sounddevice",
+        SimpleNamespace(
+            play=lambda *_a, **_kw: started.set(),
+            wait=lambda: stopped.wait(2),
+            stop=stopped.set,
+        ),
+    )
+    speaker = Speaker()
+    speaker._voice = Voice()
+    task = asyncio.create_task(speaker.speak("One. Two. Three."))
+    try:
+        assert await asyncio.to_thread(started.wait, 2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        stopped.set()
+        assert await asyncio.to_thread(finished.wait, 2)
+    assert generated == [0]

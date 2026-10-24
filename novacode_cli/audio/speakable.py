@@ -29,6 +29,11 @@ _DEFAULT_MAX_CHARS = 1200
 _SENTENCE_END = re.compile(r"[.!?](?:\s|$)")
 
 
+def speech_sentences(text: str) -> list[str]:
+    """Split prose at sentence boundaries so playback need not await a whole reply."""
+    return [part for part in re.split(r"(?<=[.!?])\s+", text.strip()) if part]
+
+
 def speakable_text(markdown: str, *, max_chars: int = _DEFAULT_MAX_CHARS) -> str:
     """Reduce ``markdown`` to plain, speakable prose, truncated to ``max_chars``.
 

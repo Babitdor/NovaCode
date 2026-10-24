@@ -67,6 +67,16 @@ def is_pocket_available() -> bool:
     return _HAS_POCKET
 
 
+def is_kokoro_available() -> bool:
+    """Return whether the optional Kokoro runtime is installed."""
+    return _has("kokoro_onnx")
+
+
+def is_sano_available() -> bool:
+    """Return whether the optional sanoTTS runtime is installed."""
+    return _has("sanotts")
+
+
 def _hint(what: str, packages: list[str], extra: str, **options: str) -> str:
     from novacode_cli.install_commands import install_command
 
@@ -92,6 +102,16 @@ def orpheus_install_hint() -> str:
 def pocket_install_hint() -> str:
     """User-facing hint for enabling the Pocket TTS provider."""
     return _hint("Pocket-TTS needs the pocket-tts package.", ["pocket-tts"], "voice-pocket")
+
+
+def kokoro_install_hint() -> str:
+    """User-facing hint for the optional CPU Kokoro runtime."""
+    return _hint("Kokoro needs kokoro-onnx.", ["kokoro-onnx==0.4.9"], "voice-kokoro")
+
+
+def sano_install_hint() -> str:
+    """User-facing hint for the optional tiny NumPy TTS runtime."""
+    return _hint("sanoTTS needs sanotts.", ["sanotts==0.3.0"], "voice-sano")
 
 
 def parakeet_install_hint() -> str:
@@ -266,10 +286,14 @@ def _fmt_bytes(n: int) -> str:
 
 __all__ = [
     "diagnose_voice",
+    "is_kokoro_available",
     "is_orpheus_available",
     "is_pocket_available",
+    "is_sano_available",
     "is_voice_available",
+    "kokoro_install_hint",
     "missing_deps",
     "orpheus_install_hint",
     "pocket_install_hint",
+    "sano_install_hint",
 ]

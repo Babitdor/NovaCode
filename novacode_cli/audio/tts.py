@@ -9,12 +9,14 @@ offloads to a worker thread. Imports cleanly without ``piper-tts`` installed.
 from __future__ import annotations
 
 import logging
-import urllib.request
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from novacode_cli.audio.downloads import download_file as _download
 from novacode_cli.audio.playback import play_and_wait, run_speech
 from novacode_cli.config.config import HOME_DIR
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger("nova.audio.tts")
 
@@ -29,28 +31,6 @@ def _voice_url_path(voice: str) -> str:
     lang_region, name, quality = voice.split("-", 2)
     lang = lang_region.split("_")[0]
     return f"{lang}/{lang_region}/{name}/{quality}/{voice}"
-
-
-def _download(url: str, dest: Path) -> None:
-    import os
-    import shutil
-    import tempfile
-
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    logger.info("Downloading Piper asset %s", url)
-    # Download to a temp file in the same folder to guarantee atomic replacement on the same drive.
-    tmp_fd, tmp_path_str = tempfile.mkstemp(dir=str(dest.parent), suffix=".tmp")
-    tmp_path = Path(tmp_path_str)
-    try:
-        # timeout guards connect *and* each socket read, so a stalled network
-        # can't hang the warmup thread forever. copyfileobj streams in chunks
-        # instead of reading the whole model into memory at once.
-        with os.fdopen(tmp_fd, "wb") as out, urllib.request.urlopen(url, timeout=30) as resp:  # noqa: S310 — fixed HTTPS host
-            shutil.copyfileobj(resp, out)
-        tmp_path.replace(dest)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
 
 
 def ensure_voice_model(voice: str = _DEFAULT_VOICE) -> Path:
@@ -96,14 +76,10 @@ class Speaker:
         await run_speech(lambda: self._speak_sync(text))
 
     def _speak_sync(self, text: str) -> None:
-        import numpy as np
-
         self._ensure_voice()
-        audio_chunks: list[np.ndarray] = []
         for chunk in self._voice.synthesize(text):
             arr = getattr(chunk, "audio_int16_array", None)
-            if arr is not None and len(arr) > 0:
-                audio_chunks.append(arr)
-        if not audio_chunks:
-            return
-        play_and_wait(np.concatenate(audio_chunks), self._samplerate)
+            # Piper yields complete sentences. Play before generating the rest;
+            # stop consuming the generator after cancellation.
+            if arr is not None and len(arr) > 0 and not play_and_wait(arr, self._samplerate):
+                return

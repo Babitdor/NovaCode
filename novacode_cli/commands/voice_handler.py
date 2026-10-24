@@ -323,11 +323,16 @@ async def _handle_settings(  # noqa: PLR0912 — settings sub-dispatch
                 console.print(
                     f"  [yellow]Set key:[/yellow] /voice settings tts {provider} --key <key>"
                 )
-        # Orpheus is an optional heavy dep — warn if selected but not installed.
-        if provider == "orpheus" and not audio.is_orpheus_available():
-            console.print(f"  [yellow]{audio.orpheus_install_hint()}[/yellow]")
-        if provider == "pocket" and not audio.is_pocket_available():
-            console.print(f"  [yellow]{audio.pocket_install_hint()}[/yellow]")
+        optional = {
+            "orpheus": (audio.is_orpheus_available, audio.orpheus_install_hint),
+            "pocket": (audio.is_pocket_available, audio.pocket_install_hint),
+            "kokoro": (audio.is_kokoro_available, audio.kokoro_install_hint),
+            "sano": (audio.is_sano_available, audio.sano_install_hint),
+        }
+        if provider in optional:
+            available, hint = optional[provider]
+            if not available():
+                console.print(f"  [yellow]{hint()}[/yellow]")
     else:
         console.print(f"[yellow]Unknown settings category:[/yellow] {action}. Use stt or tts.")
 
@@ -390,8 +395,13 @@ async def _run_download(config: NovaConfig, console: Console) -> None:
         f"  [dim]Downloading voice models ({', '.join(pending)})… this may take a while.[/dim]"
     )
     try:
-        await pipeline.warmup()
-        console.print("  [green]✓[/green] Voice models ready.")
+        ready = await pipeline.warmup()
+        if ready is False:
+            console.print(
+                "  [red]Voice model preparation failed. Run /voice doctor for details.[/red]"
+            )
+        else:
+            console.print("  [green]✓[/green] Voice models ready.")
     except Exception as exc:  # noqa: BLE001 — surface any download/network error
         console.print(f"  [red]Download failed:[/red] {exc}")
 

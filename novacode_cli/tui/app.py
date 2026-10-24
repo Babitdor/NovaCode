@@ -21,6 +21,7 @@ from novacode_cli.core import subagent_tasks
 from novacode_cli.prompts import render_template
 from novacode_cli.ui import status_phrases
 from novacode_cli.tui.avatar import NovaAvatar
+from novacode_cli.tui.voice_downloads import VoiceDownloads, VoiceModelProgress
 from novacode_cli.tui.output_buffer import MAX_PENDING_CALLS, OutputTail
 
 import asyncio
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
 
     # Annotation-only: the clipboard image is passed straight to the tracker, so
     # the module is never imported at runtime on this path.
+    from novacode_cli.audio.downloads import ModelDownload
     from novacode_cli.image_utils import ImageData
     from novacode_cli.memory.dream_gates import GateReport
     from novacode_cli.session.history_tree import HistoryTree
@@ -2513,6 +2515,8 @@ class NovaApp(App):
                 # Text cannot right-align itself.
                 yield Static("", id="prompt-hint-bar")
                 yield Static("", id="status-counts")
+            self._voice_downloads_panel = VoiceDownloads(id="voice-downloads")
+            yield self._voice_downloads_panel
             # The ask_user_question answer list. Docked here rather than pushed
             # as a modal so the transcript stays visible and the footer keeps
             # one layout; hidden until a question arrives. Sits directly above
@@ -8646,6 +8650,11 @@ class NovaApp(App):
 
     # ── Voice I/O ─────────────────────────────────────────────────────────
 
+    def _post_voice_download_progress(
+        self, progress: ModelDownload, owner: object | None = None
+    ) -> None:
+        self._voice_downloads_panel.post_message(VoiceModelProgress(progress, owner))
+
     def _ensure_voice_pipeline(self) -> bool:
         """Build the voice pipeline if needed; return whether voice is usable."""
         from novacode_cli import audio
@@ -8671,6 +8680,10 @@ class NovaApp(App):
                 )
             self._voice_speak_responses = bool(cfg["speak_responses"])
             # Voice providers stay lazy: speaking must not preload input models.
+        pipeline = self._voice_pipeline
+        pipeline.on_download_progress = lambda progress: self._post_voice_download_progress(
+            progress, pipeline
+        )
         return True
 
     @work(group="voice_warmup", exclusive=True)
@@ -8685,17 +8698,24 @@ class NovaApp(App):
 
         pending: list[str] = []
         with suppress(Exception):
-            pending = self._voice_pipeline.downloads_pending()
+            pending = await asyncio.to_thread(self._voice_pipeline.downloads_pending)
         if pending:
             self._set_nova_indicator(
                 f"⬇ downloading voice models… ({', '.join(pending)})",
                 style="dim cyan",
             )
-        # warmup() already swallows per-model errors; this guards the call itself.
-        with suppress(Exception):
-            await self._voice_pipeline.warmup()
+        ready = False
+        try:
+            ready = await self._voice_pipeline.warmup()
+        except Exception:
+            logger.exception("Voice model warmup failed")
         if pending:
-            self._set_nova_indicator("● voice models ready", style="dim green", auto_clear=3.0)
+            if ready is False:
+                self._set_nova_indicator(
+                    "Voice model preparation failed", style="red", auto_clear=5.0
+                )
+            else:
+                self._set_nova_indicator("● voice models ready", style="dim green", auto_clear=3.0)
 
     async def _eager_voice_warmup(self) -> None:
         """Initialize enabled voice without preloading models.
@@ -8802,7 +8822,7 @@ class NovaApp(App):
 
         No-op unless voice has been activated this session and ``speak_responses``
         is on. The reply is condensed into a short spoken summary (out-of-band
-        LLM call, fail-open); short replies are spoken as-is.
+        LLM call with a bounded wait); short replies are spoken as-is.
         """
         pipeline = self._voice_pipeline
         if pipeline is None or not self._voice_speak_responses:
@@ -8813,25 +8833,9 @@ class NovaApp(App):
         if not prose:
             return
 
-        # Re-check self._voice_pipeline in case it was reset during the await
-        pipeline = self._voice_pipeline
-        if pipeline is None or not self._voice_speak_responses:
-            return
-
-        # Check if the voice model needs to be downloaded before speaking
-        if getattr(pipeline, "tts_needs_download", False):
-            self._set_nova_indicator("🔊 downloading voice…", style="dim cyan")
-            # Force the pipeline warmup (downloads the voice model)
-            try:
-                await pipeline.warmup(input_audio=False)
-            except Exception as w_err:  # noqa: BLE001
-                self._log(Text(f"[🔊 TTS error] Voice download failed: {w_err}", style="red"))
-                self._set_nova_indicator("🔊 tts error", style="red", auto_clear=3.0)
-                return
-
-        # Re-check again after warmup just in case
-        pipeline = self._voice_pipeline
-        if pipeline is None or not self._voice_speak_responses:
+        # A reset during summary invalidates this reply. Model preparation and
+        # download progress belong to pipeline.speak, which loads only TTS.
+        if pipeline is not self._voice_pipeline or not self._voice_speak_responses:
             return
 
         self._set_nova_indicator("🔊 speaking…", style="dim cyan")
@@ -12583,6 +12587,7 @@ class NovaApp(App):
         (status, on/off, settings…) work here too — the worker just returns
         quickly. Output is captured the same way as ``_passthrough_command``.
         """
+        from novacode_cli.audio.downloads import download_progress
         from novacode_cli.commands.commands import handle_command
         from novacode_cli.remote.command_ui import command_output
 
@@ -12596,7 +12601,10 @@ class NovaApp(App):
             self.push_screen(SettingsScreen(section="voice"))
             return
         try:
-            with _rich_console.capture() as cap:
+            with (
+                _rich_console.capture() as cap,
+                download_progress(self._post_voice_download_progress),
+            ):
                 await handle_command(
                     text,
                     self.agent,

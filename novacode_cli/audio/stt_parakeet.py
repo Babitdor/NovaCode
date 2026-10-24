@@ -8,10 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import urllib.request
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from novacode_cli.audio.downloads import download_file as _download
 from novacode_cli.config.config import HOME_DIR
 
 if TYPE_CHECKING:
@@ -20,7 +19,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger("nova.audio.stt_parakeet")
 
 _VOICE_DIR = HOME_DIR / "voice" / "parakeet"
-_HF_BASE_URL = "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8/resolve/main"
+_HF_BASE_URL = (
+    "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8/resolve/main"
+)
 
 _MODEL_FILES = [
     "encoder.int8.onnx",
@@ -28,24 +29,6 @@ _MODEL_FILES = [
     "joiner.int8.onnx",
     "tokens.txt",
 ]
-
-
-def _download(url: str, dest: Path) -> None:
-    import os
-    import tempfile
-
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    logger.info("Downloading Parakeet asset %s", url)
-    # Download to a temp file in the same folder to guarantee atomic replacement on the same drive.
-    tmp_fd, tmp_path_str = tempfile.mkstemp(dir=str(dest.parent), suffix=".tmp")
-    tmp_path = Path(tmp_path_str)
-    try:
-        with os.fdopen(tmp_fd, "wb") as out, urllib.request.urlopen(url) as resp:  # noqa: S310
-            out.write(resp.read())
-        tmp_path.replace(dest)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
 
 
 def ensure_parakeet_model() -> None:
