@@ -197,6 +197,8 @@ def test_devhost_ports_are_distinct(bridge):
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node is optional")
+# Above the 20 s readiness wait below; the 10 s default cut it short on Windows CI.
+@pytest.mark.timeout(60)
 async def test_cancelling_devhost_stops_its_forked_companion(bridge, monkeypatch, tmp_path):
     """Load the shipped bot entry via an SDK stub and a real fork/IPC channel."""
     from novacode_cli.remote import rootapp_bridge
@@ -265,6 +267,7 @@ async def test_cancelling_devhost_stops_its_forked_companion(bridge, monkeypatch
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node is optional")
+@pytest.mark.timeout(60)  # real Node processes; slow on loaded Windows runners
 async def test_real_node_companion_round_trip_with_fake_sdk(bridge):
     """Exercise shipped JS + real WebSocket + Python runtime; no Root account."""
     node = shutil.which("node")
