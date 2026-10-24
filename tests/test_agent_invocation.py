@@ -8,14 +8,18 @@ from unittest.mock import AsyncMock
 
 import pytest
 from deepagents import create_deep_agent
+from langchain.agents.middleware.types import ModelRequest
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.store.memory import InMemoryStore
 
 from novacode_cli.agents.invocation import (
+    DELEGATION_PREFIX,
+    DelegationMiddleware,
     definition_signature,
     delegation_prompt,
+    forced_tool,
     refresh_definitions,
 )
 from novacode_cli.config.config import settings
@@ -391,3 +395,61 @@ def test_bound_graph_keeps_definition_version_and_workspace() -> None:
     assert bound.agent_definitions_signature == "definitions-v1"
     assert bound.agent_definitions_workspace == "project-workspace"
     assert bound.agent_definition_options == original.agent_definition_options
+
+
+def _delegation_request(
+    *messages: object, tools: tuple[str, ...] = ("task", "read_file")
+) -> ModelRequest:
+    return ModelRequest(
+        model=FakeMessagesListChatModel(responses=[AIMessage(content="ok")]),
+        messages=list(messages),
+        tools=[{"name": name, "description": name} for name in tools],
+    )
+
+
+_PROMPT = (
+    DELEGATION_PREFIX
+    + "- @reviewer: `task(subagent_type='reviewer', description=...)`.\n\nRequest:\nx"
+)
+
+
+async def test_at_agent_turn_forces_its_first_dispatch_once():
+    first = _delegation_request(HumanMessage(content=_PROMPT))
+    assert forced_tool(first) == "task"
+    handler = AsyncMock(return_value="response")
+    assert await DelegationMiddleware().awrap_model_call(first, handler) == "response"
+    assert handler.call_args.args[0].tool_choice == "task"
+
+    later = _delegation_request(
+        HumanMessage(content=_PROMPT),
+        AIMessage(content="", tool_calls=[{"id": "1", "name": "task", "args": {}}]),
+        ToolMessage(content="done", tool_call_id="1"),
+    )
+    assert forced_tool(later) is None
+    assert forced_tool(_delegation_request(HumanMessage(content="plain prompt"))) is None
+    assert (
+        forced_tool(_delegation_request(HumanMessage(content=_PROMPT), tools=("read_file",)))
+        is None
+    )
+    background = _PROMPT.replace("`task(", "`start_async_task(")
+    assert forced_tool(_delegation_request(HumanMessage(content=background))) is None
+    assert (
+        forced_tool(
+            _delegation_request(HumanMessage(content=background), tools=("start_async_task",))
+        )
+        == "start_async_task"
+    )
+
+
+async def test_rejected_forced_choice_retries_unforced():
+    request = _delegation_request(HumanMessage(content=_PROMPT))
+    handler = AsyncMock(side_effect=[ValueError("tool_choice conflicts with thinking"), "fallback"])
+    assert await DelegationMiddleware().awrap_model_call(request, handler) == "fallback"
+    assert handler.call_args_list[0].args[0].tool_choice == "task"
+    assert handler.call_args_list[1].args[0] is request
+
+
+def test_delegation_prompt_starts_with_the_marker(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(settings, "find_agent", lambda _name: None)
+    prompt = delegation_prompt("review it", ["reviewer"], settings)
+    assert forced_tool(_delegation_request(HumanMessage(content=prompt))) == "task"

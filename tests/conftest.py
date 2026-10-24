@@ -46,6 +46,14 @@ def _isolate_learning_auto_approval(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _isolate_shell_logs(tmp_path, monkeypatch):
+    """Full outputs of truncated test commands never land in the user's ~/.nova/logs."""
+    from novacode_cli.shell import output
+
+    monkeypatch.setattr(output, "shell_log_dir", lambda: tmp_path / "shell-logs")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_recovery_archives(tmp_path, monkeypatch):
     """Test compaction never publishes archives into the user's recovery store."""
     from novacode_cli.context import archives

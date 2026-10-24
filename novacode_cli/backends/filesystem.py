@@ -54,6 +54,8 @@ __all__ = ["OptimizedFilesystemBackend", "OptimizedLocalShellBackend"]
 # deepagents>=0.6.8, but Nova is launched against environments still on 0.6.7
 # (e.g. a miniconda install). The value matches upstream's default.
 _GREP_TIMEOUT = 30
+# deepagents' read error for an offset past the end of the file.
+_PAST_END = re.compile(r"exceeds file length \((\d+) lines\)")
 
 
 @functools.cache
@@ -665,7 +667,17 @@ class OptimizedFilesystemBackend(FilesystemBackend):
         if result.error and "codec can't decode" in result.error:
             recovered = self._read_fallback_encoding(file_path, offset, limit)
             if recovered is not None:
-                return recovered
+                result = recovered
+        if result.error and (past_end := _PAST_END.search(result.error)):
+            # Say what to do next: a bare "exceeds file length" costs a turn guessing.
+            total = int(past_end.group(1))
+            last_page = max(0, total - limit)
+            result = ReadResult(
+                error=(
+                    f"{result.error}. The file ends at line {total}; read the last page "
+                    f"with offset={last_page}, or start again with offset=0."
+                )
+            )
         return result
 
     def _read_fallback_encoding(

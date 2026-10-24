@@ -61,7 +61,7 @@ async def test_configured_ruff_errors_follow_the_edit(
 ):
     root = _project(tmp_path, ruff=True)
     monkeypatch.setattr(
-        edit_diagnostics, "_executable", lambda _root, name: RUFF if name == "ruff" else None
+        edit_diagnostics, "_executable", lambda _root, name, **_kw: RUFF if name == "ruff" else None
     )
     result = await _edit(root, _ok())
     assert result.content.startswith("Successfully replaced 1 instance")
@@ -74,7 +74,7 @@ async def test_unconfigured_project_disabled_setting_and_failed_edits_add_nothin
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     root = _project(tmp_path, ruff=False)
-    monkeypatch.setattr(edit_diagnostics, "_executable", lambda _root, _name: RUFF or "ruff")
+    monkeypatch.setattr(edit_diagnostics, "_executable", lambda _root, _name, **_kw: RUFF or "ruff")
     assert (await _edit(root, _ok())).content == _ok().content
 
     (root / "pyproject.toml").write_text("[tool.ruff]\n", encoding="utf-8")
@@ -149,3 +149,58 @@ def test_tsc_output_is_filtered_to_the_edited_file(tmp_path: Path):
         "src/a.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'.\n"
         "  detail for a"
     )
+    similar = "src/a.tsx(3,1): error TS1: other\nlib/src/a.ts(4,1): error TS2: other"
+    assert edit_diagnostics._only_file(similar, path, tmp_path) == ""
+
+
+def test_workspace_executables_need_the_opt_in(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    planted = tmp_path / "node_modules" / ".bin" / "tsc.cmd"
+    planted.parent.mkdir(parents=True)
+    planted.write_text("@echo pwned", encoding="utf-8")
+    monkeypatch.setattr(
+        edit_diagnostics.shutil,
+        "which",
+        lambda name, path=None: str(planted) if path else str(tmp_path / f"{name}.exe"),
+    )
+    root = tmp_path.resolve()
+    assert edit_diagnostics._executable(root, "tsc", project_tools=False) is None
+    assert edit_diagnostics._executable(root, "tsc", project_tools=True) == str(planted)
+    outside = str(tmp_path.parent / "bin" / "ruff.exe")
+    monkeypatch.setattr(edit_diagnostics.shutil, "which", lambda _name, **_kw: outside)
+    assert edit_diagnostics._executable(root, "ruff", project_tools=False) == outside
+
+
+def test_ruff_keeps_excludes_and_pyright_uses_the_nearest_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    package = tmp_path / "packages" / "api"
+    package.mkdir(parents=True)
+    (tmp_path / "ruff.toml").write_text("", encoding="utf-8")
+    (package / "pyproject.toml").write_text("[tool.pyright]\n", encoding="utf-8")
+    file = package / "x.py"
+    file.write_text("x = 1\n", encoding="utf-8")
+    monkeypatch.setattr(edit_diagnostics, "_executable", lambda _root, name, **_kw: name)
+    argv = dict(edit_diagnostics.checkers(file, tmp_path))
+    assert "--force-exclude" in argv["ruff"]
+    assert argv["pyright"] == ["pyright", "-p", str(package), str(file)]
+
+
+@pytest.mark.timeout(30)
+def test_timeout_kills_the_checker_and_returns_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    import time
+
+    monkeypatch.setattr(edit_diagnostics, "TIMEOUT_SECONDS", 1)
+    # A shim-like parent whose grandchild would keep the pipes open.
+    child = (
+        "import subprocess, sys, time; "
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+        "time.sleep(60)"
+    )
+    started = time.monotonic()
+    assert (
+        edit_diagnostics._run("ruff", [sys.executable, "-c", child], tmp_path / "x.py", tmp_path)
+        == ""
+    )
+    assert time.monotonic() - started < 15

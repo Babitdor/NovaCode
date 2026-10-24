@@ -106,10 +106,18 @@ class BoundedLog(deque[str]):
         """Load initial chunks through the same size limit as later writes."""
         super().__init__()
         self._chars = 0
+        self.total = 0
+        """Characters written since the job started; a ``from_offset`` cursor counts these."""
         self.extend(chunks)
+
+    @property
+    def start(self) -> int:
+        """Stream offset of the oldest character still retained."""
+        return self.total - self._chars
 
     def append(self, chunk: str) -> None:
         """Retain the latest part of a large write without growing with its size."""
+        self.total += len(chunk)
         chunk = chunk[-_LOG_MAX_CHARS:]
         super().append(chunk)
         self._chars += len(chunk)

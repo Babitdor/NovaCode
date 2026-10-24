@@ -26,6 +26,7 @@ from langchain_core.tools import StructuredTool
 from langchain_core.tools.base import ToolException
 
 from novacode_cli.shell.os_sandbox import OSSandboxPolicy, detect_backend, wrap_command
+from novacode_cli.shell.output import OutputWindow, exit_status
 from novacode_cli.shell.patterns import _NPX_YES_RE
 from novacode_cli.shell.utils import (
     _convert_unix_command_to_windows,
@@ -819,14 +820,14 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
             output = result.output or "<no output>"
 
             if len(output) > self._max_output_bytes:
-                output = output[: self._max_output_bytes]
-                output += f"\n\n... Output truncated at {self._max_output_bytes} bytes."
+                window = OutputWindow(self._max_output_bytes)
+                window.add(output)
+                output = window.text()
 
-            if result.exit_code is not None and result.exit_code != 0:
-                output = f"{output.rstrip()}\n\nExit code: {result.exit_code}"
-                status = "error"
-            else:
-                status = "success"
+            exit_note, failed = exit_status(command, result.exit_code)
+            if exit_note:
+                output = f"{output.rstrip()}\n\n{exit_note}"
+            status = "error" if failed else "success"
 
             if result.truncated:
                 output += "\n[Output was truncated due to size limits]"
@@ -1156,9 +1157,7 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
 
         _ctl = _jobs.set_current(command)
 
-        out_parts: list[str] = []
-        captured_chars = 0
-        output_truncated = False
+        window = OutputWindow(self._max_output_bytes)
         tail = ""  # rolling last-4KB window, for prompt detection only
         last_prompt = ""
         start = time.time()
@@ -1189,11 +1188,9 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
                     _job.resume_on_done = True  # agent was mid-task → auto-resume
                     _reg.attach_pid(_job.id, proc.pid)
                     _jobs.clear_current(_ctl)
-                    # Seed the job log with output captured before detaching.
-                    _job.logs.extend(out_parts)
-                    if output_truncated:
-                        _reg.append_log(_job.id, "\n[earlier output truncated]\n" + tail)
-                    out_parts = []  # hand capture over to the bounded job log
+                    # Seed the job log with output captured before detaching;
+                    # from here on capture goes to the bounded job log.
+                    _job.logs.append(window.text())
                     if detach_future is not None and not detach_future.done():
                         detach_future.set_result(
                             ToolMessage(
@@ -1222,10 +1219,7 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
                         _job = _reg.add(command, self._tool_name, prog)
                         _reg.attach_pid(_job.id, proc.pid)
                         _jobs.clear_current(_ctl)
-                        _job.logs.extend(out_parts)
-                        if output_truncated:
-                            _reg.append_log(_job.id, "\n[earlier output truncated]\n" + tail)
-                        out_parts = []
+                        _job.logs.append(window.text())
                         if detach_future is not None and not detach_future.done():
                             detach_future.set_result(
                                 ToolMessage(
@@ -1282,18 +1276,13 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
                 text = chunk.decode("utf-8", errors="replace")
                 if detached and _job is not None:
                     # Detached: append to the job's BOUNDED log buffer (not the
-                    # unbounded out_parts) and stop streaming to the tool widget.
+                    # unbounded window) and stop streaming to the tool widget.
                     _jobs.get_registry().append_log(_job.id, text)
                 else:
-                    # The result was already truncated after completion. Bound
-                    # its capture while running too, so noisy builds cannot
-                    # retain hundreds of megabytes across concurrent sessions.
-                    remaining = max(0, self._max_output_bytes - captured_chars)
-                    if remaining:
-                        part = text[:remaining]
-                        out_parts.append(part)
-                        captured_chars += len(part)
-                    output_truncated |= len(text) > remaining
+                    # Bounded while running, so noisy builds cannot retain
+                    # hundreds of megabytes across concurrent sessions. The
+                    # window keeps head + tail (where errors are) and logs the rest.
+                    window.add(text)
                     tail = (tail + text)[-4096:]
                     if tool_call_id:
                         from novacode_cli.events import emit_tool_output
@@ -1314,16 +1303,12 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
             except Exception:  # noqa: BLE001
                 pass
 
-        output = "".join(out_parts).strip() or "<no output>"
-        if output_truncated:
-            output = (
-                output[: self._max_output_bytes]
-                + f"\n\n... Output truncated at {self._max_output_bytes} bytes."
-            )
+        output = window.text().strip() or "<no output>"
         rc = proc.returncode
-        if status == "success" and rc not in (0, None):
-            status = "error"
-            output = f"{output}\n\nExit code: {rc}"
+        exit_note, failed = exit_status(command, rc)
+        if status == "success" and exit_note:
+            status = "error" if failed else "success"
+            output = f"{output}\n\n{exit_note}"
 
         if detached and _job is not None:
             # The agent already got the "backgrounded" message; finalize the job

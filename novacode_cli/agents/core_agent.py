@@ -1679,6 +1679,9 @@ def _build_middleware_stack(
             enforce_read_before_edit=False,
             truncate_results=True,
             include_system_prompt=True,
+            # write_file overwrites are still guarded: a pre-existing file must be
+            # read in full first. Local mode only; sandbox paths are not on disk here.
+            workspace_root=str(workspace_root) if sandbox is None else None,
         ),
         # Break stuck tool-call loops: if the model fires the same tool with the
         # same args and gets the same result 3× in a row (e.g. a grep that keeps
@@ -2527,6 +2530,15 @@ This file stores your preferences and context that persist across sessions.
     tools = [*tools, caveman_tool]
     if not any(isinstance(m, PromptInjectionMiddleware) for m in agent_middleware):
         agent_middleware.append(PromptInjectionMiddleware())
+    # Outside StrictToolMiddleware, so a provider-specific tool_choice conflict
+    # raises inside the call it forces and falls back to the unforced call.
+    from novacode_cli.agents.invocation import DelegationMiddleware
+
+    agent_middleware.append(DelegationMiddleware())
+    # Before StrictToolMiddleware, which then validates the repaired arguments.
+    from novacode_cli.agents.arg_repair import ToolArgRepairMiddleware
+
+    agent_middleware.append(ToolArgRepairMiddleware())
     agent_middleware.append(StrictToolMiddleware())
     agent_middleware.append(ContextSnapshotMiddleware())
 

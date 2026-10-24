@@ -54,6 +54,57 @@ def test_gate_disabled_allows_everything():
     assert mw._check_edit_allowed(_edit("/whatever.py")) is None
 
 
+
+def _old_file(tmp_path, name: str = "old.py"):
+    import os
+
+    path = tmp_path / name
+    path.write_text("line 1\nline 2\n", encoding="utf-8")
+    os.utime(path, (1_000_000, 1_000_000))  # existed long before this session
+    return path
+
+
+def _write(path: str):
+    return _req("write_file", {"file_path": path, "content": "replaced"})
+
+
+def test_overwrite_of_unread_preexisting_file_is_refused(tmp_path):
+    reset_session_tracker()
+    _old_file(tmp_path)
+    mw = FileTrackerMiddleware(enforce_read_before_edit=False, workspace_root=str(tmp_path))
+    rejection = mw._check_edit_allowed(_write("/old.py"))
+    assert rejection is not None
+    assert rejection.status == "error"
+    assert "has not been read" in rejection.content
+    assert mw._check_edit_allowed(_write("/new.py")) is None
+
+
+def test_overwrite_after_partial_read_names_the_partial_view(tmp_path):
+    reset_session_tracker()
+    _old_file(tmp_path)
+    mw = FileTrackerMiddleware(enforce_read_before_edit=False, workspace_root=str(tmp_path))
+    get_session_tracker().record_read("/old.py", "1 line 1", 0, 1, partial=True)
+    rejection = mw._check_edit_allowed(_write("old.py"))
+    assert rejection is not None
+    assert "Only part of this file has been read" in rejection.content
+    get_session_tracker().record_read("/old.py", "1 line 1\n2 line 2")
+    assert mw._check_edit_allowed(_write("old.py")) is None
+    # A later partial re-read does not undo having seen the whole file.
+    get_session_tracker().record_read("/old.py", "2 line 2", 1, 1, partial=True)
+    assert mw._check_edit_allowed(_write("/old.py")) is None
+
+
+def test_overwrite_allowed_for_session_files_and_without_a_root(tmp_path):
+    reset_session_tracker()
+    (tmp_path / "fresh.py").write_text("made by a command this session", encoding="utf-8")
+    old = _old_file(tmp_path)
+    mw = FileTrackerMiddleware(enforce_read_before_edit=False, workspace_root=str(tmp_path))
+    assert mw._check_edit_allowed(_write("/fresh.py")) is None
+    get_session_tracker().record_write("/old.py", "x", operation="write")
+    assert mw._check_edit_allowed(_write(str(old))) is None
+    reset_session_tracker()
+    assert FileTrackerMiddleware()._check_edit_allowed(_write(str(old))) is None
+
 if __name__ == "__main__":
     test_edit_on_unseen_file_is_rejected_as_error()
     test_edit_after_read_is_allowed()

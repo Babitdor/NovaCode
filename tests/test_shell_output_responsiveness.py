@@ -210,8 +210,9 @@ async def test_execute_capture_stays_bounded_while_all_live_output_streams(monke
     finally:
         tracemalloc.stop()
     assert streamed == 2000 * 16384
-    assert result.content.startswith("x" * 4000)
-    assert "truncated" in result.content
+    assert result.content.startswith("x" * 2000)
+    assert result.content.endswith("x" * 2000)
+    assert "characters omitted from the middle" in result.content
     assert peak < 2_000_000, "discarded execute output must not be retained until completion"
     assert all(control.command != "build" for control in jobs._live)
 
@@ -247,6 +248,7 @@ async def test_cancel_after_stdout_closes_terminates_and_unregisters_process(mon
         proc.terminate()
 
     from novacode_cli.shell.middleware import ShellMiddleware
+
     # This test owns a fake process. Real tree cleanup is exercised separately;
     # never run taskkill against a synthetic PID from a unit-test fixture.
     monkeypatch.setattr(ShellMiddleware, "_terminate_tree", terminate_tree)

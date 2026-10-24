@@ -201,3 +201,20 @@ def test_execute_tool_is_intercepted_for_background_parity() -> None:
     job = jobs.get_registry().resolve(m.group(0))
     assert job is not None and job.status == "running"
     jobs.get_registry().terminate(job.id)  # cleanup
+
+
+def test_task_logs_cursor_returns_only_new_output():
+    from novacode_cli.shell import jobs
+    from novacode_cli.tools.job_tools import get_task_logs
+
+    registry = jobs.get_registry()
+    job = registry.add("build", "shell", None)
+    registry.append_log(job.id, "line 1\nline 2\n")
+    first = get_task_logs.invoke({"task_id": job.task_id})
+    assert first.endswith("[next from_offset=14]")
+    registry.append_log(job.id, "line 3\n")
+    new = get_task_logs.invoke({"task_id": job.task_id, "from_offset": 14})
+    assert "line 3" in new
+    assert "line 1" not in new
+    assert new.endswith("[next from_offset=21]")
+    assert "no new output" in get_task_logs.invoke({"task_id": job.task_id, "from_offset": 21})

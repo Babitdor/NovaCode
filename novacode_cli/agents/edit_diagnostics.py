@@ -11,8 +11,10 @@ run on that file and their errors are appended to the tool result:
   ``tsconfig.json``, filtered to the edited file.
 
 A checker is used only when its config is found between the file and the
-workspace root and its executable is in the project's ``.venv`` or
-``node_modules/.bin``, or on PATH. Clean runs, timeouts and missing tools add
+workspace root and its executable is on PATH outside the workspace. The
+project's own ``.venv`` and ``node_modules/.bin`` copies are repository code, so
+they run only with ``"edit_diagnostics_project_tools": true``. Clean runs,
+timeouts (which kill the checker's whole process tree) and missing tools add
 nothing. Problems near the edited lines come first, so a new error deep in a file
 with many existing ones survives the size cap; what the cap cuts is counted.
 Disable with ``"edit_diagnostics_enabled": false`` in Nova.config.json.
@@ -22,9 +24,12 @@ Disable with ``"edit_diagnostics_enabled": false`` in Nova.config.json.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tomllib
@@ -53,6 +58,7 @@ MAX_OUTPUT_CHARS = 3000
 # A problem this many lines from the edited text still counts as near it.
 NEAR_LINES = 3
 _LOCATION = re.compile(r"[:(](\d+)[:,]\d+\b")
+_CONCISE = ("--output-format", "concise")
 
 
 def _dirs(path: Path, root: Path) -> list[Path]:
@@ -71,39 +77,67 @@ def _pyproject_has(directory: Path, table: str) -> bool:
     return table in data.get("tool", {})
 
 
-def _configured(dirs: list[Path], files: tuple[str, ...], table: str) -> bool:
-    return any(any((d / f).is_file() for f in files) or _pyproject_has(d, table) for d in dirs)
+def _config_dir(dirs: list[Path], files: tuple[str, ...], table: str) -> Path | None:
+    """The nearest directory configuring a checker, from the file up to the root."""
+    return next(
+        (d for d in dirs if any((d / f).is_file() for f in files) or _pyproject_has(d, table)),
+        None,
+    )
 
 
-def _executable(root: Path, name: str) -> str | None:
-    for local in (
-        root / ".venv" / "Scripts",
-        root / ".venv" / "bin",
-        root / "node_modules" / ".bin",
-    ):
-        if local.is_dir() and (found := shutil.which(name, path=str(local))):
-            return found
-    return shutil.which(name)
+def _inside(found: str, root: Path) -> bool:
+    try:
+        return Path(found).resolve().is_relative_to(root)
+    except (OSError, ValueError):
+        return True  # unresolvable: treat as untrusted
 
 
-def checkers(path: Path, root: Path) -> list[tuple[str, list[str]]]:
+def _executable(root: Path, name: str, *, project_tools: bool) -> str | None:
+    """A checker on PATH; the project's own ``.venv``/``node_modules`` copy only when opted in.
+
+    A repository can ship its own ``ruff`` or ``tsc``. Running it after every edit
+    would execute repository code without approval and outside the shell sandbox,
+    so by default any executable inside the workspace is refused, including one
+    Windows finds in the current directory before PATH.
+    """
+    if project_tools:
+        for local in (
+            root / ".venv" / "Scripts",
+            root / ".venv" / "bin",
+            root / "node_modules" / ".bin",
+        ):
+            if local.is_dir() and (found := shutil.which(name, path=str(local))):
+                return found
+    found = shutil.which(name)
+    if found and not project_tools and _inside(found, root):
+        return None
+    return found
+
+
+def checkers(path: Path, root: Path, *, project_tools: bool = False) -> list[tuple[str, list[str]]]:
     """``(label, argv)`` for each checker this project configures for ``path``."""
     dirs = _dirs(path, root)
     found: list[tuple[str, list[str]]] = []
     if path.suffix in PYTHON_SUFFIXES:
-        ruff = _executable(root, "ruff")
-        if ruff and _configured(dirs, ("ruff.toml", ".ruff.toml"), "ruff"):
+        ruff = _executable(root, "ruff", project_tools=project_tools)
+        if ruff and _config_dir(dirs, ("ruff.toml", ".ruff.toml"), "ruff"):
             found.append(
-                ("ruff", [ruff, "check", "--no-fix", "--output-format", "concise", str(path)])
+                (
+                    "ruff",
+                    # --force-exclude keeps the project's exclude list for an explicit path.
+                    [ruff, "check", "--no-fix", "--force-exclude", *_CONCISE, str(path)],
+                )
             )
-        pyright = _executable(root, "pyright")
-        if pyright and _configured(dirs, ("pyrightconfig.json",), "pyright"):
-            found.append(("pyright", [pyright, str(path)]))
+        pyright = _executable(root, "pyright", project_tools=project_tools)
+        config = _config_dir(dirs, ("pyrightconfig.json",), "pyright")
+        if pyright and config:
+            # -p: the nearest config (its venv, extraPaths), not the root's defaults.
+            found.append(("pyright", [pyright, "-p", str(config), str(path)]))
     elif path.suffix in TS_SUFFIXES:
         tsconfig = next(
             (d / "tsconfig.json" for d in dirs if (d / "tsconfig.json").is_file()), None
         )
-        tsc = _executable(root, "tsc")
+        tsc = _executable(root, "tsc", project_tools=project_tools)
         if tsc and tsconfig:
             found.append(("tsc", [tsc, "--noEmit", "--pretty", "false", "-p", str(tsconfig)]))
     return found
@@ -119,33 +153,64 @@ def _only_file(output: str, path: Path, root: Path) -> str:
             if keep:
                 kept.append(line)
             continue
-        keep = any(name in line for name in names)
+        # tsc prints "path(line,col): ...": match the whole path, not a prefix
+        # of src/a.tsx or a suffix of lib/src/a.ts.
+        keep = any(line.startswith(name + "(") for name in names)
         if keep:
             kept.append(line)
     return "\n".join(kept)
 
 
-def _run(label: str, argv: list[str], path: Path, root: Path) -> str:
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """Kill the checker and its children: an npm ``.cmd`` shim's node child holds the pipes."""
     try:
-        done = subprocess.run(  # noqa: S603 -- argv is a resolved checker and a project path.
+        if sys.platform == "win32":
+            from novacode_cli.utils.windows import taskkill_executable
+
+            subprocess.run(  # noqa: S603 -- fixed taskkill arguments.
+                [taskkill_executable(), "/PID", str(proc.pid), "/T", "/F"],
+                capture_output=True,
+                timeout=10,
+                check=False,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+        else:
+            os.killpg(proc.pid, signal.SIGKILL)
+    except (OSError, subprocess.TimeoutExpired):
+        proc.kill()
+
+
+def _run(label: str, argv: list[str], path: Path, root: Path) -> str:
+    group = (
+        {"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP}
+        if sys.platform == "win32"
+        else {"start_new_session": True}
+    )
+    try:
+        proc = subprocess.Popen(  # noqa: S603 -- argv is a resolved checker and a project path.
             argv,
             cwd=root,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=TIMEOUT_SECONDS,
-            check=False,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            if sys.platform == "win32"
-            else 0,
+            **group,
         )
-    except (OSError, subprocess.TimeoutExpired):
-        logger.debug("Edit diagnostics: %s did not finish", label, exc_info=True)
+    except OSError:
+        logger.debug("Edit diagnostics: %s could not start", label, exc_info=True)
         return ""
-    if done.returncode == 0:
+    try:
+        stdout, stderr = proc.communicate(timeout=TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        logger.debug("Edit diagnostics: %s timed out", label)
+        _kill_tree(proc)
+        with contextlib.suppress(subprocess.TimeoutExpired, OSError):
+            proc.communicate(timeout=5)
         return ""
-    output = (done.stdout + done.stderr).strip()
+    if proc.returncode == 0:
+        return ""
+    output = (stdout + stderr).strip()
     return _only_file(output, path, root) if label == "tsc" else output
 
 
@@ -234,16 +299,18 @@ def _resolve(file_path: str, root: Path) -> Path | None:
 
 def diagnostics(args: dict[str, Any], root: Path) -> str:
     """Text to append to an edit's tool result: checker errors, or ``""``."""
-    if not NovaConfig().get_edit_diagnostics_enabled():
+    config = NovaConfig()
+    if not config.get_edit_diagnostics_enabled():
         return ""
     file_path = args.get("file_path") or args.get("path")
     path = _resolve(file_path, root) if isinstance(file_path, str) and file_path else None
     if path is None:
         return ""
     ranges = edited_lines(args, path)
+    project_tools = config.get_edit_diagnostics_project_tools()
     reports = [
         f"{label}:\n{prioritized(output, ranges)}"
-        for label, argv in checkers(path, root)
+        for label, argv in checkers(path, root, project_tools=project_tools)
         if (output := _run(label, argv, path, root))
     ]
     if not reports:

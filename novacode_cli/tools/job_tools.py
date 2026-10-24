@@ -59,24 +59,39 @@ def get_task_status(task_id: str) -> str:
 
 
 @tool
-def get_task_logs(task_id: str, tail_lines: int = 50) -> str:
-    """Return the most recent output lines from a background task.
+def get_task_logs(task_id: str, tail_lines: int = 50, from_offset: int | None = None) -> str:
+    """Return output from a background task: the last lines, or only what is new.
 
     Args:
         task_id: e.g. "task_42".
         tail_lines: How many trailing lines to return (default 50). The buffer is
             bounded, so very old output may already have been dropped.
+        from_offset: Return only output written after this offset, as given by
+            the ``next from_offset`` of a previous call. Use it when checking a
+            task repeatedly, so earlier lines are not sent again.
     """
     t = _reg().resolve(task_id)
     if t is None:
         return f"No background task '{task_id}'."
+    total = getattr(t.logs, "total", len(t.output))
+    start = getattr(t.logs, "start", 0)
+    cursor = f"[next from_offset={total}]"
+    if from_offset is not None:
+        if from_offset >= total:
+            return f"{t.task_id} ({t.status}) — no new output since offset {from_offset}. {cursor}"
+        dropped = max(0, start - from_offset)
+        new = t.output[max(0, from_offset - start) :]
+        lines = new.splitlines()[-max(1, tail_lines) :] if tail_lines else new.splitlines()
+        note = f" ({dropped} older characters were dropped from the buffer)" if dropped else ""
+        header = f"{t.task_id} ({t.status}) — new output since offset {from_offset}{note}:"
+        return "\n".join([header, *lines, cursor])
     text = t.output
     if not text.strip():
-        return f"{t.task_id} has produced no output yet."
+        return f"{t.task_id} has produced no output yet. {cursor}"
     lines = text.splitlines()
     tail = lines[-max(1, tail_lines):]
     header = f"{t.task_id} ({t.status}) — last {len(tail)} line(s):"
-    return header + "\n" + "\n".join(tail)
+    return "\n".join([header, *tail, cursor])
 
 
 @tool

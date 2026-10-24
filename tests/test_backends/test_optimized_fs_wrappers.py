@@ -208,3 +208,14 @@ def test_resolve_path_still_blocks_traversal(tmp_path: Path) -> None:
     for bad in ("/../secrets", "/a/../../b"):
         with pytest.raises(ValueError):
             backend._resolve_path(bad)
+
+
+def test_read_past_the_end_says_where_the_file_ends(tmp_path):
+    from novacode_cli.backends.filesystem import OptimizedFilesystemBackend
+
+    (tmp_path / "a.txt").write_text("\n".join(f"l{i}" for i in range(30)), encoding="utf-8")
+    backend = OptimizedFilesystemBackend(root_dir=str(tmp_path), virtual_mode=True)
+    error = backend.read("/a.txt", offset=100, limit=20).error
+    assert "The file ends at line 30" in error
+    assert "offset=10" in error
+    assert backend.read("/a.txt", offset=0, limit=5).error is None

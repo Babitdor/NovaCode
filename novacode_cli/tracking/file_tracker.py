@@ -10,9 +10,12 @@ This middleware provides:
 import asyncio
 import hashlib
 import logging
+import re
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import NotRequired
 
 from langchain.agents.middleware.types import (
@@ -27,6 +30,11 @@ from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 
 logger = logging.getLogger(__name__)
+
+_NOVA_STARTED = time.time()
+
+# deepagents' pagination notice on a read that stopped before the end of the file.
+_MORE_REMAINS = re.compile(r"remain(?:ing)? from offset \d+")
 
 # ============================================================================
 # Data Structures
@@ -57,6 +65,9 @@ class FileReadRecord:
 
     limit: int | None = None
     """Number of lines read (None = full file)."""
+
+    seen_full: bool = False
+    """Whether any read of this file this session covered all of it (sticky)."""
 
     content_preview: str = ""
     """First 500 chars of content for context."""
@@ -110,6 +121,10 @@ class SessionFileTracker:
     rejected_edits: int = 0
     """Number of edit operations rejected for unread files."""
 
+    started_at: float = field(default_factory=lambda: _NOVA_STARTED)
+    """When Nova started; files changed since then are not guarded. The tracker
+    itself is created lazily, after files an early command may already have made."""
+
     def has_read_file(self, path: str) -> bool:
         """Check if a file has been read in this session."""
         return path in self.files_read
@@ -124,10 +139,13 @@ class SessionFileTracker:
         content: str,
         offset: int = 0,
         limit: int | None = None,
+        *,
+        partial: bool = False,
     ) -> FileReadRecord:
         """Record a file read operation."""
         content_hash = hashlib.sha256(content.encode()).hexdigest()[:16]
         lines = content.split("\n")
+        previous = self.files_read.get(path)
 
         record = FileReadRecord(
             path=path,
@@ -138,6 +156,7 @@ class SessionFileTracker:
             offset=offset,
             limit=limit,
             content_preview=content[:500] if content else "",
+            seen_full=not partial or bool(previous and previous.seen_full),
         )
 
         # Track first read order
@@ -405,9 +424,13 @@ class FileTrackerMiddleware(AgentMiddleware):
         truncate_results: bool = True,
         include_system_prompt: bool = True,
         tracker: SessionFileTracker | None = None,
+        workspace_root: str | None = None,
     ) -> None:
         super().__init__()
         self.enforce_read_before_edit = enforce_read_before_edit
+        # write_file replaces a whole file; guard pre-existing files the model has
+        # not fully read. Needs the root to map the agent's virtual paths.
+        self.workspace_root = Path(workspace_root).resolve() if workspace_root else None
         self.truncate_results = truncate_results
         self.include_system_prompt = include_system_prompt
         self._tracker = tracker
@@ -513,6 +536,8 @@ class FileTrackerMiddleware(AgentMiddleware):
         tool_name = tool_call.get("name", "")
         args = tool_call.get("args", {})
 
+        if tool_name == "write_file":
+            return self._check_overwrite_allowed(tool_call)
         # Only check edit_file operations
         if tool_name != "edit_file" or not self.enforce_read_before_edit:
             return None
@@ -543,6 +568,63 @@ class FileTrackerMiddleware(AgentMiddleware):
             )
 
         return None
+
+    def _physical(self, file_path: str) -> Path | None:
+        """The on-disk file a virtual ``/``-rooted path names, if it is in the workspace."""
+        if self.workspace_root is None:
+            return None
+        for candidate in (self.workspace_root / file_path.lstrip("/\\"), Path(file_path)):
+            try:
+                resolved = candidate.resolve()
+            except (OSError, ValueError):
+                continue
+            if resolved.is_file() and resolved.is_relative_to(self.workspace_root):
+                return resolved
+        return None
+
+    def _known(self, path: Path, records: dict) -> object | None:
+        """The record for ``path`` however it was spelled (virtual, relative, absolute)."""
+        return next((v for k, v in records.items() if self._physical(k) == path), None)
+
+    def _check_overwrite_allowed(self, tool_call: dict) -> ToolMessage | None:
+        """Refuse to replace a pre-existing file the model has not fully read.
+
+        Allowed: new or empty files, files written or edited this session, files
+        changed on disk since the session began (the agent or its commands made
+        them), and files read in full. edit_file is not gated: its exact
+        ``old_string`` match already fails on content the model has not seen.
+        """
+        file_path = (tool_call.get("args") or {}).get("file_path") or ""
+        path = self._physical(file_path) if isinstance(file_path, str) and file_path else None
+        if path is None or self._known(path, self.tracker.files_written):
+            return None
+        try:
+            stat = path.stat()
+        except OSError:
+            return None
+        if stat.st_size == 0 or stat.st_mtime >= self.tracker.started_at:
+            return None
+        record = self._known(path, self.tracker.files_read)
+        if isinstance(record, FileReadRecord) and record.seen_full:
+            return None
+        if isinstance(record, FileReadRecord):
+            reason = (
+                "Only part of this file has been read, so overwriting it would discard "
+                "lines you have not seen. Read the rest of it first, or use edit_file "
+                "for a targeted change."
+            )
+        else:
+            reason = (
+                "This file existed before this session and has not been read, so "
+                "overwriting it would discard content you have not seen. Read it first, "
+                "or use edit_file for a targeted change."
+            )
+        self.tracker.record_rejected_edit()
+        return ToolMessage(
+            content=f"write_file refused for '{file_path}': {reason}",
+            tool_call_id=tool_call.get("id", ""),
+            status="error",
+        )
 
     def _track_and_truncate(
         self, request: ToolCallRequest, result: ToolMessage | Command
@@ -596,7 +678,8 @@ class FileTrackerMiddleware(AgentMiddleware):
                 # For string content, track directly
                 # For list content (e.g., extracted PDF), use a summary
                 if isinstance(content, str):
-                    self.tracker.record_read(file_path, content, offset, limit)
+                    partial = bool(offset) or bool(_MORE_REMAINS.search(content[-400:]))
+                    self.tracker.record_read(file_path, content, offset, limit, partial=partial)
                 elif isinstance(content, list):
                     # Compose a text summary from text blocks for tracking
                     text_parts = []

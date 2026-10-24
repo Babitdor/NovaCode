@@ -15756,8 +15756,9 @@ class NovaApp(App):
             prompt = await asyncio.to_thread(
                 build_ci_fix_prompt, settings.get_workspace_root() or Path.cwd(), run_id
             )
-        except CIFixError as exc:
-            self._log(Text(str(exc), style="red"))
+        except (CIFixError, OSError, ValueError, KeyError, TypeError) as exc:
+            # Unexpected gh output must end the command, not the app.
+            self._log(Text(f"/ci-fix: {exc}", style="red"))
             return
         await self._stream_prompt(prompt)
 
