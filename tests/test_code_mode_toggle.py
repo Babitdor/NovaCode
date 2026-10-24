@@ -28,6 +28,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+# Two full app boots plus pauses: past the 10 s default under coverage on Windows CI.
+@pytest.mark.timeout(60)
 @pytest.mark.parametrize("size", [(80, 30), (45, 25)])
 async def test_composer_toggle_persists_and_supports_keyboard(
     size: tuple[int, int],
@@ -64,6 +66,7 @@ async def test_composer_toggle_persists_and_supports_keyboard(
         assert str(app.query_one("#code-mode-toggle", Button).label) == "Code Mode: off"
 
 
+@pytest.mark.timeout(60)
 async def test_failed_save_preserves_toggle(monkeypatch: pytest.MonkeyPatch):
     app = _app()
     monkeypatch.setattr(type(app), "_sample_home_system", Mock())
