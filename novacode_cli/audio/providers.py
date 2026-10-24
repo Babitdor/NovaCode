@@ -50,6 +50,15 @@ class VoiceTTS(Protocol):
 # ---------------------------------------------------------------------------
 
 STT_PROVIDERS: dict[str, dict[str, Any]] = {
+    "whistle": {
+        "name": "Whistle (Cactus)",
+        "description": "Local CPU STT — 16.9 MB, seven languages (Cactus runtime)",
+        "local": True,
+        "requires_key": False,
+        "default_model": "whistle",
+        "option_field": "model",
+        "options": ["whistle"],
+    },
     "faster-whisper": {
         "name": "Faster-Whisper",
         "description": "Local, open-source (CUDA/CPU)",

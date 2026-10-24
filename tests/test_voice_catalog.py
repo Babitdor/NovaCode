@@ -22,6 +22,7 @@ from novacode_cli.onboarding import API_KEY_NAMES
 #: Pinned here so a backend rename fails this test instead of silently making a
 #: picker selection a no-op.
 _EXPECTED_FIELD = {
+    "whistle": "model",
     "faster-whisper": "model",
     "deepgram": "model",
     "parakeet": "model",

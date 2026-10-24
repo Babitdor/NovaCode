@@ -1571,10 +1571,10 @@ class NovaApp(App):
     }
     #composer-actions {
         height: 1;
-        padding: 0 2;
+        padding: 0 1;
         background: $surface;
     }
-    #caveman-toggle {
+    #caveman-toggle, #code-mode-toggle {
         width: 16;
         min-width: 16;
         height: 1;
@@ -1584,11 +1584,12 @@ class NovaApp(App):
         background: $surface;
         color: $text-muted;
     }
-    #caveman-toggle.enabled {
+    #caveman-toggle.enabled, #code-mode-toggle.enabled {
         color: $accent;
         text-style: bold;
     }
-    #caveman-toggle:focus, #caveman-toggle:hover {
+    #caveman-toggle:focus, #caveman-toggle:hover,
+    #code-mode-toggle:focus, #code-mode-toggle:hover {
         background: $panel;
         text-style: bold;
     }
@@ -2541,6 +2542,15 @@ class NovaApp(App):
                     ),
                 )
                 yield Button("Options", id="caveman-options", tooltip="Choose Caveman features")
+                yield Button(
+                    "Code Mode: on",
+                    id="code-mode-toggle",
+                    tooltip=(
+                        "Compose Nova and MCP tool calls with JavaScript. "
+                        "Applies to the next model call; saved across launches. "
+                        "Calls needing approval or graph controls use the direct tool path."
+                    ),
+                )
             yield Static("", id="home-composer-meta")
             yield Static(
                 "/ commands   @ files   Shift+Enter new line   /settings styles",
@@ -2696,6 +2706,7 @@ class NovaApp(App):
 
         await asyncio.to_thread(self._load_ui_preferences)
         self._refresh_caveman_toggle()
+        self._refresh_code_mode_toggle()
         self.screen_change_signal.subscribe(self, self._on_interface_screen_changed, immediate=True)
         self._thread_id = threading.get_ident()
         # Log what the loop was running whenever the UI freezes for >1s
@@ -8804,7 +8815,7 @@ class NovaApp(App):
 
         # Re-check self._voice_pipeline in case it was reset during the await
         pipeline = self._voice_pipeline
-        if pipeline is None:
+        if pipeline is None or not self._voice_speak_responses:
             return
 
         # Check if the voice model needs to be downloaded before speaking
@@ -8820,7 +8831,7 @@ class NovaApp(App):
 
         # Re-check again after warmup just in case
         pipeline = self._voice_pipeline
-        if pipeline is None:
+        if pipeline is None or not self._voice_speak_responses:
             return
 
         self._set_nova_indicator("🔊 speaking…", style="dim cyan")
@@ -8831,6 +8842,8 @@ class NovaApp(App):
         try:
             try:
                 async with self._speech_lock:
+                    if pipeline is not self._voice_pipeline or not self._voice_speak_responses:
+                        return
                     await pipeline.speak(prose)
             except Exception as tts_err:  # noqa: BLE001 — TTS failure must never crash the TUI
                 spoke = False
@@ -11884,6 +11897,7 @@ class NovaApp(App):
         config = NovaConfig()
         self._ui_preferences_config = config
         self._caveman_enabled = config.get_caveman_enabled()
+        self._code_mode_enabled = config.get_code_mode_enabled()
         self._home_style = home_style(
             config.get("home_style"), legacy_dashboard=config.get("home_dashboard_enabled", True)
         )
@@ -11900,6 +11914,26 @@ class NovaApp(App):
             if isinstance(saved_rain, bool)
             else os.environ.get("NOVA_ANIMATIONS", "").strip().lower() in {"1", "true", "yes"}
         )
+
+    def _refresh_code_mode_toggle(self) -> None:
+        toggle = self.query_one("#code-mode-toggle", Button)
+        toggle.label = f"Code Mode: {'on' if self._code_mode_enabled else 'off'}"
+        toggle.set_class(self._code_mode_enabled, "enabled")
+
+    @on(Button.Pressed, "#code-mode-toggle")
+    async def _code_mode_toggle_pressed(self, event: Button.Pressed) -> None:
+        from novacode_cli.config.nova_config import NovaConfig
+
+        event.stop()
+        enabled = not self._code_mode_enabled
+        try:
+            await asyncio.to_thread(lambda: NovaConfig().set_code_mode_enabled(enabled))
+        except OSError as exc:
+            self.notify(f"Could not save Code Mode preference: {exc}", severity="error")
+            return
+        self._code_mode_enabled = enabled
+        self._refresh_code_mode_toggle()
+        self.query_one("#prompt", PromptInput).focus()
 
     def _refresh_caveman_toggle(self) -> None:
         toggle = self.query_one("#caveman-toggle", Button)
@@ -17548,9 +17582,10 @@ class NovaApp(App):
             if self._voice_pipeline is not None and self._voice_speak_responses:
                 # Speech needs a short summary, not another unbounded copy of
                 # every intermediate answer during a long autonomous turn.
-                self._accumulated_reply = (self._accumulated_reply + "\n\n" + e.text[-16_000:])[
-                    -16_000:
-                ]
+                if not e.is_subagent:
+                    self._accumulated_reply = (self._accumulated_reply + "\n\n" + e.text[-16_000:])[
+                        -16_000:
+                    ]
             else:
                 self._accumulated_reply = ""
             self._schedule_prune()

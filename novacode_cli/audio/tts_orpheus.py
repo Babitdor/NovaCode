@@ -15,9 +15,10 @@ gates selection with an install hint.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
+
+from novacode_cli.audio.playback import play_and_wait, run_speech
 
 if TYPE_CHECKING:
     import numpy as np
@@ -92,15 +93,7 @@ class OrpheusSpeaker:
         """Synthesise ``text`` and play it (off the event loop). No-op if empty."""
         if not text.strip():
             return
-        try:
-            await asyncio.to_thread(self._speak_sync, text)
-        except asyncio.CancelledError:
-            try:
-                import sounddevice as sd
-                sd.stop()
-            except Exception:  # noqa: BLE001
-                pass
-            raise
+        await run_speech(lambda: self._speak_sync(text))
 
     def _speak_sync(self, text: str) -> None:
         import numpy as np
@@ -116,15 +109,4 @@ class OrpheusSpeaker:
         self._play_and_wait(np.concatenate(chunks))
 
     def _play_and_wait(self, pcm: np.ndarray) -> None:
-        import numpy as np
-        import sounddevice as sd
-
-        # Pad with 0.25 seconds of silence to prevent abrupt cutoff on some audio drivers
-        silence_len = int(_SAMPLE_RATE * 0.25)
-        silence = np.zeros(silence_len, dtype=pcm.dtype)
-        pcm = np.concatenate([pcm, silence])
-
-        # latency="high": larger output buffer so a GIL stall from a concurrent
-        # tool call can't underrun playback and stutter the voice (see tts.py).
-        sd.play(pcm, _SAMPLE_RATE, latency="high")
-        sd.wait()
+        play_and_wait(pcm, _SAMPLE_RATE)

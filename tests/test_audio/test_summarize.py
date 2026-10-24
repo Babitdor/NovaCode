@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from novacode_cli.audio.summarize import _SHORT_REPLY_CHARS, summarize_for_speech
+from langchain_core.messages import AIMessage
 
 
 class FakeModel:
@@ -34,6 +35,34 @@ def _long_reply() -> str:
 
 
 class TestSummarize:
+    async def test_structured_content_speaks_only_text(self):
+        class StructuredModel:
+            async def ainvoke(self, *_args, **_kwargs):
+                return AIMessage(
+                    content=[
+                        {"type": "reasoning", "reasoning": "PRIVATE REASONING"},
+                        {
+                            "type": "tool_use",
+                            "id": "call",
+                            "name": "shell",
+                            "input": {"command": "PRIVATE TOOL"},
+                        },
+                        {"type": "text", "text": "The parser is fixed."},
+                    ]
+                )
+
+        out = await summarize_for_speech(_long_reply(), model=StructuredModel())
+        assert out == "The parser is fixed."
+
+    async def test_nontext_model_content_falls_back_to_original_prose(self):
+        class NontextModel:
+            async def ainvoke(self, *_args, **_kwargs):
+                return AIMessage(content=[{"type": "reasoning", "reasoning": "PRIVATE"}])
+
+        out = await summarize_for_speech(_long_reply(), model=NontextModel())
+        assert "parser" in out
+        assert "PRIVATE" not in out
+
     async def test_long_reply_uses_model_summary(self):
         model = FakeModel("Refactored the parser and fixed two bugs.")
         out = await summarize_for_speech(_long_reply(), model=model)

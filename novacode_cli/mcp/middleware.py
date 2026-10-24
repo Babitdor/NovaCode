@@ -491,6 +491,7 @@ class MCPMiddleware(AgentMiddleware):
         # Cache for rendered MCP section to avoid re-rendering on every request
         self._mcp_section_cache: str | None = None
         self._mcp_section_cache_time: float = 0
+        self._mcp_section_code_mode: bool | None = None
         self._mcp_section_cache_ttl: float = 30.0  # 30 seconds TTL
 
     async def _ensure_tools_discovered(self) -> None:
@@ -887,11 +888,16 @@ class MCPMiddleware(AgentMiddleware):
             return request
 
         import time
+
+        from novacode_cli.config.nova_config import NovaConfig
+
+        code_mode_enabled = NovaConfig().get_code_mode_enabled()
         current_time = time.time()
 
         # Sliding-window cache: refresh on access to keep hot during active use
         if (
             self._mcp_section_cache is not None
+            and self._mcp_section_code_mode == code_mode_enabled
             and current_time - self._mcp_section_cache_time < self._mcp_section_cache_ttl
         ):
             self._mcp_section_cache_time = current_time
@@ -922,9 +928,11 @@ class MCPMiddleware(AgentMiddleware):
                 servers_list=servers_list,
                 has_playwright=has_playwright,
                 cua_prefix=cua_prefix,
+                code_mode_enabled=code_mode_enabled,
             )
 
             self._mcp_section_cache = mcp_section
+            self._mcp_section_code_mode = code_mode_enabled
             self._mcp_section_cache_time = current_time
 
         # Track context usage (best-effort)

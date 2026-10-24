@@ -15,7 +15,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import BaseMessage, HumanMessage
 
 from novacode_cli.audio.speakable import speakable_text
 from novacode_cli.prompts import render_template
@@ -72,8 +72,8 @@ async def summarize_for_speech(text: str, *, model: BaseChatModel | None = None)
                 "metadata": {"nova_oob": True},
             },
         )
-        raw = getattr(resp, "content", "")
-        summary = (raw if isinstance(raw, str) else str(raw)).strip()
+        raw = resp.text if isinstance(resp, BaseMessage) else getattr(resp, "content", "")
+        summary = raw.strip() if isinstance(raw, str) else ""
     except Exception:
         logger.exception("Voice summary failed; speaking a short slice instead")
         return speakable_text(text, max_chars=_SUMMARY_MAX_CHARS)

@@ -133,6 +133,7 @@ From a local checkout, use `uv tool install --upgrade ".[voice,browser,agents-se
 | `voice` | Local speech input and output |
 | `voice-orpheus` | Optional Orpheus speech output |
 | `voice-parakeet` | Optional Parakeet speech input |
+| `voice-whistle` | Optional Whistle speech input (local Cactus runtime) |
 | `voice-pocket` | Optional Pocket-TTS speech output |
 | `browser` | Browser-use integration |
 | `bedrock` | Amazon Bedrock provider |

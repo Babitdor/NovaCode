@@ -1,0 +1,134 @@
+# Voice implementation and review — 2026-10-24
+
+User requested Whistle STT support, then a voice pipeline review. Confirmed
+preference: keep short spoken summaries. Proceeding under existing authorization;
+no separate spec approval or independent agent verification.
+
+## Evidence and plan
+
+- Official model: https://huggingface.co/Cactus-Compute/whistle — 16.9 MB `.cact`,
+  16 kHz mono float input, seven languages. Official Python implementation:
+  https://github.com/cactus-compute/needle/blob/main/needle/agent/whistle.py.
+- Official `needle/agent/fetch.py` includes Windows x64/ARM64, Linux and macOS
+  engine wheels. `cactus-needle` 3.2.1 requires Python >=3.9 and huggingface_hub;
+  its Whistle runtime is explicitly process-global and not thread-safe.
+- Add an opt-in `voice-whistle` extra and lazy provider matching VoiceSTT. Reuse
+  Nova capture/VAD. Normalize int16 to float32 and serialize native runtime use
+  across instances; no STT model or native binary downloaded during tests.
+- Preserve short spoken summaries. Extract only public text blocks from model
+  output; never stringify structured reasoning, tool calls or tool results.
+- Centralize local synthesis/playback cancellation so cancelled worker threads
+  cannot start audio later. Retain original sample rates, padding and buffering.
+  Serialize synthesis to avoid re-entering native model objects after cancellation.
+- Verify automatic TUI speech accepts only main assistant prose, excludes tool,
+  reasoning and subagent events, and rechecks voice settings after async work.
+
+Acceptance: provider discoverable/configurable, lazy/off-loop model use, helpful
+missing-dependency error, correct PCM normalization, no concurrent Whistle native
+calls; summaries remain short and text-only; cancelled speech cannot resume;
+existing provider/voice settings continue working. Test boundaries use fake audio
+devices/models, with explicit checks for cancellation races and payload filtering.
+
+Baseline voice command:
+`uv run --no-sync python -m pytest tests/test_audio tests/test_voice_catalog.py tests/test_voice_credentials.py tests/test_remote_voice_notes.py -q --tb=short`
+Result before voice edits: 98 passed, 1 skipped, 1 existing failure:
+`TestCapability::test_install_hint_mentions_extra` expects lowercase `voice` in
+an install hint that currently starts `Voice needs ...` in this environment.
+Keep this baseline distinct from new regressions.
+
+Review clarification: the baseline failure is in the voice onboarding module
+already being extended. Keep its install command intact and make the feature
+label explicit (`Nova voice needs ...`), resolving the existing case-sensitive
+hint contract without changing assertions.
+
+Known limits: no live microphone/speaker or downloaded-model quality claim;
+native synthesis itself cannot be forcibly stopped, but cancelled synthesis must
+never play. No default provider change, cloud credential change, release or push.
+New dependency is optional `cactus-needle`, justified by Whistle's incompatible
+native model/runtime; existing Faster-Whisper cannot load `.cact` weights.
+
+## Completed review and evidence
+
+Implemented optional Whistle provider, registry/picker integration, installer hint,
+and shared STT factory path (also used by remote voice notes). Default providers
+and saved user settings were not changed. `voice-whistle` resolves cactus-needle
+3.2.8; its sole base dependency, huggingface_hub, was already in Nova's lockfile.
+The runtime package is Apache-2.0. PyPI's version metadata reported no published
+advisories for 3.2.8; this is not a full dependency-tree vulnerability audit.
+
+Five voice regressions were reproduced before fixes:
+
+| Finding | Fix and proof |
+| --- | --- |
+| Structured summaries spoke Python representations containing reasoning/tool data | Use LangChain's text-only message accessor; structured/nontext response tests |
+| Cancelled synthesis could play later | Per-request cancellation state and output ownership in shared playback; real Piper path with fake audio device |
+| Simultaneous speech overlapped and cleared echo suppression early | Serialize pipeline speech across event loops; overlap and worker-loop tests |
+| A stopped listener submitted an in-flight transcript | Recheck stop/TTS state after STT completes; late-transcript test |
+| Subagent text entered automatic speech, and disabling speech during summarization was ignored | Keep only main assistant prose and recheck voice settings; Textual event/worker tests |
+
+Short spoken summaries remain enabled as requested. Tool calls, tool results,
+reasoning events and subagent replies are excluded from automatic speech.
+Synthesis/playback code now shares padding, buffering, serialization and
+cancellation logic across Piper, Pocket, Orpheus and ElevenLabs. A native worker
+cannot be forcibly killed, but cancelled work cannot begin playback afterward.
+
+Final reproducible offline command:
+
+`uv run --no-sync python scripts/verify_voice.py`
+
+Final result after code edits: exit 0, **131 passed, 1 skipped** with randomized
+ordering (seed 24102026). The skip is the pre-existing Pocket lifecycle test
+requiring the optional sounddevice package; shared playback was exercised with
+fake audio devices. Combined statement/branch coverage for Whistle, playback
+and summarization is **95%** (127 statements, 26 branches; 85% enforced gate).
+This is not a 100% changed-line coverage claim. New modules/tests/verification
+scripts passed ruff/format; all eight affected audio implementation modules
+passed mypy. The existing legacy-file lint baseline did not worsen. Lockfile
+validation, CI YAML parsing and `git diff --check` passed. Voice tests were added
+to the offline CI selection.
+
+Three negative controls executed and failed assertions: allowing cancelled
+synthesis to play, removing Whistle's native lock, and replacing LangChain's
+text-only extraction with stringification. Each control records an execution hit;
+a control that never runs, survives, times out or exits unexpectedly fails the
+verifier. No source files are mutated by these controls. The third control
+changes the message accessor contract rather than replacing application source.
+
+Actual native verification, isolated from the project's environment:
+
+`uv run --no-project --with "cactus-needle==3.2.8" --with numpy python scripts/verify_whistle_native.py`
+
+Result: exit 0; actual Windows DLL/model loaded and one second of 16 kHz silence
+transcribed to empty text. Minimum supported package 3.2.1 was also exercised.
+The probe uses a child process so Windows releases the DLL before its disposable
+cache is removed. The initial probe succeeded at inference but failed cleanup
+because its DLL was still loaded; the child-process fix was verified and the
+initial leftover cache was removed. Models were not installed into user caches
+or the project environment, and no microphone or speaker was accessed.
+
+Voice source SHA-256:
+`c0da83db6b4b4d395894b5a0b4aa1eda1e797bc12127bb2d6aa666177e89e0d4`.
+Hash construction is the same sorted-path/NUL/raw-bytes construction documented
+in CODE_MODE_EVIDENCE.md, over:
+
+- `novacode_cli/audio/{stt_whistle,playback,providers,pipeline,__init__,summarize,tts,tts_pocket,tts_orpheus,stt_elevenlabs}.py`
+- `novacode_cli/tui/app.py`
+- `tests/test_audio/{test_whistle,test_voice_safety,test_summarize}.py`
+- `tests/{test_tui_voice_output,test_voice_catalog}.py`
+- `scripts/{verify_voice,verify_whistle_native}.py`
+- `pyproject.toml`, `uv.lock`, `README.md`, `.github/workflows/ci.yml`
+
+Remaining verification limits: no live microphone/speaker quality test, no live
+cloud voice account, no transcription-accuracy benchmark, and no whole-repository
+test run. The native smoke test demonstrates runtime compatibility, not speech
+quality. Existing provider models remain opt-in. No release or push was made.
+
+## Enable from this checkout
+
+Install the base audio stack and optional provider:
+
+`uv sync --extra voice --extra voice-whistle`
+
+Then select `/voice settings stt whistle`. Whistle downloads its model and native
+runtime on first use. Existing `/voice` controls and short TTS summaries are
+preserved; Piper or the user's selected TTS provider still handles speech output.

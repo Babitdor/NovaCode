@@ -8,14 +8,13 @@ offloads to a worker thread. Imports cleanly without ``piper-tts`` installed.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import urllib.request
+from pathlib import Path
 from typing import Any
 
+from novacode_cli.audio.playback import play_and_wait, run_speech
 from novacode_cli.config.config import HOME_DIR
-
-from pathlib import Path
 
 logger = logging.getLogger("nova.audio.tts")
 
@@ -94,19 +93,10 @@ class Speaker:
         """Synthesise ``text`` and play it (off the event loop). No-op if empty."""
         if not text.strip():
             return
-        try:
-            await asyncio.to_thread(self._speak_sync, text)
-        except asyncio.CancelledError:
-            try:
-                import sounddevice as sd
-                sd.stop()
-            except Exception:  # noqa: BLE001
-                pass
-            raise
+        await run_speech(lambda: self._speak_sync(text))
 
     def _speak_sync(self, text: str) -> None:
         import numpy as np
-        import sounddevice as sd
 
         self._ensure_voice()
         audio_chunks: list[np.ndarray] = []
@@ -116,15 +106,4 @@ class Speaker:
                 audio_chunks.append(arr)
         if not audio_chunks:
             return
-        audio = np.concatenate(audio_chunks)
-        # Pad with 0.25 seconds of silence to prevent abrupt cutoff on some audio drivers
-        silence_len = int(self._samplerate * 0.25)
-        silence = np.zeros(silence_len, dtype=audio.dtype)
-        audio = np.concatenate([audio, silence])
-        # latency="high" gives PortAudio a larger output buffer. sd.play feeds the
-        # device from a Python callback, so when a concurrent tool call hogs the
-        # GIL (grep walking a tree, model streaming, the 20fps TUI render) the
-        # callback can stall; a small default buffer then underruns and the voice
-        # stutters/glitches. The bigger buffer absorbs those stalls.
-        sd.play(audio, self._samplerate, latency="high")
-        sd.wait()
+        play_and_wait(np.concatenate(audio_chunks), self._samplerate)

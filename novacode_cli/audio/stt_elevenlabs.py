@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING
 
 import aiohttp
 
+from novacode_cli.audio.playback import play_and_wait, run_speech
+
 if TYPE_CHECKING:
     import numpy as np
 
@@ -42,66 +44,46 @@ class ElevenLabsSpeaker:
         if not text.strip():
             return
 
-        try:
-            url = f"{_ELEVENLABS_BASE}/text-to-speech/{self._voice_id}"
-            headers = {
-                "Accept": "audio/mpeg",
-                "xi-api-key": self._api_key,
-                "Content-Type": "application/json",
-            }
-            payload = {
-                "text": text,
-                "model_id": "eleven_turbo_v2_5",
-                "voice_settings": {"stability": 0.5, "similarity_boost": 0.5},
-            }
+        url = f"{_ELEVENLABS_BASE}/text-to-speech/{self._voice_id}"
+        headers = {
+            "Accept": "audio/mpeg",
+            "xi-api-key": self._api_key,
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "text": text,
+            "model_id": "eleven_turbo_v2_5",
+            "voice_settings": {"stability": 0.5, "similarity_boost": 0.5},
+        }
 
-            async with (
-                aiohttp.ClientSession(headers=headers) as session,
-                session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=60)) as resp,
-            ):
-                if resp.status != _STATUS_OK:
-                    err = await resp.text()
-                    api_msg = f"ElevenLabs API error ({resp.status}): {err[:200]}"
-                    raise RuntimeError(api_msg)
-                mp3_data = await resp.read()
+        async with (
+            aiohttp.ClientSession(headers=headers) as session,
+            session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=60)) as resp,
+        ):
+            if resp.status != _STATUS_OK:
+                err = await resp.text()
+                api_msg = f"ElevenLabs API error ({resp.status}): {err[:200]}"
+                raise RuntimeError(api_msg)
+            mp3_data = await resp.read()
 
-            proc = await asyncio.to_thread(
-                subprocess.run,
-                ["ffmpeg", "-i", "-", "-f", "s16le", "-ar", "22050", "-ac", "1", "-"],
-                input=mp3_data,
-                capture_output=True,
-                timeout=60,
-            )
-            if proc.returncode != 0:
-                err = proc.stderr.decode(errors="replace")[:200]
-                fmsg = f"ffmpeg decode failed: {err}"
-                raise RuntimeError(fmsg)
+        proc = await asyncio.to_thread(
+            subprocess.run,
+            ["ffmpeg", "-i", "-", "-f", "s16le", "-ar", "22050", "-ac", "1", "-"],
+            input=mp3_data,
+            capture_output=True,
+            timeout=60,
+        )
+        if proc.returncode != 0:
+            err = proc.stderr.decode(errors="replace")[:200]
+            fmsg = f"ffmpeg decode failed: {err}"
+            raise RuntimeError(fmsg)
 
-            import numpy as np
+        import numpy as np
 
-            pcm = np.frombuffer(proc.stdout, dtype="int16")
-            if len(pcm) == 0:
-                return
-            await asyncio.to_thread(self._play_and_wait, pcm)
-        except asyncio.CancelledError:
-            try:
-                import sounddevice as sd
-                sd.stop()
-            except Exception:  # noqa: BLE001
-                pass
-            raise
+        pcm = np.frombuffer(proc.stdout, dtype="int16")
+        if len(pcm) == 0:
+            return
+        await run_speech(lambda: self._play_and_wait(pcm))
 
     def _play_and_wait(self, pcm: np.ndarray) -> None:
-        import numpy as np
-        import sounddevice as sd
-
-        # Pad with 0.25 seconds of silence to prevent abrupt cutoff on some audio drivers
-        silence_len = int(22050 * 0.25)
-        silence = np.zeros(silence_len, dtype=pcm.dtype)
-        pcm = np.concatenate([pcm, silence])
-
-        # latency="high": larger output buffer so a GIL stall from a concurrent
-        # tool call can't underrun playback and stutter the voice (see tts.py).
-        sd.play(pcm, 22050, latency="high")
-        sd.wait()
-
+        play_and_wait(pcm, 22050)

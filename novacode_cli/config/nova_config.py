@@ -1026,6 +1026,14 @@ class NovaConfig:
             return default
         return {"name": name, "email": email}
 
+    def get_code_mode_enabled(self) -> bool:
+        """Whether tools may be composed with JavaScript (enabled by default)."""
+        return _config_bool(self.get("code_mode_enabled", True), default=True)
+
+    def set_code_mode_enabled(self, enabled: bool) -> None:  # noqa: FBT001 -- config setter API.
+        """Persist the live Code Mode preference."""
+        self.set("code_mode_enabled", bool(enabled))
+
     def get_caveman_enabled(self) -> bool:
         """Whether replies should use the opt-in terse prose style."""
         return _config_bool(self.get("caveman_enabled"))

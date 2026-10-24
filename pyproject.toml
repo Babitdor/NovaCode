@@ -149,6 +149,9 @@ server = [
 agents-server = [
     "langgraph-cli[inmem]",
 ]
+voice-whistle = [
+    "cactus-needle>=3.2.1,<4",
+]
 
 [project.urls]
     Homepage = "https://github.com/Babitdor/NovaCode"

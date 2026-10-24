@@ -99,10 +99,15 @@ def parakeet_install_hint() -> str:
     return _hint("Parakeet needs the sherpa-onnx package.", ["sherpa-onnx"], "voice-parakeet")
 
 
+def whistle_install_hint() -> str:
+    """User-facing hint for enabling the Whistle STT provider."""
+    return _hint("Whistle needs the cactus-needle package.", ["cactus-needle"], "voice-whistle")
+
+
 def install_hint() -> str:
     """User-facing hint for enabling voice: what is missing and one command."""
     missing = missing_deps() or list(_REQUIRED)
-    return _hint(f"Voice needs {', '.join(missing)}.", missing, "voice")
+    return _hint(f"Nova voice needs {', '.join(missing)}.", missing, "voice")
 
 
 def diagnose_voice() -> list[str]:

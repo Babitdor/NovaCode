@@ -84,7 +84,7 @@ jobs:
           novacode_cli/remote/rootapp_setup.py
           novacode_cli/commands/rootapp_remote.py
           scripts/check_caveman_style.py
-      - name: Verify MCP Code Mode boundaries
+      - name: Verify native and MCP Code Mode boundaries
         run: uv run --no-sync python scripts/verify_mcp_code_mode.py
       - name: Run offline regression tests
         run: >-
@@ -111,6 +111,13 @@ jobs:
           tests/test_tool_search.py
           tests/test_generic_mcp_tool.py
           tests/test_mcp_code_mode.py
+          tests/test_native_code_mode.py
+          tests/test_audio
+          tests/test_tui_voice_output.py
+          tests/test_voice_catalog.py
+          tests/test_voice_credentials.py
+          tests/test_remote_voice_notes.py
+          tests/test_telegram_voice.py
           tests/test_essential_session_tools.py
           tests/test_context_snapshot.py
           tests/test_remote_cron.py

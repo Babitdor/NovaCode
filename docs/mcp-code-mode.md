@@ -1,6 +1,48 @@
-# MCP Code Mode
+# Code Mode
 
-## Acceptance contract
+## Native tools
+
+Code Mode now works without an MCP server. The existing `MCPCode` tool name is
+retained for compatibility. Discover it with `search_tools`, then compose
+ordinary Nova tools with the `tools` namespace:
+
+```javascript
+const catalog = await tools.list({offset: 0, limit: 20});
+const schema = await tools.describe("read_file");
+const files = await Promise.all(["/README.md", "/pyproject.toml"].map(file_path =>
+  tools.call("read_file", {file_path})
+));
+return {catalog, schema, files};
+```
+
+Discovery includes the owning graph's registered ordinary tools, including
+schemas deferred by tool search. It does not grant access to other sessions.
+MCP tools remain available through `mcp.list/describe/call`, as shown below.
+Both namespaces share one sandbox, call budget and concurrency limit.
+
+Every native call validates its public arguments and traverses Nova's downstream
+tool guards with a unique tool-call ID. Allowed edits and shell commands can run;
+if a call needs interactive approval, make that tool call directly. Plan mode and
+workspace brokers retain their existing restrictions, including blocking the
+outer interpreter where it has no workspace authorization.
+
+Recursive interpreters, delegation, user questions, mode/workspace transitions,
+and tools declaring graph-state updates must be called directly. Text file reads
+work; media reads that return graph updates require direct `read_file` calls.
+An unexpected state-update result is reported as an error rather than discarded
+as a successful result. Completed side effects are not transactional: errors,
+timeouts and cancellation cannot guarantee rollback or stop synchronous work
+already running in a host thread or external service. Do not automatically retry
+writes or restart a partially completed script.
+
+The composer toggle applies to both native and MCP calls. The existing `eval`
+tool and its `task(...)` subagent orchestration remain separate and unchanged.
+
+Run `uv run --no-sync python scripts/verify_mcp_code_mode.py` for the shared
+runtime, native/MCP integration tests, coverage, lint, types and negative controls.
+The original MCP-only contract and historical evidence follow.
+
+## Original MCP acceptance contract
 
 Implement `MCPCode` for the main session using the installed QuickJS runtime.
 Each call runs an isolated JavaScript async function body. `mcp.list(options)`,

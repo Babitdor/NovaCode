@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -61,6 +62,20 @@ def build_stt(provider: str, provider_configs: dict[str, Any] | None = None) -> 
     and would hijack the live voice session.
     """
     cfg = (provider_configs or {}).get(provider, {})
+    if provider == "whistle":
+        try:
+            import needle  # noqa: F401 -- verify optional package before activating provider.
+        except ImportError as exc:
+            from novacode_cli.audio import whistle_install_hint
+
+            raise ImportError(whistle_install_hint()) from exc
+
+        from novacode_cli.audio.stt_whistle import WhistleTranscriber
+
+        return WhistleTranscriber(
+            model=cfg.get("model", "whistle"),
+            language=cfg.get("language", "en"),
+        )
     if provider == "faster-whisper":
         from novacode_cli.audio.stt import Transcriber
 
@@ -138,6 +153,8 @@ class VoicePipeline:
         self._stt: Any = None
         self._tts: Any = None
         self._tts_active = False
+        # Explicit speak tools may enter from a worker's event loop.
+        self._speech_lock = threading.Lock()
 
     @property
     def tts_active(self) -> bool:
@@ -259,12 +276,18 @@ class VoicePipeline:
         """Speak ``text`` aloud, flagging ``tts_active`` for the duration."""
         if not text.strip():
             return
-        self._ensure_tts()
-        self._tts_active = True
+        # asyncio locks/events bind to one loop; explicit speech can use another.
+        while not self._speech_lock.acquire(blocking=False):  # noqa: ASYNC110
+            await asyncio.sleep(_TTS_POLL_S)
         try:
-            await self._tts.speak(text)
+            self._ensure_tts()
+            self._tts_active = True
+            try:
+                await self._tts.speak(text)
+            finally:
+                self._tts_active = False
         finally:
-            self._tts_active = False
+            self._speech_lock.release()
 
     async def listen_loop(
         self,
@@ -295,6 +318,8 @@ class VoicePipeline:
                 if pcm is None or len(pcm) == 0 or self._tts_active:
                     continue
                 text = await self._stt.transcribe(pcm)
+                if self._tts_active or (should_stop is not None and should_stop()):
+                    continue
                 if not text:
                     continue
                 result = on_transcript(text)

@@ -28,8 +28,10 @@ pytestmark = pytest.mark.timeout(30)
 
 @pytest.fixture(autouse=True)
 def isolated_policy(monkeypatch, tmp_path):
+    import novacode_cli.config.config as config_module
     from novacode_cli.security import policy
 
+    monkeypatch.setattr(config_module, "HOME_DIR", tmp_path / ".nova")
     monkeypatch.setattr(policy, "_read_json", lambda path: {})
     monkeypatch.setattr(policy, "_CACHED_POLICY", policy.load_policy(tmp_path))
     from novacode_cli.security import session_allow

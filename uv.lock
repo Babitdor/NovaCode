@@ -822,6 +822,18 @@ wheels = [
 ]
 
 [[package]]
+name = "cactus-needle"
+version = "3.2.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "huggingface-hub" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2b/98/5578ac0b4906ad19ecac3228e903fb1188b720a3bb226501f5d9fa5f82fb/cactus_needle-3.2.8.tar.gz", hash = "sha256:49f5019681aca447a860e53c411f45d7a9b1726d1672959459c1dc3dd0dfb158", size = 165056, upload-time = "2026-10-19T12:06:57.77Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/23/14/a3f3101da8c99c59ceb7847e4d199a1adcdc944645b63be754d2913320f9/cactus_needle-3.2.8-py3-none-any.whl", hash = "sha256:1a0f58430041574de6e823f5db47a3b9b72286da265af11817fe6e97ee9930ed", size = 130098, upload-time = "2026-10-19T12:06:56.418Z" },
+]
+
+[[package]]
 name = "cbor2"
 version = "6.1.2"
 source = { registry = "https://pypi.org/simple" }
@@ -3925,6 +3937,9 @@ voice-parakeet = [
 voice-pocket = [
     { name = "pocket-tts" },
 ]
+voice-whistle = [
+    { name = "cactus-needle" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -3948,6 +3963,7 @@ requires-dist = [
     { name = "bm25s", specifier = ">=0.2" },
     { name = "brotli", specifier = ">=1.2.1" },
     { name = "browser-use", marker = "extra == 'browser'", specifier = ">=0.1.0" },
+    { name = "cactus-needle", marker = "extra == 'voice-whistle'", specifier = ">=3.2.1,<4" },
     { name = "certifi", specifier = ">=2026.10.19" },
     { name = "daytona", specifier = ">=0.113.0" },
     { name = "ddgs", specifier = ">=7.0.0" },
@@ -4011,7 +4027,7 @@ requires-dist = [
     { name = "tomli-w", specifier = ">=1.0.0" },
     { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.34.0" },
 ]
-provides-extras = ["browser", "voice", "voice-orpheus", "voice-parakeet", "voice-pocket", "bedrock", "server", "agents-server"]
+provides-extras = ["browser", "voice", "voice-orpheus", "voice-parakeet", "voice-pocket", "bedrock", "server", "agents-server", "voice-whistle"]
 
 [package.metadata.requires-dev]
 dev = [
