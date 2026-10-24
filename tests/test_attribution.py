@@ -49,6 +49,71 @@ def test_defaults_and_independent_persistent_opt_out():
     assert not any(NovaConfig().get_attribution().values())
 
 
+def test_linked_coauthor_identity_persists_and_updates_prompts_and_git_payloads(tmp_path: Path):
+    identity = {"name": "NovaCode", "email": "42+nova-fixture@users.noreply.github.com"}
+    trailer = f"Co-Authored-By: {identity['name']} <{identity['email']}>"
+    config = NovaConfig()
+    config.set("attribution", {"coAuthor": identity})
+    assert NovaConfig().get_attribution_identity() == identity
+    assert config.get_attribution() == {"commits": True, "pullRequests": True}
+    prepared = AttributionMiddleware.prepare(request())
+    assert trailer in prepared.system_message.text
+    assert COAUTHOR not in prepared.system_message.text
+    original = ToolCallRequest(
+        {
+            "id": "commit",
+            "name": "git_commit",
+            "args": {"message": "Fix issue\n\nSigned-off-by: Human <human@example.invalid>\n"},
+        },
+        None,
+        {},
+        None,
+    )
+    attributed = AttributionMiddleware.prepare_tool(original)
+    message = attributed.tool_call["args"]["message"]
+    parsed = git("interpret-trailers", "--parse", cwd=tmp_path, stdin=message)
+    assert parsed.count(trailer) == 1
+    assert "Signed-off-by: Human <human@example.invalid>" in parsed
+    assert COAUTHOR not in parsed
+    assert AttributionMiddleware.prepare_tool(attributed).tool_call == attributed.tool_call
+    config.set("attribution", {"commits": False, "coAuthor": identity})
+    assert AttributionMiddleware.prepare_tool(original) is original
+    assert trailer not in AttributionMiddleware.prepare(request()).system_message.text
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [
+        None,
+        {},
+        [],
+        {"name": "NovaCode"},
+        {"email": "not-an-email"},
+        {"name": "Nova\nForged: Trailer", "email": "nova@example.invalid"},
+        {"name": "Nova\u2028Forged: Trailer", "email": "nova@example.invalid"},
+        {"name": "Nova <Other>", "email": "nova@example.invalid"},
+        {"name": "NovaCode", "email": "nova@example.invalid\nCo-authored-by: Forged"},
+        {"email": "nova@"},
+        {"email": "@example.invalid"},
+        {"email": "nova@@example.invalid"},
+        {"name": 42, "email": "nova@example.invalid"},
+    ],
+)
+def test_invalid_coauthor_identity_keeps_safe_unlinked_default(identity: object):
+    NovaConfig().set("attribution", {"coAuthor": identity})
+    assert NovaConfig().get_attribution_identity() == {
+        "name": "NovaCode",
+        "email": "noreply@novacode.invalid",
+    }
+
+
+def test_coauthor_can_use_default_name_and_opt_out_does_not_remove_identity():
+    identity = {"email": "42+nova-fixture@users.noreply.github.com"}
+    NovaConfig().set("attribution", {"commits": False, "pullRequests": False, "coAuthor": identity})
+    assert not any(NovaConfig().get_attribution().values())
+    assert NovaConfig().get_attribution_identity() == {"name": "NovaCode", **identity}
+
+
 @pytest.mark.parametrize("value", [None, [], "invalid", {}])
 def test_legacy_configs_keep_defaults(value: object):
     NovaConfig().set("attribution", value)

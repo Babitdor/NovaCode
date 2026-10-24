@@ -26,6 +26,49 @@ controls account avatars, so a Git trailer cannot display a custom image. It
 credits the whole commit and does not track which lines were AI-written. Nova
 preserves the human author and existing co-author and sign-off trailers.
 
+## Linking attribution to a GitHub account
+
+The default `.invalid` email cannot be linked to a GitHub profile. A logo in a PR
+description also does not create contribution credit. To associate new Nova
+co-author trailers with a real account, configure its existing GitHub identity:
+
+```json
+{
+  "attribution": {
+    "commits": true,
+    "pullRequests": true,
+    "coAuthor": {
+      "name": "NovaCode",
+      "email": "YOUR_ID+YOUR_NOVA_ACCOUNT@users.noreply.github.com"
+    }
+  }
+}
+```
+
+Replace the example with the **actual commit email shown in that account's GitHub
+email settings**. Do not copy the placeholder, use an unrelated person's email,
+or assume that changing a display name creates an account. The `name` defaults
+to NovaCode when omitted. Malformed identity fields fall back to the existing
+unlinked identity, preventing multiline trailer injection.
+
+GitHub requires an email associated with an account for co-author contribution
+credit. Its Contributors graph also depends on eligible commits on the default
+branch and its display/ranking rules. GitHub's profile avatar controls the linked
+identity's image; put the Nova logo on that account to use it as the avatar.
+This setting does not create accounts, upload profile images, link emails or
+modify GitHub's contributor statistics directly.
+
+Changing configuration affects future Nova-generated attribution. It does not
+add trailers to previous commits or rewrite published history. The middleware
+runs inside Nova: commits made directly by another Git client or a separate
+coding assistant do not pass through it. A valid Git trailer test establishes
+syntax and preservation, not live GitHub identity association.
+
+Sources: [GitHub co-author requirements](https://docs.github.com/en/pull-requests/how-tos/commit-changes/creating-a-commit-with-multiple-authors),
+[Contributors graph requirements](https://docs.github.com/en/repositories/viewing-activity-and-data-for-your-repository/viewing-a-projects-contributors).
+
+## Pull request footer
+
 Pull requests receive this footer, using the supplied NovaCode logo:
 
 ---

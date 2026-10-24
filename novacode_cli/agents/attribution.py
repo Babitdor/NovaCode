@@ -10,7 +10,11 @@ from typing import TYPE_CHECKING
 from langchain.agents.middleware.types import AgentMiddleware
 from langchain_core.messages import SystemMessage
 
-from novacode_cli.config.nova_config import NovaConfig
+from novacode_cli.config.nova_config import (
+    DEFAULT_ATTRIBUTION_EMAIL,
+    DEFAULT_ATTRIBUTION_NAME,
+    NovaConfig,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -19,7 +23,7 @@ if TYPE_CHECKING:
     from langchain_core.messages import AIMessage, ToolMessage
     from langgraph.types import Command
 
-COAUTHOR = "Co-Authored-By: NovaCode <noreply@novacode.invalid>"
+COAUTHOR = f"Co-Authored-By: {DEFAULT_ATTRIBUTION_NAME} <{DEFAULT_ATTRIBUTION_EMAIL}>"
 LOGO_URL = "https://raw.githubusercontent.com/Babitdor/NovaCode/main/assets/nova-attribution.png"
 PR_FOOTER = (
     f'<img src="{LOGO_URL}" alt="NovaCode logo" width="24" height="24" /> '
@@ -28,7 +32,7 @@ PR_FOOTER = (
 _TRAILER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*\s*:")
 
 
-def commit_message(message: str) -> str:
+def commit_message(message: str, *, coauthor: str = COAUTHOR) -> str:
     """Append a co-author once, preserving the final existing trailer block."""
     stripped = message.rstrip()
     lines = stripped.splitlines()
@@ -40,10 +44,10 @@ def commit_message(message: str) -> str:
         and _TRAILER.match(tail[0])
         and all(_TRAILER.match(line) or line.startswith((" ", "\t")) for line in tail)
     )
-    if trailers and any(line.strip().casefold() == COAUTHOR.casefold() for line in tail):
+    if trailers and any(line.strip().casefold() == coauthor.casefold() for line in tail):
         return message
     separator = "\n" if trailers else "\n\n"
-    return stripped + separator + COAUTHOR + "\n"
+    return stripped + separator + coauthor + "\n"
 
 
 def pull_request_body(body: str) -> str:
@@ -53,11 +57,11 @@ def pull_request_body(body: str) -> str:
     return body.rstrip() + "\n\n---\n\n" + PR_FOOTER
 
 
-def attribution_instructions(preferences: dict[str, bool]) -> str:
+def attribution_instructions(preferences: dict[str, bool], *, coauthor: str = COAUTHOR) -> str:
     """Describe the effective preference for shell commands and other transports."""
     commits = (
         "For Git commits you create, append this trailer once, in the final trailer block:\n"
-        f"{COAUTHOR}\n"
+        f"{coauthor}\n"
         "Use git commit --trailer or a commit-message file so quoting is correct "
         "for the current shell."
         if preferences["commits"]
@@ -86,7 +90,10 @@ class AttributionMiddleware(AgentMiddleware):
     @staticmethod
     def prepare(request: ModelRequest) -> ModelRequest:
         """Append preferences without editing stored history or the base prompt."""
-        note = attribution_instructions(NovaConfig().get_attribution())
+        config = NovaConfig()
+        identity = config.get_attribution_identity()
+        coauthor = f"Co-Authored-By: {identity['name']} <{identity['email']}>"
+        note = attribution_instructions(config.get_attribution(), coauthor=coauthor)
         original = request.system_message
         content = original.content if original else ""
         content = (
@@ -109,7 +116,8 @@ class AttributionMiddleware(AgentMiddleware):
         action = next((a for a in actions if name == a or name.endswith("_" + a)), None)
         if action is None:
             return request
-        preferences = NovaConfig().get_attribution()
+        config = NovaConfig()
+        preferences = config.get_attribution()
         args = dict(request.tool_call.get("args") or {})
         if action == "create_pull_request" and preferences["pullRequests"]:
             if "body" not in args:
@@ -123,7 +131,9 @@ class AttributionMiddleware(AgentMiddleware):
         elif action != "create_pull_request" and preferences["commits"]:
             if not isinstance(args.get("message"), str):
                 return request
-            args["message"] = commit_message(args["message"])
+            identity = config.get_attribution_identity()
+            coauthor = f"Co-Authored-By: {identity['name']} <{identity['email']}>"
+            args["message"] = commit_message(args["message"], coauthor=coauthor)
         else:
             return request
         return request.override(tool_call={**request.tool_call, "args": args})

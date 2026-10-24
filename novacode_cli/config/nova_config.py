@@ -18,6 +18,8 @@ ROLE_NAMES: tuple[str, ...] = ("main", "subagent", "async", "dynamic")
 CAVEMAN_LEVELS: tuple[str, ...] = (
     "lite", "full", "ultra", "wenyan-lite", "wenyan-full", "wenyan-ultra",
 )
+DEFAULT_ATTRIBUTION_NAME = "NovaCode"
+DEFAULT_ATTRIBUTION_EMAIL = "noreply@novacode.invalid"
 
 #: Strings a hand-edited boolean key may hold. Python treats every non-empty
 #: string as true, so a bare ``bool(...)`` reads ``"false"`` as "on" -- switching
@@ -1001,6 +1003,28 @@ class NovaConfig:
             name: _config_bool(saved.get(name), default=True)
             for name in ("commits", "pullRequests")
         }
+
+    def get_attribution_identity(self) -> dict[str, str]:
+        """Read an optional GitHub-linked co-author, rejecting malformed trailer fields."""
+        default = {"name": DEFAULT_ATTRIBUTION_NAME, "email": DEFAULT_ATTRIBUTION_EMAIL}
+        saved = self.get("attribution", {})
+        identity = saved.get("coAuthor") if isinstance(saved, dict) else None
+        if not isinstance(identity, dict):
+            return default
+        name = identity.get("name", DEFAULT_ATTRIBUTION_NAME)
+        email = identity.get("email")
+        if not isinstance(name, str) or not isinstance(email, str):
+            return default
+        name, email = name.strip(), email.strip()
+        if not name or not name.isprintable() or len(name) > 200 or len(email) > 320:
+            return default
+        if any(ord(char) < 32 or char in "<>" for char in name + email):
+            return default
+        if email.count("@") != 1 or any(char.isspace() for char in email):
+            return default
+        if not all(email.split("@")):
+            return default
+        return {"name": name, "email": email}
 
     def get_caveman_enabled(self) -> bool:
         """Whether replies should use the opt-in terse prose style."""
