@@ -53,8 +53,11 @@ async def test_manual_update_screen_links_to_release_notes(monkeypatch):
     app = _app()
     async with app.run_test(size=(60, 20)) as pilot:
         await app._run_update_check("/update")
-        await app.screen.workers.wait_for_complete()
+        # Let on_mount start the initial check, then wait for the worker itself.
+        # The screen's worker manager may report idle before the mount callback
+        # schedules that worker on slower Windows CI runners.
         await pilot.pause()
+        await app.screen.check_update().wait()
         assert "1.0.15" in str(app.screen.query_one("#update-status", Static).content)
         button = app.screen.query_one("#update-changelog", Button)
         assert not button.disabled
