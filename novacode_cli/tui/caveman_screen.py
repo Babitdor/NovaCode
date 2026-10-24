@@ -65,7 +65,10 @@ class CavemanScreen(ModalScreen[CavemanOptions | None]):
                 allow_blank=False,
                 prompt="Say less intensity",
                 id="caveman-level",
-                tooltip="Say less intensity. Full matches the Caveman skill default.",
+                tooltip=(
+                    "Say less intensity. Full is the default. Wenyan keeps your language; "
+                    "classical style applies only to Chinese replies."
+                ),
             )
             yield SelectionList[str](
                 *((label, key, self._features.get(key, True)) for key, label in FEATURES.items()),

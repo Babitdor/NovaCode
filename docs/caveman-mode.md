@@ -38,8 +38,10 @@ The local `caveman/SKILL.md` specifies response style, rather than the six-part
 compression/routing system. Nova's Say less now implements its rules:
 
 - `full` drops articles and filler; `lite` keeps full sentences; `ultra` compresses
-  prose further. Wenyan levels explicitly request classical Chinese; other
-  levels preserve the user's dominant language.
+  prose further. All levels preserve the user's dominant language unless the user
+  explicitly requests another language. Wenyan uses classical Chinese only for
+  Chinese replies; other languages use the matching Lite, Full or Ultra intensity.
+  Selecting Wenyan alone never requests translation.
 - No tool-call narration, decorative tables/emoji, invented abbreviations,
   style announcements, duplicate recaps, or unsolicited raw log dumps.
 - Preserve exact code, identifiers, commands, paths, errors, negations, numbers,
@@ -86,6 +88,18 @@ The script uses Nova's packaged core and security instructions. Use, for example
 `--levels off full --case clarity` for a smaller check. `/caveman audit` now also
 reports provider output/total/reasoning counts and the number of usage observations,
 so a missing usage report can be distinguished from observed zero usage.
+
+To check language preservation with Wenyan using English and Portuguese prompts:
+
+```powershell
+.venv/Scripts/python.exe -m scripts.check_caveman_style --live --levels wenyan-lite wenyan-full wenyan-ultra --case mutable_default --case portuguese
+```
+
+This makes six real calls without changing saved preferences. Inspect the saved
+responses; prompt regression tests alone cannot establish model compliance.
+The language regression check with saved `commandcode / Qwen/Qwen3.7-Flash`
+preserved English and Portuguese in all six replies across the three Wenyan
+levels. This checks reply language, not overall correctness or token savings.
 
 The audit's saved `commandcode / Qwen/Qwen3.7-Flash` model produced variable
 compliance. One final mutable-default pair using the replacement path consumed

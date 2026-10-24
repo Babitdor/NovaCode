@@ -40,13 +40,22 @@ def test_preference_is_opt_in_and_persists(saved: object, *, enabled: bool):
     assert NovaConfig().get_caveman_enabled() is not enabled
 
 
-@pytest.mark.parametrize("system", [
-    None,
-    SystemMessage(content="Core coding rules"),
-    SystemMessage(content=[{
-        "type": "text", "text": "Core coding rules", "cache_control": {"type": "ephemeral"},
-    }]),
-])
+@pytest.mark.parametrize(
+    "system",
+    [
+        None,
+        SystemMessage(content="Core coding rules"),
+        SystemMessage(
+            content=[
+                {
+                    "type": "text",
+                    "text": "Core coding rules",
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
+        ),
+    ],
+)
 def test_style_preserves_original_history_and_system_metadata(system: SystemMessage | None):
     req = _request(system)
     assert CavemanMiddleware.prepare(req, enabled=False) is req
@@ -88,7 +97,7 @@ def test_legacy_or_malformed_intensity_defaults_to_full(invalid: object):
 def test_options_validation_does_not_partially_save_a_draft():
     config = NovaConfig()
     with pytest.raises(ValueError, match="intensity"):
-        config.set_caveman_options({k: False for k in config.get_caveman_features()}, "bad")
+        config.set_caveman_options(dict.fromkeys(config.get_caveman_features(), False), "bad")
     assert NovaConfig().get("caveman_features") is None
     assert NovaConfig().get_caveman_level() == "full"
     with pytest.raises(ValueError, match="intensity"):
@@ -99,14 +108,45 @@ def test_skill_boundaries_and_auto_clarity_are_explicit_at_every_intensity():
     for level in CAVEMAN_LEVELS:
         note = caveman_instructions(level)
         for boundary in (
-            "No tool-call narration", "dominant language", "negations",
+            "No tool-call narration",
+            "dominant language",
+            "negations",
             "Code stays exact; commit messages and PR descriptions use normal prose",
-            "Never announce or name this style", "normal mode or to stop caveman",
-            "security warnings", "irreversible confirmations", "order could be misread",
-            "clarify/repeated question", "Resume terse prose", "skip verification",
+            "Never announce or name this style",
+            "normal mode or to stop caveman",
+            "security warnings",
+            "irreversible confirmations",
+            "order could be misread",
+            "clarify/repeated question",
+            "Resume terse prose",
+            "skip verification",
         ):
             assert boundary in note
         assert note.index("These boundaries override intensity") > note.index("Intensity:")
+
+
+@pytest.mark.parametrize("intensity", ["lite", "full", "ultra"])
+@pytest.mark.parametrize("style_only", [False, True])
+def test_wenyan_preserves_reply_language_and_uses_matching_non_chinese_intensity(
+    intensity: str,
+    *,
+    style_only: bool,
+):
+    config = NovaConfig()
+    config.set_caveman_enabled(True)
+    config.set_caveman_level("wenyan-" + intensity)
+    original = _request()
+    prepared = CavemanMiddleware(style_only=style_only)._prepare_live(original)
+    note = prepared.system_message.text
+    assert "For Chinese replies only" in note
+    assert "For replies in any other language" in note
+    assert CAVEMAN_STYLES[intensity] in note
+    assert "Language choice overrides intensity" in note
+    assert "Selecting Wenyan does not request translation" in note
+    assert "unless the user explicitly requests another language" in note
+    assert note.index("Language choice overrides intensity") > note.index("Intensity:")
+    assert prepared.messages == original.messages
+    assert prepared.model is original.model
 
 
 @pytest.mark.parametrize("structured", [True, False])
@@ -115,7 +155,11 @@ def test_selected_style_replaces_default_without_dropping_other_rules(*, structu
 
     default = (TEMPLATES_DIR / "response_style.jinja").read_text(encoding="utf-8").strip()
     text = "<security>Keep checks</security>" + default + "End"
-    content = [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}] if structured else text
+    content = (
+        [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
+        if structured
+        else text
+    )
     system = SystemMessage(content=content)
     prepared = CavemanMiddleware.prepare(_request(system), enabled=True)
     result = prepared.system_message.text
@@ -161,7 +205,8 @@ def test_subagents_get_style_without_routing_compression_or_recovery_requirement
 @pytest.mark.timeout(30)
 @pytest.mark.parametrize("size", [(80, 32), (45, 25)])
 async def test_intensity_commands_and_options_save_cancel(
-    size: tuple[int, int], monkeypatch: pytest.MonkeyPatch,
+    size: tuple[int, int],
+    monkeypatch: pytest.MonkeyPatch,
 ):
     app = _app()
     monkeypatch.setattr(type(app), "_sample_home_system", Mock())
@@ -206,7 +251,8 @@ async def test_existing_middleware_observes_toggle_on_next_sync_or_async_call():
 
 @pytest.mark.parametrize("size", [(80, 30), (45, 25)])
 async def test_composer_toggle_click_keyboard_commands_and_restart(
-    size: tuple[int, int], monkeypatch: pytest.MonkeyPatch,
+    size: tuple[int, int],
+    monkeypatch: pytest.MonkeyPatch,
 ):
     app = _app()
     monkeypatch.setattr(type(app), "_sample_home_system", Mock())

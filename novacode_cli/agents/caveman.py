@@ -29,6 +29,8 @@ second recap. Keep this style each response until disabled; honor requests for
 normal mode or to stop caveman. User requests for detail still get needed detail.
 """
 CAVEMAN_CLARITY = """These boundaries override intensity. Do not invent facts or rationale.
+Language choice overrides intensity: preserve the user's dominant language
+unless the user explicitly requests another language. Selecting Wenyan does not request translation.
 Keep factual uncertainty. Code stays exact; commit messages and PR descriptions use normal prose.
 Surrounding explanations still use the selected terse style.
 Use full, clear sentences for security warnings, irreversible confirmations,
@@ -49,13 +51,16 @@ CAVEMAN_STYLES = {
         "Strip conjunctions; use arrows for clear causality. One word when sufficient. "
         "Never abbreviate real code symbols or technical identifiers."
     ),
-    "wenyan-lite": "Use semi-classical Chinese, retaining grammatical structure; drop filler.",
+    "wenyan-lite": (
+        "For Chinese replies only, use semi-classical Chinese, retaining grammatical "
+        "structure; drop filler."
+    ),
     "wenyan-full": (
-        "Use terse classical Chinese (文言文), classical sentence patterns and particles; "
+        "For Chinese replies only, use terse classical Chinese, sentence patterns and particles; "
         "omit subjects when clear, verbs before objects. Technical terms stay verbatim."
     ),
     "wenyan-ultra": (
-        "Use maximally terse classical Chinese, abbreviating prose while preserving clarity "
+        "For Chinese replies only, use maximally terse classical Chinese, preserving clarity "
         "and exact technical terms."
     ),
 }
@@ -64,12 +69,18 @@ CAVEMAN_STYLES = {
 def caveman_instructions(level: str = "full") -> str:
     """Build only the selected intensity, keeping unused levels out of context."""
     level = level if level in CAVEMAN_STYLES else "full"
+    intensity = CAVEMAN_STYLES[level]
+    if level.startswith("wenyan-"):
+        intensity += (
+            " For replies in any other language, use this compression in that language: "
+            + CAVEMAN_STYLES[level.removeprefix("wenyan-")]
+        )
     return (
         f'<nova_caveman_style level="{level}">\n'
         "Selected user prose preference; overrides default response styling only.\n"
         + CAVEMAN_RULES
         + "\nIntensity: "
-        + CAVEMAN_STYLES[level]
+        + intensity
         + "\n\n"
         + CAVEMAN_CLARITY
         + "</nova_caveman_style>"

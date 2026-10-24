@@ -115,18 +115,22 @@ async def measure(output: Path, selected_cases: list[str] | None, levels: list[s
 
 
 def main() -> None:
+    from novacode_cli.config.nova_config import CAVEMAN_LEVELS
+
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--live", action="store_true", help="Authorize nine real model calls")
+    parser.add_argument(
+        "--live", action="store_true", help="Authorize the selected real model calls"
+    )
     parser.add_argument(
         "--case", action="append", choices=["mutable_default", "clarity", "portuguese"]
     )
     parser.add_argument(
-        "--levels", nargs="+", choices=["off", "full", "ultra"], default=["off", "full", "ultra"]
+        "--levels", nargs="+", choices=["off", *CAVEMAN_LEVELS], default=["off", "full", "ultra"]
     )
     parser.add_argument("--output", type=Path, default=Path("reports/caveman-style-live.json"))
     args = parser.parse_args()
     if not args.live:
-        parser.error("Pass --live to make nine inference calls using your saved main model")
+        parser.error("Pass --live to make inference calls using your saved main model")
     os.environ["LANGSMITH_TRACING"] = "false"
     os.environ["LANGCHAIN_TRACING_V2"] = "false"
     if not asyncio.run(measure(args.output, args.case, args.levels)):
