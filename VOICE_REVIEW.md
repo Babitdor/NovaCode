@@ -223,3 +223,41 @@ produced 22,050 Hz audio (about 4.33 s cold including download, 0.16 s warm for
 comparison, nor a claim of real-time speed on every low-resource machine.
 Physical speaker playback and peak process RAM were not measured. Weight sizes
 are download footprints, not total RAM requirements. Nothing was pushed.
+
+
+## Orpheus freeze after Settings download
+
+User reported an unresponsive TUI after downloading Orpheus through Settings.
+Inspection of the installed `orpheus-cpp` 0.0.3 implementation found its
+constructor passes `n_ctx=0` to llama-cpp-python (full trained context) and creates
+an unrestricted ONNX decoder session. Native loading runs off-loop already,
+but these defaults can allocate a very large KV cache and contend for CPU just
+after the GGUF transfer finishes. No multi-GB allocation was attempted to
+reproduce memory exhaustion on the user's machine.
+
+Nova now initializes the runtime with a 4,096-token context, 128-token prompt
+batches, and two generation/batch threads. The SNAC decoder uses CPU only with
+two intra-op threads and one inter-op thread. Upstream exposes no context-size
+constructor argument, so the adapter initializes its two model fields while
+retaining upstream streaming/decoding. Pin the existing optional dependency to
+0.0.3 because this relies on those implementation fields; upgrading it requires
+reviewing that contract. No new dependency was added.
+
+The progress row switches from transfer bytes to model preparation while native
+initialization continues. Orpheus cache detection now checks both GGUF and SNAC
+assets, and command cache detection (including optional imports) runs off-loop.
+Previously an Orpheus-only missing download could be incorrectly reported as
+already downloaded.
+
+Proof: resource-limit regression failed against the previous full-context
+configuration, then passed after the fix. Settings regression uses the actual
+Download models button and holds native initialization after the GGUF transfer;
+Escape closes Settings and typing reaches the prompt before loading is released.
+Combined Orpheus, command, progress, and Settings checks passed 53 tests.
+The full offline voice verifier passed 173 tests with one optional-dependency
+skip; its lint, formatting, source type checks and negative controls passed.
+A disposable environment with the real pinned Orpheus package exercised its
+streaming/decoder methods against fake native boundaries, confirming adapter
+compatibility without downloading weights or playing audio. Physical playback,
+peak RAM, and a full native Orpheus load on the user's machine remain unverified.
+Orpheus remains a multi-GB model; this change does not make it lightweight.

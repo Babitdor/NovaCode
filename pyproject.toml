@@ -119,7 +119,9 @@ voice = [
 # at runtime but does NOT declare it as a dependency, so we add it here; it's
 # pinned to the prebuilt CPU wheel index below (no compiler needed).
 voice-orpheus = [
-    "orpheus-cpp>=0.0.3",
+    # Its constructor does not expose context size; Nova adapts this runtime's
+    # two model fields to avoid allocating the full trained context on CPU.
+    "orpheus-cpp==0.0.3",
     "llama-cpp-python>=0.3.0",
 ]
 # Optional STT: NVIDIA Parakeet via sherpa-onnx (CPU/CUDA). Opt-in — the model

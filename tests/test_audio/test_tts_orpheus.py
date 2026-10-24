@@ -6,8 +6,6 @@ the pipeline factory branch, capability detection, and the /voice install hint.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import numpy as np
 import pytest
 
@@ -71,13 +69,10 @@ class TestOrpheusSpeaker:
         builds = {"n": 0}
 
         class _Mod:
-            def __init__(self, **_kw):
+            def __init__(self, _lang: str):
                 builds["n"] += 1
 
-        # Inject a fake orpheus_cpp module so the deferred import resolves.
-        monkeypatch.setitem(
-            __import__("sys").modules, "orpheus_cpp", SimpleNamespace(OrpheusCpp=_Mod)
-        )
+        monkeypatch.setattr(mod, "_load_model", _Mod)
         spk = mod.OrpheusSpeaker()
         spk._ensure_voice()
         spk._ensure_voice()  # idempotent
@@ -86,14 +81,12 @@ class TestOrpheusSpeaker:
     def test_illegal_instruction_becomes_actionable_error(self, monkeypatch):
         import novacode_cli.audio.tts_orpheus as mod
 
-        def _boom(**_kw):
+        def _boom(_lang: str):
             err = OSError("Windows Error 0xc000001d")
             err.winerror = -1073741795
             raise err
 
-        monkeypatch.setitem(
-            __import__("sys").modules, "orpheus_cpp", SimpleNamespace(OrpheusCpp=_boom)
-        )
+        monkeypatch.setattr(mod, "_load_model", _boom)
         spk = mod.OrpheusSpeaker()
         with pytest.raises(RuntimeError, match="instruction set"):
             spk._ensure_voice()
@@ -101,12 +94,10 @@ class TestOrpheusSpeaker:
     def test_other_oserror_propagates(self, monkeypatch):
         import novacode_cli.audio.tts_orpheus as mod
 
-        def _boom(**_kw):
+        def _boom(_lang: str):
             raise OSError("disk full")
 
-        monkeypatch.setitem(
-            __import__("sys").modules, "orpheus_cpp", SimpleNamespace(OrpheusCpp=_boom)
-        )
+        monkeypatch.setattr(mod, "_load_model", _boom)
         spk = mod.OrpheusSpeaker()
         with pytest.raises(OSError, match="disk full"):
             spk._ensure_voice()

@@ -37,6 +37,7 @@ SOURCES = [
 NEW_TESTS = [
     "tests/test_audio/test_whistle.py",
     "tests/test_audio/test_lightweight_tts.py",
+    "tests/test_audio/test_orpheus_resources.py",
     "tests/test_audio/test_download_progress.py",
     "tests/test_audio/test_voice_safety.py",
     "tests/test_tui_voice_output.py",

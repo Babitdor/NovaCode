@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from novacode_cli.audio.downloads import report_model_loading
 from novacode_cli.audio.playback import play_and_wait, run_speech
 
 if TYPE_CHECKING:
@@ -35,6 +36,56 @@ VOICES = ("tara", "leah", "jess", "leo", "dan", "mia", "zac", "zoe")
 #: Windows NTSTATUS for STATUS_ILLEGAL_INSTRUCTION (0xC000001D), seen as a
 #: negative winerror; the CPU lacks an instruction the native wheel uses.
 _WIN_ILLEGAL_INSTRUCTION = -1073741795
+
+
+def _model_asset(lang: str) -> tuple[str, str]:
+    from orpheus_cpp import OrpheusCpp
+
+    repo = OrpheusCpp.lang_to_model[lang]
+    return repo, repo.rsplit("/", 1)[-1].lower().replace("-gguf", ".gguf")
+
+
+def _load_model(lang: str) -> Any:  # noqa: ANN401 -- optional native runtime.
+    """Load orpheus-cpp 0.0.3 with a bounded context and CPU thread pools.
+
+    Upstream's constructor hardcodes n_ctx=0 (the full trained context), which
+    can allocate many GB of KV cache immediately after download. It exposes no
+    context parameter. Keep its streaming/decoding methods and initialize the
+    two runtime fields they use explicitly; the optional dependency is pinned.
+    """
+    import onnxruntime as ort
+    from huggingface_hub import hf_hub_download
+    from llama_cpp import Llama
+    from orpheus_cpp import OrpheusCpp
+
+    repo, filename = _model_asset(lang)
+    path = hf_hub_download(repo_id=repo, filename=filename)
+    report_model_loading()
+    llm = Llama(
+        model_path=path,
+        n_ctx=4096,
+        n_batch=128,
+        n_threads=2,
+        n_threads_batch=2,
+        n_gpu_layers=0,
+        verbose=False,
+    )
+    decoder_path = hf_hub_download(
+        repo_id="onnx-community/snac_24khz-ONNX",
+        subfolder="onnx",
+        filename="decoder_model.onnx",
+    )
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = 2
+    options.inter_op_num_threads = 1
+    report_model_loading()
+    decoder = ort.InferenceSession(
+        decoder_path, sess_options=options, providers=["CPUExecutionProvider"]
+    )
+    model = OrpheusCpp.__new__(OrpheusCpp)
+    model._llm = llm
+    model._snac_session = decoder
+    return model
 
 
 def _is_illegal_instruction(exc: OSError) -> bool:
@@ -55,6 +106,25 @@ class OrpheusSpeaker:
         self._lang = lang or _DEFAULT_LANG
         self._model: Any = None
 
+    @property
+    def needs_download(self) -> bool:
+        """Check both GGUF and codec assets without constructing a native model."""
+        if self._model is not None:
+            return False
+        try:
+            from huggingface_hub import try_to_load_from_cache
+
+            repo, filename = _model_asset(self._lang)
+            return not all(
+                isinstance(try_to_load_from_cache(repo_id, asset), str)
+                for repo_id, asset in (
+                    (repo, filename),
+                    ("onnx-community/snac_24khz-ONNX", "onnx/decoder_model.onnx"),
+                )
+            )
+        except ImportError:
+            return True
+
     def _ensure_voice(self) -> None:
         """Build the OrpheusCpp model once (named for warmup compatibility).
 
@@ -66,11 +136,9 @@ class OrpheusSpeaker:
         the CPU lacks the AVX2/AVX-512 instructions the wheel was built with.
         """
         if self._model is None:
-            from orpheus_cpp import OrpheusCpp
-
             logger.info("Loading Orpheus (orpheus-cpp) — this may download ~2GB")
             try:
-                self._model = OrpheusCpp(verbose=False, lang=self._lang)
+                self._model = _load_model(self._lang)
             except OSError as exc:
                 if _is_illegal_instruction(exc):
                     from novacode_cli.install_commands import install_command

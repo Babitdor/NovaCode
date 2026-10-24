@@ -198,6 +198,13 @@ def download_progress(callback: DownloadCallback) -> Iterator[None]:
         _CALLBACK.reset(token)
 
 
+def report_model_loading() -> None:
+    """Leave byte progress behind while native initialization is still running."""
+    reporter = _CURRENT.get()
+    if reporter is not None and reporter.visible:
+        reporter.emit("loading")
+
+
 @asynccontextmanager
 async def watch_downloads(
     kind: str, provider: str, backend: Any, callback: DownloadCallback | None

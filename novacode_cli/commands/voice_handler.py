@@ -23,6 +23,7 @@ and a quick end-to-end test. Persisted to ``~/.nova/Nova.config.json``.
 
 from __future__ import annotations
 
+import asyncio
 import shlex
 from typing import TYPE_CHECKING
 
@@ -382,7 +383,7 @@ async def _run_download(config: NovaConfig, console: Console) -> None:
         provider_configs=cfg.get("providers", {}),
     )
     try:
-        pending = pipeline.downloads_pending()
+        pending = await asyncio.to_thread(pipeline.downloads_pending)
     except Exception as exc:  # noqa: BLE001 — detection is best-effort
         console.print(f"  [yellow]Could not check model cache: {exc}[/yellow]")
         pending = ["STT", "TTS"]  # download anyway
