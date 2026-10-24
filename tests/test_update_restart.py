@@ -158,7 +158,7 @@ async def test_update_screen_offers_update_now_when_one_is_available(monkeypatch
         screen = UpdateScreen()
         app.push_screen(screen)
         await pilot.pause()
-        await pilot.pause()
+        await screen.check_update().wait()
         button = screen.query_one("#update-install", Button)
         assert not button.disabled
         monkeypatch.setattr(app, "run_worker", lambda coro, **_kw: None)
