@@ -869,7 +869,9 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
             <dl>
               <div><dt>memory</dt><dd>wiki, /dream</dd></div>
               <div><dt>planning</dt><dd>/council, plan mode</dd></div>
+              <div><dt>discussion</dt><dd>council debate, consensus</dd></div>
               <div><dt>sessions</dt><dd>parallel tabs, @tab:</dd></div>
+              <div><dt>cowork</dt><dd>folders, tasks, activity</dd></div>
               <div><dt>models</dt><dd>hosted, Ollama, /router</dd></div>
               <div><dt>learning</dt><dd>/learning, reviewable</dd></div>
               <div><dt>recovery</dt><dd>snapshots, /restore</dd></div>
@@ -994,6 +996,37 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
     </div>
   </section>
 
+  <!-- ================= web council ================= -->
+  <section id="web-council" class="s-airy" data-chapter="~/desk .nova/council">
+    <div class="wrap">
+      <div class="head rv">
+        <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="cm">/council which auth flow is least invasive?</span></p>
+        <h2>A council that debates before it concludes.</h2>
+        <p class="body">Open <code>/council web</code> for live discussion between multiple advisors. They ask each other clarification questions, vote on actual options, and a chairman reconciles disagreements into a reasoned synthesis — while keeping minority views visible.</p>
+      </div>
+
+      <div class="grid-grid rv" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:clamp(28px,4vw,48px)">
+        <div class="win" style="padding:16px 18px;display:grid;gap:10px">
+          <p class="eyebrow">Clarify</p>
+          <p class="body" style="font-size:.9rem;line-height:1.5"><code>Advisor A:</code> Does OAuth or API-key matter for user friction vs. security posture?</p>
+        </div>
+        <div class="win" style="padding:16px 18px;display:grid;gap:10px">
+          <p class="eyebrow">Debate</p>
+          <p class="body" style="font-size:.9rem;line-height:1.5"><code>Advisor B:</code> Both work, but the question scope changes with the threat model.</p>
+        </div>
+        <div class="win" style="padding:16px 18px;display:grid;gap:10px">
+          <p class="eyebrow">Synthesise</p>
+          <p class="body" style="font-size:.9rem;line-height:1.5"><code>Chairman:</code> Option 2 has stronger user trust but requires provider sign-in setup.</p>
+        </div>
+      </div>
+      <div class="row-handoff" style="display:flex;gap:12px;align-items:center">
+        <button class="btn btn-quiet" type="button">Switch to full debate view</button>
+        <p class="note" style="margin:0;font-size:.82rem;color:var(--muted)">Votes are advisory only — you still choose what to implement.</p>
+      </div>
+      <p class="note">Presets like Code Audit, Architecture and Creative Debate apply without overwriting saved assignments. This is separate from the planning <code>/council</code> workflow.</p>
+    </div>
+  </section>
+
   <!-- ================= sessions ================= -->
   <section id="sessions" data-chapter="~/desk tabs">
     <div class="wrap">
@@ -1051,6 +1084,46 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
     </div>
   </section>
 
+  <!-- ================= cowork workspace ================= -->
+  <section id="cowork" data-chapter="~/desk cowork">
+    <div class="wrap">
+      <div class="head rv">
+        <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="cm">/cowork</span></p>
+        <h2>A visual workspace that follows your folders.</h2>
+        <p class="body">Open the Cowork desk to see folder permissions, active tasks and an activity feed — all updated in real time while agents work on your code. A focused window for local work; remote integrations stay out of it.</p>
+      </div>
+
+      <div class="window demo-window rv" style="border-radius:var(--r-panel);overflow:hidden;border:1px solid var(--line)">
+        <div class="bar" aria-hidden="true"><i></i><i></i><i></i><span>Cowork — project-name</span></div>
+        <div style="display:grid;grid-template-columns:clamp(180px,22%,3fr) minmax(200px,7fr);min-height:240px">
+          <div style="background:color-mix(in srgb,var(--bg) 97%,var(--muted));padding:12px;display:flex;flex-direction:column;gap:6px;font-size:.82rem">
+            <div style="font-weight:600;margin-bottom:4px">Folders</div>
+            <div style="display:flex;flex-direction:column;gap:3px;color:var(--muted);font-family:var(--mono)">src/<wbr/>app.py &check;</div>
+            <div style="display:flex;flex-direction:column;gap:3px;color:var(--muted);font-family:var(--mono)">tests/<wbr/>* &check;</div>
+            <div style="display:flex;flex-direction:column;gap:3px;color:var(--muted);font-family:var(--mono)">docs/* ✕</div>
+            <div style="margin-top:auto">
+              <div style="font-weight:600;margin-bottom:4px">Tasks</div>
+              <div style="color:var(--muted)">📄 Writing tests ···</div>
+              <div style="color:var(--muted)">⏳ Review PR #42</div>
+            </div>
+          </div>
+          <div style="padding:12px;display:flex;flex-direction:column;gap:8px;font-size:.85rem">
+            <div style="display:flex;align-items:center;gap:8px;font-size:.78rem;color:var(--muted)">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="3"/></svg>
+              Memory explorer · index ready
+            </div>
+            <div style="background:var(--code-bg);border-radius:var(--r-panel);padding:10px;font-family:var(--mono);font-size:.82rem;line-height:1.5;flex:1">
+              <span style="color:var(--accent)">✎</span> Nova loaded memory/wiki.md<br>
+              <span style="color:var(--success)">✓</span> Updated INDEX.md routes<br>
+              <span style="color:var(--warning)">!</span> Pending /dream consolidation
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="note">Cowork is a local app — no public endpoint — so it keeps its own permission model per workspace. It works alongside background specialists, skills and MCP tools.</p>
+    </div>
+  </section>
+
   <!-- ================= models ================= -->
   <section id="models" class="s-airy" data-chapter="~/.nova/config.toml">
     <div class="wrap">
@@ -1094,6 +1167,31 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
         <span role="img" aria-label="OpenCode" title="OpenCode"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16 6H8v12h8V6zm4 16H4V2h16v20z"/></svg></span>
       </div>
       <p class="note">Routing is off by default and needs configuration. Model capabilities, credentials and provider charges still apply, and while local inference is available, selecting it does not make every external integration offline.</p>
+    </div>
+  </section>
+
+  <!-- ================= remote sessions ================= -->
+  <section id="remote-sessions" data-chapter="~/desk remote">
+    <div class="wrap">
+      <div class="head rv">
+        <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="cm">@tab:api-3f2 check your endpoint</span></p>
+        <h2>Your code review, wherever you are.</h2>
+        <p class="body">Bridge Nova to Discord or Telegram for remote terminal sessions. Each session keeps its own forum topic, handles voice notes with transcription, and can be kicked off by a cron task or signed webhook from another system.</p>
+      </div>
+
+      <div style="display:grid;gap:clamp(10px,1.5vw,16px);margin-bottom:clamp(18px,3vw,32px)">
+        <div class="win rv" style="padding:clamp(14px,2vw,20px)">
+          <table style="width:100%;border-collapse:collapse;font-size:.85rem;line-height:1.6">
+            <thead><tr style="border-bottom:1px solid var(--line)"><th style="text-align:left;padding:4px 12px 4px 0;color:var(--muted)">Service</th><th style="text-align:left;padding:4px 0;color:var(--muted)">Features</th></tr></thead>
+            <tbody>
+              <tr><td style="font-weight:600;padding:6px 12px 6px 0">Telegram</td><td style="padding:6px 0">Voice notes, forum topics, question expiry</td></tr>
+              <tr><td style="font-weight:600;padding:6px 12px 6px 0">Discord</td><td style="padding:6px 0">Channel-per-project, slash commands</td></tr>
+              <tr><td style="font-weight:600;padding:6px 12px 6px 0">Rootapp</td><td style="padding:6px 0">Background terminals &amp; long-running tasks</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <p class="note">Integration config lives on disk. Scheduling requires the Nova process running, but other systems can trigger runs through webhooks without polling.</p>
     </div>
   </section>
 
@@ -1259,7 +1357,7 @@ status: awaiting your decision">
         </details>
         <details>
           <summary>What is the council for?</summary>
-          <p>Comparing approaches before you commit to one. <code>/council &lt;task&gt;</code> runs independent proposals through critique, anonymous ranked voting and a judging stage, then puts up to three plans in front of you. Council participants have no bound tools, so they cannot edit the repository, and handing a plan to implementation is a separate approval.</p>
+          <p>Comparing approaches before you commit to one. <code>/council &lt;task&gt;</code> runs independent proposals through critique, anonymous ranked voting and a judging stage, then puts up to three plans in front of you. Use <code>/council web</code> for live discussion between advisors debating actual options with a chairman synthesising disagreements.</p>
         </details>
         <details>
           <summary>Can two sessions in different projects talk?</summary>
@@ -1284,6 +1382,10 @@ status: awaiting your decision">
         <details>
           <summary>Can I use it away from my machine?</summary>
           <p>Yes, with integration config. Bridge it to Discord or Telegram: Telegram takes voice notes, gives each session its own forum topic, and deletes a question once you have answered it. Cron tasks and signed webhooks let other systems start a run. Scheduling depends on the Nova process or service being up.</p>
+        </details>
+        <details>
+          <summary>What is Cowork?</summary>
+          <p>A visual workspace that opens beside your work — folder permissions, active tasks, and an activity feed updated in real time while agents write code. Cowork keeps its own permission model per workspace and is a local app with no public endpoint. It works alongside specialist delegates, skills and MCP tools.</p>
         </details>
       </div>
     </div>
