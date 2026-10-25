@@ -123,6 +123,7 @@ jobs:
           tests/test_remote_voice_notes.py
           tests/test_telegram_voice.py
           tests/test_essential_session_tools.py
+          tests/test_tab_mentions.py
           tests/test_context_snapshot.py
           tests/test_remote_cron.py
           tests/test_rootapp_remote.py

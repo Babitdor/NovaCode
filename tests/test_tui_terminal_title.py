@@ -8,7 +8,7 @@ from tests.test_tui_sessions import _add_pane, _app, isolated_session_config  # 
 async def test_terminal_title_tracks_visible_session_and_identity_changes():
     app = _app()
     async with app.run_test():
-        assert app.title == f"NovaCode · {app.session_state.session_id[:8]}"
+        assert app.title == f"NovaCode · {app._root_pane.display_name}"
         child = await _add_pane(app, title="Fix authentication")
         await app._switch_to(child)
         assert app.title == "NovaCode · Fix authentication"
@@ -18,12 +18,12 @@ async def test_terminal_title_tracks_visible_session_and_identity_changes():
         await app._switch_to(app._root_pane)
         app.session_state.session_id = "resumed-session-id"
         app._refresh_session_identity()
-        assert app._root_pane.title == "resumed-"
-        assert app.title == "NovaCode · resumed-"
+        assert app._root_pane.title == "Main"
+        assert app.title == f"NovaCode · {app._root_pane.display_name}"
         app.session_state.session_id = "fresh-session-id"
         app._refresh_session_identity()
-        assert app._root_pane.title == "fresh-se"
-        assert app.title == "NovaCode · fresh-se"
+        assert app._root_pane.title == "Main"
+        assert app.title == f"NovaCode · {app._root_pane.display_name}"
         assert not getattr(app, "_terminal_title", None), (
             "headless mode must not write terminal controls"
         )

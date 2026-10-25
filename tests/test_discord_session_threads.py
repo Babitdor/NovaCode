@@ -326,10 +326,11 @@ async def test_tui_sync_and_close_cover_both_platforms(kit, monkeypatch):
     manager.bridges = lambda platform=None: [bot] if platform == RemotePlatform.DISCORD else []
     app = NovaApp.__new__(NovaApp)
     app.session_state = SimpleNamespace(session_id="session-alpha", _remote_bridge_manager=manager)
-    root = SimpleNamespace(sid="root", title="Main", kind="root", state={})
+    root = SimpleNamespace(sid="root", title="Main", display_name="Main", kind="root", state={})
     child = SimpleNamespace(
         sid="child",
         title="Worker",
+        display_name="Worker",
         kind="child",
         status="idle",
         state={"session_state": SimpleNamespace(session_id="session-beta")},

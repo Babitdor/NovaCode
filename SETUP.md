@@ -35,6 +35,21 @@ Open parallel project tabs with `/tabs`, then ask Nova to send a message to anot
 tab, for example: “Tell the backend session that the frontend now expects an `id`
 field in the login response.”
 
+To message a tab directly, type `@tab:` in the composer. Suggestions match the
+session name, project or ID and show the project, session name and status.
+Use Up/Down to choose, then Tab, Enter or a click to insert the address; type
+your message and send it separately. For example:
+
+```text
+@tab:"API tests" Explain the login test failure
+```
+
+Names with spaces are quoted automatically. Duplicate names use stable IDs to
+avoid sending to the wrong session. Existing `@tab:<session-id>` addresses work.
+The main session is named Main; Telegram topics and Discord threads use readable
+project/session labels, such as `backend · API tests`. Existing topic/thread
+history stays attached when the label changes on the next connection or sync.
+
 The built-in `SendMessage(recipient, content)` tool sends plain text to a session
 ID or unique tab title found with `list_sessions`. Busy tabs queue messages until
 their current turn finishes. The recipient processes the message in its own

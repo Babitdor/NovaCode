@@ -271,8 +271,8 @@ async def test_tui_attaches_existing_root_and_child_without_duplicates(monkeypat
         post=AsyncMock(),
     )
     app = NovaApp.__new__(NovaApp)
-    root = SimpleNamespace(sid="root", title="main", kind="root", state={})
-    child = SimpleNamespace(sid="child-id", title="beta", kind="child", status="idle", state={})
+    root = SimpleNamespace(sid="root", title="main", display_name="main", kind="root", state={})
+    child = SimpleNamespace(sid="child-id", title="beta", display_name="beta", kind="child", status="idle", state={})
     app._root_pane = app._active_pane = root
     app._panes = [root, child]
     app.session_state = SimpleNamespace(session_id="session-alpha")

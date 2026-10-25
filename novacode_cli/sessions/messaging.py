@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
@@ -68,13 +69,21 @@ def resolve_mention(
     reserved: Iterable[str] = (),
 ) -> tuple[str, str] | None:
     """Only leading mentions address a tab; explicit addresses never fall through."""
-    match = re.match(r"^@(tab:)?([^\s]+)(?:\s+([\s\S]+))?$", text.strip())
+    match = re.match(r'^@(tab:)?("(?:[^"\\]|\\.)*"|[^\s]+)(?:\s+([\s\S]+))?$', text.strip())
     if text.strip().startswith("@tab:") and (match is None or not match.group(1)):
         msg = "A tab address needs a session ID and message."
         raise MessageError(msg)
     if match is None:
         return None
     explicit, name, body = match.groups()
+    if name.startswith('"'):
+        if not explicit:
+            return None  # Quoted file mentions keep their existing attachment path.
+        try:
+            name = json.loads(name)
+        except ValueError as exc:
+            msg = "Use a quoted session name or a session ID after @tab:."
+            raise MessageError(msg) from exc
     if not explicit:
         if name.casefold() in {item.casefold() for item in reserved}:
             return None

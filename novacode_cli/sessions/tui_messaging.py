@@ -115,7 +115,9 @@ class SessionCommunication:
         """Discover live panes and release references to evicted notices."""
         sessions = []
         for pane in getattr(self.app, "_panes", []):
-            project = getattr(pane, "worktree", None) or getattr(pane.child, "worktree", None)
+            project = (
+                pane.project_root or pane.worktree or getattr(pane.child, "worktree", None)
+            )
             sessions.append(
                 SessionInfo(pane.sid, pane.title, str(project or Path.cwd()), pane.status)
             )

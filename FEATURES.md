@@ -426,6 +426,11 @@ not a guarantee that arbitrary private project content is safe to publish.
 - Queue delivery while the recipient is busy and keep replies linked to the
   originating request.
 - Retain each recipient's workspace, model, history and approval settings.
+- Address a tab with `@tab:` autocomplete: search session names, projects or IDs,
+  then accept with Tab, Enter or a click. Suggestions show project/name/status;
+  names with spaces are quoted and ambiguous names use stable IDs.
+- Identify the main session as Main and label Telegram topics and Discord
+  threads with project/session names while retaining their existing routing.
 
 Messaging connects live tabs in one NovaCode TUI instance. It does not connect
 arbitrary independently launched terminals or standalone headless sessions.

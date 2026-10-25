@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 # Attributes that belong to a conversation rather than to the app. Missing ones
@@ -205,6 +206,8 @@ class SessionPane:
     """Current terminal prompt, mirrored when a remote joins the running turn."""
     remote_mirrors: dict = field(default_factory=dict)
     remote_attach_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    project_root: Path | None = None
+    """Project identity for the root pane, independent of managed Git worktrees."""
 
     def save_from(self, app: Any) -> None:
         """Capture the app's conversation attributes into this pane."""
@@ -225,3 +228,13 @@ class SessionPane:
     @property
     def has_state(self) -> bool:
         return bool(self.state)
+
+    @property
+    def display_name(self) -> str:
+        """Describe a session by project and name without changing its routing ID."""
+        project = self.project_root or self.worktree or getattr(self.child, "worktree", None)
+        project_name = Path(project).name if project else ""
+        name = " ".join(self.title.split()) or "Session"
+        if project_name and project_name.casefold() != name.casefold():
+            return f"{project_name} · {name}"
+        return name

@@ -49,6 +49,7 @@ const $=id=>document.getElementById(id);let picture=null,busy=false;
 async function request(path,options={}){const r=await fetch(path,options);
 if(!r.ok){const error=await r.json();throw new Error(error.error||'Computer unavailable')}return r}
 function render(s){$('state').textContent=s.phase+(s.paused&&s.phase==='ready'?' · input paused':'');
+$('notice').textContent=s.error||s.stage+(s.phase==='starting'?' · '+s.elapsed_seconds+'s elapsed':'');
 $('pause').disabled=busy||s.phase!=='ready'||s.paused;
 $('resume').disabled=busy||s.phase!=='ready'||!s.paused;
 $('stop').disabled=busy||s.phase==='stopped'||s.phase==='stopping';
@@ -57,7 +58,7 @@ $('empty').textContent=s.phase==='starting'?'Preparing the Linux desktop. First 
 async function tick(){try{if(!document.hidden){const s=await(await request('/status')).json();render(s);
 if(s.phase==='ready'){const blob=await(await request('/frame')).blob();const next=URL.createObjectURL(blob);
 $('screen').src=next;$('screen').hidden=false;$('empty').hidden=true;if(picture)URL.revokeObjectURL(picture);picture=next}
-if(!busy)$('notice').textContent=''}}catch(e){$('state').textContent='Preview disconnected';$('notice').textContent=e.message}
+}}catch(e){$('state').textContent='Preview disconnected';$('notice').textContent=e.message}
 finally{setTimeout(tick,1000)}}
 for(const action of ['pause','resume','stop'])$(action).onclick=async()=>{
 if(action==='stop'&&!confirm('Stop and delete this temporary computer and its files?'))return;

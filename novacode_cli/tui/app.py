@@ -464,7 +464,7 @@ def _category_glyph(cat: str) -> str:
 # The @mention token immediately before the cursor (start-of-line or after
 # whitespace, so emails like user@host don't match). Used to drive @file/@agent
 # autocomplete *anywhere* in the line, not just at the very start.
-_AT_FRAGMENT_RE = re.compile(r"(?:^|(?<=\s))@([^\s@]*)$")
+_AT_FRAGMENT_RE = re.compile(r'(?:^|(?<=\s))@((?:tab:"[^"\n]*)|[^\s@]*)$')
 
 # Inputs that mean "quit", matched case-insensitively. Centralised because the
 # check appears on four paths (dispatch, queued-command drain, slash handler,
@@ -3121,11 +3121,14 @@ class NovaApp(App):
             scroll = self.query_one("#transcript", VerticalScroll)
         except NoMatches:  # pragma: no cover - compose always yields it
             return
+        from novacode_cli.config.config import settings
+
         pane = SessionPane(
             sid="root",
-            title=((getattr(self.session_state, "session_id", "") or "main")[:8]),
+            title="Main",
             scroll=scroll,
             kind="root",
+            project_root=settings.get_workspace_root(),
         )
         self._panes: list = [pane]
         self._root_pane = pane
@@ -3907,8 +3910,9 @@ class NovaApp(App):
         """Show the active session's name in the terminal window or tab."""
         pane = getattr(self, "_active_pane", None)
         name = (
-            getattr(pane, "title", None)
-            or (getattr(self.session_state, "session_id", "") or "main")[:8]
+            getattr(pane, "display_name", None)
+            or getattr(pane, "title", None)
+            or "Main"
         )
         # Session names are user input. OSC titles must contain no escape or
         # control characters that could terminate the title and inject output.
@@ -3940,7 +3944,7 @@ class NovaApp(App):
         """Keep the root tab and terminal title in step after resume or clear."""
         pane = getattr(self, "_active_pane", None)
         if pane is not None and pane.kind == "root":
-            pane.title = (getattr(self.session_state, "session_id", "") or "main")[:8]
+            pane.title = "Main"
         self._refresh_tabs()
 
     def on_tabs_tab_activated(self, event) -> None:
@@ -5444,7 +5448,7 @@ class NovaApp(App):
         for bridge in NovaApp._remote_topic_bridges(self):
             platform = getattr(getattr(bridge._config, "platform", None), "value", "telegram")
             try:
-                tid = await bridge.ensure_session_topic(pane.sid, session_id, pane.title)
+                tid = await bridge.ensure_session_topic(pane.sid, session_id, pane.display_name)
                 if tid is None:
                     if platform == "telegram":
                         self.notify(
@@ -5456,7 +5460,8 @@ class NovaApp(App):
                 router.topics[(bridge._config.chat_id, pane.sid)] = tid
                 if previous != tid:
                     await bridge.post(
-                        f"Session **{session_id}** connected. Messages in this {'thread' if platform == 'discord' else 'topic'} go to **{pane.title}**.",
+                        f"Session **{pane.display_name}** connected. Messages in this "
+                        f"{'thread' if platform == 'discord' else 'topic'} go to this session.",
                         thread_id=tid,
                         sid=pane.sid,
                     )
@@ -8049,17 +8054,37 @@ class NovaApp(App):
             return cmds + skill_cmds
         return []
 
-    def _at_candidates(self, fragment: str) -> list[str]:  # noqa: PLR0915 (budgeted BFS walk)
+    def _at_candidates(self, fragment: str) -> list[str]:  # noqa: PLR0912, PLR0915 - Tab/agent/file discovery with a budgeted walk.
         """Build @agent + @file completions for an ``@`` fragment (no leading @)."""
         at_prefix = f"@{fragment}".lower()
         candidates: list[str] = []
-        for pane in getattr(self, "_panes", []):
-            if pane.status not in ("crashed", "exited"):
-                for name in (pane.sid, pane.title):
-                    candidate = f"@tab:{name}"
-                    if not any(char.isspace() for char in name) and candidate.casefold().startswith(at_prefix):
-                        if candidate not in candidates:
-                            candidates.append(candidate)
+        panes = [
+            pane for pane in getattr(self, "_panes", [])
+            if pane.status not in ("crashed", "exited")
+        ]
+        tab_fragment = fragment.removeprefix("tab:").lstrip('"').casefold()
+        for pane in panes:
+            title = pane.title
+            unique = sum(other.title.casefold() == title.casefold() for other in panes) == 1
+            # A title that equals another pane's ID would resolve to that pane.
+            safe_title = (
+                unique
+                and not any(other.sid == title and other.sid != pane.sid for other in panes)
+                and (title.casefold() not in {"main", "root"} or pane.sid == "root")
+            )
+            address = title if safe_title and title.strip() else pane.sid
+            if any(char.isspace() or char in ('"', "\\") for char in address):
+                address = json.dumps(address, ensure_ascii=False)
+            candidate = f"@tab:{address}"
+            if fragment.startswith("tab:"):
+                if tab_fragment in f"{pane.sid} {pane.display_name}".casefold():
+                    candidates.append(candidate)
+            elif candidate.casefold().startswith(at_prefix) or (
+                fragment and tab_fragment in pane.display_name.casefold()
+            ):
+                candidates.append(candidate)
+        if fragment.startswith("tab:"):
+            return candidates
         # Agent completions
         for n in self._get_agent_names():
             if f"@{n}".lower().startswith(at_prefix):
@@ -8185,7 +8210,22 @@ class NovaApp(App):
             return
         palette.clear_options()
         for c in matches:
-            palette.add_option(Option(c))
+            label = Text(c)
+            if c.startswith("@tab:"):
+                from novacode_cli.sessions.messaging import resolve_target
+
+                address = c[len("@tab:") :]
+                name = json.loads(address) if address.startswith('"') else address
+                sessions = {
+                    pane.sid: pane.title for pane in self._panes
+                    if pane.status not in ("crashed", "exited")
+                }
+                with suppress(ValueError):
+                    pane = self._pane_for(resolve_target(name, sessions))
+                    if pane is not None:
+                        label = Text(pane.display_name)
+                        label.append(f"  · {pane.status}  · {c}", style="dim")
+            palette.add_option(Option(label, id=c if c.startswith("@tab:") else None))
         palette.display = True
         self.call_after_refresh(self._position_palette)
         try:
@@ -8233,7 +8273,12 @@ class NovaApp(App):
             return
         if not palette.display:
             return
-        if event.key == "down":
+        if event.key == "tab" and palette.highlighted is not None:
+            option = palette.get_option_at_index(palette.highlighted)
+            self._accept_palette(option.id or str(option.prompt))
+            event.stop()
+            event.prevent_default()
+        elif event.key == "down":
             palette.action_cursor_down()
         elif event.key == "up":
             palette.action_cursor_up()
@@ -8245,7 +8290,7 @@ class NovaApp(App):
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         # Mouse-click accept from the command palette (other lists handle their own).
         if event.option_list.id == "cmdpalette":
-            self._accept_palette(str(event.option.prompt))
+            self._accept_palette(event.option.id or str(event.option.prompt))
 
     def _on_large_paste(self, placeholder: str, char_count: int) -> None:
         """Notify the transcript that a large paste was collapsed."""
@@ -8294,7 +8339,7 @@ class NovaApp(App):
         palette = self.query_one("#cmdpalette", OptionList)
         if palette.display and palette.option_count and palette.highlighted is not None:
             opt = palette.get_option_at_index(palette.highlighted)
-            self._accept_palette(str(opt.prompt))
+            self._accept_palette(opt.id or str(opt.prompt))
             return
         # The input box holds compact [paste #N +M lines] placeholders for large
         # pastes (so the box stays readable while composing). On submit we expand
@@ -14678,6 +14723,10 @@ class NovaApp(App):
                 )
             status = await computer.call("status" if action == "preview" else action)
             message = f"Computer: {status['phase']}"
+            if status.get("error"):
+                message += f" · {status['error']}"
+            elif status["phase"] == "starting":
+                message += f" · {status['stage']} · {status['elapsed_seconds']}s elapsed"
             if status["phase"] == "ready":
                 if status["paused"]:
                     message += " · input paused"

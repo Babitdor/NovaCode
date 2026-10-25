@@ -75,6 +75,23 @@ boot has not been verified here.
 | `/computer resume` | Permit input again; Nova must obtain a new screenshot |
 | `/computer stop` | Delete the guest and its temporary files |
 
+First startup downloads and caches the guest image before booting Linux. The
+total depends on image size, connection speed, disk and hardware acceleration;
+there is no fixed download-time promise. Guest readiness uses a 10-minute
+timeout, separate from the image transfer. `/computer status` and the preview
+show the current startup stage and elapsed time, or the retained failure reason.
+Stop can take around 30 seconds while QEMU's graceful shutdown expires; the
+preview allows up to 60 seconds for that request.
+
+Pause/resume control **Nova's input**, not QEMU's execution state, and require a
+ready desktop. `qemu started but VM status is 'paused'` is a failed boot, not
+Nova's input pause. On this Windows host, QEMU's log identified
+`WHPX: Unexpected VP exit code 4`; waiting longer or resuming Nova input does not
+repair that hypervisor failure. Check QEMU/Windows Hypervisor Platform
+compatibility before retrying. Nova cancels native startup and attempts cleanup
+by its generated guest name even when no SDK handle was returned. Failed
+cleanup retains ownership so `/computer stop` can retry.
+
 Then ask, for example: “Use your computer to open the browser and research
 Python's latest release.” Select a model with vision support for reliable
 visual interaction. A text-only model can use Nova's separately configured

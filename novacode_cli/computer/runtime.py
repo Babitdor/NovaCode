@@ -67,6 +67,10 @@ class Computer:
         self._name: str | None = None
         self._desktop: Any = None
         self._sdk: Any = None
+        self._client: Any = None
+        self._stage = ""
+        self._error = ""
+        self._started_at: float | None = None
         self._starting: asyncio.Task | None = None
         self._input_lock = asyncio.Lock()
         self._observation: Any = None
@@ -110,7 +114,7 @@ class Computer:
         loop = self._event_loop()
         future = asyncio.run_coroutine_threadsafe(self._dispatch(operation, arguments), loop)
         try:
-            return future.result(timeout=15)
+            return future.result(timeout=60 if operation == "stop" else 15)
         except TimeoutError:
             future.cancel()
             raise ComputerError("The computer did not respond in time.") from None
@@ -133,6 +137,13 @@ class Computer:
             "cpus": 2,
             "memory_mb": 4096,
             "name": self._name,
+            "stage": self._stage,
+            "error": self._error,
+            "elapsed_seconds": (
+                int(time.monotonic() - self._started_at)
+                if self._phase == "starting" and self._started_at is not None
+                else 0
+            ),
         }
 
     async def _dispatch(self, operation: str, arguments: dict) -> Any:  # noqa: PLR0911
@@ -143,6 +154,12 @@ class Computer:
         if operation == "stop":
             return await self._stop()
         if operation in {"pause", "resume"}:
+            if self._phase != "ready":
+                message = (
+                    f"Computer is {self._phase}. Pause/resume control input on a ready desktop; "
+                    "they cannot recover a failed boot. Use /computer stop, then /computer start."
+                )
+                raise ComputerError(message)
             self._paused = operation == "pause"
             self._observation = None
             async with self._input_lock:
@@ -161,12 +178,12 @@ class Computer:
                 return await self._capture(observe=True)
             raise ComputerError("Unknown computer operation.")
 
-    async def _start(self) -> dict:
+    async def _start(self) -> dict:  # noqa: PLR0915 - One explicit startup/cleanup lifecycle.
         if self._phase == "ready":
             return self._status()
         if self._starting is not None or self._phase == "stopping":
             raise ComputerError("The computer is already starting or stopping.")
-        if self._guest is not None:
+        if self._guest is not None or self._name is not None:
             raise ComputerError("Stop the previous computer before starting another one.")
         _prepare_qemu_path()
         os.environ.setdefault("CUA_TELEMETRY", "0")
@@ -177,8 +194,11 @@ class Computer:
         self._starting = asyncio.current_task()
         self._phase = "starting"
         self._paused = False
+        self._error = ""
+        self._stage = "Checking QEMU prerequisites"
+        self._started_at = time.monotonic()
         try:
-            client = self._sdk.embedded()
+            client = self._client = self._sdk.embedded()
             report = json.loads((await client.local().doctor()).report_json)
             qemu = next((b for b in report["backends"] if b["backend"] == "qemu"), None)
             if qemu is None or (not qemu["ready"] and not qemu["provisionable"]):
@@ -206,47 +226,94 @@ class Computer:
                 ready_timeout_ms=600_000,
                 headless=False,
             )
+            self._stage = "Downloading/caching the Linux image and booting QEMU"
             self._guest = await client.sandboxes().create(options)
             info = self._guest.info()
             if (info.location, info.kind, info.runtime) != ("local", "vm", "qemu"):
                 raise ComputerError("The runtime did not create a local QEMU VM.")
+            self._stage = "Connecting to the guest desktop"
             self._desktop = await self._guest.spacesd(30_000)
             await self._capture(observe=False)
             self._phase = "ready"
+            self._stage = "Desktop ready"
             return self._status()
-        except BaseException:
+        except BaseException as exc:
             self._phase = "error"
+            self._stage = "Startup failed"
+            self._error = self._startup_error(exc)
             self._desktop = None
-            if self._guest is not None:
-                try:
-                    await asyncio.shield(self._guest.delete())
-                    self._guest = None
-                except Exception:
-                    logger.exception("Could not delete failed computer; /computer stop can retry")
-            raise
+            try:
+                await asyncio.shield(self._cleanup_guest())
+            except Exception:
+                logger.exception("Could not delete failed computer; /computer stop can retry")
+                self._error += " Cleanup failed; /computer stop can retry."
+            if not isinstance(exc, Exception):
+                raise
+            raise ComputerError(self._error) from exc
         finally:
             self._starting = None
+
+    def _startup_error(self, exc: BaseException) -> str:
+        """Keep the failure visible, including a recognized Windows boot failure."""
+        message = str(exc) or "Computer startup was cancelled."
+        if self._name is not None:
+            home = Path(os.environ.get("CUA_HOME", str(Path.home() / ".cua")))
+            log = home / "vmm" / "qemu" / self._name / "qemu.log"
+            try:
+                with log.open("rb") as stream:
+                    stream.seek(max(0, log.stat().st_size - 8192))
+                    tail = stream.read(8192)
+                if b"WHPX: Unexpected VP exit code" in tail:
+                    message += (
+                        " QEMU's Windows Hypervisor Platform (WHPX) backend failed during boot "
+                        "(Unexpected VP exit code). This is not an image download or Nova's "
+                        "input pause. Check QEMU/WHPX compatibility before retrying."
+                    )
+            except OSError:
+                pass
+        return message
+
+    async def _cleanup_guest(self) -> None:
+        """Delete only this session's guest, even if create failed before returning a handle."""
+        if self._guest is not None:
+            await self._guest.delete()
+            self._guest = None
+        elif self._client is not None and self._name is not None:
+            boxes = self._client.sandboxes()
+            await boxes.cancel_create(self._name)
+            for info in await boxes.list("local"):
+                if info.name == self._name and info.location == "local":
+                    await boxes.delete("local:" + self._name)
+        self._name = None
 
     async def _stop(self) -> dict:
         self._paused = True
         self._phase = "stopping"
+        self._stage = "Stopping and deleting the guest"
         if self._starting is not None:
             task = self._starting
-            if not task.cancelling():
+            cancelled = None
+            if self._client is not None and self._name is not None:
+                try:
+                    cancelled = await self._client.sandboxes().cancel_create(self._name)
+                except Exception:
+                    logger.exception("SDK startup cancellation failed; retrying during cleanup")
+            if cancelled is None and not task.done() and not task.cancelling():
                 task.cancel()
             await asyncio.gather(task, return_exceptions=True)
         async with self._input_lock:
-            if self._guest is not None:
-                try:
-                    await self._guest.delete()
-                except Exception as exc:
-                    self._phase = "error"
-                    message = f"Could not delete the VM: {exc}. Retry /computer stop."
-                    raise ComputerError(message) from exc
+            try:
+                await self._cleanup_guest()
+            except Exception as exc:
+                self._phase = "error"
+                self._error = f"Could not delete the VM: {exc}. Retry /computer stop."
+                raise ComputerError(self._error) from exc
             self._guest = self._desktop = self._observation = None
             self._name = None
             self._frame = b""
             self._phase = "stopped"
+            self._stage = "Computer stopped"
+            self._error = ""
         return self._status()
 
     async def _capture(self, *, observe: bool) -> list[dict]:

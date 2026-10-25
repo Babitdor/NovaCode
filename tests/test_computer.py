@@ -98,7 +98,12 @@ def sdk(monkeypatch: pytest.MonkeyPatch):
         spacesd=AsyncMock(return_value=desktop),
         delete=AsyncMock(),
     )
-    boxes = SimpleNamespace(create=AsyncMock(return_value=guest))
+    boxes = SimpleNamespace(
+        create=AsyncMock(return_value=guest),
+        cancel_create=AsyncMock(return_value=None),
+        list=AsyncMock(return_value=[]),
+        delete=AsyncMock(),
+    )
     doctor = AsyncMock(
         return_value=SimpleNamespace(
             report_json=json.dumps(
@@ -262,6 +267,97 @@ async def test_stop_cancels_start_and_deletes_created_guest(sdk: SimpleNamespace
         await start
     sdk.guest.delete.assert_awaited_once()
     assert (await computer.call("status"))["phase"] == "stopped"
+
+
+async def test_failed_create_cleans_only_its_named_guest_and_retains_error(sdk: SimpleNamespace):
+    computer = runtime.get_computer("failed-before-handle")
+
+    async def fail(options: object) -> None:
+        sdk.boxes.list.return_value = [
+            SimpleNamespace(name=options.name, location="local"),
+            SimpleNamespace(name="unrelated", location="local"),
+        ]
+        message = "qemu started but VM status is 'paused'"
+        raise RuntimeError(message)
+
+    sdk.boxes.create.side_effect = fail
+    with pytest.raises(runtime.ComputerError, match="VM status is 'paused'"):
+        await computer.call("start")
+    name = sdk.boxes.create.call_args.args[0].name
+    sdk.boxes.cancel_create.assert_awaited_once_with(name)
+    sdk.boxes.delete.assert_awaited_once_with("local:" + name)
+    status = await computer.call("status")
+    assert status["phase"] == "error"
+    assert "paused" in status["error"]
+    assert computer._name is None
+    for operation in ("pause", "resume"):
+        with pytest.raises(runtime.ComputerError, match="cannot recover a failed boot"):
+            await computer.call(operation)
+    await computer.call("stop")
+    assert (await computer.call("status"))["error"] == ""
+
+
+async def test_failed_named_cleanup_can_be_retried(sdk: SimpleNamespace):
+    computer = runtime.get_computer("named-cleanup-retry")
+
+    async def fail(options: object) -> None:
+        sdk.boxes.list.return_value = [SimpleNamespace(name=options.name, location="local")]
+        message = "boot failed"
+        raise RuntimeError(message)
+
+    sdk.boxes.create.side_effect = fail
+    sdk.boxes.delete.side_effect = RuntimeError("runtime busy")
+    with pytest.raises(runtime.ComputerError, match="Cleanup failed"):
+        await computer.call("start")
+    assert computer._name is not None
+    sdk.boxes.delete.side_effect = None
+    await computer.call("stop")
+    assert computer._name is None
+
+
+async def test_stop_cancels_native_creation_and_reports_startup_stage(sdk: SimpleNamespace):
+    computer = runtime.get_computer("native-create-cancel")
+    entered = threading.Event()
+    released = asyncio.Event()
+
+    async def creating(_options: object) -> None:
+        entered.set()
+        await released.wait()
+        message = "native create cancelled"
+        raise RuntimeError(message)
+
+    async def cancel(name: str) -> str:
+        released.set()
+        return name
+
+    sdk.boxes.create.side_effect = creating
+    sdk.boxes.cancel_create.side_effect = cancel
+    start = asyncio.create_task(computer.call("start"))
+    assert await asyncio.to_thread(entered.wait, 2)
+    status = await computer.call("status")
+    assert "booting QEMU" in status["stage"]
+    assert status["elapsed_seconds"] >= 0
+    await computer.call("stop")
+    with pytest.raises(runtime.ComputerError, match="native create cancelled"):
+        await start
+    assert (await computer.call("status"))["phase"] == "stopped"
+
+
+def test_whpx_failure_is_diagnosed_without_exposing_log_contents(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    monkeypatch.setenv("CUA_HOME", str(tmp_path))
+    computer = runtime.Computer()
+    computer._name = "nova-test"
+    directory = tmp_path / "vmm" / "qemu" / "nova-test"
+    directory.mkdir(parents=True)
+    (directory / "qemu.log").write_text(
+        "private text\nWHPX: Unexpected VP exit code 4\n", encoding="utf-8"
+    )
+    error = computer._startup_error(RuntimeError("VM status is 'paused'"))
+    assert "WHPX" in error
+    assert "not an image download" in error
+    assert "private text" not in error
 
 
 async def test_missing_optional_dependency_is_actionable(monkeypatch: pytest.MonkeyPatch):

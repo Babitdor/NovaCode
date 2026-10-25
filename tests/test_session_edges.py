@@ -156,7 +156,7 @@ async def test_tab_completion_preserves_file_and_subagent_mentions(monkeypatch, 
         pane, send, controller = await setup(app, monkeypatch)
         monkeypatch.setattr(settings, "get_workspace_root", lambda: tmp_path)
         monkeypatch.setattr(app, "_get_agent_names", lambda: ["backend"])
-        assert "@tab:b" in app._palette_candidates("@tab:")
+        assert "@tab:backend" in app._palette_candidates("@tab:")
         assert "@tab:backend" in app._palette_candidates("@tab:back")
         assert app._resolve_tab_mention("@backend question") is None
         monkeypatch.setattr(app, "_get_agent_names", lambda: [])
