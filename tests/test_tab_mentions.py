@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
@@ -34,8 +35,9 @@ def test_quoted_names_keep_ambiguity_and_missing_message_errors():
 
 
 @pytest.mark.parametrize("accept", ["tab", "enter", "click"])
+@pytest.mark.parametrize("search_delay", [0, 0.3])
 async def test_completion_matches_project_and_inserts_only_address(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, accept: str
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, accept: str, search_delay: float
 ):
     app = _app()
     async with app.run_test() as pilot:
@@ -46,10 +48,23 @@ async def test_completion_matches_project_and_inserts_only_address(
         assert app._palette_candidates("@tab:backend") == [expected]
         assert app._palette_candidates('@tab:"API te') == [expected]
         assert app._palette_candidates("@tab:b") == [expected]
+        candidates = app._palette_candidates
+
+        def delayed_candidates(value: str, cursor: int | None = None) -> list[str]:
+            time.sleep(search_delay)
+            return candidates(value, cursor)
+
+        monkeypatch.setattr(app, "_palette_candidates", delayed_candidates)
         prompt = app.query_one("#prompt")
         prompt.value = "@tab:backend"
         prompt.cursor_position = len(prompt.value)
-        await pilot.pause(0.2)
+        # Flush Changed messages, then await the debounced search instead of
+        # assuming the runner can finish it within a fixed wall-clock delay.
+        await pilot.pause()
+        for worker in list(app.workers):
+            if worker.group == "palette":
+                await worker.wait()
+        await pilot.pause()
         palette = app.query_one("#cmdpalette", OptionList)
         assert palette.display
         option = palette.get_option_at_index(0)

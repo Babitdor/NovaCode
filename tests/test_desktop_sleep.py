@@ -7,7 +7,7 @@ refusal outside it, and the fact that no test here ever suspends anything.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
@@ -18,11 +18,6 @@ from novacode_cli.tools import desktop_tools, sleep_desktop
 if TYPE_CHECKING:
     from pathlib import Path
 
-#: The developer's own zone. The tool localises the clock it reads, so a frozen
-#: instant has to be in this zone or the conversion would shift the hour the
-#: overnight window is about.
-_LOCAL_TZ = datetime.now(UTC).astimezone().tzinfo
-
 
 def _freeze(monkeypatch: pytest.MonkeyPatch, when: datetime) -> None:
     """Pin the clock the tool reads, so the overnight window is testable."""
@@ -31,7 +26,9 @@ def _freeze(monkeypatch: pytest.MonkeyPatch, when: datetime) -> None:
 
 def _at(hour: int, minute: int = 0) -> datetime:
     """A fixed instant on the local wall clock."""
-    return datetime(2026, 9, 29, hour, minute, tzinfo=_LOCAL_TZ)
+    # Resolve the offset for the frozen date, which may be on the other side
+    # of a daylight-saving transition from the day these tests are run.
+    return datetime(2026, 9, 29, hour, minute).astimezone()
 
 
 @pytest.fixture
@@ -110,6 +107,7 @@ def test_force_schedules_it_outside_the_window(
 def test_the_overnight_call_suspends_with_a_grace_period(
     spawned: list[list[str]],
     monkeypatch: pytest.MonkeyPatch,
+    *,
     on_windows: bool,
     platform: str,
 ) -> None:
