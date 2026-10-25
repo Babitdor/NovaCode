@@ -6,9 +6,11 @@ import asyncio
 import base64
 import http.client
 import json
+import os
 import sys
 import threading
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
 
@@ -19,9 +21,52 @@ from novacode_cli.computer import runtime
 from novacode_cli.computer.preview import ComputerPreview
 from novacode_cli.tools.computer_tools import ComputerActionInput, build_computer_tools
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2ioAAAAASUVORK5CYII="
 )
+
+
+def test_standard_windows_qemu_install_is_discovered_with_stale_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("PROGRAMFILES", str(tmp_path))
+    monkeypatch.setenv("PATH", str(tmp_path / "old-bin"))
+    monkeypatch.setattr(runtime.shutil, "which", lambda _name: None)
+    directory = tmp_path / "qemu"
+    directory.mkdir()
+    for name in ("qemu-system-x86_64.exe", "qemu-img.exe"):
+        (directory / name).touch()
+    runtime._prepare_qemu_path()
+    assert os.environ["PATH"].split(os.pathsep) == [str(tmp_path / "old-bin"), str(directory)]
+
+
+def test_existing_qemu_path_keeps_precedence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setattr(runtime.shutil, "which", lambda name: str(tmp_path / name))
+    runtime._prepare_qemu_path()
+    assert os.environ["PATH"] == str(tmp_path)
+
+
+@pytest.mark.parametrize("platform", ["win32", "linux"])
+def test_incomplete_or_non_windows_install_does_not_change_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str
+):
+    monkeypatch.setattr(sys, "platform", platform)
+    monkeypatch.setenv("PROGRAMFILES", str(tmp_path))
+    monkeypatch.setenv("PATH", str(tmp_path / "old-bin"))
+    monkeypatch.setattr(runtime.shutil, "which", lambda _name: None)
+    directory = tmp_path / "qemu"
+    directory.mkdir()
+    (directory / "qemu-system-x86_64.exe").touch()
+    if platform == "linux":
+        (directory / "qemu-img.exe").touch()
+    runtime._prepare_qemu_path()
+    assert os.environ["PATH"] == str(tmp_path / "old-bin")
 
 
 @pytest.fixture
@@ -183,11 +228,20 @@ async def test_unexpected_runtime_and_failed_initialization_clean_up(sdk: Simple
 async def test_missing_qemu_fails_before_downloading_a_guest(sdk: SimpleNamespace):
     sdk.doctor.return_value = SimpleNamespace(
         report_json=json.dumps(
-            {"backends": [{"backend": "qemu", "ready": False, "provisionable": False}]}
+            {
+                "backends": [
+                    {
+                        "backend": "qemu",
+                        "ready": False,
+                        "provisionable": False,
+                        "detail": "qemu-img is missing",
+                    }
+                ]
+            }
         )
     )
     computer = runtime.get_computer("missing-qemu")
-    with pytest.raises(runtime.ComputerError, match="Install QEMU"):
+    with pytest.raises(runtime.ComputerError, match="qemu-img is missing"):
         await computer.call("start")
     sdk.boxes.create.assert_not_awaited()
 

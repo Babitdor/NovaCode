@@ -34,6 +34,10 @@ binaries available on PATH. On Windows:
 winget install --id SoftwareFreedomConservancy.QEMU --exact
 ```
 
+Nova also checks the standard `%PROGRAMFILES%\qemu` directory when the required
+binaries are missing from its inherited PATH. Custom installations still need
+their directory on PATH. This fallback changes only Nova's process environment.
+
 Restart the terminal after installation and add QEMU's installation directory
 to PATH if needed. Existing Nova and terminal processes retain their old PATH,
 even after updating the saved Windows environment. To refresh the current

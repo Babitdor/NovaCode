@@ -13,8 +13,11 @@ import logging
 import math
 import os
 import secrets
+import shutil
+import sys
 import threading
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -30,6 +33,19 @@ INSTALL_HINT = (
 
 class ComputerError(RuntimeError):
     """A desktop operation could not complete safely."""
+
+
+def _prepare_qemu_path() -> None:
+    """Find a standard Windows install when this process inherited an old PATH."""
+    if sys.platform != "win32":
+        return
+    binaries = ("qemu-system-x86_64.exe", "qemu-img.exe")
+    if all(shutil.which(binary) for binary in binaries):
+        return
+    directory = Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "qemu"
+    if directory.is_absolute() and all((directory / binary).is_file() for binary in binaries):
+        current = os.environ.get("PATH", "")
+        os.environ["PATH"] = current + os.pathsep + str(directory) if current else str(directory)
 
 
 class Computer:
@@ -152,6 +168,7 @@ class Computer:
             raise ComputerError("The computer is already starting or stopping.")
         if self._guest is not None:
             raise ComputerError("Stop the previous computer before starting another one.")
+        _prepare_qemu_path()
         os.environ.setdefault("CUA_TELEMETRY", "0")
         try:
             self._sdk = importlib.import_module("cua")
@@ -165,10 +182,16 @@ class Computer:
             report = json.loads((await client.local().doctor()).report_json)
             qemu = next((b for b in report["backends"] if b["backend"] == "qemu"), None)
             if qemu is None or (not qemu["ready"] and not qemu["provisionable"]):
-                raise ComputerError(
-                    "QEMU is not available. Install QEMU and add its binaries to PATH. "
+                detail = (
+                    qemu.get("detail", "QEMU backend missing") if qemu else "QEMU backend missing"
+                )
+                message = (
+                    f"QEMU is not available: {detail}. "
+                    "Install QEMU and add its binaries to PATH in the terminal launching Nova. "
+                    "Fully restart Nova and its terminal application after changing PATH. "
                     "Check prerequisites with: uvx --from cua==0.9.0 cua runtime --json doctor"
                 )
+                raise ComputerError(message)
             self._name = "nova-" + secrets.token_hex(8)
             options = self._sdk.SandboxCreateOptions(
                 on="local",
