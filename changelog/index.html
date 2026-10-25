@@ -152,9 +152,11 @@ h1{font-size:clamp(2rem,3vw+.6rem,2.8rem);font-weight:620;letter-spacing:-.035em
 /* .topnav a is one class plus a type, so it outranks .btn-primary: restate the button's own
    colour here or the primary action renders muted-on-accent (1.29:1). */
 .topnav a.btn-primary{color:var(--on-accent)}
+.topnav .btn-primary{min-height:44px;padding:0 14px;font-size:.86rem}
 .topnav a:hover{color:var(--text)}
-.tn-brand{display:inline-flex;align-items:center;gap:10px;font:600 .9rem/1 var(--mono);color:var(--text)}
-.tn-brand img{width:26px;height:26px;border-radius:7px}
+.tn-brand{display:inline-flex;flex:none;align-items:center;min-height:44px;gap:10px;font:600 .9rem/1 var(--mono);color:var(--text)}
+.tn-brand picture{display:flex;flex:none}
+.tn-brand img{width:32px;height:32px;border-radius:50%;border:1px solid var(--line)}
 .tn-brand b{color:var(--accent)}
 .tn-brand span{color:var(--muted);font-weight:500}
 .tn-page{font:500 .86rem/1 var(--mono);color:var(--text)}
@@ -263,7 +265,8 @@ footer{border-top:1px solid var(--line);padding-block:28px 72px}
 .theme-btn[aria-pressed="true"] .i-sun{display:block}
 @media (hover: hover){.theme-btn:hover{border-color:var(--accent);color:var(--accent)}.theme-btn:hover svg{rotate:-30deg}}
 .theme-btn:active{transform:scale(.94)}
-@media (max-width:420px){.topnav{gap:6px}.theme-btn{width:34px;height:34px}}
+@media (max-width:620px){.topnav .theme-btn{width:44px;height:44px}.topnav .tn-aux[href="../docs/index.html"]{min-height:44px}}
+@media (max-width:420px){.topnav{gap:6px}.tn-page{display:none}}
 </style>
 <link rel="canonical" href="https://babitdor.github.io/NovaCode/changelog/">
 <meta name="twitter:card" content="summary_large_image">
@@ -273,7 +276,10 @@ footer{border-top:1px solid var(--line);padding-block:28px 72px}
 
 <header class="topnav">
   <a class="tn-brand" href="../index.html" aria-label="nova@code:~$, back to the landing page">
-    <img src="../assets/emblem-128.webp" width="26" height="26" alt="">
+    <picture>
+      <source data-theme-source media="(prefers-color-scheme: dark)" srcset="../assets/avatar-dark.webp">
+      <img src="../assets/avatar-light.webp" width="32" height="32" alt="">
+    </picture>
     <span><b>nova</b>@code:~$</span>
   </a>
   <span class="tn-page">changelog</span>
@@ -282,7 +288,7 @@ footer{border-top:1px solid var(--line);padding-block:28px 72px}
   <a class="tn-aux" href="../docs/index.html">Docs</a>
   <a class="tn-aux" href="../index.html">Landing</a>
   <button class="theme-btn" type="button" data-theme-toggle aria-pressed="false" aria-label="Dark theme" hidden><svg class="i-moon" viewBox="0 0 256 256" aria-hidden="true"><path fill="currentColor" d="M233.54,142.23a8,8,0,0,0-8-2,88.08,88.08,0,0,1-109.8-109.8,8,8,0,0,0-10-10,104.84,104.84,0,0,0-52.91,37A104,104,0,0,0,136,224a103.09,103.09,0,0,0,62.52-20.88,104.84,104.84,0,0,0,37-52.91A8,8,0,0,0,233.54,142.23ZM188.9,190.36A88,88,0,0,1,65.66,67.11a89,89,0,0,1,31.4-26A106,106,0,0,0,96,56,104.11,104.11,0,0,0,200,160a106,106,0,0,0,14.92-1.06A89,89,0,0,1,188.9,190.36Z"/></svg><svg class="i-sun" viewBox="0 0 256 256" aria-hidden="true"><path fill="currentColor" d="M120,40V16a8,8,0,0,1,16,0V40a8,8,0,0,1-16,0Zm72,88a64,64,0,1,1-64-64A64.07,64.07,0,0,1,192,128Zm-16,0a48,48,0,1,0-48,48A48.05,48.05,0,0,0,176,128ZM58.34,69.66A8,8,0,0,0,69.66,58.34l-16-16A8,8,0,0,0,42.34,53.66Zm0,116.68-16,16a8,8,0,0,0,11.32,11.32l16-16a8,8,0,0,0-11.32-11.32ZM192,72a8,8,0,0,0,5.66-2.34l16-16a8,8,0,0,0-11.32-11.32l-16,16A8,8,0,0,0,192,72Zm5.66,114.34a8,8,0,0,0-11.32,11.32l16,16a8,8,0,0,0,11.32-11.32ZM48,128a8,8,0,0,0-8-8H16a8,8,0,0,0,0,16H40A8,8,0,0,0,48,128Zm80,80a8,8,0,0,0-8,8v24a8,8,0,0,0,16,0V216A8,8,0,0,0,128,208Zm112-88H216a8,8,0,0,0,0,16h24a8,8,0,0,0,0-16Z"/></svg></button>
-      <a class="btn btn-primary" href="../index.html#install" style="min-height:38px;padding:0 16px;font-size:.88rem">Install</a>
+      <a class="btn btn-primary" href="../index.html#install">Install</a>
 </header>
 
 <main id="main">

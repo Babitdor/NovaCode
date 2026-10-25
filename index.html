@@ -13,8 +13,6 @@
 <meta name="theme-color" content="#0e0e10" media="(prefers-color-scheme: dark)">
 <link rel="icon" type="image/png" href="assets/favicon.png">
 <link rel="preload" as="font" type="font/woff2" href="assets/fonts/geist-var.woff2" crossorigin>
-<link rel="preload" as="image" href="assets/hero.webp" imagesrcset="assets/hero-960.webp 960w, assets/hero.webp 1672w" imagesizes="100vw" fetchpriority="high">
-<link rel="preload" as="image" href="assets/hero-fg.webp" imagesrcset="assets/hero-fg-960.webp 960w, assets/hero-fg.webp 1672w" imagesizes="100vw" fetchpriority="high">
 <script type="application/ld+json">
 {"@context":"https://schema.org","@type":"SoftwareApplication","name":"Nova","alternateName":"NovaCode","applicationCategory":"DeveloperApplication","softwareVersion":"1.0.99","operatingSystem":"macOS, Linux, Windows","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"license":"https://opensource.org/licenses/MIT","codeRepository":"https://github.com/Babitdor/NovaCode","description":"An open-source coding agent for the terminal with a memory wiki you can read and search, plans you approve, parallel project sessions and hosted or local models."}
 </script>
@@ -239,57 +237,42 @@ section{padding-block:var(--pad)}
 
 /* ---------- nav ---------- */
 .nav{
-  /* Transparent over the hero art, which runs up underneath it. The art is a
-     night scene in both themes, so until the page has scrolled past it the
-     nav uses light text regardless of theme. */
+  /* The wordmark, controls and scrim follow the hero's light/dark palette. */
   position:fixed; inset:0 0 auto 0; z-index:var(--z-nav);
   background:transparent; border-bottom:1px solid transparent;
   transition:background-color .3s, border-color .3s, backdrop-filter .3s;
-  /* Over the art, measured with the nav's own text hidden so the plate is the
-     scrim alone, against the brightest pixel under each label: across
-     390-1920px the #e6e6ec links bottom out at 4.75:1 where the moon sits
-     under them on wide screens, and the accent wordmark at 5.37:1 over the
-     lit code panes. Those two bound how thin the scrim can get. */
-  --text:#f3f3f5; --muted:#e6e6ec; --line:rgb(255 255 255 / .34);
-  --accent:#f4723f; --on-accent:#16110e;  /* the dark theme's accent: it has to read on the art */
-}
-/* The art is bright in places — the code panes near the top — and the nav floats
-   on it. A scrim that belongs to the header, not to the art, holds every link
-   above 4.5:1 over the brightest pane and fades out below the bar. The art keeps
-   its own softer vignette underneath. */
-.nav::before{
-  content:""; position:absolute; inset:0 0 auto 0; height:150%; z-index:-1;
-  pointer-events:none;
-  background:linear-gradient(180deg,
-    rgb(8 6 14 / .8) 0, rgb(8 6 14 / .68) 62%, rgb(8 6 14 / 0) 100%);
-  transition:opacity .3s;
-}
-.nav.stuck::before, .nav.menu-open::before{opacity:0}
-/* Past the art it needs something behind it to stay readable: glass, not a slab. */
-.nav.stuck, .nav.menu-open{
-  --text:var(--page-text); --muted:var(--page-muted); --line:var(--page-line);
+  --text:var(--page-text); --muted:var(--page-text); --line:var(--page-line);
   --accent:var(--page-accent); --on-accent:var(--page-on-accent);
-  background:color-mix(in srgb, var(--bg) 62%, transparent);
-  backdrop-filter:saturate(160%) blur(16px); -webkit-backdrop-filter:saturate(160%) blur(16px);
-  border-bottom-color:var(--line);
 }
-.nav.menu-open{background:var(--bg)}
+.nav-row{
+  display:flex; align-items:center; gap:20px; height:56px;
+  position:relative; isolation:isolate;
+  width:calc(100% - 32px); margin-block:12px; padding-inline:16px;
+  border:1px solid transparent; border-radius:999px;
+  transition:background-color .3s, border-color .3s, box-shadow .3s;
+}
+.nav-row::before{content:""; position:absolute; inset:0; z-index:-1; border-radius:inherit}
+/* The full header stays transparent; only the compact row gains glass on scroll. */
+.nav.stuck .nav-row, .nav.menu-open .nav-row{
+  background:color-mix(in srgb, var(--bg) 82%, transparent);
+  border-color:var(--line); box-shadow:var(--shadow);
+}
+.nav.stuck .nav-row::before, .nav.menu-open .nav-row::before{backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px)}
 @media (prefers-reduced-transparency: reduce){
-  .nav.stuck, .nav.menu-open{background:var(--bg); backdrop-filter:none; -webkit-backdrop-filter:none}
+  .nav.stuck .nav-row, .nav.menu-open .nav-row{background:var(--bg); backdrop-filter:none; -webkit-backdrop-filter:none}
+  .nav.stuck .nav-row::before, .nav.menu-open .nav-row::before{backdrop-filter:none; -webkit-backdrop-filter:none}
 }
-/* Gaps measured with the brand held at full width: nine links, Source, Install and the
-   theme toggle fit the 1160px content width at 20/18 from 1165px up (0px over at 1165). */
-.nav-row{display:flex; align-items:center; gap:20px; height:64px}
-.brand{flex:none; display:inline-flex; align-items:center; gap:10px; text-decoration:none; font:600 .95rem/1 var(--mono)}
+.brand{flex:none; display:inline-flex; align-items:center; min-height:44px; gap:10px; text-decoration:none; font:600 .95rem/1 var(--mono)}
 .brand b{color:var(--accent)} .brand span{color:var(--muted); font-weight:500}
-.brand img{width:26px; height:26px; border-radius:7px}
+.brand picture{display:flex; flex:none}
+.brand img{width:32px; height:32px; border-radius:50%; border:1px solid var(--line)}
 .nav-links{display:flex; gap:18px; margin-left:auto}
 .nav-links a{
   min-height:28px;display:inline-flex;align-items:center;
   position:relative; text-decoration:none; color:var(--muted);
   font:500 .86rem/1 var(--mono); transition:color .2s;
 }
-.nav-links a::after{content:"/"; color:var(--line); margin-left:1px}
+.nav-links .nav-secondary{display:none}
 /* The nav answers with a rule that draws under the label, not a colour swap. */
 .nav-links a::before{
   content:""; position:absolute; left:0; right:0; bottom:-7px; height:1px;
@@ -314,6 +297,20 @@ section{padding-block:var(--pad)}
 
 /* ---------- hero: the art, full-bleed, with the prompt docked on its lower edge ---------- */
 .hero{position:relative; padding:0}
+.art{view-transition-name:hero-art}
+.nav{view-transition-name:hero-nav}
+.dock{view-transition-name:hero-dock}
+::view-transition{pointer-events:none}
+::view-transition-old(root), ::view-transition-new(root){animation:none; mix-blend-mode:normal}
+::view-transition-group(root){z-index:0}
+::view-transition-group(hero-art){z-index:1; animation-duration:.75s; animation-timing-function:var(--ease)}
+::view-transition-group(hero-nav), ::view-transition-group(hero-dock){z-index:2; animation:none}
+::view-transition-old(hero-nav), ::view-transition-old(hero-dock){display:none}
+::view-transition-new(hero-nav), ::view-transition-new(hero-dock){animation:none; mix-blend-mode:normal}
+::view-transition-old(hero-art){animation:hero-theme-out .55s var(--ease) both; mix-blend-mode:normal}
+::view-transition-new(hero-art){animation:hero-theme-in .75s var(--ease) both; mix-blend-mode:normal}
+@keyframes hero-theme-out{to{opacity:0; filter:blur(3px)}}
+@keyframes hero-theme-in{from{opacity:0; filter:blur(5px); transform:scale(1.015)} to{opacity:1; filter:blur(0); transform:none}}
 .art{
   /* Short enough that the docked prompt clears the nav above and the status
      line below: the first screen ends on the Install button, not under it. */
@@ -328,7 +325,7 @@ section{padding-block:var(--pad)}
 .art::after{
   content:""; position:absolute; inset:0; z-index:2; pointer-events:none;
   background:
-    linear-gradient(180deg, rgb(8 6 14 / .82) 0, rgb(8 6 14 / .5) 9%, transparent 24%),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg) 40%, transparent) 0, transparent 24%),
     linear-gradient(180deg, transparent 0, transparent 62%, color-mix(in srgb, var(--bg) 80%, transparent) 90%, var(--bg) 100%);
 }
 .dock{position:relative; z-index:1; margin-top:-58px; display:flex; justify-content:center; padding-inline:var(--gutter)}
@@ -691,7 +688,7 @@ details p{color:var(--muted); padding:0 44px 24px 0; max-width:64ch}
 .close-box h2{max-width:18ch}
 footer{border-top:1px solid var(--line); padding-block:28px 72px}
 .foot{display:flex; flex-wrap:wrap; gap:14px 28px; align-items:center; color:var(--muted); font-size:.93rem}
-.foot nav{display:flex; gap:22px; margin-left:auto}
+.foot nav{display:flex; flex-wrap:wrap; gap:16px 22px; margin-left:auto; min-width:0}
 .foot a{display:inline-block; padding-block:2px; text-decoration:none; transition:color .2s}
 .foot a:hover{color:var(--text)}
 
@@ -748,12 +745,9 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
 @keyframes artin{to{opacity:1; transform:none}}
 @keyframes pulse{0%,100%{opacity:1} 50%{opacity:.45}}
 
-/* Parallax in two planes: the room slides down at 40% of the scroll speed and
-   the coder at the desk at 24%, so she rises against the sky and the city while
-   both sink behind the dock. The near layer only ever moves up relative to the
-   room, so the painted-over patch behind her stays covered. It animates
-   `translate`, which stacks with the entrance's `transform`. Browsers without
-   scroll-driven animations keep both layers still and aligned. */
+/* The complete scene drifts at 40% of scroll speed. WebGL adds bounded depth
+   within that scene; the CSS fallback never separates a cutout from its source.
+   `translate` stacks with the entrance's `transform`. */
 @supports (animation-timeline: scroll()){
   @media (prefers-reduced-motion: no-preference){
     .js .art img{
@@ -761,22 +755,17 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
       animation-timeline:auto, scroll(root block);
       animation-range:normal, 0 100vh;
     }
-    .js .art .near img{animation-name:artin, drift-near}
   }
 }
 @keyframes drift{to{translate:0 40vh}}
-@keyframes drift-near{to{translate:0 24vh}}
 
-/* Pointer: the room and the desk lean away from the cursor (or a finger held on
-   the art), the desk twice as far, and a pale moonlight follows it. They lean by
-   the same amount vertically, so only her sides ever uncover the room. The page
-   script sets --mx/--my (-1 to 1) and --gx/--gy. */
+/* Pointer/touch fallback: lean the intact scene. Only a desktop mouse adds light.
+   The script sets --mx/--my (-1 to 1) and --gx/--gy. */
 @media (prefers-reduced-motion: no-preference){
   .js .art picture{
     transform:translate3d(calc(var(--mx, 0) * -9px), calc(var(--my, 0) * -6px), 0) scale(1.03);
     transition:transform 1.1s var(--ease);
   }
-  .js .art .near{transform:translate3d(calc(var(--mx, 0) * -19px), calc(var(--my, 0) * -6px), 0) scale(1.03)}
   .art::before{
     content:""; position:absolute; inset:0; z-index:1; pointer-events:none;
     background:radial-gradient(circle 280px at var(--gx, 50%) var(--gy, 50%), rgb(186 160 255 / .34), transparent 70%);
@@ -787,25 +776,19 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
   }
 }
 
-/* The 3D photo (page script, section 10): one canvas draws both layers with a
-   depth map, so every pixel moves by its own distance. It takes over from the
-   layers only once it has drawn, and keeps their alt text in the tree. */
-.art canvas{position:absolute; inset:0; width:100%; height:100%; display:block}
+/* The depth photo takes over only after drawing the current theme's artwork.
+   Its accessible picture remains underneath as the fallback. */
+.art canvas{position:absolute; inset:0; width:100%; height:100%; display:block; visibility:hidden}
+.art.gl canvas{visibility:visible}
 .art.gl picture{opacity:0}
 .art.gl::before{display:none}
-.hero-tilt{
-  position:absolute; z-index:3; right:var(--gutter); bottom:76px;
-  min-height:44px; padding:8px 16px; border:1px solid var(--line);
-  border-radius:999px; background:var(--bg); color:var(--text);
-  font:inherit; font-size:.85rem; cursor:pointer;
-}
-.hero-tilt[hidden]{display:none}
 @supports (animation-timeline: scroll()){
   @media (prefers-reduced-motion: no-preference){
     .js .art canvas{animation:drift linear both; animation-timeline:scroll(root block); animation-range:0 100vh}
   }
 }
 @media (prefers-reduced-motion: reduce){
+  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*){animation:none !important}
   html{scroll-behavior:auto}
   *,*::before,*::after{animation:none !important; transition:none !important}
 }
@@ -823,19 +806,20 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
 /* ---------- below 1080px: the nav becomes one tap away ---------- */
 @media (max-width: 1080px){
   .nav-links{
-    position:fixed; inset:64px 0 auto 0; z-index:var(--z-menu);
+    position:fixed; inset:80px 16px auto 16px; z-index:var(--z-menu);
     display:none; flex-direction:column; gap:0; margin:0;
-    background:var(--bg); border-bottom:1px solid var(--line);
+    background:var(--bg); border:1px solid var(--line); border-radius:22px;
     padding:6px var(--gutter) 22px;
     /* Nine rows plus their rules are taller than a landscape phone: 9 x 49px of link
        is ~470px inside a panel that starts 64px down. Cap it at the space below the
        bar — minus the 34px status line, which is fixed at the bottom and outranks the
        panel — so the panel scrolls instead of its last section hiding under the bar.
        Measured at 900x430: 451px of links in 332px of panel, last link reachable. */
-    max-height:calc(100dvh - 98px); overflow:auto; overscroll-behavior:contain;
+    max-height:calc(100dvh - 126px); overflow:auto; overscroll-behavior:contain;
   }
   .nav-links.open{display:flex}
   .nav-links a{padding:15px 0; font-size:1rem; border-bottom:1px solid var(--line)}
+  .nav-links .nav-secondary{display:flex}
   .nav-links a::after{display:none}
   .nav-links a::before{display:none}
   .menu-btn{display:inline-flex}
@@ -863,6 +847,7 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
      one break instead of losing its tail. */
   .cmdline{white-space:normal; overflow:visible; align-items:baseline; gap:.5ch}
   .cmdline .cm{overflow-wrap:anywhere}
+  .cmdline .typed{white-space:normal; overflow-wrap:anywhere; min-width:0}
   /* A deep path inside <code> is a single unbreakable word. */
   code{overflow-wrap:break-word}
   /* A command that still overflows would sit in a scroll container no keyboard
@@ -907,6 +892,8 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
   .foot nav{margin-left:0}
 }
 @media (max-width: 520px){
+  .nav-row{width:calc(100% - 16px); padding-inline:8px; margin-block:8px; gap:8px}
+  .nav .btn-primary{padding-inline:12px; font-size:.82rem}
   .cmd{flex-wrap:wrap}
   .statusline .where{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
   .dock-status span:last-child{margin-left:0}
@@ -937,6 +924,7 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
   .menu-btn span{position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap}
 }
 @media (max-width: 420px){.nav-row{gap:8px}}
+@media (max-width: 360px){.brand span{display:none}.brand{gap:8px}}
 </style>
 <link rel="canonical" href="https://babitdor.github.io/NovaCode/">
 <meta name="twitter:card" content="summary_large_image">
@@ -948,7 +936,10 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
 <header class="nav" id="nav">
   <div class="wrap nav-row">
     <a class="brand" href="#top" aria-label="nova @code, back to top">
-      <img src="assets/emblem-128.webp" alt="" width="26" height="26">
+      <picture>
+        <source data-theme-source media="(prefers-color-scheme: dark)" srcset="assets/avatar-dark.webp">
+        <img src="assets/avatar-light.webp" alt="" width="32" height="32">
+      </picture>
       <b>nova</b><span>@code</span>
     </a>
     <nav class="nav-links" id="nav-links" aria-label="Sections">
@@ -960,10 +951,10 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
       <a href="changelog/index.html">changelog</a>
       <a href="#memory">memory</a>
       <a href="#council">council</a>
-      <a href="#agents">agents</a>
+      <a class="nav-secondary" href="#agents">agents</a>
       <a href="#sessions">sessions</a>
-      <a href="#models">models</a>
-      <a href="#trust">trust</a>
+      <a class="nav-secondary" href="#models">models</a>
+      <a class="nav-secondary" href="#trust">trust</a>
       <a href="#faq">faq</a>
     </nav>
     <a class="btn btn-quiet" href="https://github.com/Babitdor/NovaCode">Source</a>
@@ -981,20 +972,10 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
   <section class="hero" id="top" data-chapter="~/desk">
     <div class="art">
       <picture>
-        <!-- Under ~960px the browser was still fetching the 1672w source (164 KB)
-             where the 960w one (67 KB) covers the slot, and the preload went
-             unused. One candidate up to 960px removes both problems. -->
-        <source media="(max-width: 960px)" type="image/webp" srcset="assets/hero-960.webp 960w" sizes="100vw">
-        <source type="image/webp" srcset="assets/hero-960.webp 960w, assets/hero.webp 1672w" sizes="100vw">
-        <img src="assets/hero.webp" width="1672" height="940" fetchpriority="high" decoding="async"
-             alt="Nova's workspace at night: a coder at a laptop by a tall window over the city, ringed by floating code panes, with a crescent moon and a glowing cat beside books labelled ideas, code, build and grow.">
-      </picture>
-      <!-- The coder, desk and laptop cut out of the same frame, so they can move
-           against the room behind them. At rest the two layers make the original. -->
-      <picture class="near">
-        <source media="(max-width: 960px)" type="image/webp" srcset="assets/hero-fg-960.webp 960w" sizes="100vw">
-        <source type="image/webp" srcset="assets/hero-fg-960.webp 960w, assets/hero-fg.webp 1672w" sizes="100vw">
-        <img src="assets/hero-fg.webp" width="1672" height="940" fetchpriority="high" decoding="async" alt="">
+        <source data-theme-source media="(prefers-color-scheme: dark)" type="image/webp" srcset="assets/hero-960.webp 960w, assets/hero.webp 1672w" sizes="100vw">
+        <img src="assets/hero-light.webp" srcset="assets/hero-light-960.webp 960w, assets/hero-light.webp 1672w" sizes="100vw"
+             width="1672" height="941" fetchpriority="high" decoding="async"
+             alt="Nova's workspace: a coder at a laptop by a tall window over the city, surrounded by floating code panes, a crescent moon and a glowing cat beside books labelled ideas, code, build and grow.">
       </picture>
     </div>
     <div class="dock">
@@ -2332,16 +2313,14 @@ status: awaiting your decision">
   }
 
   /* ---------- 10. the desk is a 3D photo: it leans with the pointer and the scroll ---------- */
-  /* The hero's two layers plus a depth map (assets/hero-depth.webp: red is the room,
-     green the coder) drawn in WebGL, so the moon, the city, the code panes and the
-     desk each move by their own distance, and the moonlight under the cursor lands
-     harder on what is near. Without WebGL, or under reduced motion, the CSS layers
-     and their lean stand in; the canvas replaces them only after its first frame. */
+  /* The intact themed artwork uses a continuous depth field (red: room,
+     green: coder). Bounded offsets keep the silhouette intact. CSS supplies
+     a complete fallback, including reduced motion and WebGL context loss. */
   var art = $(".art"), fine = window.matchMedia("(hover: hover) and (pointer: fine)");
   var glow = window.matchMedia("(min-width:901px) and (hover:hover) and (pointer:fine)");
   var aim = { x: 0, y: 0, lit: 0, lx: 0, ly: 0 }, photo = null, letGo = 0;
   if (art) {
-    var tiltOn = false, neutral = null, tiltButton = null;
+    var tiltOn = false, neutral = null;
     var point = function (x, y, light) {
       x = Math.min(Math.max(x, 0), 1); y = Math.min(Math.max(y, 0), 1);
       aim.x = x * 2 - 1; aim.y = y * 2 - 1; aim.lit = light && glow.matches ? 1 : 0; aim.lx = x; aim.ly = y;
@@ -2372,12 +2351,12 @@ status: awaiting your decision">
     /* A phone has no hover: touching the art is the look, and the scene settles
        back a moment after the finger lifts or the touch turns into a scroll. */
     art.addEventListener("pointerdown", function (e) {
-      if (calm || tiltOn || e.pointerType === "mouse" || e.target.closest(".hero-tilt")) return;
+      if (calm || tiltOn || e.pointerType === "mouse") return;
       window.clearTimeout(letGo);
       look(e);
     });
     var lift = function (e) {
-      if (tiltOn || e.pointerType === "mouse" || e.target.closest(".hero-tilt")) return;
+      if (tiltOn || e.pointerType === "mouse") return;
       window.clearTimeout(letGo);
       letGo = window.setTimeout(rest, 1400);
     };
@@ -2385,13 +2364,8 @@ status: awaiting your decision">
     art.addEventListener("pointercancel", lift);
     /* Device orientation supplies the same camera target as the pointer. The
        first reading is neutral, so the phone need not be held flat. Sensor
-       permission on iOS must be requested directly from a button gesture. */
+       permission on iOS must be requested from the first real interaction. */
     if (window.isSecureContext && window.DeviceOrientationEvent && navigator.maxTouchPoints > 0) {
-      tiltButton = document.createElement("button");
-      tiltButton.type = "button"; tiltButton.className = "hero-tilt";
-      tiltButton.textContent = "Enable tilt"; tiltButton.hidden = calm;
-      tiltButton.setAttribute("aria-pressed", "false");
-      art.appendChild(tiltButton);
       var orient = function (e) {
         if (calm || document.hidden || !Number.isFinite(e.beta) || !Number.isFinite(e.gamma)) return;
         if (art.getBoundingClientRect().bottom <= 0) { neutral = null; return; }
@@ -2406,79 +2380,70 @@ status: awaiting your decision">
       var stopTilt = function () {
         tiltOn = false; neutral = null;
         window.removeEventListener("deviceorientation", orient);
-        tiltButton.textContent = "Enable tilt";
-        tiltButton.setAttribute("aria-pressed", "false");
         rest();
       };
       var startTilt = function () {
         if (calm) return;
         window.clearTimeout(letGo); neutral = null; tiltOn = true;
         window.addEventListener("deviceorientation", orient, { passive: true });
-        tiltButton.textContent = "Disable tilt";
-        tiltButton.setAttribute("aria-pressed", "true");
-        tiltButton.title = "Tilt your phone to move the photo";
       };
-      // Start immediately unless the browser requires a permission gesture (iOS).
-      if (typeof window.DeviceOrientationEvent.requestPermission !== "function") startTilt();
-      tiltButton.addEventListener("click", async function () {
-        if (tiltOn) { stopTilt(); return; }
-        tiltButton.disabled = true;
-        try {
-          var sensor = window.DeviceOrientationEvent;
-          if (typeof sensor.requestPermission === "function" && await sensor.requestPermission() !== "granted") {
-            throw new Error("permission denied");
-          }
-          startTilt();
-        } catch (_) {
-          tiltButton.textContent = "Retry tilt";
-          tiltButton.title = "Allow motion and orientation access in your browser to enable tilt";
-        } finally { tiltButton.disabled = false; }
-      });
+      startTilt();
+      if (typeof window.DeviceOrientationEvent.requestPermission === "function") {
+        var requestTilt = async function () {
+          if (calm) return;
+          document.removeEventListener("pointerdown", requestTilt);
+          try {
+            if (await window.DeviceOrientationEvent.requestPermission() !== "granted") stopTilt();
+          } catch (_) { stopTilt(); } // Touch remains available if sensors are blocked.
+        };
+        document.addEventListener("pointerdown", requestTilt, { passive: true });
+      }
       document.addEventListener("visibilitychange", function () { neutral = null; rest(); });
       var tiltMotion = function () {
-        tiltButton.hidden = motion.matches;
         if (motion.matches) stopTilt();
+        else startTilt();
       };
       if (motion.addEventListener) motion.addEventListener("change", tiltMotion);
       else if (motion.addListener) motion.addListener(tiltMotion);
     }
-    /* Browsers without scroll-driven animations (Safari before 26, Firefox) get
-       the same drift from script: the room and canvas at 40% of the scroll, the
-       desk layer at 24%, over the first screen. */
-    if (!calm && !(window.CSS && window.CSS.supports && window.CSS.supports("animation-timeline: scroll()"))) {
+    /* Browsers without scroll-driven animations get the same 40% drift. */
+    if (!(window.CSS && window.CSS.supports && window.CSS.supports("animation-timeline: scroll()"))) {
       var drifting = false;
       var drift = function () {
         drifting = false;
-        var y = Math.min(Math.max(window.scrollY, 0), window.innerHeight);
+        var y = calm ? 0 : Math.min(Math.max(window.scrollY, 0), window.innerHeight);
         all(".art img, .art canvas").forEach(function (n) {
-          n.style.translate = "0 " + (y * (n.closest(".near") ? 0.24 : 0.4)).toFixed(1) + "px";
+          n.style.translate = "0 " + (y * 0.4).toFixed(1) + "px";
         });
       };
       window.addEventListener("scroll", function () {
         if (!drifting && window.scrollY < window.innerHeight * 1.5) { drifting = true; window.requestAnimationFrame(drift); }
       }, { passive: true });
+      window.addEventListener("resize", drift, { passive: true });
+      if (motion.addEventListener) motion.addEventListener("change", drift);
+      else if (motion.addListener) motion.addListener(drift);
       drift();
     }
-    if (!calm) {
-      var begin = function () {
+    var begin = function () {
         /* After the entrance has settled, so the swap lands on a still frame. */
-        window.setTimeout(function () { photo = depthPhoto(art); }, Math.max(0, 1700 - window.performance.now()));
-      };
-      if (document.readyState === "complete") begin(); else window.addEventListener("load", begin);
-    }
+        window.setTimeout(function () { if (!calm && !photo) photo = depthPhoto(art); }, Math.max(0, 1700 - window.performance.now()));
+    };
+    if (document.readyState === "complete") begin(); else window.addEventListener("load", begin);
+    if (motion.addEventListener) motion.addEventListener("change", begin);
+    else if (motion.addListener) motion.addListener(begin);
   }
 
   function depthPhoto(art) {
-    var roomImg = art.querySelector("picture:not(.near) img"), nearImg = art.querySelector(".near img");
+    var roomImg = art.querySelector("picture img");
     var canvas = document.createElement("canvas");
     var gl = canvas.getContext("webgl", { alpha: false, antialias: false, depth: false, powerPreference: "low-power" });
-    if (!gl || !roomImg || !nearImg) return null;
+    if (!gl || !roomImg) return null;
     canvas.setAttribute("aria-hidden", "true");
 
     var VS = "attribute vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }";
     var FS = [
       "precision mediump float;",
-      "uniform sampler2D uRoom, uNear, uDepth;",
+      "uniform sampler2D uRoom, uDepth;",
       "uniform vec2 uRes;    /* drawing buffer, px */",
       "uniform vec4 uMap;    /* buffer px to image uv: the layers' object-fit cover crop */",
       "uniform vec2 uCam;    /* how far, in image uv, a pixel at full depth travels */",
@@ -2487,17 +2452,18 @@ status: awaiting your decision">
       /* Nothing counts as nearer than the laptop: the blurred plants at the frame's
          edge would otherwise swing far enough to smear their outline over the city. */
       "const float NEAREST = 0.62;",
-      /* Solve for the source pixel that lands here. A few fixed-point steps
-         converge because the depth is smooth. */
-      "vec2 nearAt(vec2 uv){ vec2 q = uv; for (int i = 0; i < 4; i++) q = uv + uCam * (min(texture2D(uDepth, q).g, NEAREST) - FOCUS); return q; }",
-      "vec2 roomAt(vec2 uv){ vec2 q = uv; for (int i = 0; i < 4; i++) q = uv + uCam * (min(texture2D(uDepth, q).r, NEAREST) - FOCUS); return q; }",
+      /* A continuous depth field moves the intact artwork. Small, softened
+         offsets avoid exposing the old painted silhouette or splitting hair
+         and face edges when the phone tilts or the page scrolls. */
+      "float depthAt(vec2 uv){ vec2 d = texture2D(uDepth, uv).rg; return min(max(d.r, d.g), NEAREST); }",
+      "float softDepth(vec2 uv){ return (depthAt(uv) * 4.0 + depthAt(uv + vec2(.008, 0.0)) + depthAt(uv - vec2(.008, 0.0)) + depthAt(uv + vec2(0.0, .008)) + depthAt(uv - vec2(0.0, .008))) / 8.0; }",
       "void main(){",
       "  vec2 px = vec2(gl_FragCoord.x, uRes.y - gl_FragCoord.y);",
       "  vec2 uv = px * uMap.xy + uMap.zw;",
-      "  vec2 qn = nearAt(uv), qr = roomAt(uv);",
-      "  vec4 n = texture2D(uNear, qn);",
-      "  vec3 c = mix(texture2D(uRoom, qr).rgb, n.rgb, n.a);",
-      "  float d = min(mix(texture2D(uDepth, qr).r, texture2D(uDepth, qn).g, n.a), NEAREST) / NEAREST;",
+      "  float depth = softDepth(uv);",
+      "  vec2 q = clamp(uv + uCam * (depth - FOCUS), vec2(.001), vec2(.999));",
+      "  vec3 c = texture2D(uRoom, q).rgb;",
+      "  float d = depth / NEAREST;",
       "  float r = length(px - uLight.xy) / (0.42 * uRes.y);",
       "  float glow = exp(-r * r * 2.2) * uLight.z * (0.45 + 0.8 * d);",
       "  c = 1.0 - (1.0 - c) * (1.0 - vec3(0.62, 0.53, 1.0) * glow * 0.5);",
@@ -2514,15 +2480,18 @@ status: awaiting your decision">
     gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return null;
     gl.useProgram(prog);
-    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    var buffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
     var loc = gl.getAttribLocation(prog, "p");
     gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
     var u = {};
-    ["uRoom", "uNear", "uDepth", "uRes", "uMap", "uCam", "uLight"].forEach(function (k) { u[k] = gl.getUniformLocation(prog, k); });
+    ["uRoom", "uDepth", "uRes", "uMap", "uCam", "uLight"].forEach(function (k) { u[k] = gl.getUniformLocation(prog, k); });
+    var textures = [];
     var texture = function (unit, img) {
       gl.activeTexture(gl.TEXTURE0 + unit);
-      gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
+      if (!textures[unit]) textures[unit] = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, textures[unit]);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -2530,9 +2499,9 @@ status: awaiting your decision">
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
     };
 
-    /* Camera travel in image uv per unit of depth: NEAR is the shader's NEAREST,
-       so the laptop leans about 14px each way at 1440px and the sky about 13px back. */
-    var NEAR = 0.62, LEAN_X = 0.03, LEAN_Y = 0.014;
+    /* Keep travel inside the 3% crop margin, including maximum tilt + scroll. */
+    var LEAN_X = 0.018, LEAN_Y = 0.012;
+    var ready = false, disposed = false, loadedSource = "", observer = null;
     var cam = { x: 0, y: 0, lit: 0 }, raf = 0, last = 0, W = 0, H = 0, dh = 1;
     var size = function () {
       var r = art.getBoundingClientRect(), cw = r.width, ch = r.height;
@@ -2552,11 +2521,11 @@ status: awaiting your decision">
         (cw / 2 * (1 - 1 / z) - ox) / dw, (ch / 2 * (1 - 1 / z) - oy) / dh);
     };
     var scrolled = function () {
-      /* The room already sinks with the canvas (CSS); the nearest plane rises
-         against the sky by the 16vh the two CSS layers part by. */
-      return Math.min(Math.max(window.scrollY / window.innerHeight, 0), 1) * 0.16 * window.innerHeight / dh / NEAR;
+      // Bound internal depth travel independently of the phone's viewport height.
+      return Math.min(Math.max(window.scrollY / art.clientHeight, 0), 1) * 0.012;
     };
     var draw = function () {
+      if (!ready || disposed) return;
       gl.uniform2f(u.uCam, cam.x, cam.y + scrolled());
       gl.uniform3f(u.uLight, aim.lx * W, aim.ly * H, glow.matches ? cam.lit : 0);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -2579,26 +2548,52 @@ status: awaiting your decision">
       }
     };
     var teardown = function () {
+      if (disposed) return;
+      disposed = true;
       window.cancelAnimationFrame(raf); raf = 0;
       art.classList.remove("gl"); canvas.remove(); photo = null;
       window.removeEventListener("scroll", api.wake);
+      roomImg.removeEventListener("load", refresh);
+      document.removeEventListener("themechange", hidePhoto);
+      if (observer) observer.disconnect();
+      if (motion.removeEventListener) motion.removeEventListener("change", api.wake);
+      else if (motion.removeListener) motion.removeListener(api.wake);
+      textures.forEach(function (t) { gl.deleteTexture(t); });
+      gl.deleteBuffer(buffer);
+      gl.deleteProgram(prog); gl.deleteShader(vs); gl.deleteShader(fs);
     };
     canvas.addEventListener("webglcontextlost", function (e) { e.preventDefault(); teardown(); });
 
     var depth = new Image();
     depth.src = "assets/hero-depth.webp";
-    Promise.all([roomImg.decode(), nearImg.decode(), depth.decode()]).then(function () {
-      if (calm) return;
-      texture(0, roomImg); texture(1, nearImg); texture(2, depth);
-      gl.uniform1i(u.uRoom, 0); gl.uniform1i(u.uNear, 1); gl.uniform1i(u.uDepth, 2);
-      art.appendChild(canvas);
-      size();
-      cam.x = aim.x * LEAN_X; cam.y = aim.y * LEAN_Y; cam.lit = aim.lit;
-      draw();
-      art.classList.add("gl");
-      window.addEventListener("scroll", api.wake, { passive: true });
-      if (window.ResizeObserver) new ResizeObserver(function () { size(); draw(); }).observe(art);
-    }).catch(function () { /* the CSS layers stay */ });
+    var hidePhoto = function () {
+      ready = false; art.classList.remove("gl");
+      window.requestAnimationFrame(refresh);
+    };
+    var refresh = function () {
+      var source = roomImg.currentSrc;
+      Promise.all([roomImg.decode(), depth.decode()]).then(function () {
+        if (disposed || calm || source !== roomImg.currentSrc) return;
+        if (source !== loadedSource) { texture(0, roomImg); loadedSource = source; }
+        texture(1, depth);
+        gl.uniform1i(u.uRoom, 0); gl.uniform1i(u.uDepth, 1);
+        size(); ready = true;
+        cam.x = aim.x * LEAN_X; cam.y = aim.y * LEAN_Y; cam.lit = aim.lit;
+        draw(); art.classList.add("gl");
+      }).catch(function () { /* The intact picture remains visible. */ });
+    };
+    art.appendChild(canvas);
+    // A late-created canvas must also inherit the script-based scroll fallback.
+    canvas.style.translate = roomImg.style.translate;
+    roomImg.addEventListener("load", refresh);
+    document.addEventListener("themechange", hidePhoto);
+    window.addEventListener("scroll", api.wake, { passive: true });
+    if (motion.addEventListener) motion.addEventListener("change", api.wake);
+    else if (motion.addListener) motion.addListener(api.wake);
+    if (window.ResizeObserver) {
+      observer = new ResizeObserver(function () { size(); draw(); }); observer.observe(art);
+    }
+    refresh();
     return api;
   }
 })();

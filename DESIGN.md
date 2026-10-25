@@ -8,28 +8,37 @@ The existing concept is an editorial manual with terminal chrome. Keep its Geist
 Geist Mono fonts, neutral light/dark surfaces, orange accent, pill buttons and 14px panels.
 Preserve the landing page composition and product examples. This is a functional repair,
 so no new visual concept, framework, loader, decorative animation or invented content is needed.
-The one exception is the hero parallax the owner asked for: the art is two layers cut from
-`Nova-Hero.png` (the room, painted over where the coder sat, and the coder with her desk),
-which slide at 40% and 24% of the scroll speed through a CSS scroll-driven animation, with
-no script. They stay still and aligned under reduced motion or without `animation-timeline`.
-Under a mouse the two layers also lean away from the cursor (the desk twice as far, the same
-amount vertically so only her sides uncover the room) and a pale moonlight follows it. A phone
-has no hover, so a finger held on the art does the same and the scene settles back 1.4s after
-it lifts. Browsers without scroll-driven animations (Safari before 26, Firefox) get the drift
-from a small scroll script instead. Reduced motion gets the still frame.
+The hero uses the matched generated day/night artwork in `assets/hero-source/`, based
+on `Nova-Hero-light.png` and `Nova-Hero.png`. The originals and prompts remain versioned.
+`tools/make_hero_assets.py` encodes responsive WebP images. Native picture
+sources follow the OS without JavaScript; `assets/theme.js` also applies a saved theme.
+The transparent header uses the theme's text palette and matching face portraits from
+the generated artwork. Its compact rounded nav gains glass only after scrolling. Six
+primary links show on desktop; the mobile menu retains all nine section links. The
+smallest screens hide only the redundant @code suffix so all controls keep touch targets.
+Docs and Changelog use the same theme-aware portraits and keep their header controls
+within a 320px viewport.
+Manual theme switches dissolve and softly refocus the hero over 750ms using native View
+Transitions, waiting for the next image to decode. Navigation and the overlapping prompt
+stay above the hero snapshots. Older browsers get a short reveal; reduced motion switches
+immediately. Repeated toggles supersede the previous transition.
+The complete scene drifts at 40% of scroll speed, using CSS scroll-driven animation or
+a small script fallback. Pointer or touch input leans the scene; touch release settles
+it after 1.4 seconds. Reduced motion shows the intact still frame.
 On touch devices served over HTTPS, phone orientation drives the same camera target by
-default. Browsers requiring sensor permission show an Enable tilt button for the required
-gesture. Mobile tilt and touch never show the cursor glow; it is limited to desktop mouse
+default, with no tilt button. Browsers requiring sensor permission request it on the first
+real interaction; denial leaves touch available without repeated prompts. Mobile tilt
+and touch never show the cursor glow; it is limited to desktop mouse
 input above 900px in both CSS and WebGL. The first valid
 reading calibrates the current holding position; screen rotation recalibrates it. Tilt
-can be disabled, pauses offscreen, and is disabled by reduced motion. Touch remains the
+pauses offscreen, and is disabled by reduced motion. Touch remains the
 fallback when orientation is unavailable or permission is denied.
-Where WebGL runs, a canvas takes over once it has drawn: a 3D photo of the same two layers
-with `assets/hero-depth.webp` (red: the room's depth with the coder painted out; green: hers),
-so the moon, city, code panes and desk each move by their own distance with the pointer and
-the scroll, and the moonlight lands harder on near surfaces. It renders only while something
-moves, caps depth at the laptop so the blurred edge plants don't smear, and leaves the CSS
-layers (with their alt text) underneath as the fallback.
+Where WebGL runs, a canvas samples the intact artwork with a softened continuous depth
+field from `assets/hero-depth.webp` (red: room, green: coder). Small bounded offsets give
+the desk, coder and sky different travel without revealing a painted-over silhouette or
+separating cutout edges. Both themes share this rendering path. Theme switches reload the
+current image texture without creating additional canvases or observers; the picture stays
+visible while loading and after context loss. Rendering runs only while the scene moves.
 The release archive stays still at rest for reading. Native disclosure controls provide feedback.
 
 Navigation must work under a project subdirectory, through history, and from bookmarked

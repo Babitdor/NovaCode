@@ -74,6 +74,7 @@ def check_links():
 
 
 def main():
+    archive_count = (ROOT / 'changelog/index.html').read_text(encoding='utf-8').count('class="changelog-entry"')
     SHOTS.mkdir(parents=True, exist_ok=True)
     results = {'internal_links_and_assets': check_links(), 'checks': [], 'screenshots': [], 'accessibility': {}}
     server = ThreadingHTTPServer(('127.0.0.1', 0), partial(Handler, directory=str(ROOT)))
@@ -134,20 +135,20 @@ def main():
             page.goto(base + 'changelog/#v1.0.54')
             assert page.locator('#v1-0-54').get_attribute('open') is not None
             page.wait_for_function("document.querySelector('#release-status').textContent.includes('saved release archive')")
-            assert page.locator('.changelog-entry').count() == 55
+            assert page.locator('.changelog-entry').count() == archive_count
             results['checks'].append('Release mouse/keyboard controls, both permalink formats, API failure fallback')
 
             # Use GitHub-shaped responses to prove new releases and edited notes load dynamically.
             context.unroute('https://api.github.com/**')
             listing = page.locator('.changelog-entry').evaluate_all('entries => entries.map(e => ({name: "CHANGELOG-v" + e.dataset.version + ".md", sha:e.dataset.sha, type:"file"}))')
             listing.append({'name': 'CHANGELOG-v1.0.100.md', 'sha': 'new-test-release', 'type': 'file'})
-            listing[0]['sha'] = 'edited-test-release'
+            next(entry for entry in listing if entry['name'] == 'CHANGELOG-v1.0.54.md')['sha'] = 'edited-test-release'
             context.route('https://api.github.com/**', lambda route: route.fulfill(json=listing, headers={'Access-Control-Allow-Origin': '*'}))
             context.route('https://raw.githubusercontent.com/**', lambda route: route.fulfill(headers={'Access-Control-Allow-Origin': '*'}, body='# NovaCode v1.0.100\n\n## Fixed\n- A wrapped `regression`\n  continuation <img src=x onerror=alert(1)>\n- **Second item**\n'))
             page.goto(base + 'changelog/#v1-0-100')
             page.reload()
             page.wait_for_function("document.querySelector('#release-status').textContent === 'Up to date with the repository.'")
-            assert page.locator('.changelog-entry').count() == 56
+            assert page.locator('.changelog-entry').count() == archive_count + 1
             assert page.locator('.changelog-entry').first.get_attribute('data-version') == '1.0.100'
             assert page.locator('#v1-0-100').get_attribute('open') is not None
             assert page.locator('#v1-0-100 li').count() == 2
@@ -159,7 +160,7 @@ def main():
             context.route('https://raw.githubusercontent.com/**', lambda route: route.fulfill(status=503, body='unavailable'))
             page.reload()
             page.wait_for_function("document.querySelector('#release-status').textContent.includes('Some updates could not load')")
-            assert page.locator('.changelog-entry').count() == 55
+            assert page.locator('.changelog-entry').count() == archive_count
             results['checks'].append('Partial update failures retain every saved release')
             context.unroute('https://api.github.com/**')
             context.route('https://api.github.com/**', lambda route: route.fulfill(status=403, body='{}'))

@@ -9,6 +9,7 @@
   var root = document.documentElement, KEY = "nova-theme";
   var sys = window.matchMedia("(prefers-color-scheme: dark)");
   var saved = null;
+  var transition = null;
   try { saved = localStorage.getItem(KEY); } catch (e) { /* storage blocked: follow the system */ }
   if (saved !== "light" && saved !== "dark") saved = null;
 
@@ -18,6 +19,11 @@
     if (saved) root.setAttribute("data-theme", saved);
     else root.removeAttribute("data-theme");
     var dark = isDark();
+    /* Picture sources follow the saved choice as well as the OS. Without JS,
+       their original media query still supplies the appropriate hero. */
+    Array.prototype.forEach.call(document.querySelectorAll('source[data-theme-source]'), function (source) {
+      source.media = dark ? 'all' : 'not all';
+    });
     /* The browser chrome follows the page, not the OS, once a theme is chosen. */
     Array.prototype.forEach.call(document.querySelectorAll('meta[name="theme-color"]'), function (m) {
       var forDark = saved ? dark : /dark/.test(m.getAttribute("media") || "");
@@ -34,6 +40,31 @@
     document.dispatchEvent(new Event("themechange"));
   }
 
+  function switchTheme() {
+    var art = document.querySelector('.art');
+    var calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!art || calm) { changed(); return; }
+    var render = function () {
+      changed();
+      // Capture the new hero after its image is ready, including a cold cache.
+      return Promise.all(Array.prototype.map.call(art.querySelectorAll('img'), function (img) {
+        return img.decode().catch(function () { /* Leave the native image fallback. */ });
+      }));
+    };
+    if (document.startViewTransition) {
+      if (transition) transition.skipTransition();
+      transition = document.startViewTransition(render);
+      transition.ready.catch(function () { /* Skipping also rejects the ready promise. */ });
+      transition.finished.catch(function () { /* A newer choice superseded this fade. */ });
+    } else {
+      render().then(function () {
+        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || !art.animate) return;
+        art.animate([{opacity:0.7, filter:'blur(3px)'}, {opacity:1, filter:'blur(0px)'}],
+          {duration:600, easing:'cubic-bezier(.16, 1, .3, 1)'});
+      });
+    }
+  }
+
   apply();
   var onSys = function () { if (!saved) changed(); };
   if (sys.addEventListener) sys.addEventListener("change", onSys);
@@ -45,7 +76,7 @@
       b.addEventListener("click", function () {
         saved = isDark() ? "light" : "dark";
         try { localStorage.setItem(KEY, saved); } catch (e) { /* the choice lasts for this page only */ }
-        changed();
+        switchTheme();
       });
     });
   }
