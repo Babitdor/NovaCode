@@ -15,12 +15,13 @@
 <link rel="preload" as="font" type="font/woff2" href="../assets/fonts/geist-var.woff2" crossorigin>
 <link rel="preload" as="font" type="font/woff2" href="../assets/fonts/geist-mono-var.woff2" crossorigin>
 <script>document.documentElement.classList.add("js")</script>
+<script src="../assets/theme.js"></script>
 
 <style>
 @font-face{font-family:"Geist";src:url("../assets/fonts/geist-var.woff2") format("woff2");font-weight:100 900;font-style:normal;font-display:swap}
 @font-face{font-family:"Geist Mono";src:url("../assets/fonts/geist-mono-var.woff2") format("woff2");font-weight:100 900;font-style:normal;font-display:swap}
 
-:root{
+:root{color-scheme:light;
   --bg:#fafafa;--surface:#f0f0f2;--raised:#ffffff;
   --text:#17171a;--muted:#5b5b65;--line:#dedee3;
   --page-text:#17171a;--page-muted:#5b5b65;--page-line:#dedee3;
@@ -38,8 +39,17 @@
   --glow:0 0 0 0 transparent;--grid:transparent;
   --z-nav:20;--z-status:25;--z-skip:30;--z-scan:-1;--z-sidebar:15;
 }
-@media (prefers-color-scheme: dark){
-  :root{
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){color-scheme:dark;
+    --bg:#0e0e10;--surface:#17171b;--raised:#1d1d22;
+    --text:#ececef;--muted:#a1a1ac;--line:#2a2a31;
+    --page-text:#ececef;--page-muted:#a1a1ac;--page-line:#2a2a31;
+    --page-accent:#f4723f;--page-on-accent:#16110e;
+    --accent:#f4723f;--on-accent:#16110e;--accent-wash:#2a1810;
+    --shadow:0 1px 2px rgb(0 0 0 / .4),0 22px 48px -20px rgb(0 0 0 / .7);
+    --glow:0 0 44px -10px color-mix(in srgb,var(--accent) 55%,transparent);
+    --grid:rgb(255 255 255 / .028);
+  }}
+:root[data-theme="dark"]{color-scheme:dark;
     --bg:#0e0e10;--surface:#17171b;--raised:#1d1d22;
     --text:#ececef;--muted:#a1a1ac;--line:#2a2a31;
     --page-text:#ececef;--page-muted:#a1a1ac;--page-line:#2a2a31;
@@ -49,7 +59,6 @@
     --glow:0 0 44px -10px color-mix(in srgb,var(--accent) 55%,transparent);
     --grid:rgb(255 255 255 / .028);
   }
-}
 
 *,*::before,*::after{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;scroll-padding-top:88px}
@@ -72,7 +81,8 @@ body::after{
   background:repeating-linear-gradient(0deg,rgb(0 0 0 / .05) 0 1px,transparent 1px 3px);
   opacity:0;
 }
-@media (prefers-color-scheme: dark){body::after{opacity:1}}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) body::after{opacity:1}}
+:root[data-theme="dark"] body::after{opacity:1}
 
 img,svg{display:block;max-width:100%}
 img{height:auto}
@@ -229,6 +239,7 @@ td.desc{color:var(--muted)}
 .cmd::before{content:"$";font:600 .92rem/1 var(--mono);color:var(--accent)}
 .cmd code{flex:1;min-width:0;overflow-x:auto;white-space:nowrap;background:none;padding:0;font-size:.92rem}
 
+#page-features td:first-child{white-space:normal;min-width:11ch}
 .feature-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;margin:20px 0}
 .feature-card{border:1px solid var(--line);border-radius:var(--r-view);padding:20px;background:color-mix(in srgb,var(--surface) 50%,transparent);transition:border-color .3s,box-shadow .3s}
 .feature-card:hover{border-color:color-mix(in srgb,var(--accent) 40%,var(--line));box-shadow:var(--glow)}
@@ -303,6 +314,21 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
 @media(max-width:900px){html:not(.js) .sidebar{position:static;transform:none;visibility:visible;width:auto;height:auto}html:not(.js) .menu-btn{display:none}}
 @media(max-width:620px){.cmd{align-items:flex-start}.cmd code{white-space:pre-wrap;overflow-wrap:anywhere;overflow-x:visible}}
 @media(max-width:620px){.cmd{display:grid;grid-template-columns:12px minmax(0,1fr);gap:12px;align-items:start}.cmd code{white-space:pre-wrap;overflow-wrap:anywhere;overflow-x:visible}.cmd .copy{grid-column:2;justify-self:end}.cmd::before{padding-top:4px}}
+
+/* ---------- theme toggle: the moon offers dark, the sun offers light ---------- */
+.theme-btn{
+  display:inline-flex;align-items:center;justify-content:center;flex:none;
+  width:38px;height:38px;padding:0;border-radius:var(--r-press);cursor:pointer;
+  border:1px solid var(--line);background:transparent;color:var(--text);
+  transition:border-color .2s,color .2s,transform .2s var(--ease);
+}
+.theme-btn[hidden]{display:none}
+.theme-btn svg{width:17px;height:17px;transition:rotate .5s var(--ease)}
+.theme-btn .i-sun,.theme-btn[aria-pressed="true"] .i-moon{display:none}
+.theme-btn[aria-pressed="true"] .i-sun{display:block}
+@media (hover: hover){.theme-btn:hover{border-color:var(--accent);color:var(--accent)}.theme-btn:hover svg{rotate:-30deg}}
+.theme-btn:active{transform:scale(.94)}
+@media (max-width:420px){.docs-topnav{gap:6px}.theme-btn{width:34px;height:34px}}
 </style>
 <link rel="canonical" href="https://babitdor.github.io/NovaCode/docs/">
 <meta name="twitter:card" content="summary_large_image">
@@ -323,6 +349,7 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
         <button class="sidebar-group-title" aria-expanded="true">Orientation</button>
         <div class="sidebar-links">
           <a href="#page-overview" data-page="overview" class="active">What NovaCode is</a>
+          <a href="#page-features" data-page="features">Feature guide</a>
           <a href="#page-installation" data-page="installation">Installation &amp; setup</a>
         </div>
       </div>
@@ -387,6 +414,7 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
       <a class="topnav-aux" href="https://github.com/Babitdor/NovaCode">GitHub</a>
       <a class="topnav-aux" href="../changelog/index.html">Changelog</a>
       <a class="topnav-aux" href="../index.html">Landing</a>
+      <button class="theme-btn" type="button" data-theme-toggle aria-pressed="false" aria-label="Dark theme" hidden><svg class="i-moon" viewBox="0 0 256 256" aria-hidden="true"><path fill="currentColor" d="M233.54,142.23a8,8,0,0,0-8-2,88.08,88.08,0,0,1-109.8-109.8,8,8,0,0,0-10-10,104.84,104.84,0,0,0-52.91,37A104,104,0,0,0,136,224a103.09,103.09,0,0,0,62.52-20.88,104.84,104.84,0,0,0,37-52.91A8,8,0,0,0,233.54,142.23ZM188.9,190.36A88,88,0,0,1,65.66,67.11a89,89,0,0,1,31.4-26A106,106,0,0,0,96,56,104.11,104.11,0,0,0,200,160a106,106,0,0,0,14.92-1.06A89,89,0,0,1,188.9,190.36Z"/></svg><svg class="i-sun" viewBox="0 0 256 256" aria-hidden="true"><path fill="currentColor" d="M120,40V16a8,8,0,0,1,16,0V40a8,8,0,0,1-16,0Zm72,88a64,64,0,1,1-64-64A64.07,64.07,0,0,1,192,128Zm-16,0a48,48,0,1,0-48,48A48.05,48.05,0,0,0,176,128ZM58.34,69.66A8,8,0,0,0,69.66,58.34l-16-16A8,8,0,0,0,42.34,53.66Zm0,116.68-16,16a8,8,0,0,0,11.32,11.32l16-16a8,8,0,0,0-11.32-11.32ZM192,72a8,8,0,0,0,5.66-2.34l16-16a8,8,0,0,0-11.32-11.32l-16,16A8,8,0,0,0,192,72Zm5.66,114.34a8,8,0,0,0-11.32,11.32l16,16a8,8,0,0,0,11.32-11.32ZM48,128a8,8,0,0,0-8-8H16a8,8,0,0,0,0,16H40A8,8,0,0,0,48,128Zm80,80a8,8,0,0,0-8,8v24a8,8,0,0,0,16,0V216A8,8,0,0,0,128,208Zm112-88H216a8,8,0,0,0,0,16h24a8,8,0,0,0,0-16Z"/></svg></button>
       <a class="btn btn-primary" href="#page-installation" data-page="installation" style="min-height:38px;padding:0 16px;font-size:.88rem">Install</a>
     </nav>
 
@@ -402,18 +430,18 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
             <p class="lede">NovaCode is an open-source, terminal-based AI coding assistant built on
               LangGraph and the <code>deepagents</code> framework. It runs entirely in your terminal
               with a Textual TUI, a headless non-interactive mode for scripting and CI, and remote
-              bridges for Discord and Telegram.</p>
+              bridges for Telegram, Discord and Rootapp. The <a href="#page-features" data-page="features">feature guide</a> lists every capability in this release.</p>
           </div>
           <div class="callout rv">
             <svg class="icon" viewBox="0 0 256 256" fill="currentColor"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm-8-80V80a8,8,0,0,1,16,0v48a8,8,0,0,1-16,0Zm20,36a12,12,0,1,1-12-12A12,12,0,0,1,140,172Z"/></svg>
-            <p><b>Version 1.0.49 &middot; MIT licensed &middot; Python 3.11+.</b> Runs locally, brings your
+            <p><b>Version 1.0.99 &middot; MIT licensed &middot; Python 3.11+.</b> Runs locally, brings your
               own model. NovaCode does not retrain your model. What changes are prompts, skills, and
               thresholds on disk, readable and deletable.</p>
           </div>
           <ul class="proof rv">
             <li>~30 core tools &middot; ~85 total</li>
             <li>12 async background agents</li>
-            <li>8 model providers</li>
+            <li>18 model provider IDs</li>
             <li>20 MCP presets</li>
             <li>7 sandbox providers</li>
             <li>50+ built-in skills</li>
@@ -475,13 +503,168 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
                 <tr><td>In-process subagents</td><td class="desc">5</td><td class="desc">general-purpose, code-explorer, refactoring-specialist, bug-fix, browser-automation</td></tr>
                 <tr><td>Research personas</td><td class="desc">7</td><td class="desc">Dispatched by <code>/research</code>, loaded on demand</td></tr>
                 <tr><td>Async agents</td><td class="desc">12</td><td class="desc">Background LangGraph graphs: docs, review, tests, audits, research</td></tr>
-                <tr><td>Model providers</td><td class="desc">8</td><td class="desc">OpenAI, Anthropic, Google, NVIDIA, OpenRouter, OpenCode, OpenCode Zen, Ollama</td></tr>
+                <tr><td>Model providers</td><td class="desc">18</td><td class="desc">OpenAI, Anthropic, Google, Ollama, NVIDIA, OpenRouter, Command Code, OpenCode Go, OpenCode Zen, Azure OpenAI, Amazon Bedrock, Mistral, Groq, Cerebras, xAI, Hugging Face, Kimi For Coding, MiniMax</td></tr>
                 <tr><td>MCP presets</td><td class="desc">20</td><td class="desc">Playwright, Serena, Context7, Apify, CUA Driver, and more</td></tr>
                 <tr><td>Sandbox providers</td><td class="desc">7</td><td class="desc">os, docker, modal, runloop, daytona, langsmith, none</td></tr>
                 <tr><td>Built-in skills</td><td class="desc">50+</td><td class="desc">Progressive disclosure, loaded on demand</td></tr>
                 <tr><td>Slash commands</td><td class="desc">80+</td><td class="desc">In-TUI commands for every feature</td></tr>
               </tbody>
             </table>
+          </div>
+        </section>
+      </div>
+
+      <!-- 1b. FEATURE GUIDE -->
+      <div class="page-section" id="page-features">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:9">/help all</span></p>
+            <h2 class="page-title">Feature <b>guide</b>.</h2>
+            <p class="lede">Every capability in v1.0.99, with the command that opens it, what it needs and where it stops.
+              Optional, experimental and preview features are labelled as such.</p>
+          </div>
+          <div class="callout rv">
+            <svg class="icon" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm-8-80V80a8,8,0,0,1,16,0v48a8,8,0,0,1-16,0Zm20,36a12,12,0,1,1-12-12A12,12,0,0,1,140,172Z"/></svg>
+            <p><b>Reviewed against v1.0.99 on 25 October 2026.</b> An implemented capability is not a benchmark,
+              and not proof that every provider and platform has been exercised. When an older page in these docs
+              disagrees with this one, this page describes the current behaviour.</p>
+          </div>
+        </section>
+
+        <section id="features-recent">
+          <h2 class="rv">Recent additions</h2>
+          <div class="table-wrap rv">
+            <table>
+              <thead><tr><th>Capability</th><th>Status</th><th>How to use it</th><th>Limit</th></tr></thead>
+              <tbody>
+                <tr><td>Native + MCP Code Mode</td><td class="desc">v1.0.97</td><td class="desc">Composer toggle</td><td class="desc">Eligible tools only; interactive and graph-control calls stay direct</td></tr>
+                <tr><td>Whistle STT</td><td class="desc">v1.0.97</td><td class="desc"><code>voice</code> + <code>voice-whistle</code></td><td class="desc">Local Cactus runtime; accuracy not benchmarked</td></tr>
+                <tr><td>Kokoro and sanoTTS</td><td class="desc">v1.0.98</td><td class="desc"><code>voice</code> + the provider extra</td><td class="desc">CPU voices; download size is not peak RAM</td></tr>
+                <tr><td>Voice download progress</td><td class="desc">v1.0.98</td><td class="desc"><code>/voice download</code>, <code>/voice test</code></td><td class="desc">Percentages need a reported total</td></tr>
+                <tr><td>Eight more interface styles</td><td class="desc">v1.0.99</td><td class="desc"><code>/theme</code></td><td class="desc">Animations are optional</td></tr>
+                <tr><td>Local Linux computer</td><td class="desc">Preview, v1.0.99</td><td class="desc"><code>computer</code> extra + QEMU, <code>/computer start</code></td><td class="desc">Real guest boot not yet verified</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="features-headline">
+          <h2 class="rv">Headline features</h2>
+          <div class="feature-grid">
+            <div class="feature-card rv"><h3>Specialist agents</h3><p>Delegate exploration, fixes, refactors, reviews, security, dependency and performance checks, docs, tests and browser automation. <code>@name</code> calls a known agent; <code>/agents</code> manages file-defined ones. Background agents need the <code>agents-server</code> install.</p></div>
+            <div class="feature-card rv"><h3>Council</h3><p><code>/council &lt;task&gt;</code> runs independent proposals, critique and ranked voting. <code>/council web</code> adds advisors who clarify, vote on real options and a chairman who keeps minority concerns. Votes are advisory.</p></div>
+            <div class="feature-card rv"><h3>Persistent memory</h3><p>A linked Markdown wiki with an index, topic maps and project-scoped notes. <code>/dream</code> consolidates it with backups. Memory is evidence, never permission.</p></div>
+            <div class="feature-card rv"><h3>Model choice and vision</h3><p>18 provider IDs, independent main, in-process, async and dynamic-agent roles, per-turn <code>/router</code>, <code>/effort</code>, and a <code>VISION</code> side-call for text-only models.</p></div>
+            <div class="feature-card rv"><h3>Code Mode</h3><p><code>MCPCode</code> runs bounded JavaScript over eligible native and MCP tools with <code>tools.list</code>, <code>tools.describe</code> and <code>tools.call</code>. Only the returned result reaches the model.</p></div>
+            <div class="feature-card rv"><h3>Voice conversation</h3><p>Dictate requests and hear short spoken summaries of the final reply. Faster-Whisper and Piper by default; Whistle, Parakeet, Kokoro, sanoTTS, Pocket, Orpheus and ElevenLabs are options.</p></div>
+            <div class="feature-card rv"><h3>Interface styles</h3><p>13 styles with their own home screens, Nova character art in Workbench and Studio, and optional animated homes in Terminal, Studio and Blueprint.</p></div>
+            <div class="feature-card rv"><h3>Caveman mode</h3><p>Six independent switches for terser prose, compact tool and web output, script reuse, routing and token accounting. Opt-in; compacted sources stay recoverable.</p></div>
+            <div class="feature-card rv"><h3>Remote sessions</h3><p>A Telegram topic or Discord thread per session, plus an optional Rootapp companion. Set up and authorize senders with <code>/remote</code>.</p></div>
+            <div class="feature-card rv"><h3>Artifacts</h3><p>HTML, Markdown or dashboard results, versioned in place and searchable, shared through a temporary Cloudflare Quick Tunnel when <code>cloudflared</code> is installed.</p></div>
+            <div class="feature-card rv"><h3>Parallel workspaces</h3><p>Project tabs with <code>/tabs</code>, explicit <code>SendMessage</code> between live tabs, and <code>EnterWorktreeTool</code> / <code>ExitWorktreeTool</code> for isolated Git worktrees.</p></div>
+            <div class="feature-card rv"><h3>Permissions and guardrails</h3><p>Workspace approval, scoped path grants, explicit denies, fail-closed auto-approval reviews, credential redaction and lower-trust handling of tool and web content.</p></div>
+          </div>
+        </section>
+
+        <section id="features-catalog">
+          <h2 class="rv">Full catalog</h2>
+          <p class="body rv">Grouped as in the product's own feature inventory. The right-hand column is what to install or
+            configure first, and what the feature does not promise.</p>
+          <div class="table-wrap rv">
+            <table>
+              <thead><tr><th>Feature</th><th>What it does</th><th>Needs / limits</th></tr></thead>
+              <tbody>
+                <tr><td>Everyday tools</td><td class="desc">Read, edit and search files, run commands and checks; <code>NotebookEditTool</code> edits notebook cells without a kernel; bfs/ugrep search with ripgrep and Python fallbacks; <code>/files</code>, <code>/images</code>, <code>/tests</code>, <code>/servers</code></td><td class="desc">Notebook edits are blocked in plan mode; native search engines are optional executables</td></tr>
+                <tr><td>Specialist agents</td><td class="desc">In-process delegation and async background agents; project and global definitions; selective skill libraries; inline running/completed/failed lines; bounded retries within a four-minute model-call budget</td><td class="desc">Async needs <code>agents-server</code>; <code>@names</code> must resolve to known definitions</td></tr>
+                <tr><td>Agent teams</td><td class="desc"><code>spawn_agent</code> teammates with scoped inboxes and task claims; approvals forwarded through the parent policy; optional swarm scheduler</td><td class="desc">Experimental, off by default in <code>/settings</code> &rarr; Experimental</td></tr>
+                <tr><td>Web Council</td><td class="desc">Decision brief with up to eight options; parallel analyses, clarification questions, peer ballots, streamed chairman synthesis; Consensus and Full debate views; Code Audit, Architecture and Creative Debate presets; editable advisors</td><td class="desc">Distinct from the planning <code>/council</code>; invalid ballots abstain, ties stay unresolved; consensus is not correctness</td></tr>
+                <tr><td>Cowork</td><td class="desc"><code>/cowork [task]</code> opens a local workspace with folder grants, tasks, activity and the conversation; mobile drawer</td><td class="desc">Not shared by <code>/share</code>; folder grants are not an OS sandbox</td></tr>
+                <tr><td>Create</td><td class="desc"><code>/create</code> browses and edits skills and agent definitions in project or global scope; <code>/create stop</code> ends it</td><td class="desc">A skills-and-agents editor, not a website builder; not publicly shareable</td></tr>
+                <tr><td>Artifacts</td><td class="desc">HTML, Markdown and dashboard artifacts updated in place with versions; searchable collection; temporary Cloudflare hosting; restored on resume; <code>/share artifacts</code>, <code>/share list</code>, <code>/share stop</code></td><td class="desc">Needs <code>cloudflared</code> for a URL; public to anyone with the link; no permanent hosting and no ngrok fallback</td></tr>
+                <tr><td>Remote sessions</td><td class="desc">Telegram topics with photos, phone-friendly tables and diffs and numbered controls; Discord threads restored on reconnect and archived on close; optional Rootapp companion</td><td class="desc">Each service needs its own bot, permissions and authorized senders; bridges never widen workspace permissions</td></tr>
+                <tr><td>Models and routing</td><td class="desc"><code>/auth</code>, <code>/model</code> (alias <code>/models</code>), independent role models, <code>/router</code> with natural-language criteria and a fallback, <code>/effort</code>, ChatGPT and Google sign-in, <code>VISION</code> side-calls</td><td class="desc">Provider access, region and billing apply; Bedrock is an extra; not every model supports vision or strict tools</td></tr>
+                <tr><td>Caveman mode</td><td class="desc">Say less, Read less, Auto, Blocks, Waste fixes and Browse; six intensities including Wenyan; <code>/caveman audit</code> and <code>/caveman blocks</code></td><td class="desc">Master switch is opt-in; no promised savings; reasoning models can still use more total tokens</td></tr>
+                <tr><td>MCP and tool search</td><td class="desc"><code>/mcp</code>; <code>MCPTool</code> for discovery, schemas and calls; <code>MCPCode</code> scripts; hybrid, regex and BM25 schema search; less-used schemas load on demand</td><td class="desc">Code Mode needs the async agent loop; scripts have no host imports, filesystem or network</td></tr>
+                <tr><td>Strict tool arguments</td><td class="desc"><code>strict_tools="auto"</code> by default; raw arguments validated without coercion; <code>on</code> or <code>off</code></td><td class="desc">Native constrained sampling depends on provider, model and schema</td></tr>
+                <tr><td>Sessions and branches</td><td class="desc"><code>/tabs</code>, searchable resume, <code>/tree</code> branches and bookmarks, <code>/import</code> from Nova, Claude Code and Codex, <code>/compare</code>, <code>/rewind</code>, <code>/restore</code>, <code>/export [file]</code>, bare <code>/share</code> to a secret gist</td><td class="desc">A secret gist is unlisted, not private; redaction is a protection, not a guarantee</td></tr>
+                <tr><td>Messages between tabs</td><td class="desc"><code>SendMessage(recipient, content)</code> to a session ID or unique tab title; <code>list_sessions</code>; queued while busy, replies linked</td><td class="desc">Live tabs in one TUI instance only</td></tr>
+                <tr><td>Git worktrees</td><td class="desc"><code>EnterWorktreeTool(name)</code> branches from <code>HEAD</code> and moves file and shell tools; <code>ExitWorktreeTool()</code> returns and keeps everything; <code>/worktree</code> for the session workflow</td><td class="desc">Needs Git and a commit; resuming a conversation does not restore the live switch</td></tr>
+                <tr><td>Memory and skills</td><td class="desc">Linked memory wiki, <code>/dream</code>, <code>/learning</code>, <code>/evolution</code>; skills by <code>$skill-name</code>, <code>/skill-name</code> or Pin to prompt; resources read on demand; plugins, marketplaces and hooks</td><td class="desc">Memory is contextual evidence, not authorization; proposals keep their approval lifecycle</td></tr>
+                <tr><td>Planning and goals</td><td class="desc"><code>/plan</code>, <code>/claude-plan</code>, <code>/codex-plan</code>, <code>/claude-review</code>, <code>/codex-review</code>, <code>recent_plans</code>, <code>/research</code>, <code>/goal</code>, <code>/btw</code>, <code>/trello</code></td><td class="desc">External workflows need those CLIs and their accounts</td></tr>
+                <tr><td>Background work</td><td class="desc">Ctrl+B, <code>/tasks</code>, bounded <code>wait_for_task</code>, the <code>daemon</code> tool, <code>/cron</code> with <code>CronCreateTool</code>, <code>CronDeleteTool</code>, <code>CronListTool</code>; gated <code>TerminalCaptureTool</code> and <code>CtxInspectTool</code></td><td class="desc">Daemons are not reboot-persistent; cron needs a running interactive Nova</td></tr>
+                <tr><td>Tracing and usage</td><td class="desc"><code>/trace setup</code> for LangSmith, saved across restarts; <code>/context</code>, <code>/compact</code>, <code>/usage</code>, <code>/tokens</code>, <code>/cost</code>; reported prompt-cache reads and writes</td><td class="desc">Needs a LangSmith account; estimates and provider reports are different evidence</td></tr>
+                <tr><td>Guardrails</td><td class="desc">Workspace approval, path grants, tool policies, explicit denies, <code>/auto-approve</code> with optional fail-closed reviews, path-escape rejection, secret redaction</td><td class="desc">Not an OS sandbox or a guarantee against every prompt injection</td></tr>
+                <tr><td>Terminal experience</td><td class="desc">13 interface styles, themes, <code>/statusline</code> preview, growing composer, queued messages and <code>/redirect</code>, title spinner, <code>/nova</code> avatar, searchable <code>/help</code></td><td class="desc">Animations optional; low-resource mode pauses them</td></tr>
+                <tr><td>Integrations and headless</td><td class="desc">MCP presets for Figma, Figma Desktop, Vercel and Higgsfield; voice in and out; <code>nova -p</code>; <code>--mode pipe</code> / <code>--headless</code> JSONL sessions</td><td class="desc">Extras, accounts and subscriptions may apply; headless approval stays explicit</td></tr>
+                <tr><td>Attribution</td><td class="desc">NovaCode <code>Co-Authored-By</code> trailer and a PR logo footer, on by default; <code>attribution.commits</code> and <code>attribution.pullRequests</code></td><td class="desc">Credits a commit, not specific lines</td></tr>
+                <tr><td>Updates</td><td class="desc"><code>nova update</code> and <code>/update</code> with stages, release notes and resume of the interrupted turn; Windows launcher-safe</td><td class="desc">CI covers a maintained Windows and Linux matrix, not every configuration</td></tr>
+                <tr><td>Nova's computer</td><td class="desc">Session-owned QEMU Linux guest (2 CPUs, 4 GiB) with a private loopback preview; observe, click, type and scroll against the latest screenshot</td><td class="desc">Preview: real guest boot unverified; needs <code>computer</code> extra, QEMU and a vision model; guest has network access</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="features-demo">
+          <h2 class="rv">Try it: command shortlist</h2>
+          <div class="table-wrap rv">
+            <table>
+              <thead><tr><th>Command</th><th>What you will see</th></tr></thead>
+              <tbody>
+                <tr><td>/model &rarr; Vision</td><td class="desc">Separate main-model and vision choices</td></tr>
+                <tr><td>/router</td><td class="desc">Task criteria and per-route reasoning effort</td></tr>
+                <tr><td>/council web</td><td class="desc">Parallel discussion, ballots and chairman synthesis</td></tr>
+                <tr><td>/cowork</td><td class="desc">Chat with folder grants, tasks and activity</td></tr>
+                <tr><td>/create</td><td class="desc">Local skill and agent editing</td></tr>
+                <tr><td>/artifacts</td><td class="desc">Searchable artifact collection</td></tr>
+                <tr><td>/share artifacts</td><td class="desc">A temporary Cloudflare URL for the collection</td></tr>
+                <tr><td>/caveman settings</td><td class="desc">Six switches and the saved intensity</td></tr>
+                <tr><td>/caveman audit</td><td class="desc">Estimates against reported token usage</td></tr>
+                <tr><td>/tabs, /resume, /tree</td><td class="desc">Parallel work, saved sessions and branches</td></tr>
+                <tr><td>/voice download</td><td class="desc">Real STT and TTS download progress</td></tr>
+                <tr><td>/theme</td><td class="desc">Home screens, character art and animated homes</td></tr>
+                <tr><td>/trace setup</td><td class="desc">Persistent tracing configuration</td></tr>
+                <tr><td>/dream, /learning</td><td class="desc">Memory maintenance and reviewed learning</td></tr>
+                <tr><td>/tasks, /cron</td><td class="desc">Background work and scheduled tasks</td></tr>
+                <tr><td>/remote</td><td class="desc">Telegram, Discord or Rootapp setup</td></tr>
+                <tr><td>/computer start</td><td class="desc">The preview Linux desktop (verify a local guest first)</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="features-tools">
+          <h2 class="rv">Tool names</h2>
+          <p class="body rv">Exact names for prompts, policies and plugin code.</p>
+          <div class="table-wrap rv">
+            <table>
+              <thead><tr><th>Tool</th><th>Capability</th></tr></thead>
+              <tbody>
+                <tr><td>SendMessage</td><td class="desc">Explicit messages between connected live tabs</td></tr>
+                <tr><td>EnterWorktreeTool, ExitWorktreeTool</td><td class="desc">Move the current local agent into a Git worktree and back</td></tr>
+                <tr><td>NotebookEditTool</td><td class="desc">Insert, replace and delete notebook cells without executing them</td></tr>
+                <tr><td>GlobTool, GrepTool</td><td class="desc">Imported-definition aliases for <code>glob</code> and <code>grep</code></td></tr>
+                <tr><td>MCPTool</td><td class="desc">Server-scoped discovery, schema inspection and execution</td></tr>
+                <tr><td>MCPCode</td><td class="desc">Bounded JavaScript workflows over eligible native and MCP tools</td></tr>
+                <tr><td>computer_status, computer_screenshot, computer_action</td><td class="desc">Preview desktop observation and input; the user starts the guest</td></tr>
+                <tr><td>tool_search_tool_regex_20251119</td><td class="desc">Local regex schema discovery</td></tr>
+                <tr><td>tool_search_tool_bm25_20251119</td><td class="desc">Local BM25 natural-language schema discovery</td></tr>
+                <tr><td>CronCreateTool, CronDeleteTool, CronListTool</td><td class="desc">Scheduled-task management</td></tr>
+                <tr><td>CtxInspectTool</td><td class="desc">Feature-gated context diagnostics</td></tr>
+                <tr><td>TerminalCaptureTool</td><td class="desc">Feature-gated capture of retained Nova task-panel text</td></tr>
+                <tr><td>VISION</td><td class="desc">On-demand image inspection for text-only chat models</td></tr>
+                <tr><td>daemon</td><td class="desc">Tracked detached processes, status, log tails and termination</td></tr>
+                <tr><td>caveman</td><td class="desc">Read-only source recovery, saved script lookup and usage audit</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="codeblock win rv">
+            <pre><span class="c"># opt out of commit and PR attribution: merge into ~/.nova/Nova.config.json</span>
+{
+  "attribution": {
+    "commits": false,
+    "pullRequests": false
+  }
+}</pre>
           </div>
         </section>
       </div>
@@ -1819,8 +2002,9 @@ search_tools("*")            <span class="c"># browse the catalog</span></pre>
             <table>
               <thead><tr><th>Platform</th><th>Type</th><th>Notes</th></tr></thead>
               <tbody>
-                <tr><td>Discord</td><td class="desc">Interactive chat</td><td class="desc">Messages over 2000 chars are split into chunks</td></tr>
-                <tr><td>Telegram</td><td class="desc">Interactive chat</td><td class="desc">Messages over 4096 chars are split; supports voice notes</td></tr>
+                <tr><td>Discord</td><td class="desc">Interactive chat</td><td class="desc">A thread or forum post per session, restored on reconnect and archived on close; messages over 2000 chars are split</td></tr>
+                <tr><td>Telegram</td><td class="desc">Interactive chat</td><td class="desc">A named topic per session; photos and captioned images; messages over 4096 chars are split; supports voice notes</td></tr>
+                <tr><td>Rootapp</td><td class="desc">Optional companion</td><td class="desc">An authorized community channel through Root's local DevHost integration, with its own setup</td></tr>
                 <tr><td>Cron</td><td class="desc">One-way event source</td><td class="desc">Scheduled tasks via 5-field cron expressions</td></tr>
                 <tr><td>Webhook</td><td class="desc">One-way event source</td><td class="desc">HMAC-SHA256 signed ingress from external systems</td></tr>
               </tbody>
@@ -1920,11 +2104,14 @@ search_tools("*")            <span class="c"># browse the catalog</span></pre>
                 <tr><td>STT</td><td class="desc">Deepgram</td><td class="desc">Cloud, high-accuracy</td></tr>
                 <tr><td>STT</td><td class="desc">ElevenLabs</td><td class="desc">Cloud STT</td></tr>
                 <tr><td>STT</td><td class="desc">Parakeet</td><td class="desc">NVIDIA Parakeet via sherpa-onnx</td></tr>
+                <tr><td>STT</td><td class="desc">Whistle</td><td class="desc">Local Cactus runtime; <code>voice-whistle</code> extra</td></tr>
                 <tr><td>TTS</td><td class="desc">Piper</td><td class="desc">Lightweight local TTS</td></tr>
                 <tr><td>TTS</td><td class="desc">ElevenLabs</td><td class="desc">Cloud TTS</td></tr>
                 <tr><td>TTS</td><td class="desc">Deepgram</td><td class="desc">Cloud TTS</td></tr>
                 <tr><td>TTS</td><td class="desc">Orpheus</td><td class="desc">LLM-based TTS (~2GB, slower)</td></tr>
                 <tr><td>TTS</td><td class="desc">Pocket TTS</td><td class="desc">Kyutai's lightweight local TTS</td></tr>
+                <tr><td>TTS</td><td class="desc">Kokoro 82M INT8</td><td class="desc">CPU, six English voices, about 120 MB of weights and voices; Apache-2.0</td></tr>
+                <tr><td>TTS</td><td class="desc">sanoTTS</td><td class="desc">CPU, four English voices, about 2 to 4 MB per voice; GPL-3.0</td></tr>
               </tbody>
             </table>
           </div>
@@ -1942,6 +2129,7 @@ search_tools("*")            <span class="c"># browse the catalog</span></pre>
           <h2 class="rv">Voice management</h2>
           <div class="codeblock win rv">
             <pre>/voice test              <span class="c"># verify it works</span>
+/voice download          <span class="c"># fetch models ahead of time, with progress</span>
 /voice on/off            <span class="c"># toggle voice I/O</span>
 /voice mode ptt|listen   <span class="c"># switch mode</span>
 /voice settings tts orpheus   <span class="c"># switch TTS provider</span>
@@ -2509,7 +2697,7 @@ uv pip install novacode-cli[voice-pocket]</pre>
   const links = document.querySelectorAll('[data-page]');
   const where = document.getElementById('where');
   const pageNames = {
-    overview: '~/docs', installation: '~/docs/install', cli: '~/docs/cli', config: '~/docs/config',
+    overview: '~/docs', features: '~/docs/features', installation: '~/docs/install', cli: '~/docs/cli', config: '~/docs/config',
     tui: '~/docs/tui', slash: '~/docs/slash', headless: '~/docs/headless', tools: '~/docs/tools',
     subagents: '~/docs/agents', memory: '~/docs/memory', skills: '~/docs/skills', mcp: '~/docs/mcp',
     plugins: '~/docs/plugins', hermes: '~/docs/hermes', verification: '~/docs/verify',

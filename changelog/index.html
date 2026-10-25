@@ -15,6 +15,7 @@
 <link rel="preload" as="font" type="font/woff2" href="../assets/fonts/geist-var.woff2" crossorigin>
 <link rel="preload" as="font" type="font/woff2" href="../assets/fonts/geist-mono-var.woff2" crossorigin>
 <script>document.documentElement.classList.add("js")</script>
+<script src="../assets/theme.js"></script>
 
 <style>
 /* ============================================================
@@ -38,7 +39,7 @@
 @font-face{font-family:"Geist";src:url("../assets/fonts/geist-var.woff2") format("woff2");font-weight:100 900;font-style:normal;font-display:swap}
 @font-face{font-family:"Geist Mono";src:url("../assets/fonts/geist-mono-var.woff2") format("woff2");font-weight:100 900;font-style:normal;font-display:swap}
 
-:root{
+:root{color-scheme:light;
   --bg:#fafafa;--surface:#f0f0f2;--raised:#ffffff;
   --text:#17171a;--muted:#5b5b65;--line:#dedee3;
   --page-text:#17171a;--page-muted:#5b5b65;--page-line:#dedee3;
@@ -59,8 +60,17 @@
   --anchor-lead:80px;
   --z-nav:20;--z-skip:30;--z-scan:-1;
 }
-@media (prefers-color-scheme: dark){
-  :root{
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){color-scheme:dark;
+    --bg:#0e0e10;--surface:#17171b;--raised:#1d1d22;
+    --text:#ececef;--muted:#a1a1ac;--line:#2a2a31;
+    --page-text:#ececef;--page-muted:#a1a1ac;--page-line:#2a2a31;
+    --page-accent:#f4723f;--page-on-accent:#16110e;
+    --accent:#f4723f;--on-accent:#16110e;--accent-wash:#2a1810;
+    --shadow:0 1px 2px rgb(0 0 0 / .4),0 22px 48px -20px rgb(0 0 0 / .7);
+    --glow:0 0 44px -10px color-mix(in srgb,var(--accent) 55%,transparent);
+    --grid:rgb(255 255 255 / .028);
+  }}
+:root[data-theme="dark"]{color-scheme:dark;
     --bg:#0e0e10;--surface:#17171b;--raised:#1d1d22;
     --text:#ececef;--muted:#a1a1ac;--line:#2a2a31;
     --page-text:#ececef;--page-muted:#a1a1ac;--page-line:#2a2a31;
@@ -70,7 +80,6 @@
     --glow:0 0 44px -10px color-mix(in srgb,var(--accent) 55%,transparent);
     --grid:rgb(255 255 255 / .028);
   }
-}
 
 *,*::before,*::after{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%;scroll-padding-top:var(--anchor-lead)}
@@ -93,7 +102,8 @@ body::after{
   background:repeating-linear-gradient(0deg,rgb(0 0 0 / .05) 0 1px,transparent 1px 3px);
   opacity:0;
 }
-@media (prefers-color-scheme: dark){body::after{opacity:1}}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) body::after{opacity:1}}
+:root[data-theme="dark"] body::after{opacity:1}
 
 img,svg{display:block;max-width:100%}
 img{height:auto}
@@ -239,6 +249,21 @@ footer{border-top:1px solid var(--line);padding-block:28px 72px}
 .release-content a{text-decoration:underline;text-underline-offset:3px;color:var(--accent-ink)}
 #release-status{min-height:1.6em;font-size:.86rem;color:var(--muted);margin-top:12px}
 @media(max-width:620px){.topnav .tn-aux[href="../docs/index.html"]{display:inline-flex;min-height:32px;align-items:center}}
+
+/* ---------- theme toggle: the moon offers dark, the sun offers light ---------- */
+.theme-btn{
+  display:inline-flex;align-items:center;justify-content:center;flex:none;
+  width:38px;height:38px;padding:0;border-radius:var(--r-press);cursor:pointer;
+  border:1px solid var(--line);background:transparent;color:var(--text);
+  transition:border-color .2s,color .2s,transform .2s var(--ease);
+}
+.theme-btn[hidden]{display:none}
+.theme-btn svg{width:17px;height:17px;transition:rotate .5s var(--ease)}
+.theme-btn .i-sun,.theme-btn[aria-pressed="true"] .i-moon{display:none}
+.theme-btn[aria-pressed="true"] .i-sun{display:block}
+@media (hover: hover){.theme-btn:hover{border-color:var(--accent);color:var(--accent)}.theme-btn:hover svg{rotate:-30deg}}
+.theme-btn:active{transform:scale(.94)}
+@media (max-width:420px){.topnav{gap:6px}.theme-btn{width:34px;height:34px}}
 </style>
 <link rel="canonical" href="https://babitdor.github.io/NovaCode/changelog/">
 <meta name="twitter:card" content="summary_large_image">
@@ -256,7 +281,8 @@ footer{border-top:1px solid var(--line);padding-block:28px 72px}
   <a class="tn-aux" href="https://github.com/Babitdor/NovaCode" rel="noopener">GitHub</a>
   <a class="tn-aux" href="../docs/index.html">Docs</a>
   <a class="tn-aux" href="../index.html">Landing</a>
-  <a class="btn btn-primary" href="../index.html#install" style="min-height:38px;padding:0 16px;font-size:.88rem">Install</a>
+  <button class="theme-btn" type="button" data-theme-toggle aria-pressed="false" aria-label="Dark theme" hidden><svg class="i-moon" viewBox="0 0 256 256" aria-hidden="true"><path fill="currentColor" d="M233.54,142.23a8,8,0,0,0-8-2,88.08,88.08,0,0,1-109.8-109.8,8,8,0,0,0-10-10,104.84,104.84,0,0,0-52.91,37A104,104,0,0,0,136,224a103.09,103.09,0,0,0,62.52-20.88,104.84,104.84,0,0,0,37-52.91A8,8,0,0,0,233.54,142.23ZM188.9,190.36A88,88,0,0,1,65.66,67.11a89,89,0,0,1,31.4-26A106,106,0,0,0,96,56,104.11,104.11,0,0,0,200,160a106,106,0,0,0,14.92-1.06A89,89,0,0,1,188.9,190.36Z"/></svg><svg class="i-sun" viewBox="0 0 256 256" aria-hidden="true"><path fill="currentColor" d="M120,40V16a8,8,0,0,1,16,0V40a8,8,0,0,1-16,0Zm72,88a64,64,0,1,1-64-64A64.07,64.07,0,0,1,192,128Zm-16,0a48,48,0,1,0-48,48A48.05,48.05,0,0,0,176,128ZM58.34,69.66A8,8,0,0,0,69.66,58.34l-16-16A8,8,0,0,0,42.34,53.66Zm0,116.68-16,16a8,8,0,0,0,11.32,11.32l16-16a8,8,0,0,0-11.32-11.32ZM192,72a8,8,0,0,0,5.66-2.34l16-16a8,8,0,0,0-11.32-11.32l-16,16A8,8,0,0,0,192,72Zm5.66,114.34a8,8,0,0,0-11.32,11.32l16,16a8,8,0,0,0,11.32-11.32ZM48,128a8,8,0,0,0-8-8H16a8,8,0,0,0,0,16H40A8,8,0,0,0,48,128Zm80,80a8,8,0,0,0-8,8v24a8,8,0,0,0,16,0V216A8,8,0,0,0,128,208Zm112-88H216a8,8,0,0,0,0,16h24a8,8,0,0,0,0-16Z"/></svg></button>
+      <a class="btn btn-primary" href="../index.html#install" style="min-height:38px;padding:0 16px;font-size:.88rem">Install</a>
 </header>
 
 <main id="main">

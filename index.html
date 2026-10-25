@@ -15,9 +15,10 @@
 <link rel="preload" as="font" type="font/woff2" href="assets/fonts/geist-var.woff2" crossorigin>
 <link rel="preload" as="image" href="assets/hero.webp" imagesrcset="assets/hero-960.webp 960w, assets/hero.webp 1672w" imagesizes="100vw" fetchpriority="high">
 <script type="application/ld+json">
-{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Nova","alternateName":"NovaCode","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Linux, Windows","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"license":"https://opensource.org/licenses/MIT","codeRepository":"https://github.com/Babitdor/NovaCode","description":"An open-source coding agent for the terminal with a memory wiki you can read and search, plans you approve, parallel project sessions and hosted or local models."}
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Nova","alternateName":"NovaCode","applicationCategory":"DeveloperApplication","softwareVersion":"1.0.99","operatingSystem":"macOS, Linux, Windows","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"license":"https://opensource.org/licenses/MIT","codeRepository":"https://github.com/Babitdor/NovaCode","description":"An open-source coding agent for the terminal with a memory wiki you can read and search, plans you approve, parallel project sessions and hosted or local models."}
 </script>
 <script>document.documentElement.classList.add("js")</script>
+<script src="assets/theme.js"></script>
 
 <style>
 /* ============================================================
@@ -36,7 +37,8 @@
    System, followed everywhere:
      · one accent (--accent), nothing else is coloured
      · radius: 999px on anything you press, 14px on anything you look at
-     · theme follows the visitor's system setting; no section inverts
+     · theme follows the system until the visitor picks one (assets/theme.js);
+       no section inverts
      · motion is entrance and feedback only, and is off under reduced-motion
    Zero build: one file, no framework. Fonts are self-hosted in assets/fonts.
    ============================================================ */
@@ -51,7 +53,7 @@
   font-weight:100 900; font-style:normal; font-display:swap;
 }
 
-:root{
+:root{color-scheme:light;
   --bg:#fafafa;
   --surface:#f0f0f2;
   --raised:#ffffff;
@@ -90,8 +92,22 @@
   --z-status:25;
   --z-skip:30;
 }
-@media (prefers-color-scheme: dark){
-  :root{
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){color-scheme:dark;
+    --bg:#0e0e10;
+    --surface:#17171b;
+    --raised:#1d1d22;
+    --text:#ececef;
+    --muted:#a1a1ac;
+    --line:#2a2a31;
+    --page-text:#ececef; --page-muted:#a1a1ac; --page-line:#2a2a31;
+    --page-accent:#f4723f; --page-on-accent:#16110e;
+    --accent:#f4723f;
+    --on-accent:#16110e;
+    --shadow:0 1px 2px rgb(0 0 0 / .4), 0 22px 48px -20px rgb(0 0 0 / .7);
+    --glow:0 0 44px -10px color-mix(in srgb, var(--accent) 55%, transparent);
+    --grid:rgb(255 255 255 / .028);
+  }}
+:root[data-theme="dark"]{color-scheme:dark;
     --bg:#0e0e10;
     --surface:#17171b;
     --raised:#1d1d22;
@@ -106,7 +122,6 @@
     --glow:0 0 44px -10px color-mix(in srgb, var(--accent) 55%, transparent);
     --grid:rgb(255 255 255 / .028);
   }
-}
 
 *,*::before,*::after{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%; scroll-behavior:smooth; scroll-padding-top:88px}
@@ -126,7 +141,8 @@ body::before{
   mask-image:radial-gradient(ellipse 90% 70% at 50% 0%, #000 30%, transparent 100%);
 }
 #sky{position:fixed; inset:0; width:100%; height:100%; z-index:-1; pointer-events:none; display:none}
-@media (prefers-color-scheme: dark){ #sky{display:block} }
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) #sky{display:block}}
+:root[data-theme="dark"] #sky{display:block}
 /* CRT scanlines: texture, so they sit behind the content (-1) with the sky,
    never over it. Above the content they dim text and the focus ring and cross
    the skip link — decoration does not belong on top of either. */
@@ -134,7 +150,8 @@ body::after{
   content:""; position:fixed; inset:0; z-index:-1; pointer-events:none; display:none;
   background:repeating-linear-gradient(0deg, rgb(0 0 0 / .05) 0 1px, transparent 1px 3px);
 }
-@media (prefers-color-scheme: dark){ body::after{display:block} }
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) body::after{display:block}}
+:root[data-theme="dark"] body::after{display:block}
 
 img,svg{display:block; max-width:100%}
 img{height:auto}
@@ -258,11 +275,13 @@ section{padding-block:var(--pad)}
 @media (prefers-reduced-transparency: reduce){
   .nav.stuck, .nav.menu-open{background:var(--bg); backdrop-filter:none; -webkit-backdrop-filter:none}
 }
-.nav-row{display:flex; align-items:center; gap:28px; height:64px}
-.brand{display:inline-flex; align-items:center; gap:10px; text-decoration:none; font:600 .95rem/1 var(--mono)}
+/* Gaps measured with the brand held at full width: nine links, Source, Install and the
+   theme toggle fit the 1160px content width at 20/18 from 1165px up (0px over at 1165). */
+.nav-row{display:flex; align-items:center; gap:20px; height:64px}
+.brand{flex:none; display:inline-flex; align-items:center; gap:10px; text-decoration:none; font:600 .95rem/1 var(--mono)}
 .brand b{color:var(--accent)} .brand span{color:var(--muted); font-weight:500}
 .brand img{width:26px; height:26px; border-radius:7px}
-.nav-links{display:flex; gap:24px; margin-left:auto}
+.nav-links{display:flex; gap:18px; margin-left:auto}
 .nav-links a{
   min-height:28px;display:inline-flex;align-items:center;
   position:relative; text-decoration:none; color:var(--muted);
@@ -347,7 +366,12 @@ section{padding-block:var(--pad)}
 .statement-side{display:grid; gap:24px}
 .toc{border-radius:var(--r-view); overflow:hidden; background:var(--panel);
   backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); font:500 .86rem/1.5 var(--mono)}
-.toc .body{padding:14px 18px 18px}
+.toc .body, .toc-in{padding:14px 18px 18px}
+/* The contents panel is the page's feature index, so each row is a way in. */
+.toc dt a{text-decoration:none; background:linear-gradient(var(--accent), var(--accent)) 0 100% / 0 1px no-repeat;
+  transition:color .2s, background-size .35s var(--ease)}
+@media (hover: hover){ .toc dt a:hover{color:var(--text); background-size:100% 1px} }
+.toc dt a:focus-visible{color:var(--text); background-size:100% 1px}
 .toc dl{display:grid; gap:4px}
 .toc dl > div{display:flex; align-items:baseline; gap:8px}
 .toc dl > div::before{content:""; order:2; flex:1; border-bottom:1px dotted var(--line); transform:translateY(-4px)}
@@ -523,6 +547,53 @@ section{padding-block:var(--pad)}
 .cap-line{color:var(--muted); font-size:.9rem}
 .cap-tag{font:500 .7rem/1 var(--mono); letter-spacing:.08em; text-transform:uppercase; color:var(--accent)}
 
+/* ---------- the limit under a demo: every claim on this page names one ---------- */
+.note{color:var(--muted); font-size:.9rem; max-width:76ch; margin-top:18px}
+.tag{display:inline-block; font:600 .7rem/1 var(--mono); letter-spacing:.08em; text-transform:uppercase;
+  color:var(--accent); border:1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-radius:var(--r-press); padding:5px 9px; vertical-align:middle}
+
+/* ---------- web council: one discussion, two views. Reuses the install tabs. ---------- */
+.debate{border-radius:var(--r-view); overflow:hidden; background:var(--panel)}
+.debate .pane{padding:0}
+.stages{display:grid; grid-template-columns:repeat(3, minmax(0, 1fr))}
+.stages li{display:grid; gap:8px; align-content:start; padding:18px 20px 20px}
+.stages li + li{border-left:1px solid var(--line)}
+.who{font:500 .72rem/1 var(--mono); letter-spacing:.08em; text-transform:uppercase; color:var(--muted)}
+.stages .msg{font-size:.94rem}
+.stages .vote{font:500 .76rem/1.4 var(--mono); color:var(--accent)}
+.verdict{display:grid; gap:14px; padding:20px 22px 22px}
+.verdict p{max-width:64ch}
+.verdict .body{font-size:.94rem}
+
+/* A titled panel that is not one of the named components above. */
+.panel{border-radius:var(--r-view); overflow:hidden; background:var(--panel)}
+
+/* ---------- agents: status lines, as the TUI prints them ---------- */
+.statuses{display:grid; gap:2px; padding:12px 8px 14px; font:500 .84rem/1.5 var(--mono)}
+.statuses li{display:grid; grid-template-columns:2ch 17ch 10ch minmax(0, 1fr); gap:12px; padding:6px 10px; border-radius:var(--r-code); align-items:baseline}
+.statuses .st{color:var(--accent); font-weight:700}
+.statuses .nm{color:var(--text)}
+.statuses .state, .statuses .what{color:var(--muted)}
+.statuses li.run .state{color:var(--accent)}
+
+/* ---------- cowork: the workspace's two panes ---------- */
+.bridge.cowork{grid-template-columns:minmax(0, 5fr) minmax(0, 8fr)}
+.side{display:grid; gap:18px; align-content:start; padding:16px 18px 18px}
+.grants{display:grid; gap:4px; font:500 .82rem/1.5 var(--mono)}
+.grants li{display:flex; justify-content:space-between; gap:12px}
+.grants li > span:last-child{color:var(--muted)}
+.grants .on, .grants li > span.on:last-child{color:var(--accent)}
+.side .who{margin-bottom:8px}
+.grants .off{color:var(--muted); text-decoration:line-through}
+
+/* ---------- terminal styles: a list of names, with what each one adds ---------- */
+.styles{display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:0 clamp(16px, 2.4vw, 32px); padding:6px 20px 14px}
+.styles li{display:grid; gap:4px; align-content:start; padding:12px 0; border-top:1px solid var(--line)}
+.styles li:nth-child(-n+4){border-top:0}
+.styles b{font:600 .9rem/1.3 var(--mono)}
+.styles span{color:var(--muted); font-size:.82rem}
+
 /* ---------- code, figures, pairs ---------- */
 code{
   font-size:.88em; padding:.12em .42em; border-radius:6px;
@@ -679,14 +750,13 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
 }
 
 /* ---------- 1081-1164px: the bar is one link too wide, so tighten the gaps ----------
-   Nine links plus the two buttons need ~1,164px of bar at the authored gaps (28px between
-   groups, 24px between links). The off-canvas menu only takes over at 1080, so in this band
-   the row's content hung 43px past the right edge and clipped the primary button — measured
-   at 1081 x 900. Trimming the gaps recovers 94px and leaves the bar's height and its
-   authored values at every other width. */
+   Nine links, Source, Install and the theme toggle need ~1,160px at the 20/18 gaps above.
+   The off-canvas menu only takes over at 1080, so this band trims the gaps instead of
+   letting the row push past the right edge. */
 @media (min-width: 1081px) and (max-width: 1164px){
-  .nav-row{gap:18px}
-  .nav-links{gap:16px}
+  /* Measured at 1081: 12/12 is the widest pair with 0px over. */
+  .nav-row{gap:12px}
+  .nav-links{gap:12px}
 }
 
 /* ---------- below 1080px: the nav becomes one tap away ---------- */
@@ -764,6 +834,14 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
   .bridge > div + div{border-left:0; border-top:1px solid var(--line)}
   .ledger > div{grid-template-columns:minmax(0, 1fr); gap:4px; padding:14px 2px}
   .ledger dd:last-child{margin-top:2px}
+  .stages{grid-template-columns:minmax(0, 1fr)}
+  .stages li + li{border-left:0; border-top:1px solid var(--line)}
+  .bridge.cowork{grid-template-columns:minmax(0, 1fr)}
+  .styles{grid-template-columns:repeat(2, minmax(0, 1fr))}
+  .styles li:nth-child(-n+4){border-top:1px solid var(--line)}
+  .styles li:nth-child(-n+2){border-top:0}
+  .statuses li{grid-template-columns:2ch minmax(0, 1fr) auto; row-gap:2px}
+  .statuses .what{grid-column:2 / -1}
   .faq-grid > div:first-child{position:static !important}
   .foot nav{margin-left:0}
 }
@@ -775,6 +853,29 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
 }
 @media(max-width:620px){.statusline{gap:10px}.statusline .where{flex-shrink:0}.statusline #sl-hint{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.statusline .gauge{display:none}}
 @media(max-width:620px){.cmd{display:grid;grid-template-columns:12px minmax(0,1fr);gap:12px;align-items:start}.cmd code{white-space:pre-wrap;overflow-wrap:anywhere;overflow-x:visible}.cmd .copy{grid-column:2;justify-self:end}.cmd::before{padding-top:4px}}
+
+/* ---------- theme toggle: the moon offers dark, the sun offers light ---------- */
+.theme-btn{
+  display:inline-flex;align-items:center;justify-content:center;flex:none;
+  width:38px;height:38px;padding:0;border-radius:var(--r-press);cursor:pointer;
+  border:1px solid var(--line);background:transparent;color:var(--text);
+  transition:border-color .2s,color .2s,transform .2s var(--ease);
+}
+.theme-btn[hidden]{display:none}
+.theme-btn svg{width:17px;height:17px;transition:rotate .5s var(--ease)}
+.theme-btn .i-sun,.theme-btn[aria-pressed="true"] .i-moon{display:none}
+.theme-btn[aria-pressed="true"] .i-sun{display:block}
+@media (hover: hover){.theme-btn:hover{border-color:var(--accent);color:var(--accent)}.theme-btn:hover svg{rotate:-30deg}}
+.theme-btn:active{transform:scale(.94)}
+@media (max-width: 1080px){.nav .btn-primary{margin-left:auto}.menu-btn{margin-left:0}}
+@media (max-width: 900px){.nav-row .theme-btn{width:44px;height:44px}}
+/* A phone bar holds brand, Install, theme and menu: the menu keeps its word for screen
+   readers and shows only its icon, so all four fit down to 360px. */
+@media (max-width: 520px){
+  .menu-btn{width:44px; padding:0; justify-content:center}
+  .menu-btn span{position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap}
+}
+@media (max-width: 420px){.nav-row{gap:8px}}
 </style>
 <link rel="canonical" href="https://babitdor.github.io/NovaCode/">
 <meta name="twitter:card" content="summary_large_image">
@@ -798,14 +899,15 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
       <a href="changelog/index.html">changelog</a>
       <a href="#memory">memory</a>
       <a href="#council">council</a>
+      <a href="#agents">agents</a>
       <a href="#sessions">sessions</a>
       <a href="#models">models</a>
-      <a href="#plans">plans</a>
       <a href="#trust">trust</a>
       <a href="#faq">faq</a>
     </nav>
     <a class="btn btn-quiet" href="https://github.com/Babitdor/NovaCode">Source</a>
     <a class="btn btn-primary" href="#install">Install</a>
+    <button class="theme-btn" type="button" data-theme-toggle aria-pressed="false" aria-label="Dark theme" hidden><svg class="i-moon" viewBox="0 0 256 256" aria-hidden="true"><path fill="currentColor" d="M233.54,142.23a8,8,0,0,0-8-2,88.08,88.08,0,0,1-109.8-109.8,8,8,0,0,0-10-10,104.84,104.84,0,0,0-52.91,37A104,104,0,0,0,136,224a103.09,103.09,0,0,0,62.52-20.88,104.84,104.84,0,0,0,37-52.91A8,8,0,0,0,233.54,142.23ZM188.9,190.36A88,88,0,0,1,65.66,67.11a89,89,0,0,1,31.4-26A106,106,0,0,0,96,56,104.11,104.11,0,0,0,200,160a106,106,0,0,0,14.92-1.06A89,89,0,0,1,188.9,190.36Z"/></svg><svg class="i-sun" viewBox="0 0 256 256" aria-hidden="true"><path fill="currentColor" d="M120,40V16a8,8,0,0,1,16,0V40a8,8,0,0,1-16,0Zm72,88a64,64,0,1,1-64-64A64.07,64.07,0,0,1,192,128Zm-16,0a48,48,0,1,0-48,48A48.05,48.05,0,0,0,176,128ZM58.34,69.66A8,8,0,0,0,69.66,58.34l-16-16A8,8,0,0,0,42.34,53.66Zm0,116.68-16,16a8,8,0,0,0,11.32,11.32l16-16a8,8,0,0,0-11.32-11.32ZM192,72a8,8,0,0,0,5.66-2.34l16-16a8,8,0,0,0-11.32-11.32l-16,16A8,8,0,0,0,192,72Zm5.66,114.34a8,8,0,0,0-11.32,11.32l16,16a8,8,0,0,0,11.32-11.32ZM48,128a8,8,0,0,0-8-8H16a8,8,0,0,0,0,16H40A8,8,0,0,0,48,128Zm80,80a8,8,0,0,0-8,8v24a8,8,0,0,0,16,0V216A8,8,0,0,0,128,208Zm112-88H216a8,8,0,0,0,0,16h24a8,8,0,0,0,0-16Z"/></svg></button>
     <button class="menu-btn" type="button" id="menu-btn" aria-expanded="false" aria-controls="nav-links">
       <i aria-hidden="true"></i><span>menu</span>
     </button>
@@ -867,14 +969,20 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
           <div class="bar" aria-hidden="true"><i></i><i></i><i></i><span>contents</span></div>
           <div class="toc-in">
             <dl>
-              <div><dt>memory</dt><dd>wiki, /dream</dd></div>
-              <div><dt>planning</dt><dd>/council, plan mode</dd></div>
-              <div><dt>discussion</dt><dd>council debate, consensus</dd></div>
-              <div><dt>sessions</dt><dd>parallel tabs, @tab:</dd></div>
-              <div><dt>cowork</dt><dd>folders, tasks, activity</dd></div>
-              <div><dt>models</dt><dd>hosted, Ollama, /router</dd></div>
-              <div><dt>learning</dt><dd>/learning, reviewable</dd></div>
-              <div><dt>recovery</dt><dd>snapshots, /restore</dd></div>
+              <div><dt><a href="#memory">memory</a></dt><dd>wiki, /dream</dd></div>
+              <div><dt><a href="#council">planning</a></dt><dd>/council, plan mode</dd></div>
+              <div><dt><a href="#web-council">discussion</a></dt><dd>/council web</dd></div>
+              <div><dt><a href="#agents">agents</a></dt><dd>@name, background</dd></div>
+              <div><dt><a href="#code-mode">code mode</a></dt><dd>MCPCode</dd></div>
+              <div><dt><a href="#sessions">sessions</a></dt><dd>tabs, worktrees</dd></div>
+              <div><dt><a href="#cowork">cowork</a></dt><dd>/cowork</dd></div>
+              <div><dt><a href="#models">models</a></dt><dd>/model, Vision, /router</dd></div>
+              <div><dt><a href="#remote-sessions">remote</a></dt><dd>Telegram, Discord</dd></div>
+              <div><dt><a href="#caveman">caveman</a></dt><dd>/caveman</dd></div>
+              <div><dt><a href="#artifacts">artifacts</a></dt><dd>/share artifacts</dd></div>
+              <div><dt><a href="#terminal">styles, voice</a></dt><dd>/theme, /voice</dd></div>
+              <div><dt><a href="#computer">computer</a></dt><dd>preview</dd></div>
+              <div><dt><a href="#trust">learning</a></dt><dd>/learning, /restore</dd></div>
             </dl>
           </div>
         </div>
@@ -997,33 +1105,113 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
   </section>
 
   <!-- ================= web council ================= -->
-  <section id="web-council" class="s-airy" data-chapter="~/desk .nova/council">
+  <section id="web-council" data-chapter="~/desk .nova/council">
     <div class="wrap">
       <div class="head rv">
-        <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="cm">/council which auth flow is least invasive?</span></p>
-        <h2>A council that debates before it concludes.</h2>
-        <p class="body">Open <code>/council web</code> for live discussion between multiple advisors. They ask each other clarification questions, vote on actual options, and a chairman reconciles disagreements into a reasoned synthesis — while keeping minority views visible.</p>
+        <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="cm">/council web</span></p>
+        <h2>Then let the advisors argue it out.</h2>
+        <p class="body">The browser workspace runs a three-stage discussion. Advisors analyse a decision brief in parallel, vote on the actual options with reasons, and a chairman streams a synthesis that reconciles the disagreements and keeps the minority concern on the page. You approve, revise or reject it.</p>
       </div>
 
-      <div class="grid-grid rv" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:clamp(28px,4vw,48px)">
-        <div class="win" style="padding:16px 18px;display:grid;gap:10px">
-          <p class="eyebrow">Clarify</p>
-          <p class="body" style="font-size:.9rem;line-height:1.5"><code>Advisor A:</code> Does OAuth or API-key matter for user friction vs. security posture?</p>
+      <div class="debate win rv">
+        <div class="tabs" role="tablist" aria-label="Council view">
+          <button class="tab" role="tab" aria-selected="true" id="t-consensus" aria-controls="p-consensus">Synthesized consensus</button>
+          <button class="tab" role="tab" aria-selected="false" id="t-debate" aria-controls="p-debate" tabindex="-1">Full debate</button>
         </div>
-        <div class="win" style="padding:16px 18px;display:grid;gap:10px">
-          <p class="eyebrow">Debate</p>
-          <p class="body" style="font-size:.9rem;line-height:1.5"><code>Advisor B:</code> Both work, but the question scope changes with the threat model.</p>
+        <div class="pane on" id="p-consensus" role="tabpanel" aria-labelledby="t-consensus">
+          <div class="verdict">
+            <p class="who">chairman &middot; option 2 &middot; 2 of 3 ballots</p>
+            <p>Move sign-in to the provider's OAuth flow and keep API keys for headless runs.</p>
+            <p class="body">Two advisors weighed user friction above setup cost. The security advisor voted for option 1 and its concern stays in the record: a second credential path is a second thing to revoke.</p>
+            <p class="body"><b>Next step:</b> list where API keys are read today before anything is written.</p>
+          </div>
         </div>
-        <div class="win" style="padding:16px 18px;display:grid;gap:10px">
-          <p class="eyebrow">Synthesise</p>
-          <p class="body" style="font-size:.9rem;line-height:1.5"><code>Chairman:</code> Option 2 has stronger user trust but requires provider sign-in setup.</p>
+        <div class="pane" id="p-debate" role="tabpanel" aria-labelledby="t-debate">
+          <ol class="stages">
+            <li>
+              <span class="who">product advisor</span>
+              <span class="msg">Does a person sign in once per machine, or once per session? That decides how much friction OAuth removes.</span>
+              <span class="vote">ballot: option 2 &middot; fewer prompts at first run</span>
+            </li>
+            <li>
+              <span class="who">architecture advisor</span>
+              <span class="msg">Option 2 fits the existing credential store. Headless runs still need keys, so both paths stay.</span>
+              <span class="vote">ballot: option 2 &middot; reuses the store</span>
+            </li>
+            <li>
+              <span class="who">security advisor</span>
+              <span class="msg">Two credential paths double what has to be revoked when a laptop goes missing.</span>
+              <span class="vote">ballot: option 1 &middot; one path to audit</span>
+            </li>
+          </ol>
         </div>
       </div>
-      <div class="row-handoff" style="display:flex;gap:12px;align-items:center">
-        <button class="btn btn-quiet" type="button">Switch to full debate view</button>
-        <p class="note" style="margin:0;font-size:.82rem;color:var(--muted)">Votes are advisory only — you still choose what to implement.</p>
+      <p class="note">An illustrative discussion. Presets for Code Audit, Architecture and Creative Debate apply without overwriting your saved model assignments, and each advisor's identity, instructions and model can be edited. Votes are advisory, the chairman reads visible analyses rather than hidden reasoning, and consensus does not make an answer correct.</p>
+    </div>
+  </section>
+
+  <!-- ================= agents ================= -->
+  <section id="agents" class="s-airy" data-chapter="~/desk agents">
+    <div class="wrap">
+      <div class="head rv">
+        <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="cm">@code-explorer where is SessionState built?</span></p>
+        <h2>Specialists take the side work.</h2>
+        <p class="body">Delegate exploration, bug fixes, refactors, reviews, security and dependency checks, tests, documentation or browser automation. Results you need now come back in the same turn; independent jobs run in the background while you keep typing.</p>
       </div>
-      <p class="note">Presets like Code Audit, Architecture and Creative Debate apply without overwriting saved assignments. This is separate from the planning <code>/council</code> workflow.</p>
+
+      <div class="split">
+        <div class="panel win rv">
+          <div class="bar" aria-hidden="true"><i></i><i></i><i></i><span>agents</span></div>
+          <ul class="statuses">
+            <li><span class="st" aria-hidden="true">&#10003;</span><span class="nm">code-explorer</span><span class="state">completed</span><span class="what">3 call sites found</span></li>
+            <li class="run"><span class="st" aria-hidden="true">&#9679;</span><span class="nm">test-runner</span><span class="state">running</span><span class="what">tests/agents</span></li>
+            <li><span class="st" aria-hidden="true">&#10005;</span><span class="nm">dependency-audit</span><span class="state">failed</span><span class="what">server unreachable</span></li>
+          </ul>
+        </div>
+        <div class="split-copy rv" style="--i:1">
+          <h3>Write your own, by file</h3>
+          <p class="body">Agent definitions are files with a project or global scope; a project definition overrides a global one with the same name. Each specialist can carry its own selection of skills instead of the whole library. <code>/agents</code> lists them, and edits apply at the next turn without clearing the conversation.</p>
+          <ul class="proof">
+            <li><code>@name</code> resolves a known agent</li>
+            <li>bounded retries per model call</li>
+            <li>plain inline status lines</li>
+          </ul>
+        </div>
+      </div>
+      <p class="note">Background agents need the optional <code>agents-server</code> install; <code>/agent-server</code> reports what is missing. Persistent teams are experimental and off by default, under <code>/settings</code> &rarr; Experimental.</p>
+    </div>
+  </section>
+
+  <!-- ================= code mode ================= -->
+  <section id="code-mode" data-chapter="~/desk mcp">
+    <div class="wrap">
+      <div class="head rv">
+        <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="cm">Code Mode on</span></p>
+        <h2>Ten tool calls, one script.</h2>
+        <p class="body">Turn on Code Mode under the composer and the agent can combine eligible native and MCP tools in a short JavaScript function: loops, branches, dependent calls and bounded parallel work. Intermediate results stay in the script. Only what it returns reaches the model.</p>
+      </div>
+
+      <div class="codeblock win rv">
+        <div class="bar"><i></i><i></i><i></i><span>MCPCode</span></div>
+<pre><span class="c">// discover a tool, then call it across two folders at once</span>
+<span class="k">const</span> found = <span class="k">await</span> tools.list();
+<span class="k">const</span> spec  = <span class="k">await</span> tools.describe(found[0].name);
+<span class="k">const</span> dirs  = ["src", "tests"];
+<span class="k">const</span> runs  = <span class="k">await</span> Promise.all(dirs.map(d =&gt; tools.call(spec.name, { path: d })));
+<span class="k">return</span> runs.map((r, i) =&gt; ({ dir: dirs[i], size: r.length }));   <span class="c">// only this is returned</span></pre>
+      </div>
+
+      <div class="pair">
+        <div>
+          <h3>The same rules apply inside</h3>
+          <p class="body">Nested calls go through the configured tool inventory, argument validation, middleware and approval decisions, exactly as direct calls do. Memory, code size, run time, call count and concurrency are all bounded, and interrupting the script cancels pending work.</p>
+        </div>
+        <div>
+          <h3>Where it stops</h3>
+          <p class="body">The script has no host imports, filesystem or network of its own. Delegation, questions to you, workspace changes and calls that need interactive approval stay direct. External side effects cannot be rolled back.</p>
+        </div>
+      </div>
+      <p class="note">Native workflows need no MCP server; <code>mcp.list</code>, <code>mcp.describe</code> and <code>mcp.call</code> need configured servers. Rarely used schemas load on demand through hybrid, regex or BM25 tool search instead of riding along on every request. The script above is illustrative; arguments follow each tool's own schema.</p>
     </div>
   </section>
 
@@ -1081,46 +1269,60 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
       </div>
       <p class="note">Messaging connects tabs within one Nova window. Each recipient keeps its project and approval boundaries. Only the explicit message is shared, and pending messages are held in memory.</p>
       <p class="sr" role="status" id="tab-status"></p>
+
+      <div class="pair">
+        <div class="rv">
+          <h3>Agents can message too</h3>
+          <p class="body">The <code>SendMessage</code> tool lets the agent write to another live tab by session ID or tab title, find recipients with <code>list_sessions</code>, and keep each reply linked to the request that asked for it. <code>/tabs</code> launches, switches and closes project sessions, each with its own model, draft and scroll position.</p>
+        </div>
+        <div class="rv" style="--i:1">
+          <h3>Feature work in its own worktree</h3>
+          <p class="body">Ask Nova to enter a worktree and it creates a fresh branch from <code>HEAD</code>, then moves its file and shell tools there. Leaving keeps the branch, commits and uncommitted changes for review, and your original checkout is never touched. Needs Git and at least one commit.</p>
+        </div>
+      </div>
     </div>
   </section>
 
   <!-- ================= cowork workspace ================= -->
-  <section id="cowork" data-chapter="~/desk cowork">
+  <section id="cowork" class="s-tight" data-chapter="~/desk cowork">
     <div class="wrap">
       <div class="head rv">
-        <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="cm">/cowork</span></p>
-        <h2>A visual workspace that follows your folders.</h2>
-        <p class="body">Open the Cowork desk to see folder permissions, active tasks and an activity feed — all updated in real time while agents work on your code. A focused window for local work; remote integrations stay out of it.</p>
+        <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="cm">/cowork write the missing tests for the parser</span></p>
+        <h2>A desk for work you want to watch.</h2>
+        <p class="body">Cowork opens a local workspace beside the terminal, with folder access, tasks and activity next to the conversation. Grant or revoke a folder while Nova works, answer its questions, or stop the run.</p>
       </div>
 
-      <div class="window demo-window rv" style="border-radius:var(--r-panel);overflow:hidden;border:1px solid var(--line)">
-        <div class="bar" aria-hidden="true"><i></i><i></i><i></i><span>Cowork — project-name</span></div>
-        <div style="display:grid;grid-template-columns:clamp(180px,22%,3fr) minmax(200px,7fr);min-height:240px">
-          <div style="background:color-mix(in srgb,var(--bg) 97%,var(--muted));padding:12px;display:flex;flex-direction:column;gap:6px;font-size:.82rem">
-            <div style="font-weight:600;margin-bottom:4px">Folders</div>
-            <div style="display:flex;flex-direction:column;gap:3px;color:var(--muted);font-family:var(--mono)">src/<wbr/>app.py &check;</div>
-            <div style="display:flex;flex-direction:column;gap:3px;color:var(--muted);font-family:var(--mono)">tests/<wbr/>* &check;</div>
-            <div style="display:flex;flex-direction:column;gap:3px;color:var(--muted);font-family:var(--mono)">docs/* ✕</div>
-            <div style="margin-top:auto">
-              <div style="font-weight:600;margin-bottom:4px">Tasks</div>
-              <div style="color:var(--muted)">📄 Writing tests ···</div>
-              <div style="color:var(--muted)">⏳ Review PR #42</div>
-            </div>
+      <div class="bridge cowork rv">
+        <div class="win">
+          <div class="bar" aria-hidden="true"><i></i><i></i><i></i><span>workspace</span></div>
+          <div class="side">
+          <div>
+            <p class="who">folders</p>
+            <ul class="grants">
+              <li><span>src/parser/</span><span class="on">granted</span></li>
+              <li><span>tests/</span><span class="on">granted</span></li>
+              <li><span class="off">docs/</span><span>revoked</span></li>
+            </ul>
           </div>
-          <div style="padding:12px;display:flex;flex-direction:column;gap:8px;font-size:.85rem">
-            <div style="display:flex;align-items:center;gap:8px;font-size:.78rem;color:var(--muted)">
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="3"/></svg>
-              Memory explorer · index ready
-            </div>
-            <div style="background:color-mix(in srgb,var(--bg) 97%,var(--line));border-radius:var(--r-view);padding:10px;font-family:var(--mono);font-size:.82rem;line-height:1.5;flex:1">
-              <span style="color:var(--accent)">✎</span> Nova loaded memory/wiki.md<br>
-              <span style="color:#22c55e">✓</span> Updated INDEX.md routes<br>
-              <span style="color:#ca8a04">!</span> Pending /dream consolidation
-            </div>
+          <div>
+            <p class="who">tasks</p>
+            <ul class="grants">
+              <li><span>cover empty input</span><span class="on">running</span></li>
+              <li><span>cover nested quotes</span><span>queued</span></li>
+            </ul>
+          </div>
           </div>
         </div>
+        <div class="win">
+          <div class="bar" aria-hidden="true"><i></i><i></i><i></i><span>cowork</span></div>
+          <ol class="transcript">
+            <li><span class="who">you</span><span class="msg">Write the missing tests for the parser.</span></li>
+            <li><span class="who">nova</span><span class="msg">Reading <code>src/parser/lexer.py</code>. Two branches have no test: empty input and nested quotes.</span><span class="meta">activity &middot; 1 file read, 1 file written</span></li>
+            <li><span class="who">nova</span><span class="msg">Should the nested-quote test live in <code>tests/test_lexer.py</code> or a new file?</span></li>
+          </ol>
+        </div>
       </div>
-      <p class="note">Cowork is a local app — no public endpoint — so it keeps its own permission model per workspace. It works alongside background specialists, skills and MCP tools.</p>
+      <p class="note">Cowork runs as a local app and is not shared publicly. Folder grants scope what it may touch; they are not an operating-system sandbox. Long task and activity lists scroll on their own, and on a phone the sidebar becomes a drawer.</p>
     </div>
   </section>
 
@@ -1145,6 +1347,11 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
           <dd><code>gpt-4.1-mini</code> &middot; searches, test runs, focused jobs</dd>
         </div>
         <div>
+          <dt>Vision</dt>
+          <dd>images, on demand</dd>
+          <dd><code>/model</code> &rarr; Vision &middot; a text-only main model asks a vision model to inspect an image, and keeps answering</dd>
+        </div>
+        <div>
           <dt>Router</dt>
           <dd>per-turn selection</dd>
           <dd><code>/router</code> off by default &middot; decision model reads the turn, then routes it</dd>
@@ -1157,7 +1364,7 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
       </dl>
 
       <div class="providers-row rv">
-        <p>Providers and local runtimes Nova can be pointed at:</p>
+        <p>Among the 18 providers <code>/auth</code> can configure:</p>
         <span role="img" aria-label="Anthropic" title="Anthropic"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z"/></svg></span>
         <span role="img" aria-label="OpenAI" title="OpenAI"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9.205 8.658v-2.26c0-.19.072-.333.238-.428l4.543-2.616c.619-.357 1.356-.523 2.117-.523 2.854 0 4.662 2.212 4.662 4.566 0 .167 0 .357-.024.547l-4.71-2.759a.797.797 0 00-.856 0l-5.97 3.473zm10.609 8.8V12.06c0-.333-.143-.57-.429-.737l-5.97-3.473 1.95-1.118a.433.433 0 01.476 0l4.543 2.617c1.309.76 2.189 2.378 2.189 3.948 0 1.808-1.07 3.473-2.76 4.163zM7.802 12.703l-1.95-1.142c-.167-.095-.239-.238-.239-.428V5.899c0-2.545 1.95-4.472 4.591-4.472 1 0 1.927.333 2.712.928L8.23 5.067c-.285.166-.428.404-.428.737v6.898zM12 15.128l-2.795-1.57v-3.33L12 8.658l2.795 1.57v3.33L12 15.128zm1.796 7.23c-1 0-1.927-.332-2.712-.927l4.686-2.712c.285-.166.428-.404.428-.737v-6.898l1.974 1.142c.167.095.238.238.238.428v5.233c0 2.545-1.974 4.472-4.614 4.472zm-5.637-5.303l-4.544-2.617c-1.308-.761-2.188-2.378-2.188-3.948A4.482 4.482 0 014.21 6.327v5.423c0 .333.143.571.428.738l5.947 3.449-1.95 1.118a.432.432 0 01-.476 0zm-.262 3.9c-2.688 0-4.662-2.021-4.662-4.519 0-.19.024-.38.047-.57l4.686 2.71c.286.167.571.167.856 0l5.97-3.448v2.26c0 .19-.07.333-.237.428l-4.543 2.616c-.619.357-1.356.523-2.117.523zm5.899 2.83a5.947 5.947 0 005.827-4.756C22.287 18.339 24 15.84 24 13.296c0-1.665-.713-3.282-1.998-4.448.119-.5.19-.999.19-1.498 0-3.401-2.759-5.947-5.946-5.947-.642 0-1.26.095-1.88.31A5.962 5.962 0 0010.205 0a5.947 5.947 0 00-5.827 4.757C1.713 5.447 0 7.945 0 10.49c0 1.666.713 3.283 1.998 4.448-.119.5-.19 1-.19 1.499 0 3.401 2.759 5.946 5.946 5.946.642 0 1.26-.095 1.88-.309a5.96 5.96 0 004.162 1.713z"/></svg></span>
         <span role="img" aria-label="Google Gemini" title="Google Gemini"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81"/></svg></span>
@@ -1166,6 +1373,7 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
         <span role="img" aria-label="OpenRouter" title="OpenRouter"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.778 1.844v1.919q-.569-.026-1.138-.032-.708-.008-1.415.037c-1.93.126-4.023.728-6.149 2.237-2.911 2.066-2.731 1.95-4.14 2.75-.396.223-1.342.574-2.185.798-.841.225-1.753.333-1.751.333v4.229s.768.108 1.61.333c.842.224 1.789.575 2.185.799 1.41.798 1.228.683 4.14 2.75 2.126 1.509 4.22 2.11 6.148 2.236.88.058 1.716.041 2.555.005v1.918l7.222-4.168-7.222-4.17v2.176c-.86.038-1.611.065-2.278.021-1.364-.09-2.417-.357-3.979-1.465-2.244-1.593-2.866-2.027-3.68-2.508.889-.518 1.449-.906 3.822-2.59 1.56-1.109 2.614-1.377 3.978-1.466.667-.044 1.418-.017 2.278.02v2.176L24 6.014Z"/></svg></span>
         <span role="img" aria-label="OpenCode" title="OpenCode"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16 6H8v12h8V6zm4 16H4V2h16v20z"/></svg></span>
       </div>
+      <p class="note">Also Azure OpenAI, Amazon Bedrock, Mistral, Groq, Cerebras, xAI, Hugging Face, Command Code, OpenCode Go and Zen, Kimi For Coding and MiniMax, plus ChatGPT and Google sign-in. <code>/effort</code> sets reasoning effort where the model supports it.</p>
       <p class="note">Routing is off by default and needs configuration. Model capabilities, credentials and provider charges still apply, and while local inference is available, selecting it does not make every external integration offline.</p>
     </div>
   </section>
@@ -1174,24 +1382,138 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
   <section id="remote-sessions" data-chapter="~/desk remote">
     <div class="wrap">
       <div class="head rv">
-        <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="cm">@tab:api-3f2 check your endpoint</span></p>
-        <h2>Your code review, wherever you are.</h2>
-        <p class="body">Bridge Nova to Discord or Telegram for remote terminal sessions. Each session keeps its own forum topic, handles voice notes with transcription, and can be kicked off by a cron task or signed webhook from another system.</p>
+        <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="cm">/remote</span></p>
+        <h2>Follow the session from your phone.</h2>
+        <p class="body">Each Nova session gets its own Telegram topic or Discord thread. Prompts, tool activity and streamed replies arrive there as they happen, and an authorized sender can answer from the chat.</p>
       </div>
 
-      <div style="display:grid;gap:clamp(10px,1.5vw,16px);margin-bottom:clamp(18px,3vw,32px)">
-        <div class="win rv" style="padding:clamp(14px,2vw,20px)">
-          <table style="width:100%;border-collapse:collapse;font-size:.85rem;line-height:1.6">
-            <thead><tr style="border-bottom:1px solid var(--line)"><th style="text-align:left;padding:4px 12px 4px 0;color:var(--muted)">Service</th><th style="text-align:left;padding:4px 0;color:var(--muted)">Features</th></tr></thead>
-            <tbody>
-              <tr><td style="font-weight:600;padding:6px 12px 6px 0">Telegram</td><td style="padding:6px 0">Voice notes, forum topics, question expiry</td></tr>
-              <tr><td style="font-weight:600;padding:6px 12px 6px 0">Discord</td><td style="padding:6px 0">Channel-per-project, slash commands</td></tr>
-              <tr><td style="font-weight:600;padding:6px 12px 6px 0">Rootapp</td><td style="padding:6px 0">Background terminals &amp; long-running tasks</td></tr>
-            </tbody>
-          </table>
+      <dl class="ledger rv">
+        <div>
+          <dt>Telegram</dt>
+          <dd>one topic per session</dd>
+          <dd>Prompts, photos and captioned images; task checkboxes, stacked tables and expandable diffs laid out for a phone; numbered controls for interactive panels</dd>
+        </div>
+        <div>
+          <dt>Discord</dt>
+          <dd>one thread per session</dd>
+          <dd>Thread or forum post per session, restored on reconnect and archived when the session closes; missing channel permissions are reported plainly</dd>
+        </div>
+        <div>
+          <dt>Rootapp</dt>
+          <dd>optional companion</dd>
+          <dd>An authorized community channel through Root's local DevHost integration, with its own build, Bot ID and sender setup</dd>
+        </div>
+      </dl>
+      <p class="note">Each service needs its own account, bot, channel permissions and authorized senders, managed through <code>/remote</code>. A bridge never widens Nova's workspace permissions. Several Nova windows share one Telegram polling connection instead of competing for updates.</p>
+    </div>
+  </section>
+
+  <!-- ================= caveman ================= -->
+  <section id="caveman" class="s-airy" data-chapter="~/desk caveman">
+    <div class="wrap">
+      <div class="head rv">
+        <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="cm">/caveman full</span></p>
+        <h2>Say less. Read less. Keep the exact text.</h2>
+        <p class="body">Caveman mode is six independent switches for verbosity and context, behind one opt-in master switch on the composer. Compacted output stays recoverable, so the agent can always go back to the exact source.</p>
+      </div>
+
+      <dl class="ledger rv">
+        <div><dt>Say less</dt><dd>terser prose</dd><dd>Code and identifiers stay exact; warnings and ambiguity keep full sentences. Six intensities from <code>lite</code> to <code>wenyan-ultra</code></dd></div>
+        <div><dt>Read less</dt><dd>compact tool output</dd><dd>Logs, JSON and CSV are shortened in the model's view while the exact source stays recoverable</dd></div>
+        <div><dt>Browse</dt><dd>compact web results</dd><dd>HTML and Markdown results are compacted with references kept for exact recovery</dd></div>
+        <div><dt>Blocks</dt><dd>reuse scripts</dd><dd>Find an exact script from an earlier tool call and rerun it through the normal tool, under current permissions</dd></div>
+        <div><dt>Auto</dt><dd>routing</dd><dd>Use your router choices and per-route effort without changing the saved session model</dd></div>
+        <div><dt>Waste fixes</dt><dd>token accounting</dd><dd>Fewer duplicate tool results, with local estimates shown beside provider-reported usage and cache figures</dd></div>
+      </dl>
+      <p class="note">No savings figure is promised: results vary by model and task, and a shorter answer can still use more total tokens on a reasoning model. <code>/caveman audit</code> compares the estimates with what the provider reported. Your reply language is preserved at every intensity.</p>
+    </div>
+  </section>
+
+  <!-- ================= artifacts ================= -->
+  <section id="artifacts" data-chapter="~/desk artifacts">
+    <div class="wrap">
+      <div class="head rv">
+        <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="cm">/share artifacts</span></p>
+        <h2>Results you can open outside the terminal.</h2>
+        <p class="body">Ask for an HTML page, a Markdown report or a dashboard and Nova makes it an artifact. Updating it keeps the same ID and records a new version. The session's collection is searchable by title, type or ID.</p>
+      </div>
+      <div class="pair" style="margin-top:0">
+        <div class="rv">
+          <h3>A link for the people you choose</h3>
+          <p class="body">When <code>cloudflared</code> is installed, Nova opens a temporary Cloudflare Quick Tunnel for the collection. Resuming a saved session restores the artifacts, and a fresh tunnel can share them again. <code>/share list</code> shows what is live and <code>/share stop</code> ends it.</p>
+        </div>
+        <div class="rv" style="--i:1">
+          <h3>What the link is not</h3>
+          <p class="body">Anyone with the URL can open it, it changes on restart, and it ends when Nova or the viewer stops. It is not hosting, authentication or an uptime promise. Without <code>cloudflared</code> the artifacts still work locally.</p>
         </div>
       </div>
-      <p class="note">Integration config lives on disk. Scheduling requires the Nova process running, but other systems can trigger runs through webhooks without polling.</p>
+    </div>
+  </section>
+
+  <!-- ================= terminal styles and voice ================= -->
+  <section id="terminal" class="s-airy" data-chapter="~/.nova/theme">
+    <div class="wrap">
+      <div class="head rv">
+        <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="cm">/theme</span></p>
+        <h2>Thirteen ways to sit at the same desk.</h2>
+        <p class="body">Each interface style brings its own home screen and carries through conversation, tool and dialog views, independently of the colour theme. Home screens offer Explain, Refactor, Build and Debug starters that fill an editable prompt.</p>
+      </div>
+
+      <div class="panel win rv">
+        <div class="bar" aria-hidden="true"><i></i><i></i><i></i><span>interface styles</span></div>
+        <ul class="styles">
+          <li><b>Dashboard</b></li>
+          <li><b>Classic</b></li>
+          <li><b>Centered</b></li>
+          <li><b>Banner</b></li>
+          <li><b>Minimal</b></li>
+          <li><b>Terminal</b><span>animated home</span></li>
+          <li><b>Workbench</b><span>Nova character art</span></li>
+          <li><b>Notebook</b></li>
+          <li><b>Outline</b></li>
+          <li><b>Focus</b></li>
+          <li><b>Studio</b><span>character art, animated home</span></li>
+          <li><b>Ledger</b></li>
+          <li><b>Blueprint</b><span>animated home</span></li>
+        </ul>
+      </div>
+
+      <div class="pair">
+        <div>
+          <h3>Talk to it, hear it back</h3>
+          <p class="body">Dictate a request and hear a short spoken summary of the final reply, never the tool output or reasoning. Faster-Whisper and Piper are the defaults; Whistle and Parakeet add speech input, and Kokoro and sanoTTS are light CPU voices. Piper starts speaking sentence by sentence.</p>
+        </div>
+        <div>
+          <h3>What it needs</h3>
+          <p class="body">The <code>voice</code> extra plus the extra for any provider you pick, a working microphone and speakers, and the model downloads. <code>/voice download</code> fetches them ahead of time with real progress rows above the composer. Latency and accuracy are not benchmarked.</p>
+        </div>
+      </div>
+      <p class="note">Animated homes are optional: low-resource mode pauses them, and short terminals give the space to the composer. The status line is customisable with a live preview in <code>/statusline</code>.</p>
+    </div>
+  </section>
+
+  <!-- ================= computer preview ================= -->
+  <section id="computer" class="s-tight" data-chapter="~/desk computer">
+    <div class="wrap">
+      <div class="split">
+        <div class="split-copy rv">
+          <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="cm">/computer start</span></p>
+          <h2>Its own computer. <span class="tag">Preview</span></h2>
+          <p class="body">A session-owned Linux VM on your machine, run by QEMU with 2 CPUs and 4 GiB of RAM, with no cloud account. A private browser view shows what Nova sees. It clicks, types and scrolls only against its latest screenshot, under the same approvals as any other tool.</p>
+          <p class="note">Offline lifecycle, approval and preview tests pass, but a real guest boot has not been verified yet, so treat this as a preview. Needs the <code>computer</code> extra, QEMU, disk space for the first image and a vision-capable model. The guest can reach the network.</p>
+        </div>
+        <div class="tree rv" style="--i:1" role="group" aria-label="What the computer preview keeps separate">
+          <p><span class="g"># what stays separate</span></p>
+          <p><span class="k">guest</span> <span class="c">owned by one session</span></p>
+          <p>&#9500;&#9472; host project files  <span class="c">not mounted</span></p>
+          <p>&#9500;&#9472; clipboard, browser profiles  <span class="c">not copied</span></p>
+          <p>&#9500;&#9472; credentials  <span class="c">not copied</span></p>
+          <p>&#9492;&#9472; delegated agents  <span class="c">no desktop tools</span></p>
+          <p>&nbsp;</p>
+          <p><span class="k">you</span> <span class="c">pause, resume, stop</span></p>
+          <p>&#9492;&#9472; pause holds even with auto-approve on</p>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -1288,18 +1610,24 @@ status: awaiting your decision">
         <p class="body">Same rule as above: the extra is named on the row that needs it, so nothing shows up as a surprise during setup.</p>
       </div>
       <ul class="caps rv">
-        <li><span class="cap-name">Recoverable context</span><span class="cap-line">Inspect the context window, compact a conversation, browse recovery archives.</span></li>
-        <li><span class="cap-name">Resume saved work</span><span class="cap-line">Search saved sessions and read their project, model and continuation details.</span></li>
-        <li><span class="cap-name">Continue from other assistants</span><span class="cap-line">Import supported local Claude, Codex or Nova conversations and use them as context.</span></li>
-        <li><span class="cap-name">Goal mode</span><span class="cap-line">Keep working toward one objective across turns, with pause, resume and a turn budget.</span></li>
-        <li><span class="cap-name">Background specialists</span><span class="cap-line">Delegate focused jobs and keep working in your own tab.</span><span class="cap-tag">agents-server extra</span></li>
-        <li><span class="cap-name">Five terminal layouts</span><span class="cap-line">Dashboard, Classic, Centered, Banner or Minimal, plus color palettes.</span></li>
-        <li><span class="cap-name">Local voice</span><span class="cap-line">Dictate prompts and hear replies read back. Needs audio hardware, and the speech models download on first use.</span><span class="cap-tag">voice extra</span></li>
-        <li><span class="cap-name">Images in the conversation</span><span class="cap-line">Paste a screenshot and use it as task context.</span><span class="cap-tag">needs a vision model</span></li>
-        <li><span class="cap-name">Skills, MCP and plugins</span><span class="cap-line">Add reusable workflows, external tools and Python extensions.</span><span class="cap-tag">per integration</span></li>
-        <li><span class="cap-name">File recovery</span><span class="cap-line">Browse and restore snapshots from supported file operations.</span></li>
-        <li><span class="cap-name">Headless automation</span><span class="cap-line">One-shot tasks with text, JSON or streamed JSON, plus a JSON-lines pipe.</span></li>
-        <li><span class="cap-name">Remote and scheduled work</span><span class="cap-line">Discord and Telegram bridges, cron tasks, signed webhook events.</span><span class="cap-tag">integration config</span></li>
+        <li><span class="cap-name">Vision for any model</span><span class="cap-line">A text-only main model can hand an image to a separate vision model on demand, set in <code>/model</code> &rarr; Vision.</span><span class="cap-tag">a vision-capable model</span></li>
+        <li><span class="cap-name">Notebook editing</span><span class="cap-line">Insert, replace or delete Jupyter cells without starting a kernel; other cells and metadata are kept.</span></li>
+        <li><span class="cap-name">Fast native search</span><span class="cap-line">Uses bfs and ugrep when installed, with ripgrep and Python fallbacks.</span><span class="cap-tag">optional executables</span></li>
+        <li><span class="cap-name">Branching history</span><span class="cap-line">Browse and bookmark earlier points with <code>/tree</code>, continue from one, and export the tree as one HTML file.</span></li>
+        <li><span class="cap-name">Continue from other assistants</span><span class="cap-line">Import Nova, Claude Code or Codex histories as context, and compare them with <code>/compare</code>.</span></li>
+        <li><span class="cap-name">Goal mode</span><span class="cap-line">Keep working toward one objective across turns, with pause, resume and a turn budget. <code>/btw</code> asks a side question.</span></li>
+        <li><span class="cap-name">Background terminals</span><span class="cap-line">Send a running command to the background with Ctrl+B, read its log tail in <code>/tasks</code>, run tracked daemons.</span></li>
+        <li><span class="cap-name">Scheduled tasks</span><span class="cap-line">Create, list and delete recurring jobs with <code>/cron</code>, stored between runs.</span><span class="cap-tag">Nova must be running</span></li>
+        <li><span class="cap-name">Strict tool arguments</span><span class="cap-line">Malformed calls are caught before they run; a string "2" is not quietly read as the number 2.</span></li>
+        <li><span class="cap-name">Tracing and usage</span><span class="cap-line">LangSmith tracing from <code>/trace setup</code>; context costs in <code>/context</code>; usage in <code>/usage</code> and <code>/cost</code>.</span><span class="cap-tag">LangSmith account</span></li>
+        <li><span class="cap-name">Skill and agent editor</span><span class="cap-line"><code>/create</code> opens a local page to browse, write and edit skills and agent definitions.</span></li>
+        <li><span class="cap-name">External plans and reviews</span><span class="cap-line"><code>/claude-review</code> or <code>/codex-review</code> reviews read-only, then Nova checks the findings.</span><span class="cap-tag">Claude Code or Codex CLI</span></li>
+        <li><span class="cap-name">Commit attribution</span><span class="cap-line">A NovaCode <code>Co-Authored-By</code> trailer and a small PR footer, on by default and easy to switch off.</span></li>
+        <li><span class="cap-name">Headless automation</span><span class="cap-line">One-shot tasks with <code>nova -p</code>, plus a JSON-lines pipe mode with approvals and cancellation.</span></li>
+        <li><span class="cap-name">Skills, MCP and plugins</span><span class="cap-line">Reusable workflows, external tools and presets for Figma, Vercel and Higgsfield.</span><span class="cap-tag">per integration</span></li>
+        <li><span class="cap-name">Experimental teams</span><span class="cap-line">Persistent teammates with their own inboxes and task claims, coordinated by a lead.</span><span class="cap-tag">off by default</span></li>
+        <li><span class="cap-name">Updates that resume</span><span class="cap-line"><code>nova update</code> shows stages and release notes, then reopens the session and continues the turn.</span></li>
+        <li><span class="cap-name">Recoverable context</span><span class="cap-line">Compact a long conversation, browse recovery archives, and roll back with <code>/rewind</code> or <code>/restore</code>.</span></li>
       </ul>
     </div>
   </section>
@@ -1310,7 +1638,7 @@ status: awaiting your decision">
       <div class="head rv">
         <p class="cmdline"><span class="ps">nova &#10095;</span><span class="typed" style="--n:13">cat README.md</span></p>
         <h2>Three commands and you are running.</h2>
-        <p class="body">Python 3.11 or newer and uv. The recommended install is a <code>uv tool</code> install — once installed, the command is <code>nova</code>. For local development you <code>git clone</code>, sync, and use <code>uv run nova</code>.</p>
+        <p class="body">Python 3.11 or newer and uv. The recommended install is a <code>uv tool</code> install; once installed, the command is <code>nova</code>. For local development you <code>git clone</code>, sync, and use <code>uv run nova</code>.</p>
       </div>
       <div class="install-box win rv">
         <div class="tabs" role="tablist" aria-label="Install method">
@@ -1322,20 +1650,20 @@ status: awaiting your decision">
           <div class="cmd"><code>git clone https://github.com/Babitdor/NovaCode.git</code><button class="copy" type="button" data-copy="git clone https://github.com/Babitdor/NovaCode.git"><svg class="i-copy" aria-hidden="true"><use href="#i-copy"/></svg><svg class="i-check" aria-hidden="true"><use href="#i-check"/></svg><span>Copy</span></button></div>
           <div class="cmd"><code>cd NovaCode &amp;&amp; uv sync</code><button class="copy" type="button" data-copy="cd NovaCode &amp;&amp; uv sync"><svg class="i-copy" aria-hidden="true"><use href="#i-copy"/></svg><svg class="i-check" aria-hidden="true"><use href="#i-check"/></svg><span>Copy</span></button></div>
           <div class="cmd"><code>uv run nova</code><button class="copy" type="button" data-copy="uv run nova"><svg class="i-copy" aria-hidden="true"><use href="#i-copy"/></svg><svg class="i-check" aria-hidden="true"><use href="#i-check"/></svg><span>Copy</span></button></div>
-          <p class="install-note">For an installed copy (not development), install as a <code>uv tool</code> — the command is <code>nova</code>.</p>
+          <p class="install-note">For an installed copy (not development), install as a <code>uv tool</code>; the command is <code>nova</code>.</p>
         </div>
         <div class="pane" id="p-win" role="tabpanel" aria-labelledby="t-win">
           <div class="cmd"><code>git clone https://github.com/Babitdor/NovaCode.git</code><button class="copy" type="button" data-copy="git clone https://github.com/Babitdor/NovaCode.git"><svg class="i-copy" aria-hidden="true"><use href="#i-copy"/></svg><svg class="i-check" aria-hidden="true"><use href="#i-check"/></svg><span>Copy</span></button></div>
           <div class="cmd"><code>cd NovaCode; uv sync</code><button class="copy" type="button" data-copy="cd NovaCode; uv sync"><svg class="i-copy" aria-hidden="true"><use href="#i-copy"/></svg><svg class="i-check" aria-hidden="true"><use href="#i-check"/></svg><span>Copy</span></button></div>
           <div class="cmd"><code>uv run nova</code><button class="copy" type="button" data-copy="uv run nova"><svg class="i-copy" aria-hidden="true"><use href="#i-copy"/></svg><svg class="i-check" aria-hidden="true"><use href="#i-check"/></svg><span>Copy</span></button></div>
-          <p class="install-note">For an installed copy (not development), install as a <code>uv tool</code> — the command is <code>nova</code>.</p>
+          <p class="install-note">For an installed copy (not development), install as a <code>uv tool</code>; the command is <code>nova</code>.</p>
         </div>
         <div class="pane" id="p-tool" role="tabpanel" aria-labelledby="t-tool">
           <div class="cmd"><code>uv tool install "novacode-cli @ git+https://github.com/Babitdor/NovaCode.git"</code><button class="copy" type="button" data-copy='uv tool install "novacode-cli @ git+https://github.com/Babitdor/NovaCode.git"'><svg class="i-copy" aria-hidden="true"><use href="#i-copy"/></svg><svg class="i-check" aria-hidden="true"><use href="#i-check"/></svg><span>Copy</span></button></div>
           <div class="cmd"><code>nova</code><button class="copy" type="button" data-copy="nova"><svg class="i-copy" aria-hidden="true"><use href="#i-copy"/></svg><svg class="i-check" aria-hidden="true"><use href="#i-check"/></svg><span>Copy</span></button></div>
         </div>
       </div>
-      <p class="install-note">Voice is optional and pulls its own model downloads. <code>uv sync --extra voice</code> adds local speech in and out; <code>voice-orpheus</code> (about 2 GB), <code>voice-parakeet</code> and <code>voice-pocket</code> are separate opted-in extras, and the microphone and speakers are yours.</p>
+      <p class="install-note">Voice is optional and pulls its own model downloads. <code>uv sync --extra voice</code> adds local speech in and out; <code>voice-whistle</code>, <code>voice-orpheus</code> (about 2 GB), <code>voice-parakeet</code>, <code>voice-pocket</code> and the Kokoro and sanoTTS voices are separate opted-in extras, and the microphone and speakers are yours. The <code>computer</code> preview and Bedrock are extras too.</p>
     </div>
   </section>
 
@@ -1377,15 +1705,23 @@ status: awaiting your decision">
         </details>
         <details>
           <summary>What happens when a tool call needs approval?</summary>
-          <p>It stops and asks you, configurable per operation in <code>.nova/approval-policy.json</code>. Hard-coded denials, like <code>rm -rf /</code>, cannot be loosened by that file. Headless runs are the exception: <code>--deny-tools</code> rejects approval requests so a pipeline stops rather than waiting on a prompt nobody is there to answer — that is not the same as disabling every tool.</p>
+          <p>It stops and asks you, configurable per operation in <code>.nova/approval-policy.json</code>. Hard-coded denials, like <code>rm -rf /</code>, cannot be loosened by that file. Headless runs are the exception: <code>--deny-tools</code> rejects approval requests so a pipeline stops rather than waiting on a prompt nobody is there to answer. That is not the same as disabling every tool.</p>
         </details>
         <details>
           <summary>Can I use it away from my machine?</summary>
-          <p>Yes, with integration config. Bridge it to Discord or Telegram: Telegram takes voice notes, gives each session its own forum topic, and deletes a question once you have answered it. Cron tasks and signed webhooks let other systems start a run. Scheduling depends on the Nova process or service being up.</p>
+          <p>Yes, with integration config. Each session gets its own Telegram topic or Discord thread, with prompts, tool activity and replies streamed into it, and an optional Rootapp companion covers a community channel. Only senders you authorize through <code>/remote</code> can prompt it. Scheduled <code>/cron</code> tasks need Nova to be running.</p>
         </details>
         <details>
           <summary>What is Cowork?</summary>
-          <p>A visual workspace that opens beside your work — folder permissions, active tasks, and an activity feed updated in real time while agents write code. Cowork keeps its own permission model per workspace and is a local app with no public endpoint. It works alongside specialist delegates, skills and MCP tools.</p>
+          <p>A local workspace that opens beside the terminal, with folder access, tasks and activity on one side and the conversation on the other. You can grant or revoke a folder while Nova works. It is not shared publicly, and folder grants are not an operating-system sandbox.</p>
+        </details>
+        <details>
+          <summary>How much does Caveman mode save?</summary>
+          <p>There is no fixed number, and the page will not quote one. Savings depend on the model and the task, and a shorter visible answer can still use more total tokens on a reasoning model. <code>/caveman audit</code> shows local estimates next to the usage your provider actually reported.</p>
+        </details>
+        <details>
+          <summary>Are shared artifact links private?</summary>
+          <p>No. A temporary Cloudflare link opens for anyone who has it, changes when Nova restarts, and stops when Nova or the local viewer stops. Use <code>/share stop</code> to end it early. Sharing a whole session with bare <code>/share</code> is different: after you confirm, it uploads an export as a secret GitHub gist, which is unlisted rather than private.</p>
         </details>
       </div>
     </div>
@@ -1480,8 +1816,17 @@ status: awaiting your decision">
     "~/desk": "home &middot; install below",
     "~/desk/memory/INDEX.md": "memory &middot; index ready",
     "~/desk/.nova/plans": "council &middot; approval is separate",
+    "~/desk .nova/council": "council web &middot; votes are advisory",
+    "~/desk agents": "agents &middot; @name for a specialist",
+    "~/desk mcp": "code mode &middot; only the result returns",
     "~/desk tabs": "tabs &middot; two projects linked",
+    "~/desk cowork": "cowork &middot; folders you grant",
     "~/.nova/config.toml": "models &middot; hosted or local",
+    "~/desk remote": "remote &middot; authorized senders only",
+    "~/desk caveman": "caveman &middot; six switches, opt-in",
+    "~/desk artifacts": "artifacts &middot; temporary links",
+    "~/.nova/theme": "theme &middot; 13 interface styles",
+    "~/desk computer": "computer &middot; preview",
     "~/repo/.nova/plans": "plans &middot; archived per project",
     "~/ledger": "ledger &middot; evidence attached",
     "~/man nova": "capabilities &middot; limits named per row",
@@ -1519,7 +1864,9 @@ status: awaiting your decision">
   /* ---------- 3. in dark mode the page is the night sky above the terminal ---------- */
   var sky = $("#sky");
   if (sky && sky.getContext) {
-    var dark = window.matchMedia("(prefers-color-scheme: dark)");
+    /* The CSS owns the theme (saved choice, else the system), so the sky draws exactly
+       when the stylesheet shows its canvas. */
+    var isNight = function () { return window.getComputedStyle(sky).display !== "none"; };
     var ctx = sky.getContext("2d"), stars = [], raf = 0, seed = 20260219;
     var rand = function () { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
     var sizeCanvas = function () {
@@ -1560,7 +1907,7 @@ status: awaiting your decision">
     var startSky = function () {
       if (raf) { window.cancelAnimationFrame(raf); raf = 0; }
       sizeCanvas();
-      if (!dark.matches) { ctx.clearRect(0, 0, sky.clientWidth, sky.clientHeight); return; }
+      if (!isNight()) { ctx.clearRect(0, 0, sky.clientWidth, sky.clientHeight); return; }
       seedStars();
       if (calm) { draw(0); } else { loop(0); }
     };
@@ -1570,8 +1917,10 @@ status: awaiting your decision">
       window.clearTimeout(resizeTimer);
       resizeTimer = window.setTimeout(startSky, 180);
     });
-    if (dark.addEventListener) dark.addEventListener("change", startSky);
-    else if (dark.addListener) dark.addListener(startSky);
+    document.addEventListener("themechange", startSky);
+    var sysDark = window.matchMedia("(prefers-color-scheme: dark)");
+    if (sysDark.addEventListener) sysDark.addEventListener("change", startSky);
+    else if (sysDark.addListener) sysDark.addListener(startSky);
   }
 
   /* ---------- 4. the menu, on the screen widths that need one ---------- */
@@ -1861,8 +2210,8 @@ status: awaiting your decision">
       rightWork = $("#right-work"), queuedNote = $("#queued"),
       draftText = $("#draft-text"), openBtn = $("#act-open"), attachBtn = $("#act-attach"),
       tabStatus = $("#tab-status");
-  var REPLY_HTML = "Yes &mdash; <code>GET /v2/ingest</code> returns 200 after the queue change. Two files read: <code>routes.py</code>, <code>worker.py</code>.";
-  var REPLY_TEXT = "Yes \u2014 GET /v2/ingest returns 200 after the queue change. Two files read: routes.py, worker.py.";
+  var REPLY_HTML = "Yes. <code>GET /v2/ingest</code> returns 200 after the queue change. Two files read: <code>routes.py</code>, <code>worker.py</code>.";
+  var REPLY_TEXT = "Yes. GET /v2/ingest returns 200 after the queue change. Two files read: routes.py, worker.py.";
   var replyTimers = [];
   var anchor = $("#t-right");
   if (anchor && rightReply && leftReply) {
