@@ -13,8 +13,10 @@ The one exception is the hero parallax the owner asked for: the art is two layer
 which slide at 40% and 24% of the scroll speed through a CSS scroll-driven animation, with
 no script. They stay still and aligned under reduced motion or without `animation-timeline`.
 Under a mouse the two layers also lean away from the cursor (the desk twice as far, the same
-amount vertically so only her sides uncover the room) and a pale moonlight follows it; touch
-and reduced motion get the still frame.
+amount vertically so only her sides uncover the room) and a pale moonlight follows it. A phone
+has no hover, so a finger held on the art does the same and the scene settles back 1.4s after
+it lifts. Browsers without scroll-driven animations (Safari before 26, Firefox) get the drift
+from a small scroll script instead. Reduced motion gets the still frame.
 Where WebGL runs, a canvas takes over once it has drawn: a 3D photo of the same two layers
 with `assets/hero-depth.webp` (red: the room's depth with the coder painted out; green: hers),
 so the moon, city, code panes and desk each move by their own distance with the pointer and

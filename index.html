@@ -767,11 +767,11 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
 @keyframes drift{to{translate:0 40vh}}
 @keyframes drift-near{to{translate:0 24vh}}
 
-/* Pointer: under a mouse the room and the desk lean away from the cursor, the
-   desk twice as far, and a pale moonlight follows it. They lean by the same
-   amount vertically, so only her sides ever uncover the room. The page script
-   sets --mx/--my (-1 to 1) and --gx/--gy. */
-@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference){
+/* Pointer: the room and the desk lean away from the cursor (or a finger held on
+   the art), the desk twice as far, and a pale moonlight follows it. They lean by
+   the same amount vertically, so only her sides ever uncover the room. The page
+   script sets --mx/--my (-1 to 1) and --gx/--gy. */
+@media (prefers-reduced-motion: no-preference){
   .js .art picture{
     transform:translate3d(calc(var(--mx, 0) * -9px), calc(var(--my, 0) * -6px), 0) scale(1.03);
     transition:transform 1.1s var(--ease);
@@ -2329,12 +2329,12 @@ status: awaiting your decision">
      harder on what is near. Without WebGL, or under reduced motion, the CSS layers
      and their lean stand in; the canvas replaces them only after its first frame. */
   var art = $(".art"), fine = window.matchMedia("(hover: hover) and (pointer: fine)");
-  var aim = { x: 0, y: 0, lit: 0, lx: 0, ly: 0 }, photo = null;
+  var aim = { x: 0, y: 0, lit: 0, lx: 0, ly: 0 }, photo = null, letGo = 0;
   if (art) {
-    art.addEventListener("pointermove", function (e) {
-      if (calm || !fine.matches || e.pointerType !== "mouse") return;
+    var look = function (e) {
       var r = art.getBoundingClientRect();
-      var x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+      var x = Math.min(Math.max((e.clientX - r.left) / r.width, 0), 1);
+      var y = Math.min(Math.max((e.clientY - r.top) / r.height, 0), 1);
       aim.x = x * 2 - 1; aim.y = y * 2 - 1; aim.lit = 1; aim.lx = x; aim.ly = y;
       art.style.setProperty("--mx", aim.x.toFixed(3));
       art.style.setProperty("--my", aim.y.toFixed(3));
@@ -2342,14 +2342,51 @@ status: awaiting your decision">
       art.style.setProperty("--gy", (y * 100).toFixed(1) + "%");
       art.classList.add("lit");
       if (photo) photo.wake();
-    });
-    art.addEventListener("pointerleave", function () {
+    };
+    var rest = function () {
       aim.x = aim.y = aim.lit = 0;
       art.style.setProperty("--mx", "0");
       art.style.setProperty("--my", "0");
       art.classList.remove("lit");
       if (photo) photo.wake();
+    };
+    art.addEventListener("pointermove", function (e) {
+      if (calm) return;
+      if (e.pointerType === "mouse") { if (fine.matches) look(e); }
+      else if (e.pressure > 0) look(e);  /* a finger dragged before the page takes it as a scroll */
     });
+    art.addEventListener("pointerleave", function (e) { if (e.pointerType === "mouse") rest(); });
+    /* A phone has no hover: touching the art is the look, and the scene settles
+       back a moment after the finger lifts or the touch turns into a scroll. */
+    art.addEventListener("pointerdown", function (e) {
+      if (calm || e.pointerType === "mouse") return;
+      window.clearTimeout(letGo);
+      look(e);
+    });
+    var lift = function (e) {
+      if (e.pointerType === "mouse") return;
+      window.clearTimeout(letGo);
+      letGo = window.setTimeout(rest, 1400);
+    };
+    art.addEventListener("pointerup", lift);
+    art.addEventListener("pointercancel", lift);
+    /* Browsers without scroll-driven animations (Safari before 26, Firefox) get
+       the same drift from script: the room and canvas at 40% of the scroll, the
+       desk layer at 24%, over the first screen. */
+    if (!calm && !(window.CSS && window.CSS.supports && window.CSS.supports("animation-timeline: scroll()"))) {
+      var drifting = false;
+      var drift = function () {
+        drifting = false;
+        var y = Math.min(Math.max(window.scrollY, 0), window.innerHeight);
+        all(".art img, .art canvas").forEach(function (n) {
+          n.style.translate = "0 " + (y * (n.closest(".near") ? 0.24 : 0.4)).toFixed(1) + "px";
+        });
+      };
+      window.addEventListener("scroll", function () {
+        if (!drifting && window.scrollY < window.innerHeight * 1.5) { drifting = true; window.requestAnimationFrame(drift); }
+      }, { passive: true });
+      drift();
+    }
     if (!calm) {
       var begin = function () {
         /* After the entrance has settled, so the swap lands on a still frame. */
@@ -2432,10 +2469,10 @@ status: awaiting your decision">
       W = Math.round(cw * ratio); H = Math.round(ch * ratio);
       canvas.width = W; canvas.height = H; gl.viewport(0, 0, W, H);
       /* Reproduce the layers' crop: object-fit cover at the CSS object-position,
-         with the same 3% headroom the pointer lean uses under a mouse. */
+         with the same 3% headroom the CSS lean gives the layers. */
       var iw = roomImg.naturalWidth, ih = roomImg.naturalHeight;
       var pos = window.getComputedStyle(roomImg).objectPosition.split(" ").map(parseFloat);
-      var s = Math.max(cw / iw, ch / ih), dw = iw * s, z = fine.matches ? 1.03 : 1;
+      var s = Math.max(cw / iw, ch / ih), dw = iw * s, z = 1.03;
       dh = ih * s;
       var ox = (cw - dw) * pos[0] / 100, oy = (ch - dh) * pos[1] / 100;
       gl.uniform2f(u.uRes, W, H);
