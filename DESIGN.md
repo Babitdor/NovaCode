@@ -8,6 +8,19 @@ The existing concept is an editorial manual with terminal chrome. Keep its Geist
 Geist Mono fonts, neutral light/dark surfaces, orange accent, pill buttons and 14px panels.
 Preserve the landing page composition and product examples. This is a functional repair,
 so no new visual concept, framework, loader, decorative animation or invented content is needed.
+The one exception is the hero parallax the owner asked for: the art is two layers cut from
+`Nova-Hero.png` (the room, painted over where the coder sat, and the coder with her desk),
+which slide at 40% and 24% of the scroll speed through a CSS scroll-driven animation, with
+no script. They stay still and aligned under reduced motion or without `animation-timeline`.
+Under a mouse the two layers also lean away from the cursor (the desk twice as far, the same
+amount vertically so only her sides uncover the room) and a pale moonlight follows it; touch
+and reduced motion get the still frame.
+Where WebGL runs, a canvas takes over once it has drawn: a 3D photo of the same two layers
+with `assets/hero-depth.webp` (red: the room's depth with the coder painted out; green: hers),
+so the moon, city, code panes and desk each move by their own distance with the pointer and
+the scroll, and the moonlight lands harder on near surfaces. It renders only while something
+moves, caps depth at the laptop so the blurred edge plants don't smear, and leaves the CSS
+layers (with their alt text) underneath as the fallback.
 The release archive stays still at rest for reading. Native disclosure controls provide feedback.
 
 Navigation must work under a project subdirectory, through history, and from bookmarked
