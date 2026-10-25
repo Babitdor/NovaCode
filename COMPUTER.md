@@ -105,6 +105,14 @@ or a management endpoint belonging to another process. It must be reviewed
 when upgrading Cua; no unlimited restart loop is introduced. If recovery fails,
 the original cleanup/error flow remains available.
 
+Windows can report `[WinError 64] The specified network name is no longer
+available` when QEMU closes its loopback management socket during shutdown.
+Recovery waits for the owned process to exit; if the socket closed before
+identity verification completed, it also requires the management listener to
+disappear. A connection reset alone never permits a saved-state change. Guest
+identity mismatches, unexpected errors and a process that remains alive still
+fail recovery.
+
 Nova cancels native startup and attempts cleanup
 by its generated guest name even when no SDK handle was returned. Failed
 cleanup retains ownership so `/computer stop` can retry.

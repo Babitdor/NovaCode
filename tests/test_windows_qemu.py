@@ -273,3 +273,101 @@ def test_later_errors_are_not_mislabeled_as_the_original_whpx_failure():
     computer._whpx_recovery_attempted = True
     error = computer._startup_error(RuntimeError("desktop connection failed"))
     assert error == "Windows WHPX compatibility recovery failed: desktop connection failed"
+
+
+def windows_disconnect(code: int = 64) -> OSError:
+    """Build the same disconnect on Windows and Linux test runners."""
+    error = OSError("The specified network name is no longer available")
+    error.winerror = code
+    return error
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "read",
+        "drain",
+        "eof",
+        "handshake",
+        "connect",
+        "greeting_eof",
+        "permission",
+        "alive",
+        "handshake_alive",
+    ],
+)
+async def test_qmp_disconnect_requires_authorized_quit_and_confirmed_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+):
+    from novacode_cli.computer import windows_qemu
+
+    path = saved_state(tmp_path, monkeypatch)
+    before = path.read_bytes()
+    replies = [
+        b'{"QMP":{}}\n',
+        b'{"return":{}}\n',
+        (json.dumps({"return": {"name": NAME}}) + "\n").encode(),
+        b'{"return":{"status":"paused"}}\n',
+    ]
+    early_disconnect = failure in {"handshake", "connect", "greeting_eof", "handshake_alive"}
+    if failure in {"handshake", "handshake_alive"}:
+        replies = [windows_disconnect()]
+    elif failure == "greeting_eof":
+        replies = [b""]
+    else:
+        replies.append(
+            b"" if failure == "eof" else windows_disconnect(5 if failure == "permission" else 64)
+        )
+    reader = SimpleNamespace(readline=AsyncMock(side_effect=replies))
+    writer = SimpleNamespace(
+        write=Mock(),
+        drain=AsyncMock(),
+        close=Mock(),
+        wait_closed=AsyncMock(side_effect=windows_disconnect()),
+    )
+    if failure == "drain":
+        writer.drain.side_effect = [None, None, None, windows_disconnect()]
+    process = SimpleNamespace(wait=Mock(return_value=0))
+    if failure in {"alive", "handshake_alive"}:
+        process.wait.side_effect = windows_qemu.psutil.TimeoutExpired(10, pid=12345)
+    connect = AsyncMock(return_value=(reader, writer))
+    if failure == "connect":
+        connect.side_effect = windows_disconnect()
+    monkeypatch.setattr(asyncio, "open_connection", connect)
+    monkeypatch.setattr(windows_qemu.psutil, "Process", lambda _pid: process)
+    closed = AsyncMock()
+    monkeypatch.setattr(windows_qemu, "_wait_listener_closed", closed)
+    if failure in {"permission", "alive", "handshake_alive"}:
+        expected = windows_qemu.psutil.TimeoutExpired if failure != "permission" else OSError
+        with pytest.raises(expected):
+            await recover_whpx(NAME)
+        assert path.read_bytes() == before
+        if failure == "permission":
+            process.wait.assert_not_called()
+    else:
+        await recover_whpx(NAME)
+        process.wait.assert_called_once_with(timeout=10)
+        assert json.loads(path.read_text())["extra_args"] == WHPX_ARGS
+        assert closed.await_count == int(early_disconnect)
+    commands = [json.loads(call.args[0])["execute"] for call in writer.write.call_args_list]
+    assert ("quit" in commands) == (not early_disconnect)
+
+
+@pytest.mark.parametrize("failure", ["open", "close"])
+async def test_cleared_pid_socket_shutdown_is_rechecked_before_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+):
+    from novacode_cli.computer import windows_qemu
+
+    path = saved_state(tmp_path, monkeypatch)
+    data = json.loads(path.read_text())
+    data["pid"] = None
+    path.write_text(json.dumps(data))
+    writer = SimpleNamespace(close=Mock(), wait_closed=AsyncMock(side_effect=windows_disconnect()))
+    first = windows_disconnect() if failure == "open" else (None, writer)
+    connect = AsyncMock(side_effect=[first, ConnectionRefusedError()])
+    monkeypatch.setattr(asyncio, "open_connection", connect)
+    monkeypatch.setattr(windows_qemu, "_listener_pid", lambda _n, _p: None)
+    await recover_whpx(NAME)
+    assert connect.await_count == 2
+    assert json.loads(path.read_text()) == {**data, "extra_args": WHPX_ARGS}
