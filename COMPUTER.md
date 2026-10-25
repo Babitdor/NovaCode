@@ -61,8 +61,10 @@ uvx --from cua==0.9.0 cua runtime --json doctor
 
 Check the report's `qemu` backend. Docker/container and Lume readiness are not
 required for Nova's QEMU computer. On this development machine the SDK imports
-successfully and QEMU 11.1.0 reports ready after refreshing PATH; a real guest
-boot has not been verified here.
+successfully and QEMU 11.1.0 reports ready after refreshing PATH. The working-tree
+WHPX compatibility fix has also passed a real Linux desktop boot on Windows 11
+(build 26300), including screenshot, input pause/resume, and stop/delete. That
+cached-image startup took about 40 seconds; it is not a universal timing promise.
 
 ## Use
 
@@ -87,8 +89,23 @@ Pause/resume control **Nova's input**, not QEMU's execution state, and require a
 ready desktop. `qemu started but VM status is 'paused'` is a failed boot, not
 Nova's input pause. On this Windows host, QEMU's log identified
 `WHPX: Unexpected VP exit code 4`; waiting longer or resuming Nova input does not
-repair that hypervisor failure. Check QEMU/Windows Hypervisor Platform
-compatibility before retrying. Nova cancels native startup and attempts cleanup
+repair that hypervisor failure. This checkout includes a narrowly scoped recovery
+for Cua **0.9.0** on Windows x64: when that exact failure is detected, Nova
+verifies its own generated guest name and QEMU state, confirms/stops its paused
+process through loopback QMP when needed, then atomically adds
+`-machine kernel-irqchip=off` to that guest's saved `extra_args`. Cua then makes
+one retry using the same guest and disk. WHPX acceleration stays enabled;
+interrupt handling moves out of the Windows kernel. Other VMs, QEMU installation
+files and Windows settings are unchanged.
+
+This is a version-pinned compatibility shim over Cua's saved state, because its
+Python creation API does not expose QEMU arguments. It rejects unexpected SDK
+versions, guest identity, architecture, state paths, existing custom arguments,
+or a management endpoint belonging to another process. It must be reviewed
+when upgrading Cua; no unlimited restart loop is introduced. If recovery fails,
+the original cleanup/error flow remains available.
+
+Nova cancels native startup and attempts cleanup
 by its generated guest name even when no SDK handle was returned. Failed
 cleanup retains ownership so `/computer stop` can retry.
 

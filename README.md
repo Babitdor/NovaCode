@@ -83,7 +83,7 @@ browser automation and background-agent requirements.
 separate Linux QEMU VM with a private live browser preview and pause/resume/stop
 controls. Requires QEMU, a guest-image download and 4 GiB RAM for the guest.
 Start with `/computer start`; see [computer setup and limits](COMPUTER.md).
-Real VM boot remains unverified on the development PC.
+The Windows WHPX compatibility fix in this checkout has passed a real desktop boot.
 
 ## Documentation and contributing
 

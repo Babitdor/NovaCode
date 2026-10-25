@@ -44,8 +44,9 @@ sessions. Control tool approvals, workspaces and optional integrations.
 | Permissions and guardrails | Keep tool policy, workspace boundaries and prompt-injection handling in the agent workflow. | An approval request and scoped folder controls |
 
 The local computer is a **preview in v1.0.99**. Use “Preview: a separate Linux
-computer with a private live view” in a preview area. A real guest boot still
-needs verification before advertising tested end-to-end VM operation.
+computer with a private live view” in a preview area. The working-tree WHPX
+workaround has passed one Windows desktop boot; keep
+that scope explicit rather than promising compatibility on every machine.
 Do not use the Classic screenshot as evidence of new styles or VM operation.
 
 ## Recent additions for landing pages and docs
@@ -57,7 +58,7 @@ Do not use the Classic screenshot as evidence of new styles or VM operation.
 | Kokoro and sanoTTS | Released in v1.0.98 | `voice` + the selected provider extra; [voice setup](SETUP.md#optional-capabilities) | CPU options; download size is not peak RAM or a speed guarantee. |
 | Download progress and earlier speech playback | Released in v1.0.98 | `/voice download`, `/voice test`, `/settings` | Percentages need a backend-reported total; no universal latency claim. |
 | Eight additional interface styles and creative homes | Included in v1.0.99 | `/theme`; [interface guide](SETUP.md#interface-and-vision) | Animations are optional; new screenshots still needed. |
-| Local Linux computer and live preview | Preview in v1.0.99 | `computer` extra + QEMU; [computer guide](COMPUTER.md) | Offline tests and SDK preflight verified; real VM boot unverified here. |
+| Local Linux computer and live preview | Preview in v1.0.99 | `computer` extra + QEMU; [computer guide](COMPUTER.md) | Offline tests plus one real Windows desktop boot with the working-tree WHPX workaround. |
 
 ## 1. Everyday coding tools
 
@@ -718,10 +719,11 @@ networking can reach the Internet and local services. Stop deletes guest files;
 normal exit attempts cleanup, while a killed process can leave a guest behind.
 
 **Verification status:** offline lifecycle, tools, approval, preview and TUI tests
-pass. Real SDK prerequisite checks detect missing QEMU before download and
-report ready after the Windows PATH refresh. A real guest boot
-is **not verified** on this development PC. Do not claim tested end-to-end VM
-operation or complete host/network isolation. [Setup and boundaries](COMPUTER.md).
+pass. The working-tree Windows WHPX workaround also passed a real Linux desktop
+boot, screenshot, pause/resume and stop on the development PC, reaching readiness
+in about 40 seconds with the image already cached. This is one host check, not
+a universal startup benchmark or proof of complete host/network isolation.
+[Setup and boundaries](COMPUTER.md).
 
 ## Launch/demo command shortlist
 
@@ -758,7 +760,7 @@ operation or complete host/network isolation. [Setup and boundaries](COMPUTER.md
 1. **Lead with shipped user benefits.** Keep tool/class names for expanded
    details or documentation links.
 2. **Label experimental, preview and optional capabilities.** The local VM is
-   a preview and needs real-boot verification. Teams/swarm are not on by
+   a preview; the Windows WHPX boot check covers one development PC. Teams/swarm are not on by
    default; vision, remotes, browser, voice and hosted integrations have setup
    and service requirements.
 3. **Keep public artifact hosting distinct from local web apps.** Do not restore

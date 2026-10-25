@@ -163,8 +163,9 @@ Combine `--extra` flags to keep multiple extras installed. Voice models may need
 
 ### Nova's own computer (preview)
 
-Included as a preview in v1.0.99. Real VM boot remains unverified on the
-development PC.
+Included as a preview in v1.0.99. The working-tree Windows WHPX compatibility
+fix has passed a real Linux desktop boot, screenshot, pause/resume and stop on
+the development PC. See [computer setup](COMPUTER.md) for the tested scope.
 
 Install the `computer` extra and QEMU, then run `/computer start`. Nova creates
 a separate Linux VM (2 CPUs, 4 GiB RAM) and opens its live desktop preview in

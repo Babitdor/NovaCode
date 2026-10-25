@@ -71,6 +71,7 @@ class Computer:
         self._stage = ""
         self._error = ""
         self._started_at: float | None = None
+        self._whpx_recovery_attempted = False
         self._starting: asyncio.Task | None = None
         self._input_lock = asyncio.Lock()
         self._observation: Any = None
@@ -195,6 +196,7 @@ class Computer:
         self._phase = "starting"
         self._paused = False
         self._error = ""
+        self._whpx_recovery_attempted = False
         self._stage = "Checking QEMU prerequisites"
         self._started_at = time.monotonic()
         try:
@@ -225,9 +227,10 @@ class Computer:
                 token=secrets.token_urlsafe(32),
                 ready_timeout_ms=600_000,
                 headless=False,
+                keep_on_failure=sys.platform == "win32",
             )
             self._stage = "Downloading/caching the Linux image and booting QEMU"
-            self._guest = await client.sandboxes().create(options)
+            self._guest = await self._create_guest(options)
             info = self._guest.info()
             if (info.location, info.kind, info.runtime) != ("local", "vm", "qemu"):
                 raise ComputerError("The runtime did not create a local QEMU VM.")
@@ -253,9 +256,34 @@ class Computer:
         finally:
             self._starting = None
 
+    async def _create_guest(self, options: Any) -> Any:
+        """Create normally, with one version-pinned recovery for the WHPX boot bug."""
+        boxes = self._client.sandboxes()
+        try:
+            return await boxes.create(options)
+        except Exception as exc:
+            if (
+                sys.platform != "win32"
+                or self._phase != "starting"
+                or self._name is None
+                or getattr(self._sdk, "__version__", "") != "0.9.0"
+                or "VM status is 'paused'" not in str(exc)
+                or "WHPX" not in self._startup_error(exc)
+            ):
+                raise
+            from novacode_cli.computer.windows_qemu import recover_whpx
+
+            name = self._name
+            self._whpx_recovery_attempted = True
+            self._stage = "Applying Windows WHPX compatibility setting and restarting the guest"
+            await recover_whpx(name)
+            return await boxes.create(options)
+
     def _startup_error(self, exc: BaseException) -> str:
         """Keep the failure visible, including a recognized Windows boot failure."""
         message = str(exc) or "Computer startup was cancelled."
+        if self._whpx_recovery_attempted:
+            return "Windows WHPX compatibility recovery failed: " + message
         if self._name is not None:
             home = Path(os.environ.get("CUA_HOME", str(Path.home() / ".cua")))
             log = home / "vmm" / "qemu" / self._name / "qemu.log"
