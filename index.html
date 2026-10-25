@@ -791,6 +791,13 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
 .art canvas{position:absolute; inset:0; width:100%; height:100%; display:block}
 .art.gl picture{opacity:0}
 .art.gl::before{display:none}
+.hero-tilt{
+  position:absolute; z-index:3; right:var(--gutter); bottom:76px;
+  min-height:44px; padding:8px 16px; border:1px solid var(--line);
+  border-radius:999px; background:var(--bg); color:var(--text);
+  font:inherit; font-size:.85rem; cursor:pointer;
+}
+.hero-tilt[hidden]{display:none}
 @supports (animation-timeline: scroll()){
   @media (prefers-reduced-motion: no-preference){
     .js .art canvas{animation:drift linear both; animation-timeline:scroll(root block); animation-range:0 100vh}
@@ -2331,10 +2338,9 @@ status: awaiting your decision">
   var art = $(".art"), fine = window.matchMedia("(hover: hover) and (pointer: fine)");
   var aim = { x: 0, y: 0, lit: 0, lx: 0, ly: 0 }, photo = null, letGo = 0;
   if (art) {
-    var look = function (e) {
-      var r = art.getBoundingClientRect();
-      var x = Math.min(Math.max((e.clientX - r.left) / r.width, 0), 1);
-      var y = Math.min(Math.max((e.clientY - r.top) / r.height, 0), 1);
+    var tiltOn = false, neutral = null, tiltButton = null;
+    var point = function (x, y) {
+      x = Math.min(Math.max(x, 0), 1); y = Math.min(Math.max(y, 0), 1);
       aim.x = x * 2 - 1; aim.y = y * 2 - 1; aim.lit = 1; aim.lx = x; aim.ly = y;
       art.style.setProperty("--mx", aim.x.toFixed(3));
       art.style.setProperty("--my", aim.y.toFixed(3));
@@ -2342,6 +2348,10 @@ status: awaiting your decision">
       art.style.setProperty("--gy", (y * 100).toFixed(1) + "%");
       art.classList.add("lit");
       if (photo) photo.wake();
+    };
+    var look = function (e) {
+      var r = art.getBoundingClientRect();
+      point((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
     };
     var rest = function () {
       aim.x = aim.y = aim.lit = 0;
@@ -2351,25 +2361,79 @@ status: awaiting your decision">
       if (photo) photo.wake();
     };
     art.addEventListener("pointermove", function (e) {
-      if (calm) return;
+      if (calm || tiltOn) return;
       if (e.pointerType === "mouse") { if (fine.matches) look(e); }
-      else if (e.pressure > 0) look(e);  /* a finger dragged before the page takes it as a scroll */
+      else if (e.pressure > 0) look(e);
     });
-    art.addEventListener("pointerleave", function (e) { if (e.pointerType === "mouse") rest(); });
+    art.addEventListener("pointerleave", function (e) { if (!tiltOn && e.pointerType === "mouse") rest(); });
     /* A phone has no hover: touching the art is the look, and the scene settles
        back a moment after the finger lifts or the touch turns into a scroll. */
     art.addEventListener("pointerdown", function (e) {
-      if (calm || e.pointerType === "mouse") return;
+      if (calm || tiltOn || e.pointerType === "mouse" || e.target.closest(".hero-tilt")) return;
       window.clearTimeout(letGo);
       look(e);
     });
     var lift = function (e) {
-      if (e.pointerType === "mouse") return;
+      if (tiltOn || e.pointerType === "mouse" || e.target.closest(".hero-tilt")) return;
       window.clearTimeout(letGo);
       letGo = window.setTimeout(rest, 1400);
     };
     art.addEventListener("pointerup", lift);
     art.addEventListener("pointercancel", lift);
+    /* Device orientation supplies the same camera target as the pointer. The
+       first reading is neutral, so the phone need not be held flat. Sensor
+       permission on iOS must be requested directly from a button gesture. */
+    if (window.isSecureContext && window.DeviceOrientationEvent && navigator.maxTouchPoints > 0) {
+      tiltButton = document.createElement("button");
+      tiltButton.type = "button"; tiltButton.className = "hero-tilt";
+      tiltButton.textContent = "Enable tilt"; tiltButton.hidden = calm;
+      tiltButton.setAttribute("aria-pressed", "false");
+      art.appendChild(tiltButton);
+      var orient = function (e) {
+        if (calm || document.hidden || !Number.isFinite(e.beta) || !Number.isFinite(e.gamma)) return;
+        if (art.getBoundingClientRect().bottom <= 0) { neutral = null; return; }
+        var angle = window.screen.orientation ? window.screen.orientation.angle : (window.orientation || 0);
+        if (!neutral || neutral.angle !== angle) neutral = { beta: e.beta, gamma: e.gamma, angle: angle };
+        var dx = ((e.gamma - neutral.gamma + 540) % 360 - 180) / 20;
+        var dy = ((e.beta - neutral.beta + 540) % 360 - 180) / 20;
+        var a = angle * Math.PI / 180;
+        point((dx * Math.cos(a) + dy * Math.sin(a) + 1) / 2,
+          (dy * Math.cos(a) - dx * Math.sin(a) + 1) / 2);
+      };
+      var stopTilt = function () {
+        tiltOn = false; neutral = null;
+        window.removeEventListener("deviceorientation", orient);
+        tiltButton.textContent = "Enable tilt";
+        tiltButton.setAttribute("aria-pressed", "false");
+        rest();
+      };
+      tiltButton.addEventListener("click", async function () {
+        if (tiltOn) { stopTilt(); return; }
+        tiltButton.disabled = true;
+        try {
+          var sensor = window.DeviceOrientationEvent;
+          if (typeof sensor.requestPermission === "function" && await sensor.requestPermission() !== "granted") {
+            throw new Error("permission denied");
+          }
+          if (calm) return;
+          window.clearTimeout(letGo); neutral = null; tiltOn = true;
+          window.addEventListener("deviceorientation", orient, { passive: true });
+          tiltButton.textContent = "Disable tilt";
+          tiltButton.setAttribute("aria-pressed", "true");
+          tiltButton.title = "Tilt your phone to move the photo";
+        } catch (_) {
+          tiltButton.textContent = "Retry tilt";
+          tiltButton.title = "Allow motion and orientation access in your browser to enable tilt";
+        } finally { tiltButton.disabled = false; }
+      });
+      document.addEventListener("visibilitychange", function () { neutral = null; rest(); });
+      var tiltMotion = function () {
+        tiltButton.hidden = motion.matches;
+        if (motion.matches) stopTilt();
+      };
+      if (motion.addEventListener) motion.addEventListener("change", tiltMotion);
+      else if (motion.addListener) motion.addListener(tiltMotion);
+    }
     /* Browsers without scroll-driven animations (Safari before 26, Firefox) get
        the same drift from script: the room and canvas at 40% of the scroll, the
        desk layer at 24%, over the first screen. */
