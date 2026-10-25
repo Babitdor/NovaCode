@@ -77,6 +77,9 @@ _DEFAULT_TOOL_TIERS: dict[str, Tier] = {
     "CtxInspectTool": "allow",
     "caveman": "allow",  # Read-only recovery/audit of the invoking thread's state.
     "TerminalCaptureTool": "allow",
+    "computer_status": "allow",
+    "computer_screenshot": "allow",
+    "computer_action": "ask",
     "shell": "ask",
     "bash": "ask",
     "execute": "ask",

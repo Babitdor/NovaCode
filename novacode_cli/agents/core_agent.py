@@ -2376,6 +2376,13 @@ This file stores your preferences and context that persist across sessions.
         team_middleware.backend = composite_backend
         agent_middleware.append(team_middleware)
 
+    # The root owns its desktop. Attach after delegation rosters are captured so
+    # background agents and restricted sessions cannot inherit this capability.
+    if session_id and sandbox is None and not extra_middleware and team_binding is None:
+        from novacode_cli.tools.computer_tools import build_computer_tools
+
+        tools = [*tools, *build_computer_tools(session_id)]
+
     # Get the system prompt (sandbox-aware and with skills)
     if system_prompt is None:
         system_prompt = get_system_prompt(

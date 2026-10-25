@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "novacode-cli"
-version = "1.0.98"
+version = "1.0.99"
 description = "Agentic Coding Tool that runs in your terminal"
 authors = [{ name = "Babitdor", email = "babitdorbryan14@gmail.com" }]
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -162,6 +162,9 @@ voice-kokoro = [
 # Tiny NumPy TTS; keep voice weights opt-in and download only the chosen voice.
 voice-sano = [
     "sanotts==0.3.0",
+]
+computer = [
+    "cua==0.9.0",
 ]
 
 [project.urls]

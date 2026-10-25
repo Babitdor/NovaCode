@@ -69,6 +69,10 @@ class InterruptSpec:
 # ---------------------------------------------------------------------------
 
 INTERRUPT_SPECS: dict[str, InterruptSpec] = {
+    "computer_action": InterruptSpec(fields=[
+        ("action", FieldSpec("VM input")), ("text", FieldSpec("Text", truncate=500)),
+        ("keys", FieldSpec("Keys")), ("x", FieldSpec("X")), ("y", FieldSpec("Y")),
+    ]),
     "MCPTool": InterruptSpec(fields=[
         ("action", FieldSpec("Action")), ("server_name", FieldSpec("MCP server")),
         ("tool_name", FieldSpec("MCP tool")), ("arguments", FieldSpec("Arguments")),
@@ -464,6 +468,10 @@ def get_interrupt_configs() -> dict[str, InterruptOnConfig]:
             "description": _format_interrupt_description,  # type: ignore[typeddict-item]
             "args_schema": _INTERRUPT_ARG_SCHEMAS.get(tool_name, {}),
         }
+        if tool_name == "computer_action":
+            from novacode_cli.tools.computer_tools import ComputerActionInput
+
+            configs[tool_name]["args_schema"] = ComputerActionInput.model_json_schema()
     return configs
 
 

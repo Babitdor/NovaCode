@@ -1,8 +1,11 @@
 # NovaCode feature inventory
 
-Landing-page reference for the capabilities shipped through **v1.0.94**.
-Reviewed against the current command registry, implementation, documentation and
-release notes on **24 October 2026**.
+<!-- product: novacode-cli; version: 1.0.99; scope: release; reviewed: 2026-10-25 -->
+
+Landing-page and documentation reference for **v1.0.99**, including the explicitly marked
+local computer preview. Reviewed against source, command registrations
+and release notes on **25 October 2026**. An implemented capability is not a
+benchmark or proof that every provider and platform has been exercised.
 
 Use the short copy for feature cards and the detailed catalog for product pages,
 screenshots and documentation links. Requirements and limits belong near the
@@ -31,12 +34,30 @@ sessions. Control tool approvals, workspaces and optional integrations.
 | Council | Gather independent perspectives, debate options and get a chairman's consolidated recommendation. | Advisor sidebar, ballots and consensus view |
 | Persistent memory | Keep useful project knowledge in a linked memory wiki you can inspect and maintain. | Memory index and `/dream` controls |
 | Model choice and vision | Choose cloud or local models, with independent roles and an on-demand vision companion for text-only models. | Model picker and Vision settings |
-| MCP Code Mode | Discover external tools and combine their results in bounded JavaScript workflows. | A short `MCPCode` script and compact result |
+| Code Mode | Combine eligible native and MCP tools in bounded JavaScript workflows, with a toggle below the composer. | Composer toggle, a short script and its selected result |
+| Voice conversation | Dictate requests and hear short spoken reply summaries, with lightweight CPU voice options. | Voice model picker and real download progress |
+| Your terminal style | Choose from 13 interface styles, including Nova character art and optional animated homes. | Workbench character art and a Blueprint animation |
 | Caveman mode | Choose terse answers, recoverable compact tool output and other independent token-efficiency features. | Composer toggle and intensity picker |
 | Remote sessions | Continue through Telegram topics, Discord threads or an optional Rootapp companion. | Matching terminal session and remote conversation |
 | Artifacts | Turn results into web previews and share the session's collection through a temporary Cloudflare URL. | Responsive artifact cards and a phone preview |
 | Parallel workspaces | Run project tabs, exchange explicit messages and isolate changes in Git worktrees. | Session tabs and a worktree transition |
 | Permissions and guardrails | Keep tool policy, workspace boundaries and prompt-injection handling in the agent workflow. | An approval request and scoped folder controls |
+
+The local computer is a **preview in v1.0.99**. Use “Preview: a separate Linux
+computer with a private live view” in a preview area. A real guest boot still
+needs verification before advertising tested end-to-end VM operation.
+Do not use the Classic screenshot as evidence of new styles or VM operation.
+
+## Recent additions for landing pages and docs
+
+| Capability | Status | Setup / documentation | Claim boundary |
+| --- | --- | --- | --- |
+| Native + MCP Code Mode | Released in v1.0.97 | Composer toggle; [Code Mode](docs/mcp-code-mode.md) | Eligible tools only; interactive and graph-control calls remain direct. |
+| Whistle STT | Released in v1.0.97 | `voice` + `voice-whistle`; [voice setup](SETUP.md#optional-capabilities) | Local Cactus runtime; microphone quality and transcription accuracy are not benchmarked. |
+| Kokoro and sanoTTS | Released in v1.0.98 | `voice` + the selected provider extra; [voice setup](SETUP.md#optional-capabilities) | CPU options; download size is not peak RAM or a speed guarantee. |
+| Download progress and earlier speech playback | Released in v1.0.98 | `/voice download`, `/voice test`, `/settings` | Percentages need a backend-reported total; no universal latency claim. |
+| Eight additional interface styles and creative homes | Included in v1.0.99 | `/theme`; [interface guide](SETUP.md#interface-and-vision) | Animations are optional; new screenshots still needed. |
+| Local Linux computer and live preview | Preview in v1.0.99 | `computer` extra + QEMU; [computer guide](COMPUTER.md) | Offline tests and SDK preflight verified; real VM boot unverified here. |
 
 ## 1. Everyday coding tools
 
@@ -300,7 +321,8 @@ The master switch remains opt-in; the individual switches start selected.
 | Browse | Compact eligible HTML and Markdown tool results, retaining references for exact recovery. |
 
 - Select `lite`, `full`, `ultra`, `wenyan-lite`, `wenyan-full` or `wenyan-ultra`
-  through Options or `/caveman <level>`.
+  through Options or `/caveman <level>`. Preserve the requested reply language;
+  Wenyan styles Chinese replies without translating other languages into Chinese.
 - Replace Nova's exact bundled response-style block rather than adding a second
   competing directive. Preserve custom instructions and security rules.
 - Apply the selected prose style to Nova-managed subagents. Local/background
@@ -324,13 +346,17 @@ the Caveman skill, which itself defines prose style.
 - Manage MCP servers with `/mcp` and discover tools dynamically.
 - Use **`MCPTool`** to list tools, inspect their JSON schemas and call exact
   server/tool names. Select structured result paths and bound returned output.
-- Use **`MCPCode`** to combine discovery and tool calls in an isolated JavaScript
-  async-function body: loops, branches, dependent calls, bounded `Promise.all`
-  and local filtering are supported.
+- Toggle Code Mode below the prompt composer; the preference persists.
+- Use **`MCPCode`** with `tools.list`, `tools.describe` and `tools.call` for
+  eligible registered native tools, even without MCP servers. Existing
+  `mcp.list`, `mcp.describe` and `mcp.call` scripts remain supported.
+- Combine discovery and calls in an isolated JavaScript async-function body:
+  loops, branches, dependent calls, bounded `Promise.all` and local filtering
+  are supported.
 - Return only selected results to the model while keeping intermediate data in
   the script runtime. Normal traces may still retain nested call data.
 - Preserve the configured inventory, argument validation, downstream tool
-  middleware and approval decisions for nested MCP calls.
+  middleware and approval decisions for nested native and MCP calls.
 - Bound runtime memory, code size, execution time, call count, concurrency and
   returned results. Cancel pending work when a script is interrupted.
 - Keep existing `eval`/subagent workflows separate from MCP Code Mode.
@@ -339,10 +365,14 @@ the Caveman skill, which itself defines prose style.
 - Load less-used schemas when needed rather than keeping the full catalog in
   every model request.
 
-MCPCode needs configured MCP tools and Nova's async agent loop. It has no general
-host imports or filesystem/network API. MCP servers retain their authorized
-capabilities; external side effects cannot be rolled back. Unresolved ask-tier
-calls use the normal approval path rather than replaying an entire script.
+Code Mode needs Nova's async agent loop. Native workflows do not need an MCP
+server; `mcp.*` calls need configured servers. JavaScript has no general host
+imports or filesystem/network API; authorized tools retain their capabilities.
+Delegation, user questions, graph-state changes, workspace/mode transitions and
+computer image/action results keep their direct paths. Calls needing interactive
+approval must be made directly rather than replaying the script. External side
+effects cannot be rolled back. Dynamic agents run through the separate `eval`
+workflow; Code Mode does not replace their execution engine.
 The local regex/BM25 implementations are not Anthropic server-side search tools.
 [MCP Code Mode](docs/mcp-code-mode.md), [search and MCP reference](docs/essential-tools.md).
 
@@ -399,7 +429,7 @@ not a guarantee that arbitrary private project content is safe to publish.
 
 Messaging connects live tabs in one NovaCode TUI instance. It does not connect
 arbitrary independently launched terminals or standalone headless sessions.
-[Messaging usage](README.md#messages-between-sessions).
+[Messaging usage](SETUP.md#messages-between-sessions).
 
 ## 15. Isolated Git worktrees
 
@@ -416,7 +446,7 @@ arbitrary independently launched terminals or standalone headless sessions.
 Git and an existing commit are required. Existing jobs, external MCP servers
 and remote agents keep their own workspaces. The live workspace switch is not
 restored merely by resuming a conversation.
-[Worktree usage](README.md#isolated-worktrees).
+[Worktree usage](SETUP.md#isolated-worktrees).
 
 ## 16. Memory, learning and skills
 
@@ -542,7 +572,15 @@ access or redaction as permission to publish private data.
 
 **Benefit:** Adapt the workspace without leaving the terminal.
 
-- Choose Dashboard, Classic, Centered, Banner or Minimal interface styles.
+- Choose **13 interface styles**: Dashboard, Classic, Centered, Banner, Minimal,
+  Terminal, Workbench, Notebook, Outline, Focus, Studio, Ledger and Blueprint.
+- Use distinct home compositions with keyboard-accessible Explain / Refactor /
+  Build / Debug starters that fill an editable prompt before sending.
+- See Nova character art in Workbench and Studio, with optional animated home
+  scenes in Terminal, Studio and Blueprint. Low-resource mode pauses them;
+  short terminals prioritize the composer over large artwork.
+- Carry the selected style into conversation, tool and dialog presentation,
+  independently of the color theme.
 - Change themes, including light and dark palettes, with `/theme` or `/settings`.
 - Customize the status line with a live preview through `/statusline`.
 - Use a composer that grows with multiline input and soft wraps; keep drafts
@@ -565,8 +603,24 @@ access or redaction as permission to publish private data.
 - Connect generic MCP servers and use presets for Figma, Figma Desktop, Vercel
   and Higgsfield through `/mcp`, with supported browser authentication.
 - Use optional browser automation and semantic code-search capabilities.
-- Add local speech input/output through `/voice` and the relevant optional
-  voice extras. Models load on demand; initial downloads may be required.
+- Dictate requests with local speech input and hear short summaries of Nova's
+  final prose. Automatic speech excludes tool calls/results, reasoning and
+  subagent payloads.
+- Select speech providers and voices through `/model` (or `/models`), `/settings`
+  or `/voice settings`. Faster-Whisper and Piper remain the defaults.
+- Add **Whistle STT** with `voice-whistle` using the local Cactus runtime;
+  Parakeet is another optional speech-input provider.
+- Choose CPU speech output with **Kokoro 82M INT8** (six English voices,
+  roughly 120 MB total weights/voice download) or **sanoTTS** (four English
+  voices, roughly 2–4 MB per selected voice). Pocket and Orpheus remain optional
+  alternatives; ElevenLabs requires service credentials and may incur charges.
+- See separate STT/TTS download rows above the composer: transferred bytes and
+  percentages when totals are known, otherwise indeterminate progress.
+  Cached models remain quiet. Use `/voice download` to prepare models.
+- Begin Piper playback sentence by sentence instead of buffering the whole
+  reply. The extra summary-model call has a two-second budget with a filtered
+  short-prose fallback. Cancellation prevents late synthesis from starting
+  playback; model instances and downloaded weights are reused where supported.
 - Run one-shot tasks with `nova -p`, including structured output and turn/time
   limits.
 - Build remote-app adapters around persistent `--mode pipe` / `--headless`
@@ -576,7 +630,13 @@ access or redaction as permission to publish private data.
 
 Optional extras, external tools, browser setup, account eligibility and service
 subscriptions may be required. Figma remote access has client restrictions;
-Higgsfield is not a free included subscription. [Setup and extras](README.md).
+Higgsfield is not a free included subscription. [Setup and extras](SETUP.md#optional-capabilities).
+
+Voice requires the `voice` extra plus any selected provider extra, model downloads
+and working audio devices. Kokoro is Apache-2.0; sanoTTS is GPL-3.0. Download
+footprints are not total RAM. Physical microphone/speaker behavior, peak memory
+and universal low-resource latency have not been benchmarked. See
+[installation and voice commands](SETUP.md#optional-capabilities).
 
 ## 23. Commit and pull request attribution
 
@@ -602,8 +662,9 @@ Higgsfield is not a free included subscription. [Setup and extras](README.md).
 
 Merge that block into `~/.nova/Nova.config.json` to opt out. Git commit messages
 are plain text; their trailers cannot embed the logo or force a GitHub avatar.
-The default co-author is an unlinked product identity. Attribution credits a
-commit, not exact AI-written lines. Arbitrary shell commands follow agent
+The default co-author is an unlinked product identity; an optional configured
+name/email can credit an existing GitHub account with an associated email.
+Attribution credits a commit, not exact AI-written lines. Arbitrary shell commands follow agent
 instructions rather than being rewritten. [Attribution reference](docs/attribution.md).
 
 ## 24. Updates and cross-platform reliability
@@ -626,6 +687,37 @@ Do not infer that every historical test, OS configuration or provider has been
 certified from a focused or maintained CI suite. Advertise the actual matrix
 and tested capabilities rather than “all platforms, all tests, guaranteed.”
 
+## 25. Nova's own computer — preview
+
+**Benefit:** Let Nova operate a separate Linux desktop while you watch its activity.
+
+- Start a session-owned **local QEMU VM**, explicitly selecting Linux with
+  2 CPUs and 4 GiB RAM; no cloud account or hosting fees are required.
+- Use `/computer start` to launch it and open a private loopback browser preview.
+  The view refreshes up to once per second while its tab is visible.
+- Pause/resume agent input or stop/delete the guest from the preview or TUI.
+  User pause remains effective with auto-approve enabled.
+- Let the local root agent observe screenshots and click, drag, type, send key
+  chords or scroll. Actions require the latest observation ID and return a
+  new screenshot; they follow tool approval and plan-mode restrictions.
+- Keep guest ownership separate across sessions. Delegated agents do not inherit
+  desktop tools. No host project files, clipboard, browser profiles or
+  credentials are mounted or copied by this feature.
+
+Requires the optional `computer` extra (`cua==0.9.0`), installed QEMU, disk space
+for the first guest-image download, and enough RAM for the guest and host apps.
+Select a vision-capable model for visual interaction. Normal shell/file tools
+keep their existing workspace; starting a guest does not move them into it.
+The preview is local and token-protected, not publicly shared. Ordinary guest
+networking can reach the Internet and local services. Stop deletes guest files;
+normal exit attempts cleanup, while a killed process can leave a guest behind.
+
+**Verification status:** offline lifecycle, tools, approval, preview and TUI tests
+pass. Real SDK prerequisite checks detect missing QEMU before download and
+report ready after the Windows PATH refresh. A real guest boot
+is **not verified** on this development PC. Do not claim tested end-to-end VM
+operation or complete host/network isolation. [Setup and boundaries](COMPUTER.md).
+
 ## Launch/demo command shortlist
 
 | Command or action | What to demonstrate |
@@ -645,6 +737,11 @@ and tested capabilities rather than “all platforms, all tests, guaranteed.”
 | Ask Nova to use `SendMessage` | Explicit coordination between live tabs |
 | Ask Nova to enter/exit a worktree | Move the current local session in and back |
 | `/mcp` | External tool discovery and integrations |
+| Composer Code Mode toggle | Eligible native and MCP workflows |
+| `/voice settings`, `/voice test` | Selected input/output providers and short spoken prose |
+| `/voice download` | Real STT/TTS download progress, with an uncached model |
+| `/theme` | Distinct homes, character art and optional animations |
+| `/computer start` | Preview; demonstrate only after verifying a real local guest |
 | Ask Nova to discover `MCPCode` | Filter or combine MCP results in JavaScript |
 | `/trace setup` | Persistent tracing configuration |
 | `/dream`, `/learning` | Memory maintenance and reviewed learning |
@@ -655,7 +752,8 @@ and tested capabilities rather than “all platforms, all tests, guaranteed.”
 
 1. **Lead with shipped user benefits.** Keep tool/class names for expanded
    details or documentation links.
-2. **Label experimental and optional capabilities.** Teams/swarm are not on by
+2. **Label experimental, preview and optional capabilities.** The local VM is
+   a preview and needs real-boot verification. Teams/swarm are not on by
    default; vision, remotes, browser, voice and hosted integrations have setup
    and service requirements.
 3. **Keep public artifact hosting distinct from local web apps.** Do not restore
@@ -685,7 +783,8 @@ the main landing-page cards.
 | `NotebookEditTool` | Insert, replace and delete notebook cells without executing them |
 | `GlobTool`, `GrepTool` | Imported-definition aliases for `glob` and `grep` |
 | `MCPTool` | Generic server-scoped discovery, schema inspection and execution |
-| `MCPCode` | Bounded programmatic MCP workflows in JavaScript |
+| `MCPCode` | Bounded JavaScript workflows over eligible native and MCP tools |
+| `computer_status`, `computer_screenshot`, `computer_action` | Preview session-owned Linux desktop observation and input; user starts the guest |
 | `tool_search_tool_regex_20251119` | Local regex-based schema discovery |
 | `tool_search_tool_bm25_20251119` | Local BM25 natural-language schema discovery |
 | `CronCreateTool`, `CronDeleteTool`, `CronListTool` | Granular scheduled-task management |
@@ -727,6 +826,12 @@ agent results, confidence meters, hardware counters or token-saving figures.
 | Caveman features, skill alignment and token accounting | v1.0.91, v1.0.94 |
 | MCP Code Mode | v1.0.92 |
 | Default-on commit/PR attribution and logo | v1.0.93 |
+| Configurable GitHub-linked attribution identity | v1.0.95 |
+| Reply-language preservation at Wenyan intensities | v1.0.96 |
+| Native Code Mode, composer toggle, Whistle and voice filtering | v1.0.97 |
+| Voice download progress, earlier speech, Kokoro and sanoTTS | v1.0.98 |
+| Additional interface styles, character art and animated homes | v1.0.99 |
+| Local QEMU computer and private live preview | Preview in v1.0.99; [computer guide](COMPUTER.md) |
 
 Full historical records are in [changelog/](changelog/). When an older note
 conflicts with the current implementation or a later release, use the later

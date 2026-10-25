@@ -496,6 +496,9 @@ class SlashCommand:
 # _passthrough_command (print-or-toggle-only commands; never read stdin or use
 # a Live spinner — those would hang or garble inside Textual).
 TUI_COMMANDS: dict[str, SlashCommand] = {
+    "computer": SlashCommand(
+        "_run_computer", "separate Linux VM: /computer start|preview|pause|resume|stop|status"
+    ),
     "ui": SlashCommand(
         "_run_ui", "inspect / patch / preview / commit / rollback / reset UI panels"
     ),
@@ -3334,6 +3337,9 @@ class NovaApp(App):
         # Unmount also runs after failed/interrupted tasks and run_test exits,
         # where action_quit may never have been reached.
         self._release_output_observers()
+        from novacode_cli.computer.runtime import close_computers
+
+        await asyncio.to_thread(close_computers)
         communication = getattr(self, "_session_communication", None)
         if communication is not None:
             await communication.close()
@@ -14640,6 +14646,45 @@ class NovaApp(App):
         from novacode_cli.tui.screens import UpdateScreen
 
         self.push_screen(UpdateScreen())
+
+    @work(group="computer-command")
+    async def _run_computer(self, text: str) -> None:
+        """Control this session's opt-in guest without running VM work on the UI loop."""
+        import webbrowser
+
+        from novacode_cli.computer.runtime import get_computer
+
+        parts = text.split()
+        action = parts[1].lower() if len(parts) == 2 else "status" if len(parts) == 1 else ""
+        if action not in {"start", "preview", "pause", "resume", "stop", "status"}:
+            self._log(Text("Usage: /computer start|preview|pause|resume|stop|status"))
+            return
+        if action == "start" and self._sandbox_id:
+            self._log(Text("Computer controls require a local Nova session.", style="yellow"))
+            return
+        sid = self.session_state.session_id or self.session_state.thread_id
+        try:
+            computer = get_computer(sid)
+            if action in {"start", "preview"}:
+                url = computer.preview_url()
+                self._log(Text(f"Computer preview: {url}", style=f"link {url}"))
+                await asyncio.to_thread(webbrowser.open, url)
+            if action == "start":
+                self._log(
+                    Text(
+                        "Preparing a local Linux VM (2 CPUs, 4 GiB RAM). "
+                        "First startup downloads the guest image. QEMU must be installed…"
+                    )
+                )
+            status = await computer.call("status" if action == "preview" else action)
+            message = f"Computer: {status['phase']}"
+            if status["phase"] == "ready":
+                if status["paused"]:
+                    message += " · input paused"
+                message += ". Ask Nova to use its computer; /computer preview opens the live view."
+            self._log(Text(message))
+        except Exception as exc:
+            self._log(Text(f"Computer: {exc}", style="yellow"))
 
     async def _update_and_restart(self) -> None:
         """/update's "Update now": save, close the TUI, then update and come back.

@@ -47,6 +47,8 @@ DIRECT_ONLY_TOOLS = frozenset(
         "exit_plan_mode",
         "EnterWorktreeTool",
         "ExitWorktreeTool",
+        "computer_screenshot",  # Image results need the direct multimodal tool path.
+        "computer_action",
     }
 )
 

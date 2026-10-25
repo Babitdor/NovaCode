@@ -31,6 +31,7 @@ BLOCKED_TOOLS: frozenset[str] = frozenset({
     "CronCreateTool",
     "CronDeleteTool",
     "NotebookEditTool",
+    "computer_action",  # Desktop input can change files and submit external operations.
 })
 
 # ── Restricted write tools ─────────────────────────────────────────────
