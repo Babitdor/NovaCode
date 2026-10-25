@@ -3067,6 +3067,9 @@ class NovaApp(App):
 
     def on_app_focus(self) -> None:
         """Resume MatrixRain when the terminal regains OS focus."""
+        from novacode_cli.tui.windows_input import restore_input_mode
+
+        restore_input_mode(getattr(self, "_driver", None))
         self._os_focused = True
         self._schedule_status_tick()
         rain = self._matrix_rain()
@@ -7198,6 +7201,9 @@ class NovaApp(App):
 
     def _status_tick(self) -> None:
         """Poll background state and schedule the next adaptive refresh."""
+        from novacode_cli.tui.windows_input import restore_input_mode
+
+        restore_input_mode(getattr(self, "_driver", None))
         self._tick()
         self._schedule_status_tick()
 
@@ -14734,6 +14740,10 @@ class NovaApp(App):
             self._log(Text(message))
         except Exception as exc:
             self._log(Text(f"Computer: {exc}", style="yellow"))
+        finally:
+            from novacode_cli.tui.windows_input import restore_input_mode
+
+            restore_input_mode(getattr(self, "_driver", None))
 
     async def _update_and_restart(self) -> None:
         """/update's "Update now": save, close the TUI, then update and come back.

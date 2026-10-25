@@ -119,6 +119,7 @@ jobs:
           tests/test_home_scenes.py
           tests/test_computer.py
           tests/test_windows_qemu.py
+          tests/test_tui_windows_input.py
           tests/test_voice_catalog.py
           tests/test_voice_credentials.py
           tests/test_remote_voice_notes.py

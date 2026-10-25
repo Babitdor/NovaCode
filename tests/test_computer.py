@@ -517,6 +517,11 @@ async def test_tui_computer_commands_open_private_preview_and_clean_up(
         await start.wait()
         assert (await computer.call("status"))["phase"] == "ready"
         assert opened == [computer.preview_url(), computer.preview_url()]
+        prompt = app.query_one("#prompt", PromptInput)
+        app.set_focus(None)
+        assert await pilot.click(prompt)
+        await pilot.pause()
+        assert prompt.has_focus
         await pilot.press("h", "i")
         assert app.query_one("#prompt", PromptInput).text == "hi"
         await app._run_computer("/computer pause").wait()
