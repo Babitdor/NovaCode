@@ -7,9 +7,11 @@ references are preserved as `/Nova-Hero.png` and `/Nova-Hero-light.png`.
 - `light.png`: daylight edit of the generated night edition, using the supplied
   light original as its lighting reference.
 
-Run `python tools/make_hero_assets.py` to encode the production images. The
-renderer uses intact images with bounded depth displacement, rather than moving
-a cutout over a painted silhouette. Text and controls belong to the HTML.
+The current website uses four separately generated planes per theme in
+[`layers/`](layers/README.md), extracted from these original matched scenes.
+Run `python tools/make_hero_assets.py` to encode the planes and their neutral
+composite. The browser translates image planes without warping their pixels.
+Text and controls belong to the HTML.
 
 ## Dark prompt
 

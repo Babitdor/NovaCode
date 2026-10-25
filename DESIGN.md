@@ -22,23 +22,29 @@ Manual theme switches dissolve and softly refocus the hero over 750ms using nati
 Transitions, waiting for the next image to decode. Navigation and the overlapping prompt
 stay above the hero snapshots. Older browsers get a short reveal; reduced motion switches
 immediately. Repeated toggles supersede the previous transition.
-The complete scene drifts at 40% of scroll speed, using CSS scroll-driven animation or
-a small script fallback. Pointer or touch input leans the scene; touch release settles
-it after 1.4 seconds. Reduced motion shows the intact still frame.
+The hero is four actual full-frame image planes: sky/city, room/code panels,
+coder/desk, and near foliage. The room, subject and foliage are real RGBA cutouts;
+the sky is a complete clean plate behind them. `tools/make_hero_assets.py` encodes
+each plane and composites the same assets into the static fallback. All planes share
+the same crop and fixed 1.08 scale; only their translations differ. No shader, depth
+map, canvas, mesh deformation or pixel displacement is used.
+Pointer, touch and phone tilt move foreground planes farther than the background.
+One passive scroll handler updates CSS translations at different speeds. A frame of
+overscan keeps edges covered. Touch release settles after 1.4 seconds. Reduced motion,
+no JavaScript or failed layer loading shows the complete neutral composite.
 On touch devices served over HTTPS, phone orientation drives the same camera target by
 default, with no tilt button. Browsers requiring sensor permission request it on the first
-real interaction; denial leaves touch available without repeated prompts. Mobile tilt
+completed tap (click), when transient user activation exists; denial leaves touch
+available without repeated prompts. Listening alone never disables the touch fallback:
+only a valid orientation reading gives the sensor control. Mobile tilt
 and touch never show the cursor glow; it is limited to desktop mouse
-input above 900px in both CSS and WebGL. The first valid
+input above 900px. The first valid
 reading calibrates the current holding position; screen rotation recalibrates it. Tilt
 pauses offscreen, and is disabled by reduced motion. Touch remains the
 fallback when orientation is unavailable or permission is denied.
-Where WebGL runs, a canvas samples the intact artwork with a softened continuous depth
-field from `assets/hero-depth.webp` (red: room, green: coder). Small bounded offsets give
-the desk, coder and sky different travel without revealing a painted-over silhouette or
-separating cutout edges. Both themes share this rendering path. Theme switches reload the
-current image texture without creating additional canvases or observers; the picture stays
-visible while loading and after context loss. Rendering runs only while the scene moves.
+Both themes use the same plane order and motion rules. Theme transitions wait for the
+selected image set to decode. The static composite remains visible until every required
+plane is ready, including when a layer fails to load.
 The release archive stays still at rest for reading. Native disclosure controls provide feedback.
 
 Navigation must work under a project subdirectory, through history, and from bookmarked
