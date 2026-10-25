@@ -117,6 +117,7 @@ jobs:
           tests/test_tui_voice_downloads.py
           tests/test_interface_styles.py
           tests/test_home_scenes.py
+          tests/test_matrix3.py
           tests/test_computer.py
           tests/test_windows_qemu.py
           tests/test_tui_windows_input.py

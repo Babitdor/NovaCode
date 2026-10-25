@@ -212,6 +212,30 @@ Screen.blueprint-ui #home-style-actions .home-action {
     border: double $border; text-style: bold;
 }
 
+/* Signal: Nova's editorial identity, with a code-stream banner above a quiet desk. */
+Screen.signal-ui { align-horizontal: center; }
+Screen.signal-ui #panes > VerticalScroll { align-horizontal: center; }
+Screen.conversation-style.signal-ui ChatMessage,
+Screen.signal-ui #transcript > .tool {
+    width: 96; max-width: 100%; padding: 0 2; margin: 0 0 1 0;
+}
+Screen.conversation-style.signal-ui ChatMessage > .role { text-style: bold; }
+Screen.conversation-style.signal-ui #prompt-dock {
+    width: 100%; max-width: 100%; padding: 0;
+}
+Screen.conversation-style.signal-ui #prompt-row.normal-mode {
+    border: round $border; background: $panel; padding: 0;
+}
+Screen.signal-ui #prompt-row.normal-mode:focus-within { border: round $accent; }
+Screen.conversation-style.signal-ui #prompt.normal-mode,
+Screen.conversation-style.signal-ui #prompt:focus.normal-mode,
+Screen.signal-ui #prompt-prefix.normal-mode { background: $panel; }
+Screen.signal-ui #home-composer-meta { background: transparent; padding: 0 1; }
+ModalScreen.conversation-style.signal-ui #modal-box,
+ModalScreen.conversation-style.signal-ui #reference-shell {
+    border: round $border; background: $surface;
+}
+
 /* Four choices remain reachable on narrow terminals; short terminals favor typing. */
 Screen.launchpad-ui.narrow #home-style-actions {
     grid-size: 2 2; grid-columns: 1fr 1fr; grid-rows: 3 3; height: 7;

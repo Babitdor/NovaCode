@@ -210,8 +210,15 @@ paths. See [Code Mode](docs/mcp-code-mode.md) for exact namespaces and limits.
 
 Use `/theme` to choose interface style, colors and animation settings. Dashboard,
 Classic, Centered, Banner and Minimal are joined by Terminal, Workbench, Notebook,
-Outline, Focus, Studio, Ledger and Blueprint. Workbench and Studio use Nova's
-character art; Terminal, Studio and Blueprint have optional animated home scenes.
+Outline, Focus, Studio, Ledger, Blueprint and Signal. Signal pairs Classic's
+full-height Nova banner and logo with Matrix3 code rain and a neutral, orange-accented
+`nova-signal` theme. Choose Signal under Interface style; an explicitly saved
+color theme stays selected. Workbench, Studio and Signal use Nova's
+character art; Terminal, Studio, Blueprint and Signal have optional animated home scenes.
+Signal's Home animations toggle controls its rain, including its fading trails
+and bright heads. Signal uses the Japanese characters `生涯最愛の人` ("love of
+my life"); departed chains leave no ghost text. Its composer spans the terminal.
+Classic rain uses the separate Matrix Rain toggle.
 Low-resource mode pauses those animations.
 
 Configure an independent vision model in `/model` → Vision when the main model

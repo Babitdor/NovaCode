@@ -38,6 +38,7 @@ HOME_STYLES = (
     ("Studio · constellation portrait and soft controls", "studio"),
     ("Ledger · dense entries and compact command desk", "ledger"),
     ("Blueprint · scanning schematic and double rules", "blueprint"),
+    ("Signal · Classic banner with Matrix3 rain", "signal"),
     ("Minimal · compact conversation and controls", "minimal"),
 )
 
@@ -47,8 +48,8 @@ CONVERSATION_STYLES = frozenset(key for _, key in HOME_STYLES) - {
     "classic",
     "centered",
 }
-STYLED_HOME_STYLES = CONVERSATION_STYLES | {"centered"}
-LAUNCHPAD_STYLES = CONVERSATION_STYLES - {"banner", "minimal"}
+STYLED_HOME_STYLES = (CONVERSATION_STYLES - {"signal"}) | {"centered"}
+LAUNCHPAD_STYLES = CONVERSATION_STYLES - {"banner", "minimal", "signal"}
 
 
 def home_style(value: object, *, legacy_dashboard: object = True) -> str:

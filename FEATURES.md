@@ -36,7 +36,7 @@ sessions. Control tool approvals, workspaces and optional integrations.
 | Model choice and vision | Choose cloud or local models, with independent roles and an on-demand vision companion for text-only models. | Model picker and Vision settings |
 | Code Mode | Combine eligible native and MCP tools in bounded JavaScript workflows, with a toggle below the composer. | Composer toggle, a short script and its selected result |
 | Voice conversation | Dictate requests and hear short spoken reply summaries, with lightweight CPU voice options. | Voice model picker and real download progress |
-| Your terminal style | Choose from 13 interface styles, including Nova character art and optional animated homes. | Workbench character art and a Blueprint animation |
+| Your terminal style | Choose from 14 interface styles, including Nova character art and optional animated homes. | Signal's Classic banner with Matrix3 code rain (unreleased) |
 | Caveman mode | Choose terse answers, recoverable compact tool output and other independent token-efficiency features. | Composer toggle and intensity picker |
 | Remote sessions | Continue through Telegram topics, Discord threads or an optional Rootapp companion. | Matching terminal session and remote conversation |
 | Artifacts | Turn results into web previews and share the session's collection through a temporary Cloudflare URL. | Responsive artifact cards and a phone preview |
@@ -578,12 +578,14 @@ access or redaction as permission to publish private data.
 
 **Benefit:** Adapt the workspace without leaving the terminal.
 
-- Choose **13 interface styles**: Dashboard, Classic, Centered, Banner, Minimal,
-  Terminal, Workbench, Notebook, Outline, Focus, Studio, Ledger and Blueprint.
+- Choose **14 interface styles**: Dashboard, Classic, Centered, Banner, Minimal,
+  Terminal, Workbench, Notebook, Outline, Focus, Studio, Ledger, Blueprint and Signal.
+  Signal is unreleased: Classic's full-height Nova banner and logo meet Matrix3 rain,
+  with an orange-accented `nova-signal` theme. Explicit color choices are preserved.
 - Use distinct home compositions with keyboard-accessible Explain / Refactor /
   Build / Debug starters that fill an editable prompt before sending.
-- See Nova character art in Workbench and Studio, with optional animated home
-  scenes in Terminal, Studio and Blueprint. Low-resource mode pauses them;
+- See Nova character art in Workbench, Studio and Signal, with optional animated home
+  scenes in Terminal, Studio, Blueprint and Signal. Low-resource mode pauses them;
   short terminals prioritize the composer over large artwork.
 - Carry the selected style into conversation, tool and dialog presentation,
   independently of the color theme.

@@ -18,7 +18,8 @@ from tests.test_tui_home_preferences import _app, no_system_sampling  # noqa: F4
 if TYPE_CHECKING:
     from pathlib import Path
 
-STYLES = sorted(CONVERSATION_STYLES - {"banner", "minimal"})
+# Signal uses Classic's full-height banner, covered in test_matrix3.py.
+STYLES = sorted(CONVERSATION_STYLES - {"banner", "minimal", "signal"})
 
 
 @pytest.mark.parametrize("style", STYLES)

@@ -2631,8 +2631,7 @@ class NovaApp(App):
             except Exception:  # noqa: BLE001
                 pass
         # getattr: SessionPickerApp borrows this method and has no home style.
-        classic = getattr(self, "_home_style", None) == "classic"
-        name = "nova-classic" if classic else DEFAULT_THEME
+        name = NovaApp._default_home_theme(getattr(self, "_home_style", None))
         try:
             from novacode_cli.config.nova_config import NovaConfig
 
@@ -7191,7 +7190,7 @@ class NovaApp(App):
         if not self.is_mounted:
             self._status_timer = None
             return
-        if self._home_scene_can_animate():
+        if self._home_style != "signal" and self._home_scene_can_animate():
             delay = 1 / min(HOME_SCENE_FPS, self._animation_fps)
         elif self._turn_active and self._os_focused:
             delay = 0.2 if self._low_resource_mode else 1 / self._animation_fps
@@ -12119,14 +12118,19 @@ class NovaApp(App):
             not self._caveman_enabled if not arg else arg == "on"
         )
 
+    @staticmethod
+    def _default_home_theme(style: str | None) -> str:
+        """Resolve style defaults while leaving explicitly chosen colors independent."""
+        return {"classic": "nova-classic", "signal": "nova-signal"}.get(style or "", DEFAULT_THEME)
+
     def _set_home_style(self, style: str) -> None:
         """Switch the empty-chat layout without replacing conversation widgets."""
         from novacode_cli.config.nova_config import NovaConfig
 
-        previous_default = "nova-classic" if self._home_style == "classic" else DEFAULT_THEME
+        previous_default = self._default_home_theme(self._home_style)
         self._home_style = home_style(style)
         if self.theme == previous_default and not NovaConfig().get("theme"):
-            self.theme = "nova-classic" if self._home_style == "classic" else DEFAULT_THEME
+            self.theme = self._default_home_theme(self._home_style)
         self._home_dashboard_enabled = self._home_style == "dashboard"
         if self._home_visible:
             self._show_home_banner()
@@ -12179,7 +12183,7 @@ class NovaApp(App):
         """Run home-only motion when visible, focused, and permitted by preferences."""
         return bool(
             self._home_visible
-            and self._home_style in ANIMATED_HOME_STYLES
+            and (self._home_style in ANIMATED_HOME_STYLES or self._home_style == "signal")
             and self._home_animations_enabled
             and not self._low_resource_mode
             and self._os_focused
@@ -12196,6 +12200,11 @@ class NovaApp(App):
 
     def _paint_home_scene(self) -> None:
         """Share the status clock; no hidden-home or modal animation workers."""
+        if self._home_style == "signal":
+            rain = self._home_banner
+            if isinstance(rain, MatrixRain):
+                rain.set_animation_enabled(self._home_scene_can_animate())
+            return
         with suppress(NoMatches):
             self._w("#home-style-art", HomeScene).advance(
                 time.monotonic(), animated=self._home_scene_can_animate()
@@ -15008,7 +15017,7 @@ class NovaApp(App):
 
     def _show_home_banner(self) -> None:
         """Show the Matrix lockup in the chosen home layout."""
-        if self._home_style not in {"dashboard", "classic"}:
+        if self._home_style not in {"dashboard", "classic", "signal"}:
             self._set_home_visible(visible=True)
             return
         try:
@@ -15018,13 +15027,20 @@ class NovaApp(App):
                 width = height = None
             art = self._home_banner_art(width, height)
             compact = self._banner_compact(height)
-            viewport_height = max(1, (height or 30) - 5) if self._home_style == "classic" else None
+            viewport_height = (
+                max(1, (height or 30) - 5)
+                if self._home_style in {"classic", "signal"} else None
+            )
             rain = self._home_banner
             if isinstance(rain, MatrixRain) and rain.is_mounted:
-                rain.reflow(art, width, compact=compact, viewport_height=viewport_height)
+                rain.reflow(
+                    art, width, compact=compact, viewport_height=viewport_height,
+                    matrix3=self._home_style == "signal",
+                )
                 self._set_home_visible(visible=True)
                 return
             rain = MatrixRain(
+                matrix3=self._home_style == "signal",
                 art=art,
                 width=width,
                 compact=compact,
@@ -15045,7 +15061,7 @@ class NovaApp(App):
         from novacode_cli._version import __version__
         from novacode_cli.brand import art_for
 
-        classic = self._home_style == "classic"
+        classic = self._home_style in {"classic", "signal"}
         return art_for(
             width=(width - 3 if width is not None and classic else width),
             height=0 if self._home_style == "dashboard" else height,
@@ -15059,13 +15075,15 @@ class NovaApp(App):
         root = self._root_screen or self.screen
         styled = visible and self._home_style in STYLED_HOME_STYLES
         home_classes = {f"{style}-home" for style in STYLED_HOME_STYLES} | {
-            "home", "classic-home", "styled-home", "scene-roomy",
+            "home", "classic-home", "signal-home", "styled-home", "scene-roomy",
         }
         classes = set(root.classes) - home_classes
         if visible and self._home_dashboard_enabled:
             classes.add("home")
-        if visible and self._home_style == "classic":
+        if visible and self._home_style in {"classic", "signal"}:
             classes.add("classic-home")
+            if self._home_style == "signal":
+                classes.add("signal-home")
         if styled:
             classes.update({"styled-home", f"{self._home_style}-home"})
         if (
@@ -15084,7 +15102,7 @@ class NovaApp(App):
         rain = self._home_banner
         if isinstance(rain, MatrixRain):
             rain.set_animation_enabled(
-                visible and self._home_style in {"dashboard", "classic"}
+                visible and self._home_style in {"dashboard", "classic", "signal"}
                 and self._matrix_rain_enabled()
             )
         if visible:
@@ -15270,8 +15288,10 @@ class NovaApp(App):
                 self._home_banner_art(width, height),
                 width,
                 compact=self._banner_compact(height),
+                matrix3=self._home_style == "signal",
                 viewport_height=(
-                    max(1, (height or 30) - 5) if self._home_style == "classic" else None
+                    max(1, (height or 30) - 5)
+                    if self._home_style in {"classic", "signal"} else None
                 ),
             )
         except Exception:  # noqa: BLE001

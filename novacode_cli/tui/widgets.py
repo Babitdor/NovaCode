@@ -117,8 +117,10 @@ class MatrixRain(Static):
         fps: int = 30,
         compact: bool = False,
         viewport_height: int | None = None,
+        matrix3: bool = False,
     ) -> None:
         super().__init__("", id="matrix-rain")
+        self._matrix3 = matrix3
         self._animation_enabled = animate
         self._compact = compact
         self._viewport_height = viewport_height
@@ -217,6 +219,7 @@ class MatrixRain(Static):
         *,
         compact: bool | None = None,
         viewport_height: int | None = None,
+        matrix3: bool | None = None,
     ) -> None:
         """Re-grid when the terminal width or banner layout changes."""
         if (
@@ -224,10 +227,14 @@ class MatrixRain(Static):
             and (compact is None or compact == self._compact)
             and art == getattr(self, "_art_source", art)
             and viewport_height == self._viewport_height
+            and (matrix3 is None or matrix3 == self._matrix3)
         ):
             return
         self._art_source = art
         self._viewport_height = viewport_height
+        if matrix3 is not None and matrix3 != self._matrix3:
+            self._palette_key = None
+            self._matrix3 = matrix3
         if compact is not None:
             self._compact = compact
         self._configure(art, width)
@@ -293,6 +300,9 @@ class MatrixRain(Static):
     def _ensure_theme_cache(self) -> None:
         """Recompute the palette + art style only when the theme color changes."""
         key = self._theme_key()
+        if self._matrix3:
+            variables = self.app.theme_variables
+            key = f"{key}:{variables['background']}:{variables['foreground']}"
         if key != self._palette_key:
             self._palette = self._rain_palette()
             self._art_style_str = self._art_style()
@@ -302,6 +312,21 @@ class MatrixRain(Static):
             self._styles = tuple(Style.parse(c) for c in self._palette)
             self._art_style_obj = Style.parse(self._art_style_str)
             self._palette_key = key
+            if self._matrix3:
+                from textual.color import Color
+
+                from novacode_cli.tui.palette import cached_palette
+
+                base = self._theme_base_color()
+                resolved = cached_palette(self.app.current_theme)
+                background = Color.parse(variables["background"])
+                if background.ansi is not None:
+                    background = Color.parse(resolved.surface)
+                foreground = resolved.text
+                self._matrix3_styles = (
+                    Style(color=foreground, bold=True),
+                    *(Style(color=base.blend(background, level / 16).hex) for level in range(16)),
+                )
 
     def _rain_palette(self) -> tuple[str, str, str, str]:
         """(head, near, mid, tail) hex colors — a *dimmed* theme-tinted gradient.
@@ -441,6 +466,10 @@ class MatrixRain(Static):
         # Precomputed random-char pool: strided per frame from a random offset so
         # the look stays random without a random.choice() call per cell.
         self._char_pool = [random.choice(self._chars) for _ in range(512)]
+        if self._matrix3:
+            from novacode_cli.tui.matrix3 import Matrix3
+
+            self._matrix3_engine = Matrix3(self._col_count, self._row_count)
 
     def _tick(self) -> None:
         """Advance one frame of the rain, then stamp the logo over it.
@@ -580,7 +609,13 @@ class MatrixRain(Static):
 
     def _fill_buffers(self) -> None:
         """Advance the simulation one frame into the reusable cell buffers."""
-        cols = self._col_count
+        if self._matrix3:
+            self._ensure_theme_cache()
+            self._matrix3_engine.draw(
+                self._frame_lines, self._frame_styles, self._matrix3_styles, self._animation_fps,
+            )
+            self._composite_art()
+            return
         rows = self._row_count
         lines = self._frame_lines
         styles = self._frame_styles
@@ -630,6 +665,12 @@ class MatrixRain(Static):
                 else:
                     styles[y][col] = tail_c
 
+        self._composite_art()
+
+    def _composite_art(self) -> None:
+        """Stamp the shared brand over either rain simulation."""
+        rows, cols = self._row_count, self._col_count
+        lines, styles = self._frame_lines, self._frame_styles
         # Composite the logo on top. Solid art cells occlude the rain; regular
         # spaces stay transparent so the rain shows through the gaps.
         if self._art_lines:
@@ -654,6 +695,14 @@ class MatrixRain(Static):
                     if ch != " ":
                         gx = left + ax
                         if 0 <= gx < cols:
+                            # Matrix3 uses two-cell Japanese glyphs. Occluding either
+                            # half must erase the whole glyph before stamping the logo.
+                            if row_l[gx] == "" and gx > 0:
+                                row_l[gx - 1] = " "
+                                row_s[gx - 1] = None
+                            if gx + 1 < cols and row_l[gx + 1] == "":
+                                row_l[gx + 1] = " "
+                                row_s[gx + 1] = None
                             row_l[gx] = ch
                             row_s[gx] = art_style
                     ax += cell_len(ch)
