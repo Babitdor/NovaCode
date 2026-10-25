@@ -17,8 +17,10 @@ amount vertically so only her sides uncover the room) and a pale moonlight follo
 has no hover, so a finger held on the art does the same and the scene settles back 1.4s after
 it lifts. Browsers without scroll-driven animations (Safari before 26, Firefox) get the drift
 from a small scroll script instead. Reduced motion gets the still frame.
-On touch devices served over HTTPS, an Enable tilt button connects phone orientation to
-the same camera target, requesting sensor permission where required. The first valid
+On touch devices served over HTTPS, phone orientation drives the same camera target by
+default. Browsers requiring sensor permission show an Enable tilt button for the required
+gesture. Mobile tilt and touch never show the cursor glow; it is limited to desktop mouse
+input above 900px in both CSS and WebGL. The first valid
 reading calibrates the current holding position; screen rotation recalibrates it. Tilt
 can be disabled, pauses offscreen, and is disabled by reduced motion. Touch remains the
 fallback when orientation is unavailable or permission is denied.

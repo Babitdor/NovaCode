@@ -11,11 +11,12 @@ from tools.verify_site import Handler, ROOT, check_links
 SENSOR = """(() => {
   window.tiltPermission = 'granted';
   window.tiltRequests = 0;
-  DeviceOrientationEvent.requestPermission = async () => {
+  if (!location.search.includes('auto')) DeviceOrientationEvent.requestPermission = async () => {
     window.tiltRequests++;
     if (window.tiltPermission === 'error') throw new Error('blocked');
     return window.tiltPermission;
   };
+  else delete DeviceOrientationEvent.requestPermission;
   window.sendTilt = (beta, gamma) => window.dispatchEvent(
     new DeviceOrientationEvent('deviceorientation', {beta, gamma}));
 })();"""
@@ -23,6 +24,16 @@ SENSOR = """(() => {
 
 def target(page):
     return page.locator('.art').evaluate("e => ['--mx', '--my'].map(k => Number(e.style.getPropertyValue(k)))")
+
+
+def check_no_glow(page):
+    assert page.locator('.art').evaluate("e => getComputedStyle(e, '::before').opacity") == '0'
+    canvas = page.locator('.art canvas')
+    if canvas.count():
+        assert canvas.evaluate("""e => {
+          const gl = e.getContext('webgl'), program = gl.getParameter(gl.CURRENT_PROGRAM);
+          return gl.getUniform(program, gl.getUniformLocation(program, 'uLight'))[2];
+        }""") == 0
 
 
 def main():
@@ -70,6 +81,7 @@ def main():
                 page.evaluate('sendTilt(55, 10)')
                 assert target(page) == [0.5, 0.5]
                 page.wait_for_timeout(1100)
+                check_no_glow(page)
                 page.screenshot(path=str(shots / f'mobile-{"css" if fallback else "webgl"}.png'))
                 page.evaluate('sendTilt(100, 80)')
                 assert target(page) == [1, 1]
@@ -90,10 +102,14 @@ def main():
                 page.evaluate('sendTilt(60, 15)')
                 assert target(page) == [0, 0]
                 # Android-style API: orientation events require no permission method.
-                page.evaluate('delete DeviceOrientationEvent.requestPermission')
-                page.get_by_role('button', name='Enable tilt', exact=True).click()
+                page.goto(f'http://127.0.0.1:{server.server_port}/NovaCode/?auto')
+                assert page.get_by_role('button', name='Disable tilt').get_attribute('aria-pressed') == 'true'
+                assert page.evaluate('tiltRequests') == 0
                 page.evaluate('sendTilt(45, 0); sendTilt(45, -10)')
                 assert target(page) == [-0.5, 0]
+                page.wait_for_timeout(2100)
+                check_no_glow(page)
+                page.screenshot(path=str(shots / f'mobile-auto-{"css" if fallback else "webgl"}.png'))
                 page.evaluate("Object.defineProperty(screen.orientation, 'angle', {configurable:true, value:90})")
                 page.evaluate('sendTilt(45, -10)')
                 assert target(page) == [0, 0]  # Rotation recalibrates.
@@ -108,14 +124,20 @@ def main():
                 assert target(page) == [0, 0]
                 context.close()
                 print('PASS:', 'CSS fallback' if fallback else 'WebGL',
-                      'permission denied/error/retry, calibration, tilt, clamping, touch scrolling, disable, rotation, reduced motion')
+                      'default tilt, no mobile glow, permission denied/error/retry, calibration, clamping, touch scrolling, disable, rotation, reduced motion')
             # No sensor UI on desktop; mouse parallax still responds.
             page = browser.new_page(viewport={'width': 1440, 'height': 1000})
             page.goto(f'http://127.0.0.1:{server.server_port}/NovaCode/')
             assert page.locator('.hero-tilt').count() == 0
             page.mouse.move(1100, 250)
             assert target(page)[0] > 0
+            assert page.locator('.art').evaluate("e => e.classList.contains('lit')")
             page.screenshot(path=str(shots / 'desktop.png'))
+            # A narrow desktop browser preview must also suppress the mobile glow.
+            page.set_viewport_size({'width': 390, 'height': 844})
+            page.mouse.move(300, 200)
+            page.wait_for_timeout(2100)
+            check_no_glow(page)
             assert not errors, errors
             browser.close()
             print('PASS: desktop pointer preserved; no mobile JavaScript errors')

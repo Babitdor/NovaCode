@@ -782,7 +782,9 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
     background:radial-gradient(circle 280px at var(--gx, 50%) var(--gy, 50%), rgb(186 160 255 / .34), transparent 70%);
     mix-blend-mode:screen; opacity:0; transition:opacity .5s;
   }
-  .art.lit::before{opacity:1}
+  @media (min-width:901px) and (hover:hover) and (pointer:fine){
+    .art.lit::before{opacity:1}
+  }
 }
 
 /* The 3D photo (page script, section 10): one canvas draws both layers with a
@@ -2336,22 +2338,23 @@ status: awaiting your decision">
      harder on what is near. Without WebGL, or under reduced motion, the CSS layers
      and their lean stand in; the canvas replaces them only after its first frame. */
   var art = $(".art"), fine = window.matchMedia("(hover: hover) and (pointer: fine)");
+  var glow = window.matchMedia("(min-width:901px) and (hover:hover) and (pointer:fine)");
   var aim = { x: 0, y: 0, lit: 0, lx: 0, ly: 0 }, photo = null, letGo = 0;
   if (art) {
     var tiltOn = false, neutral = null, tiltButton = null;
-    var point = function (x, y) {
+    var point = function (x, y, light) {
       x = Math.min(Math.max(x, 0), 1); y = Math.min(Math.max(y, 0), 1);
-      aim.x = x * 2 - 1; aim.y = y * 2 - 1; aim.lit = 1; aim.lx = x; aim.ly = y;
+      aim.x = x * 2 - 1; aim.y = y * 2 - 1; aim.lit = light && glow.matches ? 1 : 0; aim.lx = x; aim.ly = y;
       art.style.setProperty("--mx", aim.x.toFixed(3));
       art.style.setProperty("--my", aim.y.toFixed(3));
       art.style.setProperty("--gx", (x * 100).toFixed(1) + "%");
       art.style.setProperty("--gy", (y * 100).toFixed(1) + "%");
-      art.classList.add("lit");
+      art.classList.toggle("lit", aim.lit === 1);
       if (photo) photo.wake();
     };
     var look = function (e) {
       var r = art.getBoundingClientRect();
-      point((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
+      point((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height, e.pointerType === "mouse");
     };
     var rest = function () {
       aim.x = aim.y = aim.lit = 0;
@@ -2407,6 +2410,16 @@ status: awaiting your decision">
         tiltButton.setAttribute("aria-pressed", "false");
         rest();
       };
+      var startTilt = function () {
+        if (calm) return;
+        window.clearTimeout(letGo); neutral = null; tiltOn = true;
+        window.addEventListener("deviceorientation", orient, { passive: true });
+        tiltButton.textContent = "Disable tilt";
+        tiltButton.setAttribute("aria-pressed", "true");
+        tiltButton.title = "Tilt your phone to move the photo";
+      };
+      // Start immediately unless the browser requires a permission gesture (iOS).
+      if (typeof window.DeviceOrientationEvent.requestPermission !== "function") startTilt();
       tiltButton.addEventListener("click", async function () {
         if (tiltOn) { stopTilt(); return; }
         tiltButton.disabled = true;
@@ -2415,12 +2428,7 @@ status: awaiting your decision">
           if (typeof sensor.requestPermission === "function" && await sensor.requestPermission() !== "granted") {
             throw new Error("permission denied");
           }
-          if (calm) return;
-          window.clearTimeout(letGo); neutral = null; tiltOn = true;
-          window.addEventListener("deviceorientation", orient, { passive: true });
-          tiltButton.textContent = "Disable tilt";
-          tiltButton.setAttribute("aria-pressed", "true");
-          tiltButton.title = "Tilt your phone to move the photo";
+          startTilt();
         } catch (_) {
           tiltButton.textContent = "Retry tilt";
           tiltButton.title = "Allow motion and orientation access in your browser to enable tilt";
@@ -2550,7 +2558,7 @@ status: awaiting your decision">
     };
     var draw = function () {
       gl.uniform2f(u.uCam, cam.x, cam.y + scrolled());
-      gl.uniform3f(u.uLight, aim.lx * W, aim.ly * H, cam.lit);
+      gl.uniform3f(u.uLight, aim.lx * W, aim.ly * H, glow.matches ? cam.lit : 0);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     };
     var frame = function (t) {
