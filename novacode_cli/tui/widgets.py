@@ -10,7 +10,7 @@ import asyncio
 import contextlib
 import random
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from rich.cells import cell_len
 from rich.markdown import Markdown
@@ -19,6 +19,7 @@ from rich.style import Style
 from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content
 from textual.css.query import NoMatches
@@ -1111,6 +1112,25 @@ class TranscriptScroll(VerticalScroll):
             self.post_message(self.AtEndChanged(self, at_end=at_end))
 
 
+class _CollapsibleMessageHeader(Static, can_focus=True):
+    """Focusable fold control for a transcript message."""
+
+    ALLOW_SELECT = False
+    BINDINGS: ClassVar[list[Binding]] = [
+        Binding("enter,space", "toggle", "Toggle reasoning", show=False)
+    ]
+    DEFAULT_CSS = """
+    _CollapsibleMessageHeader { pointer: pointer; }
+    _CollapsibleMessageHeader:hover { background: $boost; }
+    _CollapsibleMessageHeader:focus { background: $boost; text-style: bold underline; }
+    """
+
+    def action_toggle(self) -> None:
+        """Toggle the owning message without copying its body."""
+        if isinstance(self.parent, ChatMessage):
+            self.parent.toggle_collapsed()
+
+
 class ChatMessage(Vertical):
     """A single transcript entry with a role header and a body.
 
@@ -1178,7 +1198,8 @@ class ChatMessage(Vertical):
                     self._custom_color = "#10b981"
 
     def compose(self) -> ComposeResult:
-        yield Static(self._header, classes="role")
+        header_type = _CollapsibleMessageHeader if self._collapsible else Static
+        yield header_type(self._header, classes="role")
         if isinstance(self._pending_body, Widget):
             self._pending_body.add_class("body")
             yield self._pending_body
@@ -1186,6 +1207,7 @@ class ChatMessage(Vertical):
             yield SelectableStatic(self._pending_body or "", classes="body")
 
     def on_mount(self) -> None:
+        self._refresh_header_affordance()
         # If update_body ran before the `.body` child existed, apply the stashed
         # renderable now that the children are mounted.
         if self._pending_body is not None:
@@ -1235,6 +1257,7 @@ class ChatMessage(Vertical):
             role_static.update(header)
         except Exception:
             pass
+        self._refresh_header_affordance()
 
         # Store the header's identity color for theme changes.
         self._custom_color = None
@@ -1291,13 +1314,17 @@ class ChatMessage(Vertical):
         return str(renderable)
 
     def on_click(self, event: events.Click) -> None:
-        """Click a message to copy its full text to the clipboard.
+        """Toggle a fold header, or copy the message's full text on other clicks.
 
         This is deterministic and terminal-independent — unlike mouse
         drag-selection, which a captured-mouse TUI can't reliably support.
         Drag-selection still works: Textual only fires Click when there was no
         drag, and an explicit selection takes precedence here.
         """
+        if self._collapsible and event.widget is self.query_one(".role"):
+            self.toggle_collapsed()
+            event.stop()
+            return
         body = (self.raw_text or "").strip()
         if not body:
             return

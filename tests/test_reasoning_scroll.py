@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
+from rich.text import Text
+from textual.app import App
 from textual.events import MouseScrollUp
 from textual.widgets import Static
 
 from novacode_cli import ui_events as ev
+from novacode_cli.tui.widgets import ChatMessage
 from tests.test_tui_app import _disable_live_update_checks  # noqa: F401
 from tests.test_tui_home_preferences import _app, no_system_sampling  # noqa: F401
 
@@ -30,6 +34,80 @@ def _wheel_up(transcript: TranscriptScroll) -> None:
             ctrl=False,
         )
     )
+
+
+@pytest.mark.timeout(30)
+async def test_completed_reasoning_can_be_reopened_and_keeps_full_text(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    app = _app()
+    copied = Mock()
+    monkeypatch.setattr(app, "copy_to_clipboard", copied)
+    reasoning = "Beginning of reasoning. " + "detail " * 400 + " End of reasoning."
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+        app._set_home_visible(visible=False)
+        await app._render(ev.ReasoningDelta(reasoning))
+        await pilot.pause()
+        thought = app._reason_msg
+        await app._render(ev.AssistantMessage("finished", "Nova", "cyan"))
+        await pilot.pause()
+        assert app._reason_msg is None
+        assert thought.is_mounted
+        assert thought._collapsed
+        assert thought.raw_text == reasoning
+        header = thought.query_one(".role", Static)
+        body = thought.query_one(".body", Static)
+        assert not body.display
+        assert await pilot.click(header)
+        await pilot.pause()
+        assert not thought._collapsed
+        assert body.display
+        assert body.render().plain == reasoning
+        copied.assert_not_called()
+
+        # Header updates preserve the affordance, and subsequent turns keep it usable.
+        thought.update_header(Text("Thinking complete"))
+        assert "▾" in header.render().plain
+        assert await pilot.click(header)
+        await pilot.pause()
+        assert thought._collapsed
+        assert "▸" in header.render().plain
+        await app._render(ev.ReasoningDelta("Next turn"))
+        await app._render(ev.AssistantMessage("another answer", "Nova", "cyan"))
+        await pilot.pause()
+        assert len(app.query("ChatMessage.reason")) == 2
+        assert await pilot.click(header)
+        await pilot.pause()
+        assert body.display
+        assert thought.raw_text == reasoning
+
+
+async def test_reasoning_keyboard_toggle_preserves_message_copy(monkeypatch: pytest.MonkeyPatch):
+    app = App()
+    copied = Mock()
+    monkeypatch.setattr(app, "copy_to_clipboard", copied)
+    thought = ChatMessage(Text("Thinking"), "reason", collapsible=True)
+    thought.update_body(Text("Reasoning text"))
+    answer = ChatMessage(Text("Nova"), "nova")
+    answer.update_body(Text("Answer text"))
+    async with app.run_test(size=(100, 30)) as pilot:
+        await app.mount(thought, answer)
+        await pilot.pause()
+        header = thought.query_one(".role", Static)
+        assert "▾" in header.render().plain
+        header.focus()
+        await pilot.press("enter")
+        assert thought._collapsed
+        await pilot.press("space")
+        assert not thought._collapsed
+        copied.assert_not_called()
+        assert await pilot.click(thought.query_one(".body"))
+        copied.assert_called_once_with("Reasoning text")
+        copied.reset_mock()
+        assert await pilot.click(answer.query_one(".role"))
+        copied.assert_called_once_with("Answer text")
+        assert not answer._collapsed
 
 
 @pytest.mark.timeout(30)
