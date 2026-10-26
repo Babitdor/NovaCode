@@ -3,12 +3,30 @@
 from __future__ import annotations
 
 import sys
+import tomllib
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+from packaging.requirements import Requirement
 
 from novacode_cli.audio.pipeline import VoicePipeline
+
+
+def test_parakeet_installation_stays_on_wheel_supported_series(monkeypatch: pytest.MonkeyPatch):
+    from novacode_cli import install_commands
+    from novacode_cli.audio import parakeet_install_hint
+
+    root = Path(__file__).resolve().parents[2]
+    project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    requirements = project["project"]["optional-dependencies"]["voice-parakeet"]
+    requirement = next(Requirement(value) for value in requirements if "sherpa-onnx" in value)
+    assert "1.13.3" in requirement.specifier
+    assert "2.0.1" not in requirement.specifier
+    monkeypatch.setattr(install_commands, "_receipt_requirement", lambda _prefix=None: None)
+    command = parakeet_install_hint().splitlines()[1]
+    assert '"sherpa-onnx>=1.10.0,<2"' in command
 
 
 def test_parakeet_raises_import_error_when_sherpa_onnx_missing(monkeypatch):

@@ -127,7 +127,8 @@ voice-orpheus = [
 # Optional STT: NVIDIA Parakeet via sherpa-onnx (CPU/CUDA). Opt-in — the model
 # downloads on first use. Select with /voice settings stt parakeet.
 voice-parakeet = [
-    "sherpa-onnx>=1.10.0",
+    # 2.0.1 lacks cp311 Windows x64 and modern macOS wheels, forcing a C++ build.
+    "sherpa-onnx>=1.10.0,<2",
 ]
 # Optional TTS: Kyutai Pocket-TTS (CPU). Opt-in — the model downloads on
 # first use. Select with /voice settings tts pocket.

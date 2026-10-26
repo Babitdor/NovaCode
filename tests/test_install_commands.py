@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import sys
+from typing import TYPE_CHECKING
 
 import pytest
 
 from novacode_cli import install_commands as ic
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 REPO = "B:/Summer Project 2026/Nova-Code/nova-code-cli/NovaCode"
 
@@ -82,3 +86,12 @@ def test_a_missing_core_package_names_the_interpreter_command(monkeypatch):
     monkeypatch.setattr(ic.shutil, "which", lambda _name: "uv")
     message = ic.missing_package("semble")
     assert message.startswith("semble is not installed. Install it with: uv pip install --python")
+
+
+@pytest.mark.parametrize("installer", ["uv", None])
+def test_version_constraints_are_quoted_for_shells(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, installer: str | None
+):
+    monkeypatch.setattr(ic.shutil, "which", lambda _name: installer)
+    command = ic.install_command(["sherpa-onnx>=1.10.0,<2"], prefix=tmp_path)
+    assert command.endswith(' "sherpa-onnx>=1.10.0,<2"')

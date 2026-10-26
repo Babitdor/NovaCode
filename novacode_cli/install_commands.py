@@ -25,7 +25,7 @@ _NAME = "novacode-cli"
 
 def _quote(value: str) -> str:
     """Quote for both cmd/PowerShell and POSIX shells when it is needed."""
-    return f'"{value}"' if any(c in value for c in " []&()'") else value
+    return f'"{value}"' if any(c in value for c in " []&()'<>") else value
 
 
 def _receipt_requirement(prefix: Path | None = None) -> dict | None:

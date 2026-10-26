@@ -4157,7 +4157,7 @@ requires-dist = [
     { name = "runloop-api-client", specifier = ">=0.69.0" },
     { name = "sanotts", marker = "extra == 'voice-sano'", specifier = "==0.3.0" },
     { name = "semble", specifier = ">=0.1.8" },
-    { name = "sherpa-onnx", marker = "extra == 'voice-parakeet'", specifier = ">=1.10.0" },
+    { name = "sherpa-onnx", marker = "extra == 'voice-parakeet'", specifier = ">=1.10.0,<2" },
     { name = "silero-vad", marker = "extra == 'voice'", specifier = ">=5.1" },
     { name = "sounddevice", marker = "extra == 'voice'", specifier = ">=0.4.6" },
     { name = "tavily-python" },

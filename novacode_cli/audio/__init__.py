@@ -116,7 +116,9 @@ def sano_install_hint() -> str:
 
 def parakeet_install_hint() -> str:
     """User-facing hint for enabling the Parakeet STT provider."""
-    return _hint("Parakeet needs the sherpa-onnx package.", ["sherpa-onnx"], "voice-parakeet")
+    return _hint(
+        "Parakeet needs the sherpa-onnx package.", ["sherpa-onnx>=1.10.0,<2"], "voice-parakeet"
+    )
 
 
 def whistle_install_hint() -> str:

@@ -113,6 +113,7 @@ jobs:
           tests/test_mcp_code_mode.py
           tests/test_native_code_mode.py
           tests/test_audio
+          tests/test_install_commands.py
           tests/test_tui_voice_output.py
           tests/test_tui_voice_downloads.py
           tests/test_interface_styles.py
