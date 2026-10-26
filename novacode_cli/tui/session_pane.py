@@ -90,7 +90,7 @@ STATEFUL_ATTRS: tuple[str, ...] = (
     "session_state",
     "assistant_id",
     "_restored_messages",
-    "_home_banner",
+    "_home_visible",
 )
 
 _MISSING = object()
@@ -171,7 +171,7 @@ def fresh_state(
         "session_state": session_state,
         "assistant_id": assistant_id,
         "_restored_messages": [],
-        "_home_banner": None,
+        "_home_visible": False,
     }
 
 

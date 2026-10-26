@@ -1473,12 +1473,17 @@ class NovaApp(App):
     }
     #panes { height: 1fr; width: 1fr; }
     #panes > VerticalScroll { height: 1fr; width: 100%; padding: 1 2; }
-    /* Hidden until a second session exists; _refresh_tabs() toggles it.
+    /* Keep a new-session action available even with one session.
        Height MUST be explicit: the Tabs widget's inner tabs-scroll is height:1fr,
        and a 1fr child inside an `auto` parent expands to the whole screen — the
        tab bar then ate ~30 rows and crushed #panes (every session pane, root
        included) to a 1-row sliver, so nothing rendered once the bar appeared. */
-    #session-tabs { display: none; height: 3; width: 100%; }
+    #session-tab-bar { height: 3; width: 100%; }
+    #session-tabs { height: 3; width: 1fr; }
+    #new-session {
+        width: 3; min-width: 3; height: 1; min-height: 1;
+        padding: 0; margin: 0; border: none;
+    }
     #transcript { height: 1fr; padding: 1 2; }
     /* No accent bar: the background and padding already mark the card, and the
        dispatch title carries the subagent's own colour. */
@@ -2485,9 +2490,9 @@ class NovaApp(App):
         # pane deliberately keeps id="transcript" so existing CSS, the widget
         # cache and every test that queries "#transcript" are unaffected while
         # there is only one session.
-        # Hidden until a second session exists, so a single-session run looks
-        # exactly as it did before.
-        yield Tabs(id="session-tabs")
+        with Horizontal(id="session-tab-bar"):
+            yield Tabs(id="session-tabs")
+            yield Button("+", id="new-session", compact=True, tooltip="New session")
         # Dynamic subagents: every dispatch of the turn so far, grouped into the
         # phases they were launched in. Hidden until something is in flight.
         yield SubagentsDock(
@@ -3235,7 +3240,9 @@ class NovaApp(App):
             pane.load_into(self)
 
         self._active_pane = pane
-        if pane is not getattr(self, "_root_pane", None) and self._home_visible:
+        if pane.state.get("_home_visible", False):
+            self._show_home_banner()
+        else:
             self._set_home_visible(visible=False)
         self._refresh_terminal_title()
         try:
@@ -3854,8 +3861,8 @@ class NovaApp(App):
                 tooltip += " · " + ", ".join(names[name] for name in platforms) + " connected"
             rows.append((pane.sid, i, glyph, pane.title, pane.unread, platforms, tooltip))
 
-        # A busy single session still animates its terminal title even though
-        # the internal tab bar is hidden. Idle single sessions need no timer.
+        # Busy sessions animate their activity glyph and terminal title.
+        # Idle single sessions need no timer.
         target_period = 0.25 if animated else (1.0 if len(panes) > 1 else None)
         if target_period != self._tab_refresh_period:
             if self._tab_refresh_timer is not None:
@@ -3868,7 +3875,7 @@ class NovaApp(App):
         # Most timer ticks during an idle session change nothing. Avoid a DOM
         # query, widget traversal, Text construction, and label comparisons then.
         mount_state = tuple(sid for sid, mount in self._tab_mounts.items() if not mount.is_done)
-        signature = (tuple(rows), mount_state, len(panes) > 1)
+        signature = (tuple(rows), mount_state, bool(panes), self.size.width)
         if signature == self._tab_render_signature:
             return
         self._tab_render_signature = signature
@@ -3881,9 +3888,10 @@ class NovaApp(App):
             self._tab_render_signature = None
             return
 
-        # Keep the root tab mounted while hidden. That prevents the first child
-        # from becoming the implicit selection when the bar becomes visible.
-        tabs.display = len(panes) > 1
+        # Keep the root tab mounted so the first child cannot become the
+        # implicit selection when it is added.
+        tabs.display = bool(panes)
+        self.query_one("#session-tab-bar").display = bool(panes)
 
         # Update INCREMENTALLY; never clear() and rebuild. clear()+add_tab emits
         # a TabActivated for the first tab, delivered asynchronously — so it
@@ -3899,11 +3907,13 @@ class NovaApp(App):
                 with contextlib.suppress(Exception):
                     tabs.remove_tab(sid)
 
+        tab_width = 0
         for sid, i, glyph, title, unread, platforms, tooltip in rows:
             unread_text = f" +{unread}" if unread else ""
             label = Text(f"{i}:{glyph} {title}{unread_text}")
             if platforms:
                 label.append(f" [{' / '.join(platforms)}]", style="bold green")
+            tab_width += label.cell_len + 2
             tab = existing.get(sid)
             if tab is None:
                 mounting = self._tab_mounts.get(sid)
@@ -3918,6 +3928,7 @@ class NovaApp(App):
                     tab.label = content
                 if tab.tooltip != tooltip:
                     tab.tooltip = tooltip
+        tabs.styles.width = min(tab_width, max(1, self.size.width - 3))
         self._tab_mounts = {
             sid: mount for sid, mount in self._tab_mounts.items() if not mount.is_done
         }
@@ -3986,6 +3997,20 @@ class NovaApp(App):
 
     def action_new_session(self) -> None:
         self.run_worker(self._prompt_new_session())
+
+    @on(Button.Pressed, "#new-session")
+    @work(group="new-session")
+    async def _new_session_from_plus(self, event: Button.Pressed) -> None:
+        """Open a blank session immediately, using the normal isolated lifecycle."""
+        event.stop()
+        if event.button.disabled:
+            return
+        event.button.disabled = True
+        try:
+            await self.spawn_session(f"Session {len(self._panes) + 1}")
+        finally:
+            event.button.disabled = False
+            self.query_one("#prompt", PromptInput).focus()
 
     def action_next_session(self) -> None:
         self._cycle_session(1)
@@ -4156,6 +4181,7 @@ class NovaApp(App):
             model_name=saved.model_name if saved else self.model_name,
             model_provider=saved.model_provider if saved else None,
         )
+        pane.state["_home_visible"] = not (task or saved)
         self._bind_notification_source(pane)
         self._panes.append(pane)
         if history is not None:
@@ -5225,6 +5251,10 @@ class NovaApp(App):
     async def _send_child_prompt(self, pane, text: str, *, images=None, prompt_id=None):
         """Send the tab's explicit approval preference with each prompt."""
         from novacode_cli.remote.streaming import RemoteAnswerStream
+
+        pane.state["_home_visible"] = False
+        if pane is self._active_pane:
+            self._set_home_visible(visible=False)
 
         if getattr(pane, "remote_snapshot", None) is None:
             pane.remote_snapshot = RemoteAnswerStream(None)
@@ -15297,6 +15327,7 @@ class NovaApp(App):
         rain. Only acts while the banner is still on screen (home screen).
         """
         self._apply_responsive_layout(event)
+        self.call_after_refresh(self._refresh_tabs)
         self.call_after_refresh(self._position_palette)
         self.call_after_refresh(self._paint_avatar)
         self._avatar_react("window")

@@ -721,17 +721,18 @@ def test_tab_bar_does_not_collapse_the_panes():
 
 
 async def _drive_tabs_hidden_at_startup():
-    """A single-session run must look exactly as it did before panes existed."""
+    """A single-session run keeps the new-session action available."""
     from textual.widgets import Tabs
 
     app = _app()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         tabs = app.query_one("#session-tabs", Tabs)
-        assert tabs.display is False, "empty tab bar must not take up a row"
+        assert tabs.display is True
+        assert app.query_one("#new-session").display
 
 
-def test_tab_bar_is_hidden_before_any_spawn():
+def test_tab_bar_is_available_before_any_spawn():
     asyncio.run(_drive_tabs_hidden_at_startup())
 
 
@@ -914,9 +915,9 @@ def test_fresh_state_clears_every_widget_reference():
         "_tool_group",
         "_tool_group_body",
         "_last_tool",
-        "_home_banner",
     ):
         assert state[name] is None, f"{name} must not carry over"
+    assert "_home_banner" not in STATEFUL_ATTRS, "the banner is shared app chrome"
     assert state["_tool_components"] == {}
     # Todos are docked chrome now: the DATA is per-pane, not a widget ref.
     assert state["_todos"] == []
@@ -1297,7 +1298,7 @@ async def _drive_tabs_visibility():
         tabs = app.query_one("#session-tabs", Tabs)
         app._refresh_tabs()
         await pilot.pause()
-        assert tabs.display is False, "single session should look unchanged"
+        assert tabs.display is True, "single sessions expose the new-session action"
 
         await _add_pane(app)
         app._refresh_tabs()
@@ -1305,7 +1306,7 @@ async def _drive_tabs_visibility():
         assert tabs.display is True
 
 
-def test_tab_bar_appears_only_with_multiple_sessions():
+def test_tab_bar_is_available_with_one_or_more_sessions():
     asyncio.run(_drive_tabs_visibility())
 
 
