@@ -1,4 +1,4 @@
-# NovaCode 1.0.100
+# NovaCode 1.1.0
 
 ## Workspace knowledge and teammate approvals
 
