@@ -81,8 +81,11 @@ class PersistentComputer(Computer):
         self._phase = "starting"
         self._starting = asyncio.current_task()
         try:
-            self._guest = guest = await self._connect_owned()
-            await guest.resume()
+            from novacode_cli.computer.windows_console import background_guest
+
+            async with background_guest(self._name):
+                self._guest = guest = await self._connect_owned()
+                await guest.resume()
             self._desktop = await guest.spacesd(30_000)
             self._paused = False
             self._manual = False

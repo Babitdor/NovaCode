@@ -13,7 +13,7 @@ from novacode_cli.tui.home import CONVERSATION_STYLES
 from novacode_cli.tui.screens import ThemeScreen
 from novacode_cli.tui.widgets import ChatMessage, PromptInput
 from tests.test_tui_app import _disable_live_update_checks  # noqa: F401
-from tests.test_tui_home_preferences import _app, no_system_sampling  # noqa: F401
+from tests.test_tui_home_preferences import _app, _resize_terminal, no_system_sampling  # noqa: F401
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -79,7 +79,7 @@ async def test_preset_chat_modes_dialog_and_small_terminal(  # noqa: PLR0915 -- 
         await pilot.press("escape")
         assert app.screen is app._root_screen
 
-        await pilot.resize_terminal(48, 18)
+        await _resize_terminal(pilot, 48, 18)
         await pilot.pause()
         dock = app.query_one("#prompt-dock")
         assert 0 <= dock.region.x < dock.region.right <= app.size.width

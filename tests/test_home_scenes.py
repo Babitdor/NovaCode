@@ -13,7 +13,7 @@ from novacode_cli.config.nova_config import NovaConfig
 from novacode_cli.tui.home_scene import HOME_SCENE_FPS, HomeScene, scene_frame
 from novacode_cli.tui.screens import ThemeScreen
 from tests.test_tui_app import _disable_live_update_checks  # noqa: F401
-from tests.test_tui_home_preferences import _app, no_system_sampling  # noqa: F401
+from tests.test_tui_home_preferences import _app, _resize_terminal, no_system_sampling  # noqa: F401
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -59,7 +59,7 @@ async def test_portrait_home_has_room_for_actions_and_composer(style: str, tmp_p
         actions = app.query_one("#home-style-actions")
         assert actions.region.bottom <= dock.region.y
         (tmp_path / f"{style}-portrait.svg").write_text(app.export_screenshot(), encoding="utf-8")
-        await pilot.resize_terminal(80, 25)
+        await _resize_terminal(pilot, 80, 25)
         await pilot.pause()
         assert not app.screen.has_class("scene-roomy")
         assert not scene.display

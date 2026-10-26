@@ -230,7 +230,10 @@ class Computer:
                 keep_on_failure=sys.platform == "win32",
             )
             self._stage = "Downloading/caching the Linux image and booting QEMU"
-            self._guest = await self._create_guest(options)
+            from novacode_cli.computer.windows_console import background_guest
+
+            async with background_guest(self._name):
+                self._guest = await self._create_guest(options)
             info = self._guest.info()
             if (info.location, info.kind, info.runtime) != ("local", "vm", "qemu"):
                 raise ComputerError("The runtime did not create a local QEMU VM.")

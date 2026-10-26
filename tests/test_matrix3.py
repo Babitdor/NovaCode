@@ -17,7 +17,7 @@ from novacode_cli.tui.matrix3 import Matrix3
 from novacode_cli.tui.screens import ThemeScreen
 from novacode_cli.tui.widgets import ChatMessage, MatrixRain, PromptInput
 from tests.test_tui_app import _disable_live_update_checks  # noqa: F401
-from tests.test_tui_home_preferences import _app, no_system_sampling  # noqa: F401
+from tests.test_tui_home_preferences import _app, _resize_terminal, no_system_sampling  # noqa: F401
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -140,7 +140,7 @@ async def test_signal_classic_banner_motion_controls_input_and_resize(  # noqa: 
         assert rain._timer is not None
         prompt.value = "Keep this\nmultiline draft"
         for width, height in ((80, 25), (48, 18)):
-            await pilot.resize_terminal(width, height)
+            await _resize_terminal(pilot, width, height)
             await pilot.pause()
             assert rain._col_count == rain.size.width
             assert app.query_one("#prompt-dock").region.width == width

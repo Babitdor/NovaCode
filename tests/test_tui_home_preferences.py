@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from typing import TYPE_CHECKING
 from unittest.mock import Mock
 
 import pytest
@@ -17,6 +19,9 @@ from novacode_cli.ui.ui_elements import TokenTracker
 from tests.test_tui_app import _disable_live_update_checks  # noqa: F401
 from tests.test_tui_sessions import _FakeAgent
 
+if TYPE_CHECKING:
+    from textual.pilot import Pilot
+
 
 def _app() -> NovaApp:
     return NovaApp(
@@ -28,6 +33,39 @@ def _app() -> NovaApp:
         image_tracker=None,
         model_name="test-model",
     )
+
+
+async def _resize_terminal(pilot: Pilot, width: int, height: int) -> None:
+    """Wait for Textual's throttled resize to reach the rendered screen.
+
+    App.size changes before the resize timer fires, so draining message queues
+    alone can leave Windows CI inspecting geometry from the previous viewport.
+    """
+    from textual.geometry import Size
+
+    await pilot.resize_terminal(width, height)
+    async with asyncio.timeout(5):
+        while pilot.app.screen._compositor.size != Size(width, height):
+            await pilot.pause(0.01)
+    await pilot.pause()
+
+
+@pytest.mark.timeout(30)
+async def test_resize_waits_for_screen_layout(monkeypatch: pytest.MonkeyPatch) -> None:
+    from textual.geometry import Size
+
+    app = _app()
+    async with app.run_test(size=(110, 38)) as pilot:
+        await pilot.pause()
+        original_timer = app.set_timer
+
+        def delayed_timer(delay: float, callback: object, **kwargs: object) -> object:
+            return original_timer(0.25 if delay == 1 / 120 else delay, callback, **kwargs)
+
+        monkeypatch.setattr(app, "set_timer", delayed_timer)
+        await _resize_terminal(pilot, 48, 18)
+        assert app.screen.size == Size(48, 18)
+        assert app.query_one("#prompt-dock").region.right <= 48
 
 
 @pytest.fixture(autouse=True)
