@@ -402,7 +402,9 @@ async def test_panel_connects_without_owning_worker(monkeypatch: pytest.MonkeyPa
     async with app.run_test(size=(100, 40)) as pilot:
         app.push_screen(teammates.TeammatesScreen())
         await pilot.pause()
-        assert app.screen.query_one("#teammate-name").value == "Ada"
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert app.screen.panels["legacy"].query_one("#teammate-name").value == "Ada"
         await pilot.press("escape")
     assert all(action == "status" for action, _ in calls)
 

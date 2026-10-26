@@ -214,10 +214,10 @@ Screen.blueprint-ui #home-style-actions .home-action {
 
 /* Signal: Nova's editorial identity, with a code-stream banner above a quiet desk. */
 Screen.signal-ui { align-horizontal: center; }
-Screen.signal-ui #panes > VerticalScroll { align-horizontal: center; }
+Screen.signal-ui #panes > VerticalScroll { align-horizontal: left; }
 Screen.conversation-style.signal-ui ChatMessage,
 Screen.signal-ui #transcript > .tool {
-    width: 96; max-width: 100%; padding: 0 2; margin: 0 0 1 0;
+    width: 100%; max-width: 100%; padding: 0 2; margin: 0 0 1 0;
 }
 Screen.conversation-style.signal-ui ChatMessage > .role { text-style: bold; }
 Screen.conversation-style.signal-ui #prompt-dock {

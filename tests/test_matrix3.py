@@ -9,7 +9,7 @@ import pytest
 from rich.cells import cell_len
 from rich.style import Style
 from rich.text import Text
-from textual.widgets import Switch
+from textual.widgets import Collapsible, Static, Switch
 
 from novacode_cli import brand
 from novacode_cli.config.nova_config import NovaConfig
@@ -21,6 +21,30 @@ from tests.test_tui_home_preferences import _app, no_system_sampling  # noqa: F4
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+@pytest.mark.parametrize("size", [(180, 45), (120, 38), (80, 25)])
+async def test_signal_chat_and_teammate_updates_use_full_transcript_width(size: tuple[int, int]):
+    NovaConfig().set("home_style", "signal")
+    app = _app()
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        app._set_home_visible(visible=False)
+        user = ChatMessage(Text("You"), "user")
+        user.update_body("Hello")
+        answer = ChatMessage(Text("Nova Agent"), "nova")
+        answer.update_body("Hello.")
+        update = Collapsible(
+            Static("Browser opened."),
+            title="Iris · Completed · Open the Browser",
+            classes="tool teammate-update",
+        )
+        transcript = app._transcript()
+        await transcript.mount(update, user, answer)
+        await pilot.pause()
+        for widget in (update, user, answer):
+            assert widget.region.x == transcript.content_region.x
+            assert widget.region.width == transcript.scrollable_content_region.width
 
 
 def test_matrix3_source_cadence_is_independent_of_render_rate():

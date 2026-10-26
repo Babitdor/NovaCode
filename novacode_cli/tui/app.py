@@ -14722,8 +14722,12 @@ class NovaApp(App):
 
     def _run_teammates(self, _text: str) -> None:
         """Connect to the profile's detached local teammate."""
+        from novacode_cli.tui.teammate_updates import TeammateFeed
         from novacode_cli.tui.teammates import TeammatesScreen
 
+        if not hasattr(self, "_teammate_feed"):
+            self._teammate_feed = TeammateFeed(self)
+            self.set_interval(2, self._teammate_feed.refresh)
         self.push_screen(TeammatesScreen())
 
     @work(group="computer-command")

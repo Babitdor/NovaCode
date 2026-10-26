@@ -42,7 +42,7 @@ class TeammateController:
     async def open(self) -> None:
         """Acquire the cross-process fence and pause all recovered work."""
         saved = await self.coordinator._db("teammate_state", self.identity)
-        if saved:
+        if saved and saved.get("name"):
             self.data = saved
             self.data["paused"] = True
             self.data["recovery"] = "Worker restarted. Inspect computer, then Resume."
@@ -218,6 +218,7 @@ class TeammateController:
                 async with AsyncSqliteSaver.from_conn_string(
                     str(self.directory / "conversation.sqlite3")
                 ) as saver:
+                    await saver.setup()
                     await saver.adelete_thread(self.data["thread"])
             await asyncio.to_thread(self._remove_observations)
             if not await asyncio.to_thread(self.computer.close):

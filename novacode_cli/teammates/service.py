@@ -17,11 +17,13 @@ import psutil
 from aiohttp import web
 
 from novacode_cli.security.secret_files import write_secret_json
-from novacode_cli.teammates.controller import TeammateController
+from novacode_cli.teammates.registry import TeammateRegistry
 from novacode_cli.teams.models import TeamError
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from novacode_cli.teammates.controller import TeammateController
 
 MAX_PORT = 65536
 HTTP_OK = 200
@@ -165,11 +167,11 @@ async def serve(directory: Path) -> None:
     from novacode_cli.computer.preview import ComputerPreview
 
     await asyncio.to_thread(directory.mkdir, parents=True, exist_ok=True)
-    controller = TeammateController(directory)
-    await controller.open()
+    registry = TeammateRegistry(directory)
+    await registry.open()
     token = secrets.token_urlsafe(32)
     shutdown = asyncio.Event()
-    previews: list = []
+    previews: dict = {}
 
     @web.middleware
     async def authorize(incoming: web.Request, handler: Any) -> web.Response:
@@ -195,17 +197,20 @@ async def serve(directory: Path) -> None:
         if not isinstance(payload, dict):
             raise TeamError("Expected an object")
         if action == "shutdown":
-            if controller.data:
-                await controller.command("stop", {})
+            await registry.stop()
             shutdown.set()
             return web.json_response({"worker": "stopped"})
         if action == "preview":
-            if not controller.computer:
-                raise TeamError("Create a teammate first")
-            if not previews:
-                previews.append(ComputerPreview(PreviewOwner(controller)))
-            return web.json_response({"url": previews[0].url})
-        return web.json_response(await controller.command(action, payload))
+            agent_id, controller = registry.select(payload.get("agent_id"))
+            if agent_id not in previews:
+                previews[agent_id] = ComputerPreview(PreviewOwner(controller))
+            return web.json_response({"url": previews[agent_id].url})
+        result = await registry.command(action, payload)
+        if action == "delete":
+            preview = previews.pop(result["agent_id"], None)
+            if preview:
+                await asyncio.to_thread(preview.close)
+        return web.json_response(result)
 
     app = web.Application(middlewares=[authorize], client_max_size=128 * 1024)
     app.router.add_post("/control/{action}", control)
@@ -228,8 +233,8 @@ async def serve(directory: Path) -> None:
     finally:
         # Fence survives until the retained guest is safely suspended.
         (directory / "service.json").unlink(missing_ok=True)
-        await controller.close()
-        for preview in previews:
+        await registry.close()
+        for preview in previews.values():
             await asyncio.to_thread(preview.close)
         await runner.cleanup()
 

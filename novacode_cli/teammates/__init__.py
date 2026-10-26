@@ -1,1 +1,1 @@
-"""One profile-owned local assistant, independent of TUI sessions."""
+"""Profile-owned local assistants, independent of TUI sessions."""
