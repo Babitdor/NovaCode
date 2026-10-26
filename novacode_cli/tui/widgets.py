@@ -222,6 +222,13 @@ class MatrixRain(Static):
         matrix3: bool | None = None,
     ) -> None:
         """Re-grid when the terminal width or banner layout changes."""
+        if viewport_height is not None and self.is_mounted and self.size.area:
+            # Once laid out, the canvas owns the grid dimensions. Reopening
+            # home in another session does not resize this shared widget, so
+            # replacing them with terminal estimates would never be corrected
+            # by on_resize and would push the logo below its original position.
+            width = self.size.width + 4
+            viewport_height = self.size.height
         if (
             width == self._width
             and (compact is None or compact == self._compact)
@@ -534,7 +541,7 @@ class MatrixRain(Static):
         """
         if 0 <= y < len(self._strips):
             return self._strips[y]
-        return Strip.blank(self._col_count)
+        return Strip.blank(self.size.width or self._col_count, self.rich_style)
 
     def _build_strips(self) -> list[Strip]:
         """Advance one frame and render it as one ``Strip`` per row."""

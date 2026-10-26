@@ -17,8 +17,10 @@ if TYPE_CHECKING:
 
 
 @pytest.mark.timeout(30)
+@pytest.mark.parametrize("style", ["dashboard", "classic", "signal"])
+@pytest.mark.parametrize("from_home", [False, True])
 async def test_plus_creates_blank_session_and_preserves_home(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, style: str, *, from_home: bool
 ):
     from novacode_cli.sessions import worktree
     from novacode_cli.tui.widgets import MatrixRain, PromptInput
@@ -36,10 +38,15 @@ async def test_plus_creates_blank_session_and_preserves_home(
     )
     app._session_supervisor = supervisor
     async with app.run_test(size=(120, 42)) as pilot:
+        app._set_home_style(style)
         await pilot.pause()
+        assert app._home_style == style
         root = app._root_pane
         rain = app._home_banner
-        app._set_home_visible(visible=False)
+        initial_logo_top = rain.region.y + rain._art_top
+        initial_grid = (rain._col_count, rain._row_count)
+        if not from_home:
+            app._set_home_visible(visible=False)
         await pilot.click("#new-session")
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -49,13 +56,17 @@ async def test_plus_creates_blank_session_and_preserves_home(
         assert app._home_visible
         assert app._home_banner is rain
         assert len(app.query(MatrixRain)) == 1
+        assert (rain._col_count, rain._row_count) == initial_grid
+        assert rain.region.y + rain._art_top == initial_logo_top
         assert app.query_one("#prompt", PromptInput).has_focus
         supervisor.spawn.assert_awaited_once()
         supervisor.send_prompt.assert_not_awaited()
         await app._switch_to(root)
-        assert not app._home_visible
+        assert app._home_visible is from_home
         await app._switch_to(child)
         assert app._home_visible
+        assert (rain._col_count, rain._row_count) == initial_grid
+        assert rain.region.y + rain._art_top == initial_logo_top
         await app._dispatch_to_child(child, "hello")
         assert not app._home_visible
         await app._switch_to(root)
