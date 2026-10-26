@@ -13,6 +13,54 @@ from textual.widgets import Button, Input, Select, TabbedContent, TextArea
 from novacode_cli.tui import teammates
 
 
+async def test_auto_approve_switch_polling_and_failed_save(monkeypatch: pytest.MonkeyPatch):
+    from textual.widgets import Static, Switch
+
+    state = {"agent_id": "ada", "name": "Ada", "role": "Assistant", "auto_approve": True}
+    commands = []
+    fail = False
+
+    async def request(action: str, payload: dict | None = None) -> dict:
+        if action == "status":
+            return copy.deepcopy(state) if payload else {"agents": [copy.deepcopy(state)]}
+        commands.append((action, payload))
+        if fail:
+            message = "storage failed"
+            raise RuntimeError(message)
+        state["auto_approve"] = payload["auto_approve"]
+        return copy.deepcopy(state)
+
+    monkeypatch.setattr(teammates, "request", request)
+    app = App()
+    async with app.run_test(size=(80, 32)) as pilot:
+        screen = teammates.TeammatesScreen()
+        app.push_screen(screen)
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        panel = screen.panels["ada"]
+        switch = panel.query_one("#auto-approve", Switch)
+        assert switch.value
+        panel.update_status({**state, "approvals": [{"id": "proposal", "state": "pending"}]})
+        assert "Review input" in str(panel.query_one("#approval-status", Static).render())
+        for _ in range(3):
+            panel.update_status(copy.deepcopy(state))
+        await pilot.pause()
+        assert commands == []
+        switch.value = False
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert commands == [("set_auto_approve", {"agent_id": "ada", "auto_approve": False})]
+        assert not switch.value
+        fail = True
+        switch.value = True
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert not switch.value
+        assert "storage failed" in str(panel.query_one("#teammate-error", Static).render())
+        assert not switch.disabled
+        assert len(commands) == 2
+
+
 async def test_double_create_does_not_cancel_or_duplicate_the_first_request(
     monkeypatch: pytest.MonkeyPatch,
 ):

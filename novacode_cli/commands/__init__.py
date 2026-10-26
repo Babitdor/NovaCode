@@ -121,6 +121,9 @@ def build_command_registry() -> CommandRegistry:
     function that registers its command(s).
     """
     registry = CommandRegistry()
+    from novacode_cli.commands.cache_handler import register_commands as register_cache
+
+    register_cache(registry)
 
     # Module-based handlers ##################################################
     # Import each handler module's register_commands and call it.

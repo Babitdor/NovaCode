@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import webbrowser
+from contextlib import suppress
 from typing import TYPE_CHECKING, ClassVar
 
 from rich.markdown import Markdown
@@ -19,6 +20,7 @@ from textual.widgets import (
     Label,
     Select,
     Static,
+    Switch,
     TabbedContent,
     TabPane,
     TextArea,
@@ -78,6 +80,8 @@ class TeammatePanel(Vertical):
     TeammatesScreen #approval-actions { height: 3; padding: 0 2; background: $boost; }
     TeammatesScreen #approval-box .section-title { margin: 0 0 1 0; }
     TeammatesScreen #teammate-approval { height: auto; margin-bottom: 1; }
+    TeammatesScreen #auto-approve-row { height: 3; }
+    TeammatesScreen #auto-approve-label { width: 1fr; height: 3; content-align: left middle; }
     TeammatesScreen #teammate-history { height: auto; margin: 1 0; }
     TeammatesScreen #history-usage { height: auto; color: $foreground 80%; margin-top: 1; }
     TeammatesScreen #agent-usage { height: auto; margin-bottom: 1; }
@@ -107,6 +111,8 @@ class TeammatePanel(Vertical):
         self.tasks: list[dict] = []
         self.history_options: list[tuple[Text, str]] = []
         self.teammate_name = "Teammate"
+        self.auto_approve_saving = False
+        self.authoritative_auto_approve = False
 
     def compose(self) -> ComposeResult:  # noqa: PLR0915 - Declarative tab layout.
         """Use labelled native controls with scrollable task and approval detail."""
@@ -130,6 +136,14 @@ class TeammatePanel(Vertical):
                         yield Static(
                             "No input waiting for review.", id="teammate-approval", markup=False
                         )
+                    with Horizontal(id="auto-approve-row"):
+                        yield Label("Auto approve desktop input", id="auto-approve-label")
+                        yield Switch(value=False, id="auto-approve", disabled=True)
+                    yield Static(
+                        "Automatically allows desktop clicks, typing, and keyboard input "
+                        "for this teammate. Existing pending input still needs your review.",
+                        classes="hint",
+                    )
                     yield Label("Assign a task", classes="section-title")
                     yield TextArea(
                         id="teammate-task",
@@ -211,16 +225,56 @@ class TeammatePanel(Vertical):
         """Initialize this agent's controls without replacing later drafts."""
         self.update_status(self.initial_state)
 
+    @work(group="teammate-approval-policy")
+    async def on_switch_changed(self, event: Switch.Changed) -> None:
+        """Save explicit owner intent; polling changes never emit this event."""
+        event.stop()
+        if event.switch.id != "auto-approve" or self.auto_approve_saving:
+            return
+        if not self.agent_id:
+            return
+        self.auto_approve_saving = True
+        event.switch.disabled = True
+        try:
+            result = await request(
+                "set_auto_approve",
+                {
+                    "agent_id": self.agent_id,
+                    "auto_approve": event.value,
+                },
+            )
+            self.update_status(result)
+            self.query_one("#teammate-error", Static).update("")
+        except Exception as exc:  # noqa: BLE001 - recover the worker's state after failed saves.
+            with suppress(Exception):
+                self.update_status(await request("status", {"agent_id": self.agent_id}))
+            self.query_one("#teammate-error", Static).update(
+                f"Could not save Auto Approve: {exc}. Retry when the worker is available."
+            )
+        finally:
+            self.auto_approve_saving = False
+            with event.switch.prevent(Switch.Changed):
+                event.switch.value = self.authoritative_auto_approve
+            event.switch.disabled = not self.loaded
+
     def update_status(self, result: dict) -> None:
         """Refresh only this agent's history, pending approval, and power state."""
         self.teammate_name = result.get("name") or "Teammate"
         computer = result.get("computer") or {}
+        self.authoritative_auto_approve = result.get("auto_approve", False) is True
+        switch = self.query_one("#auto-approve", Switch)
+        if not getattr(self, "auto_approve_saving", False):
+            with switch.prevent(Switch.Changed):
+                switch.value = self.authoritative_auto_approve
+        switch.disabled = not result.get("name") or getattr(self, "auto_approve_saving", False)
         pending = next((a for a in result.get("approvals", []) if a["state"] == "pending"), None)
         states = {
             "task": result.get("task_state", "idle"),
             "computer": computer.get("phase", "not created"),
             "control": "You" if computer.get("manual") else "Teammate",
-            "approval": "Review input" if pending else "None pending",
+            "approval": "Review input"
+            if pending
+            else ("Auto approve" if self.authoritative_auto_approve else "Manual approval"),
         }
         for name, value in states.items():
             self.query_one(f"#{name}-status", Static).update(

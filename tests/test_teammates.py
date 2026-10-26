@@ -199,6 +199,145 @@ async def test_input_requires_durable_exact_single_use_approval(controller: Team
         await controller.command("decide", {"id": proposal["id"], "approve": True})
 
 
+async def test_auto_approve_default_strict_boolean_and_recovery(
+    controller: TeammateController, tmp_path: Path
+):
+    assert controller.data["auto_approve"] is False
+    for value in ("true", 1, None, [], {}):
+        with pytest.raises(TeamError, match="boolean"):
+            await controller.command("set_auto_approve", {"auto_approve": value})
+        assert controller.data["auto_approve"] is False
+    await controller.command("set_auto_approve", {"auto_approve": True})
+    await controller.close()
+    recovered = TeammateController(tmp_path, computer_factory=FakeComputer)
+    await recovered.open()
+    try:
+        assert recovered.data["auto_approve"] is True
+        assert recovered.data["paused"] is True
+        assert recovered.runner is None
+    finally:
+        await recovered.close()
+
+
+async def test_automatic_input_records_intent_source_and_single_result(
+    controller: TeammateController,
+):
+    await controller.command("set_auto_approve", {"auto_approve": True})
+    controller.data["paused"] = False
+    controller.active = {"id": "task"}
+    original = controller.computer.call
+    snapshots = []
+
+    async def call(operation: str, **arguments: object) -> dict | list | bytes:
+        if operation == "action":
+            snapshots.append(controller.coordinator._store.teammate_state(controller.identity))
+        return await original(operation, **arguments)
+
+    controller.computer.call = call
+    await controller.desktop_action({"action": "type", "screenshot_id": "shot", "text": "hello"})
+    assert len(controller.computer.actions) == 1
+    issued = snapshots[0]["approvals"][-1]
+    assert issued["state"] == "issued"
+    assert issued["decision_source"] == "auto_approve"
+    assert issued["task"] == "task"
+    assert issued["args"]["text"] == "hello"
+    assert (controller.directory / issued["image"]).read_bytes() == b"test-png"
+    assert controller.data["approvals"][-1]["state"] == "completed"
+
+
+async def test_enable_does_not_approve_pending_and_disable_gates_next(
+    controller: TeammateController,
+):
+    controller.data["paused"] = False
+    controller.active = {"id": "task"}
+    proposal_args = {"action": "type", "screenshot_id": "shot", "text": "hello"}
+    pending = asyncio.create_task(controller.desktop_action(proposal_args))
+    await until(lambda: bool(controller.data["approvals"]))
+    proposal = controller.data["approvals"][-1]
+    await controller.command("set_auto_approve", {"auto_approve": True})
+    assert proposal["state"] == "pending"
+    assert not controller.computer.actions
+    await controller.command("decide", {"id": proposal["id"], "approve": True})
+    await pending
+    assert proposal["decision_source"] == "owner"
+    await controller.command("set_auto_approve", {"auto_approve": False})
+    next_input = asyncio.create_task(controller.desktop_action(proposal_args))
+    await until(lambda: len(controller.data["approvals"]) == 2)
+    assert controller.data["approvals"][-1]["state"] == "pending"
+    await controller.command("pause", {})
+    with pytest.raises(TeamError, match="invalidated"):
+        await next_input
+    assert len(controller.computer.actions) == 1
+
+
+async def test_failed_auto_approve_save_keeps_authoritative_setting(
+    controller: TeammateController, monkeypatch: pytest.MonkeyPatch
+):
+    def fail() -> None:
+        message = "disk unavailable"
+        raise OSError(message)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(controller, "save", fail)
+        with pytest.raises(OSError, match="disk unavailable"):
+            await controller.command("set_auto_approve", {"auto_approve": True})
+    assert controller.data["auto_approve"] is False
+
+
+@pytest.mark.parametrize("control", ["pause", "takeover", "observe"])
+async def test_auto_approve_control_change_during_frame_preparation(
+    controller: TeammateController, control: str
+):
+    await controller.command("set_auto_approve", {"auto_approve": True})
+    controller.data["paused"] = False
+    controller.active = {"id": "task"}
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = controller.computer.call
+
+    async def call(operation: str, **arguments: object) -> dict | list | bytes:
+        if operation == "approval_frame":
+            entered.set()
+            await release.wait()
+        return await original(operation, **arguments)
+
+    controller.computer.call = call
+    pending = asyncio.create_task(
+        controller.desktop_action({"action": "click", "screenshot_id": "shot"})
+    )
+    await entered.wait()
+    if control == "observe":
+        await controller.observe()
+    else:
+        await controller.command(control, {})
+    release.set()
+    with pytest.raises(TeamError, match="invalidated"):
+        await pending
+    assert not controller.computer.actions
+    assert not controller.data["approvals"]
+
+
+async def test_auto_approve_uncertain_action_never_replayed(
+    controller: TeammateController, tmp_path: Path
+):
+    await controller.command("set_auto_approve", {"auto_approve": True})
+    controller.data["paused"] = False
+    controller.active = {"id": "task"}
+    controller.computer.fail = True
+    with pytest.raises(RuntimeError, match="unknown"):
+        await controller.desktop_action({"action": "click", "screenshot_id": "s"})
+    assert controller.data["approvals"][-1]["state"] == "uncertain"
+    await controller.close()
+    recovered = TeammateController(tmp_path, computer_factory=FakeComputer)
+    await recovered.open()
+    try:
+        assert recovered.data["auto_approve"] is True
+        assert recovered.data["paused"] is True
+        assert recovered.data["approvals"][-1]["state"] == "uncertain"
+        assert not recovered.computer.actions
+    finally:
+        await recovered.close()
+
+
 @pytest.mark.parametrize("invalidate", ["deny", "observe", "takeover"])
 async def test_denied_or_stale_input_never_executes(
     controller: TeammateController, invalidate: str
@@ -343,8 +482,9 @@ async def test_delete_requires_name_and_failed_cleanup_retains_records(
     assert controller.coordinator._store.teammate_state(controller.identity)["name"] == "Ada"
 
 
+@pytest.mark.parametrize("action", ["status", "set_auto_approve"])
 async def test_loopback_reconnect_and_origin_authentication(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, action: str
 ):
     from novacode_cli.teammates import service
 
@@ -355,7 +495,7 @@ async def test_loopback_reconnect_and_origin_authentication(
         endpoint = json.loads((tmp_path / "service.json").read_text())
         assert (await service.request("status", launch=False))["computer"] is None
         async with aiohttp.ClientSession() as client:
-            url = f"http://127.0.0.1:{endpoint['port']}/control/status"
+            url = f"http://127.0.0.1:{endpoint['port']}/control/{action}"
             for headers in (
                 {},
                 {

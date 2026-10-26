@@ -118,14 +118,14 @@ function render(s){document.body.dataset.connected='true';retained=!!s.persisten
 $('state').textContent=s.phase+(s.phase==='ready'?(manual?' · you have control':s.paused?' · input paused':''):'');
 $('takeover-controls').hidden=!retained;$('resume').hidden=retained;$('stop').textContent=retained?'Suspend':'Stop VM';
 $('approval-section').hidden=!retained;
-$('approval-indicator').textContent=s.pending_approval?'An input needs your review. Open the saved observation.':'No input waiting for review.';
+$('approval-indicator').textContent=s.pending_approval?'An input needs your review. Open the saved observation.':(s.auto_approve?'Auto approve desktop input is on.':'Desktop input requires approval.');
 $('approval-indicator').classList.toggle('waiting',!!s.pending_approval);
 if(!s.pending_approval){$('approval-observation').hidden=true;$('approval-observation').open=false;}
 if(retained){$('control-owner').textContent=manual?'You hold control':'Teammate';
 $('takeover').hidden=manual;$('return_control').hidden=!manual;
 $('takeover').disabled=busy||s.manual;$('return_control').disabled=busy||!s.manual;
 for(const id of ['manual-text','manual-key','send-text','send-key'])$(id).disabled=busy||!s.manual||s.phase!=='ready';
-document.querySelector('footer').textContent='Suspend preserves your files. Desktop input requires approval in Nova.';}
+document.querySelector('footer').textContent='Suspend preserves your files. '+(s.auto_approve?'Future desktop input is automatically approved within the assigned task.':'Desktop input requires approval in Nova.');}
 $('notice').textContent=s.error||s.stage+(s.phase==='starting'?' · '+s.elapsed_seconds+'s elapsed':'');
 $('pause').disabled=busy||s.phase!=='ready'||s.paused;
 $('resume').disabled=busy||s.phase!=='ready'||!s.paused;

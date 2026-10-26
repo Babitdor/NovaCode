@@ -9,6 +9,7 @@ content-free private manifest under .tmp, without constructing a SessionManager.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import importlib.metadata
 import json
@@ -27,6 +28,67 @@ from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from novacode_cli.context.snapshot import ContextSnapshotMiddleware
+
+
+async def knowledge_replay():
+    """Measure actual cache paths with synthetic sources and an offline model."""
+    from deepagents.backends.filesystem import FilesystemBackend
+
+    from novacode_cli.context.knowledge_cache import KnowledgeCache
+    from novacode_cli.tools.knowledge_tools import KnowledgeLookup
+
+    class SummaryModel:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def ainvoke(self, _messages):
+            self.calls += 1
+            return AIMessage(content="The fixture function adds one to its argument.")
+
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary) / "workspace"
+        root.mkdir()
+        source = "def fixture(value):\n    return value + 1\n" * 100
+        path = root / "fixture.py"
+        path.write_text(source, encoding="utf-8")
+        model = SummaryModel()
+        backend = FilesystemBackend(root_dir=root, virtual_mode=True)
+        lookup = KnowledgeLookup(
+            root,
+            "fixture",
+            backend,
+            model,
+            cache=KnowledgeCache(Path(temporary) / "cache"),
+            embed=lambda _text: [1.0, 0.0],
+            model_id="offline-fixture",
+        )
+        cold = await lookup.lookup("overview", ["fixture.py"])
+        cold_calls = model.calls
+        warm = await lookup.lookup("explain the function", ["fixture.py"])
+        warm_calls = model.calls - cold_calls
+        paraphrase = await lookup.lookup("what is this module responsible for?")
+        path.write_text(source.replace("+ 1", "+ 2"), encoding="utf-8")
+        stale = await lookup.lookup("overview")
+        path.unlink()
+        unauthorized = await lookup.lookup("overview", ["../outside.py"])
+        summary_chars = len(json.dumps(warm))
+        assert cold["kind"] == "generated"
+        assert cold_calls == 1
+        assert warm["kind"] == "exact_hit"
+        assert warm_calls == 0
+        assert paraphrase["kind"] == "semantic_hit"
+        assert stale["kind"] == unauthorized["kind"] == "miss"
+        assert summary_chars < len(source)
+        return {
+            "measurement": "synthetic offline cache replay; not production savings",
+            "cold_summary_calls": cold_calls,
+            "warm_summary_calls": warm_calls,
+            "source_context_chars": len(source),
+            "warm_context_chars": summary_chars,
+            "stale": stale["kind"],
+            "unauthorized": unauthorized["kind"],
+        }
+
 
 CASES = (
     "short_edit",
@@ -321,6 +383,7 @@ def main():
         for name in ("langchain-core", "langchain", "langgraph", "deepagents")
     }
     with (
+        asyncio.Runner() as runner,
         tempfile.TemporaryDirectory() as profile,
         patch.dict(os.environ, {"USERPROFILE": profile, "NOVA_LOCAL_METRICS": "0"}),
         patch("pathlib.Path.home", return_value=Path(profile)),
@@ -328,6 +391,7 @@ def main():
         patch.object(socket, "create_connection", blocked),
     ):
         runs = [measure() for _ in range(3)]
+        knowledge = runner.run(knowledge_replay())
     result = {
         "baseline_revision": "9b9cf8f1ee50bc62e7358d54ef72f9fde312e272",
         "dependencies": dependencies,
@@ -350,6 +414,7 @@ def main():
             if Path(name).exists()
         },
         "runs": runs,
+        "knowledge_cache": knowledge,
     }
     if args.baseline:
         baseline = json.loads(Path(args.baseline).read_text(encoding="utf-8"))

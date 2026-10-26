@@ -103,6 +103,9 @@ class TeammateRegistry:
         """Serialize roster mutations and leave task execution to each controller."""
         payload = dict(payload)
         agent_id = payload.pop("agent_id", None)
+        if action == "set_auto_approve" and agent_id is None:
+            message = "Auto approve requires an explicit agent_id"
+            raise TeamError(message)
         if action == "status" and agent_id is None:
             return await self.status()
         if action not in {"create", "delete"}:

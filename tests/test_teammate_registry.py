@@ -69,11 +69,22 @@ async def test_multiple_agents_recover_separate_data_and_computers(
         await recovered.close()
 
 
+async def test_auto_approve_requires_explicit_agent_and_is_isolated(registry: TeammateRegistry):
+    ada = await registry.command("create", {"name": "Ada"})
+    with pytest.raises(TeamError, match="agent_id"):
+        await registry.command("set_auto_approve", {"auto_approve": True})
+    bo = await registry.command("create", {"name": "Bo"})
+    await registry.command("set_auto_approve", {"agent_id": ada["agent_id"], "auto_approve": True})
+    assert registry.agents[ada["agent_id"]].data["auto_approve"] is True
+    assert registry.agents[bo["agent_id"]].data["auto_approve"] is False
+
+
 async def test_existing_single_agent_is_adopted_without_moving_its_data(tmp_path: Path):
     factory = partial(TeammateController, computer_factory=OwnedComputer)
     original = factory(tmp_path)
     await original.open()
     await original.command("create", {"name": "Existing Ada"})
+    original.data.pop("auto_approve")  # Legacy records have no approval-policy field.
     thread = original.data["thread"]
     original.data["notes"] = "Existing notes"
     original.save()
@@ -85,6 +96,7 @@ async def test_existing_single_agent_is_adopted_without_moving_its_data(tmp_path
         assert registry.agents[thread] is registry.legacy
         assert registry.legacy.computer.manifest == original_path
         assert registry.legacy.data["notes"] == "Existing notes"
+        assert registry.legacy.data["auto_approve"] is False
         bo = await registry.command("create", {"name": "Bo"})
         assert len((await registry.status())["agents"]) == 2
         await registry.command("delete", {"agent_id": thread, "confirm": "Existing Ada"})
@@ -197,6 +209,9 @@ async def test_service_routes_separate_previews_and_lists_agents(
         with pytest.raises(TeamError, match="Choose a teammate"):
             await service.request("preview", launch=False)
         a_preview = await service.request("preview", {"agent_id": ada["agent_id"]}, launch=False)
+        await service.request(
+            "set_auto_approve", {"agent_id": ada["agent_id"], "auto_approve": True}, launch=False
+        )
         b_preview = await service.request("preview", {"agent_id": bo["agent_id"]}, launch=False)
         assert a_preview["url"] != b_preview["url"]
         parsed = urlsplit(a_preview["url"])
@@ -204,6 +219,15 @@ async def test_service_routes_separate_previews_and_lists_agents(
             "X-Nova-Token": parse_qs(parsed.query)["token"][0],
             "X-Nova-Request": "1",
         }
+        async with aiohttp.ClientSession() as client:
+            async with client.get(
+                f"http://127.0.0.1:{parsed.port}/status", headers=headers
+            ) as response:
+                assert (await response.json())["auto_approve"] is True
+            async with client.post(
+                f"http://127.0.0.1:{parsed.port}/set_auto_approve", headers=headers
+            ) as response:
+                assert response.status == 404
         async with (
             aiohttp.ClientSession() as client,
             client.post(f"http://127.0.0.1:{parsed.port}/takeover", headers=headers) as response,

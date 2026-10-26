@@ -496,6 +496,7 @@ class SlashCommand:
 # _passthrough_command (print-or-toggle-only commands; never read stdin or use
 # a Live spinner — those would hang or garble inside Textual).
 TUI_COMMANDS: dict[str, SlashCommand] = {
+    "cache": SlashCommand("_passthrough_command", "knowledge cache: /cache status|clear|on|off"),
     "computer": SlashCommand(
         "_run_computer", "separate Linux VM: /computer start|preview|pause|resume|stop|status"
     ),

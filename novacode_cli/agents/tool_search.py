@@ -94,6 +94,7 @@ CORE_TOOLS = frozenset(
         "create_artifact",
         # Surface the opt-in guest and its readiness without loading input schemas.
         "computer_status",
+        "knowledge_lookup",
     }
 )
 #: Never bound by use alone: `execute` duplicates `shell` locally (both run

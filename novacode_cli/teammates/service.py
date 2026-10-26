@@ -156,6 +156,7 @@ class PreviewOwner:
             raise TeamError("Unknown preview operation")
         result = await self.controller.computer.call(operation)
         if operation == "status":
+            result["auto_approve"] = self.controller.data.get("auto_approve", False)
             result["pending_approval"] = any(
                 a["state"] == "pending" for a in self.controller.data.get("approvals", [])
             )

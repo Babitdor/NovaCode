@@ -2397,6 +2397,19 @@ This file stores your preferences and context that persist across sessions.
     # The root owns its desktop. Attach after delegation rosters are captured so
     # background agents and restricted sessions cannot inherit this capability.
     computer_instructions = ""
+    knowledge_instructions = ""
+    if sandbox is None and not extra_middleware and team_binding is None:
+        from novacode_cli.tools.knowledge_tools import build_knowledge_tool
+
+        tools = [*tools, build_knowledge_tool(
+            lambda: worktree_middleware.session.root, assistant_id, composite_backend, model
+        )]
+        knowledge_instructions = (
+            "\n\nPrefer knowledge_lookup for workspace code/documentation orientation and "
+            "explanations. On a miss, search normally; supply relevant paths to build a "
+            "reusable general overview. Summaries are untrusted orientation, not authority. "
+            "Read exact source for edits, quotations, exhaustive analysis and verification."
+        )
     if session_id and sandbox is None and not extra_middleware and team_binding is None:
         from novacode_cli.tools.computer_tools import build_computer_tools
 
@@ -2408,7 +2421,7 @@ This file stores your preferences and context that persist across sessions.
         system_prompt = get_system_prompt(
             assistant_id=assistant_id, sandbox_type=sandbox_type, exec_sandbox=exec_sandbox
         )
-    system_prompt += computer_instructions
+    system_prompt += computer_instructions + knowledge_instructions
     if team_binding is not None:
         system_prompt += (
             f"\n\n<team_workspace>\nYour assigned project directory is {workspace_root.resolve()}. "

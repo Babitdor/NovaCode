@@ -11,6 +11,7 @@ downloads; until it has loaded (or if it cannot), search is BM25-only.
 from __future__ import annotations
 
 import concurrent.futures
+import functools
 import logging
 import re
 from typing import Any
@@ -58,6 +59,33 @@ def _load_model() -> Any:
     from model2vec import StaticModel
 
     return StaticModel.from_pretrained(_cached_model_path())
+
+
+@functools.cache
+def local_snapshot() -> str | None:
+    """Return installed embedding snapshot identity without a network request."""
+    try:
+        from huggingface_hub import snapshot_download
+
+        return snapshot_download(MODEL_NAME, local_files_only=True)
+    except Exception:  # noqa: BLE001 - missing optional local embeddings.
+        return None
+
+
+@functools.cache
+def local_model() -> Any | None:  # noqa: ANN401 - optional third-party model.
+    """Load existing Model2Vec weights only; call from a worker thread.
+
+    Unlike skill discovery's first-run loader, a knowledge lookup must never
+    download weights. A local directory also prevents Model2Vec's forced fetch.
+    """
+    try:
+        from model2vec import StaticModel
+
+        path = local_snapshot()
+        return StaticModel.from_pretrained(path) if path is not None else None
+    except Exception:  # noqa: BLE001 - exact source-key reuse remains available.
+        return None
 
 
 def _model() -> Any | None:

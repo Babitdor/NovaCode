@@ -38,12 +38,14 @@ class TeammateController:
         self.saver_context: Any = None
         self.saver: Any = None
         self.closed = False
+        self.input_epoch = 0
 
     async def open(self) -> None:
         """Acquire the cross-process fence and pause all recovered work."""
         saved = await self.coordinator._db("teammate_state", self.identity)
         if saved and saved.get("name"):
             self.data = saved
+            self.data["auto_approve"] = self.data.get("auto_approve") is True
             self.data["paused"] = True
             self.data["recovery"] = "Worker restarted. Inspect computer, then Resume."
             for task in self.data["tasks"]:
@@ -67,6 +69,7 @@ class TeammateController:
 
     def invalidate(self) -> None:
         """A restart or changed control invalidates every unconsumed decision."""
+        self.input_epoch += 1
         for approval in self.data.get("approvals", []):
             if approval["state"] == "issued":
                 approval["state"] = "uncertain"
@@ -125,6 +128,7 @@ class TeammateController:
                 "approvals": [],
                 "notes": "",
                 "paused": False,
+                "auto_approve": False,
                 "recovery": "",
                 **selections,
             }
@@ -132,6 +136,16 @@ class TeammateController:
             self._bind_computer()
         elif not self.data:
             raise TeamError("Create a named teammate first")
+        elif action == "set_auto_approve":
+            if set(payload) != {"auto_approve"} or type(payload["auto_approve"]) is not bool:
+                raise TeamError("Auto approve requires a boolean")
+            previous = self.data.get("auto_approve", False)
+            self.data["auto_approve"] = payload["auto_approve"]
+            try:
+                self.save()
+            except BaseException:
+                self.data["auto_approve"] = previous
+                raise
         elif action == "edit":
             if self.runner and not self.runner.done():
                 raise TeamError("Pause before editing teammate")
@@ -183,7 +197,13 @@ class TeammateController:
             if type(payload.get("approve")) is not bool:
                 raise TeamError("Decision must be approve or deny")
             approval["state"] = "approved" if payload["approve"] else "denied"
-            self.save()
+            approval["decision_source"] = "owner"
+            try:
+                self.save()
+            except BaseException:
+                approval["state"] = "pending"
+                approval["decision_source"] = None
+                raise
             self.decisions.set()
         elif action == "takeover":
             self.data["paused"] = True
@@ -336,6 +356,8 @@ class TeammateController:
                 prompt = (
                     "Inspect a fresh screenshot before any action. Prior inputs may be uncertain; "
                     "never replay them blindly. Continue this assignment from current state:\n"
+                    + self.approval_policy()
+                    + "\n"
                     + self.active["text"]
                 )
                 await self.handle.send(prompt)
@@ -372,6 +394,7 @@ class TeammateController:
         if self.data["paused"] or self.computer.manual or not self.active:
             raise TeamError("Teammate input is paused")
         self.invalidate()
+        epoch = self.input_epoch
         if len(self.data["approvals"]) >= Limits().authorizations:
             raise TeamError("Input approval history limit reached")
         key = uuid.uuid4().hex
@@ -379,6 +402,13 @@ class TeammateController:
         observations = self.directory / "observations"
         await asyncio.to_thread(observations.mkdir, parents=True, exist_ok=True)
         await asyncio.to_thread((observations / f"{key}.png").write_bytes, image)
+        if (
+            epoch != self.input_epoch
+            or self.data["paused"]
+            or self.computer.manual
+            or not self.active
+        ):
+            raise TeamError("Desktop input denied or invalidated; observe again")
         approval = {
             "id": key,
             "task": self.active["id"],
@@ -386,9 +416,17 @@ class TeammateController:
             "screenshot": arguments["screenshot_id"],
             "image": f"observations/{key}.png",
             "state": "pending",
+            "decision_source": None,
         }
         self.data["approvals"].append(approval)
         self.save()
+        if self.data.get("auto_approve", False):
+            approval.update(state="approved", decision_source="auto_approve")
+            try:
+                self.save()
+            except BaseException:
+                approval.update(state="pending", decision_source=None)
+                raise
         while approval["state"] == "pending":
             self.decisions.clear()
             await self.decisions.wait()
@@ -405,6 +443,18 @@ class TeammateController:
         approval["state"] = "completed"
         self.save()
         return await self._visual(result)
+
+    def approval_policy(self) -> str:
+        """Describe live input policy without granting any additional authority."""
+        mode = (
+            "Auto Approve allows future desktop input proposals automatically."
+            if self.data.get("auto_approve", False)
+            else "Desktop input requires one explicit owner approval per proposal."
+        )
+        return mode + (
+            " Pending reviews still need an owner decision. Stay within the assigned task; "
+            "pause, takeover and observation checks still apply."
+        )
 
     async def observe(self) -> list:
         """Invalidate old input proposals before changing model observation."""
