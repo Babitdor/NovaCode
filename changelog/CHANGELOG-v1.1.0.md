@@ -18,6 +18,11 @@
 - Preserve the banner canvas and logo position when opening or switching sessions.
 - Keep session navigation at the top in every interface style, including Centered.
 - Extend regression coverage across all 14 home styles at wide and narrow sizes.
+- Display provider-exposed thinking and reasoning summaries across SDK formats,
+  including completed replies and gateway metadata, without repeating streamed text.
+- Request visible summaries for supported OpenAI and Azure reasoning models.
+- Respect manual scrolling during thinking, tool updates, and final answers;
+  keep expanded thinking available while the reader is scrolled away.
 
 ## Installation and CI
 

@@ -68,6 +68,18 @@ def test_openai_models_without_reasoning_get_nothing(model):
     assert openai_reasoning_kwargs(model, "high") == {}
 
 
+def test_supported_responses_models_request_visible_summaries_only_when_enabled():
+    assert openai_reasoning_kwargs("gpt-5.5", "high", summary=True) == {
+        "use_responses_api": True,
+        "store": False,
+        "include": ["reasoning.encrypted_content"],
+        "reasoning": {"effort": "high", "summary": "auto"},
+    }
+    assert openai_reasoning_kwargs("gpt-4o", "high", summary=True) == {}
+    assert openai_reasoning_kwargs("o1", "high", summary=True) == {"reasoning_effort": "high"}
+    assert openai_reasoning_kwargs("gpt-5.5", "off", summary=True) == {"reasoning_effort": "low"}
+
+
 @pytest.mark.parametrize(("responses_api", "key"), [(False, "reasoning_effort"), (True, "reasoning")])
 def test_the_openai_request_carries_the_effort_for_either_api(responses_api, key):
     from langchain_openai import ChatOpenAI

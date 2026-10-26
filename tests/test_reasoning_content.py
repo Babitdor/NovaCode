@@ -151,6 +151,13 @@ def test_streaming_deltas_keep_the_reasoning():
     assert chunk.additional_kwargs.get("reasoning_content") == "hmm"
 
 
+def test_openrouter_reasoning_details_survive_inbound_and_outbound_conversion():
+    details = [{"type": "reasoning.text", "text": "checking the source", "index": 0}]
+    chunk = _chunk({"role": "assistant", "content": "", "reasoning_details": details})
+    assert chunk.additional_kwargs["reasoning_details"] == details
+    assert _convert(chunk)["reasoning_details"] == details
+
+
 def test_a_non_streaming_response_keeps_the_reasoning():
     apply_openai_reasoning_content_patch()
     from langchain_openai.chat_models.base import _convert_dict_to_message

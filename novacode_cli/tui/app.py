@@ -4640,23 +4640,30 @@ class NovaApp(App):
         except Exception:  # noqa: BLE001 — pruning must never break rendering
             pass
 
-    def _scroll_end(self, *, force: bool = True) -> None:
+    def _scroll_end(self, *, force: bool = False) -> None:
         """Scroll the transcript to the newest content.
 
         Args:
-            force: When True (the default) always jump to the bottom. Pass False
-                for *automatic* scrolling (new content arriving, a streaming
-                repaint) so a user who has scrolled up to read is not yanked back
-                down mid-sentence.
+            force: Explicit navigation may pass True to jump to the bottom.
+                Automatic updates respect the reader's scroll position by default.
         """
         if self._replaying_history:
             return
         if force or self._follow_tail:
             try:
-                self._transcript().scroll_end(animate=False)
+                transcript = self._transcript()
+                if force:
+                    transcript.scroll_end(animate=False, immediate=True)
+                else:
+                    transcript.call_after_refresh(self._follow_latest_after_refresh, transcript)
             except NoMatches:
                 pass
         self._update_jump_latest()
+
+    def _follow_latest_after_refresh(self, transcript: TranscriptScroll) -> None:
+        """Recheck reader intent before a deferred scroll can move the viewport."""
+        if self._follow_tail and transcript is self._transcript():
+            transcript.scroll_end(animate=False, immediate=True)
 
     def _update_jump_latest(self, *, measure: bool = False) -> None:
         """Show the "jump to latest" affordance only while not following the tail.
@@ -4699,27 +4706,28 @@ class NovaApp(App):
         if event.scroll is self._transcript():
             self._update_jump_latest(measure=True)
 
-    def on_transcript_scroll_scrolled(self, event: TranscriptScroll.Scrolled) -> None:
-        """Track scroll intent: moving up stops following, reaching the end resumes.
+    def _track_transcript_scroll(
+        self, scroll: TranscriptScroll, old_y: float, new_y: float
+    ) -> None:
+        """Track scroll intent before any deferred follow-tail callback can run.
 
         Only the active pane's scroll region counts — a background session
         scrolling must not change what the visible transcript is doing.
         """
         try:
-            if event.scroll is not self._transcript():
+            if scroll is not self._transcript():
                 return
         except NoMatches:
             return
-        if event.scroll.is_vertical_scroll_end or (event.scroll.max_scroll_y - event.new_y) <= 1:
+        if scroll.is_vertical_scroll_end:
             # Hiding/showing a pane can clamp its scroll offset downward. At
             # the bottom that is layout, not an instruction to stop following.
             self._follow_tail = True
-        elif event.new_y < event.old_y - 1:
+        elif new_y < old_y:
             # The viewport moved up: the user is reading history, so stop
             # auto-scrolling. (Content growth never moves scroll_y, so this can
             # only be a real user scroll.)
             self._follow_tail = False
-        # A real user scroll: recompute the distance readout.
         self._update_jump_latest(measure=True)
 
     def action_jump_latest(self) -> None:
@@ -7270,7 +7278,8 @@ class NovaApp(App):
                 # Commit the full trace (the live view only showed a tail) and
                 # fold it to its header.
                 self._reason_msg.update_body(Text(self._reasoning_buf, style="dim italic"))
-                self._reason_msg.set_collapsed(collapsed=True)
+                if self._follow_tail:
+                    self._reason_msg.set_collapsed(collapsed=True)
             except Exception:  # noqa: BLE001 — finalizing must never break the turn
                 pass
             self._reason_msg = None

@@ -33,7 +33,7 @@ def configured(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.parametrize(
     ("provider", "name", "key", "expected"),
     [
-        ("openai", "gpt-5.5", "reasoning_effort", "high"),
+        ("openai", "gpt-5.5", "reasoning", {"effort": "high", "summary": "auto"}),
         ("ollama", "qwen3:8b", "reasoning_effort", "high"),
         ("commandcode", "gpt-5.5", "reasoning_effort", "high"),
         ("commandcode", "deepseek/deepseek-v4-flash", "reasoning_effort", "high"),
@@ -69,6 +69,26 @@ def test_gateway_deepseek_medium_maps_to_high_and_off_requests_minimum(provider:
 def test_default_leaves_gateway_settings_to_provider():
     assert model_create.gateway_reasoning_kwargs("openrouter", "deepseek/r1", None) == {}
     assert model_create.gateway_reasoning_kwargs("openrouter", "deepseek/r1", "default") == {}
+
+
+@pytest.mark.usefixtures("configured")
+def test_custom_openai_endpoints_keep_chat_completions(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://custom.invalid/v1")
+    model = model_create.build_chat_model("openai", "gpt-5.5")
+    payload = model._get_request_payload([HumanMessage("hi")])
+    assert payload["reasoning_effort"] == "high"
+    assert "reasoning" not in payload
+    assert "messages" in payload
+
+
+@pytest.mark.usefixtures("configured")
+def test_azure_v1_reasoning_models_request_summaries(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "offline")
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://test.openai.azure.com")
+    model = model_create.build_chat_model("azure", "gpt-5.5")
+    payload = model._get_request_payload([HumanMessage("hi")])
+    assert payload["reasoning"] == {"effort": "high", "summary": "auto"}
+    assert payload["store"] is False
 
 
 @pytest.mark.usefixtures("configured")

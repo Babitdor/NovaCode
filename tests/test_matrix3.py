@@ -19,6 +19,24 @@ from novacode_cli.tui.widgets import ChatMessage, MatrixRain, PromptInput
 from tests.test_tui_app import _disable_live_update_checks  # noqa: F401
 from tests.test_tui_home_preferences import _app, _resize_terminal, no_system_sampling  # noqa: F401
 
+
+@pytest.mark.parametrize("style", ["classic", "signal"])
+@pytest.mark.timeout(30)
+async def test_hidden_banner_keeps_its_last_measured_canvas(style: str):
+    NovaConfig().set("home_style", style)
+    app = _app()
+    async with app.run_test(size=(120, 42)) as pilot:
+        await pilot.pause()
+        rain = app._home_banner
+        measured = (rain._col_count, rain._row_count)
+        app._set_home_visible(visible=False)
+        await pilot.pause()
+        rain.reflow(rain._art_source, 120, viewport_height=37)
+        assert (rain._col_count, rain._row_count) == measured
+        app._show_home_banner()
+        await pilot.pause()
+        assert (rain._col_count, rain._row_count) == measured
+
 if TYPE_CHECKING:
     from pathlib import Path
 

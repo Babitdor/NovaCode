@@ -32,6 +32,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from novacode_cli.config.config import COLORS, get_agent_color
 from novacode_cli.file_ops import get_session_file_op_tracker
+from novacode_cli.core.reasoning import reasoning_text
 from novacode_cli.core.input_preparation import (
     build_agent_config,
     get_agent_display_name,
@@ -300,6 +301,7 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
 
     if seen_message_ids is None:
         seen_message_ids = set()
+    seen_before_turn = set(seen_message_ids)
 
     file_op_tracker = get_session_file_op_tracker(assistant_id=assistant_id, backend=backend)
     subagent_tracker = SubagentTracker()
@@ -310,6 +312,7 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
 
     displayed_tool_ids: set[str] = set()
     tool_call_buffers: dict[str | int, dict] = {}
+    streamed_reasoning_ids: set[tuple[str, str | None]] = set()
     tool_call_to_name: dict[str, str] = {}
     pending_text = ""
     current_ai_message_id: str | None = None
@@ -732,8 +735,9 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                     if _ckpt_ns and "before_model" in _ckpt_ns:
                         continue
 
-                    if hasattr(message, "id") and message.id in seen_message_ids:
+                    if getattr(message, "id", None) in seen_before_turn:
                         continue
+                    message_already_seen = getattr(message, "id", None) in seen_message_ids
                     if isinstance(message, HumanMessage):
                         continue
 
@@ -831,14 +835,26 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                                     context_shown = captured.input_tokens
                                     yield ev.ContextUsage(context_shown)
 
-                    if not blocks:
-                        continue
-
                     _is_completed_msg = type(message).__name__ == "AIMessage"
+                    reasoning_key = (str(_namespace), getattr(message, "id", None))
+                    thought = reasoning_text(message, blocks) if is_main_agent else ""
+                    if thought and (
+                        not _is_completed_msg
+                        or reasoning_key[1] is None
+                        or reasoning_key not in streamed_reasoning_ids
+                    ):
+                        yield ev.ReasoningDelta(thought)
+                        if reasoning_key[1] is not None:
+                            streamed_reasoning_ids.add(reasoning_key)
+                        if text_guard.feed(thought):
+                            raise _RepetitionLoop
+
+                    if message_already_seen or not blocks:
+                        continue
 
                     for block in blocks:
                         btype = block.get("type")
-                        if btype == "text":
+                        if btype == "text" and block.get("thought") is not True:
                             text = block.get("text", "")
                             if text and is_main_agent and not _is_completed_msg:
                                 current_ai_message_id = getattr(message, "id", None)
@@ -872,18 +888,6 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                                     yield ev.SubagentPreview(preview_id, "text", text)
                                 elif _mid not in preview_streamed:
                                     yield ev.SubagentPreview(preview_id, "text", text)
-                        elif btype in ("reasoning", "thinking"):
-                            if is_main_agent and not _is_completed_msg:
-                                rtext = (
-                                    block.get("text")
-                                    or block.get("reasoning")
-                                    or block.get("thinking")
-                                    or ""
-                                )
-                                if rtext:
-                                    yield ev.ReasoningDelta(rtext)
-                                    if text_guard.feed(rtext):
-                                        raise _RepetitionLoop
                         elif btype in ("tool_call_chunk", "tool_call"):
                             async for _e in _handle_tool_call_chunk(
                                 block,

@@ -205,13 +205,14 @@ def anthropic_thinking_kwargs(model_name: str, effort: str | None, budget: int =
     return {}
 
 
-def openai_reasoning_kwargs(model_name: str, effort: str | None) -> dict:
+def openai_reasoning_kwargs(model_name: str, effort: str | None, *, summary: bool = False) -> dict:
     """``reasoning_effort`` for OpenAI reasoning models (o-series, GPT-5 and later).
 
     langchain-openai sends it as ``reasoning.effort`` on the Responses API.
     Models without reasoning (gpt-4o, gpt-4.1, ``*-chat``) and o1-mini/o1-preview
     reject it. "none" and "minimal" are not accepted everywhere (GPT-6 Astra,
     GPT-6.1 Sol), so "off" is "low", which every reasoning model takes.
+    Summary-capable Responses routes opt in with ``summary=True``.
     """
     name = model_name.lower().rsplit("/", 1)[-1]
     reasoning = re.match(r"(o\d|gpt-([5-9]|\d{2}))", name) and "chat" not in name
@@ -219,6 +220,13 @@ def openai_reasoning_kwargs(model_name: str, effort: str | None) -> dict:
         return {}
     if effort == "off":
         return {"reasoning_effort": "low"}
+    if summary and effort in {"low", "medium", "high"} and not name.startswith("o1"):
+        return {
+            "use_responses_api": True,
+            "store": False,
+            "include": ["reasoning.encrypted_content"],
+            "reasoning": {"effort": effort, "summary": "auto"},
+        }
     return {"reasoning_effort": effort} if effort in ("low", "medium", "high") else {}
 
 
@@ -474,7 +482,7 @@ def _build_chat_model(
         apply_openai_reasoning_content_patch()
         if provider == "azure":
             base_url = azure_base_url()
-            reasoning = openai_reasoning_kwargs(model_name, effort)
+            reasoning = openai_reasoning_kwargs(model_name, effort, summary=True)
         else:
             base_url = provider_base_url(provider)
             reasoning = {}
@@ -642,6 +650,23 @@ def _build_chat_model(
                         http_client=sync_client,
                         http_async_client=async_client,
                     )
+
+        # Public OpenAI exposes reasoning summaries only through Responses.
+        # Preserve Chat Completions on custom endpoints and gateways unless
+        # their model route already explicitly selected Responses.
+        summary_kwargs = openai_reasoning_kwargs(model_name, effort, summary=True)
+        public_openai = provider == "openai" and openai_kwargs.get("base_url") in {
+            None,
+            "https://api.openai.com/v1",
+            "https://api.openai.com/v1/",
+        }
+        if (
+            "reasoning" in summary_kwargs
+            and "reasoning_effort" in openai_kwargs
+            and (public_openai or openai_kwargs.get("use_responses_api"))
+        ):
+            openai_kwargs.pop("reasoning_effort", None)
+            openai_kwargs.update(summary_kwargs)
 
         if provider in {"opencode", "opencode_zen"}:
             return _opencode_chat_class()(

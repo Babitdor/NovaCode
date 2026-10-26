@@ -305,7 +305,7 @@ def apply_ollama_content_block_patch() -> None:
 #: Fields a thinking model may return that the API then requires echoed back.
 #: Only ever re-attached when the model actually produced them, so a provider
 #: that has never heard of them is never sent one.
-_REASONING_FIELDS = ("reasoning_content", "reasoning")
+_REASONING_FIELDS = ("reasoning_content", "reasoning", "reasoning_details")
 
 
 def apply_openai_reasoning_content_patch() -> None:

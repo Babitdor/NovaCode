@@ -58,6 +58,7 @@ jobs:
           novacode_cli/agents/caveman_support.py
           novacode_cli/tui/caveman_screen.py
           novacode_cli/tui/diff_preview.py
+          novacode_cli/core/reasoning.py
           novacode_cli/agents/tool_search_variants.py
           novacode_cli/mcp/generic.py
           novacode_cli/mcp/code_mode.py
@@ -167,6 +168,11 @@ jobs:
           tests/test_langsmith_setup_modal.py
           tests/test_tui_trace_command.py
           tests/test_agent_stream.py
+          tests/test_reasoning_visibility.py
+          tests/test_reasoning_scroll.py
+          tests/test_reasoning_content.py
+          tests/test_reasoning_settings.py
+          tests/test_provider_effort_wiring.py
           tests/test_usage_tree.py
       - name: Upload test results
         if: always()

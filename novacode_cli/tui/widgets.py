@@ -124,6 +124,7 @@ class MatrixRain(Static):
         self._animation_enabled = animate
         self._compact = compact
         self._viewport_height = viewport_height
+        self._canvas_size: tuple[int, int] | None = None
         from novacode_cli.tui.animation_rate import animation_fps
 
         self._animation_fps = animation_fps(fps)
@@ -222,13 +223,14 @@ class MatrixRain(Static):
         matrix3: bool | None = None,
     ) -> None:
         """Re-grid when the terminal width or banner layout changes."""
-        if viewport_height is not None and self.is_mounted and self.size.area:
+        if viewport_height is not None and self.is_mounted:
             # Once laid out, the canvas owns the grid dimensions. Reopening
             # home in another session does not resize this shared widget, so
             # replacing them with terminal estimates would never be corrected
             # by on_resize and would push the logo below its original position.
-            width = self.size.width + 4
-            viewport_height = self.size.height
+            canvas = (self.size.width, self.size.height) if self.size.area else self._canvas_size
+            if canvas is not None:
+                width, viewport_height = canvas[0] + 4, canvas[1]
         if (
             width == self._width
             and (compact is None or compact == self._compact)
@@ -361,8 +363,9 @@ class MatrixRain(Static):
 
     def on_resize(self, event: events.Resize) -> None:
         """Fit Classic's rain to its canvas, including multiline composer growth."""
-        if self._viewport_height is None:
+        if self._viewport_height is None or not event.size.area:
             return
+        self._canvas_size = (event.size.width, event.size.height)
         self._viewport_height = event.size.height
         self._configure(self._art_source, event.size.width + 4)
         self._init_columns()
@@ -1094,6 +1097,11 @@ class TranscriptScroll(VerticalScroll):
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         """Announce scroll changes so the jump-to-latest affordance can react."""
         super().watch_scroll_y(old_value, new_value)
+        # Record intent before queued layout callbacks can auto-scroll again.
+        # A posted message alone arrives too late when both run in one refresh.
+        track = getattr(self.app, "_track_transcript_scroll", None)
+        if track is not None:
+            track(self, old_value, new_value)
         # Post on every change so the "N lines below" readout stays current;
         # AtEndChanged only on a flip, so the show/hide work is not repeated.
         self.post_message(self.Scrolled(self, old_y=old_value, new_y=new_value))
