@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 from typing import TYPE_CHECKING
 
@@ -28,6 +29,22 @@ async def test_hidden_banner_keeps_its_last_measured_canvas(style: str):
     async with app.run_test(size=(120, 42)) as pilot:
         await pilot.pause()
         rain = app._home_banner
+        # Theme application can queue a second resize after the first paint.
+        # Sample the full-height canvas, not the preceding compact startup grid.
+        async with asyncio.timeout(5):
+            while True:
+                header = app.query_one("#home-header")
+                chrome = (
+                    app.query_one("#session-tab-bar").region.height
+                    + app.query_one("#prompt-dock").region.height
+                )
+                if (
+                    header.region.height == app.size.height - chrome
+                    and rain._row_count == header.content_size.height
+                    and rain._col_count == rain.content_size.width
+                ):
+                    break
+                await pilot.pause(0.01)
         measured = (rain._col_count, rain._row_count)
         app._set_home_visible(visible=False)
         await pilot.pause()
