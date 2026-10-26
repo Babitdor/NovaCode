@@ -3832,7 +3832,7 @@ class NovaApp(App):
         return platforms
 
     def _refresh_tabs(self) -> None:
-        """Redraw the session tab bar; hidden while there is only one session."""
+        """Redraw session labels and their new/close actions."""
         self._refresh_terminal_title()
         panes = getattr(self, "_panes", [])
         rows = []
@@ -3913,6 +3913,10 @@ class NovaApp(App):
             label = Text(f"{i}:{glyph} {title}{unread_text}")
             if platforms:
                 label.append(f" [{' / '.join(platforms)}]", style="bold green")
+            closeable = sid != self._root_pane.sid
+            if closeable:
+                label.append(" \N{MULTIPLICATION SIGN}")
+                tooltip += " · \N{MULTIPLICATION SIGN} Close session"
             tab_width += label.cell_len + 2
             tab = existing.get(sid)
             if tab is None:
@@ -3920,6 +3924,7 @@ class NovaApp(App):
                 if mounting is not None and not mounting.is_done:
                     continue
                 tab = SessionTab(label, id=sid)
+                tab.closeable = closeable
                 tab.tooltip = tooltip
                 self._tab_mounts[sid] = tabs.add_tab(tab)
             else:
@@ -4011,6 +4016,18 @@ class NovaApp(App):
         finally:
             event.button.disabled = False
             self.query_one("#prompt", PromptInput).focus()
+
+    @on(SessionTab.CloseRequested)
+    @work(group="close-session")
+    async def _close_session_from_tab(self, event: SessionTab.CloseRequested) -> None:
+        """Close the clicked session even if the active tab changes meanwhile."""
+        event.stop()
+        try:
+            pane = next((pane for pane in self._panes if pane.sid == event.tab.id), None)
+            if pane is not None and pane.kind == "child":
+                await self._close_session(pane)
+        finally:
+            event.tab.close_requested = False
 
     def action_next_session(self) -> None:
         self._cycle_session(1)
