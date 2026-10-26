@@ -174,6 +174,7 @@ def main():
                 page.emulate_media(color_scheme=theme, reduced_motion=motion)
                 for name, url in [('home', ''), ('docs', 'docs/#page-installation'), ('changelog', 'changelog/#v1-0-54')]:
                     page.goto(base + url)
+                    page.wait_for_function("() => !document.querySelector('#boot')", timeout=6000)
                     page.wait_for_timeout(1000)
                     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), f'Overflow: {name} {mode}'
                     axe = ROOT / 'node_modules/axe-core/axe.min.js'
@@ -194,8 +195,60 @@ def main():
                     page.keyboard.press('Escape')
                     assert page.locator('#menu-btn').get_attribute('aria-expanded') == 'false'
             results['checks'].append('Desktop and mobile layouts, reduced motion, mobile drawer Escape')
+
+            # The boot screen appears once, then the theme toggle reveals the new palette.
+            theme_context = browser.new_context(
+                viewport={'width': 1440, 'height': 1000},
+                color_scheme='light',
+                reduced_motion='no-preference',
+            )
+            theme_page = theme_context.new_page()
+            theme_errors = []
+            theme_page.on('pageerror', lambda error: theme_errors.append(str(error)))
+            theme_page.add_init_script("""
+                window.__vt = 0;
+                window.__vtSupported = typeof document.startViewTransition === 'function';
+                if (window.__vtSupported) {
+                    const start = document.startViewTransition.bind(document);
+                    document.startViewTransition = function (callback) {
+                        window.__vt += 1;
+                        return start(callback);
+                    };
+                }
+            """)
+            theme_page.goto(base, wait_until='commit')
+            theme_page.wait_for_selector('#boot', state='visible', timeout=5000)
+            theme_page.wait_for_function("() => !document.querySelector('#boot')", timeout=6000)
+            theme_page.locator('[data-theme-toggle]').click()
+            theme_page.wait_for_function("document.documentElement.dataset.theme === 'dark'")
+            theme_page.wait_for_timeout(900)
+            assert theme_page.evaluate("localStorage.getItem('nova-theme')") == 'dark'
+            assert theme_page.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--theme-r')") != ''
+            if theme_page.evaluate('window.__vtSupported'):
+                assert theme_page.evaluate('window.__vt') >= 1
+            theme_page.reload(wait_until='commit')
+            theme_page.wait_for_load_state('domcontentloaded')
+            theme_page.wait_for_function("() => !document.querySelector('#boot')", timeout=6000)
+            assert theme_page.evaluate("document.documentElement.dataset.theme") == 'dark'
+            theme_page.locator('[data-theme-toggle]').click()
+            theme_page.wait_for_function("document.documentElement.dataset.theme === 'light'")
+            theme_page.wait_for_timeout(900)
+            theme_page.goto(base + 'docs/', wait_until='commit')
+            theme_page.locator('#page-overview').wait_for(state='visible')
+            theme_page.locator('.theme-btn').click()
+            theme_page.wait_for_function("document.documentElement.dataset.theme === 'dark'")
+            theme_page.wait_for_timeout(900)
+            if theme_page.evaluate('window.__vtSupported'):
+                assert theme_page.evaluate('window.__vt') >= 1
+            assert not theme_errors, theme_errors
+            theme_context.close()
+            results['checks'].append('Boot screen appears once, theme choice persists, docs and landing reveal the new palette')
+
             nojs = browser.new_context(java_script_enabled=False)
             off = nojs.new_page()
+            off.goto(base)
+            assert off.locator('#boot').evaluate("e => getComputedStyle(e).display") == 'none'
+            assert off.locator('main').is_visible()
             off.goto(base + 'docs/#page-installation')
             assert off.locator('#page-installation').is_visible()
             off.goto(base + 'changelog/')

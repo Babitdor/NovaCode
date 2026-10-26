@@ -81,6 +81,14 @@
     --grid:rgb(255 255 255 / .028);
   }
 
+/* A manual theme switch opens the new palette as a circle from the toggle. */
+::view-transition{pointer-events:none}
+::view-transition-group(root){animation:none}
+::view-transition-old(root){animation:none;mix-blend-mode:normal}
+::view-transition-new(root){animation:theme-reveal .7s cubic-bezier(.76,0,.24,1) both;mix-blend-mode:normal}
+@keyframes theme-reveal{from{clip-path:circle(0 at var(--theme-x,50%) var(--theme-y,0))}to{clip-path:circle(var(--theme-r,150vmax) at var(--theme-x,50%) var(--theme-y,0))}}
+html.theme-fade,html.theme-fade *,html.theme-fade *::before,html.theme-fade *::after{transition:background-color .45s var(--ease),border-color .45s var(--ease),color .45s var(--ease),fill .45s var(--ease),stroke .45s var(--ease),box-shadow .45s var(--ease),outline-color .45s var(--ease) !important}
+
 *,*::before,*::after{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%;scroll-padding-top:var(--anchor-lead)}
 body{
@@ -260,9 +268,10 @@ footer{border-top:1px solid var(--line);padding-block:28px 72px}
   transition:border-color .2s,color .2s,transform .2s var(--ease);
 }
 .theme-btn[hidden]{display:none}
-.theme-btn svg{width:17px;height:17px;transition:rotate .5s var(--ease)}
+.theme-btn svg{width:17px;height:17px;transition:rotate .5s var(--ease);animation:theme-icon-in .45s var(--ease)}
 .theme-btn .i-sun,.theme-btn[aria-pressed="true"] .i-moon{display:none}
 .theme-btn[aria-pressed="true"] .i-sun{display:block}
+@keyframes theme-icon-in{from{opacity:0;rotate:-35deg;scale:.72}to{opacity:1;rotate:0deg;scale:1}}
 @media (hover: hover){.theme-btn:hover{border-color:var(--accent);color:var(--accent)}.theme-btn:hover svg{rotate:-30deg}}
 .theme-btn:active{transform:scale(.94)}
 @media (max-width:620px){.topnav .theme-btn{width:44px;height:44px}.topnav .tn-aux[href="../docs/index.html"]{min-height:44px}}

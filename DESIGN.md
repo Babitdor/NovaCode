@@ -7,7 +7,8 @@ branch at `/NovaCode/`; release Markdown belongs to `main/changelog/`.
 The existing concept is an editorial manual with terminal chrome. Keep its Geist and
 Geist Mono fonts, neutral light/dark surfaces, orange accent, pill buttons and 14px panels.
 Preserve the landing page composition and product examples. This is a functional repair,
-so no new visual concept, framework, loader, decorative animation or invented content is needed.
+so no new visual concept, framework or invented content is needed. The boot screen and
+the theme reveal are the only additions.
 The hero uses the matched generated day/night artwork in `assets/hero-source/`, based
 on `Nova-Hero-light.png` and `Nova-Hero.png`. The originals and prompts remain versioned.
 `tools/make_hero_assets.py` encodes responsive WebP images. Native picture
@@ -18,10 +19,15 @@ primary links show on desktop; the mobile menu retains all nine section links. T
 smallest screens hide only the redundant @code suffix so all controls keep touch targets.
 Docs and Changelog use the same theme-aware portraits and keep their header controls
 within a 320px viewport.
-Manual theme switches dissolve and softly refocus the hero over 750ms using native View
-Transitions, waiting for the next image to decode. Navigation and the overlapping prompt
-stay above the hero snapshots. Older browsers get a short reveal; reduced motion switches
-immediately. Repeated toggles supersede the previous transition.
+Manual theme switches open the new palette as a circle from the theme toggle over 700ms
+using native View Transitions, after the next image set has decoded. The whole page,
+including the hero, navigation and prompt, is revealed by the same wipe, so no text is
+cross-faded. Older browsers fade the palette in place; reduced motion switches
+immediately. Repeated toggles supersede the previous reveal.
+The landing page opens with a boot screen once per tab: a terminal line, a hairline
+progress bar driven by font, hero and load milestones, and a curtain lift. The boot
+screen is hidden without JavaScript and under reduced motion, and a hard timeout means
+it can never hold the page.
 The hero is four actual full-frame image planes: sky/city, room/code panels,
 coder/desk, and near foliage. The room, subject and foliage are real RGBA cutouts;
 the sky is a complete clean plate behind them. `tools/make_hero_assets.py` encodes
