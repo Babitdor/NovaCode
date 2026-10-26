@@ -168,14 +168,15 @@ class ApprovalModal(ModalScreen[str]):
             # off-screen — the options must always stay visible.
             with VerticalScroll(id="modal-body-scroll"):
                 yield Static(self._body, id="modal-body")
-            yield OptionList(id="choices")
-            yield Static(
-                Text(
-                    "↑/↓ navigate · Enter select · y/a/n quick keys · Esc reject",
-                    style="dim",
-                ),
-                id="modal-hint",
-            )
+            with Vertical(id="modal-choices"):
+                yield OptionList(id="choices")
+                yield Static(
+                    Text(
+                        "↑/↓ navigate · Enter select · y/a/n quick keys · Esc reject",
+                        style="dim",
+                    ),
+                    id="modal-hint",
+                )
 
     def on_mount(self) -> None:
         animate_modal_screen(self)
@@ -245,14 +246,15 @@ class PlanApprovalModal(ModalScreen[str]):
             # off-screen — the options must always stay visible.
             with VerticalScroll(id="modal-body-scroll"):
                 yield Static(self._body, id="modal-body")
-            yield OptionList(id="choices")
-            yield Static(
-                Text(
-                    "↑/↓ navigate · Enter select · a/m/r quick keys · Esc refine",
-                    style="dim",
-                ),
-                id="modal-hint",
-            )
+            with Vertical(id="modal-choices"):
+                yield OptionList(id="choices")
+                yield Static(
+                    Text(
+                        "↑/↓ navigate · Enter select · a/m/r quick keys · Esc refine",
+                        style="dim",
+                    ),
+                    id="modal-hint",
+                )
 
     def on_mount(self) -> None:
         animate_modal_screen(self)

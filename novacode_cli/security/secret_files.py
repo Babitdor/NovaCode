@@ -26,6 +26,7 @@ def write_secret_json(path: Path, data: Any) -> None:
                 text=True,
                 timeout=10,
                 check=True,
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
             sid = next(csv.reader([identity.stdout.strip()]))[1]
             if not sid.startswith("S-1-") or any(c not in "S0123456789-" for c in sid):
@@ -42,6 +43,7 @@ def write_secret_json(path: Path, data: Any) -> None:
                 stderr=subprocess.DEVNULL,
                 timeout=10,
                 check=False,
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
             if result.returncode:
                 raise OSError("Could not restrict credential file access")

@@ -92,6 +92,8 @@ CORE_TOOLS = frozenset(
         "wait_for_task",
         # The prompt asks for artifacts proactively.
         "create_artifact",
+        # Surface the opt-in guest and its readiness without loading input schemas.
+        "computer_status",
     }
 )
 #: Never bound by use alone: `execute` duplicates `shell` locally (both run

@@ -582,3 +582,21 @@ class TeamStore:
         with self._lock:
             self.release_owner()
             self.db.close()
+
+    def teammate_state(self, caller: Identity) -> Record | None:
+        """Read profile controller state; never expose it through team tools."""
+        with self._lock:
+            row = self.db.execute(
+                "SELECT body FROM team_records WHERE project=? AND root=? "
+                "AND kind='teammate' AND id='profile'",
+                (caller.project, caller.root),
+            ).fetchone()
+            return json.loads(row[0]) if row else None
+
+    def save_teammate_state(self, caller: Identity, value: Record) -> None:
+        """Fence durable controller updates with the existing process owner."""
+        if caller.agent != "lead":
+            message = "Only the controller owns teammate state"
+            raise TeamError(message)
+        with self._transaction():
+            self._put(caller, "teammate", {**value, "id": "profile", "team": "profile"})

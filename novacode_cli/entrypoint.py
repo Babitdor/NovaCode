@@ -31,6 +31,10 @@ def cli_main() -> None:
         from novacode_cli.updates import update_main
 
         raise SystemExit(update_main(sys.argv[2:]))
+    if sys.argv[1:2] == ["teammates"]:
+        from novacode_cli.teammates.service import cli
+
+        raise SystemExit(cli(sys.argv[2:]))
     # Upstream skills add owns its flags, including --help.
     if ("--help" in sys.argv[1:] or "-h" in sys.argv[1:]) and add_arguments(sys.argv[1:]) is None:
         from novacode_cli.cli_args import parse_args

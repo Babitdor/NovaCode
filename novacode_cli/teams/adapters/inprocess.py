@@ -17,9 +17,10 @@ if TYPE_CHECKING:
 class InProcessAdapter:
     """Build a fresh configured graph; share only explicit runtime services."""
 
-    def __init__(self, builder: Callable) -> None:
+    def __init__(self, builder: Callable, *, skip_file_mentions: bool = False) -> None:
         """Inject the existing Nova graph builder, not another agent loop."""
         self.builder = builder
+        self.skip_file_mentions = skip_file_mentions
 
     async def start(
         self, request: SpawnRequest, event: Callable, gateway: Callable
@@ -44,7 +45,9 @@ class InProcessAdapter:
             if hasattr(agent, "close_session"):
                 await agent.close_session(state.thread_id)
             raise
-        return InProcessHandle(request, agent, backend, state, event)
+        return InProcessHandle(
+            request, agent, backend, state, event, skip_file_mentions=self.skip_file_mentions
+        )
 
 
 class InProcessHandle:
@@ -57,6 +60,8 @@ class InProcessHandle:
         backend: Any,  # noqa: ANN401 - Backend implementations.
         state: SessionState,
         event: Callable,
+        *,
+        skip_file_mentions: bool = False,
     ) -> None:
         """Start only the idle inbox driver, with bounded pending work."""
         self.request, self.agent, self.backend, self.state, self.event = (
@@ -70,6 +75,7 @@ class InProcessHandle:
         self.driver = asyncio.create_task(self._drive(), name=f"teammate-{request.identity.agent}")
         self.stopped = False
         self.turns = 0
+        self.skip_file_mentions = skip_file_mentions
         import os
 
         import psutil
@@ -93,7 +99,7 @@ class InProcessHandle:
         self.queue.put_nowait(text)
         self.turns += 1
 
-    async def _drive(self) -> None:  # noqa: PLR0912 - Explicit lifecycle transitions.
+    async def _drive(self) -> None:  # noqa: PLR0912, PLR0915 - Explicit lifecycle transitions.
         import uuid
 
         from novacode_cli import ui_events as ev
@@ -117,6 +123,7 @@ class InProcessHandle:
                 config = {"configurable": {"thread_id": self.state.thread_id}}
                 before = await self.agent.aget_state(config)
                 old_ids = {message.id for message in before.values.get("messages", [])}
+                cancelled = False
                 with usage_scope(f"team:{self.request.identity.agent}"):
                     async for event in iterate_agent_events(
                         text,
@@ -124,6 +131,7 @@ class InProcessHandle:
                         self.request.agent_type,
                         self.state,
                         backend=self.backend,
+                        skip_file_mentions=self.skip_file_mentions,
                     ):
                         if isinstance(event, ev.InterruptRequest):
                             # Tool approvals use the broker; child plan/question
@@ -136,6 +144,13 @@ class InProcessHandle:
                             summary.append(event.text)
                         elif isinstance(event, ev.Error):
                             error = event.message
+                        elif isinstance(event, ev.Cancelled):
+                            # The shared loop reports cancellation as an event.
+                            # Preserve adapter cancellation instead of recording
+                            # a false success and waiting on the inbox forever.
+                            cancelled = True
+                if cancelled:
+                    raise asyncio.CancelledError  # noqa: TRY301
                 if not summary and not error:
                     # Non-streaming model implementations can commit an answer
                     # without token events. Recover only this turn's final AI.

@@ -39,6 +39,8 @@ def build_computer_tools(session_id: str) -> list[BaseTool]:
 
         This never starts a VM or accesses the user's host desktop. Computer
         screenshots need a vision model or Nova's VISION tool.
+        For desktop browsing or searches, load computer_screenshot and
+        computer_action using search_tools, then observe and use the guest browser.
         """
         return json.dumps(await computer.call("status"))
 

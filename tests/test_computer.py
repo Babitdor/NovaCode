@@ -29,6 +29,53 @@ PNG = base64.b64decode(
 )
 
 
+async def test_computer_is_visible_and_desktop_tools_load_on_demand(sdk: SimpleNamespace):
+    from langchain.agents.middleware.types import ModelRequest
+    from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+
+    from novacode_cli.agents.tool_search import ToolSearchMiddleware
+    from novacode_cli.prompts import render_template
+
+    tools = build_computer_tools("desktop-discovery")
+    instructions = render_template("computer_use.jinja")
+    request = ModelRequest(
+        model=None,
+        tools=tools,
+        messages=[HumanMessage("Use your computer to search for Python docs")],
+        system_message=SystemMessage(instructions),
+        state={},
+        runtime=None,
+    )
+    middleware = ToolSearchMiddleware()
+    middleware._frequent = set()
+    initial = middleware._apply(request)
+    assert {tool.name for tool in initial.tools} == {"computer_status"}
+    assert "Do not silently substitute web_search" in str(initial.system_message.content)
+    status = json.loads(await initial.tools[0].ainvoke({}))
+    assert status["phase"] == "stopped"
+    sdk.boxes.create.assert_not_awaited()
+    found = middleware._tool_search("computer_screenshot, computer_action")
+    loaded = middleware._apply(
+        request.override(
+            messages=[
+                *request.messages,
+                ToolMessage(found, name="search_tools", tool_call_id="desktop-tools"),
+            ]
+        )
+    )
+    assert {tool.name for tool in loaded.tools} == {
+        "computer_status",
+        "computer_screenshot",
+        "computer_action",
+    }
+    assert 'keys=["ctrl", "l"]' in instructions
+    assert "most recent screenshot or action result" in instructions
+    teammate = render_template("computer_use.jinja", teammate=True)
+    assert "already available directly" in teammate
+    assert "search_tools(" not in teammate
+    assert "/computer start" not in teammate
+
+
 def test_standard_windows_qemu_install_is_discovered_with_stale_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):

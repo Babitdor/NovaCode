@@ -1965,7 +1965,8 @@ def create_agent_with_config(
     workspace_root: str | None = None,
     extra_middleware: list | None = None,
     team_binding=None,
-) -> tuple[Pregel, CompositeBackend]:
+    teammate_only: bool = False,
+) -> tuple[Pregel, CompositeBackend | None]:
     """Create and configure an agent with the specified model and tools.
 
     ``workspace_root`` overrides the default (``settings.get_workspace_root()``) —
@@ -1989,6 +1990,23 @@ def create_agent_with_config(
     Returns:
         2-tuple of (graph, backend)
     """
+    if teammate_only:
+        # This boundary deliberately precedes all host tools, plugins, memory,
+        # discovery, subagents, and filesystem backend construction.
+        from langchain.agents import create_agent
+
+        from novacode_cli.config.config import config as execution_config
+
+        if checkpointer is None:
+            message = "A persistent teammate requires a private checkpointer"
+            raise ValueError(message)
+        return create_agent(
+            model=model,
+            tools=tools,
+            system_prompt=system_prompt,
+            checkpointer=checkpointer,
+        ).with_config(recursion_limit=execution_config["recursion_limit"]), None
+
     # Lazy import for tracing (speeds up startup)
     from novacode_cli.tracking.tracing import is_tracing_enabled, get_tracing_config
 
@@ -2378,16 +2396,19 @@ This file stores your preferences and context that persist across sessions.
 
     # The root owns its desktop. Attach after delegation rosters are captured so
     # background agents and restricted sessions cannot inherit this capability.
+    computer_instructions = ""
     if session_id and sandbox is None and not extra_middleware and team_binding is None:
         from novacode_cli.tools.computer_tools import build_computer_tools
 
         tools = [*tools, *build_computer_tools(session_id)]
+        computer_instructions = "\n\n" + render_template("computer_use.jinja")
 
     # Get the system prompt (sandbox-aware and with skills)
     if system_prompt is None:
         system_prompt = get_system_prompt(
             assistant_id=assistant_id, sandbox_type=sandbox_type, exec_sandbox=exec_sandbox
         )
+    system_prompt += computer_instructions
     if team_binding is not None:
         system_prompt += (
             f"\n\n<team_workspace>\nYour assigned project directory is {workspace_root.resolve()}. "

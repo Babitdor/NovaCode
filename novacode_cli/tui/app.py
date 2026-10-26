@@ -499,6 +499,7 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "computer": SlashCommand(
         "_run_computer", "separate Linux VM: /computer start|preview|pause|resume|stop|status"
     ),
+    "teammates": SlashCommand("_run_teammates", "persistent local assistant and input approvals"),
     "ui": SlashCommand(
         "_run_ui", "inspect / patch / preview / commit / rollback / reset UI panels"
     ),
@@ -1432,9 +1433,7 @@ class NovaApp(App):
     ModalScreen.conversation-style OptionList,
     ModalScreen.conversation-style OptionList:focus,
     ModalScreen.conversation-style SelectionList,
-    ModalScreen.conversation-style SelectionList:focus,
-    ModalScreen.conversation-style TextArea,
-    ModalScreen.conversation-style TextArea:focus {
+    ModalScreen.conversation-style SelectionList:focus {
         border: none; background: transparent;
     }
     ModalScreen.conversation-style .option-list--option { background: transparent; }
@@ -1884,11 +1883,16 @@ class NovaApp(App):
         width: 96%; max-width: 110; padding: 1 2;
     }
     ModalScreen.short #modal-box { max-height: 96%; padding: 0 2; }
-    .narrow #modal-buttons, .short #modal-buttons {
+    .narrow #modal-buttons, .short #modal-buttons,
+    .narrow #remember-buttons, .short #remember-buttons {
         layout: grid; grid-size: 2; grid-columns: 1fr 1fr; grid-gutter: 0 1;
     }
-    .narrow #modal-buttons Button, .short #modal-buttons Button {
+    .narrow #modal-buttons Button, .short #modal-buttons Button,
+    .narrow #remember-buttons Button, .short #remember-buttons Button {
         width: 1fr; margin: 0;
+    }
+    ModalScreen.short #modal-buttons Button, ModalScreen.short #remember-buttons Button {
+        height: 1; min-height: 1; border: none; padding: 0 1;
     }
     .short .preview-box { max-height: 4; }
     .short #sessions, .short #pick-list, .short #infolist,
@@ -1929,6 +1933,7 @@ class NovaApp(App):
         width: 80%; max-width: 110; height: auto; max-height: 90%;
         border: thick $accent; background: $surface;
         padding: 1 4; layer: overlay;
+        overflow-y: auto; scrollbar-gutter: stable;
     }
     #modal-title { margin-bottom: 1; padding: 0 0; }
     /* The live task list owns the space left by its header and hints. */
@@ -1946,6 +1951,8 @@ class NovaApp(App):
     BackgroundTasksScreen #tasks-hint { height: auto; max-height: 3; }
     BackgroundTasksScreen.tasks-short #tasks-hint { max-height: 1; }
     #modal-body { padding: 0 0; }
+    #modal-choices { dock: bottom; height: auto; }
+    #modal-choices #modal-hint { height: auto; }
     /* Long lists scroll inside the box instead of overflowing the screen. */
     #sessions, #pick-list, #infolist, #mcp-configured, #mcp-presets, #plugins, #cplugins-list, #agents-list, #skills-list, #servers-list, #hooks-list, #wiki-pages-list, #wiki-inbox-list, #tasks-list {
         height: auto; max-height: 40%;
@@ -2013,11 +2020,17 @@ class NovaApp(App):
     #auth-hint { padding: 0 1; color: $text-muted; }
     #auth-error { padding: 0 1; height: auto; }
     #auth-endpoint-label { margin-top: 1; }
-    #modal-buttons {
+    #theme-list { height: auto; min-height: 3; max-height: 12; }
+    #theme-hint { height: auto; }
+    #modal-buttons, #remember-buttons {
+        dock: bottom;
         height: auto; align: center middle;
         margin-top: 1; padding: 0 0;
     }
-    #modal-buttons Button { margin: 0 1; }
+    #modal-buttons Button, #remember-buttons Button { margin: 0 1; }
+    HooksScreen #modal-buttons {
+        layout: grid; grid-size: 3; grid-columns: 1fr 1fr 1fr; grid-gutter: 0 1;
+    }
     #modal-hint { padding: 0 1; color: $text-muted; }
     Collapsible { margin: 0; }
     Collapsible > .collapsible--title { padding: 0 1; background: $surface; }
@@ -14706,6 +14719,12 @@ class NovaApp(App):
         from novacode_cli.tui.screens import UpdateScreen
 
         self.push_screen(UpdateScreen())
+
+    def _run_teammates(self, _text: str) -> None:
+        """Connect to the profile's detached local teammate."""
+        from novacode_cli.tui.teammates import TeammatesScreen
+
+        self.push_screen(TeammatesScreen())
 
     @work(group="computer-command")
     async def _run_computer(self, text: str) -> None:

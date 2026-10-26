@@ -28,6 +28,7 @@ def test_main_templates_ignore_global_overrides_and_activated_artifacts(
         "nova_standing_instructions.jinja",
         "coding_workflow.jinja",
         "file_paths.jinja",
+        "computer_use.jinja",
     ):
         folder = tmp_path / name.removesuffix(".jinja")
         folder.mkdir()
