@@ -189,6 +189,8 @@ class SessionPane:
     """idle | running | needs-approval | starting | crashed | exited"""
     child: Any = None
     """The :class:`~novacode_cli.sessions.supervisor.ChildSession`, if spawned."""
+    start_task: asyncio.Task[Any] | None = None
+    """Process creation that must finish before shutdown and worktree cleanup."""
     buffer: deque = field(default_factory=lambda: deque(maxlen=2000))
     """Events that arrived while hidden, replayed on switch."""
     unread: int = 0

@@ -3904,8 +3904,11 @@ class NovaApp(App):
 
         for sid in existing:
             if sid not in wanted:
+                pending = self._tab_mounts.get(sid)
+                if pending is not None and not pending.is_done:
+                    continue
                 with contextlib.suppress(Exception):
-                    tabs.remove_tab(sid)
+                    self._tab_mounts[sid] = tabs.remove_tab(sid)
 
         tab_width = 0
         for sid, i, glyph, title, unread, platforms, tooltip in rows:
@@ -4216,17 +4219,23 @@ class NovaApp(App):
         # and renders in the root transcript — the spawned session just sits
         # there never receiving a prompt, which reads as "the tab does nothing".
         await self._switch_to(pane)
+        if pane not in self._panes:
+            getattr(self, "_pending_task_for", {}).pop(sid, None)
+            return None
 
         try:
             continuation = {"resume_id": saved.session_id} if saved else {}
-            child = await sup.spawn(
-                session_id=sid,
-                name=name,
-                worktree=info.path,
-                branch=info.branch,
-                assistant_id=(saved.assistant_id if saved else self.assistant_id) or "nova-agent",
-                **continuation,
+            pane.start_task = asyncio.create_task(
+                sup.spawn(
+                    session_id=sid,
+                    name=name,
+                    worktree=info.path,
+                    branch=info.branch,
+                    assistant_id=(saved.assistant_id if saved else self.assistant_id) or "nova-agent",
+                    **continuation,
+                )
             )
+            child = await pane.start_task
         except asyncio.CancelledError:
             getattr(self, "_pending_task_for", {}).pop(sid, None)
             pane.status = "exited"
@@ -4245,6 +4254,10 @@ class NovaApp(App):
             return None
 
         pane.child = child
+        if pane not in self._panes:
+            # A close can hide the tab while process creation is still pending.
+            # Its cleanup worker waits for start_task and owns shutdown.
+            return None
         await self._open_remote_topics(pane)
         note = Text()
         note.append(f"◆ you are now in session “{name}”\n", style="bold #9ece6a")
@@ -4475,7 +4488,32 @@ class NovaApp(App):
             self._log(Text("The main session can't be closed.", style="#e0af68"))
             return
 
-        await self._supervisor().close(pane.sid)
+        if pane not in self._panes:
+            return
+        index = self._panes.index(pane)
+        self._panes.remove(pane)
+        if pane is self._active_pane:
+            self._tab_switch_generation += 1
+            async with self._pane_render_lock:
+                self._select_pane(self._root_pane)
+        self._refresh_tabs()
+        # Hide immediately; graceful shutdown and Git cleanup may take seconds.
+        # Keep the transcript mounted until shutdown succeeds so a failed stop
+        # can restore a visible, controllable tab.
+        try:
+            if pane.start_task is not None:
+                await asyncio.shield(asyncio.gather(pane.start_task, return_exceptions=True))
+            child = await self._supervisor().close(pane.sid)
+            if child is not None and child.alive:
+                raise RuntimeError("the session process is still running")
+        except Exception as exc:  # noqa: BLE001 — restore control on failed shutdown
+            pending = self._tab_mounts.get(pane.sid)
+            if pending is not None and not pending.is_done:
+                await pending
+            self._panes.insert(min(index, len(self._panes)), pane)
+            self._refresh_tabs()
+            self._log(Text(f"✖ could not close session “{pane.title}”: {exc}", style="bold #f7768e"))
+            return
         while pane.remote_turns:
             await self._finish_remote_turn(pane, error=f"✖ Session “{pane.title}” was closed.")
         await self._close_remote_topics(pane)
@@ -4490,14 +4528,8 @@ class NovaApp(App):
                 if repo is not None:
                     outcome = await asyncio.to_thread(wt.remove_worktree, pane.worktree, repo=repo)
 
-        if pane in self._panes:
-            self._panes.remove(pane)
         with contextlib.suppress(Exception):
             await pane.scroll.remove()
-
-        if pane is self._active_pane:
-            await self._switch_to(self._root_pane)
-        self._refresh_tabs()
 
         note = f"◆ session “{pane.title}” closed"
         if outcome:

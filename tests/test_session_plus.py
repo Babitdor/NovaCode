@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
@@ -82,7 +83,7 @@ async def test_cross_closes_its_session_without_selecting_other_tabs(*, active: 
     from novacode_cli.tui.session_tab import SessionTab
 
     app = _app()
-    supervisor = SimpleNamespace(close=AsyncMock())
+    supervisor = SimpleNamespace(close=AsyncMock(return_value=None))
     app._session_supervisor = supervisor
     async with app.run_test(size=(120, 42)) as pilot:
         child = await _add_pane(app)
@@ -115,3 +116,68 @@ async def test_clicking_tab_label_still_selects_session():
         await pilot.click(f"#{child.sid}", offset=(2, 0))
         await app.workers.wait_for_complete()
         assert app._active_pane is child
+
+
+@pytest.mark.timeout(30)
+async def test_cross_disappears_before_slow_worker_shutdown():
+    app = _app()
+    closing = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def close(_sid: str) -> None:
+        closing.set()
+        await finish.wait()
+
+    app._session_supervisor = SimpleNamespace(close=AsyncMock(side_effect=close))
+    async with app.run_test(size=(120, 42)) as pilot:
+        child = await _add_pane(app)
+        await app._switch_to(child)
+        await pilot.pause()
+        tab = app.query_one(f"#{child.sid}")
+        await pilot.click(tab, offset=(tab.size.width - 2, 0))
+        await asyncio.wait_for(closing.wait(), timeout=2)
+        try:
+            await pilot.pause()
+            assert not app.query(f"#{child.sid}"), "the tab waited for process shutdown"
+            assert app._active_pane is app._root_pane
+        finally:
+            finish.set()
+            await app.workers.wait_for_complete()
+
+
+@pytest.mark.timeout(30)
+async def test_failed_shutdown_restores_tab():
+    app = _app()
+    app._session_supervisor = SimpleNamespace(close=AsyncMock(side_effect=OSError("stop failed")))
+    async with app.run_test(size=(120, 42)) as pilot:
+        child = await _add_pane(app)
+        await app._switch_to(child)
+        await app._close_session(child)
+        await pilot.pause()
+        assert child in app._panes
+        assert app.query(f"#{child.sid}")
+        assert child.scroll.is_mounted
+        await app._switch_to(child)
+        assert app._active_pane is child
+
+
+@pytest.mark.timeout(30)
+async def test_close_waits_for_startup_after_hiding_tab():
+    app = _app()
+    finish = asyncio.Event()
+    supervisor = SimpleNamespace(close=AsyncMock(return_value=None))
+    app._session_supervisor = supervisor
+    async with app.run_test(size=(120, 42)) as pilot:
+        child = await _add_pane(app)
+        child.start_task = asyncio.create_task(finish.wait())
+        await app._switch_to(child)
+        worker = app.run_worker(app._close_session(child))
+        try:
+            await pilot.pause()
+            assert not app.query(f"#{child.sid}")
+            assert app._active_pane is app._root_pane
+            supervisor.close.assert_not_awaited()
+        finally:
+            finish.set()
+            await worker.wait()
+        supervisor.close.assert_awaited_once_with(child.sid)
