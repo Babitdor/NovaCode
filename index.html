@@ -143,6 +143,23 @@ body::before{
 #sky{position:fixed; inset:0; width:100%; height:100%; z-index:-1; pointer-events:none; display:none}
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]) #sky{display:block}}
 :root[data-theme="dark"] #sky{display:block}
+/* Interactive twinkling starfield (dark mode only) */
+.starfield{
+  position:fixed;
+  inset:0;
+  width:100vw;
+  height:100dvh;
+  z-index:-1;
+  pointer-events:none;
+  display:none;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]) .starfield{display:block}
+}
+:root[data-theme="dark"] .starfield{display:block}
+@media (prefers-reduced-motion: reduce){
+  .starfield{display:none !important}
+}
 /* CRT scanlines: texture, so they sit behind the content (-1) with the sky,
    never over it. Above the content they dim text and the focus ring and cross
    the skip link — decoration does not belong on top of either. */
@@ -920,6 +937,7 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
 <body>
 <a class="skip" href="#main">Skip to content</a>
 <canvas id="sky" aria-hidden="true"></canvas>
+<canvas id="starfield" class="starfield" aria-hidden="true"></canvas>
 
 <header class="nav" id="nav">
   <div class="wrap nav-row">
@@ -2437,6 +2455,91 @@ status: awaiting your decision">
       if (motion.addEventListener) motion.addEventListener("change", tiltMotion);
       else if (motion.addListener) motion.addListener(tiltMotion);
     }
+  }
+
+  /* ---------- interactive twinkling stars (dark mode) ---------- */
+  var sf = document.getElementById('starfield');
+  if (sf && sf.getContext && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    var sctx2 = sf.getContext('2d');
+    var stars2 = [];
+    var mx2 = window.innerWidth / 2, my2 = window.innerHeight / 2, tmx2 = mx2, tmy2 = my2;
+    var sraf2 = 0;
+    var seed3 = 123456789;
+    function r3(){ seed3 = (seed3 * 1103515245 + 12345) & 0x7fffffff; return seed3 / 0x80000000; }
+    function sz3(){
+      var w = window.innerWidth, h = window.innerHeight;
+      var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      sf.width = Math.round(w * dpr);
+      sf.height = Math.round(h * dpr);
+      sf.style.width = w + 'px';
+      sf.style.height = h + 'px';
+      sctx2.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    function n3(){ return window.getComputedStyle(sf).display !== 'none'; }
+    function init3(){
+      var w = window.innerWidth, h = window.innerHeight;
+      var cnt = Math.min(320, Math.max(110, Math.round((w * h) / 6500)));
+      stars2 = [];
+      for (var i = 0; i < cnt; i++) {
+        stars2.push({ x: r3() * w, y: r3() * h, br: 0.25 + r3() * 1.4, ph: r3() * Math.PI * 2, sp: 0.0004 + r3() * 0.0018, tw: 0.35 + r3() * 0.65, par: 0.06 + r3() * 0.6, burst: 0 });
+      }
+    }
+    function draw3(t){
+      if (!n3()) { sctx2.clearRect(0, 0, window.innerWidth, window.innerHeight); return; }
+      var w = window.innerWidth, h = window.innerHeight;
+      sctx2.clearRect(0, 0, w, h);
+      tmx2 += (mx2 - tmx2) * 0.07;
+      tmy2 += (my2 - tmy2) * 0.07;
+      for (var i = 0; i < stars2.length; i++) {
+        var st = stars2[i];
+        if (st.burst > 0) st.burst -= 0.018;
+        var px = (tmx2 - w / 2) * st.par * 0.016;
+        var py = (tmy2 - h / 2) * st.par * 0.016;
+        var twv = Math.sin(st.ph + t * st.sp);
+        var a = (0.12 + st.tw * (0.4 + 0.6 * Math.max(0, twv))) + st.burst * 0.9;
+        if (a < 0) a = 0; if (a > 0.98) a = 0.98;
+        var rr = st.br * (0.6 + 0.9 * Math.max(0, twv)) + st.burst * 1.0;
+        sctx2.globalAlpha = a;
+        sctx2.fillStyle = 'rgba(220,225,255,' + a + ')';
+        sctx2.beginPath();
+        sctx2.arc(st.x + px, st.y + py, rr, 0, Math.PI * 2);
+        sctx2.fill();
+        if (twv > 0.86 || st.burst > 0.25) {
+          sctx2.globalAlpha = a * 0.32;
+          sctx2.beginPath();
+          sctx2.arc(st.x + px, st.y + py, rr * 2.8, 0, Math.PI * 2);
+          sctx2.fill();
+        }
+      }
+      sctx2.globalAlpha = 1;
+    }
+    function loop3(t){ draw3(t); sraf2 = window.requestAnimationFrame(loop3); }
+    function start3(){
+      if (sraf2) { window.cancelAnimationFrame(sraf2); sraf2 = 0; }
+      sz3();
+      if (!n3()) { try { sctx2.clearRect(0, 0, window.innerWidth, window.innerHeight); } catch(e){} return; }
+      init3();
+      loop3(0);
+    }
+    window.addEventListener('mousemove', function(e){ mx2 = e.clientX; my2 = e.clientY; }, { passive: true });
+    sf.style.pointerEvents = 'auto';
+    sf.addEventListener('click', function(){
+      if (!n3()) return;
+      for (var j = 0; j < 18; j++) {
+        var idx = Math.floor(r3() * stars2.length);
+        var st = stars2[idx];
+        if (!st) continue;
+        st.burst = 1.0;
+        setTimeout((function(s){ return function(){ s.burst = Math.max(0, s.burst - 0.5); }; })(st), 40);
+        setTimeout((function(s){ return function(){ s.burst = 0; }; })(st), 380);
+      }
+    }, { passive: true });
+    window.addEventListener('resize', start3, { passive: true });
+    document.addEventListener('themechange', start3);
+    var md3 = window.matchMedia('(prefers-color-scheme: dark)');
+    if (md3.addEventListener) md3.addEventListener('change', start3);
+    else if (md3.addListener) md3.addListener(start3);
+    start3();
   }
 })();
 </script>
