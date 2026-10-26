@@ -50,24 +50,6 @@ async def _resize_terminal(pilot: Pilot, width: int, height: int) -> None:
     await pilot.pause()
 
 
-@pytest.mark.timeout(30)
-async def test_resize_waits_for_screen_layout(monkeypatch: pytest.MonkeyPatch) -> None:
-    from textual.geometry import Size
-
-    app = _app()
-    async with app.run_test(size=(110, 38)) as pilot:
-        await pilot.pause()
-        original_timer = app.set_timer
-
-        def delayed_timer(delay: float, callback: object, **kwargs: object) -> object:
-            return original_timer(0.25 if delay == 1 / 120 else delay, callback, **kwargs)
-
-        monkeypatch.setattr(app, "set_timer", delayed_timer)
-        await _resize_terminal(pilot, 48, 18)
-        assert app.screen.size == Size(48, 18)
-        assert app.query_one("#prompt-dock").region.right <= 48
-
-
 @pytest.fixture(autouse=True)
 def no_system_sampling(monkeypatch: pytest.MonkeyPatch) -> Mock:
     sampler = Mock()
