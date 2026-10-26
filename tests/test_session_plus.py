@@ -10,10 +10,75 @@ from unittest.mock import AsyncMock
 import pytest
 from textual.widgets import Button, Tabs
 
+from novacode_cli.tui.home import HOME_STYLES
 from tests.test_tui_sessions import _add_pane, _app, isolated_session_config  # noqa: F401
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+@pytest.mark.timeout(45)
+@pytest.mark.parametrize("style", [key for _, key in HOME_STYLES])
+async def test_session_chrome_stays_outside_every_home_layout(
+    style: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    from novacode_cli.sessions import worktree
+    from novacode_cli.tui.widgets import PromptInput
+    from tests.test_tui_home_preferences import _resize_terminal
+
+    monkeypatch.setattr(
+        worktree,
+        "create_worktree",
+        lambda *_args, **_kwargs: SimpleNamespace(path=tmp_path, branch=None, warnings=[]),
+    )
+    app = _app()
+    app._session_supervisor = SimpleNamespace(
+        at_capacity=lambda: False,
+        spawn=AsyncMock(return_value=object()),
+        send_prompt=AsyncMock(return_value="p1"),
+        close=AsyncMock(return_value=None),
+    )
+    async with app.run_test(size=(160, 50)) as pilot:
+        app._set_home_style(style)
+        await pilot.pause()
+        bar = app.query_one("#session-tab-bar")
+        assert bar.region.y == 0
+        assert bar.region.width == app.size.width
+        if style == "centered":
+            header = app.query_one("#home-style-header")
+            dock = app.query_one("#prompt-dock")
+            assert abs(header.region.x * 2 + header.region.width - app.size.width) <= 1
+            assert dock.region.x == header.region.x
+            assert dock.region.width == header.region.width
+        await pilot.click("#new-session")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        child = app._active_pane
+        assert child is not app._root_pane
+        assert app._home_visible
+        assert app.screen.has_class(f"{style}-ui")
+        assert bar.region.y == 0
+        (tmp_path / f"{style}-new.svg").write_text(app.export_screenshot(), encoding="utf-8")
+        for size in ((48, 18), (160, 50)):
+            await _resize_terminal(pilot, *size)
+            assert bar.region.y == 0
+            assert bar.region.width == app.size.width
+            plus = app.query_one("#new-session")
+            prompt = app.query_one("#prompt", PromptInput)
+            assert 0 <= plus.region.x < plus.region.right <= app.size.width
+            assert bar.region.bottom <= prompt.region.y < prompt.region.bottom <= app.size.height
+        await app._switch_to(app._root_pane)
+        await app._switch_to(child)
+        await app._dispatch_to_child(child, "hello")
+        await pilot.pause()
+        assert not app._home_visible
+        assert bar.region.y == 0
+        assert app.query_one("#workspace-layout").region.height > 0
+        await app._close_session(child)
+        await pilot.pause()
+        assert app._active_pane is app._root_pane
+        assert app._home_visible
+        assert bar.region.y == 0
 
 
 @pytest.mark.timeout(30)

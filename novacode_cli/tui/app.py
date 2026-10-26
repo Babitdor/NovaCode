@@ -1478,7 +1478,7 @@ class NovaApp(App):
        and a 1fr child inside an `auto` parent expands to the whole screen — the
        tab bar then ate ~30 rows and crushed #panes (every session pane, root
        included) to a 1-row sliver, so nothing rendered once the bar appeared. */
-    #session-tab-bar { height: 3; width: 100%; }
+    #session-tab-bar { dock: top; height: 3; width: 100%; }
     #session-tabs { height: 3; width: 1fr; }
     #new-session {
         width: 3; min-width: 3; height: 1; min-height: 1;
