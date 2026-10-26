@@ -2540,6 +2540,7 @@ class ThemeScreen(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         from novacode_cli.config.nova_config import NovaConfig
+        from novacode_cli.tui.diff_preview import DIFF_PREVIEW_STYLES, diff_preview_style
         from novacode_cli.tui.home import HOME_STYLES, home_style
 
         config = NovaConfig()
@@ -2560,6 +2561,18 @@ class ThemeScreen(ModalScreen[None]):
                     "Styles change layout, borders, and spacing. Color themes apply independently.",
                     classes="theme-description",
                 )
+                yield Static("Diff preview")
+                yield Select(
+                    DIFF_PREVIEW_STYLES,
+                    value=diff_preview_style(config.get("diff_preview_style")),
+                    allow_blank=False,
+                    id="diff-preview-select",
+                )
+                yield Static(
+                    "Side by side shows Before / After with line numbers. "
+                    "Narrow previews use Classic automatically.",
+                    classes="theme-description",
+                )
                 with Horizontal():
                     yield Switch(
                         value=config.get("home_animations_enabled", True) is True,
@@ -2577,6 +2590,16 @@ class ThemeScreen(ModalScreen[None]):
                 yield Button("Close", id="close")
 
     def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id == "diff-preview-select" and event.value is not Select.BLANK:
+            from novacode_cli.config.nova_config import NovaConfig
+            from novacode_cli.tui.diff_preview import diff_preview_style
+
+            style = diff_preview_style(event.value)
+            config = NovaConfig()
+            if config.get("diff_preview_style", "classic") != style:
+                config.set("diff_preview_style", style)
+            self.app._set_diff_preview_style(style)
+            return
         if event.select.id != "home-style-select" or event.value is Select.BLANK:
             return
         from novacode_cli.config.nova_config import NovaConfig

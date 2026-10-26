@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     # Annotation-only: the clipboard image is passed straight to the tracker, so
     # the module is never imported at runtime on this path.
     from novacode_cli.audio.downloads import ModelDownload
+    from novacode_cli.file_ops import FileOperationRecord
     from novacode_cli.image_utils import ImageData
     from novacode_cli.memory.dream_gates import GateReport
     from novacode_cli.session.history_tree import HistoryTree
@@ -82,6 +83,7 @@ from novacode_cli.tui.home import (
     system_text,
 )
 from novacode_cli.tui.resume_picker import RESUME_CSS
+from novacode_cli.tui.diff_preview import DiffPreview, diff_preview_style
 
 logger = logging.getLogger(__name__)
 
@@ -6761,15 +6763,10 @@ class NovaApp(App):
 
     def _fileop_body(self, rec, full_output: str) -> Text:
         """Native body for a file-op component: diff for writes/edits, content for reads."""
-        diff = getattr(rec, "diff", None) if rec is not None else None
+        diff = self._fileop_diff(rec)
         path = getattr(rec, "display_path", None) if rec is not None else None
         if diff:
             return self._render_diff_text(diff, path=path)
-        after = getattr(rec, "after_content", None) if rec is not None else None
-        if after:  # write with no diff — show the new content as additions
-            return self._render_diff_text(
-                "\n".join("+" + ln for ln in after.splitlines()), path=path
-            )
         out = (
             full_output
             or (getattr(rec, "read_output", None) if rec is not None else None)
@@ -6778,6 +6775,19 @@ class NovaApp(App):
         if len(out) > 6000:
             out = out[:6000] + "\n… (truncated)"
         return Text(out)
+
+    @staticmethod
+    def _fileop_diff(rec: FileOperationRecord | None) -> str | None:
+        """Use the recorded change, including writes without a unified diff."""
+        diff = getattr(rec, "diff", None)
+        after = getattr(rec, "after_content", None)
+        return diff or ("\n".join("+" + line for line in after.splitlines()) if after else None)
+
+    def _set_diff_preview_style(self, style: str) -> None:
+        """Apply the selected diff layout to current and hidden session previews."""
+        self._diff_preview_style = diff_preview_style(style)
+        for preview in self.query(DiffPreview):
+            preview.set_preview_style(self._diff_preview_style)
 
     def _fileop_summary(self, rec) -> str:
         """A concise '+A / -D' (or 'Read N lines') summary for a file-op title."""
@@ -12067,6 +12077,7 @@ class NovaApp(App):
 
         config = NovaConfig()
         self._ui_preferences_config = config
+        self._diff_preview_style = diff_preview_style(config.get("diff_preview_style"))
         self._caveman_enabled = config.get_caveman_enabled()
         self._code_mode_enabled = config.get_code_mode_enabled()
         self._home_style = home_style(
@@ -17956,7 +17967,7 @@ class NovaApp(App):
                     )
                     comp = Collapsible(body, hint, title=f"{base}  · running…", collapsed=False)
                 else:
-                    body = Static("", classes="toolbody")
+                    body = DiffPreview(classes="toolbody")
                     # Starts collapsed for file diffs
                     comp = Collapsible(body, title=f"{base}  · running…", collapsed=True)
                 comp.add_class("tool")
@@ -18008,7 +18019,14 @@ class NovaApp(App):
                 # to show what changed, so a collapsed diff defeats the purpose.
                 if errored or getattr(rec, "diff", None):
                     comp.collapsed = False
-                body.update(self._fileop_body(rec, e.full_output))
+                classic = self._fileop_body(rec, e.full_output)
+                diff = self._fileop_diff(rec)
+                if isinstance(body, DiffPreview) and diff:
+                    body.set_diff(
+                        diff, getattr(rec, "display_path", None), classic, self._diff_preview_style
+                    )
+                else:
+                    body.update(classic)
             else:
                 self._mark_tool_group_result(
                     e.call_id, is_error=errored, detail=self._fileop_summary(rec)

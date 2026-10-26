@@ -10,6 +10,8 @@
 
 ## Session tabs and interface layouts
 
+- Add an opt-in experimental side-by-side diff preview in `/themes`, with line
+  numbers, syntax highlighting, theme-aware change shading, and a narrow-screen fallback.
 - Add a `+` button for opening a blank session with the home screen and focused input.
 - Add close controls to extra session tabs. Dismiss tabs immediately while worker
   shutdown and worktree cleanup continue; restore tabs when shutdown fails.

@@ -192,7 +192,7 @@ async def test_reference_layouts_use_the_real_composer_and_leave_room_for_it(
             assert header.region.x == dock.region.x
             assert abs((header.region.y + dock.region.bottom) / 2 - app.size.height / 2) <= 2
         else:
-            assert header.region.y <= 2
+            assert header.region.y == app.query_one("#session-tab-bar").region.bottom
             assert dock.region.y >= app.size.height - 10
         prompt = app.query_one("#prompt", PromptInput)
         prompt.value = "First line\nSecond line"

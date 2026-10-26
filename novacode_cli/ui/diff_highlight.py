@@ -72,8 +72,8 @@ def lexer_for_path(path: str | None) -> Lexer | None:
         return None
 
 
-@lru_cache(maxsize=1)
-def _token_style_map() -> dict[str, str]:
+@lru_cache(maxsize=4)
+def _token_style_map(theme: str = "monokai") -> dict[str, str]:
     """Build a ``{pygments_token_type: rich_style}`` map from the default style.
 
     Uses Pygments' own style definitions so token colours match the lexer's
@@ -82,7 +82,7 @@ def _token_style_map() -> dict[str, str]:
     """
     from pygments.styles import get_style_by_name
 
-    style = get_style_by_name("monokai")
+    style = get_style_by_name(theme)
     mapping: dict[str, str] = {}
     for token_type, style_def in style.styles.items():
         # Key by the dotted token string (e.g. "Token.Keyword") so lookups in
@@ -102,12 +102,15 @@ def _token_style_map() -> dict[str, str]:
     return mapping
 
 
-def highlight_line(code: str, lexer: Lexer | None) -> list[tuple[str, str]]:
+def highlight_line(
+    code: str, lexer: Lexer | None, *, theme: str = "monokai"
+) -> list[tuple[str, str]]:
     """Tokenize a single line of code into ``(text, rich_style)`` spans.
 
     Args:
         code: The line content **without** its diff marker.
         lexer: A Pygments lexer, or ``None`` for no highlighting.
+        theme: Pygments palette, defaulting to the existing dark syntax colors.
 
     Returns:
         A list of ``(text, style)`` pairs. When ``lexer`` is ``None`` or
@@ -120,7 +123,7 @@ def highlight_line(code: str, lexer: Lexer | None) -> list[tuple[str, str]]:
     try:
         from pygments.token import Token
 
-        style_map = _token_style_map()
+        style_map = _token_style_map(theme)
         spans: list[tuple[str, str]] = []
         for token_type, value in lexer.get_tokens(code):
             if not value:

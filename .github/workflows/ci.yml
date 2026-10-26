@@ -57,6 +57,7 @@ jobs:
           novacode_cli/agents/caveman.py
           novacode_cli/agents/caveman_support.py
           novacode_cli/tui/caveman_screen.py
+          novacode_cli/tui/diff_preview.py
           novacode_cli/agents/tool_search_variants.py
           novacode_cli/mcp/generic.py
           novacode_cli/mcp/code_mode.py
@@ -131,6 +132,8 @@ jobs:
           tests/test_essential_session_tools.py
           tests/test_tab_mentions.py
           tests/test_session_plus.py
+          tests/test_diff_preview.py
+          tests/test_diff_highlight.py
           tests/test_context_snapshot.py
           tests/test_remote_cron.py
           tests/test_rootapp_remote.py
