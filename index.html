@@ -891,9 +891,9 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
 }
 
 /* ---------- 1081-1164px: the bar is one link too wide, so tighten the gaps ----------
-   Nine links, Source, Install and the theme toggle need ~1,160px at the 20/18 gaps above.
-   The off-canvas menu only takes over at 1080, so this band trims the gaps instead of
-   letting the row push past the right edge. */
+   Nine links, the GitHub mark, Install and the theme toggle need ~1,160px at the 20/18
+   gaps above. The off-canvas menu only takes over at 1080, so this band trims the gaps
+   instead of letting the row push past the right edge. */
 @media (min-width: 1081px) and (max-width: 1164px){
   /* Measured at 1081: 12/12 is the widest pair with 0px over. */
   .nav-row{gap:12px}
@@ -1008,17 +1008,39 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
   transition:border-color .2s,color .2s,transform .2s var(--ease);
 }
 .theme-btn[hidden]{display:none}
+/* The source link is the GitHub mark alone: the label lives in aria-label/title so
+   the row keeps the width the word "Source" used to take. */
+.gh-link{
+  display:inline-flex;align-items:center;justify-content:center;flex:none;
+  width:38px;height:38px;border-radius:var(--r-press);
+  border:1px solid transparent;background:transparent;color:var(--text);
+  text-decoration:none;
+  transition:border-color .2s,color .2s,transform .2s var(--ease);
+}
+.gh-link svg{width:19px;height:19px;display:block}
+@media (hover: hover){.gh-link:hover{border-color:var(--accent);color:var(--accent)}.gh-link:hover svg{scale:1.06}}
+.gh-link:active{transform:scale(.94)}
+.gh-link:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .theme-btn svg{width:17px;height:17px;transition:rotate .5s var(--ease);animation:theme-icon-in .45s var(--ease)}
 .theme-btn .i-sun,.theme-btn[aria-pressed="true"] .i-moon{display:none}
 .theme-btn[aria-pressed="true"] .i-sun{display:block}
 @keyframes theme-icon-in{from{opacity:0; rotate:-35deg; scale:.72}to{opacity:1; rotate:0deg; scale:1}}
 @media (hover: hover){.theme-btn:hover{border-color:var(--accent);color:var(--accent)}.theme-btn:hover svg{rotate:-30deg}}
 .theme-btn:active{transform:scale(.94)}
-@media (max-width: 1080px){.nav .btn-primary{margin-left:auto}.menu-btn{margin-left:0}}
-@media (max-width: 900px){.nav-row .theme-btn{width:44px;height:44px}}
+@media (max-width: 1080px){
+  /* The section links leave the row here, so the GitHub mark takes the auto margin
+     that keeps the controls grouped at the right edge. */
+  .nav .gh-link{margin-left:auto}
+  .nav .btn-primary{margin-left:0}
+  .menu-btn{margin-left:0}
+}
+@media (max-width: 900px){.nav-row .theme-btn, .nav-row .gh-link{width:44px;height:44px}}
 /* A phone bar holds brand, Install, theme and menu: the menu keeps its word for screen
-   readers and shows only its icon, so all four fit down to 360px. */
+   readers and shows only its icon, so all four fit down to 360px. The GitHub mark is a
+   fifth control, so it gives way below 520px and the footer link carries the source. */
 @media (max-width: 520px){
+  .nav .gh-link{display:none}
+  .nav .btn-primary{margin-left:auto}
   .menu-btn{width:44px; padding:0; justify-content:center}
   .menu-btn span{position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap}
 }
@@ -1065,7 +1087,7 @@ footer{border-top:1px solid var(--line); padding-block:28px 72px}
       <a class="nav-secondary" href="#trust">trust</a>
       <a href="#faq">faq</a>
     </nav>
-    <a class="btn btn-quiet" href="https://github.com/Babitdor/NovaCode">Source</a>
+    <a class="gh-link" href="https://github.com/Babitdor/NovaCode" aria-label="Source on GitHub" title="Source on GitHub"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg></a>
     <a class="btn btn-primary" href="#install">Install</a>
     <button class="theme-btn" type="button" data-theme-toggle aria-pressed="false" aria-label="Dark theme" hidden><svg class="i-moon" viewBox="0 0 256 256" aria-hidden="true"><path fill="currentColor" d="M233.54,142.23a8,8,0,0,0-8-2,88.08,88.08,0,0,1-109.8-109.8,8,8,0,0,0-10-10,104.84,104.84,0,0,0-52.91,37A104,104,0,0,0,136,224a103.09,103.09,0,0,0,62.52-20.88,104.84,104.84,0,0,0,37-52.91A8,8,0,0,0,233.54,142.23ZM188.9,190.36A88,88,0,0,1,65.66,67.11a89,89,0,0,1,31.4-26A106,106,0,0,0,96,56,104.11,104.11,0,0,0,200,160a106,106,0,0,0,14.92-1.06A89,89,0,0,1,188.9,190.36Z"/></svg><svg class="i-sun" viewBox="0 0 256 256" aria-hidden="true"><path fill="currentColor" d="M120,40V16a8,8,0,0,1,16,0V40a8,8,0,0,1-16,0Zm72,88a64,64,0,1,1-64-64A64.07,64.07,0,0,1,192,128Zm-16,0a48,48,0,1,0-48,48A48.05,48.05,0,0,0,176,128ZM58.34,69.66A8,8,0,0,0,69.66,58.34l-16-16A8,8,0,0,0,42.34,53.66Zm0,116.68-16,16a8,8,0,0,0,11.32,11.32l16-16a8,8,0,0,0-11.32-11.32ZM192,72a8,8,0,0,0,5.66-2.34l16-16a8,8,0,0,0-11.32-11.32l-16,16A8,8,0,0,0,192,72Zm5.66,114.34a8,8,0,0,0-11.32,11.32l16,16a8,8,0,0,0,11.32-11.32ZM48,128a8,8,0,0,0-8-8H16a8,8,0,0,0,0,16H40A8,8,0,0,0,48,128Zm80,80a8,8,0,0,0-8,8v24a8,8,0,0,0,16,0V216A8,8,0,0,0,128,208Zm112-88H216a8,8,0,0,0,0,16h24a8,8,0,0,0,0-16Z"/></svg></button>
     <button class="menu-btn" type="button" id="menu-btn" aria-expanded="false" aria-controls="nav-links">

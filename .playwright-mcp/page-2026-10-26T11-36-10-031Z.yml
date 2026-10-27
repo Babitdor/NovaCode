@@ -1,0 +1,959 @@
+- generic [active] [ref=e1]:
+  - link "Skip to content" [ref=e2] [cursor=pointer]:
+    - /url: "#main"
+  - banner [ref=e3]:
+    - generic [ref=e4]:
+      - link "nova @code, back to top" [ref=e5] [cursor=pointer]:
+        - /url: "#top"
+        - generic [ref=e7]: nova
+        - generic [ref=e8]: "@code"
+      - navigation "Sections" [ref=e9]:
+        - link "docs" [ref=e10] [cursor=pointer]:
+          - /url: docs/index.html
+        - link "changelog" [ref=e11] [cursor=pointer]:
+          - /url: changelog/index.html
+        - link "memory" [ref=e12] [cursor=pointer]:
+          - /url: "#memory"
+        - link "council" [ref=e13] [cursor=pointer]:
+          - /url: "#council"
+        - link "sessions" [ref=e14] [cursor=pointer]:
+          - /url: "#sessions"
+        - link "faq" [ref=e15] [cursor=pointer]:
+          - /url: "#faq"
+      - link "Source" [ref=e16] [cursor=pointer]:
+        - /url: https://github.com/Babitdor/NovaCode
+      - link "❯ Install" [ref=e17] [cursor=pointer]:
+        - /url: "#install"
+      - button "Dark theme" [ref=e18] [cursor=pointer]
+  - main [ref=e21]:
+    - generic [ref=e22]:
+      - 'img "Nova''s workspace: a coder at a laptop by a tall window over the city, surrounded by floating code panes, a crescent moon and a glowing cat beside a stack of books." [ref=e25]'
+      - generic [ref=e27]:
+        - paragraph [ref=e28]: A terminal coding assistant with memory you can explore and workflows you can control.
+        - generic [ref=e29]:
+          - paragraph [ref=e30]:
+            - generic [aria-hidden] [ref=e31]: ❯
+            - generic: nova
+          - link "❯ Install Nova" [ref=e33] [cursor=pointer]:
+            - /url: "#install"
+          - link "Source" [ref=e36] [cursor=pointer]:
+            - /url: https://github.com/Babitdor/NovaCode
+        - generic [ref=e37]:
+          - generic [ref=e38]: READY
+          - generic [ref=e39]: ~/your-repo
+          - generic [ref=e40]: main
+          - generic [ref=e41]: ctx 0%
+    - generic [ref=e43]:
+      - generic [ref=e44]:
+        - paragraph [ref=e45]:
+          - generic [aria-hidden] [ref=e46]: ❯
+          - generic [ref=e47]: man nova
+        - heading "It keeps notes in Markdown. It asks before it edits." [level=1] [ref=e48]
+        - paragraph [ref=e49]: Nova is a coding agent for the terminal. Its memory is a wiki of Markdown pages you can read, search and delete. Its plans wait for your approval. Its sessions run side by side, and its models are yours to pick, hosted or local.
+        - generic [ref=e50]:
+          - link "❯ Install Nova" [ref=e51] [cursor=pointer]:
+            - /url: "#install"
+          - link "Open the memory" [ref=e54] [cursor=pointer]:
+            - /url: "#memory"
+      - generic [ref=e56]:
+        - generic [ref=e61]: contents
+        - generic [ref=e63]:
+          - generic [ref=e64]:
+            - term [ref=e65]:
+              - link "memory" [ref=e66] [cursor=pointer]:
+                - /url: "#memory"
+            - definition [ref=e67]: wiki, /dream
+          - generic [ref=e68]:
+            - term [ref=e69]:
+              - link "planning" [ref=e70] [cursor=pointer]:
+                - /url: "#council"
+            - definition [ref=e71]: /council, plan mode
+          - generic [ref=e72]:
+            - term [ref=e73]:
+              - link "discussion" [ref=e74] [cursor=pointer]:
+                - /url: "#web-council"
+            - definition [ref=e75]: /council web
+          - generic [ref=e76]:
+            - term [ref=e77]:
+              - link "agents" [ref=e78] [cursor=pointer]:
+                - /url: "#agents"
+            - definition [ref=e79]: "@name, background"
+          - generic [ref=e80]:
+            - term [ref=e81]:
+              - link "code mode" [ref=e82] [cursor=pointer]:
+                - /url: "#code-mode"
+            - definition [ref=e83]: MCPCode
+          - generic [ref=e84]:
+            - term [ref=e85]:
+              - link "sessions" [ref=e86] [cursor=pointer]:
+                - /url: "#sessions"
+            - definition [ref=e87]: tabs, worktrees
+          - generic [ref=e88]:
+            - term [ref=e89]:
+              - link "cowork" [ref=e90] [cursor=pointer]:
+                - /url: "#cowork"
+            - definition [ref=e91]: /cowork
+          - generic [ref=e92]:
+            - term [ref=e93]:
+              - link "models" [ref=e94] [cursor=pointer]:
+                - /url: "#models"
+            - definition [ref=e95]: /model, Vision, /router
+          - generic [ref=e96]:
+            - term [ref=e97]:
+              - link "remote" [ref=e98] [cursor=pointer]:
+                - /url: "#remote-sessions"
+            - definition [ref=e99]: Telegram, Discord
+          - generic [ref=e100]:
+            - term [ref=e101]:
+              - link "caveman" [ref=e102] [cursor=pointer]:
+                - /url: "#caveman"
+            - definition [ref=e103]: /caveman
+          - generic [ref=e104]:
+            - term [ref=e105]:
+              - link "artifacts" [ref=e106] [cursor=pointer]:
+                - /url: "#artifacts"
+            - definition [ref=e107]: /share artifacts
+          - generic [ref=e108]:
+            - term [ref=e109]:
+              - link "styles, voice" [ref=e110] [cursor=pointer]:
+                - /url: "#terminal"
+            - definition [ref=e111]: /theme, /voice
+          - generic [ref=e112]:
+            - term [ref=e113]:
+              - link "computer" [ref=e114] [cursor=pointer]:
+                - /url: "#computer"
+            - definition [ref=e115]: preview
+          - generic [ref=e116]:
+            - term [ref=e117]:
+              - link "learning" [ref=e118] [cursor=pointer]:
+                - /url: "#trust"
+            - definition [ref=e119]: /learning, /restore
+    - generic [ref=e121]:
+      - generic [ref=e122]:
+        - paragraph [ref=e123]:
+          - generic [aria-hidden] [ref=e124]: ❯
+          - generic [ref=e125]: open memory
+        - heading "Memory you can explore." [level=2] [ref=e126]
+        - paragraph [ref=e127]: Nova stores preferences and topic notes in readable Markdown. A compact home index routes to topic maps and related pages, with project lessons kept scoped. The agent searches for relevant notes and opens their full sources.
+      - generic [ref=e128]:
+        - generic [ref=e133]: memory
+        - generic [ref=e134]:
+          - navigation "Memory files" [ref=e135]:
+            - paragraph [ref=e136]: memories/
+            - list [ref=e137]:
+              - listitem [ref=e138]:
+                - button "INDEX.md" [ref=e139] [cursor=pointer]
+              - listitem [ref=e140]:
+                - button "wiki-nova.md" [ref=e141] [cursor=pointer]
+              - listitem [ref=e142]:
+                - button "wiki-operations.md" [ref=e143] [cursor=pointer]
+            - paragraph [ref=e144]: .nova/
+            - list [ref=e145]:
+              - listitem [ref=e146]:
+                - button "NOVA.md" [ref=e147] [cursor=pointer]
+            - paragraph [ref=e148]: root
+            - list [ref=e149]:
+              - listitem [ref=e150]:
+                - button "agent.md" [ref=e151] [cursor=pointer]
+              - listitem [ref=e152]:
+                - button "HABITS.md" [ref=e153] [cursor=pointer]
+          - article [ref=e154]:
+            - paragraph [ref=e155]: memories/INDEX.md
+            - heading "Memory Wiki" [level=3] [ref=e156]
+            - generic [ref=e157]:
+              - paragraph [ref=e158]: Start with a relevant map or a search. Read the full page, follow useful links, then check dated claims against the active project.
+              - list [ref=e159]:
+                - listitem [ref=e160]:
+                  - button "wiki-nova.md" [ref=e161] [cursor=pointer]
+                  - generic [ref=e162]: runtime, UI and agent architecture
+                - listitem [ref=e163]:
+                  - button "wiki-operations.md" [ref=e164] [cursor=pointer]
+                  - generic [ref=e165]: tools, memory management
+                - listitem [ref=e166]:
+                  - button "agent.md" [ref=e167] [cursor=pointer]
+                  - generic [ref=e168]: standing preferences
+                - listitem [ref=e169]:
+                  - button "HABITS.md" [ref=e170] [cursor=pointer]
+                  - generic [ref=e171]: work checklist
+            - generic [ref=e172]:
+              - generic [ref=e173]: related
+              - button "wiki-nova.md" [ref=e174] [cursor=pointer]
+              - button "wiki-operations.md" [ref=e175] [cursor=pointer]
+              - button "agent.md" [ref=e176] [cursor=pointer]
+              - button "HABITS.md" [ref=e177] [cursor=pointer]
+        - generic [ref=e178]:
+          - button "/dream" [ref=e179] [cursor=pointer]
+          - list
+      - paragraph [ref=e180]
+      - generic [ref=e181]:
+        - generic [ref=e182]:
+          - heading [level=3] [ref=e183]:
+            - text: What
+            - code [ref=e184]: /dream
+            - text: does
+          - paragraph [ref=e185]: It prepares backups and navigation, then asks the agent to consolidate the notes. Maintenance checks local links and preserves topic bodies.
+        - generic [ref=e186]:
+          - heading "What it does not do" [level=3] [ref=e187]
+          - paragraph [ref=e188]: Navigation maintenance does not establish whether a remembered claim is true. A new install starts with its memory scaffold; the wiki develops around accumulated notes.
+      - 'figure "A session orienting itself before it touches a note: list the folder, read the consolidation skill, open the index." [ref=e189]':
+        - 'img "A Nova session: the agent says it will orient itself in the memory directory, then lists the folder, reads the consolidation skill and opens the memory index." [ref=e191]'
+    - generic [ref=e194]:
+      - generic [ref=e195]:
+        - paragraph [ref=e196]:
+          - generic [aria-hidden] [ref=e197]: ❯
+          - generic [ref=e198]: /council split the ingest worker out of the CLI
+        - heading "A council before the code changes." [level=2] [ref=e199]
+        - paragraph [ref=e200]: "Three proposals, written independently. They critique each other anonymously, rank the survivors, and a judge writes the reasoning. You pick one. Selection is not approval: handing the plan to implementation is a separate step."
+      - group "Proposals from the council" [ref=e201]:
+        - 'button "Plan A · 4 of 6 votes Extract a worker process behind a queue Move ingestion into its own process, talk over a queue, keep the CLI as a thin client. Critique: two deployment units to run and a queue to supervise; the split earns its keep only above one worker." [pressed] [ref=e202] [cursor=pointer]':
+          - generic [ref=e203]: Plan A · 4 of 6 votes
+          - generic [ref=e204]: Extract a worker process behind a queue
+          - generic [ref=e205]: Move ingestion into its own process, talk over a queue, keep the CLI as a thin client.
+          - generic [ref=e206]: "Critique: two deployment units to run and a queue to supervise; the split earns its keep only above one worker."
+        - 'button "Plan B · 2 of 6 votes Split the package, share the core Keep one process, cut the module along its seam, share the core package. Critique: the seam that looked clean in the tree is a shared connection pool at runtime." [ref=e207] [cursor=pointer]':
+          - generic [ref=e208]: Plan B · 2 of 6 votes
+          - generic [ref=e209]: Split the package, share the core
+          - generic [ref=e210]: Keep one process, cut the module along its seam, share the core package.
+          - generic [ref=e211]: "Critique: the seam that looked clean in the tree is a shared connection pool at runtime."
+        - 'button "Plan C · 0 of 6 votes Ship the interface first Define the boundary, migrate callers, leave the implementation where it is. Critique: nothing becomes parallel, so the original motivation is untouched." [ref=e212] [cursor=pointer]':
+          - generic [ref=e213]: Plan C · 0 of 6 votes
+          - generic [ref=e214]: Ship the interface first
+          - generic [ref=e215]: Define the boundary, migrate callers, leave the implementation where it is.
+          - generic [ref=e216]: "Critique: nothing becomes parallel, so the original motivation is untouched."
+      - generic [ref=e217]:
+        - status [ref=e218]: ❯ Plan A selected · review the diff against the current CLI, then approve implementation separately.
+        - button "Hand off to implementation" [ref=e219] [cursor=pointer]
+      - paragraph [ref=e220]: Council participants have no bound tools, so they cannot edit the repository. Diverse personas are not necessarily different models, and a vote does not prove the winning plan is correct. It uses several model calls.
+    - generic [ref=e222]:
+      - generic [ref=e223]:
+        - paragraph [ref=e224]:
+          - generic [aria-hidden] [ref=e225]: ❯
+          - generic [ref=e226]: /council web
+        - heading "Then let the advisors argue it out." [level=2] [ref=e227]
+        - paragraph [ref=e228]: The browser workspace runs a three-stage discussion. Advisors analyse a decision brief in parallel, vote on the actual options with reasons, and a chairman streams a synthesis that reconciles the disagreements and keeps the minority concern on the page. You approve, revise or reject it.
+      - generic [ref=e229]:
+        - tablist "Council view" [ref=e230]:
+          - tab "Synthesized consensus" [selected] [ref=e231] [cursor=pointer]
+          - tab "Full debate" [ref=e232] [cursor=pointer]
+        - tabpanel "Synthesized consensus" [ref=e233]:
+          - generic [ref=e234]:
+            - paragraph [ref=e235]: chairman · option 2 · 2 of 3 ballots
+            - paragraph [ref=e236]: Move sign-in to the provider's OAuth flow and keep API keys for headless runs.
+            - paragraph [ref=e237]: "Two advisors weighed user friction above setup cost. The security advisor voted for option 1 and its concern stays in the record: a second credential path is a second thing to revoke."
+            - paragraph [ref=e238]: "Next step: list where API keys are read today before anything is written."
+      - paragraph [ref=e239]: An illustrative discussion. Presets for Code Audit, Architecture and Creative Debate apply without overwriting your saved model assignments, and each advisor's identity, instructions and model can be edited. Votes are advisory, the chairman reads visible analyses rather than hidden reasoning, and consensus does not make an answer correct.
+    - generic [ref=e241]:
+      - generic [ref=e242]:
+        - paragraph [ref=e243]:
+          - generic [aria-hidden] [ref=e244]: ❯
+          - generic [ref=e245]: "@code-explorer where is SessionState built?"
+        - heading "Specialists take the side work." [level=2] [ref=e246]
+        - paragraph [ref=e247]: Delegate exploration, bug fixes, refactors, reviews, security and dependency checks, tests, documentation or browser automation. Results you need now come back in the same turn; independent jobs run in the background while you keep typing.
+      - generic [ref=e248]:
+        - generic [ref=e249]:
+          - generic [ref=e254]: agents
+          - list [ref=e255]:
+            - listitem [ref=e256]:
+              - generic [aria-hidden] [ref=e257]: ✓
+              - generic [ref=e258]: code-explorer
+              - generic [ref=e259]: completed
+              - generic [ref=e260]: 3 call sites found
+            - listitem [ref=e261]:
+              - generic [aria-hidden] [ref=e262]: ●
+              - generic [ref=e263]: test-runner
+              - generic [ref=e264]: running
+              - generic [ref=e265]: tests/agents
+            - listitem [ref=e266]:
+              - generic [aria-hidden] [ref=e267]: ✕
+              - generic [ref=e268]: dependency-audit
+              - generic [ref=e269]: failed
+              - generic [ref=e270]: server unreachable
+        - generic [ref=e271]:
+          - heading "Write your own, by file" [level=3] [ref=e272]
+          - paragraph [ref=e273]:
+            - text: Agent definitions are files with a project or global scope; a project definition overrides a global one with the same name. Each specialist can carry its own selection of skills instead of the whole library.
+            - code [ref=e274]: /agents
+            - text: lists them, and edits apply at the next turn without clearing the conversation.
+          - list [ref=e275]:
+            - listitem [ref=e276]:
+              - text: ✓
+              - code [ref=e277]: "@name"
+              - text: resolves a known agent
+            - listitem [ref=e278]: ✓ bounded retries per model call
+            - listitem [ref=e279]: ✓ plain inline status lines
+      - paragraph [ref=e280]:
+        - text: Background agents need the optional
+        - code [ref=e281]: agents-server
+        - text: install;
+        - code [ref=e282]: /agent-server
+        - text: reports what is missing. Persistent teams are experimental and off by default, under
+        - code [ref=e283]: /settings
+        - text: → Experimental.
+    - generic [ref=e285]:
+      - generic [ref=e286]:
+        - paragraph [ref=e287]:
+          - generic [aria-hidden] [ref=e288]: ❯
+          - generic [ref=e289]: Code Mode on
+        - heading "Ten tool calls, one script." [level=2] [ref=e290]
+        - paragraph [ref=e291]: "Turn on Code Mode under the composer and the agent can combine eligible native and MCP tools in a short JavaScript function: loops, branches, dependent calls and bounded parallel work. Intermediate results stay in the script. Only what it returns reaches the model."
+      - generic [ref=e292]:
+        - generic [ref=e293]: MCPCode
+        - generic [ref=e298]: "// discover a tool, then call it across two folders at once const found = await tools.list(); const spec = await tools.describe(found[0].name); const dirs = [\"src\", \"tests\"]; const runs = await Promise.all(dirs.map(d => tools.call(spec.name, { path: d }))); return runs.map((r, i) => ({ dir: dirs[i], size: r.length })); // only this is returned"
+      - generic [ref=e299]:
+        - generic [ref=e300]:
+          - heading "The same rules apply inside" [level=3] [ref=e301]
+          - paragraph [ref=e302]: Nested calls go through the configured tool inventory, argument validation, middleware and approval decisions, exactly as direct calls do. Memory, code size, run time, call count and concurrency are all bounded, and interrupting the script cancels pending work.
+        - generic [ref=e303]:
+          - heading "Where it stops" [level=3] [ref=e304]
+          - paragraph [ref=e305]: The script has no host imports, filesystem or network of its own. Delegation, questions to you, workspace changes and calls that need interactive approval stay direct. External side effects cannot be rolled back.
+      - paragraph [ref=e306]:
+        - text: Native workflows need no MCP server;
+        - code [ref=e307]: mcp.list
+        - text: ","
+        - code [ref=e308]: mcp.describe
+        - text: and
+        - code [ref=e309]: mcp.call
+        - text: need configured servers. Rarely used schemas load on demand through hybrid, regex or BM25 tool search instead of riding along on every request. The script above is illustrative; arguments follow each tool's own schema.
+    - generic [ref=e311]:
+      - generic [ref=e312]:
+        - paragraph [ref=e313]:
+          - generic [aria-hidden] [ref=e314]: ❯
+          - generic [ref=e315]: "@tab:api-3f2 is my endpoint still 200?"
+        - heading "Project agents that can talk to each other." [level=2] [ref=e316]
+        - paragraph [ref=e317]:
+          - text: Run parallel session tabs and address another live tab with
+          - code [ref=e318]: "@tab:<session-id> <message>"
+          - text: . Requests queue while the recipient is busy. Linked replies appear in both transcripts, with controls to open the other tab or attach the reply to your draft.
+      - generic [ref=e319]:
+        - generic [ref=e320]:
+          - generic [ref=e325]: frontend
+          - list [ref=e326]:
+            - listitem [ref=e327]:
+              - generic [ref=e328]: you
+              - generic [ref=e329]:
+                - text: "@tab:api-3f2 is"
+                - code [ref=e330]: GET /v2/ingest
+                - text: still returning 200 after the queue change?
+            - listitem [ref=e331]:
+              - generic [ref=e332]: ↳ api-3f2
+              - generic [ref=e333]: replied 11:04 · 2 files read
+          - generic [ref=e334]:
+            - paragraph [ref=e335]: ❯Waiting on api-3f2…
+            - button "Open tab" [disabled] [ref=e336]
+            - button "❯ Attach to draft" [disabled] [ref=e337]
+        - generic [ref=e338]:
+          - generic [ref=e343]: api
+          - list [ref=e344]:
+            - listitem [ref=e345]:
+              - generic [ref=e346]: you
+              - generic [ref=e347]: Extract the ingest worker, keep the routes where they are.
+            - listitem [ref=e348]:
+              - generic [ref=e349]: nova
+              - generic [ref=e350]:
+                - text: Editing
+                - code [ref=e351]: ingest/worker.py
+                - text: …
+              - generic [ref=e352]: • 1 message queued while this tab is busy
+            - listitem [ref=e353]:
+              - generic [ref=e354]: nova
+              - generic [ref=e355]: ↩ sent to frontend 11:04
+          - paragraph [ref=e357]: ❯running tests
+      - paragraph [ref=e358]: Messaging connects tabs within one Nova window. Each recipient keeps its project and approval boundaries. Only the explicit message is shared, and pending messages are held in memory.
+      - status [ref=e359]
+      - generic [ref=e360]:
+        - generic [ref=e361]:
+          - heading "Agents can message too" [level=3] [ref=e362]
+          - paragraph [ref=e363]:
+            - text: The
+            - code [ref=e364]: SendMessage
+            - text: tool lets the agent write to another live tab by session ID or tab title, find recipients with
+            - code [ref=e365]: list_sessions
+            - text: ", and keep each reply linked to the request that asked for it."
+            - code [ref=e366]: /tabs
+            - text: launches, switches and closes project sessions, each with its own model, draft and scroll position.
+        - generic [ref=e367]:
+          - heading "Feature work in its own worktree" [level=3] [ref=e368]
+          - paragraph [ref=e369]:
+            - text: Ask Nova to enter a worktree and it creates a fresh branch from
+            - code [ref=e370]: HEAD
+            - text: ", then moves its file and shell tools there. Leaving keeps the branch, commits and uncommitted changes for review, and your original checkout is never touched. Needs Git and at least one commit."
+    - generic [ref=e372]:
+      - generic [ref=e373]:
+        - paragraph [ref=e374]:
+          - generic [aria-hidden] [ref=e375]: ❯
+          - generic [ref=e376]: /cowork write the missing tests for the parser
+        - heading "A desk for work you want to watch." [level=2] [ref=e377]
+        - paragraph [ref=e378]: Cowork opens a local workspace beside the terminal, with folder access, tasks and activity next to the conversation. Grant or revoke a folder while Nova works, answer its questions, or stop the run.
+      - generic [ref=e379]:
+        - generic [ref=e380]:
+          - generic [ref=e385]: workspace
+          - generic [ref=e386]:
+            - generic [ref=e387]:
+              - paragraph [ref=e388]: folders
+              - list [ref=e389]:
+                - listitem [ref=e390]:
+                  - generic [ref=e391]: src/parser/
+                  - generic [ref=e392]: granted
+                - listitem [ref=e393]:
+                  - generic [ref=e394]: tests/
+                  - generic [ref=e395]: granted
+                - listitem [ref=e396]:
+                  - generic [ref=e397]: docs/
+                  - generic [ref=e398]: revoked
+            - generic [ref=e399]:
+              - paragraph [ref=e400]: tasks
+              - list [ref=e401]:
+                - listitem [ref=e402]:
+                  - generic [ref=e403]: cover empty input
+                  - generic [ref=e404]: running
+                - listitem [ref=e405]:
+                  - generic [ref=e406]: cover nested quotes
+                  - generic [ref=e407]: queued
+        - generic [ref=e408]:
+          - generic [ref=e413]: cowork
+          - list [ref=e414]:
+            - listitem [ref=e415]:
+              - generic [ref=e416]: you
+              - generic [ref=e417]: Write the missing tests for the parser.
+            - listitem [ref=e418]:
+              - generic [ref=e419]: nova
+              - generic [ref=e420]:
+                - text: Reading
+                - code [ref=e421]: src/parser/lexer.py
+                - text: ". Two branches have no test: empty input and nested quotes."
+              - generic [ref=e422]: activity · 1 file read, 1 file written
+            - listitem [ref=e423]:
+              - generic [ref=e424]: nova
+              - generic [ref=e425]:
+                - text: Should the nested-quote test live in
+                - code [ref=e426]: tests/test_lexer.py
+                - text: or a new file?
+      - paragraph [ref=e427]: Cowork runs as a local app and is not shared publicly. Folder grants scope what it may touch; they are not an operating-system sandbox. Long task and activity lists scroll on their own, and on a phone the sidebar becomes a drawer.
+    - generic [ref=e429]:
+      - generic [ref=e430]:
+        - paragraph [ref=e431]:
+          - generic [aria-hidden] [ref=e432]: ❯
+          - generic [ref=e433]: /model
+        - heading "Your model choices, across the workflow." [level=2] [ref=e434]
+        - paragraph [ref=e435]:
+          - text: Nova speaks to hosted providers and to local Ollama models.
+          - code [ref=e436]: /model
+          - text: sets the main agent and the delegated roles. Optional
+          - code [ref=e437]: /router
+          - text: profiles pick among configured routes per turn using a decision model, and fall back to the default route when that decision fails.
+      - generic [ref=e438]:
+        - generic [ref=e439]:
+          - term [ref=e440]: Main agent
+          - definition [ref=e441]: the model in the loop
+          - definition [ref=e442]:
+            - code [ref=e443]: claude-sonnet-4-6
+            - text: · edits, verifies, answers
+        - generic [ref=e444]:
+          - term [ref=e445]: Subagents
+          - definition [ref=e446]: delegated work
+          - definition [ref=e447]:
+            - code [ref=e448]: gpt-4.1-mini
+            - text: · searches, test runs, focused jobs
+        - generic [ref=e449]:
+          - term [ref=e450]: Vision
+          - definition [ref=e451]: images, on demand
+          - definition [ref=e452]:
+            - code [ref=e453]: /model
+            - text: → Vision · a text-only main model asks a vision model to inspect an image, and keeps answering
+        - generic [ref=e454]:
+          - term [ref=e455]: Router
+          - definition [ref=e456]: per-turn selection
+          - definition [ref=e457]:
+            - code [ref=e458]: /router
+            - text: off by default · decision model reads the turn, then routes it
+        - generic [ref=e459]:
+          - term [ref=e460]: Local
+          - definition [ref=e461]: Ollama on your machine
+          - definition [ref=e462]:
+            - code [ref=e463]: qwen2.5-coder:14b
+            - text: · no provider charges for this role
+      - generic [ref=e464]:
+        - paragraph [ref=e465]:
+          - text: Among the 18 providers
+          - code [ref=e466]: /auth
+          - text: "can configure:"
+        - img "Anthropic" [ref=e467]
+        - img "OpenAI" [ref=e470]
+        - img "Google Gemini" [ref=e473]
+        - img "NVIDIA NIM" [ref=e476]
+        - img "Ollama" [ref=e479]
+        - img "OpenRouter" [ref=e482]
+        - img "OpenCode" [ref=e485]
+      - paragraph [ref=e488]:
+        - text: Also Azure OpenAI, Amazon Bedrock, Mistral, Groq, Cerebras, xAI, Hugging Face, Command Code, OpenCode Go and Zen, Kimi For Coding and MiniMax, plus ChatGPT and Google sign-in.
+        - code [ref=e489]: /effort
+        - text: sets reasoning effort where the model supports it.
+      - paragraph [ref=e490]: Routing is off by default and needs configuration. Model capabilities, credentials and provider charges still apply, and while local inference is available, selecting it does not make every external integration offline.
+    - generic [ref=e492]:
+      - generic [ref=e493]:
+        - paragraph [ref=e494]:
+          - generic [aria-hidden] [ref=e495]: ❯
+          - generic [ref=e496]: /remote
+        - heading "Follow the session from your phone." [level=2] [ref=e497]
+        - paragraph [ref=e498]: Each Nova session gets its own Telegram topic or Discord thread. Prompts, tool activity and streamed replies arrive there as they happen, and an authorized sender can answer from the chat.
+      - generic [ref=e499]:
+        - generic [ref=e500]:
+          - term [ref=e501]: Telegram
+          - definition [ref=e502]: one topic per session
+          - definition [ref=e503]: Prompts, photos and captioned images; task checkboxes, stacked tables and expandable diffs laid out for a phone; numbered controls for interactive panels
+        - generic [ref=e504]:
+          - term [ref=e505]: Discord
+          - definition [ref=e506]: one thread per session
+          - definition [ref=e507]: Thread or forum post per session, restored on reconnect and archived when the session closes; missing channel permissions are reported plainly
+        - generic [ref=e508]:
+          - term [ref=e509]: Rootapp
+          - definition [ref=e510]: optional companion
+          - definition [ref=e511]: An authorized community channel through Root's local DevHost integration, with its own build, Bot ID and sender setup
+      - paragraph [ref=e512]:
+        - text: Each service needs its own account, bot, channel permissions and authorized senders, managed through
+        - code [ref=e513]: /remote
+        - text: . A bridge never widens Nova's workspace permissions. Several Nova windows share one Telegram polling connection instead of competing for updates.
+    - generic [ref=e515]:
+      - generic [ref=e516]:
+        - paragraph [ref=e517]:
+          - generic [aria-hidden] [ref=e518]: ❯
+          - generic [ref=e519]: /caveman full
+        - heading "Say less. Read less. Keep the exact text." [level=2] [ref=e520]
+        - paragraph [ref=e521]: Caveman mode is six independent switches for verbosity and context, behind one opt-in master switch on the composer. Compacted output stays recoverable, so the agent can always go back to the exact source.
+      - generic [ref=e522]:
+        - generic [ref=e523]:
+          - term [ref=e524]: Say less
+          - definition [ref=e525]: terser prose
+          - definition [ref=e526]:
+            - text: Code and identifiers stay exact; warnings and ambiguity keep full sentences. Six intensities from
+            - code [ref=e527]: lite
+            - text: to
+            - code [ref=e528]: wenyan-ultra
+        - generic [ref=e529]:
+          - term [ref=e530]: Read less
+          - definition [ref=e531]: compact tool output
+          - definition [ref=e532]: Logs, JSON and CSV are shortened in the model's view while the exact source stays recoverable
+        - generic [ref=e533]:
+          - term [ref=e534]: Browse
+          - definition [ref=e535]: compact web results
+          - definition [ref=e536]: HTML and Markdown results are compacted with references kept for exact recovery
+        - generic [ref=e537]:
+          - term [ref=e538]: Blocks
+          - definition [ref=e539]: reuse scripts
+          - definition [ref=e540]: Find an exact script from an earlier tool call and rerun it through the normal tool, under current permissions
+        - generic [ref=e541]:
+          - term [ref=e542]: Auto
+          - definition [ref=e543]: routing
+          - definition [ref=e544]: Use your router choices and per-route effort without changing the saved session model
+        - generic [ref=e545]:
+          - term [ref=e546]: Waste fixes
+          - definition [ref=e547]: token accounting
+          - definition [ref=e548]: Fewer duplicate tool results, with local estimates shown beside provider-reported usage and cache figures
+      - paragraph [ref=e549]:
+        - text: "No savings figure is promised: results vary by model and task, and a shorter answer can still use more total tokens on a reasoning model."
+        - code [ref=e550]: /caveman audit
+        - text: compares the estimates with what the provider reported. Your reply language is preserved at every intensity.
+    - generic [ref=e552]:
+      - generic [ref=e553]:
+        - paragraph [ref=e554]:
+          - generic [aria-hidden] [ref=e555]: ❯
+          - generic [ref=e556]: /share artifacts
+        - heading "Results you can open outside the terminal." [level=2] [ref=e557]
+        - paragraph [ref=e558]: Ask for an HTML page, a Markdown report or a dashboard and Nova makes it an artifact. Updating it keeps the same ID and records a new version. The session's collection is searchable by title, type or ID.
+      - generic [ref=e559]:
+        - generic [ref=e560]:
+          - heading "A link for the people you choose" [level=3] [ref=e561]
+          - paragraph [ref=e562]:
+            - text: When
+            - code [ref=e563]: cloudflared
+            - text: is installed, Nova opens a temporary Cloudflare Quick Tunnel for the collection. Resuming a saved session restores the artifacts, and a fresh tunnel can share them again.
+            - code [ref=e564]: /share list
+            - text: shows what is live and
+            - code [ref=e565]: /share stop
+            - text: ends it.
+        - generic [ref=e566]:
+          - heading "What the link is not" [level=3] [ref=e567]
+          - paragraph [ref=e568]:
+            - text: Anyone with the URL can open it, it changes on restart, and it ends when Nova or the viewer stops. It is not hosting, authentication or an uptime promise. Without
+            - code [ref=e569]: cloudflared
+            - text: the artifacts still work locally.
+    - generic [ref=e571]:
+      - generic [ref=e572]:
+        - paragraph [ref=e573]:
+          - generic [aria-hidden] [ref=e574]: ❯
+          - generic [ref=e575]: /theme
+        - heading "Thirteen ways to sit at the same desk." [level=2] [ref=e576]
+        - paragraph [ref=e577]: Each interface style brings its own home screen and carries through conversation, tool and dialog views, independently of the colour theme. Home screens offer Explain, Refactor, Build and Debug starters that fill an editable prompt.
+      - generic [ref=e578]:
+        - generic [ref=e583]: interface styles
+        - list [ref=e584]:
+          - listitem [ref=e585]:
+            - generic [ref=e586]: Dashboard
+          - listitem [ref=e587]:
+            - generic [ref=e588]: Classic
+          - listitem [ref=e589]:
+            - generic [ref=e590]: Centered
+          - listitem [ref=e591]:
+            - generic [ref=e592]: Banner
+          - listitem [ref=e593]:
+            - generic [ref=e594]: Minimal
+          - listitem [ref=e595]:
+            - generic [ref=e596]: Terminal
+            - generic [ref=e597]: animated home
+          - listitem [ref=e598]:
+            - generic [ref=e599]: Workbench
+            - generic [ref=e600]: Nova character art
+          - listitem [ref=e601]:
+            - generic [ref=e602]: Notebook
+          - listitem [ref=e603]:
+            - generic [ref=e604]: Outline
+          - listitem [ref=e605]:
+            - generic [ref=e606]: Focus
+          - listitem [ref=e607]:
+            - generic [ref=e608]: Studio
+            - generic [ref=e609]: character art, animated home
+          - listitem [ref=e610]:
+            - generic [ref=e611]: Ledger
+          - listitem [ref=e612]:
+            - generic [ref=e613]: Blueprint
+            - generic [ref=e614]: animated home
+      - generic [ref=e615]:
+        - generic [ref=e616]:
+          - heading "Talk to it, hear it back" [level=3] [ref=e617]
+          - paragraph [ref=e618]: Dictate a request and hear a short spoken summary of the final reply, never the tool output or reasoning. Faster-Whisper and Piper are the defaults; Whistle and Parakeet add speech input, and Kokoro and sanoTTS are light CPU voices. Piper starts speaking sentence by sentence.
+        - generic [ref=e619]:
+          - heading "What it needs" [level=3] [ref=e620]
+          - paragraph [ref=e621]:
+            - text: The
+            - code [ref=e622]: voice
+            - text: extra plus the extra for any provider you pick, a working microphone and speakers, and the model downloads.
+            - code [ref=e623]: /voice download
+            - text: fetches them ahead of time with real progress rows above the composer. Latency and accuracy are not benchmarked.
+      - paragraph [ref=e624]:
+        - text: "Animated homes are optional: low-resource mode pauses them, and short terminals give the space to the composer. The status line is customisable with a live preview in"
+        - code [ref=e625]: /statusline
+        - text: .
+    - generic [ref=e628]:
+      - generic [ref=e629]:
+        - paragraph [ref=e630]:
+          - generic [aria-hidden] [ref=e631]: ❯
+          - generic [ref=e632]: /computer start
+        - heading "Its own computer. Preview" [level=2] [ref=e633]:
+          - text: Its own computer.
+          - generic [ref=e634]: Preview
+        - paragraph [ref=e635]: A session-owned Linux VM on your machine, run by QEMU with 2 CPUs and 4 GiB of RAM, with no cloud account. A private browser view shows what Nova sees. It clicks, types and scrolls only against its latest screenshot, under the same approvals as any other tool.
+        - paragraph [ref=e636]:
+          - text: Offline lifecycle, approval and preview tests pass, but a real guest boot has not been verified yet, so treat this as a preview. Needs the
+          - code [ref=e637]: computer
+          - text: extra, QEMU, disk space for the first image and a vision-capable model. The guest can reach the network.
+      - group "What the computer preview keeps separate" [ref=e638]:
+        - paragraph [ref=e639]: "# what stays separate"
+        - paragraph [ref=e640]: guest owned by one session
+        - paragraph [ref=e641]: ├─ host project files not mounted
+        - paragraph [ref=e642]: ├─ clipboard, browser profiles not copied
+        - paragraph [ref=e643]: ├─ credentials not copied
+        - paragraph [ref=e644]: └─ delegated agents no desktop tools
+        - paragraph [ref=e645]
+        - paragraph [ref=e646]: you pause, resume, stop
+        - paragraph [ref=e647]: └─ pause holds even with auto-approve on
+    - generic [ref=e649]:
+      - generic [ref=e650]:
+        - paragraph [ref=e651]:
+          - generic [aria-hidden] [ref=e652]: ❯
+          - generic [ref=e653]: find the plan we wrote last week
+        - heading "Plans you can find again." [level=2] [ref=e654]
+        - paragraph [ref=e655]: "Read-only planning separates investigation from implementation. Approved plans live next to their project:"
+      - generic [ref=e656]:
+        - group "Where approved plans are stored" [ref=e657]:
+          - paragraph [ref=e658]: "# user-approved plans, project and archive"
+          - paragraph [ref=e659]: your-repo/
+          - paragraph [ref=e660]: ├─ .nova/plans/
+          - paragraph [ref=e661]: ├─ plan-extract-ingest-worker.md approved
+          - paragraph [ref=e662]: └─ plan-lazy-memory-index.md approved
+          - paragraph [ref=e663]
+          - paragraph [ref=e664]: ~/.nova/plans/
+          - paragraph [ref=e665]: ├─ your-repo/
+          - paragraph [ref=e666]: ├─ plan-extract-ingest-worker.md mirror
+          - paragraph [ref=e667]: └─ plan-lazy-memory-index.md mirror
+          - paragraph [ref=e668]: └─ other-project/
+          - paragraph [ref=e669]: └─ plan-tidy-colour-tokens.md auto-approved, archive only
+        - generic [ref=e670]:
+          - heading "Approve once, read it back in any later session" [level=3] [ref=e671]
+          - paragraph [ref=e672]:
+            - text: The agent's
+            - code [ref=e673]: recent_plans
+            - text: tool lists both locations for the current project and reads the saved Markdown, so a committed decision comes back with its reasoning attached.
+          - list [ref=e674]:
+            - listitem [ref=e675]:
+              - text: ✓ Project plans in
+              - code [ref=e676]: <project>/.nova/plans/
+            - listitem [ref=e677]:
+              - text: ✓ Mirrored to
+              - code [ref=e678]: ~/.nova/plans/<project-slug>/
+            - listitem [ref=e679]: ✓ Auto-approved plans stay in the archive
+          - paragraph [ref=e680]:
+            - text: Optional
+            - code [ref=e681]: /claude-plan
+            - text: and
+            - code [ref=e682]: /codex-plan
+            - text: let an installed, authenticated Claude Code or Codex CLI prepare a plan for Nova to implement after approval. Those integrations bring their own installation and account requirements.
+    - generic [ref=e684]:
+      - generic [ref=e685]:
+        - paragraph [ref=e686]:
+          - generic [ref=e687]: nova ❯
+          - generic [ref=e688]: cat ~/.nova/refinement_events.json
+        - heading "Nothing here changes behind your back." [level=2] [ref=e689]
+        - paragraph [ref=e690]: "Three things decide how far Nova can go on its own: what it learned, what still needs your approval, and what you can get back afterwards. Each one is a file you can read."
+      - generic [ref=e691]:
+        - generic [ref=e692]:
+          - heading "Learning, with a ledger" [level=3] [ref=e693]
+          - paragraph [ref=e694]: When a run finishes, Hermes can review it and prepare a lesson, a habit, a skill or a prompt proposal. Each item lands in a versioned local ledger with its scope, the evidence it came from and its status.
+          - paragraph [ref=e695]: "Where it stops: approval and activation are separate steps, and a generated proposal is not treated as your instruction. Reviews and other auxiliary model work can add provider usage."
+        - generic [ref=e696]:
+          - heading "Approval, per operation" [level=3] [ref=e697]
+          - paragraph [ref=e698]:
+            - text: "Editing a file, running a command, reaching the network: each has its own policy in"
+            - code [ref=e699]: .nova/approval-policy.json
+            - text: . Nova stops and asks when the policy says ask, and answers with the operation it wants to run.
+          - paragraph [ref=e700]:
+            - text: "Where it stops: hard-coded denials cannot be loosened by that file. In a headless run,"
+            - code [ref=e701]: "--deny-tools"
+            - text: rejects approval requests, so a pipeline stops instead of waiting on a prompt nobody is there to answer. It does not disable every tool, and it is not a read-only sandbox.
+        - generic [ref=e702]:
+          - heading "Recovery, on your disk" [level=3] [ref=e703]
+          - paragraph [ref=e704]: Context archives keep checksummed manifests so a compacted conversation can be inspected later. File snapshots let you browse and restore supported edits, and saved sessions keep their project, model and continuation details.
+          - paragraph [ref=e705]: "Where it stops: compaction is not perfect recall, and snapshot coverage depends on the operation. Large files can be skipped. Neither replaces version control."
+      - generic [ref=e706]:
+        - generic [ref=e707]: /learning review
+        - button "Copy" [ref=e712] [cursor=pointer]
+        - generic [ref=e716]: proposed skill verify-pytest-before-commit scope project evidence 3 of 4 sessions in this repo committed before running the suite status awaiting your decision [a]pprove and activate [r]evise [d]iscard nothing is written until you choose
+    - generic [ref=e718]:
+      - generic [ref=e719]:
+        - paragraph [ref=e720]:
+          - generic [ref=e721]: nova ❯
+          - generic [ref=e722]: nova --help
+        - heading "Everything else, and what each one needs." [level=2] [ref=e723]
+        - paragraph [ref=e724]: "Same rule as above: the extra is named on the row that needs it, so nothing shows up as a surprise during setup."
+      - list [ref=e725]:
+        - listitem [ref=e726]:
+          - generic [ref=e727]: Vision for any model
+          - generic [ref=e728]:
+            - text: A text-only main model can hand an image to a separate vision model on demand, set in
+            - code [ref=e729]: /model
+            - text: → Vision.
+          - generic [ref=e730]: a vision-capable model
+        - listitem [ref=e731]:
+          - generic [ref=e732]: Notebook editing
+          - generic [ref=e733]: Insert, replace or delete Jupyter cells without starting a kernel; other cells and metadata are kept.
+        - listitem [ref=e734]:
+          - generic [ref=e735]: Fast native search
+          - generic [ref=e736]: Uses bfs and ugrep when installed, with ripgrep and Python fallbacks.
+          - generic [ref=e737]: optional executables
+        - listitem [ref=e738]:
+          - generic [ref=e739]: Branching history
+          - generic [ref=e740]:
+            - text: Browse and bookmark earlier points with
+            - code [ref=e741]: /tree
+            - text: ", continue from one, and export the tree as one HTML file."
+        - listitem [ref=e742]:
+          - generic [ref=e743]: Continue from other assistants
+          - generic [ref=e744]:
+            - text: Import Nova, Claude Code or Codex histories as context, and compare them with
+            - code [ref=e745]: /compare
+            - text: .
+        - listitem [ref=e746]:
+          - generic [ref=e747]: Goal mode
+          - generic [ref=e748]:
+            - text: Keep working toward one objective across turns, with pause, resume and a turn budget.
+            - code [ref=e749]: /btw
+            - text: asks a side question.
+        - listitem [ref=e750]:
+          - generic [ref=e751]: Background terminals
+          - generic [ref=e752]:
+            - text: Send a running command to the background with Ctrl+B, read its log tail in
+            - code [ref=e753]: /tasks
+            - text: ", run tracked daemons."
+        - listitem [ref=e754]:
+          - generic [ref=e755]: Scheduled tasks
+          - generic [ref=e756]:
+            - text: Create, list and delete recurring jobs with
+            - code [ref=e757]: /cron
+            - text: ", stored between runs."
+          - generic [ref=e758]: Nova must be running
+        - listitem [ref=e759]:
+          - generic [ref=e760]: Strict tool arguments
+          - generic [ref=e761]: Malformed calls are caught before they run; a string "2" is not quietly read as the number 2.
+        - listitem [ref=e762]:
+          - generic [ref=e763]: Tracing and usage
+          - generic [ref=e764]:
+            - text: LangSmith tracing from
+            - code [ref=e765]: /trace setup
+            - text: ; context costs in
+            - code [ref=e766]: /context
+            - text: ; usage in
+            - code [ref=e767]: /usage
+            - text: and
+            - code [ref=e768]: /cost
+            - text: .
+          - generic [ref=e769]: LangSmith account
+        - listitem [ref=e770]:
+          - generic [ref=e771]: Skill and agent editor
+          - generic [ref=e772]:
+            - code [ref=e773]: /create
+            - text: opens a local page to browse, write and edit skills and agent definitions.
+        - listitem [ref=e774]:
+          - generic [ref=e775]: External plans and reviews
+          - generic [ref=e776]:
+            - code [ref=e777]: /claude-review
+            - text: or
+            - code [ref=e778]: /codex-review
+            - text: reviews read-only, then Nova checks the findings.
+          - generic [ref=e779]: Claude Code or Codex CLI
+        - listitem [ref=e780]:
+          - generic [ref=e781]: Commit attribution
+          - generic [ref=e782]:
+            - text: A NovaCode
+            - code [ref=e783]: Co-Authored-By
+            - text: trailer and a small PR footer, on by default and easy to switch off.
+        - listitem [ref=e784]:
+          - generic [ref=e785]: Headless automation
+          - generic [ref=e786]:
+            - text: One-shot tasks with
+            - code [ref=e787]: nova -p
+            - text: ", plus a JSON-lines pipe mode with approvals and cancellation."
+        - listitem [ref=e788]:
+          - generic [ref=e789]: Skills, MCP and plugins
+          - generic [ref=e790]: Reusable workflows, external tools and presets for Figma, Vercel and Higgsfield.
+          - generic [ref=e791]: per integration
+        - listitem [ref=e792]:
+          - generic [ref=e793]: Experimental teams
+          - generic [ref=e794]: Persistent teammates with their own inboxes and task claims, coordinated by a lead.
+          - generic [ref=e795]: off by default
+        - listitem [ref=e796]:
+          - generic [ref=e797]: Updates that resume
+          - generic [ref=e798]:
+            - code [ref=e799]: nova update
+            - text: shows stages and release notes, then reopens the session and continues the turn.
+        - listitem [ref=e800]:
+          - generic [ref=e801]: Recoverable context
+          - generic [ref=e802]:
+            - text: Compact a long conversation, browse recovery archives, and roll back with
+            - code [ref=e803]: /rewind
+            - text: or
+            - code [ref=e804]: /restore
+            - text: .
+    - generic [ref=e806]:
+      - generic [ref=e807]:
+        - paragraph [ref=e808]:
+          - generic [ref=e809]: nova ❯
+          - generic [ref=e810]: cat README.md
+        - heading "Three commands and you are running." [level=2] [ref=e811]
+        - paragraph [ref=e812]:
+          - text: Python 3.11 or newer and uv. The recommended install is a
+          - code [ref=e813]: uv tool
+          - text: install; once installed, the command is
+          - code [ref=e814]: nova
+          - text: . For local development you
+          - code [ref=e815]: git clone
+          - text: ", sync, and use"
+          - code [ref=e816]: uv run nova
+          - text: .
+      - generic [ref=e817]:
+        - tablist "Install method" [ref=e818]:
+          - tab "macOS and Linux" [ref=e819] [cursor=pointer]
+          - tab "Windows" [selected] [ref=e820] [cursor=pointer]
+          - tab "uv tool" [ref=e821] [cursor=pointer]
+        - text: $ $ $
+        - tabpanel "Windows" [ref=e822]:
+          - generic [ref=e823]:
+            - text: $
+            - code [ref=e824]: git clone https://github.com/Babitdor/NovaCode.git
+            - button "Copy" [ref=e825] [cursor=pointer]
+          - generic [ref=e829]:
+            - text: $
+            - code [ref=e830]: cd NovaCode; uv sync
+            - button "Copy" [ref=e831] [cursor=pointer]
+          - generic [ref=e835]:
+            - text: $
+            - code [ref=e836]: uv run nova
+            - button "Copy" [ref=e837] [cursor=pointer]
+          - paragraph [ref=e841]:
+            - text: For an installed copy (not development), install as a
+            - code [ref=e842]: uv tool
+            - text: ; the command is
+            - code [ref=e843]: nova
+            - text: .
+        - text: $ $
+      - paragraph [ref=e844]:
+        - text: Voice is optional and pulls its own model downloads.
+        - code [ref=e845]: uv sync --extra voice
+        - text: adds local speech in and out;
+        - code [ref=e846]: voice-whistle
+        - text: ","
+        - code [ref=e847]: voice-orpheus
+        - text: (about 2 GB),
+        - code [ref=e848]: voice-parakeet
+        - text: ","
+        - code [ref=e849]: voice-pocket
+        - text: and the Kokoro and sanoTTS voices are separate opted-in extras, and the microphone and speakers are yours. The
+        - code [ref=e850]: computer
+        - text: preview and Bedrock are extras too.
+    - generic [ref=e852]:
+      - generic [ref=e853]:
+        - paragraph [ref=e854]:
+          - generic [ref=e855]: nova ❯
+          - generic [ref=e856]: man nova
+        - heading "Questions people ask first." [level=2] [ref=e857]
+      - generic [ref=e858]:
+        - group [ref=e859]:
+          - generic "What does Nova remember between sessions?" [ref=e860] [cursor=pointer]
+        - group [ref=e861]:
+          - generic "What does /dream actually do?" [ref=e862] [cursor=pointer]
+        - group [ref=e863]:
+          - generic "What is the council for?" [ref=e864] [cursor=pointer]
+        - group [ref=e865]:
+          - generic "Can two sessions in different projects talk?" [ref=e866] [cursor=pointer]
+        - group [ref=e867]:
+          - generic "Which models can I use?" [ref=e868] [cursor=pointer]
+        - group [ref=e869]:
+          - generic "Where do approved plans end up?" [ref=e870] [cursor=pointer]
+        - group [ref=e871]:
+          - generic "Does the self-improvement retrain my model?" [ref=e872] [cursor=pointer]
+        - group [ref=e873]:
+          - generic "What happens when a tool call needs approval?" [ref=e874] [cursor=pointer]
+        - group [ref=e875]:
+          - generic "Can I use it away from my machine?" [ref=e876] [cursor=pointer]
+        - group [ref=e877]:
+          - generic "What is Cowork?" [ref=e878] [cursor=pointer]
+        - group [ref=e879]:
+          - generic "How much does Caveman mode save?" [ref=e880] [cursor=pointer]
+        - group [ref=e881]:
+          - generic "Are shared artifact links private?" [ref=e882] [cursor=pointer]
+    - generic [ref=e885]:
+      - heading "Point it at a repository tonight." [level=2] [ref=e886]
+      - paragraph [ref=e887]: Approval still applies, memory still lands on disk in files you can read, and the first thing it does is look around before it touches anything.
+      - generic [ref=e888]:
+        - link "❯ Clone the repository" [ref=e889] [cursor=pointer]:
+          - /url: https://github.com/Babitdor/NovaCode
+        - link "Read the documentation" [ref=e892] [cursor=pointer]:
+          - /url: docs/index.html
+      - list [ref=e893]:
+        - listitem [ref=e894]: ✓ MIT licensed
+        - listitem [ref=e895]: ✓ Python 3.11+
+        - listitem [ref=e896]: ✓ cloud or local models
+  - contentinfo [ref=e897]:
+    - generic [ref=e898]:
+      - generic [ref=e899]: Nova, 2026. Built in the terminal, for the terminal.
+      - navigation "Footer" [ref=e900]:
+        - link "GitHub" [ref=e901] [cursor=pointer]:
+          - /url: https://github.com/Babitdor/NovaCode
+        - link "Documentation" [ref=e902] [cursor=pointer]:
+          - /url: docs/index.html
+        - link "Changelog" [ref=e903] [cursor=pointer]:
+          - /url: changelog/index.html
+        - link "Install" [ref=e904] [cursor=pointer]:
+          - /url: "#install"
+  - generic [aria-hidden] [ref=e905]:
+    - generic [ref=e906]: NOVA
+    - generic [ref=e907]: ~/desk
+    - generic [ref=e908]: home · install below
