@@ -124,6 +124,9 @@ def build_command_registry() -> CommandRegistry:
     from novacode_cli.commands.cache_handler import register_commands as register_cache
 
     register_cache(registry)
+    from novacode_cli.commands.prime_handler import register_commands as register_prime
+
+    register_prime(registry)
 
     # Module-based handlers ##################################################
     # Import each handler module's register_commands and call it.

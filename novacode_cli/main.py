@@ -854,6 +854,7 @@ async def _run_agent_session(
                     or model_name
                 )
                 from novacode_cli.commands.side_commands import goal_state_payload
+                from novacode_cli.prime import prime_payload
 
                 _crash_dir = session_manager.save_session(
                     session_id=session_state.session_id,
@@ -867,6 +868,7 @@ async def _run_agent_session(
                     sandbox_id=(getattr(sandbox_backend, "id", None) if sandbox_backend else None),
                     sandbox_type=sandbox_type,
                     goal=goal_state_payload(session_state),
+                    prime=prime_payload(session_state),
                 )
                 console.print(f"[dim]Session saved → {_crash_dir}[/dim]")
             except Exception as _save_err:
@@ -1206,6 +1208,12 @@ async def main(
             from novacode_cli.commands.side_commands import restore_goal_state
 
             restore_goal_state(session_state, getattr(session_data.meta, "goal", None))
+
+            from novacode_cli.prime import restore_prime
+
+            restore_prime(session_state, getattr(session_data.meta, "prime", None))
+            if isinstance(getattr(session_state, "cli_prime_override", None), bool):
+                session_state.prime_enabled = session_state.cli_prime_override
 
             # Recover the sandbox used last time so we can reconnect to its
             # container (preserving installed deps / in-container state).
@@ -1904,6 +1912,8 @@ def cli_main() -> None:
             # non-interactive path (see the branch order in main()).
             session_state.headless = headless_prompt is not None or pipe_mode
             session_state.cli_model_override = args.model
+            session_state.prime_enabled = getattr(args, "prime", None) is True
+            session_state.cli_prime_override = getattr(args, "prime", None)
             if pipe_mode:
                 session_state.pipe_mode = True
                 session_state.pipe_input_format = args.input_format

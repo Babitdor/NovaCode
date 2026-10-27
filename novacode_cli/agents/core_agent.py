@@ -2567,6 +2567,9 @@ This file stores your preferences and context that persist across sessions.
     from novacode_cli.security.prompt_injection import PromptInjectionMiddleware
 
     agent_middleware.append(CavemanMiddleware())
+    from novacode_cli.agents.prime import PrimeMiddleware
+
+    agent_middleware.append(PrimeMiddleware())
     agent_middleware.append(AttributionMiddleware())
     tools = [*tools, caveman_tool]
     if not any(isinstance(m, PromptInjectionMiddleware) for m in agent_middleware):

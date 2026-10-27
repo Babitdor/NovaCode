@@ -213,6 +213,9 @@ async def run_headless(  # noqa: PLR0912, PLR0915 — single linear event loop
 
             if isinstance(event, ev.AssistantMessage) and not event.is_subagent:
                 text_parts.append(event.text)
+            elif isinstance(event, ev.ContextMessage) and event.event_type == "nova_prime_receipt":
+                # A host delivery record is output, not another model step.
+                text_parts.append(event.message)
             out.handle_event(event)
 
             if isinstance(event, ev.InterruptRequest):
@@ -432,6 +435,7 @@ async def _autosave(
             return
         todos = state.values.get("todos") or getattr(session_state, "todos", None)
         from novacode_cli.commands.side_commands import goal_state_payload
+        from novacode_cli.prime import prime_payload
 
         await asyncio.to_thread(
             session_manager.save_session,
@@ -445,6 +449,7 @@ async def _autosave(
             project_root=settings.project_root or Path.cwd(),
             task_status="failed" if is_error else "completed",
             goal=goal_state_payload(session_state),
+            prime=prime_payload(session_state),
         )
     except Exception as exc:  # noqa: BLE001 — never fail the run on save
         _diagnostic(f"Headless session save skipped: {exc}")

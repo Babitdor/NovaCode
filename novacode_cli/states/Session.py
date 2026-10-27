@@ -124,6 +124,9 @@ class SessionState:
         self.workspace_root: str | None = None  # commands/log_commands.py, tui/app.py
         self.verify_enabled: bool = False  # ui/execution.py
         self.active_goal: str | None = None  # commands/side_commands.py, core/agent_loop.py, tui/app.py
+        self.prime_enabled: bool = False
+        self.cli_prime_override: bool | None = None
+        self.prime_report: dict[str, Any] | None = None
         self.active_rubric: str | None = None  # commands/side_commands.py, core/agent_loop.py
         self.goal_status: str | None = None
         self.goal_turns_used: int = 0
@@ -476,6 +479,7 @@ class SessionState:
         "headless_timeout", "headless_deadline", "headless_include_partial_messages",
         "headless_trust_workspace", "headless_result_emitted",
         "workspace_root", "verify_enabled", "active_goal", "active_rubric",
+        "prime_enabled", "prime_report", "cli_prime_override",
         "goal_status", "goal_turns_used", "goal_max_turns", "goal_thread_id",
         "goal_revision",
         "browser_use_tasks", "create_server",
@@ -634,6 +638,7 @@ class SessionState:
         self.thread_id = str(uuid.uuid4())
         self.session_id = str(uuid.uuid4())
         self.active_goal = None
+        self.prime_report = None
         self.active_rubric = None
         self.goal_status = None
         self.goal_turns_used = 0

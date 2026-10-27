@@ -247,6 +247,7 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     or :class:`~novacode_cli.ui_events.Error` event.
     """
     loop = asyncio.get_running_loop()
+    prime_original_input = user_input
 
     if getattr(session_state, "plan_mode_enabled", False):
         directive = (
@@ -481,6 +482,16 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     auto_approve_val = bool(getattr(session_state, "auto_approve", False))
     token = _auto_approve_var.set(auto_approve_val)
 
+    from novacode_cli.prime import PrimeRun, current_run, receipt
+
+    prime_run = (
+        PrimeRun(session_state, prime_original_input)
+        if getattr(session_state, "prime_enabled", False) is True
+        else None
+    )
+    prime_token = current_run.set(prime_run)
+    prime_outcome = "interrupted"
+
     # Resuming after an interrupt restarts LangGraph's recursion counter, so a
     # rejection the *policy* resolves on its own (plan-mode block, deny rule) can
     # spin forever: reject -> model retries the same call -> reject -> ... with no
@@ -489,6 +500,11 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     auto_reject_streak = 0
 
     try:
+        if prime_run is not None:
+            yield ev.ContextMessage(
+                "Prime · Define · 0/6 checkpoints", event_type="nova_prime_progress",
+                icon="◆", color="cyan",
+            )
         while True:
             interrupt_occurred = False
             user_prompted = False
@@ -535,6 +551,21 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                 _namespace, current_stream_mode, data = chunk
 
                 if current_stream_mode == "custom":
+                    if (
+                        prime_run is not None
+                        and prime_run.is_current()
+                        and isinstance(data, dict)
+                        and data.get("type") == "nova_prime_checkpoint"
+                        and data.get("run_id") == prime_run.report["id"]
+                    ):
+                        yield ev.ContextMessage(
+                            message=f"Prime · {prime_run.report['phase'].title()} · "
+                            f"{len(prime_run.report['checkpoints'])}/6 checkpoints",
+                            event_type="nova_prime_progress",
+                            icon="◆",
+                            color="cyan",
+                        )
+                        continue
                     if isinstance(data, dict) and data.get("type") == "nova_model_retry":
                         phase = data.get("phase")
                         if phase == "retry":
@@ -1243,7 +1274,9 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
         except Exception:
             pass
 
+        prime_outcome = "complete"
     except asyncio.CancelledError:
+        prime_outcome = "cancelled"
         _gen = _current_stream_gen
         _current_stream_gen = None
         if _gen is not None:
@@ -1264,6 +1297,7 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
         return
 
     except Exception as e:  # noqa: BLE001
+        prime_outcome = "error"
         # Promptly release the underlying LangGraph stream rather than leaving it
         # for GC-time finalization.
         _gen = _current_stream_gen
@@ -1322,6 +1356,9 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
         return
     finally:
         _auto_approve_var.reset(token)
+        if prime_run is not None:
+            prime_run.finish(prime_outcome)
+        current_run.reset(prime_token)
 
     if captured.input_tokens or captured.output_tokens:
         yield captured
@@ -1329,6 +1366,10 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
         yield ev.CompactionNotice(preserve_api_context=usage_after_compaction)
     for _ctx in _drain_nova_events():
         yield _ctx
+    if prime_run is not None and prime_run.is_current():
+        yield ev.ContextMessage(
+            receipt(prime_run.report), event_type="nova_prime_receipt", icon="◆", color="cyan"
+        )
     yield ev.Done(had_response=has_responded)
 
 

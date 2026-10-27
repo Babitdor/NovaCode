@@ -578,6 +578,10 @@ def parse_args() -> argparse.Namespace:  # noqa: PLR0912, PLR0915 — one existi
     parser.add_argument("--request-timeout", type=positive_seconds, default=None)
     parser.add_argument("--approval-timeout", type=positive_seconds, default=300)
     parser.add_argument("--model", help="Process-local provider:model override")
+    parser.add_argument(
+        "--prime", action=argparse.BooleanOptionalAction, default=None,
+        help="Enable Nova Prime Deep Work for this session (--no-prime disables it).",
+    )
 
     parser.add_argument(
         "--print",

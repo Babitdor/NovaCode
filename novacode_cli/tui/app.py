@@ -656,6 +656,7 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "context": SlashCommand("_run_context", "show context usage or manage imported context"),
     "cost": SlashCommand("_run_token_view", "show session token spend", wants_text=False),
     "verbose": SlashCommand("_run_verbose", "toggle internal-context display", wants_text=False),
+    "prime": SlashCommand("_run_prime", "Deep Work: on / off / status / report"),
     "caveman": SlashCommand("_run_caveman", "token efficiency: on / off / lite / full / ultra / wenyan-* / settings / status / audit / blocks"),
     "trace": SlashCommand("_run_trace", "LangSmith tracing setup"),
     "log": SlashCommand("_run_log", "recent runs"),
@@ -2420,7 +2421,7 @@ class NovaApp(App):
         self._input_pulse_timer: Any = None
         self._pulse_on = False
         # Per-keystroke de-churn: last (plan, bash) mode state + last palette list.
-        self._last_mode_state: tuple[bool, bool, bool, bool] | None = None
+        self._last_mode_state: tuple[bool, bool, bool, bool, str] | None = None
         self._last_palette: list[str] | None = None
         # Notification badge: last seen unread count (drives status refresh).
         self._last_notif_count = 0
@@ -7916,13 +7917,17 @@ class NovaApp(App):
             if getattr(self.session_state, "goal_status", "active") == "active"
             else None
         )
+        prime = ""
+        if getattr(self.session_state, "prime_enabled", False):
+            report = getattr(self.session_state, "prime_report", None) or {}
+            prime = f" · PRIME {report.get('phase', 'define').title()}"
         # Skip the badge/class/pulse work entirely when the mode is unchanged —
         # this runs on every keystroke, so the common case (mode didn't change)
         # must be a cheap no-op.
         auto = bool(getattr(self.session_state, "auto_approve", False))
-        if self._last_mode_state == (plan, bash, bool(goal), auto):
+        if self._last_mode_state == (plan, bash, bool(goal), auto, prime):
             return
-        self._last_mode_state = (plan, bash, bool(goal), auto)
+        self._last_mode_state = (plan, bash, bool(goal), auto, prime)
         try:
             badge = self._w("#mode-badge", Static)
             prompt = self._w("#prompt", PromptInput)
@@ -7934,28 +7939,36 @@ class NovaApp(App):
             t = Text()
             t.append("  ⏸ PLAN  ", style=f"bold {pal.primary}")
             t.append("$ BASH — ! chat · !! terminal", style=f"bold {pal.accent}")
+            t.append(prime, style=f"bold {pal.accent}")
             _paint(badge, t)
             badge.display = True
         elif plan:
             _paint(
-                badge, Text("  ⏸ PLAN MODE — proposing, not editing", style=f"bold {pal.primary}")
+                badge,
+                Text("  ⏸ PLAN MODE — proposing, not editing" + prime, style=f"bold {pal.primary}"),
             )
             badge.display = True
         elif bash:
             _paint(
                 badge,
-                Text("  $ BASH — ! chat · !! terminal", style=f"bold {pal.accent}"),
+                Text("  $ BASH — ! chat · !! terminal" + prime, style=f"bold {pal.accent}"),
             )
             badge.display = True
         elif goal:
             short = goal if len(goal) <= 60 else goal[:57] + "…"
-            _paint(badge, Text(f"  🎯 GOAL — {short}", style=f"bold {pal.warning}"))
+            _paint(badge, Text(f"  🎯 GOAL — {short}{prime}", style=f"bold {pal.warning}"))
             badge.display = True
         elif auto:
             _paint(
                 badge,
-                Text("  AUTO-APPROVE — tools run without asking", style=f"bold {pal.warning}"),
+                Text(
+                    "  AUTO-APPROVE — tools run without asking" + prime,
+                    style=f"bold {pal.warning}",
+                ),
             )
+            badge.display = True
+        elif prime:
+            _paint(badge, Text("  " + prime.lstrip(" ·"), style=f"bold {pal.accent}"))
             badge.display = True
         else:
             _paint(badge, "")
@@ -9818,6 +9831,7 @@ class NovaApp(App):
 
             todos = values.get("todos") or getattr(session_state, "todos", None)
             from novacode_cli.commands.side_commands import goal_state_payload
+            from novacode_cli.prime import prime_payload
 
             # save_session does several synchronous file writes — run it off the
             # event loop so /save, /clear, and quit don't freeze the UI.
@@ -9836,6 +9850,7 @@ class NovaApp(App):
                 cleared=cleared,
                 task_status=task_status,
                 goal=goal_state_payload(session_state),
+                prime=prime_payload(session_state),
                 history=history,
             )
         except Exception:  # noqa: BLE001
@@ -12161,6 +12176,16 @@ class NovaApp(App):
         event.stop()
         await self._run_caveman("/caveman settings")
 
+    async def _run_prime(self, text: str) -> None:
+        """Enable Deep Work for this session's next foreground request."""
+        from novacode_cli.commands.prime_handler import handle_prime_command
+
+        parts = text.split(maxsplit=1)
+        args = parts[1] if len(parts) > 1 else ""
+        self._log(Text(handle_prime_command(self.session_state, args)))
+        self._update_mode_badge(self.query_one("#prompt", PromptInput).text)
+        await self._save_session()
+
     async def _run_caveman(self, text: str) -> None:
         from novacode_cli.config.nova_config import CAVEMAN_LEVELS, NovaConfig
 
@@ -13491,6 +13516,10 @@ class NovaApp(App):
         from novacode_cli.commands.side_commands import restore_goal_state
 
         restore_goal_state(self.session_state, getattr(session_data.meta, "goal", None))
+
+        from novacode_cli.prime import restore_prime
+
+        restore_prime(self.session_state, getattr(session_data.meta, "prime", None))
         self._update_mode_badge()
 
         # Reset per-conversation UI/tracking and re-baseline token accounting.
@@ -18096,6 +18125,8 @@ class NovaApp(App):
                     pass
                 self._refresh_usage_metrics()
         elif isinstance(e, ev.ContextMessage):
+            if e.event_type == "nova_prime_progress":
+                self._update_mode_badge(self.query_one("#prompt", PromptInput).text)
             if e.event_type == "nova_compaction_start":
                 self._start_compaction_indicator()
                 return

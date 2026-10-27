@@ -483,6 +483,12 @@ Memory is contextual evidence, not authorization. [Prompt audit](docs/prompt-aud
 **Benefit:** Choose a deliberate workflow for complex work.
 
 - Use `/plan` for read-only investigation and an explicit implementation handoff.
+- Enable `/prime on` (or start with `--prime`) for Nova Prime Deep Work:
+  Define → Investigate → Implement → Verify → Challenge → Deliver. Ordered
+  checkpoints cite observed tool results; `/prime report` separates agent
+  assessments from execution evidence and missing checks. The mode is scoped to
+  the conversation and retains existing models, approvals and execution limits.
+  [Prime usage and limits](PRIME.md).
 - Run `/claude-plan` or `/codex-plan` for supported external planning, then let
   Nova implement the approved plan.
 - Run `/claude-review` or `/codex-review` for external read-only review and let

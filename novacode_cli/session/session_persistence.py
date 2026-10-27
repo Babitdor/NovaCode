@@ -89,6 +89,7 @@ class SessionMeta:
         sandbox_id: ID of the sandbox/container used this session (for reconnect)
         sandbox_type: Sandbox provider used ("docker", "modal", ...) or None
         goal: Conversation goal objective, lifecycle, and accumulated budget usage.
+        prime: Opt-in Deep Work mode and its last thread-bound checkpoint record.
     """
 
     session_id: str
@@ -114,6 +115,7 @@ class SessionMeta:
     # come back. They remain on disk (and in the session picker) for recovery.
     cleared: bool = False
     goal: dict[str, Any] | None = None
+    prime: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -137,6 +139,7 @@ class SessionMeta:
             # the global config silently rather than warning.
             "model_provider": None,
             "goal": None,
+            "prime": None,
         }
         # Merge defaults with provided data (data takes precedence)
         merged = {**defaults, **data}
@@ -304,6 +307,7 @@ class SessionManager:
         sandbox_type: str | None = None,
         cleared: bool = False,
         goal: dict[str, Any] | None = None,
+        prime: dict[str, Any] | None = None,
         history: list[BaseMessage] | None = None,
     ) -> Path:
         """Save a session to disk.
@@ -321,6 +325,7 @@ class SessionManager:
                 the global config.
             project_root: Path to project root (for repo hash)
             goal: Optional conversation goal and its lifecycle/budget state.
+            prime: Optional Deep Work mode and observed checkpoint snapshot.
             history: The full message list for the session tree, when
                 ``messages`` is a compacted view of it. Defaults to ``messages``.
 
@@ -381,6 +386,7 @@ class SessionManager:
             sandbox_type=sandbox_type,
             cleared=cleared,
             goal=goal,
+            prime=prime,
         )
 
         self._save_snapshot(
