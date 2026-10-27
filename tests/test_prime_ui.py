@@ -104,6 +104,8 @@ async def test_composer_prime_toggle_keeps_draft_and_permission_colors(size: tup
         app._update_mode_badge(prompt.text)
         # The same control supports keyboard activation.
         toggle.focus()
+        await pilot.pause()
+        assert app.focused is toggle
         await pilot.press("enter")
         await pilot.pause()
         assert not app.session_state.prime_enabled
@@ -174,6 +176,8 @@ async def test_plan_composer_toggle_uses_plan_agent_and_keeps_draft(  # noqa: PL
             assert control.region.bottom <= size[1]
             assert control.region.height == 1
         toggle.focus()
+        await pilot.pause()
+        assert app.focused is toggle
         await pilot.press("enter")
         await pilot.pause()
         assert not app.session_state.plan_mode_enabled

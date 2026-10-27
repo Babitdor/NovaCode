@@ -77,6 +77,14 @@ async def test_signal_chat_and_teammate_updates_use_full_transcript_width(size: 
         transcript = app._transcript()
         await transcript.mount(update, user, answer)
         await pilot.pause()
+        # The short viewport may drop its scrollbar after the collapsed update
+        # is measured. Wait for the children to reflow into the released columns.
+        async with asyncio.timeout(5):
+            while any(
+                widget.region.width != transcript.scrollable_content_region.width
+                for widget in (update, user, answer)
+            ):
+                await pilot.pause(0.01)
         for widget in (update, user, answer):
             assert widget.region.x == transcript.content_region.x
             assert widget.region.width == transcript.scrollable_content_region.width

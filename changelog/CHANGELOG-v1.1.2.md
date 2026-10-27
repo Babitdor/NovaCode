@@ -44,3 +44,5 @@
   offline CI regression matrix and focused source lint checks.
 - Use a native temporary workspace in plan-path tests so containment checks run
   against absolute paths on both Linux and Windows.
+- Wait for queued keyboard focus and scrollbar-driven layout reflow in composer
+  and Signal transcript tests before sending keys or asserting geometry.
