@@ -55,7 +55,9 @@ provide an OS sandbox for an untrusted server.
 6. **Deliver:** summarize the change, checks, limitations and next steps.
 
 Prime uses the existing agent/tool loop and selected model. The model records
-each phase with `prime_checkpoint`; the prompt badge and transcript show progress.
+each phase with `prime_checkpoint`; the prompt badge and temporary notifications
+show progress. The completion notification points to `/prime report` for the
+full delivery record, keeping automatic status messages out of the transcript.
 Criteria become fixed after Define. New scope still needs an owner decision.
 For explanations or planning, irrelevant implementation/checks are explicitly
 marked as not applicable or deferred. Planning mode remains read-only.

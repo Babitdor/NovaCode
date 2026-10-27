@@ -3387,7 +3387,7 @@ class NovaApp(App):
             else None
         )
         if notification is not None:
-            self._log(Text(f"{notification.title}\n{notification.message}"))
+            self._log(Text(f"{notification.title}\n{notification.message}"), transcript=True)
         self.query_one("#prompt", PromptInput).focus()
 
     async def on_unmount(self):
@@ -3562,7 +3562,7 @@ class NovaApp(App):
             "\n/tabs new <name>[: task] · /tabs launch · /tabs resume [id] · /tabs close · alt+<n>",
             style="dim",
         )
-        self._log(block)
+        self._log(block, transcript=True)
 
     async def _rebuild_agent(self, saved: str) -> None:
         """Rebuild the agent on the live model, so a setting read at build time
@@ -3597,7 +3597,7 @@ class NovaApp(App):
         if not found:
             block = Text("No usage to show: no Claude Code, Codex or keyed provider with a usage API.")
         block.append(f"\n\n{USAGE_NOTE}", style="dim")
-        self._log(block)
+        self._log(block, transcript=True)
 
     async def _run_worktree_command(self, text: str) -> None:
         """``/worktree [list] | <name>[: task] | remove <name>``.
@@ -3632,7 +3632,7 @@ class NovaApp(App):
             if not found:
                 block.append("No Nova worktrees for this repository.\n", style="dim")
             block.append("\n/worktree <name>[: task] · /worktree remove <name>", style="dim")
-            self._log(block)
+            self._log(block, transcript=True)
             return
 
         if sub.lower() == "remove":
@@ -5829,13 +5829,29 @@ class NovaApp(App):
         except Exception:  # noqa: BLE001
             pass
 
-    def _log(self, renderable: Any, *, classes: str = "logline") -> None:
-        """Mount an ancillary line (errors, command output, notices)."""
-        from novacode_cli.remote.command_ui import command_output
+    def _log(
+        self,
+        renderable: Any,  # noqa: ANN401 -- Rich/Textual output and remote command renderables.
+        *,
+        classes: str = "logline",
+        transcript: bool = False,
+    ) -> None:
+        """Show brief notices as toasts; retain explicitly requested output in the transcript."""
+        from novacode_cli.remote.command_ui import command_output, plain
 
         captured = command_output.get()
         if captured is not None:
             captured.append(renderable)
+        if not transcript:
+            if isinstance(renderable, Text):
+                message = renderable.plain
+            elif isinstance(renderable, str):
+                message = renderable
+            else:
+                message = plain(renderable)
+            if message.strip():
+                self.notify(message, timeout=4, markup=False)
+            return
         self._close_tool_group()
         self._transcript().mount(Static(renderable, classes=classes))
         self._schedule_prune()
@@ -6147,7 +6163,7 @@ class NovaApp(App):
             head.append(
                 f"background agent · {self._oneline(str(entry.get('prompt', '')))}", style="bold"
             )
-            self._log(head)
+            self._log(head, transcript=True)
             summary = str(entry.get("summary") or "").strip()
             if summary:
                 await self._add_message(self._agent_label("Nova"), "nova", Markdown(summary))
@@ -7160,7 +7176,8 @@ class NovaApp(App):
                     Text(
                         f"  ⎿  {self._oneline(detail)}",
                         style=self._palette.tool_fail if is_error else self._palette.dim,
-                    )
+                    ),
+                    transcript=True,
                 )
             return
         entry = self._tool_group_entries[idx]
@@ -7210,7 +7227,8 @@ class NovaApp(App):
                 Text(
                     f"  ⎿  {preview}",
                     style=self._palette.tool_fail if is_error else self._palette.dim,
-                )
+                ),
+                transcript=True,
             )
             return
         comp, body, base = entry
@@ -9266,10 +9284,12 @@ class NovaApp(App):
 
     def _log_task_output(self, pane, text):
         if pane is not None and pane is not getattr(self, "_active_pane", None):
-            self._queue_pane_event(pane, ev.ContextMessage(message=text.plain))
+            self._queue_pane_event(
+                pane, ev.ContextMessage(message=text.plain, event_type="nova_command_output")
+            )
             pane.unread += 1
         else:
-            self._log(text)
+            self._log(text, transcript=True)
 
     def _refresh_tasks_bar(self) -> None:
         """Show running jobs, subagents, and the targets of active waiters."""
@@ -11089,7 +11109,7 @@ class NovaApp(App):
                         renderable = Text(message)
 
                     # Log to TUI locally
-                    self._log(renderable)
+                    self._log(renderable, transcript=True)
 
                     # Reply to remote user
                     plain = renderable.plain.strip()
@@ -11958,7 +11978,7 @@ class NovaApp(App):
                 self._log(Text("UI patches must be JSON objects.", style="yellow"))
                 return
             result = await self._ui_harness.execute(operation, payload)
-            self._log(Text(json.dumps(result, indent=2), style="dim"))
+            self._log(Text(json.dumps(result, indent=2), style="dim"), transcript=True)
         except (ValueError, OSError) as error:
             self._log(Text(f"UI change failed: {error}", style="yellow"))
 
@@ -12011,7 +12031,7 @@ class NovaApp(App):
         with _rich_console.capture() as cap:
             await _handle_remote_command(parts[1], self._remote_owner_state(), _rich_console)
         if output := cap.get().strip():
-            self._log(Text.from_ansi(output))
+            self._log(Text.from_ansi(output), transcript=True)
         self._ensure_remote_consumer()
 
     async def _run_remote_screen(self) -> None:
@@ -12243,7 +12263,7 @@ class NovaApp(App):
         args = parts[1] if len(parts) > 1 else ""
         message = handle_prime_command(self.session_state, args)
         if args.strip().lower() not in {"", "on", "off"}:
-            self._log(Text(message))
+            self._log(Text(message), transcript=args.strip().lower() in {"status", "report"})
         self._update_mode_badge(self.query_one("#prompt", PromptInput).text)
         await self._save_session()
 
@@ -12298,7 +12318,7 @@ class NovaApp(App):
                 )
                 import json
 
-                self._log(Text(json.dumps(result, indent=2)))
+                self._log(Text(json.dumps(result, indent=2)), transcript=True)
             except (OSError, ValueError, TimeoutError) as exc:
                 self.notify(f"Could not read Caveman report: {exc}", severity="error")
             return
@@ -12428,7 +12448,7 @@ class NovaApp(App):
             )
 
     def _run_token_view(self) -> None:
-        self._log(self._token_text())
+        self._log(self._token_text(), transcript=True)
 
     async def _run_context(self, text: str = "/context") -> None:
         """Open the live context dashboard or retain imported-context controls."""
@@ -12443,7 +12463,7 @@ class NovaApp(App):
                 )
                 if restored:
                     self.session_state.thread_id = restored
-                self._log(Text(result))
+                self._log(Text(result), transcript=True)
             except (ValueError, OSError) as error:
                 self._log(Text(str(error), style="red"))
             return
@@ -12553,7 +12573,7 @@ class NovaApp(App):
         from novacode_cli.plugins import marketplaces as mp
 
         def log(msg: str, style: str = "") -> None:
-            self._log(Text(msg, style=style) if style else Text(msg))
+            self._log(Text(msg, style=style) if style else Text(msg), transcript=True)
 
         def fmt(comps: dict) -> str:
             parts = [
@@ -12755,7 +12775,7 @@ class NovaApp(App):
         try:
             result = await handler(args)
             if result:
-                self._log(Text(str(result)))
+                self._log(Text(str(result)), transcript=True)
         except Exception as ex:  # noqa: BLE001
             self._log(Text(f"Plugin command /{cmd} failed: {ex}", style="red"))
         return True
@@ -12852,7 +12872,7 @@ class NovaApp(App):
                 f"\n  Supporting files: {', '.join(skill.supporting_files)}",
                 style="dim",
             )
-        self._log(t)
+        self._log(t, transcript=True)
         await self._stream_prompt(skill.pinned_prompt or skill.prompt)
         return True
 
@@ -12879,7 +12899,7 @@ class NovaApp(App):
                 )
             out = cap.get()
             if out.strip():
-                self._log(Text.from_ansi(out))
+                self._log(Text.from_ansi(out), transcript=True)
             # Sync active TUI agent/backend in case model was switched dynamically.
             # SessionState exposes these as `_agent` / `_backend`; fall back to the
             # current values so a command that doesn't touch them can't blow up.
@@ -12949,7 +12969,7 @@ class NovaApp(App):
                 )
             out = cap.get()
             if out.strip():
-                self._log(Text.from_ansi(out))
+                self._log(Text.from_ansi(out), transcript=True)
             # A config-changing subcommand (on/off/mode/speak/settings) must
             # rebuild the cached pipeline so the next use picks up the new config.
             # test/download/status/doctor don't change config — leave the warmed
@@ -13684,9 +13704,9 @@ class NovaApp(App):
                 lines.append(f"log          : {status['log_path']}")
             if status["graphs"]:
                 lines.append(f"graphs       : {len(status['graphs'])} registered")
-            self._log(Text("agent server", style=f"bold {self._palette.primary}"))
+            self._log(Text("agent server", style=f"bold {self._palette.primary}"), transcript=True)
             for line in lines:
-                self._log(Text(line, style="dim"))
+                self._log(Text(line, style="dim"), transcript=True)
             return
 
         if action == "logs":
@@ -13694,9 +13714,12 @@ class NovaApp(App):
                 self._log(Text("no agent server log: nothing has been launched", style="dim"))
                 return
             tail = await asyncio.to_thread(_read_tail, str(status["log_path"]))
-            self._log(Text("agent server log (tail)", style=f"bold {self._palette.primary}"))
+            self._log(
+                Text("agent server log (tail)", style=f"bold {self._palette.primary}"),
+                transcript=True,
+            )
             for line in tail.splitlines()[-20:]:
-                self._log(Text(line, style="dim"))
+                self._log(Text(line, style="dim"), transcript=True)
             return
 
         if action == "stop":
@@ -13953,7 +13976,7 @@ class NovaApp(App):
                 t.append(f"  {p['url']}\n", style="dim")
         else:
             t.append("  (none found or tracing not configured)\n", style="dim")
-        self._log(t)
+        self._log(t, transcript=True)
 
     def _trace_traces(self, args: list[str]) -> None:
         """Show the most recent traces."""
@@ -13980,7 +14003,7 @@ class NovaApp(App):
                 "  (none — make a request with tracing enabled first)\n",
                 style="dim",
             )
-        self._log(t)
+        self._log(t, transcript=True)
 
     def _trace_help(self) -> None:
         """List the /trace subcommands."""
@@ -13996,7 +14019,7 @@ class NovaApp(App):
         ):
             t.append(f"  /trace {name}\n", style="cyan")
             t.append(f"      {desc}\n", style="dim")
-        self._log(t)
+        self._log(t, transcript=True)
 
     def _trace_status(self) -> None:
         """Show whether tracing is available, configured and enabled."""
@@ -14018,7 +14041,7 @@ class NovaApp(App):
         else:
             t.append("  ○ not configured\n", style="yellow")
             t.append("  run /trace setup to enter the environment\n", style="dim")
-        self._log(t)
+        self._log(t, transcript=True)
 
     async def _open_langsmith_setup(self, project_name: str | None = None) -> None:
         """Ask for the LangSmith environment and activate tracing with it."""
@@ -14053,7 +14076,7 @@ class NovaApp(App):
             t.append("● LangSmith tracing is off\n", style="yellow")
             if not os.environ.get("LANGSMITH_API_KEY"):
                 t.append("  an API key is required to trace\n", style="dim")
-        self._log(t)
+        self._log(t, transcript=True)
 
     async def _run_log(self, text: str) -> None:
         """Native recent-runs list and `/log show <id>` detail."""
@@ -14087,7 +14110,7 @@ class NovaApp(App):
                     t.append(f"\n{label}\n", style="bold")
                     for k, v in data.items():
                         t.append(f"  {k}: {v}\n", style="dim")
-            self._log(t)
+            self._log(t, transcript=True)
             return
 
         if sub == "grep":
@@ -14148,7 +14171,7 @@ class NovaApp(App):
             t, hits = await asyncio.to_thread(_scan)
             if hits == 0:
                 t.append(f"  (no matches for '{pattern}')\n", style="dim")
-            self._log(t)
+            self._log(t, transcript=True)
             return
 
         if sub not in ("list", ""):  # diff / verdict / frontier
@@ -14173,7 +14196,7 @@ class NovaApp(App):
         else:
             for s in sessions:
                 t.append(f"  {self._session_log_line(s)}\n", style="dim")
-        self._log(t)
+        self._log(t, transcript=True)
 
     @staticmethod
     def _session_log_line(s: Any) -> str:
@@ -14419,7 +14442,10 @@ class NovaApp(App):
         self._log(Text(f"Installing {planner.NAME}: {' '.join(planner.install_command())}", style="cyan"))
         self._set_status(f"installing {planner.NAME}…")
         try:
-            installed = await planner.install(lambda line: self._log(Text(f"  {line}", style="dim")))
+            installed = await planner.install(lambda line: self._log(
+                                                               Text(f"  {line}", style="dim"),
+                                                               transcript=True,
+                                                           ))
         finally:
             self._set_status("ready")
         if not installed:
@@ -14701,7 +14727,8 @@ class NovaApp(App):
                 Text(
                     f"Plan mode: {'enabled' if enabled else 'disabled'}",
                     style="cyan" if enabled else "dim",
-                )
+                ),
+                transcript=True,
             )
             return
         if low == "off":
@@ -14737,7 +14764,7 @@ class NovaApp(App):
 
         if result.action in {"status", "pause", "budget", "rubric-clear", "rubric-set"}:
             self._update_mode_badge()
-            self._log(Text(result.message, style="dim"))
+            self._log(Text(result.message, style="dim"), transcript=result.action == "status")
             if result.action != "status":
                 await self._save_session()
             return
@@ -14749,7 +14776,7 @@ class NovaApp(App):
             return
 
         if result.action == "usage":
-            self._log(Text(result.message, style="dim"))
+            self._log(Text(result.message, style="dim"), transcript=True)
             return
 
         # Setting or resuming a goal starts its next agent turn.
@@ -14760,7 +14787,7 @@ class NovaApp(App):
             style=f"bold {self._palette.accent}",
         )
         t.append(result.goal or "", style="italic")
-        self._log(t)
+        self._log(t, transcript=True)
 
         if result.kickoff:
             await self._stream_prompt(result.kickoff)
@@ -14949,7 +14976,7 @@ class NovaApp(App):
             computer = get_computer(sid)
             if action in {"start", "preview"}:
                 url = computer.preview_url()
-                self._log(Text(f"Computer preview: {url}", style=f"link {url}"))
+                self._log(Text(f"Computer preview: {url}", style=f"link {url}"), transcript=True)
                 await asyncio.to_thread(webbrowser.open, url)
             if action == "start":
                 self._log(
@@ -14968,7 +14995,7 @@ class NovaApp(App):
                 if status["paused"]:
                     message += " · input paused"
                 message += ". Ask Nova to use its computer; /computer preview opens the live view."
-            self._log(Text(message))
+            self._log(Text(message), transcript=True)
         except Exception as exc:
             self._log(Text(f"Computer: {exc}", style="yellow"))
         finally:
@@ -15606,7 +15633,7 @@ class NovaApp(App):
             from novacode_cli.config.config import settings
             try:
                 result = await asyncio.to_thread(handle_learning_review, arg, agent_dir=settings.get_agent_dir(self.assistant_id), project=project_memory_key(Path.cwd()))
-                self._log(Text(result))
+                self._log(Text(result), transcript=True)
             except (ValueError, OSError) as error:
                 self._log(Text(str(error), style="red"))
             return
@@ -15641,7 +15668,7 @@ class NovaApp(App):
                 "Usage: /learning on|off|status|auto on|auto off|review|approve|reject|rollback\n",
                 style="dim",
             )
-            self._log(t)
+            self._log(t, transcript=True)
             return
 
         if arg not in ("on", "off"):
@@ -15808,7 +15835,7 @@ class NovaApp(App):
                     self._model_provider, self.model_name, self._reasoning_effort
                 )
             )
-            self._log(t)
+            self._log(t, transcript=True)
             return
 
         val = args.strip().lower()
@@ -15890,7 +15917,7 @@ class NovaApp(App):
                 for i, si in enumerate(instr, 1):
                     t.append(f"  {i}. ", style="cyan")
                     t.append(f"{si.label}: {si.instruction}\n", style="dim")
-            self._log(t)
+            self._log(t, transcript=True)
             return
         if low in ("clear", "reset"):
             n = len(instr)
@@ -15999,7 +16026,7 @@ class NovaApp(App):
                 " · /notifications clear\n",
                 style="dim",
             )
-        self._log(t)
+        self._log(t, transcript=True)
 
     @staticmethod
     def _find_notification(ss, nid: str) -> object | None:
@@ -16077,7 +16104,7 @@ class NovaApp(App):
                     self.agent, self.session_state, self.token_tracker, cmd_args=None
                 )
             out = Text.from_ansi(cap.get()).plain.strip()
-            self._log(Text(out or "Usage: /research <query>", style="dim"))
+            self._log(Text(out or "Usage: /research <query>", style="dim"), transcript=True)
             return
         self._log(Text(f"🔬 Research: {args}", style="bold"))
         # Capture (and discard) the handler's setup prints; the agent run itself
@@ -16130,7 +16157,7 @@ class NovaApp(App):
                 )
                 await handle_ingest(mock_ctx)
             out = Text.from_ansi(cap.get()).plain.strip()
-            self._log(Text(out or "Usage: /ingest <raw_path>", style="dim"))
+            self._log(Text(out or "Usage: /ingest <raw_path>", style="dim"), transcript=True)
             return
         self._log(Text(f"📥 Ingesting: {args}", style="bold"))
         with _rich_console.capture() as cap:
@@ -16147,7 +16174,7 @@ class NovaApp(App):
             await handle_ingest(mock_ctx, execute_fn=self._tui_execute_fn)
         out = cap.get().strip()
         if out:
-            self._log(Text.from_ansi(out))
+            self._log(Text.from_ansi(out), transcript=True)
 
     async def _run_ask(self, text: str) -> None:
         """Ask a question with wiki context prepended."""
@@ -16169,7 +16196,7 @@ class NovaApp(App):
                 )
                 await handle_ask(mock_ctx)
             out = Text.from_ansi(cap.get()).plain.strip()
-            self._log(Text(out or "Usage: /ask <question>", style="dim"))
+            self._log(Text(out or "Usage: /ask <question>", style="dim"), transcript=True)
             return
         self._log(Text(f"📚 Asking: {question}", style="bold"))
         with _rich_console.capture() as cap:
@@ -16186,7 +16213,7 @@ class NovaApp(App):
             await handle_ask(mock_ctx, execute_fn=self._tui_execute_fn)
         out = cap.get().strip()
         if out:
-            self._log(Text.from_ansi(out))
+            self._log(Text.from_ansi(out), transcript=True)
 
     async def _run_file(self, text: str) -> None:
         """File conversation knowledge into the wiki."""
@@ -16208,7 +16235,7 @@ class NovaApp(App):
                 )
                 await handle_file(mock_ctx)
             out = Text.from_ansi(cap.get()).plain.strip()
-            self._log(Text(out or "Usage: /file <topic>", style="dim"))
+            self._log(Text(out or "Usage: /file <topic>", style="dim"), transcript=True)
             return
         self._log(Text(f"📝 Filing: {topic}", style="bold"))
         with _rich_console.capture() as cap:
@@ -16225,7 +16252,7 @@ class NovaApp(App):
             await handle_file(mock_ctx, execute_fn=self._tui_execute_fn)
         out = cap.get().strip()
         if out:
-            self._log(Text.from_ansi(out))
+            self._log(Text.from_ansi(out), transcript=True)
 
     async def _run_wiki(self) -> None:
         """Show the Obsidian LLM Wiki browser (interactive)."""
@@ -16259,7 +16286,7 @@ class NovaApp(App):
         if sub == "status":
             report = await asyncio.to_thread(gates.check_gates, agent_dir, sessions_dir)
             auto = NovaConfig().get("auto_dream", True) is not False
-            self._log(self._dream_status(report, auto=auto))
+            self._log(self._dream_status(report, auto=auto), transcript=True)
             return
         if sub:
             self._log(Text("Usage: /dream · /dream status · /dream auto on|off", style="yellow"))
@@ -16325,7 +16352,7 @@ class NovaApp(App):
                     block.append(line)
                 if i < len(status_lines) - 1:
                     block.append("\n")
-            self._log(block)
+            self._log(block, transcript=True)
 
         if isinstance(result, str) and result.strip():
             self._log(Text("💭 Dreaming over memories…", style="bold"))
@@ -16490,7 +16517,7 @@ class NovaApp(App):
                     f"  Total: {len(images)} — /images remove <id> · /images clear\n",
                     style="dim",
                 )
-            self._log(t)
+            self._log(t, transcript=True)
             return
         if sub == "remove":
             if len(arg_parts) < 2:
@@ -16549,7 +16576,7 @@ class NovaApp(App):
                     ops = f"({len(recs)}x) " + ops
                 t.append(f"  {disp}", style="yellow")
                 t.append(f"  {ops}\n", style="dim")
-        self._log(t)
+        self._log(t, transcript=True)
 
     async def _run_tests(self, text: str) -> None:
         """Native /tests: detect framework (or use args) and stream results."""
@@ -16587,10 +16614,10 @@ class NovaApp(App):
 
         def _cb(line: str) -> None:
             if threading.get_ident() == loop_tid:
-                self._log(Text(line, style="dim"))
+                self._log(Text(line, style="dim"), transcript=True)
             else:
                 try:
-                    self.call_from_thread(self._log, Text(line, style="dim"))
+                    self.call_from_thread(self._log, Text(line, style="dim"), transcript=True)
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -16617,7 +16644,7 @@ class NovaApp(App):
                 t.append("  " + ", ".join(stats) + "\n", style="dim")
             if result.error:
                 t.append(f"  error: {result.error}\n", style="red")
-            self._log(t)
+            self._log(t, transcript=True)
             self._notify_test_result(result)
         except Exception as ex:  # noqa: BLE001
             self._log(Text(f"Test run failed: {ex}", style="red"))
@@ -16944,7 +16971,7 @@ class NovaApp(App):
                         image_tracker=self.image_tracker,
                     )
                 )
-            self._log(Text.from_markup(captured.get()))
+            self._log(Text.from_markup(captured.get()), transcript=True)
             return
 
         import shutil
@@ -16997,7 +17024,8 @@ class NovaApp(App):
             Text.assemble(
                 ("● Shared: ", "green"), (view, f"link {view}"), ("\n  gist: ", "dim"),
                 (gist, f"dim link {gist}"),
-            )
+            ),
+            transcript=True,
         )
 
     async def _run_restore(self, text: str) -> None:
@@ -17261,10 +17289,10 @@ class NovaApp(App):
             except Exception:  # noqa: BLE001 - never let bad markup break the run
                 renderable = Text(message)
             if threading.get_ident() == loop_tid:
-                self._log(renderable)
+                self._log(renderable, transcript=True)
             else:
                 try:
-                    self.call_from_thread(self._log, renderable)
+                    self.call_from_thread(self._log, renderable, transcript=True)
                 except Exception:  # noqa: BLE001 - app may be shutting down
                     pass
 
@@ -17310,7 +17338,7 @@ class NovaApp(App):
         if args == "status":
             with _rich_console.capture() as cap:
                 _handle_status(self.session_state)
-            self._log(Text.from_ansi(cap.get()))
+            self._log(Text.from_ansi(cap.get()), transcript=True)
             return
 
         # Check if already running
@@ -17558,7 +17586,8 @@ class NovaApp(App):
                         (f"{run_id}  ", "cyan"),
                         (f"{run.status:<18}", "dim"),
                         (run.prompt.splitlines()[0][:60] if run.prompt else "", ""),
-                    )
+                    ),
+                    transcript=True,
                 )
             return
 
@@ -17723,18 +17752,22 @@ class NovaApp(App):
             from novacode_cli.tui.council_view import plan_cards
 
             for card in plan_cards(run, palette):
-                self._log(card, classes="council-plan")
+                self._log(card, classes="council-plan", transcript=True)
         else:  # no theme (a bare harness): the plain listing
             for plan in plans:
                 proposal = run.proposal(plan.proposal_id)
                 if proposal is not None:
-                    self._log(Text(f"#{plan.rank} {proposal.title} — {proposal.summary}"))
+                    self._log(
+                        Text(f"#{plan.rank} {proposal.title} — {proposal.summary}"),
+                        transcript=True,
+                    )
         self._log(
             Text(
                 "#1 is recommended. Use the buttons, or type /council approve <n> · "
                 "view <n> · revise <notes> · reject",
                 style="dim",
-            )
+            ),
+            transcript=True,
         )
         if run.status == cp.AWAITING_APPROVAL and hasattr(self, "_transcript"):
             from novacode_cli.tui.council_view import CouncilActions
@@ -17759,7 +17792,7 @@ class NovaApp(App):
         if proposal is None:
             self._log(Text("That plan is missing from the run.", style="red"))
             return
-        self._log(Markdown(to_implementation_plan(run, proposal, selected)))
+        self._log(Markdown(to_implementation_plan(run, proposal, selected)), transcript=True)
 
     async def _run_chat(self, text: str) -> None:
         """Run the Council web UI — start or stop it in the browser."""
@@ -18204,22 +18237,10 @@ class NovaApp(App):
                 )
                 return
 
-            color = self._event_color(e.color)
-            t = Text(e.icon + " ", style=color)
-            t.append(e.message, style=color)
-            # Map event_type (e.g. "nova_skill_refinement") to the CSS modifier
-            # class ("nova-skill-refinement"): strip the leading "nova_"
-            # namespace and convert underscores to hyphens so the per-event
-            # border colors defined in the stylesheet actually match.
-            css = "nova-event"
-            if e.event_type:
-                modifier = e.event_type.replace("nova_", "", 1).replace("_", "-")
-                css += f" nova-{modifier}"
-            # Non-tool content: close any open tool group first to keep order.
-            self._close_tool_group()
-            self._transcript().mount(Static(t, classes=css))
-            self._schedule_prune()
-            self._scroll_end()
+            message = e.message
+            if e.event_type == "nova_prime_receipt":
+                message = message.partition("\n")[0] + ". Use /prime report for details."
+            self._log(Text(message), transcript=e.event_type == "nova_command_output")
         elif isinstance(e, ev.SubagentActivity):
             await self._handle_subagent(e)
         elif isinstance(e, ev.SubagentTask):

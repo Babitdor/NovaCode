@@ -35,7 +35,7 @@ class _Stub:
         self.prompts: list[str] = []
         self.workers: list[object] = []
 
-    def _log(self, renderable) -> None:
+    def _log(self, renderable: object, **_kwargs: object) -> None:
         self.logged.append(str(renderable))
 
     def run_worker(self, coro) -> None:

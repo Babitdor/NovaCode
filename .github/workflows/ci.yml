@@ -99,6 +99,7 @@ jobs:
           tests/test_release_version.py
           tests/test_prime.py
           tests/test_prime_ui.py
+          tests/test_tui_notices.py
           tests/test_plan_mcp_guard.py
           tests/test_plan_middleware.py
           tests/test_plan_lifecycle_regressions.py

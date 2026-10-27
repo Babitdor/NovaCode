@@ -42,7 +42,16 @@ def _disable_live_update_checks(monkeypatch: pytest.MonkeyPatch, tmp_path) -> No
 
     monkeypatch.setattr(NovaConfig, "__init__", isolated_config)
     if _HAS_TEXTUAL:
+        from unittest.mock import AsyncMock
+
+        from novacode_cli.hermes.verifier import InlineVerifier, VerifierVerdict
         from novacode_cli.tui.app import NovaApp
+
+        # UI tests use fake agents; their auxiliary grader must also stay offline.
+        monkeypatch.setattr(
+            InlineVerifier, "grade",
+            AsyncMock(return_value=VerifierVerdict(passed=True, score=1, feedback="Offline test")),
+        )
 
         async def no_voice_warmup() -> None:
             pass
@@ -1607,8 +1616,6 @@ def test_tui_markup_safe():
 
 async def _drive_context_warning():
     """_check_context warns once at the warning line and re-arms below it."""
-    from textual.widgets import Static
-
     from novacode_cli.tui.app import NovaApp, NovaStatusBar
 
     class _BD:
@@ -1636,15 +1643,19 @@ async def _drive_context_warning():
         session_manager=None,
     )
     app._auto_compact = False  # don't invoke the model in the test
+    from unittest.mock import Mock
+
+    notifications = Mock(wraps=app.notify)
+    app.notify = notifications
     async with app.run_test() as pilot:
         tt._bd = _BD(80.0, True, False)
         await app._check_context()
         assert app._ctx_warned is True
-        # Critical (no auto-compact) -> strong warning logged.
+        # Critical (no auto-compact) -> strong warning notified.
         tt._bd = _BD(96.0, True, True)
         await app._check_context()
         await pilot.pause()
-        txt = " ".join(str(w.render()) for w in app.query("#transcript .logline").results(Static))
+        txt = " ".join(call.args[0] for call in notifications.call_args_list)
         assert "critical" in txt.lower(), txt
         # Back below the warning line -> re-arm so the next rise warns again.
         tt._bd = _BD(40.0, False, False)
@@ -1660,7 +1671,6 @@ def test_tui_context_warning():
 
 async def _drive_live_steering():
     """Typing while the agent works injects a transient steer, cleared after."""
-    from textual.widgets import Input, Static
     from novacode_cli.tui.widgets import PromptInput
 
     from novacode_cli.tui.app import NovaApp, NovaStatusBar
@@ -1677,6 +1687,10 @@ async def _drive_live_steering():
         model_name="m",
         session_manager=None,
     )
+    from unittest.mock import Mock
+
+    notifications = Mock(wraps=app.notify)
+    app.notify = notifications
     async with app.run_test() as pilot:
         app._turn_active = True  # simulate an in-flight turn
         inp = app.query_one("#prompt", PromptInput)
@@ -1689,7 +1703,7 @@ async def _drive_live_steering():
         assert any(si.instruction == "focus on error handling" for si in instrs), instrs
         assert len(app._live_steers) == 1
         assert app._live_steers[0].live, "a queued message, recorded in the chat when picked up"
-        txt = " ".join(str(w.render()) for w in app.query("#transcript .logline").results(Static))
+        txt = " ".join(call.args[0] for call in notifications.call_args_list)
         assert "Queued" in txt, txt
         # Turn-end cleanup removes the transient steer (one-turn lifetime).
         app._turn_active = False
@@ -2720,6 +2734,10 @@ async def _drive_init_routes_native():
         image_tracker=None,
         model_name="m",
     )
+    from unittest.mock import Mock
+
+    notifications = Mock(wraps=app.notify)
+    app.notify = notifications
     async with app.run_test() as pilot:
         prev_root = cfg.settings.project_root
         cfg.settings.project_root = None  # deterministic no-project path
@@ -2733,9 +2751,7 @@ async def _drive_init_routes_native():
         finally:
             cfg.settings.project_root = prev_root
         # native notice rendered; not the "isn't available in --tui" fallback
-        from textual.widgets import Static
-
-        texts = " ".join(str(w.render()) for w in app.query("#transcript .logline").results(Static))
+        texts = " ".join(call.args[0] for call in notifications.call_args_list)
         assert "isn't available" not in texts, texts
         assert "requires a project" in texts or "Initializing NOVA.md" in texts, texts
 
@@ -3146,7 +3162,7 @@ async def _drive_prune_keeps_up_during_a_burst():
         cap = appmod._MAX_TRANSCRIPT_WIDGETS
         # A burst with NO awaits between logs — a fast tool/output stream.
         for i in range(cap * 3):
-            app._log(RText(f"burst {i}"))
+            app._log(RText(f"burst {i}"), transcript=True)
         for _ in range(10):
             await pilot.pause()
         n = len(app.query_one("#transcript").children)
@@ -3165,7 +3181,7 @@ async def _drive_prune_keeps_up_during_a_burst():
 
         tr.remove_children = counting  # type: ignore[assignment]
         for i in range(cap):
-            app._log(RText(f"second {i}"))
+            app._log(RText(f"second {i}"), transcript=True)
         for _ in range(10):
             await pilot.pause()
         assert calls["batch"] > 0, (
@@ -3428,7 +3444,7 @@ async def _drive_tool_group_coalescing():
         await app._render(
             ev.ToolResult(preview="finaldetail", is_error=False, full_output="x", call_id="z1")
         )
-        app._log(RText("something else"))  # closes the tool group
+        app._log(RText("something else"), transcript=True)  # closes the tool group
         await settle(pilot)
         assert "finaldetail" in str(lst.render()), "pending paint was lost when the group closed"
 
@@ -3765,7 +3781,6 @@ async def _drive_steer_save_native():
 
 async def _drive_research_dream_native():
     """/research streams natively via execute_fn; /dream renders natively."""
-    from textual.widgets import Input, Static
     from novacode_cli.tui.widgets import PromptInput
 
     from novacode_cli.tui.app import NovaApp, NovaStatusBar
@@ -3790,10 +3805,14 @@ async def _drive_research_dream_native():
         await app.workers.wait_for_complete()
         await pilot.pause()
 
+    from unittest.mock import Mock
+
+    notifications = Mock(wraps=app.notify)
+    app.notify = notifications
     async with app.run_test() as pilot:
         await submit(pilot, "/research quick how do async generators work")
         await submit(pilot, "/dream")
-        txt = " ".join(str(w.render()) for w in app.query("#transcript .logline").results(Static))
+        txt = " ".join(call.args[0] for call in notifications.call_args_list)
         assert "isn't available" not in txt, txt
         # research header surfaced natively
         assert "Research" in txt, txt
@@ -4127,6 +4146,10 @@ async def _drive_resume_replay():
         session_manager=None,
         restored_messages=msgs,
     )
+    from unittest.mock import Mock
+
+    notifications = Mock(wraps=app.notify)
+    app.notify = notifications
     async with app.run_test() as pilot:
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -4138,7 +4161,7 @@ async def _drive_resume_replay():
         assert len(users) >= 1, f"no user message replayed ({len(users)})"
         assert len(novas) >= 1, f"no nova message replayed ({len(novas)})"
         # and a "resumed" notice records how many were restored.
-        blob = " ".join(str(w.render()) for w in app.query("#transcript .logline").results(Static))
+        blob = " ".join(call.args[0] for call in notifications.call_args_list)
         assert "Resumed" in blob and "2" in blob, blob
 
 
@@ -4209,6 +4232,10 @@ async def _drive_clear_resets_chat():
         await app.workers.wait_for_complete()
         await pilot.pause()
 
+    from unittest.mock import Mock
+
+    notifications = Mock(wraps=app.notify)
+    app.notify = notifications
     async with app.run_test() as pilot:
         await submit(pilot, "hello there")  # build some history
         app._seen.add("sentinel")
@@ -4216,7 +4243,7 @@ async def _drive_clear_resets_chat():
         # New conversation thread + cleared per-chat tracking.
         assert ss.thread_id != "orig-thread", ss.thread_id
         assert "sentinel" not in app._seen
-        txt = " ".join(str(w.render()) for w in app.query("#transcript .logline").results(Static))
+        txt = " ".join(call.args[0] for call in notifications.call_args_list)
         assert "new chat" in txt.lower(), txt
 
 
