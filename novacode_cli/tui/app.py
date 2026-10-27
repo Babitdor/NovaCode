@@ -1597,11 +1597,18 @@ class NovaApp(App):
         padding: 0 0 0 2;
     }
     #composer-actions {
+        layout: grid;
+        grid-size: 4 1;
+        grid-columns: 14 16 12 18;
+        grid-rows: 1;
         height: 1;
         padding: 0 1;
         background: $surface;
     }
-    #caveman-toggle, #code-mode-toggle {
+    Screen.compact #composer-actions {
+        grid-size: 2 2; grid-columns: 1fr 1fr; grid-rows: 1 1; height: 2;
+    }
+    #prime-toggle, #caveman-toggle, #code-mode-toggle {
         width: 16;
         min-width: 16;
         height: 1;
@@ -1611,17 +1618,20 @@ class NovaApp(App):
         background: $surface;
         color: $text-muted;
     }
-    #caveman-toggle.enabled, #code-mode-toggle.enabled {
+    #prime-toggle { width: 14; min-width: 14; }
+    #code-mode-toggle { width: 18; min-width: 18; }
+    #prime-toggle.enabled, #caveman-toggle.enabled, #code-mode-toggle.enabled {
         color: $accent;
         text-style: bold;
     }
+    #prime-toggle:focus, #prime-toggle:hover,
     #caveman-toggle:focus, #caveman-toggle:hover,
     #code-mode-toggle:focus, #code-mode-toggle:hover {
         background: $panel;
         text-style: bold;
     }
     #caveman-options {
-        width: 10; min-width: 10; height: 1; min-height: 1;
+        width: 12; min-width: 12; height: 1; min-height: 1;
         border: none; padding: 0 1; color: $text-muted; background: $surface;
     }
     #caveman-options:hover, #caveman-options:focus { background: $panel; color: $accent; }
@@ -2580,6 +2590,14 @@ class NovaApp(App):
             # tall in normal mode, so it costs nothing until a mode is active.
             yield Static("", id="mode-badge")
             with Horizontal(id="composer-actions"):
+                yield Button(
+                    "Prime: off",
+                    id="prime-toggle",
+                    tooltip=(
+                        "Toggle Nova Prime · Deep Work for subsequent requests. "
+                        "Existing models, limits and approvals stay in force."
+                    ),
+                )
                 yield Button(
                     "Caveman: off",
                     id="caveman-toggle",
@@ -7934,6 +7952,13 @@ class NovaApp(App):
         except NoMatches:
             return
 
+        prompt.screen.set_class(bool(prime), "prime-mode")
+        toggle = self._w("#prime-toggle", Button)
+        toggle.label = "Prime: on" if prime else "Prime: off"
+        toggle.set_class(bool(prime), "enabled")
+        prime_composer = bool(prime) and not (plan or bash or auto)
+        prompt.set_class(prime_composer, "prime-composer")
+
         pal = self._palette
         if plan and bash:
             t = Text()
@@ -7987,6 +8012,7 @@ class NovaApp(App):
             prefix.set_class(plan and not bash, "plan-mode")
             prefix.set_class(not plan and not bash, "normal-mode")
             prefix.set_class(auto and not bash, "auto-approve-mode")
+            prefix.set_class(prime_composer, "prime-composer")
             _paint(prefix, "$ " if bash else "> ")
         except NoMatches:
             pass
@@ -7996,6 +8022,8 @@ class NovaApp(App):
             row.set_class(plan and not bash, "plan-mode")
             row.set_class(not plan and not bash, "normal-mode")
             row.set_class(auto and not bash, "auto-approve-mode")
+            row.set_class(prime_composer, "prime-composer")
+            row.border_title = "Nova Prime · Deep Work" if prime_composer else ""
         except NoMatches:
             pass
 
@@ -12175,6 +12203,13 @@ class NovaApp(App):
     async def _caveman_options_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         await self._run_caveman("/caveman settings")
+
+    @on(Button.Pressed, "#prime-toggle")
+    async def _prime_toggle_pressed(self, event: Button.Pressed) -> None:
+        """Share slash-command semantics without submitting the composer's draft."""
+        event.stop()
+        await self._run_prime("/prime")
+        self._w("#prompt", PromptInput).focus()
 
     async def _run_prime(self, text: str) -> None:
         """Enable Deep Work for this session's next foreground request."""

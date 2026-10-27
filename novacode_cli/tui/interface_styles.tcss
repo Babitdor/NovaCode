@@ -275,3 +275,24 @@ Screen.studio-home #home-style-actions .home-action {
     height: 3; border: round $border; background: $panel;
 }
 Screen.studio-home.scene-roomy #home-style-art:hover { text-style: bold; }
+
+/* Prime is a session mode, layered over the selected interface and color theme.
+   The composer keeps PLAN, BASH and approval-warning colors when those apply. */
+Screen.prime-mode #prompt-row.prime-composer.normal-mode {
+    border: round $accent; border-title-color: $accent;
+    border-title-style: bold; background: $accent 8%;
+}
+Screen.prime-mode #prompt.prime-composer.normal-mode,
+Screen.prime-mode #prompt-prefix.prime-composer.normal-mode { background: $accent 8%; }
+Screen.prime-mode #prompt:focus.prime-composer.normal-mode { background: $accent 14%; }
+Screen.prime-mode #prompt-prefix.prime-composer.normal-mode { color: $accent; text-style: bold; }
+Screen.prime-mode #mode-badge {
+    display: block; height: auto; background: $accent 12%; color: $text;
+}
+Screen.prime-mode #prime-toggle.enabled {
+    background: $accent; color: $background; text-style: bold;
+}
+Screen.prime-mode #prime-toggle.enabled:hover,
+Screen.prime-mode #prime-toggle.enabled:focus {
+    background: $accent 75%; color: $text; text-style: bold reverse;
+}
