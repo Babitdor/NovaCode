@@ -1598,17 +1598,17 @@ class NovaApp(App):
     }
     #composer-actions {
         layout: grid;
-        grid-size: 4 1;
-        grid-columns: 14 16 12 18;
+        grid-size: 5 1;
+        grid-columns: 14 12 16 12 18;
         grid-rows: 1;
         height: 1;
         padding: 0 1;
         background: $surface;
     }
-    Screen.compact #composer-actions {
-        grid-size: 2 2; grid-columns: 1fr 1fr; grid-rows: 1 1; height: 2;
+    Screen.narrow #composer-actions {
+        grid-size: 2 3; grid-columns: 1fr 1fr; grid-rows: 1 1 1; height: 3;
     }
-    #prime-toggle, #caveman-toggle, #code-mode-toggle {
+    #prime-toggle, #plan-toggle, #caveman-toggle, #code-mode-toggle {
         width: 16;
         min-width: 16;
         height: 1;
@@ -1619,12 +1619,14 @@ class NovaApp(App):
         color: $text-muted;
     }
     #prime-toggle { width: 14; min-width: 14; }
+    #plan-toggle { width: 12; min-width: 12; }
     #code-mode-toggle { width: 18; min-width: 18; }
-    #prime-toggle.enabled, #caveman-toggle.enabled, #code-mode-toggle.enabled {
+    #prime-toggle.enabled, #plan-toggle.enabled,
+    #caveman-toggle.enabled, #code-mode-toggle.enabled {
         color: $accent;
         text-style: bold;
     }
-    #prime-toggle:focus, #prime-toggle:hover,
+    #prime-toggle:focus, #prime-toggle:hover, #plan-toggle:focus, #plan-toggle:hover,
     #caveman-toggle:focus, #caveman-toggle:hover,
     #code-mode-toggle:focus, #code-mode-toggle:hover {
         background: $panel;
@@ -2597,6 +2599,11 @@ class NovaApp(App):
                         "Toggle Nova Prime · Deep Work for subsequent requests. "
                         "Existing models, limits and approvals stay in force."
                     ),
+                )
+                yield Button(
+                    "Plan: off",
+                    id="plan-toggle",
+                    tooltip="Toggle read-only planning without submitting your draft.",
                 )
                 yield Button(
                     "Caveman: off",
@@ -7953,9 +7960,13 @@ class NovaApp(App):
             return
 
         prompt.screen.set_class(bool(prime), "prime-mode")
+        prompt.screen.set_class(bool(plan), "planning-mode")
         toggle = self._w("#prime-toggle", Button)
         toggle.label = "Prime: on" if prime else "Prime: off"
         toggle.set_class(bool(prime), "enabled")
+        plan_toggle = self._w("#plan-toggle", Button)
+        plan_toggle.label = "Plan: on" if plan else "Plan: off"
+        plan_toggle.set_class(bool(plan), "enabled")
         prime_composer = bool(prime) and not (plan or bash or auto)
         prompt.set_class(prime_composer, "prime-composer")
 
@@ -8023,7 +8034,12 @@ class NovaApp(App):
             row.set_class(not plan and not bash, "normal-mode")
             row.set_class(auto and not bash, "auto-approve-mode")
             row.set_class(prime_composer, "prime-composer")
-            row.border_title = "Nova Prime · Deep Work" if prime_composer else ""
+            plan_composer = bool(plan) and not (bash or auto)
+            row.set_class(plan_composer, "plan-composer")
+            row.border_title = (
+                "Plan Mode · Read only" if plan_composer
+                else "Nova Prime · Deep Work" if prime_composer else ""
+            )
         except NoMatches:
             pass
 
@@ -12211,13 +12227,23 @@ class NovaApp(App):
         await self._run_prime("/prime")
         self._w("#prompt", PromptInput).focus()
 
+    @on(Button.Pressed, "#plan-toggle")
+    async def _plan_toggle_pressed(self, event: Button.Pressed) -> None:
+        """Toggle the existing plan agent without submitting the composer's draft."""
+        event.stop()
+        enabled = getattr(self.session_state, "plan_mode_enabled", False)
+        await self._run_plan("/plan off" if enabled else "/plan")
+        self._w("#prompt", PromptInput).focus()
+
     async def _run_prime(self, text: str) -> None:
         """Enable Deep Work for this session's next foreground request."""
         from novacode_cli.commands.prime_handler import handle_prime_command
 
         parts = text.split(maxsplit=1)
         args = parts[1] if len(parts) > 1 else ""
-        self._log(Text(handle_prime_command(self.session_state, args)))
+        message = handle_prime_command(self.session_state, args)
+        if args.strip().lower() not in {"", "on", "off"}:
+            self._log(Text(message))
         self._update_mode_badge(self.query_one("#prompt", PromptInput).text)
         await self._save_session()
 
@@ -14685,16 +14711,9 @@ class NovaApp(App):
                 self.session_state.clear_plan_agent()
             except Exception:  # noqa: BLE001
                 pass
-            self._log(Text("Plan mode disabled.", style="yellow"))
             return
         if not await self._enable_plan_mode():
             return
-        self._log(
-            Text(
-                "Plan mode is Active",
-                style="cyan",
-            )
-        )
         if args:
             await self._stream_prompt(args)
 

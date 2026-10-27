@@ -26,8 +26,21 @@ The **Prime: off/on** button beside the composer toggles the same session settin
 with a click or keyboard activation, preserving the current draft. While enabled,
 the composer has an accented frame labeled **Nova Prime · Deep Work**, a highlighted
 toggle and a phase badge. Colors follow the selected theme; Plan, Bash and
-auto-approval indicators keep their established colors. Composer controls use two
-rows on narrow terminals.
+auto-approval indicators keep their established colors. Composer controls wrap
+onto multiple rows on narrow terminals.
+
+The adjacent **Plan: off/on** button enables the existing read-only planner
+without submitting the draft. Its blue frame reads **Plan Mode · Read only**.
+Mode toggles are silent; `/prime status`, `/prime report` and `/plan status`
+remain available for explicit details.
+
+Plan restrictions run before tool execution, including direct MCP tools and
+calls routed through MCPTool or Code Mode. Serena exposes only reviewed
+investigation operations during planning; edits, memory writes, commands and
+unknown operations are blocked even with auto-approval enabled. Other MCP
+tools require explicit read-only metadata and must not declare destructive
+behavior. Tool metadata comes from configured servers, so these checks do not
+provide an OS sandbox for an untrusted server.
 
 ## The workflow
 

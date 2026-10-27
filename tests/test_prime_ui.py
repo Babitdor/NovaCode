@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.widgets import Button, Static
@@ -78,6 +78,7 @@ async def test_composer_prime_toggle_keeps_draft_and_permission_colors(size: tup
         assert app.focused is prompt
         for selector in (
             "#prime-toggle",
+            "#plan-toggle",
             "#caveman-toggle",
             "#caveman-options",
             "#code-mode-toggle",
@@ -111,4 +112,76 @@ async def test_composer_prime_toggle_keeps_draft_and_permission_colors(size: tup
         assert not row.border_title
         assert row.styles.border_top == original_border
         assert prompt.text == "Keep this draft @file.py"
+        app.agent.astream.assert_not_called()
+
+
+@pytest.mark.timeout(30)
+@pytest.mark.parametrize("size", [(110, 38), (55, 24)])
+async def test_plan_composer_toggle_uses_plan_agent_and_keeps_draft(  # noqa: PLR0915 -- One UI lifecycle.
+    size: tuple[int, int],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from novacode_cli.agents import plan_agent
+
+    app = _app()
+    app.agent.astream = AsyncMock(side_effect=AssertionError("Toggle must not start work"))
+    app.session_state._model = Mock()
+    planner, backend = Mock(), Mock()
+    factory = Mock(return_value=(planner, backend))
+    monkeypatch.setattr(plan_agent, "create_plan_agent_with_config", factory)
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        prompt = app.query_one("#prompt", PromptInput)
+        toggle = app.query_one("#plan-toggle", Button)
+        row = app.query_one("#prompt-row")
+        prompt.text = "Investigate @parser.py"
+        original_border = row.styles.border_top
+        original_approval = app.session_state.auto_approve
+        log = Mock(wraps=app._log)
+        monkeypatch.setattr(app, "_log", log)
+        assert await pilot.click(toggle)
+        await pilot.pause()
+        factory.assert_called_once()
+        assert app.session_state.plan_mode_enabled
+        assert app._active_agent() == (planner, backend)
+        assert str(toggle.label) == "Plan: on"
+        assert toggle.has_class("enabled")
+        assert app.screen.has_class("planning-mode")
+        assert row.has_class("plan-composer")
+        assert row.border_title == "Plan Mode · Read only"
+        assert row.styles.border_top != original_border
+        assert app.focused is prompt
+        assert prompt.text == "Investigate @parser.py"
+        assert app.session_state.auto_approve is original_approval
+        log.assert_not_called()
+        # Both modes can be enabled; Plan keeps the read-only frame.
+        await app._run_prime("/prime on")
+        assert row.has_class("plan-composer")
+        assert not row.has_class("prime-composer")
+        log.assert_not_called()
+        await app._run_plan("/plan status")
+        assert "enabled" in str(log.call_args.args[0])
+        log.reset_mock()
+        for selector in (
+            "#prime-toggle",
+            "#plan-toggle",
+            "#caveman-toggle",
+            "#caveman-options",
+            "#code-mode-toggle",
+        ):
+            control = app.query_one(selector, Button)
+            assert 0 <= control.region.x < control.region.right <= size[0]
+            assert control.region.bottom <= size[1]
+            assert control.region.height == 1
+        toggle.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert not app.session_state.plan_mode_enabled
+        assert app._active_agent() == (app.agent, app.backend)
+        assert not app.screen.has_class("planning-mode")
+        assert str(toggle.label) == "Plan: off"
+        assert row.has_class("prime-composer")
+        assert prompt.text == "Investigate @parser.py"
+        assert app.focused is prompt
+        log.assert_not_called()
         app.agent.astream.assert_not_called()

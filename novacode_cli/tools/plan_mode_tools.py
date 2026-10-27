@@ -168,6 +168,11 @@ def enter_plan_mode(reason: str = "") -> str:
     Returns:
         Planning instructions to follow for the rest of this task.
     """
+    from novacode_cli.config.plan_mode import active_plan_session
+
+    session = active_plan_session.get()
+    if session is not None:
+        session.plan_mode_enabled = True
     header = f"Plan mode activated. Reason: {reason}\n\n" if reason else "Plan mode activated.\n\n"
     return header + _PLAN_MODE_PROMPT
 

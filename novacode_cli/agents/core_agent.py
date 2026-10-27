@@ -2540,6 +2540,9 @@ This file stores your preferences and context that persist across sessions.
     # Caller-injected middleware (e.g. Cowork's WorkspacePolicy broker) goes last
     # so it wraps tool calls closest to execution — a denied call never runs.
     from novacode_cli.security.delegated_approval import HardDenyMiddleware
+    from novacode_cli.agents.plan_agent.plan_mode_middleware import PlanModeMiddleware
+
+    agent_middleware.append(PlanModeMiddleware(workspace_root=workspace_root, always_on=False))
     agent_middleware.append(HardDenyMiddleware())
     if extra_middleware:
         agent_middleware.extend(extra_middleware)

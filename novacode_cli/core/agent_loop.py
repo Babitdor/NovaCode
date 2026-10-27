@@ -490,6 +490,9 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
         else None
     )
     prime_token = current_run.set(prime_run)
+    from novacode_cli.config.plan_mode import active_plan_session
+
+    plan_session_token = active_plan_session.set(session_state)
     prime_outcome = "interrupted"
 
     # Resuming after an interrupt restarts LangGraph's recursion counter, so a
@@ -1356,6 +1359,7 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
         return
     finally:
         _auto_approve_var.reset(token)
+        active_plan_session.reset(plan_session_token)
         if prime_run is not None:
             prime_run.finish(prime_outcome)
         current_run.reset(prime_token)

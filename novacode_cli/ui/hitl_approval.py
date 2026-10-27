@@ -9,7 +9,7 @@ from __future__ import annotations
 
 
 from novacode_cli.config.config import console
-from novacode_cli.config.plan_mode import BLOCKED_TOOLS, RESTRICTED_WRITE_TOOLS
+from novacode_cli.config.plan_mode import plan_tool_rejection
 from novacode_cli.security.policy import ApprovalPolicy
 from novacode_cli.security.session_allow import get_session_allow
 
@@ -57,22 +57,16 @@ def check_plan_mode_blocked(req: dict, plan_mode_enabled: bool) -> tuple[bool, d
 
     for ar in action_requests:
         tool_name = ar.get("name", "")
-        if tool_name in BLOCKED_TOOLS:
-            decisions.append({"type": "reject", "reason": f"Blocked in plan mode: {tool_name}"})
+        reason = plan_tool_rejection(tool_name, ar.get("args") or {})
+        if reason:
+            decisions.append({
+                "type": "reject", "reason": reason,
+                "message": (
+                    "writes/edits are only allowed inside .nova/plans/ or .nova/ralph/ in plan mode"
+                )
+                if tool_name in {"write_file", "edit_file"} else reason,
+            })
             any_rejected = True
-        elif tool_name in RESTRICTED_WRITE_TOOLS:
-            # Allow writes to .nova/plans/ and .nova/ralph/ paths
-            args = ar.get("args", {}) or {}
-            file_path = args.get("file_path", "") or args.get("path", "")
-            if file_path and (".nova/plans/" in str(file_path) or ".nova/ralph/" in str(file_path)):
-                decisions.append({"type": "approve"})
-            else:
-                decisions.append({
-                    "type": "reject",
-                    "message": "writes/edits are only allowed inside .nova/plans/ or .nova/ralph/ in plan mode",
-                    "reason": f"Write blocked in plan mode: {tool_name}",
-                })
-                any_rejected = True
         else:
             decisions.append({"type": "approve"})
 
@@ -117,13 +111,11 @@ def evaluate_tool_actions(
         tool_name = ar.get("name", "")
         args = ar.get("args", {}) or {}
 
-        # Plan mode: block write tools
+        # The same plan restrictions apply before policy/auto-approval.
         if plan_mode_enabled:
-            if tool_name in BLOCKED_TOOLS:
-                decisions.append({"type": "reject", "reason": f"Blocked in plan mode: {tool_name}"})
-                continue
-            if tool_name in RESTRICTED_WRITE_TOOLS:
-                decisions.append({"type": "reject", "reason": f"Write blocked in plan mode: {tool_name}"})
+            reason = plan_tool_rejection(tool_name, args)
+            if reason:
+                decisions.append({"type": "reject", "reason": reason})
                 continue
 
         # Policy evaluation: allow → approve, deny → reject, ask → None (HITL)

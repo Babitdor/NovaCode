@@ -296,3 +296,18 @@ Screen.prime-mode #prime-toggle.enabled:hover,
 Screen.prime-mode #prime-toggle.enabled:focus {
     background: $accent 75%; color: $text; text-style: bold reverse;
 }
+
+/* Planning uses the existing primary color and yields to command/approval modes. */
+Screen.planning-mode #prompt-row.plan-composer.plan-mode {
+    border: round $primary; border-title-color: $primary; border-title-style: bold;
+}
+Screen.planning-mode #mode-badge {
+    display: block; height: auto; background: $primary 12%; color: $text;
+}
+Screen.planning-mode #plan-toggle.enabled {
+    background: $primary; color: $background; text-style: bold;
+}
+Screen.planning-mode #plan-toggle.enabled:hover,
+Screen.planning-mode #plan-toggle.enabled:focus {
+    background: $primary 75%; color: $text; text-style: bold reverse;
+}

@@ -589,8 +589,11 @@ class MCPMiddleware(AgentMiddleware):
         ]
 
         # /context and the request snapshot count MCP schemas by this tag.
-        for tool in server_tools:
-            tool.metadata = {**(tool.metadata or {}), "nova_mcp_server": server_name}
+        for tool, raw in zip(server_tools, raw_tools, strict=True):
+            tool.metadata = {
+                **(tool.metadata or {}), "nova_mcp_server": server_name,
+                "nova_mcp_tool": raw.name,
+            }
 
         # Build metadata cache with correct server attribution
         for tool, raw_tool in zip(server_tools, raw_tools, strict=True):
