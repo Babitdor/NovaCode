@@ -10,7 +10,7 @@ import asyncio
 import contextlib
 import random
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from rich.cells import cell_len
 from rich.markdown import Markdown
@@ -1992,6 +1992,32 @@ class TuiInitRenderer:
         finally:
             session_state.auto_approve = prev
 
+
+
+class SubagentStatus(Static):
+    """A compact local dispatch row that opens its live activity preview."""
+
+    can_focus = True
+    BINDINGS: ClassVar = [("enter", "preview", "View activity")]
+    DEFAULT_CSS = """
+    SubagentStatus { height: auto; }
+    SubagentStatus:hover, SubagentStatus:focus { background: $surface; }
+    """
+
+    def __init__(self, task_id: str) -> None:
+        """Bind the status row to one dispatch's preview."""
+        super().__init__(classes="subagent-inline", markup=False)
+        self.task_id = task_id
+        self.tooltip = "View subagent activity · click or Enter"
+
+    def on_click(self, event: events.Click) -> None:
+        """Open this dispatch without triggering transcript click handlers."""
+        event.stop()
+        self.action_preview()
+
+    def action_preview(self) -> None:
+        """Open the same activity screen used by remote subagents."""
+        cast("NovaApp", self.app)._open_subagent_preview(self.task_id)
 
 
 class SubagentsDock(Vertical):

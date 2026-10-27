@@ -1,9 +1,10 @@
-"""Local subagents render as plain chat status lines; remote tasks retain their panel."""
+"""Subagent status rows open isolated live Markdown and tool previews."""
 
 from __future__ import annotations
 
 import asyncio
 import time
+from io import StringIO
 
 import pytest
 
@@ -72,31 +73,62 @@ def _task(task_id: str, **kwargs) -> ev.SubagentTask:
 
 
 @pytest.mark.parametrize("phase_kind", ["direct", "eval"])
-async def test_local_task_is_inline_noninteractive_and_not_in_dock(phase_kind):
-    from textual.widgets import Collapsible, Static
+@pytest.mark.parametrize("size", [(120, 44), (55, 24)])
+async def test_local_task_opens_live_preview_without_leaking_details(
+    phase_kind: str, size: tuple[int, int]
+) -> None:
+    from rich.console import Console
+    from textual.widgets import Static
+
+    from novacode_cli.tui.screens import SubagentPreviewScreen
+    from novacode_cli.tui.widgets import CachedMarkdown
 
     app = _app()
-    async with app.run_test(size=(120, 44)) as pilot:
+    async with app.run_test(size=size) as pilot:
+        app._set_home_visible(visible=False)
         await app._render(_task("a", phase_kind=phase_kind, subagent_type="reviewer"))
         await pilot.pause()
         widget = app._inline_subagents["a"]
         assert isinstance(widget, Static)
-        assert not isinstance(widget, Collapsible)
-        assert not widget.can_focus
+        assert widget.can_focus
         assert "reviewer" in str(widget.render())
         assert "running" in str(widget.render())
         assert not app.query_one("#subagents-dock").has_class("active")
         assert app._subagents_tick is None
         screen = app.screen
-        before = str(widget.render())
-        await pilot.click(widget)
+        await app._render(ev.SubagentPreview("a", "text", "## Findings\n\n**Two** hits."))
+        await app._render(ev.SubagentPreview("a", "tool", "grep(secret)", "c1"))
+        await app._render(_task("b", phase_kind=phase_kind, subagent_type="other"))
+        await app._render(ev.SubagentPreview("b", "text", "Other agent's private output"))
         await pilot.pause()
+        widget.scroll_visible(animate=False, immediate=True)
+        await pilot.pause()
+        assert await pilot.click(widget)
+        await pilot.pause()
+        preview = app.screen
+        assert isinstance(preview, SubagentPreviewScreen)
+        assert any(isinstance(body, CachedMarkdown) for body in preview._rendered.values())
+        await app._render(ev.SubagentPreview("a", "result", "2 matches", "c1"))
+        preview._refresh()
+        console = Console(width=size[0], record=True, file=StringIO())
+        console.print(preview.query_one("#preview-body", Static).visual._renderable)
+        rendered = console.export_text()
+        assert "Two hits." in rendered
+        assert "**Two**" not in rendered
+        assert "grep(secret)" in rendered
+        assert "2 matches" in rendered
+        assert "Other agent's private output" not in rendered
+        assert "grep(secret)" not in str(widget.render())
+        await pilot.press("escape")
         assert app.screen is screen
-        assert str(widget.render()) == before
-        assert not app.query("Collapsible.subagent")
-        await app._render(ev.SubagentPreview("a", "tool", "grep(secret)"))
-        assert not app._subagent_previews
-        assert len(app.query(".subagent-inline")) == 1
+        await app._render(_task("a", phase_kind=phase_kind, status="done"))
+        widget.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, SubagentPreviewScreen)
+        assert "2 matches" in str(app.screen._shown)
+        await pilot.press("escape")
 
 
 @pytest.mark.parametrize("status,word", [("done", "completed"), ("failed", "failed"), ("stopped", "stopped")])

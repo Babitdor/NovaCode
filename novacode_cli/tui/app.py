@@ -132,6 +132,7 @@ from novacode_cli.tui.widgets import (
     PromptInput,
     QuestionDock,
     SessionHeader,
+    SubagentStatus,
     SubagentsDock,
     TranscriptScroll,
     TuiInitRenderer,
@@ -6679,7 +6680,7 @@ class NovaApp(App):
     def _open_subagent_preview(self, task_id: str) -> None:
         """Show what one row is doing, updating while it runs."""
         opened = self._subagent_rows.get(task_id)
-        if opened is None or opened.phase_kind != "async":
+        if opened is None or opened.phase_kind == "team":
             return
 
         # The same header the main page gives the agent's own turns.
@@ -7270,7 +7271,11 @@ class NovaApp(App):
     async def _show_inline_subagent(self, task: ev.SubagentTask) -> None:
         widget = self._inline_subagents.get(task.task_id)
         if widget is None:
-            widget = Static(classes="subagent-inline", markup=False)
+            widget = (
+                Static(classes="subagent-inline", markup=False)
+                if task.phase_kind == "team"
+                else SubagentStatus(task.task_id)
+            )
             self._inline_subagents[task.task_id] = widget
             # Like _log, a status line must not hold up the agent stream while
             # Textual drains mount/layout callbacks.
@@ -7287,7 +7292,7 @@ class NovaApp(App):
             self._subagent_widgets.pop(task.task_id, None)
 
     async def _handle_subagent(self, e: ev.SubagentActivity) -> None:
-        """Local delegates get a single noninteractive line in the transcript."""
+        """Local delegates get a compact row linking to their activity preview."""
         if e.kind not in {"dispatched", "completed"}:
             return
         cid = e.call_id or ""
@@ -18251,7 +18256,7 @@ class NovaApp(App):
         elif isinstance(e, ev.SubagentPreview):
             # Collected unseen; the preview screen reads it when a row is opened.
             row = self._subagent_rows.get(e.task_id)
-            if row is not None and row.phase_kind == "async":
+            if row is not None and row.phase_kind != "team":
                 subagent_tasks.append_preview(
                     self._subagent_previews.setdefault(e.task_id, []), e.kind, e.text, e.call_id
                 )
