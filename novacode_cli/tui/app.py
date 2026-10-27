@@ -502,6 +502,7 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "computer": SlashCommand(
         "_run_computer", "separate Linux VM: /computer start|preview|pause|resume|stop|status"
     ),
+    "rooms": SlashCommand("_run_rooms", "project channels, agent DMs and shared task board"),
     "teammates": SlashCommand("_run_teammates", "persistent local assistant and input approvals"),
     "ui": SlashCommand(
         "_run_ui", "inspect / patch / preview / commit / rollback / reset UI panels"
@@ -2143,6 +2144,7 @@ class NovaApp(App):
     """ + RESUME_CSS
 
     BINDINGS = [
+        Binding("ctrl+shift+r", "rooms", "Project rooms"),
         Binding("ctrl+shift+backspace", "ui_reset", "Restore UI", priority=True),
         *[
             Binding(f"f{i}", f"harness_key('f{i}')", show=False, priority=True)
@@ -2493,6 +2495,7 @@ class NovaApp(App):
         # cache and every test that queries "#transcript" are unaffected while
         # there is only one session.
         with Horizontal(id="session-tab-bar"):
+            yield Button("Rooms", id="project-rooms", compact=True, tooltip="Project rooms")
             yield Tabs(id="session-tabs")
             yield Button("+", id="new-session", compact=True, tooltip="New session")
         # Dynamic subagents: every dispatch of the turn so far, grouped into the
@@ -14819,6 +14822,19 @@ class NovaApp(App):
         from novacode_cli.tui.screens import UpdateScreen
 
         self.push_screen(UpdateScreen())
+
+    @on(Button.Pressed, "#project-rooms")
+    def action_rooms(self) -> None:
+        """Open project conversations without starting agent work."""
+        self._run_rooms("")
+
+    def _run_rooms(self, _text: str) -> None:
+        from novacode_cli.config.config import settings
+        from novacode_cli.tui.rooms import RoomsScreen
+
+        self.push_screen(
+            RoomsScreen(Path(settings.get_workspace_root()), str(self.session_state.thread_id))
+        )
 
     def _run_teammates(self, _text: str) -> None:
         """Connect to the profile's detached local teammate."""
