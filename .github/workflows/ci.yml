@@ -56,6 +56,11 @@ jobs:
           novacode_cli/agents/attribution.py
           novacode_cli/agents/caveman.py
           novacode_cli/agents/caveman_support.py
+          novacode_cli/agents/prime.py
+          novacode_cli/agents/plan_agent/plan_mode_middleware.py
+          novacode_cli/config/plan_mode.py
+          novacode_cli/commands/prime_handler.py
+          novacode_cli/prime.py
           novacode_cli/tui/caveman_screen.py
           novacode_cli/tui/diff_preview.py
           novacode_cli/core/reasoning.py
@@ -92,6 +97,13 @@ jobs:
         run: >-
           uv run --no-sync pytest -q --tb=short --junitxml=test-results/regression.xml
           tests/test_release_version.py
+          tests/test_prime.py
+          tests/test_prime_ui.py
+          tests/test_plan_mcp_guard.py
+          tests/test_plan_middleware.py
+          tests/test_plan_lifecycle_regressions.py
+          tests/test_plan_approval_persistence.py
+          tests/test_session_state_fields.py
           tests/test_attribution.py
           tests/test_deepagents_compat.py
           tests/test_async_model_context.py

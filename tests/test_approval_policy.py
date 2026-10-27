@@ -211,14 +211,12 @@ def test_gate_auto_approve_approves_all():
     assert res == [{"type": "reject", "reason": "Policy denied: shell"}]
 
 
-def test_gate_plan_mode_blocks(monkeypatch):
+@pytest.mark.parametrize("auto_approve", [False, True])
+def test_gate_plan_mode_blocks(auto_approve: bool):
     reset_policy_cache()
-    import novacode_cli.ui.hitl_approval as h
-
-    monkeypatch.setattr(h, "BLOCKED_TOOLS", {"shell"})
     res = evaluate_tool_actions(
         _req(("shell", {"command": "git status"})),
-        _SS(plan_mode=True),
+        _SS(plan_mode=True, auto_approve=auto_approve),
         plan_mode_enabled=True,
     )
     assert res[0]["type"] == "reject"
@@ -254,7 +252,8 @@ def test_gate_session_allow_cannot_override_deny():
 
 
 if __name__ == "__main__":
-    test_shell_deny_destructive_and_injection()
+    test_shell_deny_destructive()
+    test_shell_metacharacters_are_not_injection()
     test_shell_allow_safe_commands()
     test_gate_all_allow_resolves_without_ask()
     test_gate_deny_rejects_without_ask()

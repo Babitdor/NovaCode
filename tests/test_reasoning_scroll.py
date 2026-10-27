@@ -59,6 +59,10 @@ async def test_completed_reasoning_can_be_reopened_and_keeps_full_text(
         header = thought.query_one(".role", Static)
         body = thought.query_one(".body", Static)
         assert not body.display
+        # Folding a long trace changes scroll geometry. Navigate to the header
+        # before hit-testing it, as a reader reopening older reasoning would.
+        header.scroll_visible(animate=False, immediate=True)
+        await pilot.pause()
         assert await pilot.click(header)
         await pilot.pause()
         assert not thought._collapsed
@@ -69,6 +73,8 @@ async def test_completed_reasoning_can_be_reopened_and_keeps_full_text(
         # Header updates preserve the affordance, and subsequent turns keep it usable.
         thought.update_header(Text("Thinking complete"))
         assert "▾" in header.render().plain
+        header.scroll_visible(animate=False, immediate=True)
+        await pilot.pause()
         assert await pilot.click(header)
         await pilot.pause()
         assert thought._collapsed
@@ -77,6 +83,8 @@ async def test_completed_reasoning_can_be_reopened_and_keeps_full_text(
         await app._render(ev.AssistantMessage("another answer", "Nova", "cyan"))
         await pilot.pause()
         assert len(app.query("ChatMessage.reason")) == 2
+        header.scroll_visible(animate=False, immediate=True)
+        await pilot.pause()
         assert await pilot.click(header)
         await pilot.pause()
         assert body.display
