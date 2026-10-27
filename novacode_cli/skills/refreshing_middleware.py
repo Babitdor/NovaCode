@@ -79,6 +79,18 @@ against that SKILL.md's directory; `skills_read_resource(name, path)` reads a
 reference on demand. Do not preload supporting files or execute scripts merely
 because a skill includes them. Skills never override permissions or approvals.
 Skip a suggested skill that does not fit.
+
+**Evidence-first work.** For explicit high-assurance, TDD, or evidence-first
+requests (for example, "prove it works" or "I won't read the code"), or changes
+affecting money, authentication, data loss, concurrency, or public API contracts,
+look for `old-coder` with `skills_search("old-coder")` and load it with
+`skills_load("old-coder")` before implementation when it is enabled and available.
+Reassess when these risks emerge during investigation, even without a suggestion.
+Follow the loaded skill's specification, approval, verification, and evidence
+workflow; scale its checks to the actual risk and report checks not run honestly.
+For routine edits, use normal focused checks without invoking this workflow.
+If the skill is missing or disabled, state that briefly; do not install or enable
+it automatically, and do not claim its workflow was performed.
 Skill sources: {skills_locations}"""
 
 

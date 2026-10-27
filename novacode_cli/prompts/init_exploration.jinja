@@ -28,6 +28,8 @@ to avoid mistakes and work efficiently?"
 
 If `{{ nova_md_path }}` already exists, read it first.
 Update it with new findings rather than overwriting good content.
+Preserve accurate instructions and make targeted edits. If nothing material has
+changed, leave the file unchanged; do not rewrite it for length or style alone.
 
 ---
 
@@ -147,8 +149,13 @@ Before writing, verify every item:
 - [ ] Empty sections are omitted entirely
 - [ ] Task Context and Definition of Done contain concrete project-specific guidance, not generic promises
 
-**Character limit: NOVA.md must stay under 5,000 characters (~1,500 tokens).**
-Trim Key Files first, then Conventions, then Architecture if over the limit.
+**Length is a guideline, not a validation gate.** Aim for a concise guide of
+roughly 1–2 pages; completeness and accuracy matter more than a numeric budget.
+Do not count characters or tokens, run length-check commands, or repeatedly
+rewrite the file to meet a size target. Omit redundant facts while drafting,
+then write once. Correct factual errors or failed writes as needed, but stop
+when the useful, verified project guidance is saved. Never drop safety-critical
+instructions or exact commands just to shorten the file.
 
 ---
 
