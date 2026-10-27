@@ -42,3 +42,5 @@
   expanding long traces, preserving all reopening and full-text assertions.
 - Include Prime state, composer controls and MCP planning restrictions in the
   offline CI regression matrix and focused source lint checks.
+- Use a native temporary workspace in plan-path tests so containment checks run
+  against absolute paths on both Linux and Windows.

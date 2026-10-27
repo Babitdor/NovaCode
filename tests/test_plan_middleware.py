@@ -5,8 +5,8 @@ from novacode_cli.agents.plan_agent.plan_mode_middleware import PlanModeMiddlewa
 
 
 @pytest.mark.anyio
-async def test_plan_mode_middleware_blocks_outside_plans_and_ralph():
-    workspace = Path("B:/fake/workspace")
+async def test_plan_mode_middleware_blocks_outside_plans_and_ralph(tmp_path: Path):
+    workspace = tmp_path
     middleware = PlanModeMiddleware(workspace_root=workspace)
 
     # 1. Blocked tools should fail immediately
