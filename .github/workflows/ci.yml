@@ -113,6 +113,7 @@ jobs:
           tests/test_prime_records.py
           tests/test_shell_prompts.py
           tests/test_prime_ui.py
+          tests/test_prime_browser.py
           tests/test_tui_notices.py
           tests/test_plan_mcp_guard.py
           tests/test_plan_middleware.py

@@ -57,11 +57,11 @@ async def test_prime_toggle_phase_and_existing_permission_badges():
 
 @pytest.mark.timeout(30)
 @pytest.mark.parametrize("size", [(110, 38), (55, 24)])
-async def test_prime_drawer_prepare_continue_and_narrow_navigation(
+async def test_prime_drawer_prepare_continue_and_narrow_navigation(  # noqa: PLR0915 - One UI lifecycle.
     size: tuple[int, int],
     monkeypatch: pytest.MonkeyPatch,
 ):
-    from textual.widgets import Input
+    from textual.widgets import Input, OptionList
 
     app = _app()
     app.agent.astream = AsyncMock(side_effect=AssertionError("Inspect/prepare must not start work"))
@@ -86,7 +86,11 @@ async def test_prime_drawer_prepare_continue_and_narrow_navigation(
         drawer = panel.query_one("#prime-drawer")
         assert drawer.display
         assert drawer.region.height <= size[1] // 3
-        assert "Task history" in str(panel.query_one("#prime-details", Static).render())
+        assert not panel.query(Input), "Selecting saved work must not require entering an ID"
+        records = panel.query_one("#prime-records", OptionList)
+        assert records.option_count == 1
+        assert "Fix CLI" in str(records.get_option_at_index(0).prompt)
+        assert run.report["id"] not in str(records.get_option_at_index(0).prompt)
         for selector in (
             "#prime-prepare",
             "#prime-inspect",
@@ -97,8 +101,10 @@ async def test_prime_drawer_prepare_continue_and_narrow_navigation(
             control = panel.query_one(selector, Button)
             assert control.region.height == 1
             assert control.content_region.height == 1
-        record_input = panel.query_one("#prime-record-id", Input)
-        record_input.value = run.report["id"]
+        records.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert "Fix CLI" in str(panel.query_one("#prime-details", Static).render())
         await pilot.click("#prime-prepare")
         await pilot.pause()
         assert app.session_state.prime_pending["id"] == run.report["id"]

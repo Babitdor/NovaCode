@@ -12338,28 +12338,55 @@ class NovaApp(App):
                 "Wait for the active request to finish before changing saved Prime context."
             )
             return
-        message = await asyncio.to_thread(handle_prime_command, self.session_state, args)
         panel = self.query_one("#prime-panel", PrimePanel)
+        session = self.session_state
+        message = (
+            ""
+            if action in {"tasks", "checks"}
+            else await asyncio.to_thread(handle_prime_command, session, args)
+        )
         if action in {"tasks", "checks"}:
             panel.display = True
             panel.query_one("#prime-drawer").display = True
             panel.query_one("#prime-drawer").styles.height = min(13, max(7, self.size.height // 3))
-            await panel.show_details(self.session_state, message)
+            identity = args.split()[1] if action == "checks" and len(args.split()) > 1 else ""
+            await panel.show_details(session, view=action, identity=identity)
         elif action == "forget" and "Confirm local removal" in message:
             identity = args.split()[1]
 
             async def confirmed(accepted: bool | None) -> None:
-                if accepted:
+                if not accepted:
+                    session.prime_forget_pending = None
+                elif self._turn_running():
+                    session.prime_forget_pending = None
+                    self.notify("Wait for the active request to finish before removing saved work.")
+                else:
                     result = await asyncio.to_thread(
                         handle_prime_command,
-                        self.session_state,
+                        session,
                         f"forget {identity} confirm",
                     )
+                    if result.startswith("Prime record ") and result.endswith(" removed."):
+                        result = f'Removed "{panel.record_label(identity)}" from Prime saved work.'
                     self.notify(result)
-                    await panel.show_details(self.session_state)
+                    await panel.show_details(session)
 
-            self.push_screen(ConfirmModal("Forget Prime record?", Text(message)), confirmed)
+            body = (
+                f'Remove "{panel.record_label(identity)}" from Prime saved work?\n\n'
+                "Your project files and conversation history will stay intact."
+            )
+            dialog = ConfirmModal("Remove saved Prime work?", Text(body))
+            await self.push_screen(dialog, confirmed)
+            dialog.query_one("#yes", Button).label = "Remove (y)"
+            dialog.query_one("#no", Button).label = "Cancel (n)"
         elif action not in {"", "on", "off"}:
+            if action == "resume" and len(args.split()) > 1:
+                identity = args.split()[1]
+                message = message.replace(
+                    f"Prime task {identity} prepared.",
+                    f'Loaded "{panel.record_label(identity)}".',
+                    1,
+                )
             self._log(Text(message), transcript=args.strip().lower() in {"status", "report"})
         self._update_mode_badge(self.query_one("#prompt", PromptInput).text)
         await self._save_session()
@@ -12378,9 +12405,7 @@ class NovaApp(App):
                     "Continue the prepared Prime task within the current permissions and limits."
                 )
         elif event.identity:
-            action = {"prepare": "resume", "inspect": "checks", "forget": "forget"}.get(
-                event.action
-            )
+            action = {"prepare": "resume", "forget": "forget"}.get(event.action)
             if action:
                 if self._turn_running() and action in {"resume", "forget"}:
                     self.notify(
