@@ -347,7 +347,7 @@ def test_a_new_cycle_is_read_newest_first(tmp_path) -> None:
     assert [cycle for cycle, _ in fresh.cycle_files()] == [2, 1]
 
 
-def test_old_cycles_are_pruned_to_bound_the_store(tmp_path) -> None:
+def test_old_cycles_are_pruned_to_bound_the_store(tmp_path, monkeypatch) -> None:
     """An agent directory outlives a session, so the store cannot grow forever.
 
     Cycles, not pages: a cycle holds at most ``window`` verdicts, so the budget
@@ -355,18 +355,21 @@ def test_old_cycles_are_pruned_to_bound_the_store(tmp_path) -> None:
     those two units and pruned nothing at all -- which this test caught, because
     it asserts cycles really disappear.
     """
-    from novacode_cli.agents.tool_verdicts import MAX_CACHED_VERDICTS
+    from novacode_cli.agents import tool_verdicts
 
+    # Exercise the retention boundary without thousands of filesystem writes on Windows.
+    budget = 20
+    monkeypatch.setattr(tool_verdicts, "MAX_CACHED_VERDICTS", budget)
     path = tmp_path / "tool_verdicts.json"
     cache = ToolVerdictCache(path=path, window=1)  # one verdict per cycle
-    cycles = MAX_CACHED_VERDICTS + 20
+    cycles = budget + 20
     for cycle in range(1, cycles + 1):
         cache.cycle = cycle
         cache.put(_result(f"c{cycle}", f"payload {cycle}"), 0.5)
 
     remaining = [cycle for cycle, _ in cache.cycle_files()]
     assert max(remaining) == cycles, "the newest cycle always survives"
-    assert len(remaining) <= MAX_CACHED_VERDICTS, "the store stays bounded"
+    assert len(remaining) <= budget, "the store stays bounded"
     assert min(remaining) > 1, "the oldest cycles are gone"
     assert cache.get(_result(f"c{cycles}", f"payload {cycles}")) == 0.5
 

@@ -39,3 +39,5 @@
   benchmark reduced estimator calls from 15,614 to 394 while preserving the fitted
   state and token count.
 - Extend offline CI coverage for approval decisions, compression modes and pruning.
+- Keep the cache-retention regression fixture small enough for the Windows test
+  timeout while still exercising pruning beyond the configured budget.
