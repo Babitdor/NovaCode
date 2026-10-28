@@ -473,7 +473,7 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
 
     @_session_hook
     async def aafter_agent(self, state: AgentState, runtime: Any = None) -> None:  # noqa: ARG002
-        """At task completion, maybe evolve a skill from a complex task.
+        """At task completion, queue a bounded review that prepares learning proposals.
 
         Fires only for the main agent (subagents don't carry this middleware),
         so it is exactly one trigger per user task. Never raises.

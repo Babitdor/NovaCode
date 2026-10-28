@@ -21,6 +21,11 @@ class Host(App):
         self.push_screen(self.panel)
 
 
+@pytest.fixture(autouse=True)
+def isolated_learning_home(tmp_path, monkeypatch):
+    monkeypatch.setattr("novacode_cli.config.config.HOME_DIR", tmp_path / "nova")
+
+
 def test_help_covers_commands_aliases_and_runtime_extensions():
     assert {"help", "evolution"} <= _LIVE_UI_COMMANDS
     entries = help_entries(
@@ -138,7 +143,7 @@ async def test_evolution_loader_uses_store_and_reports_failures(monkeypatch):
     )
     monkeypatch.setattr("novacode_cli.memory.store.get_durable_store", lambda: store)
     counters, events = await _load_evolution(strict=True)
-    assert counters == {"unlocked": 2, "leveled": 4}
+    assert counters["unlocked"] == 2 and counters["leveled"] == 4
     assert [e["ts"] for e in events] == [2, 1]
     store.asearch.side_effect = RuntimeError("Offline")
     with pytest.raises(RuntimeError, match="Offline"):

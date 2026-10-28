@@ -9,7 +9,7 @@ import sqlite3
 import tempfile
 import time
 import uuid
-from contextlib import contextmanager, nullcontext
+from contextlib import closing, contextmanager, nullcontext
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -191,6 +191,24 @@ class LearningLedger:
         if active:
             records = [r for r in records if r.status == "applied"]
         return sorted(records, key=lambda r: r.scope != "project")
+
+    @classmethod
+    def read_activity(cls, path: Path) -> builtins.list[tuple[LearningRecord, float]]:
+        """Read current revisions and decision times without initializing or modifying a ledger.
+
+        Candidates without a decision have no recorded timestamp; report zero
+        rather than inventing a creation time. Latest ledger revisions lead.
+        """
+        if not path.exists():
+            return []
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+            rows = db.execute(
+                "SELECT r.payload, (SELECT MAX(timestamp) FROM events e "
+                "WHERE e.reference=r.id || '@' || r.revision) FROM revisions r "
+                "WHERE r.revision=(SELECT MAX(revision) FROM revisions r2 WHERE r2.id=r.id) "
+                "ORDER BY r.rowid DESC"
+            ).fetchall()
+        return [(cls._decode(payload), float(ts or 0)) for payload, ts in rows]
 
     def history(self, identity: str) -> builtins.list[LearningRecord]:
         """Read every recoverable revision in order."""

@@ -383,18 +383,25 @@ class ReviewRunner:
             # bind caps the auxiliary request independently of the coding turn.
             model = request.model
             module = type(model).__module__
+            from langchain_anthropic import ChatAnthropic
             from langchain_core.language_models.fake_chat_models import FakeListChatModel
-            if not module.startswith(("langchain_openai.", "langchain_anthropic.",
-                                      "langchain_core.language_models.fake")) and not isinstance(model, FakeListChatModel):
+            from langchain_openai import ChatOpenAI
+
+            if not isinstance(model, (ChatOpenAI, ChatAnthropic, FakeListChatModel)) and not (
+                module.startswith("langchain_core.language_models.fake")
+            ):
                 logger.info("Learning review skipped: adapter retry/output caps unavailable")
                 await self._record_skip("adapter caps unavailable")
                 return
             if "max_retries" in getattr(type(model), "model_fields", {}):
                 model = model.model_copy(update={"max_retries": 1})
-                # Cached SDK clients otherwise retain the coding model's retry
-                # policy even after copying its max_retries field.
+                # Preserve managed authentication and custom transports when
+                # bounding cached clients; rebuilding them loses gateway auth.
                 for name in ("_client", "_async_client"):
-                    model.__dict__.pop(name, None)
+                    client = model.__dict__.get(name)
+                    if client is not None:
+                        model.__dict__[name] = client.with_options(max_retries=1)
+                model.__dict__.pop("_client_params", None)
                 for name in ("root_client", "root_async_client"):
                     client = getattr(model, name, None)
                     if client is not None and hasattr(client, "with_options"):
@@ -407,7 +414,9 @@ class ReviewRunner:
                 review_msg = await reviewer.ainvoke(messages, config=review_config)
 
             content = ""
-            raw = getattr(review_msg, "content", "")
+            raw = getattr(review_msg, "text", None)
+            if not isinstance(raw, str):
+                raw = getattr(review_msg, "content", "")
             content = raw if isinstance(raw, str) else str(raw)
 
             await self._apply_review_content(content, task_id=task_id, evidence=evidence)

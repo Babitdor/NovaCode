@@ -619,7 +619,7 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
         "_run_dream", "consolidate the memory wiki now (/dream status · /dream auto on|off)"
     ),
     "evolution": SlashCommand(
-        "_run_evolution", "view skills unlocked / levelled up by complex tasks", wants_text=False
+        "_run_evolution", "view learning proposals, applied improvements, and history", wants_text=False
     ),
     "reindex": SlashCommand(
         "_run_reindex", "rebuild the semantic code-search index", wants_text=False
@@ -16523,7 +16523,9 @@ class NovaApp(App):
         """Open the native evolution dashboard without tying up the turn."""
         from novacode_cli.tui.reference_screens import EvolutionScreen
 
-        self.push_screen(EvolutionScreen())
+        self.push_screen(EvolutionScreen(
+            agent_id=self._current_assistant_id or self.assistant_id or "nova-agent"
+        ))
 
     async def _run_reindex(self) -> None:
         """Rebuild the semantic code-search index, with a native status."""

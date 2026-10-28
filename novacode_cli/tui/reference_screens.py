@@ -285,8 +285,15 @@ class HelpScreen(ReferenceScreen):
 
 
 class EvolutionScreen(ReferenceScreen):
-    def __init__(self):
+    DEFAULT_CSS = """
+    EvolutionScreen.compact .reference-subtitle { display: none; }
+    EvolutionScreen.compact .reference-title { height: 1; }
+    EvolutionScreen #evolution-totals { color: $text; }
+    """
+
+    def __init__(self, *, agent_id: str = "nova-agent") -> None:
         super().__init__()
+        self.agent_id = agent_id
         self.entries: list[dict[str, Any]] = []
         self.visible_entries: list[dict[str, Any]] = []
         self._loading = True
@@ -296,14 +303,20 @@ class EvolutionScreen(ReferenceScreen):
         with Vertical(id="reference-shell"):
             yield Static("NOVA  /  EVOLUTION", classes="reference-title")
             yield Static(
-                "Skills gained and strengthened through completed work.",
+                "Learning proposals, applied improvements, and historical activity.",
                 classes="reference-subtitle",
             )
             yield Static("Loading evolution history…", id="evolution-totals")
             with Horizontal(id="reference-filters"):
                 yield Input(placeholder="Search a skill or task…", id="reference-search")
                 yield Select(
-                    [("All activity", "all"), ("Unlocked", "unlock"), ("Levelled up", "levelup")],
+                    [
+                        ("All activity", "all"), ("Pending review", "candidate"),
+                        ("Approved", "approved"), ("Applied", "applied"), ("Rejected", "rejected"),
+                        ("Rollback pending", "rollback_pending"), ("Rolled back", "rolled_back"),
+                        ("Failed", "failed"), ("Historical", "historical"),
+                        ("Historical unlocks", "unlock"), ("Historical level-ups", "levelup"),
+                    ],
                     value="all",
                     allow_blank=False,
                     id="reference-category",
@@ -328,9 +341,11 @@ class EvolutionScreen(ReferenceScreen):
         self._load_error = None
         self.query_one("#evolution-totals", Static).update("Loading evolution history…")
         try:
-            counters, self.entries = await _load_evolution(strict=True)
+            counters, self.entries = await _load_evolution(strict=True, agent_id=self.agent_id)
+            from novacode_cli.commands.evolution_handler import evolution_summary
+
             self.query_one("#evolution-totals", Static).update(
-                f"◈  {counters['unlocked']:,} skills unlocked    ↑  {counters['leveled']:,} level-ups"
+                evolution_summary(counters)
             )
         except Exception as error:
             self._load_error = str(error)
@@ -349,24 +364,32 @@ class EvolutionScreen(ReferenceScreen):
     def _reload(self) -> None:
         if not self.is_mounted:
             return
+        from novacode_cli.commands.evolution_handler import evolution_label
+
         query = self.query_one(Input).value.strip().casefold()
         kind = self.query_one(Select).value
         self.visible_entries = [
             e
             for e in self.entries
-            if (kind == "all" or e.get("kind") == kind)
-            and query in f"{e.get('skill', '')} {e.get('task_summary', '')}".casefold()
+            if (
+                kind == "all" or e.get("status", "historical") == kind
+                or (kind in {"unlock", "levelup"} and e.get("kind") == kind
+                    and e.get("status", "historical") == "historical")
+            )
+            and query in (
+                f"{e.get('skill', '')} {e.get('reference', '')} {e.get('task_summary', '')}".casefold()
+            )
         ]
         palette = self._palette()
         options = []
         for entry in self.visible_entries:
-            unlock = entry.get("kind") == "unlock"
+            applied = entry.get("status") == "applied"
             label = Text(
-                "◈ " if unlock else "↑ ", style=palette.success if unlock else palette.accent
+                "✓ " if applied else "• ", style=palette.success if applied else palette.accent
             )
             label.append(str(entry.get("skill", "Unknown skill")), style=f"bold {palette.text}")
             label.append(
-                "\n" + ("Unlocked" if unlock else "Levelled up") + "  ·  " + self._when(entry),
+                "\n" + evolution_label(entry) + "  ·  " + self._when(entry),
                 style=palette.muted,
             )
             options.append(Option(label))
@@ -383,7 +406,9 @@ class EvolutionScreen(ReferenceScreen):
                 if self._load_error
                 else "No matching activity."
                 if self.entries
-                else "Your evolution starts with completed work. Finish a complex task involving edits, tests, or subagents to unlock or strengthen a skill."
+                else "Your evolution starts with completed work. "
+                "/learning on enables task-end reviews. "
+                "Use /learning review to inspect proposals and decisions."
             )
 
     @staticmethod
@@ -399,8 +424,10 @@ class EvolutionScreen(ReferenceScreen):
     def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
         if event.option_index < len(self.visible_entries):
             entry = self.visible_entries[event.option_index]
+            from novacode_cli.commands.evolution_handler import evolution_detail
+
             self.query_one("#reference-detail", Static).update(
-                str(entry.get("task_summary") or "No task summary recorded for this evolution.")
+                evolution_detail(entry)
             )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
