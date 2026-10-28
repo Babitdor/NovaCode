@@ -27,6 +27,7 @@ PROMPT_PATTERNS = [
     r"select.*:",  # "Select a framework:"
     r"choose.*:",  # "Choose an option:"
     r"pick.*:",  # "Pick a template:"
+    r"initialize .*git repository\?",  # Astro's optional Git setup.
 ]
 
 # Patterns that indicate a long-running server has successfully started
@@ -112,6 +113,10 @@ INTERACTIVE_COMMANDS = [
     "create-next-app",
     "create-react-app",
     "create-vite",
+    "create-astro",
+    "npm create astro",
+    "pnpm create astro",
+    "yarn create astro",
     "npm init",
     "yarn init",
     "pnpm init",
@@ -194,9 +199,9 @@ _COMPILED_DANGEROUS = [re.compile(p, re.IGNORECASE) for p in DANGEROUS_PATTERNS]
 # Prompts that are safe to answer automatically without user interaction.
 # Maps regex pattern -> auto-response string.
 AUTO_ANSWER_PATTERNS: dict[str, str] = {
-    r"ok to proceed\??": "y",  # npm/npx install confirmation
-    r"need to install the following": "y",  # npm "Need to install packages:"
-    r"do you want to install": "y",  # pnpm dlx and similar
+    # Match the complete known npm confirmation. Install-related words in an
+    # arbitrary question do not authorize defaults, overwrites or publication.
+    r"(?:\?\s*)?ok to proceed\??\s*(?:\((?:y|y/n)\)|\[y/n\])?": "y",
 }
 _COMPILED_AUTO_ANSWER: dict[re.Pattern[str], str] = {
     re.compile(p, re.IGNORECASE): resp for p, resp in AUTO_ANSWER_PATTERNS.items()
@@ -251,17 +256,17 @@ _DANGEROUS_ENV_VARS: frozenset[str] = frozenset(
 
 
 __all__ = [
+    "AUTO_ANSWER_PATTERNS",
+    "DANGEROUS_PATTERNS",
+    "INTERACTIVE_COMMANDS",
+    "LONG_RUNNING_COMMANDS",
     "PROMPT_PATTERNS",
     "SERVER_READY_PATTERNS",
-    "LONG_RUNNING_COMMANDS",
-    "INTERACTIVE_COMMANDS",
-    "DANGEROUS_PATTERNS",
-    "AUTO_ANSWER_PATTERNS",
+    "_API_KEY_SUFFIXES",
+    "_COMPILED_AUTO_ANSWER",
+    "_COMPILED_DANGEROUS",
     "_COMPILED_PATTERNS",
     "_COMPILED_SERVER_READY",
-    "_COMPILED_DANGEROUS",
-    "_COMPILED_AUTO_ANSWER",
-    "_NPX_YES_RE",
-    "_API_KEY_SUFFIXES",
     "_DANGEROUS_ENV_VARS",
+    "_NPX_YES_RE",
 ]

@@ -8,6 +8,7 @@ background process tracking, and sandbox execution support.
 from __future__ import annotations
 
 import asyncio
+import codecs
 import contextlib
 import os
 import re
@@ -32,9 +33,10 @@ from novacode_cli.shell.utils import (
     _convert_unix_command_to_windows,
     _sanitize_env,
     get_auto_answer,
+    get_interactive_prompt,
+    interactive_prompt_guidance,
     is_dangerous_command,
     is_interactive_command,
-    is_interactive_prompt,
     is_long_running_command,
     is_server_ready,
 )
@@ -74,6 +76,12 @@ def _looks_like_shell_rejection(result: "ToolMessage | str") -> bool:
     # status, so fall through to the pattern check.
     if not isinstance(result, str) and getattr(result, "status", "error") not in ("error", None):
         return False
+    if (
+        isinstance(result, ToolMessage)
+        and isinstance(result.artifact, dict)
+        and result.artifact.get("interactive_prompt")
+    ):
+        return False  # The command already ran; replay could repeat partial filesystem changes.
     text = _result_text(result)
     return bool(text) and bool(_SHELL_REJECTION.search(text))
 
@@ -208,7 +216,9 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
             f"For scaffolding commands (create-next-app, ng new, npm init, etc.) "
             f"always pass non-interactive flags (--yes, --defaults, --no-interaction, "
             f"or explicit option flags) so arrow-key TUI menus never appear — "
-            f"piped stdin cannot support TUI navigation."
+            f"piped stdin cannot support TUI navigation. "
+            f"For create-astro, add --yes after the package name and explicitly "
+            f"choose --git or --no-git."
         )
 
         # ── Resolve the program each tool ACTUALLY executes locally ──────
@@ -750,7 +760,6 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
                     tool_call_id=tool_call_id,
                     prog=prog,
                     detach_future=detach_future,
-                    **({"prompt_window": self._timeout} if interactive else {}),
                 ),
                 timeout=self._timeout + 15,
                 detach_future=detach_future,
@@ -936,8 +945,8 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
         """Execute a shell command locally, streaming to completion.
 
         The command runs (on a single process — never re-executed) until it exits
-        or the full ``self._timeout`` elapses. The first few seconds double as
-        interactive-prompt detection: a known prompt is auto-answered on the
+        or the full ``self._timeout`` elapses. Throughout execution,
+        interactive-prompt detection runs: a known prompt is auto-answered on the
         process's stdin; an unanswerable prompt aborts with guidance instead of
         blocking. Output is returned in the ToolMessage — nothing is written to
         stdout (that corrupts the Textual TUI; see ``iterate_agent_events``).
@@ -1142,14 +1151,13 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
         command: str,
         *,
         tool_call_id: str | None,
-        prompt_window: float = 5.0,
         prog: list[str] | None = None,
         detach_future: Any = None,
     ) -> ToolMessage:
         """Stream a local command to completion (up to ``self._timeout``).
 
-        Reads output on one long-lived process. During the first ``prompt_window``
-        seconds, a stall with prompt-like output is treated as an interactive
+        Reads output on one long-lived process. Throughout execution,
+        a stall with prompt-like output is treated as an interactive
         prompt — auto-answered if known, otherwise aborted with guidance (the agent
         can re-run with non-interactive flags) rather than hanging on console input.
         """
@@ -1177,8 +1185,12 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
         _ctl = _jobs.set_current(command)
 
         window = OutputWindow(self._max_output_bytes)
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         tail = ""  # rolling last-4KB window, for prompt detection only
         last_prompt = ""
+        pending_prompt = ""
+        auto_answers = 0
+        max_auto_answers = 8
         start = time.time()
         status = "success"
         note = ""
@@ -1262,37 +1274,55 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
                 try:
                     chunk = await asyncio.wait_for(proc.stdout.read(16384), timeout=0.5)  # type: ignore[union-attr]
                 except TimeoutError:
-                    # No output right now. Within the prompt window, check whether the
-                    # process is blocked waiting on an interactive prompt.
+                    # Prompts may appear after slow installs or downloads. Check
+                    # the current question for the entire foreground lifetime.
+                    active_prompt = get_interactive_prompt(tail)
                     if (
                         not detached
                         and tail
                         and tail != last_prompt
-                        and (time.time() - start) <= prompt_window
                         and proc.returncode is None
-                        and is_interactive_prompt(tail)
+                        and active_prompt is not None
                     ):
                         last_prompt = tail
                         auto = get_auto_answer(tail)
-                        if auto is not None and proc.stdin is not None:
-                            proc.stdin.write((auto + "\n").encode())
+                        if (
+                            auto is not None
+                            and proc.stdin is not None
+                            and auto_answers < max_auto_answers
+                        ):
                             try:
+                                proc.stdin.write((auto + "\n").encode())
                                 await proc.stdin.drain()
                             except (OSError, ConnectionResetError):
-                                pass
+                                pending_prompt = active_prompt
+                                await self._terminate_tree(proc, grace=0)
+                                status = "error"
+                                note = "\n\n[Could not deliver interactive input. No command was retried.]"
+                                break
+                            auto_answers += 1
                         else:
+                            pending_prompt = active_prompt
                             await self._terminate_tree(proc, grace=0)
                             status = "error"
                             note = (
-                                "\n\n[This command is waiting for interactive input, which "
-                                "can't be provided here. Re-run it non-interactively — pass "
-                                "flags like --yes / --defaults / -y, or pipe the input via stdin.]"
+                                "\n\n[This command is waiting for interactive input. "
+                                "It was stopped without selecting an option or retrying. "
+                                + (
+                                    "The automatic package-confirmation limit was reached. "
+                                    if auto_answers >= max_auto_answers
+                                    else ""
+                                )
+                                + interactive_prompt_guidance(command)
+                                + "]"
                             )
                             break
                     continue
+                text = decoder.decode(chunk, final=not chunk)
                 if not chunk:
+                    if text:
+                        window.add(text)
                     break  # stdout closed → process is exiting
-                text = chunk.decode("utf-8", errors="replace")
                 if detached and _job is not None:
                     # Detached: append to the job's BOUNDED log buffer (not the
                     # unbounded window) and stop streaming to the tool widget.
@@ -1335,8 +1365,10 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
             # return value below is discarded by _run_async on the detach path.
             _jobs.get_registry().complete(_job.id, rc, output=note or None)
 
-        from novacode_cli.prime_memory import execution_evidence
+        from novacode_cli.prime_memory import execution_evidence, safe_text
 
+        if pending_prompt:
+            note += "\nPending prompt:\n" + safe_text(pending_prompt, 1000)
         return ToolMessage(
             content=output + note,
             tool_call_id=tool_call_id,
@@ -1350,7 +1382,17 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
                     completed=rc is not None and rc >= 0 and not bool(note) and not detached,
                     truncated=bool(window.omitted),
                     output=window.text(),
-                )
+                ),
+                **(
+                    {
+                        "interactive_prompt": {
+                            "text": safe_text(pending_prompt),
+                            "input_required": True,
+                        }
+                    }
+                    if pending_prompt
+                    else {}
+                ),
             },
         )
 
@@ -1363,9 +1405,8 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
     ) -> ToolMessage:
         """Run a command that may prompt for input, handling prompts non-blockingly.
 
-        Shares the streaming path with ``_run_local_command`` — the only difference
-        is that prompt detection stays active for the *whole* command (not just the
-        first few seconds). Known prompts (npm/npx "ok to proceed?", …) are
+        Shares the prompt-aware streaming path with ``_run_local_command``.
+        Known prompts (npm/npx "ok to proceed?", …) are
         auto-answered on the process's stdin; an unanswerable prompt aborts with
         guidance rather than blocking on console input (there is no console to read
         from under the Textual TUI). Nothing is written to stdout.
@@ -1406,7 +1447,6 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
                 lambda: self._async_local_shell(
                     command,
                     tool_call_id=tool_call_id,
-                    prompt_window=self._timeout,
                     prog=prog,
                     detach_future=detach_future,
                 ),
