@@ -18,7 +18,10 @@ from textual.widgets.option_list import Option
 from novacode_cli.tui.palette import cached_palette
 
 _GROUPS = {
-    "Conversation": "help sessions import compare tabs session resume save copy clear compact context tokens cost images files artifacts btw steer quit exit",
+    "Conversation": (
+        "help sessions import compare tabs session resume save handoff copy clear compact "
+        "context tokens cost images files artifacts btw steer quit exit"
+    ),
     "Models & settings": "model router auth settings theme effort voice update ui verbose",
     "Agents & automation": "subagents agents agent-server tasks cowork plan goal remote notifications cron webhook research ralph council servers kill tests browser-use trello",
     "Skills & knowledge": "init mcp skills plugins middleware reload-plugins prompt refine dream evolution reindex restore hooks create ingest ask file wiki learning",
@@ -32,6 +35,7 @@ _EXAMPLES = {
     "worktree": "/worktree  ·  /worktree <name>: <task>  ·  /worktree remove <name>",
     "compare": "/compare claude:<id> codex:<id>",
     "resume": "/resume <session-id>",
+    "handoff": "/handoff  ·  Composer Handoff toggle  ·  /skill:handoff invokes the skill",
     "steer": "/steer <instruction>  ·  You can also type naturally during a running turn.",
     "ui": "/ui inspect  ·  /ui reset",
     "learning": "/learning on  ·  /learning off  ·  /learning status",

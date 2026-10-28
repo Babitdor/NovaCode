@@ -328,6 +328,9 @@ def create_plan_agent_with_config(
     from novacode_cli.agents.prime import PrimeMiddleware
 
     plan_middleware.insert(0, PrimeMiddleware())
+    from novacode_cli.agents.handoff import HandoffMiddleware
+
+    plan_middleware.insert(0, HandoffMiddleware())
     interrupt_on = get_interrupt_configs(extra_tools=tools or [])
     agent = create_deep_agent(
         name=assistant_id,

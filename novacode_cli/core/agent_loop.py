@@ -509,6 +509,10 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
         else None
     )
     prime_token = current_run.set(prime_run)
+    from novacode_cli.handoff import HandoffRun, current_handoff
+
+    handoff_run = None
+    handoff_token = current_handoff.set(None)
     from novacode_cli.config.plan_mode import active_plan_session
 
     plan_session_token = active_plan_session.set(session_state)
@@ -525,6 +529,11 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     auto_reject_streak = 0
 
     try:
+        if getattr(session_state, "handoff_enabled", False) is True:
+            handoff_run = await asyncio.to_thread(HandoffRun, session_state, prime_original_input)
+            current_handoff.set(handoff_run)
+        if handoff_run is not None and handoff_run.error:
+            yield ev.ContextMessage(handoff_run.error, event_type="nova_handoff_status")
         if prime_run is not None:
             yield ev.ContextMessage(
                 "Prime · Define · 0/6 checkpoints",
@@ -1399,6 +1408,11 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
         if prime_run is not None:
             prime_run.finish(prime_outcome)
         current_run.reset(prime_token)
+        try:
+            if handoff_run is not None:
+                await asyncio.to_thread(handoff_run.finish, prime_outcome)
+        finally:
+            current_handoff.reset(handoff_token)
 
     if captured.input_tokens or captured.output_tokens:
         yield captured
@@ -1414,6 +1428,12 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
             color="cyan",
             record_id=prime_run.report["id"],
             data=prime_run.progress(),
+        )
+    if handoff_run is not None:
+        yield ev.ContextMessage(
+            handoff_run.error or f"Handoff saved: {handoff_run.record['title']}",
+            event_type="nova_handoff_status",
+            record_id=handoff_run.record["id"],
         )
     yield ev.Done(had_response=has_responded)
 

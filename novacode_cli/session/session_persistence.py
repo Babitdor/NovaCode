@@ -90,6 +90,7 @@ class SessionMeta:
         sandbox_type: Sandbox provider used ("docker", "modal", ...) or None
         goal: Conversation goal objective, lifecycle, and accumulated budget usage.
         prime: Opt-in Deep Work mode and its last thread-bound checkpoint record.
+        handoff: Opt-in handoff mode and IDs of selected project context.
     """
 
     session_id: str
@@ -116,6 +117,7 @@ class SessionMeta:
     cleared: bool = False
     goal: dict[str, Any] | None = None
     prime: dict[str, Any] | None = None
+    handoff: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -140,6 +142,7 @@ class SessionMeta:
             "model_provider": None,
             "goal": None,
             "prime": None,
+            "handoff": None,
         }
         # Merge defaults with provided data (data takes precedence)
         merged = {**defaults, **data}
@@ -308,6 +311,7 @@ class SessionManager:
         cleared: bool = False,
         goal: dict[str, Any] | None = None,
         prime: dict[str, Any] | None = None,
+        handoff: dict[str, Any] | None = None,
         history: list[BaseMessage] | None = None,
     ) -> Path:
         """Save a session to disk.
@@ -326,6 +330,7 @@ class SessionManager:
             project_root: Path to project root (for repo hash)
             goal: Optional conversation goal and its lifecycle/budget state.
             prime: Optional Deep Work mode and observed checkpoint snapshot.
+            handoff: Optional handoff toggle and project record IDs.
             history: The full message list for the session tree, when
                 ``messages`` is a compacted view of it. Defaults to ``messages``.
 
@@ -387,6 +392,7 @@ class SessionManager:
             cleared=cleared,
             goal=goal,
             prime=prime,
+            handoff=handoff,
         )
 
         self._save_snapshot(

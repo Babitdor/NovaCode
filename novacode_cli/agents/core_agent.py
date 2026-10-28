@@ -2581,6 +2581,9 @@ This file stores your preferences and context that persist across sessions.
     # Observe intercepted shell results and denials as well as ordinary tools.
     # Prime only records; all execution and approval guards remain inside it.
     agent_middleware.insert(0, PrimeMiddleware())
+    from novacode_cli.agents.handoff import HandoffMiddleware
+
+    agent_middleware.insert(0, HandoffMiddleware())
     agent_middleware.append(AttributionMiddleware())
     tools = [*tools, caveman_tool]
     if not any(isinstance(m, PromptInjectionMiddleware) for m in agent_middleware):

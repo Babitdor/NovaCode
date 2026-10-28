@@ -855,6 +855,7 @@ async def _run_agent_session(
                 )
                 from novacode_cli.commands.side_commands import goal_state_payload
                 from novacode_cli.prime import prime_payload
+                from novacode_cli.handoff import handoff_payload
 
                 _crash_dir = session_manager.save_session(
                     session_id=session_state.session_id,
@@ -869,6 +870,7 @@ async def _run_agent_session(
                     sandbox_type=sandbox_type,
                     goal=goal_state_payload(session_state),
                     prime=prime_payload(session_state),
+                    handoff=handoff_payload(session_state),
                 )
                 console.print(f"[dim]Session saved → {_crash_dir}[/dim]")
             except Exception as _save_err:
@@ -1210,8 +1212,10 @@ async def main(
             restore_goal_state(session_state, getattr(session_data.meta, "goal", None))
 
             from novacode_cli.prime import restore_prime
+            from novacode_cli.handoff import restore_handoff
 
             restore_prime(session_state, getattr(session_data.meta, "prime", None))
+            restore_handoff(session_state, getattr(session_data.meta, "handoff", None))
             if isinstance(getattr(session_state, "cli_prime_override", None), bool):
                 session_state.prime_enabled = session_state.cli_prime_override
 

@@ -5,6 +5,7 @@ from novacode_cli.config.config import COLORS, console, settings
 from novacode_cli.ui.ui_elements import TokenTracker
 from novacode_cli.utils.model_info import get_current_provider
 from novacode_cli.prime import prime_payload
+from novacode_cli.handoff import handoff_payload
 
 
 async def handle_sessions_command(ctx: CommandContext) -> bool:
@@ -76,6 +77,7 @@ async def handle_save_command(
             sandbox_id=sandbox_id,
             sandbox_type=sandbox_type,
             prime=prime_payload(session_state),
+            handoff=handoff_payload(session_state),
         )
 
         console.print(

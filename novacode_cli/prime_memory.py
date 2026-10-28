@@ -38,7 +38,11 @@ def session_directory(session: Any) -> str:  # noqa: ANN401 - Session proxies.
     """Use Nova's selected workspace; minimal session proxies may supply it directly."""
     from novacode_cli.config.config import settings
 
-    return str(getattr(session, "working_directory", None) or settings.get_workspace_root())
+    return str(
+        getattr(session, "working_directory", None)
+        or getattr(session, "workspace_root", None)
+        or settings.get_workspace_root()
+    )
 
 
 def continuation_context(report: Record) -> Record:

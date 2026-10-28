@@ -662,6 +662,9 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "prime": SlashCommand(
         "_run_prime", "Deep Work: on / off / status / report / tasks / checks / resume / forget"
     ),
+    "handoff": SlashCommand(
+        "_run_handoff", "project handoffs: browse / on / off / status / preview / resume"
+    ),
     "ponytail": SlashCommand(
         "_run_ponytail", "coding efficiency: lite / full / ultra / off / settings / status",
     ),
@@ -712,6 +715,7 @@ _LIVE_UI_COMMANDS = frozenset(
         "auto-approve",
         "help",
         "evolution",
+        "handoff",
         "auth",
         "theme",
         "settings",
@@ -1611,8 +1615,8 @@ class NovaApp(App):
     }
     #composer-actions {
         layout: grid;
-        grid-size: 5 1;
-        grid-columns: 14 12 16 12 18;
+        grid-size: 6 1;
+        grid-columns: 14 16 12 16 12 18;
         grid-rows: 1;
         height: 1;
         padding: 0 1;
@@ -1621,7 +1625,7 @@ class NovaApp(App):
     Screen.narrow #composer-actions {
         grid-size: 2 3; grid-columns: 1fr 1fr; grid-rows: 1 1 1; height: 3;
     }
-    #prime-toggle, #plan-toggle, #caveman-toggle, #code-mode-toggle {
+    #prime-toggle, #handoff-toggle, #plan-toggle, #caveman-toggle, #code-mode-toggle {
         width: 16;
         min-width: 16;
         height: 1;
@@ -1634,12 +1638,13 @@ class NovaApp(App):
     #prime-toggle { width: 14; min-width: 14; }
     #plan-toggle { width: 12; min-width: 12; }
     #code-mode-toggle { width: 18; min-width: 18; }
-    #prime-toggle.enabled, #plan-toggle.enabled,
+    #prime-toggle.enabled, #handoff-toggle.enabled, #plan-toggle.enabled,
     #caveman-toggle.enabled, #code-mode-toggle.enabled {
         color: $accent;
         text-style: bold;
     }
-    #prime-toggle:focus, #prime-toggle:hover, #plan-toggle:focus, #plan-toggle:hover,
+    #prime-toggle:focus, #prime-toggle:hover, #handoff-toggle:focus, #handoff-toggle:hover,
+    #plan-toggle:focus, #plan-toggle:hover,
     #caveman-toggle:focus, #caveman-toggle:hover,
     #code-mode-toggle:focus, #code-mode-toggle:hover {
         background: $panel;
@@ -2447,7 +2452,7 @@ class NovaApp(App):
         self._input_pulse_timer: Any = None
         self._pulse_on = False
         # Per-keystroke de-churn: last (plan, bash) mode state + last palette list.
-        self._last_mode_state: tuple[bool, bool, bool, bool, str] | None = None
+        self._last_mode_state: tuple[bool, bool, bool, bool, str, bool] | None = None
         self._last_palette: list[str] | None = None
         # Notification badge: last seen unread count (drives status refresh).
         self._last_notif_count = 0
@@ -2613,6 +2618,14 @@ class NovaApp(App):
                     tooltip=(
                         "Toggle Nova Prime · Deep Work for subsequent requests. "
                         "Existing models, limits and approvals stay in force."
+                    ),
+                )
+                yield Button(
+                    "Handoff: off",
+                    id="handoff-toggle",
+                    tooltip=(
+                        "Automatically save project handoffs during requests. "
+                        "Use /handoff to preview and continue in a new session."
                     ),
                 )
                 yield Button(
@@ -7994,9 +8007,15 @@ class NovaApp(App):
         # this runs on every keystroke, so the common case (mode didn't change)
         # must be a cheap no-op.
         auto = bool(getattr(self.session_state, "auto_approve", False))
-        if self._last_mode_state == (plan, bash, bool(goal), auto, prime):
+        handoff = getattr(self.session_state, "handoff_enabled", False) is True
+        handoff_toggle = self._w("#handoff-toggle", Button)
+        handoff_toggle.label = "Handoff: on" if handoff else "Handoff: off"
+        handoff_toggle.set_class(handoff, "enabled")
+        pane = getattr(self, "_active_pane", None)
+        handoff_toggle.disabled = pane is not None and pane.kind == "child"
+        if self._last_mode_state == (plan, bash, bool(goal), auto, prime, handoff):
             return
-        self._last_mode_state = (plan, bash, bool(goal), auto, prime)
+        self._last_mode_state = (plan, bash, bool(goal), auto, prime, handoff)
         try:
             badge = self._w("#mode-badge", Static)
             prompt = self._w("#prompt", PromptInput)
@@ -9927,6 +9946,7 @@ class NovaApp(App):
             todos = values.get("todos") or getattr(session_state, "todos", None)
             from novacode_cli.commands.side_commands import goal_state_payload
             from novacode_cli.prime import prime_payload
+            from novacode_cli.handoff import handoff_payload
 
             # save_session does several synchronous file writes — run it off the
             # event loop so /save, /clear, and quit don't freeze the UI.
@@ -9946,6 +9966,7 @@ class NovaApp(App):
                 task_status=task_status,
                 goal=goal_state_payload(session_state),
                 prime=prime_payload(session_state),
+                handoff=handoff_payload(session_state),
                 history=history,
             )
         except Exception:  # noqa: BLE001
@@ -12318,6 +12339,102 @@ class NovaApp(App):
         await self._run_prime("/prime")
         self._w("#prompt", PromptInput).focus()
 
+    @on(Button.Pressed, "#handoff-toggle")
+    async def _handoff_toggle_pressed(self, event: Button.Pressed) -> None:
+        """Apply to subsequent requests without sending or changing the composer's draft."""
+        event.stop()
+        enabled = getattr(self.session_state, "handoff_enabled", False) is True
+        await self._run_handoff("/handoff off" if enabled else "/handoff on")
+        self._w("#prompt", PromptInput).focus()
+
+    async def _run_handoff(self, text: str) -> None:
+        """Browse named project handoffs, or change the local mode without execution."""
+        from novacode_cli.commands.handoff_handler import handle_handoff_command
+        from novacode_cli.prime_memory import session_directory
+        from novacode_cli.tui.handoff_screen import HandoffScreen
+
+        pane = getattr(self, "_active_pane", None)
+        if pane is not None and pane.kind == "child":
+            self.notify("Use Handoff from the main session (Alt+1).")
+            return
+        parts = text.split(maxsplit=1)
+        args = parts[1].strip() if len(parts) > 1 else ""
+        if args in {"", "list"} or args.startswith("preview "):
+            session = self.session_state
+            directory = session_directory(session)
+            thread = session.thread_id
+
+            async def selected(identity: str | None) -> None:
+                if not identity:
+                    return
+                if (
+                    self._turn_running() or self.session_state is not session
+                    or session.thread_id != thread
+                ):
+                    self.notify("The session changed or is busy. Open /handoff again to continue.")
+                    return
+                from types import SimpleNamespace
+
+                from novacode_cli.handoff import prepare
+
+                selection = SimpleNamespace(working_directory=directory)
+                try:
+                    result = await asyncio.to_thread(prepare, selection, identity)
+                except Exception:  # noqa: BLE001
+                    self.notify("Handoff storage unavailable.", severity="warning")
+                    return
+                pending = getattr(selection, "handoff_pending", None)
+                if not pending or pending.get("id") != identity:
+                    self.notify(result, severity="warning")
+                    return
+                # Use the existing pane lock: a tab switch cannot redirect the
+                # conversation reset while its save is awaiting disk/checkpoints.
+                async with self._pane_render_lock:
+                    if (
+                        self._turn_running() or self.session_state is not session
+                        or session.thread_id != thread
+                    ):
+                        self.notify("The session changed or is busy. Open /handoff again.")
+                        return
+                    prompt = self.query_one("#prompt", PromptInput)
+                    prompt.disabled = True
+                    self._turn_active = True
+                    try:
+                        planning = session.plan_mode_enabled
+                        planner, plan_backend = session.plan_agent, session.plan_backend
+                        await self._run_clear(preserve_previous=True)
+                        session.plan_mode_enabled = planning
+                        if planning:
+                            session.plan_agent, session.plan_backend = planner, plan_backend
+                        session.handoff_pending = pending
+                        session.handoff_enabled = True
+                        self._update_mode_badge()
+                        self.notify(result)
+                        await self._save_session()
+                    finally:
+                        self._turn_active = False
+                        prompt.disabled = False
+                self._dispatch_root(
+                    "Continue from the selected project handoff. Recheck its findings against "
+                    "the current workspace and follow the current permissions and limits."
+                )
+
+            await self.push_screen(
+                HandoffScreen(
+                    directory, can_continue=not self._turn_running(),
+                    identity=args.split(maxsplit=1)[1] if args.startswith("preview ") else "",
+                ),
+                selected,
+            )
+            return
+        if args.startswith("resume ") and self._turn_running():
+            self.notify("Wait for the active request to finish before loading a handoff.")
+            return
+        message = await asyncio.to_thread(handle_handoff_command, self.session_state, args)
+        self.notify(message)
+        self._update_mode_badge()
+        await self._save_session()
+
     @on(Button.Pressed, "#plan-toggle")
     async def _plan_toggle_pressed(self, event: Button.Pressed) -> None:
         """Toggle the existing plan agent without submitting the composer's draft."""
@@ -13680,8 +13797,10 @@ class NovaApp(App):
         restore_goal_state(self.session_state, getattr(session_data.meta, "goal", None))
 
         from novacode_cli.prime import restore_prime
+        from novacode_cli.handoff import restore_handoff
 
         restore_prime(self.session_state, getattr(session_data.meta, "prime", None))
+        restore_handoff(self.session_state, getattr(session_data.meta, "handoff", None))
         self._update_mode_badge()
 
         # Reset per-conversation UI/tracking and re-baseline token accounting.
@@ -15225,7 +15344,7 @@ class NovaApp(App):
             )
         )
 
-    async def _run_clear(self) -> None:
+    async def _run_clear(self, *, preserve_previous: bool = False) -> None:
         """Start a fresh chat — a total reset. Save the current conversation first.
 
         Clearing only the transcript would leave the agent's full history in the
@@ -15238,15 +15357,15 @@ class NovaApp(App):
         saved first so nothing is lost.
         """
         saved = self.session_manager is not None
-        # Preserve the current conversation under its existing id, but mark it
-        # cleared so neither --continue nor the --resume picker brings it back.
-        await self._save_session(cleared=True)
+        # /clear hides the old chat from continuation pickers; a handoff keeps
+        # the previous conversation available under its original identity.
+        await self._save_session(cleared=not preserve_previous)
         # Distil this conversation's un-reviewed work before it's gone.
         await self._consolidate_learning()
         # Belt-and-suspenders: explicitly mark the session cleared even if the
         # save above early-returned (e.g. the checkpointer read timed out or had
         # no messages) but a prior /save had already written it as not-cleared.
-        if self.session_manager is not None:
+        if self.session_manager is not None and not preserve_previous:
             try:
                 self.session_manager.mark_cleared(self.session_state.session_id)
             except Exception:  # noqa: BLE001

@@ -41,6 +41,7 @@ DIRECT_ONLY_TOOLS = frozenset(
         "eval",
         "task",
         "write_todos",
+        "handoff_save",  # Owns foreground context; keep on the direct graph tool path.
         "wait_for_task",
         "ask_user_question",
         "enter_plan_mode",
