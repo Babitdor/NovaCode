@@ -943,6 +943,10 @@ def _harden_subagent_specs(
 
         if not any(isinstance(m, AttributionMiddleware) for m in existing):
             mw_to_add.append(AttributionMiddleware())
+        from novacode_cli.plugins.hooks import PluginHooksMiddleware
+
+        if not any(isinstance(m, PluginHooksMiddleware) for m in existing):
+            mw_to_add.append(PluginHooksMiddleware(lifecycle=False))
         if not any(isinstance(m, CavemanMiddleware) for m in existing):
             mw_to_add.append(CavemanMiddleware(style_only=True))
 
@@ -1907,7 +1911,13 @@ def _build_subagent_roster(
     from novacode_cli.plugins.claude_plugins import plugin_agent_specs
 
     _existing = {s.get("name") for s in Nova_SubAgent if isinstance(s, dict)}
-    Nova_SubAgent.extend(s for s in plugin_agent_specs() if s["name"] not in _existing)
+    for spec in plugin_agent_specs():
+        if spec["name"] not in _existing:
+            chosen = spec.get("_nova_tool_names")
+            spec["tools"] = (
+                tools if chosen is None else [t for t in tools if _tool_name(t) in chosen]
+            )
+            Nova_SubAgent.append(spec)
 
     # Load async subagents (run on remote LangGraph servers in background)
     async_subagents = retrieve_async_subagents()
@@ -2562,6 +2572,9 @@ This file stores your preferences and context that persist across sessions.
     from novacode_cli.agents.strict_tools import StrictToolMiddleware
     from novacode_cli.security.prompt_injection import PromptInjectionMiddleware
 
+    from novacode_cli.plugins.hooks import PluginHooksMiddleware
+
+    agent_middleware.append(PluginHooksMiddleware())
     agent_middleware.append(CavemanMiddleware())
     from novacode_cli.agents.prime import PrimeMiddleware
 

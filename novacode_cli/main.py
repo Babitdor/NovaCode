@@ -1799,6 +1799,9 @@ def cli_main() -> None:
 
     try:
         args = parse_args()
+        from novacode_cli.plugins.claude_plugins import set_session_plugins
+
+        set_session_plugins(getattr(args, "plugin_dir", []))
         if getattr(args, "safe_ui", False):
             os.environ["NOVA_SAFE_UI"] = "1"
 

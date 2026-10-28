@@ -36,6 +36,21 @@ _CREDENTIAL_ENV_VARS = (
 
 
 @pytest.fixture(autouse=True)
+def _isolate_directory_plugins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Offline agent graphs must never discover or execute the user's plugins."""
+    from novacode_cli.plugins import claude_plugins, marketplaces
+
+    directory = tmp_path / "plugin-home"
+    project = tmp_path / "plugin-project"
+    monkeypatch.setattr(claude_plugins, "PLUGINS_DIR", directory / "plugins")
+    monkeypatch.setattr(claude_plugins, "MANIFEST", directory / "plugins/installed.json")
+    monkeypatch.setattr(claude_plugins, "project_root", lambda: project)
+    monkeypatch.setattr(claude_plugins, "SESSION_PLUGINS", [])
+    monkeypatch.setattr(marketplaces, "MARKETPLACES_DIR", directory / "marketplaces")
+    monkeypatch.setattr(marketplaces, "MANIFEST", directory / "marketplaces/marketplaces.json")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_learning_auto_approval(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep generated proposals pending regardless of the developer's config."""
     from novacode_cli.hermes import ledger, skill_proposals
@@ -79,7 +94,7 @@ def _isolate_prompt_overrides(tmp_path, monkeypatch):
 def _restore_async_graph_imports():
     """Discard graphs imported while a test replaced the graph builder/model."""
     prefix = "novacode_cli.agents.async_agents."
-    before = {name for name in sys.modules if name.startswith(prefix)}
+    before = {name for name in tuple(sys.modules) if name.startswith(prefix)}
     yield
     for name in list(sys.modules):
         if name.startswith(prefix) and name not in before:

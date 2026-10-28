@@ -213,10 +213,16 @@ def list_skills(
     # Load installed-plugin skills (~/.nova/plugins/<name>/skills). Set an explicit
     # on-disk ``path`` so the invoker's path-first read/dir resolution works without
     # threading plugin dirs through every helper.
+    from novacode_cli.plugins.claude_plugins import plugin_skill_sources, qualify_skills
+
+    plugin_sources = {str(s["directory"]): s for s in plugin_skill_sources()}
     for plugin_dir in plugin_skills_dirs or []:
         if not (plugin_dir and plugin_dir.exists()):
             continue
-        for skill in _list_dir(plugin_dir):
+        listed = _list_dir(plugin_dir)
+        if str(plugin_dir) in plugin_sources:
+            listed = qualify_skills(listed, plugin_sources[str(plugin_dir)])
+        for skill in listed:
             skill["source"] = "plugin"  # type: ignore[typeddict-unknown-key]
             # The backend's ``path`` is virtual (rooted at plugin_dir, e.g.
             # "/foo/SKILL.md") and uses the real directory name — which can differ

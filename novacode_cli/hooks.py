@@ -109,6 +109,9 @@ def reload_hooks() -> None:
     """
     global _hooks_config  # noqa: PLW0603
     _hooks_config = None
+    from novacode_cli.plugins.hooks import reload_plugin_hooks
+
+    reload_plugin_hooks()
 
 
 def _load_hooks() -> list[dict[str, Any]]:
@@ -145,7 +148,8 @@ def _load_hooks() -> list[dict[str, Any]]:
             )
             _hooks_config = []
             return _hooks_config
-        _hooks_config = hooks
+        # Legacy installers copied plugin hooks here; bundles now own their lifecycle.
+        _hooks_config = [hook for hook in hooks if not hook.get("_plugin")]
     except (json.JSONDecodeError, OSError) as exc:
         logger.warning("Failed to load hooks config from %s: %s", HOOKS_FILE, exc)
         _hooks_config = []
@@ -258,6 +262,17 @@ async def dispatch_hook(event: str, payload: dict[str, Any]) -> None:
         payload: Arbitrary JSON-serializable dict sent on the command's stdin.
     """
     try:
+        plugin_event = {
+            "session.end": "SessionEnd",
+            "compact": "PreCompact",
+            "notification": "Notification",
+        }.get(event)
+        if plugin_event:
+            from novacode_cli.plugins.hooks import execute_hooks
+
+            result = await asyncio.to_thread(execute_hooks, plugin_event, payload)
+            if result.denial:
+                logger.warning("Plugin lifecycle hook: %s", result.denial)
         hooks = _load_hooks()
         if not hooks:
             return

@@ -9,7 +9,9 @@ from typing import Any
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 _reload_generation = 0
-SKILL_REFERENCE = re.compile(r"(?<!\S)[/$]([a-z0-9]+(?:-[a-z0-9]+)*)(?![\w/-])")
+SKILL_REFERENCE = re.compile(
+    r"(?<!\S)[/$]([a-z0-9]+(?:[._-][a-z0-9]+)*(?::[a-z0-9]+(?:[._-][a-z0-9]+)*)?)(?![\w/:-])"
+)
 
 
 def request_reload() -> None:
@@ -27,6 +29,9 @@ def skill_snapshot(skill: dict[str, Any], content: str) -> tuple[str, dict[str, 
     """Strip frontmatter and attach its optional tool names to a small snapshot."""
     import yaml
 
+    plugin_root = skill.get("plugin_root")
+    if isinstance(plugin_root, str):
+        content = content.replace("${CLAUDE_PLUGIN_ROOT}", plugin_root)
     metadata: dict[str, Any] = {}
     body = content
     match = re.match(r"\A---\s*\r?\n(.*?)\r?\n---\s*(?:\r?\n|$)", content, re.DOTALL)

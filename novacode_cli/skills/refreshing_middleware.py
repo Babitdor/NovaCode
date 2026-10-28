@@ -536,31 +536,35 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
                     self._all_skills = cached
                 else:
                     # An empty state makes the base class list unconditionally.
-                    if self._library_names is None:
-                        update = SkillsMiddleware.before_agent(self, {}, runtime, config)  # type: ignore[arg-type]
-                    else:
-                        from deepagents.middleware.skills import _list_skills_with_errors
+                    from deepagents.middleware.skills import _list_skills_with_errors
 
-                        from novacode_cli.skills.libraries import LibraryDiscoveryBackend
+                    from novacode_cli.plugins.claude_plugins import (
+                        plugin_skill_sources,
+                        qualify_skills,
+                    )
+                    from novacode_cli.skills.libraries import LibraryDiscoveryBackend
 
-                        backend = LibraryDiscoveryBackend(
+                    backend = (
+                        self._skill_backend({}, runtime, config)
+                        if self._library_names is None
+                        else LibraryDiscoveryBackend(
                             self._skill_backend({}, runtime, config), self._library_names
                         )
-                        selected = {}
-                        errors = []
-                        for source in self.sources if self._library_names else []:
-                            entries, error = _list_skills_with_errors(backend, source)
-                            selected.update(
-                                (skill["name"], skill)
-                                for skill in entries
-                                if skill["name"] in self._library_names
-                            )
-                            if error:
-                                errors.append(error)
-                        update = {
-                            "skills_metadata": list(selected.values()),
-                            "skills_load_errors": errors,
-                        }
+                    )
+                    plugin_sources = {s["id"]: s for s in plugin_skill_sources()}
+                    selected = {}
+                    errors = []
+                    for source in self.sources:
+                        discovered, source_errors = _list_skills_with_errors(backend, source)
+                        source_id = source.removeprefix("/plugin-skills-").strip("/")
+                        if source.startswith("/plugin-skills-") and source_id in plugin_sources:
+                            discovered = qualify_skills(discovered, plugin_sources[source_id])
+                        selected.update((s["name"], s) for s in discovered)
+                        if source_errors:
+                            errors.append(source_errors)
+                    update = {
+                        "skills_metadata": list(selected.values()), "skills_load_errors": errors,
+                    }
                     self._all_skills = list((update or {}).get("skills_metadata") or [])
                     self._load_errors = list((update or {}).get("skills_load_errors") or [])
                     if key:
@@ -584,7 +588,12 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
         import hashlib
 
         blob = repr(
-            (list(map(str, self.sources)), self._library_names, sorted(self._last_signature))
+            (
+                "plugin-namespaces-v2",
+                list(map(str, self.sources)),
+                self._library_names,
+                sorted(self._last_signature),
+            )
         )
         return hashlib.sha1(blob.encode("utf-8"), usedforsecurity=False).hexdigest()
 

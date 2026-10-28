@@ -13,7 +13,7 @@ import contextlib
 import re
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from rich.text import Text
 from textual import work
@@ -2359,155 +2359,178 @@ class PluginsScreen(ModalScreen[None]):
 
 
 class ClaudePluginsScreen(ModalScreen[None]):
-    """Native ``/plugins`` viewer: installed Claude-compatible plugins.
+    """Installed bundles, marketplace discovery and lifecycle management."""
 
-    Lists plugins under ``~/.nova/plugins`` (installed directly or via a
-    marketplace) with a scrollable per-plugin component breakdown — readable even
-    when a plugin ships 200+ skills. ``r`` / Remove uninstalls the highlighted
-    plugin; install/search stay on the ``/plugins`` command.
+    BINDINGS: ClassVar = [("escape", "close", "Close")]
+    DEFAULT_CSS = """
+    ClaudePluginsScreen #modal-box { width: 90; max-width: 96%; height: 90%; }
+    ClaudePluginsScreen #cplugins-list { height: 8; min-height: 3; }
+    ClaudePluginsScreen #cplugin-detail { height: auto; max-height: 8; overflow-y: auto; }
+    ClaudePluginsScreen Horizontal { height: 3; }
+    ClaudePluginsScreen Button { min-width: 6; width: 1fr; }
+    ClaudePluginsScreen #plugin-source { width: 1fr; }
     """
-
-    BINDINGS = [
-        ("escape", "close", "Close"),
-        ("r", "remove", "Remove"),
-    ]
 
     def __init__(self) -> None:
         super().__init__()
         self._plugins: list[dict] = []
+        self._view = "installed"
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="modal-box"):
-            yield Static(Text("Plugins", style="bold"), id="modal-title")
+        with VerticalScroll(id="modal-box"):
+            yield Static("Plugins", id="modal-title")
+            yield Tabs(
+                Tab("Installed", id="installed"),
+                Tab("Discover", id="discover"),
+                Tab("Marketplaces", id="marketplaces"),
+                id="plugin-tabs",
+            )
             yield OptionList(id="cplugins-list")
-            yield Static(Text("Components:", style="bold yellow"), id="cplugin-detail-header")
             yield Static("", id="cplugin-detail", classes="preview-box")
-            yield Static("", id="cplugins-hint")
+            yield Select(
+                [("Install: User", "user"), ("Install: Project", "project"),
+                 ("Install: Local", "local")],
+                value="user",
+                allow_blank=False,
+                id="plugin-scope",
+            )
+            with Horizontal():
+                yield Input(placeholder="Local folder or Git source", id="plugin-source")
+                yield Button("Add", id="plugin-add")
             with Horizontal(id="modal-buttons"):
+                yield Button("Install", id="plugin-install")
+                yield Button("Toggle", id="plugin-toggle")
+                yield Button("Update", id="plugin-update")
                 yield Button("Remove", id="remove", variant="error")
                 yield Button("Close", id="close")
+            yield Static(
+                "Install trusted sources. /reload-plugins applies changes to this session.",
+                id="cplugins-hint",
+            )
 
     def on_mount(self) -> None:
         animate_modal_screen(self)
         self._reload()
 
-    @staticmethod
-    def _counts(comps: dict) -> str:
-        parts = []
-        for key, label in (
-            ("skills", "skills"),
-            ("commands", "cmds"),
-            ("agents", "agents"),
-            ("mcp", "mcp"),
-            ("hooks", "hooks"),
-        ):
-            n = len(comps.get(key, []) or [])
-            if n:
-                parts.append(f"{n} {label}")
-        return " · ".join(parts)
-
-    def _reload(self) -> None:
+    @work(exclusive=True, group="plugin-list")
+    async def _reload(self) -> None:
         from novacode_cli.plugins import claude_plugins as cp
+        from novacode_cli.plugins import marketplaces as mp
+
+        view = self._view
+
+        def read() -> list[dict]:
+            if view == "discover":
+                return mp.list_marketplace_plugins()
+            if view == "marketplaces":
+                return mp.list_marketplaces()
+            items = cp.list_plugins()
+            for item in items:
+                try:
+                    item["components"] = cp.plugin_components(item["id"])
+                except (OSError, ValueError) as exc:
+                    item["components"] = {"diagnostics": [str(exc)]}
+            return items
 
         try:
-            self._plugins = cp.list_plugins()
-        except Exception:  # noqa: BLE001
-            self._plugins = []
-
-        ol = self.query_one("#cplugins-list", OptionList)
-        keep = ol.highlighted
-        ol.clear_options()
-        hint = self.query_one("#cplugins-hint", Static)
-
-        if not self._plugins:
-            self.query_one("#cplugin-detail", Static).update(
-                Text("No plugins installed.", style="dim")
-            )
-            hint.update(
-                Text(
-                    "Install with  /plugins install <owner/repo | plugin@marketplace>",
-                    style="dim",
-                )
-            )
+            items = await asyncio.to_thread(read)
+        except (OSError, ValueError, KeyError) as exc:
+            self.notify(f"Could not load plugins: {exc}", severity="error")
             return
-
-        for p in self._plugins:
-            comps = cp.plugin_components(p["name"])
-            row = Text()
-            row.append("● ", style="green" if p.get("enabled", True) else "dim")
-            row.append(str(p["name"]), style="bold")
-            counts = self._counts(comps)
-            if counts:
-                row.append(f"   {counts}", style="dim")
-            ol.add_option(Option(row))
-
-        if keep is not None and 0 <= keep < len(self._plugins):
-            ol.highlighted = keep
-        else:
-            ol.highlighted = 0
-        ol.focus()
-        self._update_detail(ol.highlighted)
-        hint.update(
-            Text(
-                f"{len(self._plugins)} plugin(s) · r removes the highlighted one · "
-                "/reload-plugins applies changes this session",
-                style="dim",
+        if not self.is_mounted or view != self._view:
+            return
+        self._plugins = items
+        listing = self.query_one("#cplugins-list", OptionList)
+        listing.clear_options()
+        for item in items:
+            identity = item.get("id", item["name"])
+            if view == "discover":
+                identity += "@" + item["marketplace"]
+            status = (
+                f" · {item['scope']} · {'enabled' if item['enabled'] else 'disabled'}"
+                if "enabled" in item
+                else ""
             )
-        )
+            listing.add_option(Option(Text(identity + status)))
+        if items:
+            listing.highlighted = 0
+        self._update_detail(listing.highlighted)
 
-    def _update_detail(self, idx: int | None) -> None:
-        from novacode_cli.plugins import claude_plugins as cp
-
+    def _update_detail(self, index: int | None) -> None:
         detail = self.query_one("#cplugin-detail", Static)
-        if idx is None or not (0 <= idx < len(self._plugins)):
-            detail.update(Text(""))
+        if index is None or not 0 <= index < len(self._plugins):
+            detail.update(Text("No plugins in this view.", style="dim"))
             return
-        p = self._plugins[idx]
-        comps = cp.plugin_components(p["name"])
-        t = Text()
-        t.append(str(p["name"]), style="bold #7aa2f7")
-        t.append(f"\n{p.get('source', '')}", style="dim")
-        t.append(f"\n{p.get('path', '')}", style="dim")
-        for key, label in (
-            ("skills", "Skills"),
-            ("commands", "Commands"),
-            ("agents", "Agents"),
-            ("mcp", "MCP servers"),
-            ("hooks", "Hooks"),
-        ):
-            items = comps.get(key, []) or []
-            if not items:
-                continue
-            t.append(f"\n\n{label} ({len(items)})", style="bold cyan")
-            t.append("\n" + ", ".join(str(i) for i in items))
-        detail.update(t)
+        item = self._plugins[index]
+        text = Text(str(item.get("id", item["name"])), style="bold")
+        text.append("\n" + str(item.get("description", item.get("source", ""))), style="dim")
+        for kind, values in item.get("components", {}).items():
+            if values:
+                text.append(f"\n{kind}: " + ", ".join(values))
+        detail.update(text)
+
+    def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
+        """Load the selected management view without blocking the UI."""
+        if event.tabs.id == "plugin-tabs":
+            self._view = event.tab.id or "installed"
+            self._reload()
 
     def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
         if event.option_list.id == "cplugins-list":
             self._update_detail(event.option_index)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
         if event.button.id == "close":
             self.dismiss(None)
-        elif event.button.id == "remove":
-            self.action_remove()
-
-    def action_remove(self) -> None:
-        ol = self.query_one("#cplugins-list", OptionList)
-        idx = ol.highlighted
-        if idx is None or not (0 <= idx < len(self._plugins)):
             return
-        name = self._plugins[idx]["name"]
-        from novacode_cli.plugins import claude_plugins as cp
+        self._operate(event.button.id or "")
 
-        try:
-            cp.remove(name)
-        except Exception as e:  # noqa: BLE001
-            self.query_one("#cplugins-hint", Static).update(
-                Text(f"Remove failed: {e}", style="red")
+    @work(exclusive=True, group="plugin-operation")
+    async def _operate(self, action: str) -> None:
+        from novacode_cli.plugins.cli import execute
+
+        scope = str(self.query_one("#plugin-scope", Select).value)
+        index = self.query_one("#cplugins-list", OptionList).highlighted
+        item = self._plugins[index] if index is not None and index < len(self._plugins) else None
+        if action == "plugin-add":
+            source = self.query_one("#plugin-source", Input).value.strip()
+            if not source:
+                self.notify("Enter a local folder or Git source first.")
+                return
+            arguments = (
+                ["marketplace", "add", source]
+                if self._view == "marketplaces"
+                else ["install", source, "--scope", scope]
             )
+        elif item is None:
             return
-        self._reload()
+        elif self._view == "marketplaces":
+            operation = "remove" if action == "remove" else "update"
+            if action not in {"remove", "plugin-update"}:
+                return
+            arguments = ["marketplace", operation, item["name"]]
+        elif self._view == "discover":
+            if action != "plugin-install":
+                return
+            arguments = ["install", item["name"] + "@" + item["marketplace"], "--scope", scope]
+        else:
+            operation = {
+                "remove": "uninstall",
+                "plugin-update": "update",
+                "plugin-toggle": "disable" if item["enabled"] else "enable",
+            }.get(action)
+            if operation is None:
+                return
+            arguments = [operation, item["id"]]
+            if operation in {"uninstall", "update"}:
+                arguments += ["--scope", item["scope"]]
+        try:
+            result = await asyncio.to_thread(execute, arguments)
+            self.notify("\n".join(result.lines), timeout=8)
+            self._reload()
+        except (OSError, ValueError, RuntimeError, KeyError) as exc:
+            self.notify(f"Plugin operation failed: {exc}", severity="error")
 
     def action_close(self) -> None:
         self.dismiss(None)

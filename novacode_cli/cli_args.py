@@ -662,6 +662,10 @@ def parse_args() -> argparse.Namespace:  # noqa: PLR0912, PLR0915 — one existi
     )
     parser.add_argument("-h", "--help", action="help", help="Show this help message and exit")
 
+    parser.add_argument(
+        "--plugin-dir", action="append", default=[], metavar="PATH",
+        help="Load a standard directory plugin in this session without installing it",
+    )
     args = parser.parse_args()
     if args.headless:
         args.mode = "pipe"

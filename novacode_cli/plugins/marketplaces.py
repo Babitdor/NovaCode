@@ -15,12 +15,15 @@ clones marketplaces and resolves a plugin's ``source`` to something
 ``claude_plugins.install`` already accepts (a local dir or a git ref).
 """
 
+# ruff: noqa: TRY004 -- external catalog schema failures use ValueError.
+
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from novacode_cli.plugins import claude_plugins as cp
+from novacode_cli.plugins.components import contained, object_file
+from novacode_cli.plugins.storage import locked, write_json
 
 MARKETPLACES_DIR = Path.home() / ".nova" / "marketplaces"
 MANIFEST = MARKETPLACES_DIR / "marketplaces.json"
@@ -28,97 +31,135 @@ MANIFEST = MARKETPLACES_DIR / "marketplaces.json"
 
 # ── manifest ────────────────────────────────────────────────────────────────
 def _load() -> dict[str, dict]:
-    try:
-        return json.loads(MANIFEST.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
+    return object_file(MANIFEST, optional=True)
 
 
-def _save(m: dict[str, dict]) -> None:
-    MARKETPLACES_DIR.mkdir(parents=True, exist_ok=True)
-    MANIFEST.write_text(json.dumps(m, indent=2), encoding="utf-8")
+def _save(data: dict[str, dict]) -> None:
+    write_json(MANIFEST, data)
 
 
-def _marketplace_json(mkt_dir: Path) -> dict:
-    try:
-        return json.loads((mkt_dir / ".claude-plugin" / "marketplace.json").read_text("utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
+def _marketplace_json(directory: Path) -> dict:
+    data = object_file(directory / ".claude-plugin/marketplace.json")
+    cp._safe_name(data.get("name", ""))
+    entries = data.get("plugins")
+    if not isinstance(entries, list):
+        msg = "Marketplace plugins must be a list"
+        raise ValueError(msg)
+    names = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            msg = "Marketplace plugin must be an object"
+            raise ValueError(msg)
+        name = cp._safe_name(entry.get("name", ""))
+        if name in names:
+            msg = "Duplicate marketplace plugin name"
+            raise ValueError(msg)
+        names.add(name)
+    return data
 
 
-# ── add / list / remove ──────────────────────────────────────────────────────
 def add(source: str) -> str:
-    """Clone a marketplace repo; register it. Returns the marketplace name."""
+    """Fetch and atomically publish a validated marketplace snapshot."""
+    import tempfile
+
     MARKETPLACES_DIR.mkdir(parents=True, exist_ok=True)
-    staging = MARKETPLACES_DIR / ".staging"
-    cp._force_rmtree(staging)
+    with tempfile.TemporaryDirectory(prefix=".stage-", dir=MARKETPLACES_DIR) as temporary:
+        stage = Path(temporary) / "catalog"
+        cp.fetch(source, stage)
+        data = _marketplace_json(stage)
+        name = data["name"]
+        # A catalog's label cannot grant it an official trust tier.
+        if name.startswith(("claude-", "anthropic-")) and not source.startswith(
+            (
+                "anthropics/",
+                "https://github.com/anthropics/",
+                "git@github.com:anthropics/",
+            )
+        ):
+            msg = "Official marketplace names require an Anthropic GitHub source"
+            raise ValueError(msg)
+        with locked(MARKETPLACES_DIR):
+            manifest = _load()
+            if name in manifest and manifest[name]["source"] != source:
+                msg = "Marketplace name already belongs to another source"
+                raise ValueError(msg)
+            # Version the catalog too; failed publication leaves the prior catalog intact.
+            import uuid
 
-    ref = cp.fetch(source, staging)
-    fallback = Path(ref.rstrip("/")).name.removesuffix(".git")
-    name = _marketplace_json(staging).get("name") or fallback
-    name = cp._safe_name(str(name))
-
-    dest = cp._storage_path(MARKETPLACES_DIR, name)
-    cp._force_rmtree(dest)
-    staging.rename(dest)
-
-    m = _load()
-    m[name] = {"source": source}
-    _save(m)
+            snapshot = MARKETPLACES_DIR / (name + "-" + uuid.uuid4().hex)
+            stage.rename(snapshot)
+            manifest[name] = {"source": source, "path": str(snapshot)}
+            _save(manifest)
     return name
 
 
 def list_marketplaces() -> list[dict]:
-    return [{"name": n, **meta} for n, meta in _load().items()]
+    """List the registered catalogs without fetching or executing code."""
+    return [{"name": name, **meta} for name, meta in _load().items()]
+
+
+def _directory(name: str) -> Path:
+    meta = _load()[name]
+    return contained(
+        MARKETPLACES_DIR,
+        str(Path(meta.get("path", MARKETPLACES_DIR / name)).relative_to(MARKETPLACES_DIR)),
+    )
+
+
+def update_marketplace(name: str) -> str:
+    """Refresh one catalog while preserving its prior snapshot."""
+    return add(_load()[name]["source"])
 
 
 def remove_marketplace(name: str) -> bool:
-    m = _load()
-    if name not in m:
-        return False
-    cp._force_rmtree(cp._storage_path(MARKETPLACES_DIR, name))
-    del m[name]
-    _save(m)
+    """Remove a catalog only after its installed plugins are unregistered."""
+    with locked(MARKETPLACES_DIR):
+        data = _load()
+        if name not in data:
+            return False
+        installed = [p for p in cp.list_plugins() if p.get("marketplace") == name]
+        if installed:
+            msg = "Uninstall this marketplace's plugins before removing its catalog"
+            raise ValueError(msg)
+        del data[name]
+        _save(data)
     return True
 
 
 # ── plugin listing + install ──────────────────────────────────────────────────
 def list_marketplace_plugins() -> list[dict]:
     """``[{marketplace, name, description}]`` across all registered marketplaces."""
-    out = []
+    out: list[dict] = []
     for mname in _load():
-        for entry in _marketplace_json(MARKETPLACES_DIR / mname).get("plugins", []):
-            if isinstance(entry, dict) and entry.get("name"):
-                out.append(
-                    {
-                        "marketplace": mname,
-                        "name": entry["name"],
-                        "description": entry.get("description", ""),
-                    }
-                )
+        out.extend(
+            {
+                "marketplace": mname,
+                "name": entry["name"],
+                "description": entry.get("description", ""),
+            }
+            for entry in _marketplace_json(_directory(mname))["plugins"]
+        )
     return out
 
 
 def _resolve_entry_source(entry: dict, mkt_dir: Path) -> str:
-    """Resolve a plugin entry's ``source`` to a dir/ref ``cp.install`` accepts."""
-    s = entry.get("source")
-    if s is None:  # convention: a subdir named after the plugin
-        return str(mkt_dir / entry["name"])
-    if isinstance(s, dict):
-        # ponytail: only the common {"source":"github","repo":"o/r"} form.
-        repo = s.get("repo")
-        if repo:
-            return str(repo)
-        msg = f"Unsupported plugin source object: {s}"
+    """Resolve only documented source forms; relative paths stay in the catalog."""
+    source = entry.get("source")
+    if isinstance(source, dict):
+        kind = source.get("source")
+        if kind == "github" and isinstance(source.get("repo"), str):
+            return "https://github.com/" + source["repo"]
+        if kind == "git" and isinstance(source.get("url"), str):
+            return source["url"]
+        msg = "Unsupported marketplace source type"
         raise ValueError(msg)
-    s = str(s)
-    local = (mkt_dir / s)
-    if s.startswith((".", "/")) or local.exists():  # relative path inside the marketplace
-        return str(local.resolve())
-    return s  # a git URL / owner/repo — install() handles it
+    if not isinstance(source, str) or (not source.startswith("./") and source != "."):
+        msg = "Relative marketplace source must start with ./"
+        raise ValueError(msg)
+    return str(contained(mkt_dir, source))
 
 
-def install_plugin(spec: str) -> str:
+def install_plugin(spec: str, *, scope: str = "user") -> str:
     """Install ``plugin@marketplace`` (or just ``plugin`` if unambiguous)."""
     if "@" in spec:
         plugin, marketplace = spec.split("@", 1)
@@ -127,7 +168,8 @@ def install_plugin(spec: str) -> str:
     plugin, marketplace = plugin.strip(), marketplace.strip()
 
     matches = [
-        p for p in list_marketplace_plugins()
+        p
+        for p in list_marketplace_plugins()
         if p["name"] == plugin and (not marketplace or p["marketplace"] == marketplace)
     ]
     if not matches:
@@ -140,25 +182,18 @@ def install_plugin(spec: str) -> str:
         raise ValueError(msg)
 
     hit = matches[0]
-    mkt_dir = MARKETPLACES_DIR / hit["marketplace"]
+    mkt_dir = _directory(hit["marketplace"])
     entry = next(
         e for e in _marketplace_json(mkt_dir).get("plugins", []) if e.get("name") == plugin
     )
-    return cp.install(_resolve_entry_source(entry, mkt_dir))
-
-
-if __name__ == "__main__":
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as tmp:
-        mkt = Path(tmp) / "mkt"
-        (mkt / ".claude-plugin").mkdir(parents=True)
-        (mkt / ".claude-plugin" / "marketplace.json").write_text(
-            json.dumps({"name": "m", "plugins": [{"name": "foo", "source": "./foo"}]})
-        )
-        assert _marketplace_json(mkt)["name"] == "m"
-        entry = {"name": "foo", "source": "./foo"}
-        assert _resolve_entry_source(entry, mkt) == str((mkt / "./foo").resolve())
-        assert _resolve_entry_source({"name": "bar"}, mkt) == str(mkt / "bar")
-        assert _resolve_entry_source({"name": "b", "source": {"repo": "o/r"}}, mkt) == "o/r"
-    print("marketplaces self-check ok")
+    source = entry.get("source")
+    options = source if isinstance(source, dict) else {}
+    return cp.install(
+        _resolve_entry_source(entry, mkt_dir),
+        scope=scope,
+        marketplace=hit["marketplace"],
+        expected_name=plugin,
+        ref=options.get("ref"),
+        subdirectory=options.get("path"),
+        entry=entry,
+    )

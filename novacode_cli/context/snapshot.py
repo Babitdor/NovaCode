@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from novacode_cli.agents.caveman import CavemanMiddleware
     from novacode_cli.agents.context_compaction import ContextCompactionMiddleware
     from novacode_cli.agents.strict_tools import StrictToolMiddleware
+    from novacode_cli.plugins.hooks import PluginHooksMiddleware
     from novacode_cli.security.prompt_injection import PromptInjectionMiddleware
 
 
@@ -365,6 +366,7 @@ def background_context_middleware() -> list[
     | PromptInjectionMiddleware
     | AttributionMiddleware
     | CavemanMiddleware
+    | PluginHooksMiddleware
 ]:
     """Give packaged remote agents the same protection and accounting contract."""
     from deepagents.backends.filesystem import FilesystemBackend
@@ -374,6 +376,7 @@ def background_context_middleware() -> list[
     from novacode_cli.agents.caveman import CavemanMiddleware
     from novacode_cli.agents.context_compaction import ContextCompactionMiddleware
     from novacode_cli.agents.strict_tools import StrictToolMiddleware
+    from novacode_cli.plugins.hooks import PluginHooksMiddleware
     from novacode_cli.security.prompt_injection import PromptInjectionMiddleware
 
     backend = FilesystemBackend(root_dir=str(workspace_root()), virtual_mode=True)
@@ -381,6 +384,7 @@ def background_context_middleware() -> list[
         ContextCompactionMiddleware(backend=backend),
         AttributionMiddleware(),
         CavemanMiddleware(style_only=True),
+        PluginHooksMiddleware(lifecycle=False),
         PromptInjectionMiddleware(),
         StrictToolMiddleware(),
         ContextSnapshotMiddleware(),

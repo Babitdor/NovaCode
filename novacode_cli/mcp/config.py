@@ -109,7 +109,7 @@ def _release_lock(lock_path: Path) -> None:
 class MCPServerConfig(BaseModel):
     """Configuration for a single MCP server."""
 
-    transport: Literal["http", "stdio"]
+    transport: Literal["http", "stdio", "sse"]
     url: str | None = None
     command: str | None = None
     args: list[str] = Field(default_factory=list)
@@ -183,13 +183,13 @@ class MCPServerConfig(BaseModel):
     @model_validator(mode="after")
     def validate_transport_requirements(self) -> "MCPServerConfig":
         """Validate that transport-specific requirements are met."""
-        if self.transport == "http" and not self.url:
+        if self.transport in {"http", "sse"} and not self.url:
             msg = "HTTP transport requires a URL"
             raise ValueError(msg)
         if self.transport == "stdio" and not self.command:
             msg = "stdio transport requires a command"
             raise ValueError(msg)
-        if self.transport != "http" and (self.oauth or self.header_secrets):
+        if self.transport not in {"http", "sse"} and (self.oauth or self.header_secrets):
             msg = "OAuth and HTTP headers require HTTP transport"
             raise ValueError(msg)
         return self
@@ -204,6 +204,7 @@ class MCPConfig:
         Args:
             config_path: Path to mcp.json config file. Defaults to ~/.nova/mcp.json
         """
+        self._include_plugins = config_path is None
         if config_path is None:
             config_path = Path.home() / ".nova" / "mcp.json"
         self.config_path = config_path
@@ -349,4 +350,37 @@ class MCPConfig:
         Returns:
             Dictionary mapping server names to configurations
         """
-        return self.load()
+        servers = self.load()
+        if not self._include_plugins:
+            return servers
+        from novacode_cli.plugins.claude_plugins import legacy_mcp_servers, plugin_mcp_servers
+
+        try:
+            for name, definition in legacy_mcp_servers().items():
+                try:
+                    previous = MCPServerConfig(**definition)
+                except ValueError:
+                    continue
+                if name in servers and servers[name] == previous:
+                    servers.pop(name)
+            for name, definition in plugin_mcp_servers().items():
+                config = dict(definition)
+                config["transport"] = config.pop("type", config.get("transport")) or (
+                    "stdio" if config.get("command") else "http"
+                )
+                headers = config.pop("headers", {})
+                if headers:
+                    config["env"] = {
+                        **config.get("env", {}),
+                        **{
+                            "HTTP_HEADER_" + key.replace("-", "_"): value
+                            for key, value in headers.items()
+                        },
+                    }
+                try:
+                    servers.setdefault(name, MCPServerConfig(**config))
+                except ValueError as exc:
+                    logger.warning("Plugin MCP server %s cannot load: %s", name, exc)
+        except (OSError, ValueError) as exc:
+            logger.warning("Plugin MCP configuration cannot load: %s", exc)
+        return servers

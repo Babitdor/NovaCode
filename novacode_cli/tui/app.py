@@ -586,7 +586,8 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "update": SlashCommand("_run_update_check", "check/install updates and view release notes"),
     "save": SlashCommand("_run_save", "save the session now", wants_text=False),
     "copy": SlashCommand("_run_copy", "copy last response (or whole chat) — or click a message"),
-    "plugins": SlashCommand("_run_plugins", "install / manage plugins and marketplaces"),
+    "plugin": SlashCommand("_run_plugins", "install / manage plugins and marketplaces"),
+    "plugins": SlashCommand("_run_plugins", "alias for /plugin"),
     "middleware": SlashCommand(
         "_run_middleware", "list active middleware (/reload-plugins to reload)", wants_text=False
     ),
@@ -2369,6 +2370,7 @@ class NovaApp(App):
         self._system_sampler = SystemSampler()
         # name → async (args) -> str  for slash commands contributed by plugins.
         self._plugin_commands: dict[str, Any] = {}
+        self._plugin_command_generation = 0
         # Strong refs to fire-and-forget background sends so the event loop
         # doesn't garbage-collect them mid-flight (asyncio only holds weak refs).
         self._bg_tasks: set[Any] = set()
@@ -8255,7 +8257,8 @@ class NovaApp(App):
         # alongside the built-in commands; a skill sharing a command's name
         # shouldn't appear twice.
         if value.startswith("/"):
-            cmds = [c for c in _TUI_SLASH_COMMANDS if c.startswith(v)]
+            commands = [*_TUI_SLASH_COMMANDS, *(f"/{name}" for name in self._plugin_commands)]
+            cmds = [command for command in commands if command.startswith(v)]
             seen = set(cmds)
             skill_cmds = [
                 f"/{n}"
@@ -12628,97 +12631,21 @@ class NovaApp(App):
         self._load_plugin_commands()
 
     async def _run_plugins(self, text: str) -> None:
-        """Native ``/plugins`` — Claude-compatible plugin installer + marketplaces.
+        from novacode_cli.commands.plugin_install_handler import command_arguments
+        from novacode_cli.plugins.cli import execute
 
-        Mirrors the console handler but logs via ``self._log``. Reuses the shared
-        install/marketplace logic in ``plugins.claude_plugins`` / ``.marketplaces``.
-        """
-        import re as _re
-
-        from novacode_cli.plugins import claude_plugins as cp
-        from novacode_cli.plugins import marketplaces as mp
-
-        def log(msg: str, style: str = "") -> None:
-            self._log(Text(msg, style=style) if style else Text(msg), transcript=True)
-
-        def fmt(comps: dict) -> str:
-            parts = [
-                f"{k}: {', '.join(v)}"
-                for k in ("skills", "commands", "agents", "mcp", "hooks")
-                if (v := comps.get(k))
-            ]
-            return "  " + " | ".join(parts) if parts else "  (no components)"
-
-        parts = text.split(maxsplit=2)
-        sub = parts[1] if len(parts) > 1 else "list"
-        arg = parts[2].strip() if len(parts) > 2 else ""
+        arguments = command_arguments(text.partition(" ")[2])
+        if not arguments or arguments == ["list"]:
+            await self.push_screen_wait(ClaudePluginsScreen())
+            return
         try:
-            if sub == "install":
-                if not arg:
-                    log(
-                        "Usage: /plugins install <owner/repo | git-url | dir | plugin@marketplace>",
-                        "yellow",
-                    )
-                    return
-                name = (
-                    mp.install_plugin(arg)
-                    if _re.fullmatch(r"[\w.-]+@[\w.-]+", arg)
-                    else cp.install(arg)
-                )
-                log(f"● Installed {name}", "green")
-                log(fmt(cp.plugin_components(name)), "cyan")
-                log("Restart Nova to activate.", "dim")
-            elif sub == "remove":
-                log(
-                    f"● Removed {arg}" if cp.remove(arg) else f"No plugin named '{arg}'",
-                    "green" if arg else "yellow",
-                )
-            elif sub == "search":
-                hits = mp.list_marketplace_plugins()
-                if arg:
-                    q = arg.lower()
-                    hits = [
-                        p for p in hits if q in p["name"].lower() or q in p["description"].lower()
-                    ]
-                if not hits:
-                    log(
-                        "No matching plugins. Add a marketplace: /plugins marketplace add <owner/repo>",
-                        "dim",
-                    )
-                else:
-                    log("Available plugins:", "bold")
-                    for p in hits:
-                        log(f"  • {p['name']}@{p['marketplace']}  {p['description']}")
-            elif sub == "marketplace":
-                msub, _, marg = arg.partition(" ")
-                marg = marg.strip()
-                if msub == "add":
-                    name = mp.add(marg)
-                    log(
-                        f"● Added marketplace {name} ({len(mp.list_marketplace_plugins())} plugins — /plugins search)",
-                        "green",
-                    )
-                elif msub == "remove":
-                    log(
-                        f"● Removed marketplace {marg}"
-                        if mp.remove_marketplace(marg)
-                        else f"No marketplace '{marg}'",
-                        "green" if marg else "yellow",
-                    )
-                else:
-                    mkts = mp.list_marketplaces()
-                    log(
-                        "Marketplaces:"
-                        if mkts
-                        else "No marketplaces. /plugins marketplace add <owner/repo>",
-                        "bold" if mkts else "dim",
-                    )
-                    for m in mkts:
-                        log(f"  • {m['name']}  {m['source']}")
-            else:  # list — open the native plugins viewer instead of a text dump
-                await self.push_screen_wait(ClaudePluginsScreen())
-        except (ValueError, RuntimeError) as e:
-            log(f"Failed: {e}", "red")
+            result = await asyncio.to_thread(execute, arguments)
+            if result.report:
+                self._log(Text("\n".join(result.lines)), transcript=True)
+            else:
+                self.notify("\n".join(result.lines), timeout=8)
+        except (OSError, ValueError, RuntimeError, KeyError) as exc:
+            self.notify(f"Plugin operation failed: {exc}", severity="error")
 
     async def _run_reload_plugins(self) -> None:
         """``/reload-plugins`` — rebuild the agent to pick up plugins added/changed
@@ -12767,22 +12694,26 @@ class NovaApp(App):
         happens on the UI thread.
         """
 
+        self._plugin_command_generation += 1
+        generation = self._plugin_command_generation
+
         def work() -> None:
             found = self._discover_plugin_commands()
             try:
                 if self.is_running:
-                    self.call_from_thread(self._register_plugin_commands, found)
+                    self.call_from_thread(self._register_plugin_commands, found, generation)
             except Exception:  # noqa: BLE001 — the app closed while we were scanning
                 pass
 
         threading.Thread(target=work, name="nova-plugin-commands", daemon=True).start()
 
-    def _register_plugin_commands(self, found: dict[str, Any]) -> None:
+    def _register_plugin_commands(
+        self, found: dict[str, Any], generation: int | None = None,
+    ) -> None:
+        """Replace this session's commands, discarding stale discovery workers."""
+        if generation is not None and generation != self._plugin_command_generation:
+            return
         self._plugin_commands = found
-        for name in found:
-            slash = f"/{name}"
-            if slash not in _TUI_SLASH_COMMANDS:
-                _TUI_SLASH_COMMANDS.append(slash)
         if getattr(self, "session_state", None) is not None:
             self._schedule_remote_command_menu()
 
@@ -12821,7 +12752,7 @@ class NovaApp(App):
                 return _handler
 
             for cname, _desc, body in plugin_commands():
-                found.setdefault(cname, _make_claude_handler(body))
+                found.setdefault(cname.lower(), _make_claude_handler(body))
         except Exception:  # noqa: BLE001 — a bad plugin must not break startup
             pass
         return found
