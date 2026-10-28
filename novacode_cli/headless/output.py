@@ -206,6 +206,11 @@ class HeadlessOutput:
                 "subtype": "context",
                 "message": event.message,
                 "event_type": event.event_type,
+                **(
+                    {"record_id": event.record_id, "data": event.data}
+                    if event.record_id is not None
+                    else {}
+                ),
             }
         if isinstance(event, ev.Error):
             return {

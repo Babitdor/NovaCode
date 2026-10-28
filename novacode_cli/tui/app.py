@@ -28,6 +28,7 @@ from novacode_cli.tui.home_scene import (
 )
 from novacode_cli.tui.voice_downloads import VoiceDownloads, VoiceModelProgress
 from novacode_cli.tui.output_buffer import MAX_PENDING_CALLS, OutputTail
+from novacode_cli.tui.prime_panel import PrimePanel
 
 import asyncio
 import contextlib
@@ -658,7 +659,9 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "context": SlashCommand("_run_context", "show context usage or manage imported context"),
     "cost": SlashCommand("_run_token_view", "show session token spend", wants_text=False),
     "verbose": SlashCommand("_run_verbose", "toggle internal-context display", wants_text=False),
-    "prime": SlashCommand("_run_prime", "Deep Work: on / off / status / report"),
+    "prime": SlashCommand(
+        "_run_prime", "Deep Work: on / off / status / report / tasks / checks / resume / forget"
+    ),
     "ponytail": SlashCommand(
         "_run_ponytail", "coding efficiency: lite / full / ultra / off / settings / status",
     ),
@@ -2588,6 +2591,7 @@ class NovaApp(App):
             # one layout; hidden until a question arrives. Sits directly above
             # the input, which is where the eye already is.
             yield QuestionDock(id="question-dock")
+            yield PrimePanel(id="prime-panel")
             with Horizontal(id="prompt-row", classes="normal-mode"):
                 yield Static("> ", id="prompt-prefix", classes="normal-mode")
                 yield PromptInput(
@@ -7979,6 +7983,10 @@ class NovaApp(App):
             else None
         )
         prime = ""
+        try:
+            self._w("#prime-panel", PrimePanel).update_report(self.session_state)
+        except NoMatches:
+            pass
         if getattr(self.session_state, "prime_enabled", False):
             report = getattr(self.session_state, "prime_report", None) or {}
             prime = f" · PRIME {report.get('phase', 'define').title()}"
@@ -12324,11 +12332,62 @@ class NovaApp(App):
 
         parts = text.split(maxsplit=1)
         args = parts[1] if len(parts) > 1 else ""
-        message = handle_prime_command(self.session_state, args)
-        if args.strip().lower() not in {"", "on", "off"}:
+        action = args.strip().split(maxsplit=1)[0].lower() if args.strip() else ""
+        if self._turn_running() and action in {"resume", "forget"}:
+            self.notify(
+                "Wait for the active request to finish before changing saved Prime context."
+            )
+            return
+        message = await asyncio.to_thread(handle_prime_command, self.session_state, args)
+        panel = self.query_one("#prime-panel", PrimePanel)
+        if action in {"tasks", "checks"}:
+            panel.display = True
+            panel.query_one("#prime-drawer").display = True
+            panel.query_one("#prime-drawer").styles.height = min(13, max(7, self.size.height // 3))
+            await panel.show_details(self.session_state, message)
+        elif action == "forget" and "Confirm local removal" in message:
+            identity = args.split()[1]
+
+            async def confirmed(accepted: bool | None) -> None:
+                if accepted:
+                    result = await asyncio.to_thread(
+                        handle_prime_command,
+                        self.session_state,
+                        f"forget {identity} confirm",
+                    )
+                    self.notify(result)
+                    await panel.show_details(self.session_state)
+
+            self.push_screen(ConfirmModal("Forget Prime record?", Text(message)), confirmed)
+        elif action not in {"", "on", "off"}:
             self._log(Text(message), transcript=args.strip().lower() in {"status", "report"})
         self._update_mode_badge(self.query_one("#prompt", PromptInput).text)
         await self._save_session()
+
+    @on(PrimePanel.Control)
+    async def _prime_panel_control(self, event: PrimePanel.Control) -> None:
+        """Prepare without execution; Continue uses the ordinary foreground dispatch."""
+        panel = self.query_one("#prime-panel", PrimePanel)
+        if event.action == "open":
+            await panel.show_details(self.session_state)
+        elif event.action == "continue":
+            if self._turn_running():
+                self.notify("Wait for the active request to finish before continuing Prime.")
+            elif getattr(self.session_state, "prime_pending", None):
+                self._dispatch_root(
+                    "Continue the prepared Prime task within the current permissions and limits."
+                )
+        elif event.identity:
+            action = {"prepare": "resume", "inspect": "checks", "forget": "forget"}.get(
+                event.action
+            )
+            if action:
+                if self._turn_running() and action in {"resume", "forget"}:
+                    self.notify(
+                        "Wait for the active request to finish before changing saved Prime context."
+                    )
+                    return
+                await self._run_prime(f"/prime {action} {event.identity}")
 
     async def _run_caveman(self, text: str) -> None:
         from novacode_cli.config.nova_config import CAVEMAN_LEVELS, NovaConfig
@@ -18209,8 +18268,14 @@ class NovaApp(App):
                     pass
                 self._refresh_usage_metrics()
         elif isinstance(e, ev.ContextMessage):
-            if e.event_type == "nova_prime_progress":
+            if e.event_type in {"nova_prime_progress", "nova_prime_receipt"}:
                 self._update_mode_badge(self.query_one("#prompt", PromptInput).text)
+                if (
+                    e.data and e.data.get("storage_error")
+                    and getattr(self, "_prime_storage_noticed", None) != e.record_id
+                ):
+                    self._prime_storage_noticed = e.record_id
+                    self.notify(str(e.data["storage_error"]), severity="warning")
             if e.event_type == "nova_compaction_start":
                 self._start_compaction_indicator()
                 return

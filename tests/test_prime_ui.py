@@ -9,6 +9,7 @@ from textual.widgets import Button, Static
 
 from novacode_cli import ui_events as ev
 from novacode_cli.prime import PrimeRun
+from novacode_cli.tui.prime_panel import PrimePanel
 from novacode_cli.tui.widgets import PromptInput
 from tests.test_tui_app import _disable_live_update_checks  # noqa: F401
 from tests.test_tui_home_preferences import _app
@@ -52,6 +53,94 @@ async def test_prime_toggle_phase_and_existing_permission_badges():
         assert app.session_state.auto_approve
         assert "PRIME" not in str(badge.render())
         app.agent.astream.assert_not_called()
+
+
+@pytest.mark.timeout(30)
+@pytest.mark.parametrize("size", [(110, 38), (55, 24)])
+async def test_prime_drawer_prepare_continue_and_narrow_navigation(
+    size: tuple[int, int],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from textual.widgets import Input
+
+    app = _app()
+    app.agent.astream = AsyncMock(side_effect=AssertionError("Inspect/prepare must not start work"))
+    dispatch = Mock()
+    monkeypatch.setattr(app, "_dispatch_root", dispatch)
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        await app._run_prime("/prime on")
+        run = PrimeRun(app.session_state, "Fix CLI")
+        run.checkpoint("define", "Reproduce", criteria=["CLI works"])
+        run.finish("cancelled")
+        app._update_mode_badge()
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.text = "Keep this draft"
+        transcript_y = app._transcript().scroll_y
+        log = Mock(wraps=app._log)
+        monkeypatch.setattr(app, "_log", log)
+        panel = app.query_one("#prime-panel", PrimePanel)
+        panel.query_one("#prime-strip", Button).focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        drawer = panel.query_one("#prime-drawer")
+        assert drawer.display
+        assert drawer.region.height <= size[1] // 3
+        assert "Task history" in str(panel.query_one("#prime-details", Static).render())
+        for selector in (
+            "#prime-prepare",
+            "#prime-inspect",
+            "#prime-forget",
+            "#prime-continue",
+            "#prime-close",
+        ):
+            control = panel.query_one(selector, Button)
+            assert control.region.height == 1
+            assert control.content_region.height == 1
+        record_input = panel.query_one("#prime-record-id", Input)
+        record_input.value = run.report["id"]
+        await pilot.click("#prime-prepare")
+        await pilot.pause()
+        assert app.session_state.prime_pending["id"] == run.report["id"]
+        assert not panel.query_one("#prime-continue", Button).disabled
+        assert prompt.text == "Keep this draft"
+        assert app._transcript().scroll_y == transcript_y
+        assert not any(call.kwargs.get("transcript") for call in log.call_args_list)
+        app.agent.astream.assert_not_called()
+        dispatch.assert_not_called()
+        panel.query_one("#prime-continue", Button).focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        dispatch.assert_called_once()
+        await pilot.click("#prime-close")
+        assert not drawer.display
+        assert prompt.text == "Keep this draft"
+        assert panel.query_one("#prime-strip", Button).region.right <= size[0]
+
+
+@pytest.mark.timeout(30)
+async def test_prime_storage_warning_is_temporary_and_shown_once(monkeypatch: pytest.MonkeyPatch):
+    app = _app()
+    async with app.run_test(size=(100, 34)) as pilot:
+        await pilot.pause()
+        notify = Mock(wraps=app.notify)
+        log = Mock(wraps=app._log)
+        monkeypatch.setattr(app, "notify", notify)
+        monkeypatch.setattr(app, "_log", log)
+        event = ev.ContextMessage(
+            "Prime progress",
+            event_type="nova_prime_progress",
+            record_id="record",
+            data={"storage_error": "Prime drafts cannot be saved"},
+        )
+        await app._render(event)
+        await app._render(event)
+        warnings = [
+            call for call in notify.call_args_list if call.args[0] == "Prime drafts cannot be saved"
+        ]
+        assert len(warnings) == 1
+        assert warnings[0].kwargs["severity"] == "warning"
+        assert not any(call.kwargs.get("transcript") for call in log.call_args_list)
 
 
 @pytest.mark.timeout(30)

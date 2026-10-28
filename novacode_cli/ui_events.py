@@ -251,6 +251,8 @@ class ContextMessage:
     """Semantic type like 'nova_review_start', 'nova_review_complete', etc."""
     icon: str = "•"
     color: str = "cyan"
+    record_id: str | None = None
+    data: dict[str, Any] | None = None
 
 
 @dataclass

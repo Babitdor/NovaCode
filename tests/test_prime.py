@@ -87,7 +87,8 @@ def test_ordered_checkpoints_and_observed_execution_evidence():
     run.checkpoint("challenge", "Repeated login and missing cookies covered", evidence=["test-2"])
     run.checkpoint("deliver", "Change ready for owner review")
     run.finish("complete")
-    assert session.prime_report["status"] == "delivered"
+    assert session.prime_report["status"] == "delivered_with_limits"
+    assert "Unverified criteria" in receipt(session.prime_report)
     assert len(session.prime_report["checkpoints"]) == 6
     assert "agent assessment" in receipt(session.prime_report)
     assert "does not by itself prove tests passed" in receipt(session.prime_report)
@@ -244,7 +245,8 @@ async def test_real_graph_records_phases_results_and_host_delivery_receipt():
     session = state()
     events = [e async for e in iterate_agent_events("Fix login", graph, "nova-agent", session)]
     assert not [e for e in events if isinstance(e, ev.Error)]
-    assert session.prime_report["status"] == "delivered", session.prime_report
+    # The legacy tool returns prose without mechanical acceptance assertions.
+    assert session.prime_report["status"] == "delivered_with_limits", session.prime_report
     assert [r["phase"] for r in session.prime_report["checkpoints"]] == list(PHASES)
     assert session.prime_report["tools"][0]["id"] == "tests-1"
     assert any(
@@ -312,6 +314,9 @@ async def test_errors_and_cancellation_pause_or_fail_prime_without_permission_ch
         {"tools": [{"id": "x", "name": "shell", "status": []}]},
         {"criteria": [None]},
         {"checkpoints": [None]},
+        {"goal": {}},
+        {"checks": None},
+        {"evidence": [{"status": "passed"}]},
     ],
 )
 def test_malformed_saved_reports_do_not_restore_or_grant_permissions(change: dict):

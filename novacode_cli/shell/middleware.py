@@ -832,12 +832,31 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
             if result.truncated:
                 output += "\n[Output was truncated due to size limits]"
 
+            from novacode_cli.prime_memory import execution_evidence
+
             return ToolMessage(
                 content=output,
                 tool_call_id=tool_call_id,
                 name=self._tool_name,
                 status=status,
-                artifact={"execution_outcome": "success" if result.exit_code == 0 else "failure" if result.exit_code is not None else "unknown", "exit_code": result.exit_code},
+                artifact={
+                    "execution_outcome": "success"
+                    if result.exit_code == 0
+                    else "failure"
+                    if result.exit_code is not None
+                    else "unknown",
+                    "exit_code": result.exit_code,
+                    # Backend cwd is not part of its protocol. Preserve legacy status,
+                    # but do not certify a sandbox check without a known execution cwd.
+                    "nova_execution": execution_evidence(
+                        command=command,
+                        cwd=None,
+                        exit_code=result.exit_code,
+                        completed=False,
+                        truncated=bool(result.truncated),
+                        output=result.output or "",
+                    ),
+                },
             )
         except NotImplementedError as e:
             return ToolMessage(
@@ -1316,11 +1335,23 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
             # return value below is discarded by _run_async on the detach path.
             _jobs.get_registry().complete(_job.id, rc, output=note or None)
 
+        from novacode_cli.prime_memory import execution_evidence
+
         return ToolMessage(
             content=output + note,
             tool_call_id=tool_call_id,
             name=self._tool_name,
             status=status,
+            artifact={
+                "nova_execution": execution_evidence(
+                    command=command,
+                    cwd=str(Path(self._workspace_root).resolve()),
+                    exit_code=rc,
+                    completed=rc is not None and rc >= 0 and not bool(note) and not detached,
+                    truncated=bool(window.omitted),
+                    output=window.text(),
+                )
+            },
         )
 
     def _run_interactive_shell_command(

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "novacode-cli"
-version = "1.1.3"
+version = "1.1.4"
 description = "Agentic Coding Tool that runs in your terminal"
 authors = [{ name = "Babitdor", email = "babitdorbryan14@gmail.com" }]
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -232,6 +232,10 @@ convention = "google"  # Google-style docstrings
 ignore-var-parameters = true
 
 [tool.ruff.lint.per-file-ignores]
+"scripts/verify_prime.py" = [
+    "T201",  # CLI verification results.
+    "S603",  # Current Python interpreter and fixed repository test paths; no shell.
+]
 "novacode_cli/cli.py" = [
     "T201",    # Allow print statements in CLI
 ]

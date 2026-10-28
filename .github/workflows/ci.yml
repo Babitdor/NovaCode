@@ -68,6 +68,8 @@ jobs:
           novacode_cli/config/plan_mode.py
           novacode_cli/commands/prime_handler.py
           novacode_cli/prime.py
+          novacode_cli/prime_memory.py
+          novacode_cli/tui/prime_panel.py
           novacode_cli/tui/caveman_screen.py
           novacode_cli/tui/diff_preview.py
           novacode_cli/core/reasoning.py
@@ -98,6 +100,9 @@ jobs:
           novacode_cli/remote/rootapp_setup.py
           novacode_cli/commands/rootapp_remote.py
           scripts/check_caveman_style.py
+          scripts/verify_prime.py
+      - name: Verify Prime evidence boundaries
+        run: uv run --no-sync python scripts/verify_prime.py --mutations
       - name: Verify native and MCP Code Mode boundaries
         run: uv run --no-sync python scripts/verify_mcp_code_mode.py
       - name: Run offline regression tests
@@ -105,6 +110,7 @@ jobs:
           uv run --no-sync pytest -q --tb=short --junitxml=test-results/regression.xml
           tests/test_release_version.py
           tests/test_prime.py
+          tests/test_prime_records.py
           tests/test_prime_ui.py
           tests/test_tui_notices.py
           tests/test_plan_mcp_guard.py

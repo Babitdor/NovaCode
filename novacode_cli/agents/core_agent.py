@@ -2578,7 +2578,9 @@ This file stores your preferences and context that persist across sessions.
     agent_middleware.append(CavemanMiddleware())
     from novacode_cli.agents.prime import PrimeMiddleware
 
-    agent_middleware.append(PrimeMiddleware())
+    # Observe intercepted shell results and denials as well as ordinary tools.
+    # Prime only records; all execution and approval guards remain inside it.
+    agent_middleware.insert(0, PrimeMiddleware())
     agent_middleware.append(AttributionMiddleware())
     tools = [*tools, caveman_tool]
     if not any(isinstance(m, PromptInjectionMiddleware) for m in agent_middleware):

@@ -527,8 +527,12 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     try:
         if prime_run is not None:
             yield ev.ContextMessage(
-                "Prime · Define · 0/6 checkpoints", event_type="nova_prime_progress",
-                icon="◆", color="cyan",
+                "Prime · Define · 0/6 checkpoints",
+                event_type="nova_prime_progress",
+                icon="◆",
+                color="cyan",
+                record_id=prime_run.report["id"],
+                data=prime_run.progress(),
             )
         while True:
             interrupt_occurred = False
@@ -589,6 +593,8 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                             event_type="nova_prime_progress",
                             icon="◆",
                             color="cyan",
+                            record_id=prime_run.report["id"],
+                            data=prime_run.progress(),
                         )
                         continue
                     if isinstance(data, dict) and data.get("type") == "nova_model_retry":
@@ -1402,7 +1408,12 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
         yield _ctx
     if prime_run is not None and prime_run.is_current():
         yield ev.ContextMessage(
-            receipt(prime_run.report), event_type="nova_prime_receipt", icon="◆", color="cyan"
+            await asyncio.to_thread(receipt, prime_run.report),
+            event_type="nova_prime_receipt",
+            icon="◆",
+            color="cyan",
+            record_id=prime_run.report["id"],
+            data=prime_run.progress(),
         )
     yield ev.Done(had_response=has_responded)
 

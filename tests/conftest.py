@@ -8,6 +8,17 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _isolate_prime_records(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prime tests and incidental agent runs never write the user's project records."""
+    from langgraph.store.memory import InMemoryStore
+
+    from novacode_cli import prime_memory
+
+    store = InMemoryStore()
+    monkeypatch.setattr(prime_memory, "get_durable_store", lambda: store)
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
