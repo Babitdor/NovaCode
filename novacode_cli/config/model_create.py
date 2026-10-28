@@ -4,6 +4,7 @@ import re
 from langchain_core.language_models import BaseChatModel
 
 from novacode_cli.config.config import console, settings
+from novacode_cli.config.provider_registry import CATALOG_PROVIDERS
 
 # Env var that must be set before a provider is usable. Ollama needs no key.
 PROVIDER_KEY_ENV: dict[str, str] = {
@@ -26,6 +27,12 @@ PROVIDER_KEY_ENV: dict[str, str] = {
     # Bedrock is absent on purpose: an AWS profile or role authenticates it with
     # no key in the environment, so a key gate would wrongly turn it away.
 }
+
+PROVIDER_KEY_ENV.update({
+    provider: preset["api_key_var"]
+    for provider, preset in CATALOG_PROVIDERS.items()
+    if preset.get("api_key_var")
+})
 
 
 def azure_base_url() -> str:
@@ -381,6 +388,11 @@ def _build_chat_model(
 
     nova_config = NovaConfig()
     effort = reasoning_effort if reasoning_effort is not None else nova_config.get("reasoning_effort")
+
+    if provider in CATALOG_PROVIDERS:
+        from novacode_cli.config.catalog_models import build_catalog_model
+
+        return build_catalog_model(provider, model_name)
 
     if provider == "ollama":
         # Ollama is driven through its OpenAI-compatible endpoint (`/v1`) with
@@ -817,6 +829,15 @@ def create_model_from_config(provider: str, model_name: str) -> BaseChatModel | 
         A ``BaseChatModel`` instance, or ``None`` if the provider cannot be used.
     """
     key_var = PROVIDER_KEY_ENV.get(provider)
+    if provider in CATALOG_PROVIDERS:
+        from novacode_cli.config.provider_auth import get_provider_auth_status
+
+        if not get_provider_auth_status(provider).is_usable:
+            return None
+        try:
+            return build_chat_model(provider, model_name)
+        except ValueError:
+            return None
     if key_var:
         # Keyring-aware: a key saved to the system keychain is absent from
         # os.environ on a fresh session, so an env-only check wrongly returned
@@ -869,7 +890,17 @@ def create_model_for_session(
         return model, None
 
     key_var = PROVIDER_KEY_ENV.get(provider)
-    if key_var and not (os.environ.get(key_var) or getattr(settings, f"{provider}_api_key", None)):
+    if provider in CATALOG_PROVIDERS:
+        from novacode_cli.config.provider_auth import get_provider_auth_status
+
+        status = get_provider_auth_status(provider)
+        reason = (
+            status.detail if not status.is_usable
+            else f"provider '{provider}' or model is unavailable"
+        )
+    elif key_var and not (
+        os.environ.get(key_var) or getattr(settings, f"{provider}_api_key", None)
+    ):
         has_chatgpt_login = _openai_auth_available() if provider == "openai" else False
         reason = (
             "OpenAI ChatGPT sign-in is missing"
@@ -917,8 +948,18 @@ def create_model() -> BaseChatModel:
         if provider == "google":
             from novacode_cli.config.provider_auth import get_provider_auth_status
             available = get_provider_auth_status("google").is_usable
-        if key_var and not available:
-            console.print(f"[yellow]Warning: {key_var} not set, falling back to Ollama[/yellow]")
+        elif provider in CATALOG_PROVIDERS:
+            available = get_provider_auth_status(provider).is_usable
+        if (key_var or provider in CATALOG_PROVIDERS) and not available:
+            if provider in CATALOG_PROVIDERS:
+                detail = get_provider_auth_status(provider).detail or "provider unavailable"
+                console.print(
+                    f"[yellow]Warning: {provider}: {detail}; falling back to Ollama[/yellow]"
+                )
+            else:
+                console.print(
+                    f"[yellow]Warning: {key_var} not set, falling back to Ollama[/yellow]"
+                )
         else:
             return build_chat_model(provider, model_name)
 
@@ -981,6 +1022,10 @@ def create_model() -> BaseChatModel:
     from novacode_cli.config.model_manager import MODEL_PRESETS, OPENAI_COMPATIBLE_PROVIDERS
 
     for provider in sorted(OPENAI_COMPATIBLE_PROVIDERS | {"minimax"}):
+        # New gateways and regional variants need an explicit /model choice;
+        # sharing a credential name never authorizes selecting a new origin.
+        if provider in CATALOG_PROVIDERS:
+            continue
         preset = MODEL_PRESETS[provider]
         if os.environ.get(preset["api_key_var"]):
             model_name = os.environ.get(preset["env_var"], preset["default_model"])
@@ -1143,7 +1188,9 @@ ASYNC_AGENT_PROVIDER_ENV = "ASYNC_AGENT_PROVIDER"
 ASYNC_AGENT_MODEL_ENV = "ASYNC_AGENT_MODEL"
 
 #: Providers an async graph may run on: Ollama plus everything with a key variable.
-VALID_ASYNC_PROVIDERS: tuple[str, ...] = ("ollama", *PROVIDER_KEY_ENV)
+VALID_ASYNC_PROVIDERS: tuple[str, ...] = tuple(
+    dict.fromkeys(("ollama", *PROVIDER_KEY_ENV, *CATALOG_PROVIDERS))
+)
 
 #: Model used when nothing overrides it. Only providers whose default Nova can stand
 #: behind are listed; for the rest, asking for ASYNC_AGENT_MODEL beats guessing an id
@@ -1155,6 +1202,10 @@ PROVIDER_DEFAULT_MODEL: dict[str, str] = {
     "google": "gemini-3-pro-preview",
     "openrouter": "z-ai/glm-5.2",
 }
+PROVIDER_DEFAULT_MODEL.update({
+    provider: preset["default_model"] for provider, preset in CATALOG_PROVIDERS.items()
+    if preset.get("default_model")
+})
 
 
 def build_role_model(role: str) -> BaseChatModel | None:
@@ -1244,7 +1295,10 @@ def build_async_agent_model(*, per_agent_model_var: str | None = None) -> BaseCh
         raise ValueError(message)
 
     key_var = PROVIDER_KEY_ENV.get(provider)
-    if key_var and not (os.environ.get(key_var) or "").strip():
+    if (
+        key_var and provider not in CATALOG_PROVIDERS
+        and not (os.environ.get(key_var) or "").strip()
+    ):
         message = (
             f"Provider {provider!r} needs an API key: set {key_var} (in .env for the "
             "container, or in the environment for a server Nova launches itself)."

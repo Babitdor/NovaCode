@@ -90,7 +90,9 @@ def _validate_command(command: list[str]) -> str | None:
 
 def _sanitize_env_for_hook(env: dict[str, str]) -> dict[str, str]:
     """Strip API key / token env vars from a subprocess environment."""
-    to_strip: set[str] = set()
+    from novacode_cli.config.provider_registry import CATALOG_CREDENTIAL_VARS
+
+    to_strip: set[str] = set(CATALOG_CREDENTIAL_VARS)
     for key in env:
         upper = key.upper()
         for suffix in _API_KEY_SUFFIXES:

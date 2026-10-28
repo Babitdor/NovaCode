@@ -113,10 +113,52 @@ async def test_the_manager_lists_every_storable_credential(secrets):
         app.push_screen(manager)
         assert await _settle(pilot, lambda: bool(_rows(manager)))
 
-        assert set(_rows(manager)) == set(credential_names())
+        from textual.widgets import Tabs
+
+        found = set()
+        for section in ("llms", "tools", "decisions", "voice"):
+            manager.query_one("#auth-sections", Tabs).active = section
+            await pilot.pause()
+            found.update(_rows(manager))
+        assert found == set(credential_names()) | {"google-vertex"}
         # Nothing is configured in this fixture, so every row says so.
         joined = " ".join(_labels(manager))
         assert "[missing]" in joined
+
+
+@pytest.mark.usefixtures("secrets")
+async def test_auth_sections_search_and_actions_on_short_terminals():
+    from textual.widgets import Button, Input, Tabs
+
+    from novacode_cli.tui.auth_screens import AuthManagerScreen
+    from tests.test_modal_layouts import ModalHost, action_failures
+
+    app = ModalHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        manager = AuthManagerScreen()
+        app.push_screen(manager)
+        assert await _settle(pilot, lambda: bool(_rows(manager)))
+        for size in ((120, 40), (80, 24), (48, 18)):
+            await pilot.resize_terminal(*size)
+            app.apply_layout()
+            await pilot.pause()
+            assert not action_failures(app, manager), size
+            search = manager.query_one("#auth-filter", Input)
+            assert manager.region.contains_region(search.region), size
+            search.value = "deepseek"
+            await pilot.pause()
+            assert _rows(manager) == ["deepseek"]
+            search.value = ""
+            manager.query_one("#auth-sections", Tabs).active = "tools"
+            await pilot.pause()
+            assert set(_rows(manager)) == {"tavily", "exa", "firecrawl", "parallel", "tinyfish"}
+            manager.query_one("#auth-sections", Tabs).active = "llms"
+            await pilot.pause()
+        manager.query_one("#auth-filter", Input).value = "vertex"
+        await pilot.pause()
+        assert _rows(manager) == ["google-vertex"]
+        assert manager.query_one("#edit", Button).disabled
+        assert manager.query_one("#delete", Button).disabled
 
 
 async def test_a_stored_key_is_reported_as_stored(secrets):
@@ -159,7 +201,7 @@ async def test_the_voice_providers_are_manageable_here_too(secrets):
 
     app = _Host()
     async with app.run_test(size=(120, 40)) as pilot:
-        manager = AuthManagerScreen()
+        manager = AuthManagerScreen(focus="deepgram")
         app.push_screen(manager)
         assert await _settle(pilot, lambda: bool(_rows(manager)))
 
@@ -196,13 +238,18 @@ async def test_a_service_row_only_claims_what_that_service_gates(
 
     app = _Host()
     async with app.run_test(size=(120, 40)) as pilot:
-        manager = AuthManagerScreen()
+        manager = AuthManagerScreen(focus="tavily")
         app.push_screen(manager)
         assert await _settle(pilot, lambda: bool(_rows(manager)))
 
         labels = dict(zip(_rows(manager), _labels(manager), strict=True))
 
         assert "gates web search" in labels["tavily"]
+        from textual.widgets import Tabs
+
+        manager.query_one("#auth-sections", Tabs).active = "voice"
+        await pilot.pause()
+        labels = dict(zip(_rows(manager), _labels(manager), strict=True))
         assert "gates web search" not in labels["elevenlabs"]
         assert "gates web search" not in labels["deepgram"]
 

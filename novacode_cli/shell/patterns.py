@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import re
 
+from novacode_cli.config.provider_registry import CATALOG_CREDENTIAL_VARS
+
 # Patterns that indicate a line is an interactive prompt requiring user input
 PROMPT_PATTERNS = [
     r"\(y/n\)",  # Yes/No prompts
@@ -253,6 +255,7 @@ _DANGEROUS_ENV_VARS: frozenset[str] = frozenset(
         "LANGSMITH_API_KEY",
     }
 )
+_DANGEROUS_ENV_VARS |= CATALOG_CREDENTIAL_VARS
 
 
 __all__ = [

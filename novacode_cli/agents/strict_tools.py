@@ -14,6 +14,8 @@ from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool
 from langchain_core.utils.function_calling import convert_to_openai_tool
 
+from novacode_cli.config.provider_registry import CATALOG_PROVIDERS
+
 # Audited against the actual routes in config/model_manager.py. "conditional"
 # requires explicit on mode; "local" does not assert provider-side sampling.
 PROVIDER_STRICT_MODES = {
@@ -36,6 +38,9 @@ PROVIDER_STRICT_MODES = {
     "kimi_coding": "local",
     "minimax": "local",
 }
+# Tool calling is covered by offline SDK checks. Provider-side constrained
+# sampling has not been verified for these endpoints, so enforce schemas locally.
+PROVIDER_STRICT_MODES.update(dict.fromkeys(CATALOG_PROVIDERS, "local"))
 
 
 def strict_mode() -> str:

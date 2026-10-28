@@ -41,9 +41,31 @@ def registration_refused_hint(name: str, server_url: str) -> str:
     )
 
 
-def resolve_header(reference: str) -> str:
+def resolve_header(
+    reference: str, *, server_url: str | None = None, header_name: str | None = None,
+) -> str | None:
     """Read a configured header without exposing its value in config or logs."""
-    value = SecretManager().get_secret(reference)
+    prefix, _, variable = reference.partition(":")
+    if prefix in {"bearer", "optional"}:
+        from novacode_cli.config.credentials import credential_value
+        from novacode_cli.mcp.config import SERVICE_HEADER_TARGETS
+
+        target = SERVICE_HEADER_TARGETS.get(reference)
+        if target is None:
+            message = "Unknown MCP provider credential reference"
+            raise ValueError(message)
+        if (
+            (header_name or "").lower() != target[0].lower()
+            or (server_url or "").rstrip("/") != target[1]
+        ):
+            message = "MCP service credential reference requires its official endpoint and header"
+            raise ValueError(message)
+        key = credential_value(variable)
+        if prefix == "optional" and not key:
+            return None
+        value = (f"Bearer {key}" if prefix == "bearer" else key) if key else None
+    else:
+        value = SecretManager().get_secret(reference)
     if value is None:
         message = "An MCP header secret is missing; configure it again"
         raise ValueError(message)

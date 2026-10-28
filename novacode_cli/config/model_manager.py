@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import os
 import subprocess
-from typing import TYPE_CHECKING, Any, Literal
+from string import Template
+from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 from novacode_cli.config.config import Settings, console
 from novacode_cli.config.nova_config import NovaConfig
+from novacode_cli.config.provider_registry import CATALOG_PROVIDERS
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
@@ -29,11 +32,7 @@ OPENCODE_ZEN_BASE_URL = "https://opencode.ai/zen/v1"
 COMMANDCODE_BASE_URL = "https://api.commandcode.ai/provider/v1"
 
 # Type for supported providers
-ProviderType = Literal[
-    "openai", "anthropic", "ollama", "google", "openrouter", "opencode", "opencode_zen",
-    "commandcode", "nvidia", "azure", "bedrock", "mistral", "groq", "cerebras", "xai",
-    "huggingface", "kimi_coding", "minimax",
-]
+ProviderType = str
 
 #: Providers that speak OpenAI Chat Completions at a fixed URL (``base_url`` in
 #: their preset, overridable through ``base_url_env``). One client covers them all.
@@ -319,7 +318,7 @@ MODEL_PRESETS: dict[str, dict[str, Any]] = {
         ],
     },
     "kimi_coding": {
-        "name": "Kimi For Coding",
+        "name": "Kimi For Coding (kimi.com)",
         # kimi.ai accounts: KIMI_BASE_URL=https://api.kimi.ai/coding/v1
         "description": "Kimi Code plan subscription (kimi.com / kimi.ai)",
         "default_model": "kimi-for-coding",
@@ -332,7 +331,7 @@ MODEL_PRESETS: dict[str, dict[str, Any]] = {
         "models": ["kimi-for-coding", "kimi-for-coding-highspeed", "k3"],
     },
     "minimax": {
-        "name": "MiniMax",
+        "name": "MiniMax (minimax.io)",
         "description": "MiniMax models, pay-as-you-go or Token Plan (Anthropic-compatible API)",
         "default_model": "MiniMax-M3",
         "env_var": "MINIMAX_MODEL",
@@ -347,12 +346,32 @@ MODEL_PRESETS: dict[str, dict[str, Any]] = {
     },
 }
 
+MODEL_PRESETS.update(CATALOG_PROVIDERS)
+OPENAI_COMPATIBLE_PROVIDERS |= frozenset(
+    provider for provider, preset in CATALOG_PROVIDERS.items()
+    if preset["protocol"] in {"chat", "responses"}
+)
 
-def provider_base_url(provider: str) -> str:
+
+def provider_base_url(provider: str, model_name: str | None = None) -> str:
     """The provider's endpoint: its ``base_url_env`` override, else the preset's."""
     preset = MODEL_PRESETS[provider]
     override = os.environ.get(preset.get("base_url_env") or "", "").strip()
-    return (override or preset["base_url"]).rstrip("/")
+    model_url = preset.get("model_overrides", {}).get(model_name, {}).get("base_url")
+    template = override or model_url or preset["base_url"]
+    values = os.environ.copy()
+    if provider == "databricks" and values.get("DATABRICKS_HOST", "").startswith("https://"):
+        values["DATABRICKS_HOST"] = values["DATABRICKS_HOST"].removeprefix("https://").rstrip("/")
+    try:
+        endpoint = Template(template).substitute(values).rstrip("/")
+    except KeyError as exc:
+        message = f"{preset['name']} requires endpoint setting {exc.args[0]}"
+        raise ValueError(message) from None
+    parts = urlsplit(endpoint)
+    if not parts.hostname or parts.scheme not in {"http", "https"} or parts.username is not None:
+        message = f"{preset['name']} requires a valid HTTP(S) endpoint without credentials"
+        raise ValueError(message)
+    return endpoint
 
 
 def provider_api_key(provider: str) -> str | None:
@@ -361,6 +380,8 @@ def provider_api_key(provider: str) -> str | None:
 
     preset = MODEL_PRESETS[provider]
     for var in (preset["api_key_var"], *preset.get("key_aliases", ())):
+        if not var:
+            continue
         if key := get_stored_key(var) or os.environ.get(var):
             return key
     return None
@@ -575,8 +596,6 @@ class ModelManager:
         read it. Key Policy: what to do when this returns None (prompt, warn,
         or fail) belongs to the caller, never here.
         """
-        from novacode_cli.config.credentials import CredentialStore
-
         preset = MODEL_PRESETS.get(provider)
         api_key_var = preset.get("api_key_var") if preset else None
         if not api_key_var:
@@ -585,7 +604,7 @@ class ModelManager:
         # Read through the credential store, not SecretManager directly: the
         # store is the one place that knows how a credential is filed, and a
         # second reader here is how the keychain and the TUI drifted apart.
-        key = CredentialStore().get_key(api_key_var) or os.environ.get(api_key_var)
+        key = provider_api_key(provider)
         if key:
             os.environ[api_key_var] = key
         return key
@@ -612,6 +631,9 @@ class ModelManager:
         # Use provided model name or default
         if model_name is None:
             model_name = preset["default_model"]
+        if not model_name:
+            message = f"Choose a current model ID for {preset['name']}"
+            raise ValueError(message)
 
         # Check API key requirement. `resolve_api_key` is keychain-aware and
         # exports what it finds, so a key saved through `/auth` works here too —

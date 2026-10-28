@@ -27,7 +27,7 @@ from rich.text import Text
 from textual import work
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, OptionList, Static
+from textual.widgets import Button, Input, OptionList, Static, Tab, Tabs
 from textual.widgets.option_list import Option
 
 from novacode_cli.config.credentials import (
@@ -43,6 +43,7 @@ from novacode_cli.config.provider_auth import (
     ProviderAuthStatus,
     credential_env_var,
     credential_names,
+    credential_section,
     get_all_auth_statuses,
     is_service,
     provider_display_name,
@@ -62,6 +63,10 @@ if TYPE_CHECKING:
 #: Tavily's "gates web search" note for them was simply wrong.
 _SERVICE_NOTES: dict[str, str] = {
     "tavily": "gates web search",
+    "exa": "web search; connect its preset in /mcp",
+    "firecrawl": "web crawling; connect its preset in /mcp",
+    "parallel": "web research; connect its preset in /mcp",
+    "tinyfish": "browser automation; connect its preset in /mcp",
     "jev": "decision-based tool pruning",
     "systemone": "custom endpoint credential",
 }
@@ -122,6 +127,8 @@ class AuthManagerScreen(ModalScreen[None]):
         """
         super().__init__()
         self._focus = focus
+        self._section = credential_section(focus) if focus else "llms"
+        self._filter = ""
         self._names: list[str] = []
         self._statuses: dict[str, ProviderAuthStatus] = {}
         self._metas: dict[str, CredentialMeta] = {}
@@ -144,6 +151,14 @@ class AuthManagerScreen(ModalScreen[None]):
                 ),
                 id="auth-desc",
             )
+            yield Tabs(
+                Tab("LLM Providers", id="llms"),
+                Tab("Tools", id="tools"),
+                Tab("Decisions", id="decisions"),
+                Tab("Voice", id="voice"),
+                active=self._section, id="auth-sections",
+            )
+            yield Input(placeholder="Search providers or credentials…", id="auth-filter")
             yield OptionList(id="auth-list")
             yield Static("", id="auth-hint")
             with Horizontal(id="modal-buttons"):
@@ -180,7 +195,13 @@ class AuthManagerScreen(ModalScreen[None]):
             statuses: Readiness per provider/service id.
         """
         self._statuses = statuses
-        names = [name for name in credential_names() if name in statuses]
+        names = [
+            name for name in (*credential_names(), "google-vertex")
+            if name in statuses and credential_section(name) == self._section
+            and self._filter.casefold() in (
+                f"{name} {provider_display_name(name)} {credential_env_var(name)}".casefold()
+            )
+        ]
         self._names = names
 
         self._metas = CredentialStore().list_meta(
@@ -193,12 +214,30 @@ class AuthManagerScreen(ModalScreen[None]):
             option_list.add_option(Option(self._row_label(name, statuses[name]), id=name))
 
         if not names:
-            option_list.add_option(Option("No credentials can be stored here.", id="__none__"))
+            message = (
+                "No credentials match your search." if self._filter
+                else "No credentials are available in this section."
+            )
+            option_list.add_option(Option(message, id="__none__"))
 
         if self._focus and self._focus in names:
             option_list.highlighted = names.index(self._focus)
         option_list.focus()
         self._update_hint()
+
+    def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
+        """Keep tools, decisions, voice, and model credentials in their own sections."""
+        if event.tabs.id == "auth-sections" and event.tab.id and event.tab.id != self._section:
+            self._section = event.tab.id
+            self._focus = None
+            self._paint(self._statuses)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Filter the selected section without changing credentials or starting work."""
+        if event.input.id == "auth-filter" and event.value != self._filter:
+            self._filter = event.value
+            self._paint(self._statuses)
+            event.input.focus()
 
     def _row_label(self, name: str, status: ProviderAuthStatus) -> Text:
         """Build one row: display name, badge, and a short status detail.
@@ -243,7 +282,7 @@ class AuthManagerScreen(ModalScreen[None]):
             if status.detail in {"ChatGPT plan sign-in", "Google OAuth sign-in"}:
                 parts.append(status.detail)
             return "  ·  ".join(parts)
-        return ""
+        return status.detail or ""
 
     def _highlighted(self) -> str | None:
         """Return the highlighted credential name, if it is a real row."""
@@ -257,8 +296,18 @@ class AuthManagerScreen(ModalScreen[None]):
         """Refresh the footer for the highlighted row."""
         name = self._highlighted()
         hint = self.query_one("#auth-hint", Static)
+        managed = name is None or credential_env_var(name) is None
+        self.query_one("#edit", Button).disabled = managed
+        self.query_one("#delete", Button).disabled = managed
         if name is None:
             hint.update(Text("Esc close", style="dim"))
+            return
+        if credential_env_var(name) is None:
+            hint.update(Text(
+                "Configure Google Cloud Application Default Credentials outside Nova."
+                "  ·  Esc close",
+                style="dim",
+            ))
             return
         action = "replace" if self._stored(name) else "add"
         deletable = "  ·  Ctrl+D delete" if self._stored(name) else ""
@@ -497,7 +546,8 @@ class AuthManagerScreen(ModalScreen[None]):
             # do, and pretending otherwise would leave the user thinking it is
             # gone. Say so instead.
             self.app.notify(
-                f"{env_var} is not stored here — it comes from your environment. "
+                f"{self._statuses[name].env_var or env_var} is not stored here "
+                "— it comes from your environment. "
                 f"Unset it in your shell or .env instead.",
                 severity="warning",
                 markup=False,

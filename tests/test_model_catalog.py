@@ -156,4 +156,8 @@ def test_every_registry_provider_resolves_to_something():
     models = model_catalog.get_all_models()
 
     assert set(models) == set(MODEL_PRESETS)
-    assert all(ids for ids in models.values())
+    for provider, ids in models.items():
+        preset = MODEL_PRESETS[provider]
+        # Institutional endpoints and catalogs with no current tool-capable
+        # models require an explicit model ID; never fabricate a default.
+        assert ids or preset.get("requires_model") or preset.get("unavailable_reason"), provider

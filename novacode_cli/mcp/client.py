@@ -137,7 +137,8 @@ def build_mcp_server_config(
 
             headers = headers or {}
             for name, reference in config.header_secrets.items():
-                headers[name] = resolve_header(reference)
+                if value := resolve_header(reference, server_url=config.url, header_name=name):
+                    headers[name] = value
 
         auth = None
         if config.oauth:

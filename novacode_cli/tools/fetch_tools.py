@@ -8,10 +8,11 @@ from __future__ import annotations
 import json
 import re
 import time
-from typing import Any
+from typing import Annotated, Any
 
 import requests
 from langchain.tools import tool
+from pydantic import Field
 
 from novacode_cli.tools._shared import (
     _BROWSER_USER_AGENTS,
@@ -201,7 +202,9 @@ def fetch_url(
     headers: dict[str, str] | None = None,
     data: str | dict | None = None,
     params: dict[str, str] | None = None,
-    auth: tuple[str, str] | None = None,
+    # Homogeneous items survive Gemini conversion; fixed tuples use prefixItems,
+    # which Gemini does not support. Keep pair validation and requests' tuple API.
+    auth: Annotated[tuple[str, ...], Field(min_length=2, max_length=2)] | None = None,
     cookies: dict[str, str] | None = None,
     follow_redirects: bool = True,
     max_content_size: int = 10 * 1024 * 1024,  # 10MB default
@@ -214,7 +217,8 @@ def fetch_url(
     """HTTP request with retries. HTML pages come back as markdown, JSON parsed.
 
     GitHub blob URLs are fetched raw; tree and repo URLs return the listing or
-    repo info. `data`: a dict is sent as JSON, a string as-is. `user_agent`:
+    repo info. `auth`: exactly two strings [username, password] for basic auth.
+    `data`: a dict is sent as JSON, a string as-is. `user_agent`:
     "browser", "bot" or a custom string. `summarize` (GET) shortens a large
     page, focused by `focus_query`. Returns success, url, status_code, content,
     content_type. Summarize what you fetched; do not paste raw JSON or markdown.

@@ -106,6 +106,13 @@ def _release_lock(lock_path: Path) -> None:
         pass
 
 
+SERVICE_HEADER_TARGETS: dict[str, tuple[str, str]] = {
+    "bearer:PARALLEL_API_KEY": ("Authorization", "https://mcp.parallel.ai/mcp"),
+    "bearer:TINYFISH_API_KEY": ("Authorization", "https://agent.tinyfish.ai/mcp"),
+    "optional:EXA_API_KEY": ("x-api-key", "https://mcp.exa.ai/mcp"),
+}
+
+
 class MCPServerConfig(BaseModel):
     """Configuration for a single MCP server."""
 
@@ -176,7 +183,12 @@ class MCPServerConfig(BaseModel):
                 raise ValueError("Invalid HTTP header name")
             if name.lower() in {"content-length", "transfer-encoding", "host", "connection"}:
                 raise ValueError("Protected HTTP header cannot be configured")
-            if not re.fullmatch(r"mcp-header-[0-9a-f]{32}", reference):
+            prefix, _, _variable = reference.partition(":")
+            if prefix in {"bearer", "optional"}:
+                if reference not in SERVICE_HEADER_TARGETS:
+                    message = "Unknown MCP provider credential reference"
+                    raise ValueError(message)
+            elif not re.fullmatch(r"mcp-header-[0-9a-f]{32}", reference):
                 raise ValueError("Invalid MCP header secret reference")
         return value
 
@@ -192,6 +204,14 @@ class MCPServerConfig(BaseModel):
         if self.transport not in {"http", "sse"} and (self.oauth or self.header_secrets):
             msg = "OAuth and HTTP headers require HTTP transport"
             raise ValueError(msg)
+        for name, reference in self.header_secrets.items():
+            if target := SERVICE_HEADER_TARGETS.get(reference):
+                header, endpoint = target
+                if name.lower() != header.lower() or (self.url or "").rstrip("/") != endpoint:
+                    msg = (
+                        "MCP service credential reference requires its official endpoint and header"
+                    )
+                    raise ValueError(msg)
         return self
 
 

@@ -66,6 +66,8 @@ def format_auth_indicator(status: ProviderAuthStatus) -> str:
     Returns:
         Short indicator text, or an empty string for a configured provider.
     """
+    if status.state is ProviderAuthState.MISSING and (status.detail or "").startswith("requires "):
+        return "setup required"
     return _SHORT_STATES[status.state]
 
 
@@ -81,5 +83,5 @@ def _badge_text(status: ProviderAuthStatus) -> str:
             return f"env set: {status.env_var}"
         return "stored"
     if status.state is ProviderAuthState.MISSING:
-        return "missing"
+        return "setup required" if (status.detail or "").startswith("requires ") else "missing"
     return _SHORT_STATES[status.state]

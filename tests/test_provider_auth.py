@@ -141,7 +141,13 @@ def test_credential_names_exclude_keyless_providers():
     assert names["tavily"] == "TAVILY_API_KEY"
     assert names["deepgram"] == "DEEPGRAM_API_KEY"
     assert names["elevenlabs"] == "ELEVENLABS_API_KEY"
+    from novacode_cli.config.model_manager import MODEL_PRESETS
+    from novacode_cli.config.provider_auth import SERVICE_API_KEY_ENV
+
     assert set(names) == {
+        provider for provider, preset in MODEL_PRESETS.items() if preset.get("api_key_var")
+    } | set(SERVICE_API_KEY_ENV)
+    assert set(names) >= {
         "openai",
         "anthropic",
         "google",

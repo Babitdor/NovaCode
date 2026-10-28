@@ -256,6 +256,27 @@ MCP_PRESETS: dict[str, dict[str, Any]] = {
         "config": {
             "transport": "http",
             "url": "https://mcp.exa.ai/mcp",
+            "header_secrets": {"x-api-key": "optional:EXA_API_KEY"},
+        },
+    },
+    "parallel": {
+        "name": "Parallel MCP",
+        "description": "Web search, fetching, and research through Parallel",
+        "package": "Hosted Parallel MCP (no local package required)",
+        "config": {
+            "transport": "http",
+            "url": "https://mcp.parallel.ai/mcp",
+            "header_secrets": {"Authorization": "bearer:PARALLEL_API_KEY"},
+        },
+    },
+    "tinyfish": {
+        "name": "TinyFish MCP",
+        "description": "Hosted browser automation and extraction through TinyFish",
+        "package": "Hosted TinyFish MCP (no local package required)",
+        "config": {
+            "transport": "http",
+            "url": "https://agent.tinyfish.ai/mcp",
+            "header_secrets": {"Authorization": "bearer:TINYFISH_API_KEY"},
         },
     },
     "perplexity": {

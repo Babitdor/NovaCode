@@ -136,7 +136,11 @@ def _restore_credential_env_vars() -> Iterator[None]:
     on. Restores exact prior presence (set, unset, or empty) for the credential
     vars only, leaving the rest of the environment to monkeypatch.
     """
-    saved = {name: os.environ.get(name) for name in _CREDENTIAL_ENV_VARS}
+    from novacode_cli.config.provider_auth import credential_names
+
+    saved = {
+        name: os.environ.get(name) for name in (*_CREDENTIAL_ENV_VARS, *credential_names().values())
+    }
     yield
     for name, value in saved.items():
         if value is None:

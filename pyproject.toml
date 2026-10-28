@@ -197,6 +197,7 @@ llama-cpp-python = { index = "llama-cpp-cpu" }
 novacode_cli = ["assets/Nova.png", "assets/nova-avatar.png"]
 "novacode_cli.remote" = ["rootapp_bot/*.cjs", "rootapp_bot/*.json"]
 "novacode_cli.tui" = ["*.tcss"]
+"novacode_cli.config" = ["provider_catalog.json"]
 
 [tool.ruff]
 line-length = 100
@@ -232,6 +233,7 @@ convention = "google"  # Google-style docstrings
 ignore-var-parameters = true
 
 [tool.ruff.lint.per-file-ignores]
+"novacode_cli/config/*" = ["INP001"]  # Existing namespace package; no eager config imports.
 "scripts/verify_prime.py" = [
     "T201",  # CLI verification results.
     "S603",  # Current Python interpreter and fixed repository test paths; no shell.

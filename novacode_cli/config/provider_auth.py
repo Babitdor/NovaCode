@@ -108,6 +108,10 @@ class ProviderAuthStatus:
 
 SERVICE_API_KEY_ENV: dict[str, str] = {
     "tavily": "TAVILY_API_KEY",
+    "exa": "EXA_API_KEY",
+    "firecrawl": "FIRECRAWL_API_KEY",
+    "parallel": "PARALLEL_API_KEY",
+    "tinyfish": "TINYFISH_API_KEY",
     "deepgram": "DEEPGRAM_API_KEY",
     "elevenlabs": "ELEVENLABS_API_KEY",
     "jev": "TYPESAFE_API_KEY",
@@ -124,11 +128,24 @@ manager. Without them here, a voice key can only live in plaintext in
 
 SERVICE_DISPLAY_NAMES: dict[str, str] = {
     "tavily": "Tavily (web search)",
+    "exa": "Exa",
+    "firecrawl": "Firecrawl",
+    "parallel": "Parallel",
+    "tinyfish": "TinyFish",
     "deepgram": "Deepgram (speech to text)",
     "elevenlabs": "ElevenLabs (text to speech)",
     "jev": "Jev (System One compaction)",
     "systemone": "Custom decision endpoint (optional API key)",
 }
+
+
+def credential_section(name: str) -> str:
+    """Return the feature section owning a credential in /auth."""
+    if name in {"deepgram", "elevenlabs"}:
+        return "voice"
+    if name in {"jev", "systemone"}:
+        return "decisions"
+    return "tools" if is_service(name) else "llms"
 """Capitalized names for the services in ``/auth``.
 
 Services have no provider preset to carry a display name, and showing the raw
@@ -213,7 +230,7 @@ def credential_names() -> dict[str, str]:
     """
     names: dict[str, str] = {}
     for provider, preset in _presets().items():
-        if not preset.get("requires_api_key"):
+        if not preset.get("api_key_var"):
             continue
         var = preset.get("api_key_var")
         if isinstance(var, str) and var:
@@ -255,7 +272,27 @@ def get_provider_auth_status(
         )
 
     env_var = credential_env_var(name)
-    if preset is not None and not preset.get("requires_api_key"):
+    if preset is not None:
+        from novacode_cli.config.provider_registry import missing_provider_settings
+
+        reason = preset.get("unavailable_reason")
+        missing = missing_provider_settings(name)
+        if reason or missing:
+            store = store if store is not None else CredentialStore()
+            source = ProviderAuthSource.NONE
+            if env_var and store.has_key(env_var):
+                source = ProviderAuthSource.STORED
+            elif env_var and _env_value(env_var):
+                source = ProviderAuthSource.ENV
+            state = ProviderAuthState.UNKNOWN if reason else ProviderAuthState.MISSING
+            detail = str(reason) if reason else "requires " + ", ".join(missing)
+            return ProviderAuthStatus(name=name, state=state,
+                                      source=source, env_var=env_var,
+                                      detail=detail)
+    if preset is not None and preset.get("protocol") == "vertex":
+        return ProviderAuthStatus(name=name, state=ProviderAuthState.MANAGED,
+                                  detail="Application Default Credentials (Google Cloud)")
+    if preset is not None and not preset.get("requires_api_key") and not env_var:
         return ProviderAuthStatus(
             name=name,
             state=ProviderAuthState.NOT_REQUIRED,
@@ -321,7 +358,7 @@ def get_provider_auth_status(
                 name=name,
                 state=ProviderAuthState.CONFIGURED,
                 source=ProviderAuthSource.ENV,
-                env_var=env_var,
+                env_var=var,
                 detail=f"set in environment: {var}",
             )
 
@@ -347,6 +384,10 @@ def get_provider_auth_status(
                 )
         except Exception:  # noqa: BLE001 — auth status must remain renderable
             pass
+
+    if preset is not None and not preset.get("requires_api_key"):
+        return ProviderAuthStatus(name=name, state=ProviderAuthState.NOT_REQUIRED,
+                                  env_var=env_var, detail="optional API key")
 
     return ProviderAuthStatus(
         name=name,
