@@ -199,7 +199,7 @@ class CodeModeMiddleware(AgentMiddleware):
             return self._message(request, "MCP Code Mode is disabled.")
         if get_policy().tool_default("MCPCode") == "deny":
             return self._message(request, "MCPCode denied by approval policy.")
-        if get_policy().tool_default("MCPCode") == "ask" and not self._auto_approve:
+        if get_policy().tool_default("MCPCode") == "ask" and not self._auto_approval_enabled():
             return self._message(
                 request, "MCPCode requires approval; configure its policy before use."
             )
@@ -357,23 +357,23 @@ class CodeModeMiddleware(AgentMiddleware):
             raise ValueError(value)
         return value
 
+    def _auto_approval_enabled(self) -> bool:
+        from novacode_cli.config.plan_mode import active_plan_session
+
+        session = active_plan_session.get()
+        return bool(getattr(session, "auto_approve", self._auto_approve))
+
     async def _authorize(self, request: ToolCallRequest, name: str, arguments: dict) -> None:
         """Reuse session permissions and optional approval classifiers."""
+        from novacode_cli.security.approval_context import request_user_text
         from novacode_cli.ui.hitl_approval import evaluate_tool_actions
 
-        user_request = next(
-            (
-                m.content
-                for m in reversed(request.state.get("messages", []))
-                if getattr(m, "type", "") == "human" and isinstance(m.content, str)
-            ),
-            "",
-        )
+        user_request = request_user_text(request)
         decisions = await asyncio.to_thread(
             evaluate_tool_actions,
             {"action_requests": [{"name": name, "args": arguments}]},
-            SimpleNamespace(auto_approve=self._auto_approve),
-            user_request=user_request[:4000],
+            SimpleNamespace(auto_approve=self._auto_approval_enabled()),
+            user_request=user_request,
         )
         decision = decisions[0] if len(decisions) == 1 else None
         if decision is None:

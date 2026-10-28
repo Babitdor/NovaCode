@@ -653,3 +653,174 @@ def test_stalled_scoring_activates_fallback_without_waiting() -> None:
     finally:
         release.set()
         _wait(scorer)
+
+
+def test_scoring_one_new_result_does_not_reask_cached_questions() -> None:
+    client = FakeDecisionClient(0.1)
+    scorer = VerdictScorer(
+        client,
+        ToolVerdictCache(),
+        keep=2,
+        window=6,
+        max_state_tokens=20_000,
+        max_request_tokens=30_000,
+        min_interval_seconds=0,
+    )
+    messages = _history(10)
+    assert scorer.maybe_score(messages)
+    _wait(scorer)
+    previous_calls = len(client.calls)
+    extended = [*messages, *_turn(11)[1:]]
+    assert scorer.maybe_score(extended)
+    _wait(scorer)
+    assert scorer.last_error is None
+    assert sum(len(call["questions"]) for call in client.calls[previous_calls:]) == 1
+    assert not scorer.maybe_score(extended), "incremental passes must retain prior cache hits"
+
+
+def test_memory_only_verdicts_survive_cycles_and_remain_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from novacode_cli.agents import tool_verdicts
+
+    monkeypatch.setattr(tool_verdicts, "MAX_CACHED_VERDICTS", 2)
+    first, second, third = [ToolMessage(str(n), tool_call_id=str(n)) for n in range(3)]
+    cache = ToolVerdictCache()
+    cache.put(first, 0.1)
+    cache.begin()
+    cache.put(second, 0.2)
+    assert cache.get(first) == 0.1
+    cache.put(third, 0.3)
+    assert cache.get(first) is None
+    assert cache.get(second) == 0.2
+    assert cache.get(third) == 0.3
+
+
+def test_scoring_keeps_task_context_before_the_candidate_window() -> None:
+    original = "Keep generated files untouched; focus on the parser regression."
+    messages = [HumanMessage(original), *_history(20)]
+    client = FakeDecisionClient(0.1)
+    scorer = VerdictScorer(
+        client,
+        ToolVerdictCache(),
+        keep=1,
+        window=4,
+        max_state_tokens=20_000,
+        max_request_tokens=30_000,
+        min_interval_seconds=0,
+    )
+    assert scorer.maybe_score(messages)
+    _wait(scorer)
+    assert scorer.last_error is None
+    assert original in json.dumps(client.calls[0]["state"])
+
+
+def test_state_fitting_estimates_each_entry_a_bounded_number_of_times(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from novacode_cli.agents import tool_verdicts
+
+    messages = [HumanMessage(f"Context {n}: " + "detail " * 200) for n in range(80)]
+    original = tool_verdicts.estimate_tokens
+    estimates = []
+
+    def counted(text: str) -> int:
+        estimates.append(len(text))
+        return original(text)
+
+    monkeypatch.setattr(tool_verdicts, "estimate_tokens", counted)
+    fitted = build_verdict_state(messages, [], max_state_tokens=1_000, goal="Keep the task")
+    assert fitted.tokens <= 1_000
+    assert len(estimates) <= 12 * len(messages)
+
+
+def test_failed_later_batch_does_not_publish_partial_verdicts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from novacode_cli.agents import tool_verdicts
+
+    monkeypatch.setattr(tool_verdicts, "MAX_QUESTIONS_PER_REQUEST", 1)
+
+    class FailsLater:
+        calls = 0
+
+        def ask(self, _state: object, questions: dict[str, object]) -> dict[str, float]:
+            self.calls += 1
+            if self.calls > 1:
+                message = "synthetic later-batch failure"
+                raise OSError(message)
+            return dict.fromkeys(questions, 0.1)
+
+    cache = ToolVerdictCache()
+    scorer = VerdictScorer(FailsLater(), cache, max_state_tokens=20_000, max_request_tokens=30_000)
+    assert scorer.maybe_score(_history(10))
+    _wait(scorer)
+    assert scorer.fallback_required
+    assert len(cache) == 0
+
+
+def test_reused_call_ids_pair_results_with_the_preceding_call() -> None:
+    messages = [
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "reused",
+                    "name": "read_file",
+                    "args": {"file_path": "/old.py"},
+                }
+            ],
+        ),
+        ToolMessage("old content", tool_call_id="reused"),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "reused",
+                    "name": "read_file",
+                    "args": {"file_path": "/new.py"},
+                }
+            ],
+        ),
+        ToolMessage("new content", tool_call_id="reused"),
+    ]
+    candidates = collect_candidates(messages, preserve_recent_results=0)
+    assert [(candidate.call_index, candidate.args["file_path"]) for candidate in candidates] == [
+        (0, "/old.py"),
+        (2, "/new.py"),
+    ]
+
+
+@pytest.mark.parametrize("invalid", [True, -0.1, 1.1, float("nan"), float("inf"), "0.1"])
+def test_invalid_scoring_probability_never_reaches_the_cache(invalid: object) -> None:
+    class Invalid:
+        def ask(self, _state: object, questions: dict[str, object]) -> dict[str, object]:
+            return dict.fromkeys(questions, invalid)
+
+    cache = ToolVerdictCache()
+    scorer = VerdictScorer(Invalid(), cache, max_state_tokens=20_000, max_request_tokens=30_000)
+    assert scorer.maybe_score(_history(10))
+    _wait(scorer)
+    assert scorer.fallback_required
+    assert len(cache) == 0
+
+
+def test_improved_scoring_does_not_reuse_legacy_verdicts(tmp_path: Path) -> None:
+    import hashlib
+    from types import SimpleNamespace
+
+    from novacode_cli.agents.tool_verdicts import _dumps, verdict_cache_path
+
+    endpoint, model = "http://localhost:11434/v1/systemone", "tev1"
+    config = SimpleNamespace(
+        get_tool_verdict_endpoint=lambda: endpoint,
+        get_tool_verdict_model=lambda: model,
+    )
+    legacy_digest = hashlib.sha256(_dumps([endpoint, model]).encode()).hexdigest()[:16]
+    legacy_path = tmp_path / "systemone" / legacy_digest / "tool_verdicts.json"
+    result = ToolMessage("working data", tool_call_id="previously-pinned", name="read_file")
+    ToolVerdictCache(path=legacy_path).put(result, 0.01)
+    new_path = verdict_cache_path(tmp_path, config)
+    assert new_path != legacy_path
+    assert ToolVerdictCache(path=new_path).get(result) is None
+    assert ToolVerdictCache(path=legacy_path).get(result) == 0.01

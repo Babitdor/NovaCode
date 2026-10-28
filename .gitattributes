@@ -11,3 +11,5 @@
 *.js text eol=lf
 *.css text eol=lf
 *.html text eol=lf
+# Keep pinned upstream assets byte-identical on Windows checkouts, including LICENSE.
+novacode_cli/prompts/ponytail/** text eol=lf

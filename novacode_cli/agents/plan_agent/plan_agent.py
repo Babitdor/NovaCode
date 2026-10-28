@@ -87,7 +87,7 @@ def create_plan_agent_with_config(
     sandbox: SandboxBackendProtocol | None = None,
     sandbox_type: str | None = None,
     system_prompt: str | None = None,
-    auto_approve: bool = False,
+    auto_approve: bool = False,  # noqa: ARG001 -- Compatibility; the shared loop owns this setting.
     steering_instructions: list | None = None,
     checkpointer: Any = None,
     store: Any = None,
@@ -257,11 +257,6 @@ def create_plan_agent_with_config(
     if system_prompt is None:
         system_prompt = get_plan_agent_system_prompt(sandbox_type=sandbox_type)
 
-    if auto_approve:
-        interrupt_on = {}
-    else:
-        interrupt_on = get_interrupt_configs()
-
     # Import create_deep_agent here to avoid circular imports
     from deepagents.graph import create_deep_agent
 
@@ -330,6 +325,7 @@ def create_plan_agent_with_config(
     from novacode_cli.security.prompt_injection import PromptInjectionMiddleware
 
     plan_middleware.append(PromptInjectionMiddleware())
+    interrupt_on = get_interrupt_configs(extra_tools=tools or [])
     agent = create_deep_agent(
         name=assistant_id,
         model=wrapped_model,

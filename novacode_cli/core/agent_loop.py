@@ -246,6 +246,25 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     :class:`~novacode_cli.ui_events.Done`, :class:`~novacode_cli.ui_events.Cancelled`,
     or :class:`~novacode_cli.ui_events.Error` event.
     """
+    from novacode_cli.agents.ponytail import helper_prompt, is_deactivation_command
+    from novacode_cli.config.nova_config import NovaConfig
+
+    compression_config = await asyncio.to_thread(NovaConfig)
+    if (
+        compression_config.get_compression_mode() == "ponytail"
+        and is_deactivation_command(user_input)
+    ):
+        try:
+            await asyncio.to_thread(compression_config.set_compression_mode, "off")
+        except OSError:
+            yield ev.Error(message="Could not save compression preference.")
+        yield ev.Done(had_response=False)
+        return
+    command = user_input.split(maxsplit=1)
+    if command and command[0].lower() in {
+        "/ponytail-" + name for name in ("review", "audit", "debt", "gain", "help")
+    }:
+        user_input = helper_prompt(user_input)
     loop = asyncio.get_running_loop()
     prime_original_input = user_input
 
@@ -493,6 +512,9 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     from novacode_cli.config.plan_mode import active_plan_session
 
     plan_session_token = active_plan_session.set(session_state)
+    from novacode_cli.security.approval_context import current_user_request
+
+    approval_request_token = current_user_request.set(prime_original_input)
     prime_outcome = "interrupted"
 
     # Resuming after an interrupt restarts LangGraph's recursion counter, so a
@@ -1082,6 +1104,11 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                                 yield ev.ContextMessage(message, icon=icon, color=color)
                             continue
 
+                    # A genuine ask remains interactive even in auto mode.
+                    # Resolvers must not run the reviewer a second time.
+                    approval_payload = (
+                        {**payload, "requires_owner_approval": True} if kind == "tool" else payload
+                    )
                     fut: asyncio.Future = loop.create_future()
 
                     # Raise the notification BEFORE surfacing the interrupt, so the
@@ -1090,7 +1117,9 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                     # once the generator resumed past the yield). Skipped entirely
                     # when auto-approving (see above).
                     _notif_id: str | None = None
-                    if kind in ("tool", "plan", "question") and not _auto_approve:
+                    if kind in ("tool", "plan", "question") and (
+                        not _auto_approve or kind == "tool"
+                    ):
                         _notif_msg = (
                             "Plan requires approval"
                             if kind == "plan"
@@ -1104,7 +1133,7 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                             _notif_id = session_state.add_notification(
                                 level="approval",
                                 title=_notif_msg,
-                                message=format_interrupt_notification(kind, payload),
+                                message=format_interrupt_notification(kind, approval_payload),
                                 source="system",
                                 action_id=interrupt_id,
                                 action_type=("approve" if kind in ("tool", "plan") else "select"),
@@ -1114,7 +1143,7 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                             pass
 
                     user_prompted = True
-                    yield ev.InterruptRequest(kind=kind, payload=payload, future=fut)
+                    yield ev.InterruptRequest(kind=kind, payload=approval_payload, future=fut)
                     response = await fut
 
                     # Resolved (via the modal or /notifications) — clear the badge
@@ -1360,6 +1389,7 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     finally:
         _auto_approve_var.reset(token)
         active_plan_session.reset(plan_session_token)
+        current_user_request.reset(approval_request_token)
         if prime_run is not None:
             prime_run.finish(prime_outcome)
         current_run.reset(prime_token)

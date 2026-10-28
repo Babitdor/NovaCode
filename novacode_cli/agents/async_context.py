@@ -66,6 +66,8 @@ class NovaAsyncContext:
     model: str | None = None
     #: The dispatching session's approval setting; delegates auto-approve independently.
     auto_approve: bool = False
+    #: Host-provided owner intent; a subagent task description cannot supply consent.
+    user_request: str = ""
 
 
 def _fields(context: Any) -> tuple[str, str]:
@@ -260,6 +262,11 @@ def _bind_context(client: Any) -> Any:
             from novacode_cli.tools.plan_mode_tools import _auto_approve_var
 
             context = current_async_context()
+            from novacode_cli.security.approval_context import current_user_request
+
+            owner_request = current_user_request.get()
+            if owner_request is not None:
+                context = replace(context or NovaAsyncContext(), user_request=owner_request)
             # Fixed at launch: the run cannot see a later toggle in this session.
             if _auto_approve_var.get():
                 context = replace(context or NovaAsyncContext(), auto_approve=True)

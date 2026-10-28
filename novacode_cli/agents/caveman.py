@@ -215,6 +215,12 @@ class CavemanMiddleware(AgentMiddleware):
         )
 
         config = NovaConfig()
+        if config.get_compression_mode() == "ponytail":
+            from novacode_cli.agents.ponytail import ponytail_instructions
+
+            return self.prepare_instructions(
+                request, ponytail_instructions(config.get_ponytail_level())
+            )
         features = config.get_caveman_features()
         if self._style_only:
             return self.prepare(request, enabled=features["say"], level=config.get_caveman_level())
@@ -291,9 +297,13 @@ class CavemanMiddleware(AgentMiddleware):
         """Apply the selected style to a copy, replacing only Nova's bundled default."""
         if not enabled:
             return request
+        return CavemanMiddleware.prepare_instructions(request, caveman_instructions(level))
+
+    @staticmethod
+    def prepare_instructions(request: ModelRequest, instructions: str) -> ModelRequest:
+        """Replace the bundled style on a request copy, preserving block metadata."""
         original = request.system_message
         content = original.content if original else ""
-        instructions = caveman_instructions(level)
         if isinstance(content, str):
             if _DEFAULT_STYLE in content:
                 content = content.replace(_DEFAULT_STYLE, instructions, 1)

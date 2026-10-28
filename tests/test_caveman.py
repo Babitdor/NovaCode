@@ -262,7 +262,7 @@ async def test_composer_toggle_click_keyboard_commands_and_restart(
         assert button.region.width > 0
         assert button.region.height == 1
         assert button.region.right <= size[0]
-        assert str(button.label) == "Caveman: off"
+        assert str(button.label) == "Compress: off"
         assert await pilot.click("#caveman-toggle")
         await pilot.pause()
         assert NovaConfig().get_caveman_enabled()
@@ -288,11 +288,11 @@ async def test_failed_save_keeps_current_toggle(monkeypatch: pytest.MonkeyPatch)
     async with app.run_test() as pilot:
         await pilot.pause()
         monkeypatch.setattr(
-            NovaConfig, "set_caveman_enabled", Mock(side_effect=OSError("read only"))
+            NovaConfig, "set_compression_mode", Mock(side_effect=OSError("read only"))
         )
         await app._set_caveman_enabled(enabled=True)
         assert not app._caveman_enabled
-        assert str(app.query_one("#caveman-toggle", Button).label) == "Caveman: off"
+        assert str(app.query_one("#caveman-toggle", Button).label) == "Compress: off"
 
 
 @pytest.mark.timeout(40)

@@ -1042,13 +1042,40 @@ class NovaConfig:
         """Whether edit checks may run the workspace's own .venv/node_modules executables."""
         return _config_bool(self.get("edit_diagnostics_project_tools", False))
 
+    def get_compression_mode(self) -> str:
+        """Read the exclusive mode, migrating the legacy Caveman switch lazily."""
+        mode = self.get("compression_mode")
+        if "compression_mode" not in self._config:
+            return "caveman" if _config_bool(self.get("caveman_enabled")) else "off"
+        return mode if isinstance(mode, str) and mode in ("off", "caveman", "ponytail") else "off"
+
+    def set_compression_mode(self, mode: str) -> None:
+        """Persist one active mode and the legacy compatibility switch together."""
+        if mode not in ("off", "caveman", "ponytail"):
+            message = "Unsupported compression mode."
+            raise ValueError(message)
+        self._config.update(compression_mode=mode, caveman_enabled=mode == "caveman")
+        self._save()
+
+    def get_ponytail_level(self) -> str:
+        """Read Ponytail intensity independently of the Caveman settings."""
+        level = self.get("ponytail_level", "full")
+        return level if isinstance(level, str) and level in ("lite", "full", "ultra") else "full"
+
+    def set_ponytail_level(self, level: str) -> None:
+        """Save a supported upstream intensity."""
+        if level not in ("lite", "full", "ultra"):
+            message = "Unsupported Ponytail intensity."
+            raise ValueError(message)
+        self.set("ponytail_level", level)
+
     def get_caveman_enabled(self) -> bool:
         """Whether replies should use the opt-in terse prose style."""
-        return _config_bool(self.get("caveman_enabled"))
+        return self.get_compression_mode() == "caveman"
 
     def set_caveman_enabled(self, enabled: bool) -> None:
         """Persist the response style independently of model and routing choices."""
-        self.set("caveman_enabled", bool(enabled))
+        self.set_compression_mode("caveman" if enabled else "off")
 
     def get_caveman_level(self) -> str:
         """Read the skill's default intensity, tolerating older configurations."""
@@ -1075,14 +1102,31 @@ class NovaConfig:
         """Save all six independent preferences without changing the master toggle."""
         self.set_caveman_options(features, self.get_caveman_level())
 
-    def set_caveman_options(self, features: dict[str, bool], level: str) -> None:
+    def set_caveman_options(
+        self,
+        features: dict[str, bool],
+        level: str,
+        *,
+        mode: str | None = None,
+        ponytail_level: str | None = None,
+    ) -> None:
         """Save a validated Options draft together in one configuration write."""
         names = {"say", "read", "auto", "blocks", "waste", "browse"}
         if set(features) != names or any(not isinstance(v, bool) for v in features.values()):
             raise ValueError("Expected a boolean switch for each of the six Caveman features.")
         if level not in CAVEMAN_LEVELS:
             raise ValueError("Unsupported Caveman intensity.")
+        if mode is not None and mode not in ("off", "caveman", "ponytail"):
+            message = "Unsupported compression mode."
+            raise ValueError(message)
+        if ponytail_level is not None and ponytail_level not in ("lite", "full", "ultra"):
+            message = "Unsupported Ponytail intensity."
+            raise ValueError(message)
         self._config.update(caveman_features=features, caveman_level=level)
+        if mode is not None:
+            self._config.update(compression_mode=mode, caveman_enabled=mode == "caveman")
+        if ponytail_level is not None:
+            self._config["ponytail_level"] = ponytail_level
         self._save()
 
     def get(self, key: str, default: Any = None) -> Any:

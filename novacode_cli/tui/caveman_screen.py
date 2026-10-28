@@ -1,11 +1,11 @@
-"""Independent Caveman feature switches; edits take effect only after Save."""
+"""Exclusive compression mode and feature options, applied only after Save."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Select, SelectionList, Static
 
@@ -30,35 +30,55 @@ class CavemanOptions:
 
     features: dict[str, bool]
     level: str
+    mode: str = "off"
+    ponytail_level: str = "full"
 
 
 class CavemanScreen(ModalScreen[CavemanOptions | None]):
-    """Edit six independent preferences without changing the master switch."""
+    """Edit mode, intensities and Caveman features as a single draft."""
 
     BINDINGS: ClassVar = [("escape", "cancel", "Cancel")]
     DEFAULT_CSS = """
     CavemanScreen #modal-box { width: 86; max-width: 96%; height: 75%; }
-    CavemanScreen #caveman-features { height: 1fr; margin: 1 0; }
+    CavemanScreen #caveman-features { height: 9; margin: 1 0; }
     CavemanScreen #modal-buttons { height: 3; }
     CavemanScreen Button { width: 1fr; min-width: 8; }
     """
 
     def __init__(
-        self, features: dict[str, bool], *, router_ready: bool, level: str = "full"
+        self,
+        features: dict[str, bool],
+        *,
+        router_ready: bool,
+        level: str = "full",
+        mode: str = "off",
+        ponytail_level: str = "full",
     ) -> None:
         """Take a preference snapshot; persistence belongs to the app callback."""
         super().__init__()
+        self._mode = mode
+        self._ponytail_level = ponytail_level
         self._features = features
         self._router_ready = router_ready
         self._level = level if level in CAVEMAN_LEVELS else "full"
 
     def compose(self) -> ComposeResult:
         """Show persistent switches and the routing prerequisite."""
-        with Vertical(id="modal-box"):
-            yield Static("Caveman features", id="modal-title")
-            yield Static(
-                "Space toggles. Master switch below the composer activates selected features."
+        with VerticalScroll(id="modal-box"):
+            yield Static("Compression options", id="modal-title")
+            yield Select(
+                [("Off", "off"), ("Caveman", "caveman"), ("Ponytail", "ponytail")],
+                value=self._mode,
+                allow_blank=False,
+                id="compression-mode",
             )
+            yield Select(
+                [("Ponytail: " + name, name) for name in ("lite", "full", "ultra")],
+                value=self._ponytail_level,
+                allow_blank=False,
+                id="ponytail-level",
+            )
+            yield Static("Space toggles. Caveman features apply only when Caveman is selected.")
             yield Select(
                 [(f"Say less: {name}", name) for name in CAVEMAN_LEVELS],
                 value=self._level,
@@ -93,6 +113,8 @@ class CavemanScreen(ModalScreen[CavemanOptions | None]):
                 CavemanOptions(
                     {key: key in selected for key in FEATURES},
                     str(self.query_one("#caveman-level", Select).value),
+                    str(self.query_one("#compression-mode", Select).value),
+                    str(self.query_one("#ponytail-level", Select).value),
                 )
             )
         elif event.button.id == "caveman-cancel":

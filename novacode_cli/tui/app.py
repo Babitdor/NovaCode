@@ -658,6 +658,14 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "cost": SlashCommand("_run_token_view", "show session token spend", wants_text=False),
     "verbose": SlashCommand("_run_verbose", "toggle internal-context display", wants_text=False),
     "prime": SlashCommand("_run_prime", "Deep Work: on / off / status / report"),
+    "ponytail": SlashCommand(
+        "_run_ponytail", "coding efficiency: lite / full / ultra / off / settings / status",
+    ),
+    "ponytail-review": SlashCommand("_run_ponytail_helper", "Ponytail review"),
+    "ponytail-audit": SlashCommand("_run_ponytail_helper", "Ponytail audit"),
+    "ponytail-debt": SlashCommand("_run_ponytail_helper", "Ponytail debt"),
+    "ponytail-gain": SlashCommand("_run_ponytail_helper", "Ponytail gain"),
+    "ponytail-help": SlashCommand("_run_ponytail_helper", "Ponytail help"),
     "caveman": SlashCommand("_run_caveman", "token efficiency: on / off / lite / full / ultra / wenyan-* / settings / status / audit / blocks"),
     "trace": SlashCommand("_run_trace", "LangSmith tracing setup"),
     "log": SlashCommand("_run_log", "recent runs"),
@@ -2607,14 +2615,17 @@ class NovaApp(App):
                     tooltip="Toggle read-only planning without submitting your draft.",
                 )
                 yield Button(
-                    "Caveman: off",
+                    "Compress: off",
                     id="caveman-toggle",
                     tooltip=(
-                        "Activate selected Caveman features. Click or use /caveman on|off. "
+                        "Cycle compression: off, Caveman, Ponytail. "
                         "Saved across launches."
                     ),
                 )
-                yield Button("Options", id="caveman-options", tooltip="Choose Caveman features")
+                yield Button(
+                    "Options", id="caveman-options",
+                    tooltip="Choose compression mode and intensity",
+                )
                 yield Button(
                     "Code Mode: on",
                     id="code-mode-toggle",
@@ -8555,6 +8566,10 @@ class NovaApp(App):
         self._set_home_visible(visible=False)
         event.input.value = ""
         self._hide_palette()
+        from novacode_cli.agents.ponytail import is_deactivation_command
+        if self._compression_mode == "ponytail" and is_deactivation_command(text):
+            self.run_worker(self._set_compression_mode("off"), group="compression_mode")
+            return
         # Submitting is an explicit act: resume following the tail so the user
         # always sees their own message, even if they had scrolled up to read.
         self._follow_tail = True
@@ -12175,6 +12190,7 @@ class NovaApp(App):
         self._ui_preferences_config = config
         self._diff_preview_style = diff_preview_style(config.get("diff_preview_style"))
         self._caveman_enabled = config.get_caveman_enabled()
+        self._compression_mode = config.get_compression_mode()
         self._code_mode_enabled = config.get_code_mode_enabled()
         self._home_style = home_style(
             config.get("home_style"), legacy_dashboard=config.get("home_dashboard_enabled", True)
@@ -12216,29 +12232,68 @@ class NovaApp(App):
 
     def _refresh_caveman_toggle(self) -> None:
         toggle = self.query_one("#caveman-toggle", Button)
-        enabled = getattr(self, "_caveman_enabled", False)
-        toggle.label = f"Caveman: {'on' if enabled else 'off'}"
+        mode = getattr(self, "_compression_mode", "off")
+        enabled = mode != "off"
+        toggle.label = {
+            "off": "Compress: off", "caveman": "Caveman: on", "ponytail": "Ponytail: on",
+        }[mode]
         toggle.set_class(enabled, "enabled")
 
     async def _set_caveman_enabled(self, enabled: bool) -> None:
+        await self._set_compression_mode("caveman" if enabled else "off")
+
+    async def _set_compression_mode(self, mode: str) -> None:
         from novacode_cli.config.nova_config import NovaConfig
 
-        def save() -> None:
-            NovaConfig().set_caveman_enabled(enabled)
-
         try:
-            await asyncio.to_thread(save)
-        except OSError as exc:
-            self.notify(f"Could not save Caveman preference: {exc}", severity="error")
+            await asyncio.to_thread(NovaConfig().set_compression_mode, mode)
+        except (OSError, ValueError) as exc:
+            self.notify(f"Could not save compression preference: {exc}", severity="error")
             return
-        self._caveman_enabled = enabled
+        self._compression_mode = mode
+        self._caveman_enabled = mode == "caveman"
         self._refresh_caveman_toggle()
         self.query_one("#prompt", PromptInput).focus()
+
+    async def _run_ponytail(self, text: str) -> None:
+        from novacode_cli.config.nova_config import NovaConfig
+
+        parts = text.split(maxsplit=1)
+        arg = parts[1].strip().lower() if len(parts) > 1 else ""
+        if arg == "settings":
+            await self._run_caveman("/caveman settings")
+            return
+        if arg == "status":
+            config = await asyncio.to_thread(NovaConfig)
+            self.notify(
+                f"Compression: {config.get_compression_mode()} "
+                f"· Ponytail {config.get_ponytail_level()}"
+            )
+            return
+        if arg not in {"", "on", "off", "lite", "full", "ultra"}:
+            self.notify(
+                "Usage: /ponytail [lite|full|ultra|off|settings|status]", severity="warning",
+            )
+            return
+        if arg in {"lite", "full", "ultra"}:
+            try:
+                await asyncio.to_thread(NovaConfig().set_ponytail_level, arg)
+            except (OSError, ValueError) as exc:
+                self.notify(f"Could not save Ponytail intensity: {exc}", severity="error")
+                return
+        await self._set_compression_mode("off" if arg == "off" else "ponytail")
+
+    async def _run_ponytail_helper(self, text: str) -> None:
+        from novacode_cli.agents.ponytail import helper_prompt
+
+        await self._add_message(self._user_label(), "user", _user_message_body(text))
+        await self._stream_prompt(helper_prompt(text))
 
     @on(Button.Pressed, "#caveman-toggle")
     async def _caveman_toggle_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        await self._set_caveman_enabled(not self._caveman_enabled)
+        mode = {"off": "caveman", "caveman": "ponytail", "ponytail": "off"}[self._compression_mode]
+        await self._set_compression_mode(mode)
 
     @on(Button.Pressed, "#caveman-options")
     async def _caveman_options_pressed(self, event: Button.Pressed) -> None:
@@ -12297,7 +12352,11 @@ class NovaApp(App):
                 try:
                     await asyncio.to_thread(
                         config.set_caveman_options, options.features, options.level,
+                        mode=options.mode, ponytail_level=options.ponytail_level,
                     )
+                    self._compression_mode = config.get_compression_mode()
+                    self._caveman_enabled = config.get_caveman_enabled()
+                    self._refresh_caveman_toggle()
                 except (OSError, ValueError) as exc:
                     self.notify(f"Could not save Caveman options: {exc}", severity="error")
 
@@ -12306,6 +12365,8 @@ class NovaApp(App):
                 saved if isinstance(saved, dict) else {},
                 router_ready=bool(config.get_router_routes()),
                 level=config.get_caveman_level(),
+                mode=config.get_compression_mode(),
+                ponytail_level=config.get_ponytail_level(),
             ), save_features)
             return
         if arg in {"audit", "blocks"}:
@@ -18658,7 +18719,7 @@ class NovaApp(App):
                 e.future.set_result({"decisions": rejection["decisions"], "any_rejected": True})
                 return
             action_requests = req["action_requests"]
-            if self.session_state.auto_approve:
+            if self.session_state.auto_approve and not req.get("requires_owner_approval"):
                 e.future.set_result(
                     {
                         "decisions": [{"type": "approve"} for _ in action_requests],

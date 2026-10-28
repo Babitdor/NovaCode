@@ -593,8 +593,9 @@ async def test_real_workspace_broker_blocks_outer_interpreter(tmp_path: Path):
     assert "no verified workspace authorization" in messages[0].content
 
 
+@pytest.mark.parametrize("auto_approve", [False, True])
 async def test_core_registers_code_mode_without_mcp(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, auto_approve: bool
 ):
     from unittest.mock import Mock
 
@@ -608,6 +609,7 @@ async def test_core_registers_code_mode_without_mcp(
     monkeypatch.setattr(core_agent, "_build_skill_sources", lambda: ([], root, root, [], []))
     monkeypatch.setattr(core_agent, "_build_middleware_stack", lambda **_kw: [])
     monkeypatch.setattr(core_agent, "_build_subagent_roster", lambda **_kw: [])
+    monkeypatch.setattr("novacode_cli.context.ContextManager.window_size", lambda _self: 32768)
     monkeypatch.setattr("novacode_cli.plugins.loader.discover_enabled_plugins", list)
     monkeypatch.setattr("novacode_cli.agents.invocation.definition_signature", lambda: "test")
     build = Mock(wraps=core_agent.create_deep_agent)
@@ -638,7 +640,9 @@ async def test_core_registers_code_mode_without_mcp(
         [],
         system_prompt="Offline test",
         workspace_root=str(root),
+        auto_approve=auto_approve,
     )
+    assert "execute" in build.call_args.kwargs["interrupt_on"]
     first_middleware = build.call_args.kwargs["middleware"][0]
     assert isinstance(first_middleware, CodeModeMiddleware)
     messages = await execute(graph, {"configurable": {"thread_id": "native-no-mcp"}})

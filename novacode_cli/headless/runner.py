@@ -57,12 +57,16 @@ async def _resolve_interrupt(
     try:
         if event.kind == "tool" and not deny_tools:
             payload = event.payload if isinstance(event.payload, dict) else {}
-            decisions = await asyncio.to_thread(
-                evaluate_tool_actions,
-                payload,
-                session_state,
-                plan_mode_enabled=getattr(session_state, "plan_mode_enabled", False),
-                user_request=getattr(session_state, "headless_prompt", "") or "",
+            decisions = (
+                [None for _ in payload.get("action_requests", [])]
+                if payload.get("requires_owner_approval")
+                else await asyncio.to_thread(
+                    evaluate_tool_actions,
+                    payload,
+                    session_state,
+                    plan_mode_enabled=getattr(session_state, "plan_mode_enabled", False),
+                    user_request=getattr(session_state, "headless_prompt", "") or "",
+                )
             )
             needs_human = any(d is None for d in decisions)
             # No human can answer: an unresolved verdict grants nothing.

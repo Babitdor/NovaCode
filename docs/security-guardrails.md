@@ -1,5 +1,38 @@
 # Nova prompt-injection guardrails
 
+## Decision-model approval
+
+When decision-model approval is enabled, auto-approve retains the main tool
+approval gate. Policy denials and Plan mode restrictions take precedence. A
+confident model approval can resolve an otherwise unresolved action; a rejection
+blocks it. An uncertain, malformed, unavailable, or oversized review requires an
+owner decision. The TUI presents its approval dialog even in auto mode; headless
+runs stop with human input required, and pipe clients receive the approval
+request. An unreadable policy or approval preference never grants execution.
+
+Local and packaged async subagents use the same reviewer without opening nested
+approval dialogs. An unresolved child action returns an approval-required error
+to its parent without executing. Code Mode also checks every nested call before
+execution. Existing explicit policy allows remain immediate. With the reviewer
+disabled, legacy auto-approval continues to honor hard policy denials.
+
+Reviews use host-bound owner intent where available. Child task descriptions,
+internal skill suggestions and tool results cannot supply owner consent. Review
+input is bounded, obvious credential assignments are redacted, provider keys are
+selected by the shared client factory, and owned review transports are closed.
+Third-party precompiled graphs still own their approval controls. Registered
+custom and plugin tools retain approval points even with review disabled, so
+changing the review preference takes effect on their next request. Manual mode
+also honors the policy's default ask tier for these tools.
+
+The confidence threshold is conservative and unchanged; it has not been
+calibrated across all providers. These offline regression tests verify execution
+and failure handling, not a model's real-world judgment accuracy:
+
+```text
+uv run pytest tests/test_approval_decisions.py -q
+```
+
 ## Scope and acceptance criteria
 
 This is an autonomous security hardening change. Spec approval was not obtained

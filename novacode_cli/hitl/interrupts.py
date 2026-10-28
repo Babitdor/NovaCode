@@ -20,7 +20,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
 
 from langchain.agents.middleware import InterruptOnConfig
 from langchain.agents.middleware.types import AgentState
@@ -426,7 +429,7 @@ def _format_interrupt_description(
 # ---------------------------------------------------------------------------
 
 
-def get_interrupt_configs() -> dict[str, InterruptOnConfig]:
+def get_interrupt_configs(*, extra_tools: Iterable[Any] = ()) -> dict[str, InterruptOnConfig]:
     """Get all human-in-the-loop interrupt configurations.
 
     Returns:
@@ -455,8 +458,18 @@ def get_interrupt_configs() -> dict[str, InterruptOnConfig]:
     except Exception:  # noqa: BLE001 — fail closed: gate everything if policy load fails
         policy = None
 
+    names = dict.fromkeys(INTERRUPT_SPECS)
+    # Keep custom/plugin approval points installed so a live preference change
+    # cannot bypass review. The shared loop resolves legacy auto mode silently.
+    # Plan/question controls already own their native approval or question UI.
+    names.update(
+        (tool.name, None)
+        for tool in extra_tools
+        if getattr(tool, "name", None)
+        and tool.name not in {"ask_user_question", "enter_plan_mode", "exit_plan_mode"}
+    )
     configs: dict[str, InterruptOnConfig] = {}
-    for tool_name in INTERRUPT_SPECS:
+    for tool_name in names:
         if (
             policy is not None
             and policy.tool_default(tool_name) == "allow"

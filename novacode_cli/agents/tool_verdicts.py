@@ -13,6 +13,11 @@ Jev-shaped decision model whether one old tool result is still needed, and clear
 the ones it scores stale. Nothing else changes -- text is never rewritten, and
 recovery through ``/cleared/`` is untouched.
 
+The background scorer asks only about eligible cache misses. Its state retains
+the full user/assistant narrative while bounding tool-call descriptions, and
+fits that state using incremental per-entry token estimates. A scoring pass is
+published only after every requested answer has been validated.
+
 Two deliberate departures from the original library:
 
 * **One question per result, not two.** The library also asks whether the tool
@@ -69,15 +74,21 @@ DEFAULT_MAX_REQUEST_TOKENS = 1_800
 #: Minimum probability that a result is still needed for it to survive.
 DEFAULT_KEEP_THRESHOLD = 0.5
 
+# Scoring semantics changed: older passes also asked pinned results and lacked
+# earlier task context. Keep those files intact, but do not reuse their advice.
+VERDICT_CACHE_VERSION = 2
+
 #: How many of the most recent results a verdict may be asked about.
 #:
 #: Measured against 105 real archived sessions (``scripts/probe_window_capacity``):
-#: the *whole*-session skeleton does not fit this model's context at all -- a
+#: a skeleton describing *every tool call* does not fit this model's context -- a
 #: 308-result session needs ~135,000 tokens even after every shrink stage, against
 #: a budget of ~1,400. Only a bounded window fits, and the largest that fits at a
 #: 1,400-token state is 12-16 results. 12 is chosen for headroom, and it has to
 #: cover the ``keep`` results the edit pins anyway, so it leaves about seven
 #: results a verdict can actually act on.
+#: User and assistant narrative still comes from the full conversation and is
+#: fitted in stages; this window limits tool-call descriptions and questions.
 #:
 #: Results older than the window are **not** judged, and an unjudged result is
 #: kept rather than cleared (``VerdictToolUsesEdit`` fails open). So once the
@@ -246,6 +257,7 @@ def collect_candidates(
     an unjudged result is kept rather than cleared, they stay verbatim.
     """
     calls: dict[str, tuple[str, dict[str, Any], int]] = {}
+    found: list[tuple[int, VerdictCandidate]] = []
     for index, message in enumerate(messages):
         if isinstance(message, AIMessage):
             for call in _call_args(message):
@@ -257,8 +269,8 @@ def collect_candidates(
                         index,
                     )
 
-    found: list[tuple[int, VerdictCandidate]] = []
-    for index, message in enumerate(messages):
+        # Pair chronologically: resumed transcripts can reuse an id for a later
+        # call with different arguments. A future call must not replace its origin.
         if not isinstance(message, ToolMessage):
             continue
         origin = calls.get(message.tool_call_id)
@@ -474,7 +486,7 @@ def _merge_call_runs(
     return merged
 
 
-def build_verdict_state(
+def build_verdict_state(  # noqa: PLR0915 -- Ordered fitting stages share one incremental budget.
     messages: Sequence[AnyMessage],
     candidates: Sequence[VerdictCandidate],
     *,
@@ -506,19 +518,28 @@ def build_verdict_state(
     def pinned_entry(entry: dict[str, Any]) -> bool:
         return _is_pinned(entry["i"], total_messages, preserve_recent_messages)
 
+    tokens = base_tokens
+    per_entry: list[int] = []
+
     def fitted(history: list[dict[str, Any]], stage: str) -> FittedState:
-        tokens = base_tokens + sum(entry_tokens(entry) for entry in history)
         return FittedState(state=state_of(history), tokens=tokens, stage=stage)
 
-    def fits(history: list[dict[str, Any]]) -> bool:
-        return base_tokens + sum(entry_tokens(entry) for entry in history) <= max_state_tokens
+    def fits() -> bool:
+        return tokens <= max_state_tokens
+
+    def changed(index: int) -> None:
+        nonlocal tokens
+        updated = entry_tokens(history[index])
+        tokens += updated - per_entry[index]
+        per_entry[index] = updated
 
     for limit in INPUT_CHARS:
         history = _history_entries(messages, candidates, limit)
-        if fits(history):
+        per_entry = [entry_tokens(entry) for entry in history]
+        tokens = base_tokens + sum(per_entry)
+        if fits():
             return fitted(history, "full" if limit == INPUT_CHARS[0] else f"inputs<={limit}")
 
-    history = _history_entries(messages, candidates, INPUT_CHARS[-1])
     # Oldest-first, pinned last, so the newest messages are the last to lose text.
     order = sorted(range(len(history)), key=lambda index: pinned_entry(history[index]))
 
@@ -527,7 +548,8 @@ def build_verdict_state(
         if len(entry.get("text", "")) <= TEXT_HEAD + TEXT_TAIL + 40:
             continue
         entry["text"] = _abridge(entry["text"], TEXT_HEAD, TEXT_TAIL)
-        if fits(history):
+        changed(index)
+        if fits():
             return fitted(history, "texts abridged")
 
     for index in order:
@@ -536,7 +558,8 @@ def build_verdict_state(
             continue
         original = len(_format_content(messages[entry["i"]].content))
         entry["text"] = f"[\u2026 {original} chars omitted \u2026]"
-        if fits(history):
+        changed(index)
+        if fits():
             return fitted(history, "old messages collapsed")
 
     by_message: dict[int, list[VerdictCandidate]] = {}
@@ -549,7 +572,8 @@ def build_verdict_state(
         if pinned_entry(entry) or not own:
             continue
         entry["tool_calls"] = [_compact_call(candidate) for candidate in own]
-        if fits(history):
+        changed(index)
+        if fits():
             return fitted(history, "old calls compacted")
 
     # Dropping entries shifts every later index, so the removals are collected
@@ -561,16 +585,17 @@ def build_verdict_state(
         if pinned_entry(entry) or entry.get("tool_calls"):
             continue
         left_out.add(index)
-        remaining = [item for position, item in enumerate(history) if position not in left_out]
-        if fits(remaining):
+        tokens -= per_entry[index]
+        if fits():
+            remaining = [item for position, item in enumerate(history) if position not in left_out]
             return fitted(remaining, "old messages left out")
 
     remaining = [item for position, item in enumerate(history) if position not in left_out]
     merged = _merge_call_runs(remaining, pinned_entry)
-    if fits(merged):
+    tokens = base_tokens + sum(entry_tokens(entry) for entry in merged)
+    if fits():
         return fitted(merged, "old calls merged")
 
-    tokens = base_tokens + sum(entry_tokens(entry) for entry in merged)
     raise ValueError(
         f"history too large for the decision model (~{tokens} tokens after "
         f"truncation, limit {max_state_tokens})"
@@ -585,6 +610,10 @@ def stale_from_noul(noul: float, *, keep_threshold: float = DEFAULT_KEEP_THRESHO
 # ── the endpoint ────────────────────────────────────────────────────────────
 class DecisionClient(Protocol):
     """Anything that can answer verdict questions."""
+
+    def close(self) -> None:
+        """Release owned transport resources."""
+        ...
 
     def ask(
         self,
@@ -647,6 +676,13 @@ class SystemOneClient:
         self.api_key = api_key
         self.timeout = timeout
         self._client = client
+        self._owns_client = client is None
+
+    def close(self) -> None:
+        """Release an owned HTTP session; injected clients remain caller-owned."""
+        if self._owns_client and self._client is not None:
+            self._client.close()
+            self._client = None
 
     def _session(self) -> Any:
         if self._client is not None:
@@ -725,13 +761,13 @@ def create_system_one_client(config: NovaConfig) -> DecisionClient:
 
 
 def verdict_cache_path(agent_dir: Path | None, config: NovaConfig) -> Path | None:
-    """Keep decisions from different endpoints/models in separate caches."""
+    """Separate cached advice by endpoint, model, and scoring version."""
     import hashlib
 
     if agent_dir is None:
         return None
     identity = _dumps([config.get_tool_verdict_endpoint(), config.get_tool_verdict_model()])
-    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+    digest = hashlib.sha256(f"{VERDICT_CACHE_VERSION}:{identity}".encode()).hexdigest()[:16]
     return agent_dir / "systemone" / digest / "tool_verdicts.json"
 
 
@@ -741,6 +777,9 @@ class FakeDecisionClient:
     def __init__(self, answer: Any = 0.5, calls: list[dict[str, Any]] | None = None) -> None:
         self._answer = answer
         self.calls = calls if calls is not None else []
+
+    def close(self) -> None:
+        """The offline client owns no transport resources."""
 
     def ask(
         self,
@@ -864,9 +903,12 @@ class ToolVerdictCache:
 
     # ── writing ─────────────────────────────────────────────────────────
     def begin(self) -> None:
-        """Rotate in a new, empty cycle before a scoring pass."""
+        """Start a scoring cycle, retaining bounded memory-only history."""
         self.cycle += 1
-        self._memory = {}
+        # Without disk cycles this map is the whole cache. Retain earlier hits
+        # so an incremental pass cannot make all previous results unscored.
+        if self.path is not None:
+            self._memory = {}
         self._loaded_cycle = self.cycle
 
     def _prune(self) -> None:
@@ -903,6 +945,8 @@ class ToolVerdictCache:
         """Append a verdict to the current cycle."""
         key = result_key(message)
         self._memory[key] = float(noul)
+        if self.path is None and len(self._memory) > MAX_CACHED_VERDICTS:
+            self._memory.pop(next(iter(self._memory)))
         path = self._cycle_path(self.cycle)
         if path is None:
             return
@@ -983,8 +1027,9 @@ class ToolVerdictCache:
         moment ago is found without touching the older pages.
         """
         key = result_key(message)
-        if key in self._memory:
-            return self._memory[key]
+        found = self._memory.get(key)
+        if found is not None:
+            return found
         for cycle, _ in self.cycle_files():
             found = self._cycle_entries(cycle).get(key)
             if found is not None:
@@ -1095,21 +1140,19 @@ class VerdictScorer:
     ) -> None:
         """The worker: fit a bounded state, ask, append. Never raises."""
         try:
-            recent = _slice_to_window(messages, self.window + self.keep, candidates)
-            renumbered = collect_candidates(
-                recent, preserve_recent_results=self.keep, window=self.window
+            window = collect_candidates(
+                messages, preserve_recent_results=self.keep, window=self.window
             )
-            if not renumbered:
+            if not candidates:
                 return
             fitted = build_verdict_state(
-                recent,
-                renumbered,
+                messages,
+                window,
                 max_state_tokens=self.max_state_tokens,
             )
-            self.cache.begin()
-            by_label = {candidate.label: candidate for candidate in renumbered}
+            pending: list[tuple[VerdictCandidate, float]] = []
             for batch in batch_candidates(
-                renumbered, fitted.tokens, max_request_tokens=self.max_request_tokens
+                candidates, fitted.tokens, max_request_tokens=self.max_request_tokens
             ):
                 questions: dict[str, dict[str, Any]] = {}
                 for candidate in batch:
@@ -1118,48 +1161,34 @@ class VerdictScorer:
 
                 with dispatch("classifier.tool_verdicts"):
                     answers = self.client.ask(fitted.state, questions)
-                expected = {
-                    f"result_{candidate.label}" for candidate in batch if not candidate.pinned
-                }
+                expected = {f"result_{candidate.label}" for candidate in batch}
                 if not expected.issubset(answers):
                     error_message = "Decision model returned incomplete tool-result verdicts"
                     raise ValueError(error_message)  # noqa: TRY301 - activate scoring fallback
-                for name, noul in answers.items():
-                    if not name.startswith("result_"):
-                        continue
-                    candidate = by_label.get(name[len("result_") :])
-                    if candidate is None:
-                        continue
-                    self.cache.put(
-                        ToolMessage(
-                            content=candidate.content,
-                            tool_call_id=candidate.call_id,
-                            name=candidate.tool,
-                        ),
-                        noul,
-                    )
+                for candidate in batch:
+                    noul = answers[f"result_{candidate.label}"]
+                    if (
+                        isinstance(noul, bool)
+                        or not isinstance(noul, (int, float))
+                        or not math.isfinite(noul)
+                        or not 0 <= noul <= 1
+                    ):
+                        error_message = "Decision model returned an invalid probability"
+                        raise ValueError(error_message)  # noqa: TRY301 -- Preserve old cache.
+                    pending.append((candidate, float(noul)))
+            # A failed batch leaves this pass unpublished. Keep existing verdicts
+            # until every requested answer has passed validation.
+            self.cache.begin()
+            for candidate, noul in pending:
+                self.cache.put(
+                    ToolMessage(
+                        content=candidate.content,
+                        tool_call_id=candidate.call_id,
+                        name=candidate.tool,
+                    ),
+                    noul,
+                )
             self.last_error = None
         except Exception as error:  # noqa: BLE001 - scoring is never worth a turn
             self.last_error = f"{type(error).__name__}: {error}"
             logger.debug("Verdict scoring failed", exc_info=True)
-
-
-def _slice_to_window(
-    messages: Sequence[AnyMessage],
-    results: int,
-    candidates: Sequence[VerdictCandidate],
-) -> list[AnyMessage]:
-    """The newest ``results`` tool results, whole messages only.
-
-    Cut back to the assistant turn that made the oldest kept call, so every
-    result in the slice still has the call the state describes it with.
-    """
-    indices = [index for index, message in enumerate(messages) if isinstance(message, ToolMessage)]
-    if len(indices) <= results:
-        return list(messages)
-    cutoff = indices[-results]
-    while cutoff > 0 and not (
-        isinstance(messages[cutoff], AIMessage) and messages[cutoff].tool_calls
-    ):
-        cutoff -= 1
-    return list(messages[cutoff:])

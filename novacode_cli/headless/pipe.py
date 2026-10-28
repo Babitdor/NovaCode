@@ -380,12 +380,16 @@ class PipeSession(SessionWorker):
     async def _handle_interrupt(self, event):
         if event.kind == "tool":
             payload = event.payload if isinstance(event.payload, dict) else {}
-            self._policy = await asyncio.to_thread(
-                evaluate_tool_actions,
-                payload,
-                self.session_state,
-                plan_mode_enabled=getattr(self.session_state, "plan_mode_enabled", False),
-                user_request=self._current_prompt,
+            self._policy = (
+                [None for _ in payload.get("action_requests", [])]
+                if payload.get("requires_owner_approval")
+                else await asyncio.to_thread(
+                    evaluate_tool_actions,
+                    payload,
+                    self.session_state,
+                    plan_mode_enabled=getattr(self.session_state, "plan_mode_enabled", False),
+                    user_request=self._current_prompt,
+                )
             )
             if getattr(self.session_state, "headless_deny_tools", False):
                 self._policy = [

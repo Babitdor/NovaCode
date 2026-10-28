@@ -7,10 +7,13 @@ have been removed.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from novacode_cli.security.policy import ApprovalPolicy
 
 from novacode_cli.config.config import console
 from novacode_cli.config.plan_mode import plan_tool_rejection
-from novacode_cli.security.policy import ApprovalPolicy
 from novacode_cli.security.session_allow import get_session_allow
 
 
@@ -81,6 +84,7 @@ def evaluate_tool_actions(
     *,
     plan_mode_enabled: bool = False,
     user_request: str = "",
+    policy: ApprovalPolicy | None = None,
 ) -> list[dict | None]:
     """Evaluate tool actions against policy and return decisions.
 
@@ -93,6 +97,8 @@ def evaluate_tool_actions(
         req: The tool action request dict with "action_requests" list
         session_state: Current session state
         plan_mode_enabled: Whether plan mode is active
+        user_request: Host-supplied owner intent, separate from tool arguments.
+        policy: An already loaded policy for delegated execution, if supplied.
 
     Returns:
         List of decision dicts or None for each action request
@@ -103,9 +109,12 @@ def evaluate_tool_actions(
     # Load the approval policy (cached, best-effort)
     try:
         from novacode_cli.security.policy import get_policy
-        policy = get_policy()
+        policy = policy or get_policy()
     except Exception:  # noqa: BLE001
-        policy = ApprovalPolicy()
+        return [
+            {"type": "reject", "reason": "Approval policy unavailable"}
+            for _ in action_requests
+        ]
 
     for ar in action_requests:
         tool_name = ar.get("name", "")
@@ -122,14 +131,18 @@ def evaluate_tool_actions(
         try:
             verdict = policy.evaluate(tool_name, args)
             tier = verdict.tier if hasattr(verdict, 'tier') else verdict
+            if tier not in {"allow", "ask", "deny"}:
+                decisions.append({"type": "reject", "reason": "Invalid approval policy verdict"})
+                continue
             if tier == "allow":
                 decisions.append({"type": "approve"})
                 continue
             if tier == "deny":
                 decisions.append({"type": "reject", "reason": f"Policy denied: {tool_name}"})
                 continue
-        except Exception:  # noqa: BLE001 — never break the turn
-            tier = "ask"
+        except Exception:  # noqa: BLE001 — A broken policy cannot grant execution.
+            decisions.append({"type": "reject", "reason": "Approval policy evaluation failed"})
+            continue
 
         # Auto-approve keeps hard denials authoritative. Existing policy allows
         # are still immediate; only actions that normally ask the user are
@@ -141,22 +154,26 @@ def evaluate_tool_actions(
             try:
                 from novacode_cli.config.nova_config import NovaConfig
 
-                use_decision_model = NovaConfig().get_auto_approve_decisions_enabled()
-            except Exception:  # noqa: BLE001 — preserve the legacy auto mode
-                use_decision_model = False
+                config = NovaConfig()
+                use_decision_model = config.get_auto_approve_decisions_enabled()
+            except Exception:  # noqa: BLE001 — An unreadable preference grants nothing.
+                decisions.append(None)
+                continue
             if use_decision_model:
                 from novacode_cli.agents.approval_decisions import decide_tool_approval
 
-                model_name = NovaConfig().get_tool_verdict_model()
                 verdict = decide_tool_approval(
-                    tool_name, args, user_request=user_request
+                    tool_name, args, config=config, user_request=user_request
                 )
+                if verdict["decision"] == "ask":
+                    decisions.append(None)
+                    continue
                 result = {
                     "type": "approve" if verdict["decision"] == "approve" else "reject",
                     "approval_source": verdict["source"],
                 }
                 if verdict["source"] == "decision_model":
-                    result["decision_model"] = model_name
+                    result["decision_model"] = config.get_tool_verdict_model()
                 result["reason"] = verdict["reason"]
                 decisions.append(result)
                 continue

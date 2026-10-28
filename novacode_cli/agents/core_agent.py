@@ -2434,13 +2434,6 @@ This file stores your preferences and context that persist across sessions.
             "\n</team_workspace>"
         )
 
-    if auto_approve:
-        # No interrupts - all tools run automatically
-        interrupt_on = {}
-    else:
-        # Full HITL for destructive operations
-        interrupt_on = get_interrupt_configs()
-
     # Pass named_subagents directly to create_deep_agent
     # It will create the SubAgentMiddleware internally
     # Use provided checkpointer or fallback to InMemorySaver
@@ -2601,6 +2594,17 @@ This file stores your preferences and context that persist across sessions.
         ),
     )
 
+    # Auto mode still enters the shared policy/reviewer gate before execution.
+    interrupt_on = get_interrupt_configs(
+        extra_tools=[
+            *(tools or []),
+            *(
+                tool
+                for middleware in agent_middleware
+                for tool in (getattr(middleware, "tools", []) or [])
+            ),
+        ]
+    )
     agent = create_deep_agent(
         name=assistant_id,
         model=wrapped_model,

@@ -67,6 +67,9 @@ class OpenAIDecisionsClient:
         self.endpoint = endpoint
         self._client = client
 
+    def close(self) -> None:
+        """Owned transports close per request; injected clients belong to their caller."""
+
     def _request(
         self, state: dict[str, Any], questions: list[dict[str, Any]]
     ) -> dict[str, dict[str, Any]]:
