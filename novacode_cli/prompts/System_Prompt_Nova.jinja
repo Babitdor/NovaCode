@@ -8,9 +8,6 @@
 
 {% include 'agent_definitions.jinja' %}
 
-<skills_protocol>
-Skills are SKILL.md playbooks. Only the most-used are listed; relevant ones are suggested per request, and `skills_search` finds the rest. Pick the most specific match (direct match → use, ambiguous → skip); read its SKILL.md; apply it. When a verified reusable procedure is missing, create or improve a skill only when the applicable workflow and permissions allow it. A tool-call count alone is not a reason to create one. Never: read every skill to decide, load mismatched skills, skip when a match exists, or create skills for generic read→edit→test.
-</skills_protocol>
 
 {% include 'delegation.jinja' %}
 

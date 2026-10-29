@@ -17,6 +17,22 @@ SKILL_REFERENCE = re.compile(
 )
 
 
+def requested_skill_names(text: str) -> list[str]:
+    """Auto-pin only clear invocations; leave ambiguous prose to model selection."""
+    # Quoted examples and code are data, not requests to load instructions.
+    prose = re.sub(r"```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]*`", "", text)
+    names = []
+    for match in SKILL_REFERENCE.finditer(prose):
+        prefix = prose[: match.start()].split("\n")[-1]
+        if re.fullmatch(r"\s*(?:please\s+)?", prefix, re.IGNORECASE) or re.fullmatch(
+            r"\s*(?:please\s+)?(?:use|apply|follow|load|invoke|run)\s+",
+            prefix,
+            re.IGNORECASE,
+        ):
+            names.append(match.group(1))
+    return list(dict.fromkeys(names))
+
+
 def request_reload() -> None:
     """Invalidate every skills middleware, including already-built subagents."""
     global _reload_generation  # noqa: PLW0603 — process-wide invalidation signal
