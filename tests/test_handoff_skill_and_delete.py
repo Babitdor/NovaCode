@@ -11,7 +11,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from novacode_cli import handoff
 from novacode_cli import ui_events as ev
 from novacode_cli.agents.handoff import HandoffMiddleware
-from novacode_cli.commands.handoff_handler import handle_handoff_command
+from novacode_cli.commands.handoff_handler import handle_passing_command
 from novacode_cli.commands.skill_invoke import _resolve_skill_invocation
 from novacode_cli.core.agent_loop import iterate_agent_events
 from novacode_cli.handoff import HandoffMemory, HandoffRun, document, prepare
@@ -170,10 +170,10 @@ def test_delete_requires_project_local_confirmation_and_clears_selection(tmp_pat
     run = HandoffRun(session, "Portfolio")
     prepare(session, run.record["id"])
     memory = HandoffMemory(str(tmp_path))
-    prompt = handle_handoff_command(session, f"delete {run.record['id']} confirm")
+    prompt = handle_passing_command(session, f"delete {run.record['id']} confirm")
     assert "Confirm deletion" in prompt
     assert memory.get(run.record["id"]) is not None
-    assert "Handoff deleted" in handle_handoff_command(
+    assert "Handoff deleted" in handle_passing_command(
         session, f"delete {run.record['id']} confirm"
     )
     assert memory.get(run.record["id"]) is None
@@ -193,7 +193,7 @@ def test_wrong_project_cannot_delete_and_repeated_deletion_is_safe(tmp_path: Pat
     other.mkdir()
     session = state(original)
     run = HandoffRun(session, "Portfolio")
-    assert "not found" in handle_handoff_command(state(other), f"delete {run.record['id']}")
+    assert "not found" in handle_passing_command(state(other), f"delete {run.record['id']}")
     memory = HandoffMemory(str(original))
     assert memory.get(run.record["id"])
     assert memory.delete(run.record["id"])
@@ -228,14 +228,14 @@ def test_failed_delete_reports_storage_error_without_touching_project_files(
     sentinel = tmp_path / "project.txt"
     sentinel.write_text("keep")
     session = run.session
-    handle_handoff_command(session, f"delete {run.record['id']}")
+    handle_passing_command(session, f"delete {run.record['id']}")
 
     def fail_delete(*_args: object) -> None:
         message = "private storage exception detail"
         raise OSError(message)
 
     monkeypatch.setattr(type(run.memory.store), "delete", fail_delete)
-    response = handle_handoff_command(session, f"delete {run.record['id']} confirm")
+    response = handle_passing_command(session, f"delete {run.record['id']} confirm")
     assert "storage unavailable" in response
     assert "private storage" not in response
     assert sentinel.read_text() == "keep"

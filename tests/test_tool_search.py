@@ -14,6 +14,8 @@ from novacode_cli.agents.tool_search import (
     ToolSearchMiddleware,
     loaded_names,
 )
+from tests.tool_search_helpers import SearchHarness
+from tests.tool_search_helpers import history as search_history
 
 
 @tool
@@ -69,7 +71,7 @@ def _request(messages: list) -> ModelRequest:
 
 
 def _mw() -> ToolSearchMiddleware:
-    mw = ToolSearchMiddleware(
+    mw = SearchHarness(
         deferred_subagents={
             "rust-reviewer": "Expert Rust code reviewer for ownership and lifetimes."
         }
@@ -86,7 +88,7 @@ def test_only_core_tools_are_bound_until_loaded() -> None:
     req = _mw()._apply(_request([HumanMessage("hi")]))
     assert _names(req) == {"read_file", "task"}
     note = req.system_message.content_blocks[-1]["text"]
-    assert "`playwright_*`: browser_click, browser_navigate, browser_snapshot" in note
+    assert "`playwright_*` (3 tools)" in note
 
 
 def test_frequent_tools_stay_bound() -> None:
@@ -105,7 +107,7 @@ def test_async_start_check_and_wait_are_bound_and_the_rest_are_found() -> None:
     bound = _names(mw._apply(req))
     assert core <= bound and not rare & bound
     assert "playwright_browser_navigate" not in bound
-    found = mw._tool_search("list_async_tasks, cancel_async_task")
+    found = mw.text("list_async_tasks, cancel_async_task")
     assert "Loaded tools:" in found and "list_async_tasks" in found and "cancel_async_task" in found
     # A session without an async server must not acquire nonexistent tools.
     assert not core & _names(_mw()._apply(_request([HumanMessage("hi")])))
@@ -135,7 +137,15 @@ def test_create_artifact_is_bound_and_its_result_loads_update_artifact() -> None
         HumanMessage("make a dashboard"),
         AIMessage("", tool_calls=[{"name": "create_artifact", "args": {}, "id": "c1"}]),
         ToolMessage(
-            "Artifact created.\nLoaded tools: update_artifact", tool_call_id="c1", name="create_artifact"
+            "Artifact created.\nLoaded tools: update_artifact",
+            tool_call_id="c1",
+            name="create_artifact",
+            artifact={
+                "nova_tool_search": {
+                    "version": 1,
+                    "capabilities": [{"kind": "tool", "name": "update_artifact"}],
+                }
+            },
         ),
     ]
     req = _request(created).override(tools=[*TOOLS, *arts])
@@ -145,24 +155,24 @@ def test_create_artifact_is_bound_and_its_result_loads_update_artifact() -> None
 def test_search_tools_loads_by_description_and_by_exact_name() -> None:
     mw = _mw()
     mw._apply(_request([HumanMessage("hi")]))  # builds the catalog
-    by_meaning = mw.tools[0].invoke({"query": "open a url in the browser"})
+    by_meaning = mw.invoke({"query": "open a url in the browser"})
     assert by_meaning.startswith(LOADED_MARKER) and "playwright_browser_navigate" in by_meaning
-    exact = mw.tools[0].invoke({"query": "playwright_browser_click, playwright_browser_snapshot"})
+    exact = mw.invoke({"query": "playwright_browser_click, playwright_browser_snapshot"})
     assert exact.splitlines()[0] == (
         f"{LOADED_MARKER} playwright_browser_click, playwright_browser_snapshot"
     )
-    agent = mw.tools[0].invoke({"query": "review rust ownership lifetimes"})
+    agent = mw.invoke({"query": "review rust ownership lifetimes"})
     assert 'task(subagent_type="rust-reviewer")' in agent
 
 
 def test_loaded_tools_are_bound_from_then_on() -> None:
     mw = _mw()
     mw._apply(_request([HumanMessage("hi")]))
-    result = mw.tools[0].invoke({"query": "playwright_browser_click"})
+    result = mw.invoke({"query": "playwright_browser_click"})
     history = [
         HumanMessage("click the button"),
         AIMessage("", tool_calls=[{"id": "1", "name": "search_tools", "args": {}}]),
-        ToolMessage(result, tool_call_id="1", name="search_tools"),
+        search_history(result, tool_call_id="1")[1],
     ]
     assert "playwright_browser_click" in _names(mw._apply(_request(history)))
 
@@ -175,73 +185,71 @@ def test_every_registered_tool_is_searchable_even_when_already_bound() -> None:
     ]
     mw._apply(_request(history))
     for t in TOOLS:
-        result = mw.tools[0].invoke({"query": t.name.upper()})
+        result = mw.invoke({"query": t.name.upper()})
         assert result.splitlines()[0] == f"{LOADED_MARKER} {t.name}"
-        assert t.name in loaded_names([ToolMessage(result, name="search_tools", tool_call_id="s")])
+        assert t.name in loaded_names(search_history(result))
 
 
 def test_search_keeps_loaded_subagents_discoverable() -> None:
     mw = _mw()
     mw._apply(_request([]))
-    result = mw._tool_search("rust-reviewer")
-    mw._apply(_request([ToolMessage(result, name="search_tools", tool_call_id="s")]))
-    assert 'task(subagent_type="rust-reviewer")' in mw._tool_search("rust-reviewer")
+    result = mw.text("rust-reviewer")
+    mw._apply(_request(search_history(result)))
+    assert 'task(subagent_type="rust-reviewer")' in mw.text("rust-reviewer")
 
 
 @pytest.mark.parametrize("query", ["browser click", "browser_click", "playwright_browser_clik"])
 def test_partial_names_and_typos_find_the_tool(query: str) -> None:
     mw = _mw()
     mw._apply(_request([]))
-    assert "playwright_browser_click" in mw._tool_search(query).splitlines()[0]
+    assert "playwright_browser_click" in mw.text(query).splitlines()[0]
 
 
 def test_exact_name_does_not_hide_other_requested_capabilities() -> None:
     capture = _mcp("capture_screen", "Capture a screenshot image of the browser.")
     mw = _mw()
     mw._apply(_request([]).override(tools=[*TOOLS, capture]))
-    result = mw._tool_search("read_file and capture a screenshot of the browser?")
+    result = mw.text("read_file and capture a screenshot of the browser?")
     assert "read_file" in result.splitlines()[0]
     assert "capture_screen" in result.splitlines()[0]
 
 
 def test_wildcards_can_page_through_every_tool_and_load_later_results() -> None:
     extras = [_mcp(f"server_action_{i:02d}", "A server action.") for i in range(35)]
-    mw = ToolSearchMiddleware()
+    mw = SearchHarness()
     mw._apply(_request([]).override(tools=extras))
     found = set()
     history = []
     for offset in range(0, len(extras), 5):
-        result = mw.tools[0].invoke({"query": "server_*", "offset": offset})
-        message = ToolMessage(result, name="search_tools", tool_call_id=str(offset))
-        found.update(loaded_names([message]))
-        history.append(message)
-    assert found == {t.name for t in extras}
-    assert "Showing 1-5 of 35 matches" in mw._tool_search("*", limit=5)
-    assert _names(mw._apply(_request(history).override(tools=extras))) == found
-    assert "server_action_34" in mw._tool_search("server_action_34")
+        result = mw.invoke({"query": "server_*", "offset": offset})
+        pair = search_history(result, tool_call_id=str(offset))
+        found.update(loaded_names(pair))
+        history.extend(pair)
+    assert found - {"search_tools"} == {t.name for t in extras}
+    assert "Showing 1-5 of 35 matches" in mw.text("*", limit=5)
+    assert _names(mw._apply(_request(history).override(tools=extras))) == found - {"search_tools"}
+    assert "server_action_34" in mw.text("server_action_34")
 
 
 def test_capability_search_can_retrieve_more_than_twenty_matches() -> None:
     extras = [_mcp(f"integration_{i:02d}", "Encrypt stored backups securely.") for i in range(35)]
-    mw = ToolSearchMiddleware()
+    mw = SearchHarness()
     mw._apply(_request([]).override(tools=extras))
-    result = mw._tool_search("encrypt backups", limit=50)
-    assert loaded_names([ToolMessage(result, name="search_tools", tool_call_id="s")]) == {
-        t.name for t in extras
-    }
+    result = mw.text("encrypt backups", limit=50)
+    assert loaded_names(search_history(result)) - {"search_tools"} == {t.name for t in extras}
 
 
 def test_catalog_tracks_added_and_removed_tools_even_when_nothing_is_deferred() -> None:
-    mw = ToolSearchMiddleware()
+    mw = SearchHarness()
     mw._apply(_request([]))
     added = _mcp("new_integration", "Upload a report.")
     updated = mw._apply(_request([]).override(tools=[read_file, added]))
-    assert "new_integration" in updated.system_message.content_blocks[-1]["text"]
-    assert "new_integration" in mw._tool_search("new_integration")
+    assert "`new_*` (1 tools)" in updated.system_message.content_blocks[-1]["text"]
+    assert "new_integration" in mw.text("new_integration")
     mw._apply(_request([]).override(tools=[read_file]))
-    assert "playwright_browser_click" not in mw._tool_search("*")
-    assert "new_integration" not in mw._tool_search("*")
-    assert mw._tool_search("read_file").startswith(LOADED_MARKER)
+    assert "playwright_browser_click" not in mw.text("*")
+    assert "new_integration" not in mw.text("*")
+    assert mw.text("read_file").startswith(LOADED_MARKER)
 
 
 def test_function_dict_tools_are_discoverable() -> None:
@@ -252,9 +260,9 @@ def test_function_dict_tools_are_discoverable() -> None:
         },
         {"type": "function", "name": "check_signature", "description": "Verify a signature."},
     ]
-    mw = ToolSearchMiddleware()
+    mw = SearchHarness()
     mw._apply(_request([]).override(tools=tools))
-    result = mw._tool_search("`CHECKSUM_FILE`, check_signature")
+    result = mw.text("`CHECKSUM_FILE`, check_signature")
     assert "checksum_file, check_signature" in result.splitlines()[0]
 
 
@@ -268,13 +276,13 @@ def test_search_still_works_if_the_retrieval_index_fails(monkeypatch: pytest.Mon
     monkeypatch.setattr(mod, "get_index", unavailable)
     mw = _mw()
     mw._apply(_request([]))
-    assert "playwright_browser_navigate" in mw._tool_search("navigate to a url")
-    assert "playwright_browser_click" in mw._tool_search("playwright_browser_click")
-    assert "rust-reviewer" in mw._tool_search("*", limit=50)
+    assert "playwright_browser_navigate" in mw.text("navigate to a url")
+    assert "playwright_browser_click" in mw.text("playwright_browser_click")
+    assert "rust-reviewer" in mw.text("*", limit=50)
 
 
 def test_search_results_name_the_correct_sync_or_async_dispatch_tool() -> None:
-    mw = ToolSearchMiddleware(
+    mw = SearchHarness(
         deferred_subagents={
             "sync-review": "Review code now.",
             "background-review": "Review code in the background.",
@@ -282,8 +290,8 @@ def test_search_results_name_the_correct_sync_or_async_dispatch_tool() -> None:
         async_subagents={"background-review"},
     )
     mw._apply(_request([]))
-    assert 'task(subagent_type="sync-review")' in mw._tool_search("sync-review")
-    result = mw._tool_search("background-review")
+    assert 'task(subagent_type="sync-review")' in mw.text("sync-review")
+    result = mw.text("background-review")
     assert 'start_async_task(subagent_type="background-review")' in result
     assert 'use `task(subagent_type="background-review")' not in result
 
@@ -291,18 +299,23 @@ def test_search_results_name_the_correct_sync_or_async_dispatch_tool() -> None:
 def test_tool_found_in_structured_message_is_loaded_on_next_call() -> None:
     mw = _mw()
     mw._apply(_request([]))
-    result = mw._tool_search("playwright_browser_click")
+    result = mw.text("playwright_browser_click")
     message = ToolMessage(
-        content=[{"type": "text", "text": result}], name="search_tools", tool_call_id="s"
+        content=[{"type": "text", "text": result}],
+        artifact=result.artifact,
+        name="search_tools",
+        tool_call_id="search",
     )
-    assert "playwright_browser_click" in _names(mw._apply(_request([message])))
+    assert "playwright_browser_click" in _names(
+        mw._apply(_request([search_history(result)[0], message]))
+    )
 
 
 def test_empty_and_unmatched_queries_offer_catalog_browsing() -> None:
     mw = _mw()
     mw._apply(_request([]))
     for query in ("", " ", "zzzz_unknown_capability", "absent_*"):
-        result = mw._tool_search(query)
+        result = mw.text(query)
         assert "browse" in result
         assert not result.startswith(LOADED_MARKER)
 
@@ -310,21 +323,21 @@ def test_empty_and_unmatched_queries_offer_catalog_browsing() -> None:
 def test_page_beyond_last_match_explains_how_to_retry_without_loading() -> None:
     mw = _mw()
     mw._apply(_request([]))
-    result = mw._tool_search("playwright_browser_click", offset=1)
+    result = mw.text("playwright_browser_click", offset=1)
     assert "offset smaller than 1" in result
     assert not result.startswith(LOADED_MARKER)
 
 
 def test_empty_inventory_reports_no_registered_tools() -> None:
-    mw = ToolSearchMiddleware()
+    mw = SearchHarness()
     mw._apply(_request([]).override(tools=[]))
-    assert "No tools are currently registered" in mw._tool_search("*")
+    assert "No tools are currently registered" in mw.text("*")
 
 
 @pytest.mark.parametrize(("limit", "offset"), [(0, 0), (51, 0), (5, -1)])
 def test_invalid_page_parameters_are_rejected(limit: int, offset: int) -> None:
     with pytest.raises(ValueError, match="limit must be"):
-        _mw()._tool_search("*", limit=limit, offset=offset)
+        _mw().text("*", limit=limit, offset=offset)
 
 
 def test_a_tool_called_without_loading_stays_bound() -> None:
@@ -361,10 +374,10 @@ def test_a_result_from_the_old_name_still_loads() -> None:
     """Checkpoints written before the rename keep working."""
     mw = _mw()
     mw._apply(_request([HumanMessage("hi")]))
-    result = mw.tools[0].invoke({"query": "playwright_browser_click"})
+    result = mw.invoke({"query": "playwright_browser_click"})
     history = [
         AIMessage("", tool_calls=[{"id": "1", "name": "tool_search", "args": {}}]),
-        ToolMessage(result, tool_call_id="1", name="tool_search"),
+        search_history(result, name="tool_search", tool_call_id="1")[1],
     ]
     assert "playwright_browser_click" in _names(mw._apply(_request(history)))
 
@@ -399,10 +412,13 @@ def test_start_async_task_lists_each_agent_in_one_line() -> None:
         "- You changed code\n- A PR needs review\n\n"
         "## Usage notes:\n1. Returns a task ID."
     )
-    start = StructuredTool.from_function(lambda description: "", name="start_async_task", description=roster)
-    mw = ToolSearchMiddleware(async_subagents={"general-purpose-async", "reviewer-async"})
+    start = StructuredTool.from_function(
+        lambda description: description, name="start_async_task", description=roster
+    )
+    mw = SearchHarness(async_subagents={"general-purpose-async", "reviewer-async"})
     desc = mw._compact_async_roster(start).description
-    assert "- general-purpose-async: Does anything." in desc and "- reviewer-async: Reviews code." in desc
+    assert "- general-purpose-async: Does anything." in desc
+    assert "- reviewer-async: Reviews code." in desc
     assert "A PR needs review" not in desc and "Use this agent when" not in desc
     assert desc.endswith("## Usage notes:\n1. Returns a task ID.")
 
@@ -421,8 +437,10 @@ async def test_frequent_tools_come_from_recent_history_not_all_time_counts() -> 
             return [("nova", "s1", "tool_history"), ("nova", "s1", "tool_stats")]
 
         async def aget(self, space, key):
-            return SimpleNamespace(value={"entries": entries}) if space[-1] == "tool_history" else None
+            return (
+                SimpleNamespace(value={"entries": entries}) if space[-1] == "tool_history" else None
+            )
 
-    mw = ToolSearchMiddleware()
+    mw = SearchHarness()
     await mw._read_frequent(SimpleNamespace(runtime=SimpleNamespace(store=Store())))
     assert mw._frequent == {"get_task_logs"}

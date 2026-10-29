@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from novacode_cli.commands import CommandContext, CommandRegistry
 
 
-def handle_handoff_command(session: Any, args: str = "") -> str:  # noqa: ANN401, PLR0911 - Command grammar.
+def handle_passing_command(session: Any, args: str = "") -> str:  # noqa: ANN401, PLR0911 - Command grammar.
     """Toggle or inspect context without starting work or restoring approval decisions."""
     parts = args.strip().split()
     action = parts[0].lower() if parts else "list"
@@ -19,13 +19,13 @@ def handle_handoff_command(session: Any, args: str = "") -> str:  # noqa: ANN401
         if action != "status":
             session.handoff_enabled = action == "on"
         state = "on" if getattr(session, "handoff_enabled", False) is True else "off"
-        return f"Handoff mode: {state}. Saves project context during subsequent requests."
+        return f"Passing mode: {state}. Saves project context during subsequent requests."
     try:
         if action == "list" and len(parts) <= 1:
             records = HandoffMemory(session_directory(session)).records()
             return "\n".join(f"{r['id']} · {r['title']} · {r['status']}" for r in records) or (
                 "No saved handoffs in this project. "
-                "Enable Handoff beside the composer, then send a task."
+                "Enable Passing beside the composer, then send a task."
             )
         if action == "preview" and len(parts) == 2:  # noqa: PLR2004 - Command grammar.
             record = HandoffMemory(session_directory(session)).get(parts[1])
@@ -35,7 +35,7 @@ def handle_handoff_command(session: Any, args: str = "") -> str:  # noqa: ANN401
         if action == "delete" and len(parts) in {2, 3}:
             memory = HandoffMemory(session_directory(session))
             identity = parts[1]
-            record = memory.get(identity)
+            record = memory.get_for_deletion(identity)
             if record is None:
                 return "Handoff not found in this project."
             target = memory.context["project"] + ":" + identity
@@ -43,7 +43,7 @@ def handle_handoff_command(session: Any, args: str = "") -> str:  # noqa: ANN401
                 session.handoff_delete_pending = target
                 return (
                     f"Confirm deletion of {record['title']} with "
-                    f"/handoff delete {identity} confirm. "
+                    f"/passing delete {identity} confirm. "
                     "Project files and conversation history stay intact."
                 )
             memory.delete(identity)
@@ -52,7 +52,7 @@ def handle_handoff_command(session: Any, args: str = "") -> str:  # noqa: ANN401
     except Exception:  # noqa: BLE001 - Storage errors remain temporary local notices.
         return "Handoff storage unavailable. Your workspace and conversation are unchanged."
     return (
-        "Usage: /handoff [on|off|status|list|preview <id>|resume <id>|delete <id> [confirm]] "
+        "Usage: /passing [on|off|status|list|preview <id>|resume <id>|delete <id> [confirm]] "
         "· /skill:handoff invokes the skill."
     )
 
@@ -62,7 +62,7 @@ def register_commands(registry: CommandRegistry) -> None:
     from novacode_cli.config.config import console
 
     async def handler(ctx: CommandContext) -> bool:
-        console.print(handle_handoff_command(ctx.session_state, ctx.cmd_args or ""), markup=False)
+        console.print(handle_passing_command(ctx.session_state, ctx.cmd_args or ""), markup=False)
         return True
 
-    registry.register("handoff", handler)
+    registry.register("passing", handler)

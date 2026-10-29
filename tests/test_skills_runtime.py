@@ -273,7 +273,7 @@ def test_skills_tools_load_registered_optional_schemas(skill):
     from novacode_cli.agents.tool_search import ToolSearchMiddleware
 
     middleware, _, content = skill
-    search = ToolSearchMiddleware(skill_tools=middleware._active_tools)
+    search = ToolSearchMiddleware(skills=middleware)
     search._frequent = set()
     messages = [pinned_message(middleware._skills[0], content)]
     request = ModelRequest(

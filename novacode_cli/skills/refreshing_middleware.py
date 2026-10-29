@@ -35,7 +35,13 @@ from langchain_core.messages import HumanMessage, ToolMessage
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict, Field
 
-from novacode_cli.skills.retrieval import first_sentence, get_index, prewarm
+from novacode_cli.skills.retrieval import (
+    MIN_TASK_WORDS,
+    first_sentence,
+    get_index,
+    prewarm,
+    skill_summary,
+)
 from novacode_cli.skills.runtime import (
     SKILL_REFERENCE,
     active_skill_names,
@@ -57,6 +63,12 @@ logger = logging.getLogger("nova.skills")
 DEFAULT_LISTING_CHARS = 4_000
 #: Hard ceiling: a 1M-token window must not mean an 80k-char listing.
 MAX_LISTING_CHARS = 8_000
+SUGGESTION_CHARS = 2_000
+_CONTINUATION = re.compile(
+    r"(?:(?:continue|proceed)(?: with (?:all )?(?:the )?fixes)?|yes|go ahead|"
+    r"do (?:it|that)|fix it|add tests|test it|now implement|implement it)[.!?\s]*",
+    re.IGNORECASE,
+)
 
 # Starts with "Internal context" so transcript replay hides it
 # (core/streaming.py::is_internal_context_text): the user did not type it.
@@ -78,7 +90,12 @@ Resolve relative paths
 against that SKILL.md's directory; `skills_read_resource(name, path)` reads a
 reference on demand. Do not preload supporting files or execute scripts merely
 because a skill includes them. Skills never override permissions or approvals.
-Skip a suggested skill that does not fit.
+Suggestions are candidates, not instructions to activate every match. Check
+their scope and exclusions against the current task; load only the ones that
+fit. If several overlap, choose the most specific useful workflow. Reassess
+with skills_search when new requirements emerge. A prior suggestion does not
+mean its instructions were loaded. After compaction, reload the skill before
+depending on its instructions or optional tools.
 
 **Evidence-first work.** For explicit high-assurance, TDD, or evidence-first
 requests (for example, "prove it works" or "I won't read the code"), or changes
@@ -102,7 +119,7 @@ def listing_budget(context_window: int) -> int:
 
 
 def _entry(skill: SkillMetadata) -> str:
-    return f"- **{skill['name']}** `{skill['path']}`: {first_sentence(skill['description'])}"
+    return f"- **{skill['name']}** `{skill['path']}`: {skill_summary(skill['description'], 400)}"
 
 
 def _text(msg: Any) -> str:
@@ -110,6 +127,30 @@ def _text(msg: Any) -> str:
     if isinstance(content, list):
         return " ".join(b.get("text", "") for b in content if isinstance(b, dict))
     return str(content)
+
+
+def _selection_query(messages: list[Any]) -> str:
+    """Keep the current request's ends; resolve short continuations to their task."""
+    query = _text(messages[-1]).strip()
+    if _CONTINUATION.fullmatch(query):
+        for message in reversed(messages[:-1]):
+            if (
+                not isinstance(message, HumanMessage)
+                or message.additional_kwargs.get("lc_source") in {"pinned_skill", "summarization"}
+            ):
+                continue
+            previous = _text(message).strip()
+            if (
+                not previous.startswith("Internal context")
+                and not _CONTINUATION.fullmatch(previous)
+                and len(previous.split()) >= MIN_TASK_WORDS
+            ):
+                query = previous + "\nCurrent request: " + query
+                break
+    if len(query) <= SUGGESTION_CHARS:
+        return query
+    half = SUGGESTION_CHARS // 2
+    return query[:half] + "\n" + query[-half + 1:]
 
 
 _DISK_CACHE_ENTRIES = 8
@@ -441,13 +482,13 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
                     and any(word.lower() in (name + " " + body).lower() for word in query.split())]
         if reviewed:
             return "\n".join(reviewed[:5] + [
-                f"- **{skill['name']}** `{skill['path']}`: {first_sentence(skill['description'], 300)}"
+                f"- **{skill['name']}** `{skill['path']}`: {skill_summary(skill['description'])}"
                 for skill, _, _ in hits
             ])
         if not hits:
             return f"No skill matches {query!r}. Proceed without one."
         return "\n".join(
-            f"- **{s['name']}** `{s['path']}`: {first_sentence(s['description'], 300)}"
+            f"- **{s['name']}** `{s['path']}`: {skill_summary(s['description'])}"
             for s, _, _ in hits
         )
 
@@ -464,8 +505,8 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
         used = 0
         for skill in ranked:
             line = _entry(skill)
-            if used + len(line) > self._listing_chars:
-                break
+            if used + len(line) + 1 > self._listing_chars:
+                continue
             lines.append(line)
             used += len(line) + 1
         rest = len(skills) - len(lines)
@@ -478,27 +519,29 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
     def _suggestions(self, state: SkillsState, skills: list[SkillMetadata]) -> HumanMessage | None:
         messages = state.get("messages") or []
         last = messages[-1] if messages else None
-        if not isinstance(last, HumanMessage):
+        if not isinstance(last, HumanMessage) or last.additional_kwargs.get("lc_source") in {
+            "pinned_skill", "summarization",
+        }:
             return None
-        query = _text(last)
+        query = _selection_query(messages)
         if not query.strip() or query.lstrip().startswith("Internal context"):
             return None
-        already = {
-            name
-            for m in messages
-            if isinstance(m, HumanMessage) and _text(m).startswith(SUGGESTION_MARKER)
-            for name in re.findall(r"^- \*\*([^*]+)\*\*", _text(m), re.M)
-        }
-        picks = get_index(skills).suggest(query[:2000], exclude=already)
+        # A historical suggestion is not a load. Suppress only skills whose
+        # successful instruction snapshots are still available to this model.
+        picks = get_index(skills).suggest(
+            query, exclude=active_skill_names(messages, skills), usage=self._usage,
+        )
         if not picks:
             return None
-        body = "\n".join(_entry(s) for s in picks)
-        return HumanMessage(
-            content=(
-                f"{SUGGESTION_MARKER} If one fits this request, read its SKILL.md "
-                f"before starting; otherwise ignore this.\n{body}"
-            )
+        content = (
+            f"{SUGGESTION_MARKER} Assess scope and exclusions; load only a skill "
+            "that fits this task with skills_load. Ignore unrelated candidates.\n"
         )
+        for skill in picks:
+            line = _entry(skill) + "\n"
+            if len(content) + len(line) <= SUGGESTION_CHARS:
+                content += line
+        return HumanMessage(content=content) if "- **" in content else None
 
     async def _read_usage(self, runtime: Runtime) -> None:
         """Skill invocation counts from Hermes' tracker (best effort, once)."""
@@ -509,8 +552,24 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
         if store is None:
             return
         try:
-            for item in await store.asearch(("nova", "skill_usage"), limit=1000):
-                self._usage[item.key] = int((item.value or {}).get("invocations", 0))
+            spaces = await store.alist_namespaces(
+                prefix=("nova",), suffix=("skill_usage",), limit=1000,
+            )
+            # Include the legacy namespace and defend against stores that ignore
+            # namespace filters. Counts are a preference, never authorization.
+            spaces = {("nova", "skill_usage"), *map(tuple, spaces)}
+            for space in sorted(spaces):
+                if (
+                    len(space) not in (2, 3)
+                    or space[:1] != ("nova",) or space[-1:] != ("skill_usage",)
+                ):
+                    continue
+                for item in await store.asearch(space, limit=1000):
+                    if tuple(item.namespace) != space:
+                        continue
+                    count = item.value.get("invocations", 0) if isinstance(item.value, dict) else 0
+                    if isinstance(count, int) and not isinstance(count, bool) and count > 0:
+                        self._usage[item.key] = self._usage.get(item.key, 0) + count
         except Exception:  # noqa: BLE001 — ranking is a nicety, never break a turn
             logger.debug("skill usage unavailable", exc_info=True)
 

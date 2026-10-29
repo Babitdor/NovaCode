@@ -72,7 +72,7 @@ class HandoffScreen(ModalScreen[str | None]):
     def compose(self) -> ComposeResult:
         """Keep the list, preview and continuation controls inside one modal."""
         with Vertical(id="handoff-shell"):
-            yield Static("PROJECT HANDOFFS", id="handoff-title")
+            yield Static("PASSING / PROJECT HANDOFFS", id="handoff-title")
             yield Static(
                 "Select a handoff to preview. Continue saves this chat and starts a fresh one "
                 "in the current workspace, with the current model and permissions.",
@@ -142,9 +142,11 @@ class HandoffScreen(ModalScreen[str | None]):
         self.query_one("#handoff-preview", Static).update(
             document(record)
             if record
-            else "No saved handoffs match. Enable Handoff, then send a task."
+            else "No saved handoffs match. Enable Passing, then send a task."
         )
-        self.query_one("#handoff-continue", Button).disabled = not (record and self.can_continue)
+        self.query_one("#handoff-continue", Button).disabled = not (
+            record and self.can_continue and not record.get("deletion_pending")
+        )
         self.query_one("#handoff-delete", Button).disabled = not (record and self.can_continue)
         self.query_one("#handoff-preview-scroll", VerticalScroll).scroll_home(animate=False)
 
@@ -161,6 +163,7 @@ class HandoffScreen(ModalScreen[str | None]):
             event.button.id == "handoff-continue"
             and self.can_continue
             and (record := self.selected())
+            and not record.get("deletion_pending")
         ):
             self.dismiss(record["id"])
         elif event.button.id == "handoff-close":

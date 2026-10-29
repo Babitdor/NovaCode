@@ -1,10 +1,6 @@
 """Load rarely used tools and subagents on demand, not on every model call.
 
-Nova binds ~85 tools (~117k chars of schemas, most of them MCP: playwright,
-serena, apify, chrome-devtools) and the ``task`` tool lists ~90 subagents
-(~19k chars), all resent on every call. This follows Anthropic's Tool Search
-Tool (defer_loading: tokens -85%, Opus tool accuracy 49% -> 74%), done
-provider-side-agnostically in middleware:
+Tool schemas and specialist rosters load on demand, independently of provider:
 
 * Only **core** tools (file, shell, todos, plan mode, search), the user's
   **most-used** tools (Hermes ``tool_stats``, read once per session) and tools
@@ -13,9 +9,9 @@ provider-side-agnostically in middleware:
   ``task`` description the same way.
 * ``search_tools`` finds the rest (hybrid search, shared with skills) and loads
   them: a tool is loaded once a ``search_tools`` result names it or the model
-  has called it. Derived from the messages, so it survives checkpoints and
-  never needs its own state. Loaded tools stay loaded (a changing tool list
-  re-bills the prompt cache, so it should change rarely).
+  has called it. Successful structured results are matched to their calls and
+  retained in checkpoints. Compaction drops visibility when that evidence leaves
+  context; rediscovery restores it. Search uses the owning execution's inventory.
 
 Every tool stays registered with the graph, so a call to one that is not bound
 still executes; only the schemas sent to the model shrink.
@@ -28,11 +24,14 @@ import re
 import time
 from difflib import get_close_matches
 from fnmatch import fnmatchcase
+from functools import partial, update_wrapper
 from typing import TYPE_CHECKING, Any
 
 from langchain.agents.middleware import AgentMiddleware
+from langchain.tools import ToolRuntime  # noqa: TC002 - Pydantic resolves runtime annotations.
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from langchain_core.tools import StructuredTool
+from pydantic import ConfigDict
 
 from novacode_cli.agents.tool_search_variants import (
     BM25_TOOL,
@@ -43,12 +42,15 @@ from novacode_cli.agents.tool_search_variants import (
     parameter_text,
     regex_matches,
 )
-from novacode_cli.skills.retrieval import first_sentence, get_index
+from novacode_cli.skills.retrieval import MIN_COSINE, first_sentence, get_index
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
 
     from langchain.agents.middleware.types import ModelRequest, ModelResponse
+    from langchain_core.tools import BaseTool
+
+    from novacode_cli.skills.refreshing_middleware import RefreshingSkillsMiddleware
 
 logger = logging.getLogger("nova.tool_search")
 
@@ -123,6 +125,17 @@ LOADED_MARKER = "Loaded tools:"
 #: and create_artifact, whose natural next step is update_artifact.
 LOADING_TOOLS = frozenset({"search_tools", "tool_search", "create_artifact"}) | SEARCH_VARIANTS
 MAX_SEARCH_LIMIT = 50
+MAX_INVENTORY_CHARS = 2_000
+MAX_INVENTORY_GROUPS = 10
+MAX_GROUP_CHARS = 1_000
+LOAD_RECORD = "nova_tool_search"
+
+
+class RuntimeSearchInput(SearchInput):
+    """Runtime inventory is injected by the graph, never supplied by the model."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    runtime: ToolRuntime
 
 
 def _name(tool: Any) -> str:
@@ -137,40 +150,87 @@ def _description(tool: Any) -> str:
     return getattr(tool, "description", "") or ""
 
 
-def loaded_names(messages: list[Any]) -> set[str]:
-    """Tools this thread has loaded: named by ``search_tools`` or already called."""
-    names: set[str] = set()
+def _with_description(tool: BaseTool | dict, description: str) -> BaseTool | dict:
+    """Copy descriptions without mutating registered objects or function schemas."""
+    if isinstance(tool, dict):
+        if isinstance(tool.get("function"), dict):
+            return {**tool, "function": {**tool["function"], "description": description}}
+        return {**tool, "description": description}
+    return tool.model_copy(update={"description": description})
+
+
+def loaded_capabilities(messages: list[Any]) -> set[tuple[str, str]]:
+    """Typed schema visibility from calls and their successful structured results.
+
+    Old text-only discovery reports remain readable, but require rediscovery.
+    A marker embedded in tool output is never a loading instruction.
+    """
+    loaded: set[tuple[str, str]] = set()
+    calls: dict[str, str] = {}
     for msg in messages:
         if isinstance(msg, AIMessage):
-            names.update(tc["name"] for tc in msg.tool_calls or [])
-        elif isinstance(msg, ToolMessage) and msg.name in LOADING_TOOLS:
-            texts = (
-                [msg.content]
-                if isinstance(msg.content, str)
-                else [
-                    part if isinstance(part, str) else part.get("text", "") for part in msg.content
-                ]
-            )
-            for text in texts:
-                for line in text.splitlines():
-                    if line.startswith(LOADED_MARKER):
-                        names.update(n.strip() for n in line[len(LOADED_MARKER) :].split(","))
-    return names
+            for call in msg.tool_calls or []:
+                call_id = call.get("id")
+                if isinstance(call_id, str):
+                    calls[call_id] = call["name"]
+                loaded.add(("tool", call["name"]))
+                if call["name"] in {"task", "start_async_task"}:
+                    agent = call.get("args", {}).get("subagent_type")
+                    if isinstance(agent, str):
+                        loaded.add(("subagent", agent))
+        elif isinstance(msg, ToolMessage):
+            expected = calls.pop(msg.tool_call_id, None)
+            if (
+                msg.status == "error"
+                or msg.name not in LOADING_TOOLS
+                or expected != msg.name
+                or not isinstance(msg.artifact, dict)
+            ):
+                continue
+            record = msg.artifact.get(LOAD_RECORD)
+            if (
+                not isinstance(record, dict)
+                or type(record.get("version")) is not int
+                or record["version"] != 1
+            ):
+                continue
+            capabilities = record.get("capabilities")
+            if not isinstance(capabilities, list):
+                continue
+            for capability in capabilities:
+                if (
+                    isinstance(capability, dict)
+                    and isinstance(capability.get("kind"), str)
+                    and capability.get("kind") in {"tool", "subagent"}
+                    and isinstance(capability.get("name"), str)
+                    and capability["name"]
+                ):
+                    loaded.add((capability["kind"], capability["name"]))
+    return loaded
+
+
+def loaded_names(messages: list[Any]) -> set[str]:
+    """Compatibility projection; binding uses typed capabilities."""
+    return {name for _, name in loaded_capabilities(messages)}
 
 
 def _group(names: list[str]) -> str:
-    """``playwright_browser_click, playwright_browser_close`` -> one line per prefix."""
+    """Bounded capability groups; full member names stay behind search."""
     groups: dict[str, list[str]] = {}
     for name in sorted(names):
         prefix = name.split("_", 1)[0] if "_" in name else ""
         groups.setdefault(prefix, []).append(name)
-    lines = []
+    lines: list[str] = []
+    shown = 0
     for prefix, members in groups.items():
-        if prefix and len(members) >= 3:
-            short = ", ".join(m[len(prefix) + 1 :] for m in members)
-            lines.append(f"- `{prefix}_*`: {short}")
-        else:
-            lines.extend(f"- `{m}`" for m in members)
+        label = f"{prefix}_*" if prefix else "other names"
+        line = f"- `{label[:80]}` ({len(members)} tools)"
+        if len(lines) >= MAX_INVENTORY_GROUPS or sum(map(len, lines)) + len(line) > MAX_GROUP_CHARS:
+            break
+        lines.append(line)
+        shown += len(members)
+    if shown < len(names):
+        lines.append(f"- {len(names) - shown} further tools; search to inspect.")
     return "\n".join(lines)
 
 
@@ -221,63 +281,125 @@ class ToolSearchMiddleware(AgentMiddleware):
         *,
         deferred_subagents: dict[str, str] | None = None,
         async_subagents: set[str] | None = None,
-        skill_tools: Any = None,
+        skills: RefreshingSkillsMiddleware | None = None,
     ) -> None:
         """``deferred_subagents``: name -> description, hidden from ``task`` until found."""
         super().__init__()
         self._deferred_subagents = deferred_subagents or {}
         self._async_subagents = async_subagents or set()
-        self._skill_tools = skill_tools
+        self._skills = skills
         self._frequent: set[str] | None = None  # read once, then frozen
-        self._note: str | None = None  # frozen: a changing prompt re-bills the cache
-        self._inventory: tuple = ()
-        self._catalog: list[dict] = []
         self._bm25 = BM25Search()
         self.tools = [
             StructuredTool.from_function(
-                self._tool_search,
-                name="search_tools",
-                args_schema=SearchInput,
-                description=(
-                    "Find and load any available tool or subagent, including loaded tools. "
-                    "Search by capability, exact names separated by commas, partial names, "
-                    "or wildcards such as playwright_*. Use query='*' to browse the catalog. "
-                    "Use limit and offset to page through results. Found tools are callable "
-                    "from your next step on."
+                func=update_wrapper(partial(self._search, mode=mode), self._search),
+                coroutine=update_wrapper(partial(self._asearch, mode=mode), self._asearch),
+                name=name,
+                args_schema=RuntimeSearchInput,
+                response_format="content_and_artifact",
+                description=description,
+            )
+            for name, mode, description in (
+                (
+                    "search_tools",
+                    "hybrid",
+                    "Find tools/subagents by capability, exact/partial names or wildcards. "
+                    "Searches names, descriptions and parameters. query='*' browses; limit and "
+                    "offset page results. Found schemas load next step; approvals still apply.",
                 ),
-            ),
-            StructuredTool.from_function(
-                self._regex_search,
-                name=REGEX_TOOL,
-                args_schema=SearchInput,
-                description="Find and load tools/subagents using a case-insensitive Python regex. "
-                "Searches names, descriptions and parameters. Maximum pattern length: 200 characters. "
-                "Use query, limit and offset to page results.",
-            ),
-            StructuredTool.from_function(
-                self._bm25_search,
-                name=BM25_TOOL,
-                args_schema=SearchInput,
-                description="Find and load tools/subagents using natural-language BM25 keyword ranking. "
-                "Searches names, descriptions and parameters without embeddings. Maximum query length: "
-                "500 characters. Use query, limit and offset to page results.",
-            ),
+                (
+                    REGEX_TOOL,
+                    "regex",
+                    "Find tools/subagents using case-insensitive Python regex over names, "
+                    "descriptions and parameters. Maximum pattern length: 200 characters. "
+                    "Use query, limit and offset to page results.",
+                ),
+                (
+                    BM25_TOOL,
+                    "bm25",
+                    "Find tools/subagents using BM25 keywords over names, descriptions and "
+                    "parameters without embeddings. Maximum query length: 500 characters. "
+                    "Use query, limit and offset to page results.",
+                ),
+            )
         ]
 
-    # ── search_tools ───────────────────────────────────────────────────────
+    def _catalog_for(self, tools: Sequence[Any]) -> list[dict]:
+        """Discovery metadata belongs to this invocation's current inventory."""
+        return [
+            {
+                "name": _name(tool),
+                "description": _description(tool),
+                "kind": "tool",
+                "parameters": parameter_text(tool),
+            }
+            for tool in tools
+            if _name(tool)
+        ] + [
+            {"name": name, "description": description, "kind": "subagent"}
+            for name, description in self._deferred_subagents.items()
+        ]
 
-    def _search_matches(self, query: str) -> list[dict]:
+    def _search(
+        self,
+        query: str,
+        runtime: ToolRuntime,
+        limit: int = 5,
+        offset: int = 0,
+        *,
+        mode: str = "hybrid",
+    ) -> tuple[str, dict]:
+        """Use the owning run's inventory, including its activated skill aliases."""
+        tools = {_name(tool): tool for tool in runtime.tools}
+        if self._skills is not None:
+            resolved = self._skills._resolve_tools(runtime.state.get("messages", []), runtime)
+            for name, tool in resolved.items():
+                tools.setdefault(name, tool)
+        return self._tool_search(
+            query,
+            limit,
+            offset,
+            catalog=self._catalog_for(list(tools.values())),
+            _mode=mode,
+        )
+
+    async def _asearch(
+        self,
+        query: str,
+        runtime: ToolRuntime,
+        limit: int = 5,
+        offset: int = 0,
+        *,
+        mode: str = "hybrid",
+    ) -> tuple[str, dict]:
+        """Resolve async skill aliases in the same invocation context."""
+        tools = {_name(tool): tool for tool in runtime.tools}
+        if self._skills is not None:
+            resolved = await self._skills._aresolve_tools(
+                runtime.state.get("messages", []), runtime
+            )
+            for name, tool in resolved.items():
+                tools.setdefault(name, tool)
+        return self._tool_search(
+            query,
+            limit,
+            offset,
+            catalog=self._catalog_for(list(tools.values())),
+            _mode=mode,
+        )
+
+    def _search_matches(self, query: str, catalog: list[dict]) -> list[dict]:
         """Rank the full catalog, retaining exact names ahead of semantic hits."""
         tokens = re.findall(r"[\w.:-]+", query.casefold())
-        names = {item["name"].casefold() for item in self._catalog}
-        exact = [item for item in self._catalog if item["name"].casefold() in tokens]
+        names = {item["name"].casefold() for item in catalog}
+        exact = [item for item in catalog if item["name"].casefold() in tokens]
         patterns = [
             word.strip("`\"'") for word in re.split(r"[,\s]+", query.casefold()) if "*" in word
         ]
         if patterns:
             return [
                 item
-                for item in self._catalog
+                for item in catalog
                 if item in exact
                 or any(fnmatchcase(item["name"].casefold(), pattern) for pattern in patterns)
             ]
@@ -286,74 +408,88 @@ class ToolSearchMiddleware(AgentMiddleware):
         normalized = re.sub(r"[^\w]+|_", " ", query.casefold()).strip()
         partial = [
             item
-            for item in self._catalog
+            for item in catalog
             if normalized
             and normalized in re.sub(r"[^\w]+|_", " ", item["name"].casefold()).strip()
         ]
         fuzzy_names = get_close_matches(query.casefold(), sorted(names), n=3, cutoff=0.8)
-        fuzzy = [item for item in self._catalog if item["name"].casefold() in fuzzy_names]
+        fuzzy = [item for item in catalog if item["name"].casefold() in fuzzy_names]
         try:
             ranked = [
-                item for item, _, _ in get_index(self._catalog).search(query, k=len(self._catalog))
+                item
+                for item, cosine, bm25 in get_index(catalog).search(query, k=len(catalog))
+                if bm25 > 0 or cosine >= MIN_COSINE
             ]
         except Exception:  # noqa: BLE001 - discovery still works without the optional index
             logger.debug("Tool retrieval index unavailable; using lexical search", exc_info=True)
             ranked = [
                 item
-                for item in self._catalog
-                if set(tokens) & set(re.findall(r"[\w]+", item["description"].casefold()))
+                for item in catalog
+                if set(tokens)
+                & set(
+                    re.findall(
+                        r"[\w]+",
+                        (
+                            item["name"]
+                            + " "
+                            + item["description"]
+                            + " "
+                            + item.get("parameters", "")
+                        ).casefold(),
+                    )
+                )
             ]
         hits: dict[tuple[str, str], dict] = {}
         for item in [*exact, *partial, *fuzzy, *ranked]:
             hits.setdefault((item["kind"], item["name"]), item)
         return list(hits.values())
 
-    def _regex_search(self, query: str, limit: int = 5, offset: int = 0) -> str:
-        """Load regex matches through the same checkpoint markers as legacy search."""
-        return self._tool_search(query, limit, offset, _mode="regex")
-
-    def _bm25_search(self, query: str, limit: int = 5, offset: int = 0) -> str:
-        """Load BM25 matches without starting a dense-model download."""
-        return self._tool_search(query, limit, offset, _mode="bm25")
-
-    def _tool_search(self, query: str, limit: int = 5, offset: int = 0, *, _mode: str = "hybrid") -> str:
+    def _tool_search(
+        self,
+        query: str,
+        limit: int = 5,
+        offset: int = 0,
+        *,
+        catalog: list[dict],
+        _mode: str = "hybrid",
+    ) -> tuple[str, dict]:
         """Find and load available tools and subagents.
 
         Args:
             query: A capability, exact or partial names, or a wildcard; '*' lists everything.
             limit: Results per page (1-50).
             offset: Number of matches to skip to reach another page.
+            catalog: Metadata from the owning invocation's current tool inventory.
         """
         if not 1 <= limit <= MAX_SEARCH_LIMIT or offset < 0:
             message = "limit must be between 1 and 50, and offset must be nonnegative."
             raise ValueError(message)
-        if _mode != "regex":
-            query = query.strip()
+        query = query if _mode == "regex" else query.strip()
         if not query:
             return (
                 "Enter a capability or tool name, or use query='*' to browse all available tools."
-            )
-        if not self._catalog:
-            return "No tools are currently registered for discovery."
+            ), {}
+        if not catalog:
+            return "No tools are currently registered for discovery.", {}
         try:
             if _mode == "regex":
-                matches = regex_matches(self._catalog, query)
+                matches = regex_matches(catalog, query)
             elif _mode == "bm25":
-                matches = self._bm25.search(self._catalog, query)
+                matches = self._bm25.search(catalog, query)
             else:
-                matches = self._search_matches(query)
+                matches = self._search_matches(query, catalog)
         except (ValueError, re.error, TimeoutError) as exc:
-            return f"Tool search failed: {exc}"
+            return f"Tool search failed: {exc}", {}
         if not matches:
             return (
                 f"No registered tools match {query!r}. "
                 "Try a shorter name, a server prefix, or query='*' to browse."
-            )
+            ), {}
         hits = matches[offset : offset + limit]
         if not hits:
             return (
                 f"There are {len(matches)} matches. Retry with offset smaller than {len(matches)}."
-            )
+            ), {}
         tools = [h for h in hits if h["kind"] == "tool"]
         agents = [h for h in hits if h["kind"] == "subagent"]
         lines = [f"- `{h['name']}`: {first_sentence(h['description'], 200)}" for h in tools]
@@ -372,7 +508,12 @@ class ToolSearchMiddleware(AgentMiddleware):
                 result += (
                     f" Continue with the same query, limit={limit}, offset={offset + len(hits)}."
                 )
-        return result
+        return result, {
+            LOAD_RECORD: {
+                "version": 1,
+                "capabilities": [{"kind": hit["kind"], "name": hit["name"]} for hit in hits],
+            }
+        }
 
     # ── binding ────────────────────────────────────────────────────────────
 
@@ -416,9 +557,17 @@ class ToolSearchMiddleware(AgentMiddleware):
         """
         hidden_set = set(hidden)
         kept: list[str] = []
+        skip_lines = 0
         for line in _description(tool).splitlines():
+            if skip_lines:
+                skip_lines -= 1
+                continue
             match = re.match(r"^[ \t]*- ([^:]+):", line)
             if match and match.group(1).strip() in hidden_set:
+                name = match.group(1).strip()
+                # deepagents inserts each source description verbatim after
+                # the roster heading. Remove its complete block, not just line 1.
+                skip_lines = max(0, len(self._deferred_subagents[name].splitlines()) - 1)
                 continue
             kept.append(line)
         text = "\n".join(kept)
@@ -426,7 +575,7 @@ class ToolSearchMiddleware(AgentMiddleware):
             f"\n\n{len(hidden)} more specialist subagents are not listed here: "
             "`search_tools` finds them by what they do."
         )
-        return tool.model_copy(update={"description": text})
+        return _with_description(tool, text)
 
     def _compact_async_roster(self, tool: Any) -> Any:
         """One line per agent in ``start_async_task``'s roster (a request-local copy).
@@ -451,90 +600,77 @@ class ToolSearchMiddleware(AgentMiddleware):
             match = re.match(r"^- ([^:\s]+): (.*)", line)
             if match and match.group(1) in self._async_subagents:
                 lines.append(f"- {match.group(1)}: {first_sentence(match.group(2), 160)}")
-        return tool.model_copy(update={"description": "\n".join(lines)})
+        return _with_description(tool, "\n".join(lines))
 
     def _shorten(self, tool: Any, hidden: list[str]) -> Any:
         """The request-local copy of a bound tool with its description trimmed."""
-        if isinstance(tool, dict):
-            return tool
         name = _name(tool)
         if name == "task" and hidden:
             return self._trim_task(tool, hidden)
         if name == "start_async_task" and self._async_subagents:
             return self._compact_async_roster(tool)
         if name in DESCRIPTIONS:
-            return tool.model_copy(update={"description": DESCRIPTIONS[name]})
+            return _with_description(tool, DESCRIPTIONS[name])
         return tool
 
     def _apply(self, request: ModelRequest) -> ModelRequest:
-        # Discovery covers the full available inventory, regardless of which
-        # schemas this particular model call already has loaded.
-        self._catalog = [
-            {
-                "name": _name(t), "description": _description(t),
-                "kind": "tool", "parameters": parameter_text(t),
-            }
-            for t in request.tools
-            if _name(t)
-        ] + [
-            {"name": n, "description": description, "kind": "subagent"}
-            for n, description in self._deferred_subagents.items()
-        ]
-        inventory = tuple(
-            (item["kind"], item["name"], item["description"], item.get("parameters", ""))
-            for item in self._catalog
-        )
-        if inventory != self._inventory:
-            self._note = None
-            self._inventory = inventory
-        loaded = loaded_names(request.messages)
-        if self._skill_tools is not None:
-            loaded.update(self._skill_tools(request.messages))
+        capabilities = loaded_capabilities(request.messages)
+        loaded = {name for kind, name in capabilities if kind == "tool"}
+        loaded_agents = {name for kind, name in capabilities if kind == "subagent"}
         # Skill snapshots activate their optional schemas without a second search.
         # Ordinary registered tools remain independently searchable.
         for message in request.messages:
             extra = getattr(message, "additional_kwargs", {})
             snapshot = extra.get("skill", {}) if extra.get("lc_source") == "pinned_skill" else {}
-            if isinstance(message, ToolMessage) and message.name == "skills_load" and message.status != "error" and isinstance(message.artifact, dict):
+            if (
+                isinstance(message, ToolMessage)
+                and message.name == "skills_load"
+                and message.status != "error"
+                and isinstance(message.artifact, dict)
+            ):
                 snapshot = message.artifact.get("skill", {})
             if isinstance(snapshot, dict):
                 include = snapshot.get("include_tools", [])
                 if isinstance(include, list):
                     loaded.update(name for name in include if isinstance(name, str))
         keep = set(CORE_TOOLS) | (self._frequent or set()) | loaded
-        keep.update(_name(tool) for tool in request.tools if (getattr(tool, "metadata", None) or {}).get("_nova_skill_active"))
-        bound, deferred = [], []
+        keep.update(
+            _name(tool)
+            for tool in request.tools
+            if (getattr(tool, "metadata", None) or {}).get("_nova_skill_active")
+        )
+        bound: list[Any] = []
+        deferred: list[Any] = []
         for tool in request.tools:
             (bound if _name(tool) in keep else deferred).append(tool)
-        hidden = [n for n in self._deferred_subagents if n not in loaded]
+        hidden = [n for n in self._deferred_subagents if n not in loaded_agents]
         bound = [self._shorten(t, hidden) for t in bound]
         if not deferred and not hidden:
             return request.override(tools=bound)
 
-        if self._note is None:  # changes only when available inventory changes
-            optional_names = [
-                item["name"]
-                for item in self._catalog
-                if item["kind"] == "tool" and item["name"] not in CORE_TOOLS
-            ]
-            self._note = (
-                "\n\n## More tools (load on demand)\n\n"
-                f"Additional tool schemas load on demand to save context. "
-                f"{len(self._deferred_subagents)} specialist subagents are searchable.\n"
-                f"{_group(optional_names)}\n\n"
-                'Call `search_tools("<what you need>")` or `search_tools("name1, name2")`; '
-                f"Use `{REGEX_TOOL}` for regex or `{BM25_TOOL}` "
-                "for natural-language keyword ranking. "
-                'Search covers all available tools. Use query="*" or a wildcard '
-                'such as "playwright_*" '
-                "to browse; limit and offset retrieve further matches. "
-                "What it returns is callable from your next step. Never guess a tool's "
-                "arguments: load it first."
-            )
-        blocks = request.system_message.content_blocks if request.system_message else []
+        optional_names = [
+            _name(tool) for tool in request.tools if _name(tool) and _name(tool) not in CORE_TOOLS
+        ]
+        note = (
+            "\n\n## More tools (load on demand)\n\n"
+            f"{len(optional_names)} optional tools and {len(self._deferred_subagents)} "
+            "specialist subagents are searchable. Capability groups:\n"
+            f"{_group(optional_names)}\n\n"
+            'Call search_tools("<capability>") or use exact names. query="*" browses; '
+            'wildcards such as "playwright_*", limit and offset inspect further results. '
+            f"{REGEX_TOOL} supports regex; {BM25_TOOL} supports keyword search. "
+            "Search loads schemas, not permission. Normal approvals and execution policy "
+            "still apply. Never guess arguments: load the schema first. "
+            "After compaction, search again for schemas no longer available."
+        )[:MAX_INVENTORY_CHARS]
+        blocks = (
+            [dict(block) for block in request.system_message.content_blocks]
+            if request.system_message
+            else []
+        )
         return request.override(
             tools=bound,
-            system_message=SystemMessage(content=[*blocks, {"type": "text", "text": self._note}]),
+            system_message=SystemMessage(content=[*blocks, {"type": "text", "text": note}]),
         )
 
     def wrap_model_call(

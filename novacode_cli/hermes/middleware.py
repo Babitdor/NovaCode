@@ -597,6 +597,17 @@ class NovaLearningMiddleware(AgentMiddleware[NovaState]):
                 if outcome
                 else status_ok and not _execution_failed(tool_name, response)
             )
+            if tool_name == "skills_load":
+                snapshot = artifact.get("skill") if isinstance(artifact, dict) else None
+                success = bool(
+                    status_ok and isinstance(snapshot, dict)
+                    and snapshot.get("name") == skill_invoked and snapshot.get("path")
+                    and not _content_to_text(response).lstrip().lower().startswith("error")
+                )
+            elif skill_invoked:
+                success = success and not (
+                    _content_to_text(response).lstrip().lower().startswith("error")
+                )
             await self._tracker.increment_counter()
             await self._tracker.record_tool_usage(
                 tool_name,

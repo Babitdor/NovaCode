@@ -1055,7 +1055,15 @@ class NovaConfig:
             message = "Unsupported compression mode."
             raise ValueError(message)
         self._config.update(compression_mode=mode, caveman_enabled=mode == "caveman")
+        if mode != "off":
+            self._config["compression_last_mode"] = mode
         self._save()
+
+    def get_preferred_compression_mode(self) -> str:
+        """Remember the chosen style while off, including profiles predating Lite Mode."""
+        active = self.get_compression_mode()
+        saved = active if active != "off" else self.get("compression_last_mode", "caveman")
+        return saved if saved in ("caveman", "ponytail") else "caveman"
 
     def get_ponytail_level(self) -> str:
         """Read Ponytail intensity independently of the Caveman settings."""
@@ -1090,11 +1098,18 @@ class NovaConfig:
 
     def get_caveman_features(self) -> dict[str, bool]:
         """Read independent switches, effective only while the master mode is on."""
-        saved = self.get("caveman_features", {})
-        saved = saved if isinstance(saved, dict) else {}
         master = self.get_caveman_enabled()
         return {
-            name: master and _config_bool(saved.get(name), default=True)
+            name: master and enabled
+            for name, enabled in self.get_caveman_feature_preferences().items()
+        }
+
+    def get_caveman_feature_preferences(self) -> dict[str, bool]:
+        """Read saved feature choices independently of the active compression style."""
+        saved = self.get("caveman_features", {})
+        saved = saved if isinstance(saved, dict) else {}
+        return {
+            name: _config_bool(saved.get(name), default=True)
             for name in ("say", "read", "auto", "blocks", "waste", "browse")
         }
 
@@ -1125,6 +1140,8 @@ class NovaConfig:
         self._config.update(caveman_features=features, caveman_level=level)
         if mode is not None:
             self._config.update(compression_mode=mode, caveman_enabled=mode == "caveman")
+            if mode != "off":
+                self._config["compression_last_mode"] = mode
         if ponytail_level is not None:
             self._config["ponytail_level"] = ponytail_level
         self._save()

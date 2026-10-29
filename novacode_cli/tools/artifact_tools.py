@@ -26,8 +26,12 @@ def _host_artifact(art, registry) -> tuple[str, str | None]:
         return local_url, f"Temporary public hosting unavailable: {exc}"
 
 
-@tool
-def create_artifact(title: str, type: str = "markdown", content: str = "") -> str:
+@tool(response_format="content_and_artifact")
+def create_artifact(
+    title: str,
+    type: str = "markdown",  # noqa: A002 - Preserve the public tool argument named type.
+    content: str = "",
+) -> tuple[str, dict]:
     """Create a live, shareable web page from a session output.
 
     For results clearer as a visual page (a walkthrough, an analysis, a
@@ -53,13 +57,19 @@ def create_artifact(title: str, type: str = "markdown", content: str = "") -> st
     art = registry.create(title, type, content)
     url, share_note = _host_artifact(art, registry)
     availability = f"\n{share_note}" if share_note else ""
-    return (
+    text = (
         f"Artifact created: '{art.title}' ({art.type}).\n"
         f"id: {art.id}\nURL: {url}{availability}\n"
         f"Update it in place with update_artifact(id='{art.id}', content='...') "
         f"instead of creating a duplicate.\n"
-        "Loaded tools: update_artifact"  # tool_search.LOADED_MARKER: bound from the next step
+        "Loaded tools: update_artifact"
     )
+    return text, {
+        "nova_tool_search": {
+            "version": 1,
+            "capabilities": [{"kind": "tool", "name": "update_artifact"}],
+        },
+    }
 
 
 @tool

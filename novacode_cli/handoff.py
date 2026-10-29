@@ -70,31 +70,35 @@ class HandoffMemory:
 
     def get(self, identity: str) -> Record | None:
         """Resolve a handoff only within this project."""
+        record = self.get_for_deletion(identity)
+        return None if self.store.get(self.deleted_namespace, identity) else record
+
+    def get_for_deletion(self, identity: str) -> Record | None:
+        """Read a stored record for cleanup, including a partially deleted one."""
         item = self.store.get(self.namespace, identity)
-        if (
-            item
-            and item.value.get("version") == 1
-            and not self.store.get(self.deleted_namespace, identity)
-        ):
+        if item and item.value.get("version") == 1:
             return deepcopy(item.value)
         return None
 
     def records(self) -> list[Record]:
         """List saved handoffs with names and newest snapshots first."""
+        records = []
+        for item in self.store.search(self.namespace, limit=200):
+            if item.value.get("version") != 1:
+                continue
+            record = deepcopy(item.value)
+            if self.store.get(self.deleted_namespace, item.key):
+                record.update(status="deletion_pending", deletion_pending=True)
+            records.append(record)
         return sorted(
-            (
-                item.value
-                for item in self.store.search(self.namespace, limit=200)
-                if item.value.get("version") == 1
-                and not self.store.get(self.deleted_namespace, item.key)
-            ),
+            records,
             key=lambda record: record.get("updated_at", 0),
             reverse=True,
         )
 
     def delete(self, identity: str) -> bool:
         """Remove only a project record; keep a content-free marker fencing late saves."""
-        if self.get(identity) is None:
+        if self.get_for_deletion(identity) is None:
             return False
         self.store.put(self.deleted_namespace, identity, {"deleted": True})
         self.store.delete(self.namespace, identity)
@@ -121,6 +125,8 @@ def document(record: Record) -> str:
     ]
     if record.get("skill_source"):
         lines.append(f"Skill: handoff ({record['skill_source']})")
+    if record.get("deletion_pending"):
+        return "\n".join(lines) + "\n\nDeletion incomplete. Retry Delete to finish removal."
     if record.get("content"):
         parts = [*lines, "", record["content"]]
         if str(record.get("summary_kind", "")).startswith("snapshot"):
@@ -232,6 +238,7 @@ class HandoffRun:
             "objective": source.get("objective") or prime_memory.safe_text(request, 4000),
             "status": "paused",
             "summary_kind": "snapshot (summary not yet recorded)",
+            "summary_status": "snapshot",
             "content": source.get("content", ""),
             "skill_source": self.skill.source if self.skill else None,
             "updated_at": time.time(),
@@ -275,6 +282,7 @@ class HandoffRun:
                 title=prime_memory.safe_text(title, 120),
                 content=prime_memory.safe_text(content, MAX_DOCUMENT_CHARS),
                 summary_kind="agent summary (handoff skill; claims must be rechecked)",
+                summary_status="document",
             )
             self.save()
 
@@ -285,6 +293,7 @@ class HandoffRun:
                 title=prime_memory.safe_text(title, 120),
                 objective=prime_memory.safe_text(objective, 4000),
                 summary_kind="agent summary (claims must be rechecked)",
+                summary_status="structured",
             )
             for key in SECTIONS:
                 if key != "objective":
@@ -329,6 +338,17 @@ class HandoffRun:
             self.record["status"] = "saved" if outcome == "complete" else "paused"
             self.record["outcome"] = outcome
             self.save()
+
+    def notice(self) -> str:
+        """Distinguish a new skill document from an inherited document or fallback snapshot."""
+        if self.error:
+            return self.error
+        kind = self.record.get("summary_status", "snapshot")
+        if kind == "document":
+            return f"Handoff document saved: {self.record['title']}"
+        if kind == "structured":
+            return f"Handoff summary saved (legacy format): {self.record['title']}"
+        return "Passing snapshot saved; the handoff skill did not produce a new document."
 
 
 current_handoff: ContextVar[HandoffRun | None] = ContextVar("nova_handoff_run", default=None)

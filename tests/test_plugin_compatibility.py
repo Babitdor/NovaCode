@@ -21,6 +21,19 @@ if TYPE_CHECKING:
 Store = tuple[Path, Path, Path]
 
 
+def test_only_singular_plugin_command_is_registered():
+    from novacode_cli.commands import CommandRegistry
+    from novacode_cli.commands.plugin_install_handler import register_commands
+    from novacode_cli.tui.app import TUI_COMMANDS
+
+    registry = CommandRegistry()
+    register_commands(registry)
+    assert registry.get("plugin") is not None
+    assert registry.get("plugins") is None
+    assert "plugin" in TUI_COMMANDS
+    assert "plugins" not in TUI_COMMANDS
+
+
 @pytest.fixture
 def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Store:
     home = tmp_path / "home"

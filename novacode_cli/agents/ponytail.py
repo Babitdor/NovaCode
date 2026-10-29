@@ -56,7 +56,7 @@ def helper_prompt(text: str) -> str:
         + "\n\n"
         + args
         + (
-            "\nNova host: compression settings use /ponytail and the composer selector. "
+            "\nNova host: compression settings use /lite-mode and the composer selector. "
             "Claude-specific band/board and statusline hooks are not installed in Nova. "
             "Report measured savings only; do not present upstream benchmark figures "
             "as this session's usage."

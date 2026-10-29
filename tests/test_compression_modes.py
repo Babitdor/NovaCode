@@ -111,7 +111,7 @@ def test_helpers_preserve_upstream_body_and_mode(name: str) -> None:
     assert config.get_compression_mode() == "caveman"
 
 
-async def test_composer_cycles_preserving_draft_and_settings(
+async def test_composer_toggles_preserving_draft_and_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from unittest.mock import Mock
@@ -126,16 +126,16 @@ async def test_composer_cycles_preserving_draft_and_settings(
         prompt = app.query_one("#prompt")
         prompt.text = "unfinished draft"
         button = app.query_one("#caveman-toggle", Button)
-        for mode in ("caveman", "ponytail", "off"):
+        for mode in ("caveman", "off"):
             await pilot.click("#caveman-toggle")
             await pilot.pause(0.4)
             assert NovaConfig().get_compression_mode() == mode
             assert prompt.text == "unfinished draft"
-        await app._run_ponytail("/ponytail ultra")
-        assert str(button.label) == "Ponytail: on"
-        await app._run_ponytail("/ponytail")
+        await app._run_lite_mode("/lite-mode ponytail ultra")
+        assert str(button.label) == "Lite: Ponytail"
+        await app._run_lite_mode("/lite-mode on")
         assert NovaConfig().get_ponytail_level() == "ultra"
-        await app._run_ponytail("/ponytail settings")
+        await app._run_lite_mode("/lite-mode settings")
         await pilot.pause()
         assert app.screen.query_one("#compression-mode", Select).value == "ponytail"
         assert app.screen.query_one("#ponytail-level", Select).value == "ultra"
@@ -224,7 +224,7 @@ async def test_settings_save_works_in_narrow_terminal(monkeypatch: pytest.Monkey
     app = _app()
     monkeypatch.setattr(type(app), "_sample_home_system", Mock())
     async with app.run_test(size=(45, 25)) as pilot:
-        await app._run_ponytail("/ponytail settings")
+        await app._run_lite_mode("/lite-mode settings")
         await pilot.pause()
         app.screen.query_one("#compression-mode", Select).value = "ponytail"
         app.screen.query_one("#ponytail-level", Select).value = "lite"
@@ -235,4 +235,4 @@ async def test_settings_save_works_in_narrow_terminal(monkeypatch: pytest.Monkey
         await pilot.pause()
         assert NovaConfig().get_compression_mode() == "ponytail"
         assert NovaConfig().get_ponytail_level() == "lite"
-        assert str(app.query_one("#caveman-toggle", Button).label) == "Ponytail: on"
+        assert str(app.query_one("#caveman-toggle", Button).label) == "Lite: Ponytail"

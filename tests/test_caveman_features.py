@@ -299,7 +299,7 @@ async def test_options_save_and_cancel_are_persistent_and_independent(
         await pilot.pause()
         assert NovaConfig().get("caveman_features")["browse"] is False
         assert NovaConfig().get_caveman_enabled() is False
-        await app._run_caveman("/caveman settings")
+        await app._run_lite_mode("/lite-mode settings")
         await pilot.pause()
         app.screen.query_one(SelectionList).select("browse")
         await pilot.press("escape")

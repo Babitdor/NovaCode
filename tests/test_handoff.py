@@ -16,7 +16,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from novacode_cli import ui_events as ev
 from novacode_cli.agents.handoff import HandoffMiddleware, handoff_save
-from novacode_cli.commands.handoff_handler import handle_handoff_command
+from novacode_cli.commands.handoff_handler import handle_passing_command
 from novacode_cli.core.agent_loop import iterate_agent_events
 from novacode_cli.handoff import (
     HandoffMemory,
@@ -65,23 +65,23 @@ def summary(run: HandoffRun) -> None:
 
 def test_commands_are_local_and_project_specific(tmp_path: Path):
     session = state(tmp_path, enabled=False)
-    assert "off" in handle_handoff_command(session, "status")
-    assert "on" in handle_handoff_command(session, "on")
+    assert "off" in handle_passing_command(session, "status")
+    assert "on" in handle_passing_command(session, "on")
     assert not session.auto_approve
-    assert "No saved" in handle_handoff_command(session)
+    assert "No saved" in handle_passing_command(session)
     (tmp_path / "app.py").write_text("original")
     run = HandoffRun(session, "Build a portfolio")
     summary(run)
     run.finish("complete")
-    assert "Portfolio accessibility" in handle_handoff_command(session)
-    assert "Suggested Skills" in handle_handoff_command(session, f"preview {run.record['id']}")
-    assert "Loaded handoff" in handle_handoff_command(session, f"resume {run.record['id']}")
+    assert "Portfolio accessibility" in handle_passing_command(session)
+    assert "Suggested Skills" in handle_passing_command(session, f"preview {run.record['id']}")
+    assert "Loaded handoff" in handle_passing_command(session, f"resume {run.record['id']}")
     assert session.handoff_pending["id"] == run.record["id"]
     assert not session.auto_approve
     other = tmp_path / "other-project"
     other.mkdir()
     assert HandoffMemory(str(other)).get(run.record["id"]) is None
-    assert "not found" in handle_handoff_command(state(other), f"resume {run.record['id']}")
+    assert "not found" in handle_passing_command(state(other), f"resume {run.record['id']}")
 
 
 def test_linked_worktrees_share_handoffs_and_warn_without_switching(tmp_path: Path):

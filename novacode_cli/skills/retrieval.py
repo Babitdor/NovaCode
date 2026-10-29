@@ -2,35 +2,43 @@
 
 Hybrid search over each skill's name + description: BM25 (exact terms like
 "clickhouse", "pptx") fused with static Model2Vec embeddings (paraphrases like
-"deck" -> pptx) by reciprocal rank. On the real 627-skill library this put the
-right skill in the top 3 for 31 of 32 test prompts, at under 1 ms a query; adding
-the skill body did not help. The embedder is the one ``code_search`` already
+"deck" -> pptx) by reciprocal rank. Skill bodies and supporting references are
+loaded separately, only when needed. The embedder is the one ``code_search`` already
 downloads; until it has loaded (or if it cannot), search is BM25-only.
 """
 
 from __future__ import annotations
 
 import concurrent.futures
+import copy
 import functools
+import json
 import logging
 import re
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, Generic, TypeVar
 
 logger = logging.getLogger("nova.skills.retrieval")
+SkillT = TypeVar("SkillT", bound=Mapping[str, Any])
 
 MODEL_NAME = "minishlab/potion-code-16M"  # shared with code_search: already cached
 
-# An unprompted suggestion needs a skill that STANDS OUT: its similarity this
-# many standard deviations above the library's mean for the request. Raw scores
-# do not work: BM25 grows with query length (every long eval instruction
-# "matched" three junk skills) and a lone rare word ("continue") spikes it.
-# Measured: real matches z >= 4.8, long task texts <= 3.0, chit-chat mostly < 4.5.
-MIN_Z = 4.5
-MIN_COSINE = 0.4
+# Candidate suggestions, never activation. Absolute similarity and separation
+# from ordinary matches work even for a one-skill specialist library.
+MIN_COSINE = 0.55
+MIN_DENSE_MARGIN = 0.08
+MIN_TASK_WORDS = 3
+MIN_LEXICAL_TERMS = 2
+_GENERIC_TERMS = frozenset(
+    "a an and are as at be build can code create do for from help how i improve in "  # noqa: SIM905
+    "is it make me my need of on or our please task that the their this to use using "
+    "want we with work write you your file files result results output add fix "
+    "implement test tests testing review".split()
+)
 
 _executor: concurrent.futures.ThreadPoolExecutor | None = None
 _model_future: concurrent.futures.Future | None = None
-_index_cache: dict[tuple, SkillIndex] = {}
+_index_cache: dict[str, SkillIndex[Any]] = {}
 
 
 def _cached_model_path() -> str:
@@ -108,24 +116,35 @@ def prewarm() -> None:
     _model()
 
 
-def _doc(item: dict) -> str:
+def _doc(item: Mapping[str, Any]) -> str:
     name = item["name"].replace("-", " ").replace("_", " ")
-    return f"{name}. {item.get('description', '')}"
+    return f"{name}. {item.get('description', '')} {item.get('parameters', '')}".rstrip()
 
 
 def _tokenize(texts: list[str]) -> Any:
     import bm25s
 
-    return bm25s.tokenize(texts, stopwords="en", show_progress=False)
+    return bm25s.tokenize(
+        [text.replace("_", " ") for text in texts], stopwords="en", show_progress=False,
+    )
 
 
-class SkillIndex:
+def _terms(text: str) -> set[str]:
+    return set(re.findall(r"[\w]+", text.casefold())) - _GENERIC_TERMS
+
+
+def _named(query: str, name: str) -> bool:
+    return bool(re.search(r"(?<![\w.-])" + re.escape(name) + r"(?![\w.-])", query, re.IGNORECASE))
+
+
+class SkillIndex(Generic[SkillT]):
     """BM25 + (when available) dense index over skills (or any name + description dicts)."""
 
-    def __init__(self, skills: list[dict]) -> None:
+    def __init__(self, skills: list[SkillT]) -> None:
+        """Index a private metadata snapshot for this exact source inventory."""
         import bm25s
 
-        self.skills = skills
+        self.skills = copy.deepcopy(skills)
         docs = [_doc(s) for s in skills]
         self._bm25 = bm25s.BM25()
         self._bm25.index(_tokenize(docs), show_progress=False)
@@ -141,7 +160,7 @@ class SkillIndex:
     def dense(self) -> bool:
         return self._emb is not None
 
-    def search(self, query: str, k: int = 5) -> list[tuple[dict, float, float]]:
+    def search(self, query: str, k: int = 5) -> list[tuple[SkillT, float, float]]:
         """Top ``k`` skills as ``(skill, cosine, bm25)``, best first."""
         import numpy as np
 
@@ -153,7 +172,7 @@ class SkillIndex:
         bm25 = dict(zip(idx[0].tolist(), scores[0].tolist(), strict=True))
         ranked = [i for i, s in bm25.items() if s > 0]
         cosine: dict[int, float] = {}
-        if self._emb is not None:
+        if self._emb is not None and self._model is not None:
             q = self._model.encode([query])[0]
             sims = self._emb @ (q / (np.linalg.norm(q) + 1e-9))
             dense = np.argsort(-sims)[:candidates].tolist()
@@ -162,29 +181,62 @@ class SkillIndex:
             for rank_list in (ranked, dense):
                 for r, i in enumerate(rank_list):
                     fused[i] = fused.get(i, 0.0) + 1 / (60 + r)
-            ranked = sorted(fused, key=fused.get, reverse=True)
+            ranked = sorted(fused, key=lambda i: fused[i], reverse=True)
+        # An explicit name must not lose to a semantically similar description.
+        ranked.sort(key=lambda i: not _named(query, self.skills[i]["name"]))
         return [(self.skills[i], cosine.get(i, 0.0), bm25.get(i, 0.0)) for i in ranked[:k]]
 
-    def suggest(self, query: str, k: int = 3, exclude: set[str] = frozenset()) -> list[dict]:
-        """Skills that stand out for ``query``; none without the embedder."""
+    def suggest(
+        self, query: str, k: int = 3, exclude: set[str] | frozenset[str] = frozenset(),
+        usage: dict[str, int] | None = None,
+    ) -> list[SkillT]:
+        """Offer relevant candidates; lexical matches also work without embeddings.
+
+        Usage only breaks ties between equally relevant candidates. A suggestion
+        is context for the model to assess, not permission to load or execute.
+        """
         import numpy as np
 
-        if self._emb is None or len(query.split()) < 3:
-            return []  # BM25 alone cannot tell a match from noise; "continue" is not a task
-        q = self._model.encode([query])[0]
-        sims = self._emb @ (q / (np.linalg.norm(q) + 1e-9))
-        z = (sims - sims.mean()) / (sims.std() + 1e-9)
-        out = [
-            self.skills[i]
-            for i in np.argsort(-sims)[: k + len(exclude)].tolist()
-            if z[i] >= MIN_Z and sims[i] >= MIN_COSINE and self.skills[i]["name"] not in exclude
-        ]
-        return out[:k]
+        if not self.skills or not query.strip():
+            return []
+        baseline = 0.0
+        if self._emb is not None and self._model is not None and len(self.skills) > 1:
+            q = self._model.encode([query])[0]
+            baseline = float(np.median(self._emb @ (q / (np.linalg.norm(q) + 1e-9))))
+        terms = _terms(query)
+        candidates = []
+        for skill, cosine, _bm25 in self.search(query, k=len(self.skills)):
+            name = skill["name"]
+            if name in exclude:
+                continue
+            denied = re.search(
+                r"\b(?:do not|don't|never|without|skip|avoid)\s+"
+                r"(?:(?:use|using|load|loading)\s+)?(?:the\s+)?[/$]?"
+                + re.escape(name) + r"(?![\w.-])", query, re.IGNORECASE,
+            )
+            if denied:
+                continue
+            exact = _named(query, name)
+            if len(query.split()) < MIN_TASK_WORDS and not exact:
+                continue
+            overlap = terms & _terms(_doc(skill))
+            lexical = len(overlap) >= MIN_LEXICAL_TERMS or bool(terms & _terms(name))
+            semantic = (
+                len(query.split()) >= MIN_TASK_WORDS and cosine >= MIN_COSINE
+                and cosine - baseline >= MIN_DENSE_MARGIN
+            )
+            if exact or lexical or semantic:
+                relevance = (exact, len(overlap), round(cosine, 1))
+                candidates.append((relevance, (usage or {}).get(name, 0), skill))
+        candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return [skill for _, _, skill in candidates[:k]]
 
 
-def get_index(skills: list[dict]) -> SkillIndex:
+def get_index(skills: list[SkillT]) -> SkillIndex[SkillT]:
     """A cached index for this exact skill list (rebuilt once the embedder is up)."""
-    key = tuple((s["name"], s.get("description", ""), s.get("kind", "")) for s in skills)
+    # The cached index holds source objects, not just vectors. Include their
+    # complete identity so a different project or tool metadata cannot leak in.
+    key = json.dumps(skills, sort_keys=True, default=str)
     index = _index_cache.get(key)
     if index is None or (not index.dense and _model() is not None):
         index = SkillIndex(skills)
@@ -200,3 +252,24 @@ def first_sentence(text: str, limit: int = 150) -> str:
     m = re.match(r"(.+?[.!?])(\s|$)", text)
     text = m.group(1) if m else text
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def skill_summary(text: str, limit: int = 600) -> str:
+    """Preserve scope and exclusions instead of discarding later sentences."""
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    boundaries = [
+        sentence for sentence in sentences[1:]
+        if re.search(
+            r"\b(?:use when|only|not for|do not|don't|skip|never|avoid|trigger)\b",
+            sentence, re.IGNORECASE,
+        )
+    ]
+    if not boundaries:
+        return text[:limit - 1].rstrip() + "…"
+    lead = first_sentence(sentences[0], min(150, limit // 3))
+    rest = " ".join(boundaries)
+    remaining = limit - len(lead) - 1
+    return lead + " " + (rest if len(rest) <= remaining else rest[:remaining - 1].rstrip() + "…")

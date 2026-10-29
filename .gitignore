@@ -227,3 +227,5 @@ tmp/
 
 # Local runtime state of the ruflo Claude Code plugin
 /.claude-flow/
+!docs/plugin-compatibility-spec.md
+!docs/plugin-compatibility-evidence.md

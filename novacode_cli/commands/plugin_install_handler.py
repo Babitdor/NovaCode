@@ -34,6 +34,5 @@ async def handle_plugin_install_command(ctx: CommandContext) -> bool:
 
 
 def register_commands(registry: CommandRegistry) -> None:
-    """Keep the plural spelling as an alias for the standard /plugin command."""
+    """Register the standard /plugin command."""
     registry.register("plugin", handle_plugin_install_command)
-    registry.register("plugins", handle_plugin_install_command)

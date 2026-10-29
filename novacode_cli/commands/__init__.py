@@ -130,6 +130,9 @@ def build_command_registry() -> CommandRegistry:
     from novacode_cli.commands.handoff_handler import register_commands as register_handoff
 
     register_handoff(registry)
+    from novacode_cli.commands.lite_mode_handler import register_commands as register_lite_mode
+
+    register_lite_mode(registry)
 
     # Module-based handlers ##################################################
     # Import each handler module's register_commands and call it.

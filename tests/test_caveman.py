@@ -212,10 +212,10 @@ async def test_intensity_commands_and_options_save_cancel(
     monkeypatch.setattr(type(app), "_sample_home_system", Mock())
     async with app.run_test(size=size) as pilot:
         for level in CAVEMAN_LEVELS:
-            await app._run_caveman("/caveman " + level)
+            await app._run_lite_mode("/lite-mode " + level)
             assert NovaConfig().get_caveman_level() == level
             assert NovaConfig().get_caveman_enabled()
-        await app._run_caveman("/caveman settings")
+        await app._run_lite_mode("/lite-mode settings")
         await pilot.pause()
         picker = app.screen.query_one("#caveman-level", Select)
         assert picker.value == "wenyan-ultra"
@@ -223,13 +223,13 @@ async def test_intensity_commands_and_options_save_cancel(
         await pilot.click("#caveman-save")
         await pilot.pause()
         assert NovaConfig().get_caveman_level() == "lite"
-        await app._run_caveman("/caveman settings")
+        await app._run_lite_mode("/lite-mode settings")
         await pilot.pause()
         app.screen.query_one("#caveman-level", Select).value = "full"
         await pilot.press("escape")
         await pilot.pause()
         assert NovaConfig().get_caveman_level() == "lite"
-        await app._run_caveman("/caveman off")
+        await app._run_lite_mode("/lite-mode off")
         assert not NovaConfig().get_caveman_enabled()
         assert NovaConfig().get_caveman_level() == "lite"
 
@@ -262,24 +262,24 @@ async def test_composer_toggle_click_keyboard_commands_and_restart(
         assert button.region.width > 0
         assert button.region.height == 1
         assert button.region.right <= size[0]
-        assert str(button.label) == "Compress: off"
+        assert str(button.label) == "Lite: off"
         assert await pilot.click("#caveman-toggle")
         await pilot.pause()
         assert NovaConfig().get_caveman_enabled()
-        assert str(button.label) == "Caveman: on"
+        assert str(button.label) == "Lite: Caveman"
         await pilot.pause(0.4)  # Button ignores repeat presses during its active animation.
         button.focus()
         await pilot.press("enter")
         await pilot.pause()
         assert not NovaConfig().get_caveman_enabled()
-        await app._run_caveman("/caveman on")
-        await app._run_caveman("/caveman status")
-        await app._run_caveman("/caveman invalid")
+        await app._run_lite_mode("/lite-mode on")
+        await app._run_lite_mode("/lite-mode status")
+        await app._run_lite_mode("/lite-mode invalid")
         assert NovaConfig().get_caveman_enabled()
     app = _app()
     async with app.run_test(size=size) as pilot:
         await pilot.pause()
-        assert str(app.query_one("#caveman-toggle", Button).label) == "Caveman: on"
+        assert str(app.query_one("#caveman-toggle", Button).label) == "Lite: Caveman"
 
 
 async def test_failed_save_keeps_current_toggle(monkeypatch: pytest.MonkeyPatch):
@@ -292,7 +292,7 @@ async def test_failed_save_keeps_current_toggle(monkeypatch: pytest.MonkeyPatch)
         )
         await app._set_caveman_enabled(enabled=True)
         assert not app._caveman_enabled
-        assert str(app.query_one("#caveman-toggle", Button).label) == "Compress: off"
+        assert str(app.query_one("#caveman-toggle", Button).label) == "Lite: off"
 
 
 @pytest.mark.timeout(40)

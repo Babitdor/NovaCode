@@ -24,7 +24,7 @@ for when you are about to do something unusual.
 ## 1. The name
 
 | Form | Where it belongs |
-|---|---|
+| --- | --- |
 | `Nova` | prose, headlines, documentation |
 | `NOVA.CODE` | the interface, the hero wordmark |
 | `nova@code:~$` | the shell identity, prompts, status lines |
@@ -282,7 +282,7 @@ These stay invariant on **every** Nova surface, without exception:
 These are free per surface:
 
 | Surface | What it leads with | What is optional |
-|---|---|---|
+| --- | --- | --- |
 | Landing page | editorial prose in a terminal's chrome, the reference implementation | section count and order |
 | TUI | the art, then the work. Chrome stays out of the way | every colour: the TUI themes are user-selectable, which is a feature |
 | Web surfaces (`/cowork`, `/chat`, `/create`) | the landing page's tokens applied to a live surface | layout |
@@ -315,7 +315,7 @@ verification. A surface that hides the verification is contradicting the promise
 Every rule here is cited to the file that owns it:
 
 | Owned by | Carries |
-|---|---|
+| --- | --- |
 | `landing/DESIGN.md` | voice, tokens, measured contrast, radii, motion timings, page structure and its own verification recipe |
 | `novacode_cli/brand.py` | the art, the width tiers, the product accents |
 | `landing/tools/make_brand_assets.py` | the source image and the crop boxes behind every derived asset |

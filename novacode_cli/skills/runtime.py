@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import re
 from html import escape
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
@@ -60,7 +63,7 @@ def pinned_message(skill: dict[str, Any], content: str) -> HumanMessage:
     )
 
 
-def active_skill_names(messages: list[Any], skills: list[dict[str, Any]]) -> set[str]:
+def active_skill_names(messages: list[Any], skills: Sequence[Mapping[str, Any]]) -> set[str]:
     """Only successful loads still in context activate a skill's private tools."""
     by_path = {str(skill["path"]).replace("\\", "/"): skill["name"] for skill in skills}
     known = {skill["name"]: str(skill["path"]) for skill in skills}

@@ -17,7 +17,7 @@ independently testable.  Owns four durable-store namespaces:
 
 The distinction between the last two matters: ``tool_stats`` tracks *tools*
 (``web_search``, ``code_search``, …), while ``skill_usage`` tracks
-actual SKILL.md *skills* the agent invoked by reading their file. The
+actual SKILL.md *skills* the agent loaded through skills_load or a file read. The
 refinement loop (``check_skill_effectiveness``) reads ``skill_usage`` — keying
 it off tool names (the historical bug) meant it could never match a real skill.
 
@@ -41,9 +41,7 @@ logger = logging.getLogger("nova.hermes.tracker")
 
 _MAX_COUNTER = 1_000_000  # Sanity cap to prevent integer overflow
 
-# A read of ``…/<something>skills…/<skill-name>/SKILL.md`` is how the agent
-# invokes a skill under deepagents' progressive-disclosure model (there is no
-# dedicated "load skill" tool). Capture the skill directory name.
+# Recognize legacy file reads alongside the dedicated skills_load tool.
 _SKILL_READ_RE = re.compile(r"/[^/]*skills[^/]*/(?P<name>[^/]+)/SKILL\.md$", re.IGNORECASE)
 # Tool names whose path argument can signal a skill read.
 _READ_TOOLS: frozenset[str] = frozenset({"read_file", "read", "view", "cat"})
@@ -165,17 +163,19 @@ class ToolUsageTracker:
     def skill_name_from_tool_call(tool_call: dict[str, Any] | None) -> str | None:
         """Return the skill name a tool call invokes, or ``None``.
 
-        A skill is invoked by reading its ``…/skills…/<name>/SKILL.md`` file
-        (deepagents progressive disclosure — there is no dedicated load tool).
-        Recognizes the common read tools and the typical path-argument keys.
+        Recognizes skills_load and legacy reads of a SKILL.md. The caller must
+        establish that the load actually succeeded before crediting it.
         """
         if not isinstance(tool_call, dict):
             return None
         name = tool_call.get("name", "")
-        if name not in _READ_TOOLS:
-            return None
         args = tool_call.get("args") or {}
         if not isinstance(args, dict):
+            return None
+        if name == "skills_load":
+            value = args.get("name")
+            return value if isinstance(value, str) and value.strip() else None
+        if name not in _READ_TOOLS:
             return None
         for key in ("file_path", "path", "filename", "file"):
             value = args.get(key)
@@ -250,7 +250,8 @@ class ToolUsageTracker:
             await self._track_tool_stats(tool_name, success)
 
             if skill_invoked:
-                await self._record_skill_invocation(skill_invoked)
+                if success:
+                    await self._record_skill_invocation(skill_invoked)
             elif (
                 self._active_skill
                 and self._active_skill_budget > 0

@@ -2525,7 +2525,7 @@ This file stores your preferences and context that persist across sessions.
     }
     agent_middleware.append(
         ToolSearchMiddleware(
-            skill_tools=skills_middleware._active_tools,
+            skills=skills_middleware,
             deferred_subagents=_deferred_agents,
             async_subagents={
                 s["name"] for s in subagents if isinstance(s, dict) and "graph_id" in s

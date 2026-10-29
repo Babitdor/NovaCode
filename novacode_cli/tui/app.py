@@ -588,7 +588,6 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "save": SlashCommand("_run_save", "save the session now", wants_text=False),
     "copy": SlashCommand("_run_copy", "copy last response (or whole chat) — or click a message"),
     "plugin": SlashCommand("_run_plugins", "install / manage plugins and marketplaces"),
-    "plugins": SlashCommand("_run_plugins", "alias for /plugin"),
     "middleware": SlashCommand(
         "_run_middleware", "list active middleware (/reload-plugins to reload)", wants_text=False
     ),
@@ -662,18 +661,17 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "prime": SlashCommand(
         "_run_prime", "Deep Work: on / off / status / report / tasks / checks / resume / forget"
     ),
-    "handoff": SlashCommand(
-        "_run_handoff", "project handoffs: browse / on / off / status / preview / resume / delete"
-    ),
-    "ponytail": SlashCommand(
-        "_run_ponytail", "coding efficiency: lite / full / ultra / off / settings / status",
+    "passing": SlashCommand(
+        "_run_passing", "project handoffs: browse / on / off / status / preview / resume / delete"
     ),
     "ponytail-review": SlashCommand("_run_ponytail_helper", "Ponytail review"),
     "ponytail-audit": SlashCommand("_run_ponytail_helper", "Ponytail audit"),
     "ponytail-debt": SlashCommand("_run_ponytail_helper", "Ponytail debt"),
     "ponytail-gain": SlashCommand("_run_ponytail_helper", "Ponytail gain"),
     "ponytail-help": SlashCommand("_run_ponytail_helper", "Ponytail help"),
-    "caveman": SlashCommand("_run_caveman", "token efficiency: on / off / lite / full / ultra / wenyan-* / settings / status / audit / blocks"),
+    "lite-mode": SlashCommand(
+        "_run_lite_mode", "compression: settings / on / off / caveman / ponytail / status / audit"
+    ),
     "trace": SlashCommand("_run_trace", "LangSmith tracing setup"),
     "log": SlashCommand("_run_log", "recent runs"),
     "theme": SlashCommand(
@@ -715,7 +713,8 @@ _LIVE_UI_COMMANDS = frozenset(
         "auto-approve",
         "help",
         "evolution",
-        "handoff",
+        "passing",
+        "lite-mode",
         "auth",
         "theme",
         "settings",
@@ -1625,7 +1624,7 @@ class NovaApp(App):
     Screen.narrow #composer-actions {
         grid-size: 2 3; grid-columns: 1fr 1fr; grid-rows: 1 1 1; height: 3;
     }
-    #prime-toggle, #handoff-toggle, #plan-toggle, #caveman-toggle, #code-mode-toggle {
+    #prime-toggle, #passing-toggle, #plan-toggle, #caveman-toggle, #code-mode-toggle {
         width: 16;
         min-width: 16;
         height: 1;
@@ -1638,12 +1637,12 @@ class NovaApp(App):
     #prime-toggle { width: 14; min-width: 14; }
     #plan-toggle { width: 12; min-width: 12; }
     #code-mode-toggle { width: 18; min-width: 18; }
-    #prime-toggle.enabled, #handoff-toggle.enabled, #plan-toggle.enabled,
+    #prime-toggle.enabled, #passing-toggle.enabled, #plan-toggle.enabled,
     #caveman-toggle.enabled, #code-mode-toggle.enabled {
         color: $accent;
         text-style: bold;
     }
-    #prime-toggle:focus, #prime-toggle:hover, #handoff-toggle:focus, #handoff-toggle:hover,
+    #prime-toggle:focus, #prime-toggle:hover, #passing-toggle:focus, #passing-toggle:hover,
     #plan-toggle:focus, #plan-toggle:hover,
     #caveman-toggle:focus, #caveman-toggle:hover,
     #code-mode-toggle:focus, #code-mode-toggle:hover {
@@ -2621,11 +2620,11 @@ class NovaApp(App):
                     ),
                 )
                 yield Button(
-                    "Handoff: off",
-                    id="handoff-toggle",
+                    "Passing: off",
+                    id="passing-toggle",
                     tooltip=(
                         "Automatically save project handoffs during requests. "
-                        "Use /handoff to preview and continue in a new session."
+                        "Use /passing to preview and continue in a new session."
                     ),
                 )
                 yield Button(
@@ -2634,16 +2633,16 @@ class NovaApp(App):
                     tooltip="Toggle read-only planning without submitting your draft.",
                 )
                 yield Button(
-                    "Compress: off",
+                    "Lite: off",
                     id="caveman-toggle",
                     tooltip=(
-                        "Cycle compression: off, Caveman, Ponytail. "
-                        "Saved across launches."
+                        "Toggle Lite Mode without sending your draft. "
+                        "Settings chooses Caveman or Ponytail; saved across launches."
                     ),
                 )
                 yield Button(
-                    "Options", id="caveman-options",
-                    tooltip="Choose compression mode and intensity",
+                    "Settings", id="caveman-options",
+                    tooltip="Choose a Lite Mode style, strength, and options",
                 )
                 yield Button(
                     "Code Mode: on",
@@ -8008,8 +8007,8 @@ class NovaApp(App):
         # must be a cheap no-op.
         auto = bool(getattr(self.session_state, "auto_approve", False))
         handoff = getattr(self.session_state, "handoff_enabled", False) is True
-        handoff_toggle = self._w("#handoff-toggle", Button)
-        handoff_toggle.label = "Handoff: on" if handoff else "Handoff: off"
+        handoff_toggle = self._w("#passing-toggle", Button)
+        handoff_toggle.label = "Passing: on" if handoff else "Passing: off"
         handoff_toggle.set_class(handoff, "enabled")
         pane = getattr(self, "_active_pane", None)
         handoff_toggle.disabled = pane is not None and pane.kind == "child"
@@ -9870,13 +9869,13 @@ class NovaApp(App):
         pending_prompt: str | None = None,
         task_status: str = "active",
         pane: SessionPane | None = None,
-    ) -> None:
+    ) -> bool:
         if self.session_manager is None:
-            return
+            return False
         # Serialize checkpoint reads as well as disk writes. A clear/new-session
         # transition must not race a periodic save for the old thread.
         async with self._session_save_lock:
-            await self._save_session_snapshot(
+            return await self._save_session_snapshot(
                 cleared=cleared,
                 pending_prompt=pending_prompt,
                 task_status=task_status,
@@ -9890,8 +9889,8 @@ class NovaApp(App):
         pending_prompt: str | None,
         task_status: str,
         pane: SessionPane | None,
-    ) -> None:
-        """Save the conversation to disk via the session manager (best effort).
+    ) -> bool:
+        """Save the conversation; return False on failure and True for an empty chat.
 
         Args:
             cleared: Mark the saved session as cleared (used by /clear) so it is
@@ -9902,7 +9901,7 @@ class NovaApp(App):
             pane: Owning pane, including a root session hidden behind another tab.
         """
         if self.session_manager is None:
-            return
+            return False
         try:
             bundle = (
                 pane.state
@@ -9930,7 +9929,7 @@ class NovaApp(App):
                 previous = await asyncio.to_thread(self.session_manager.load_session, session_id)
                 values = {"messages": previous.messages if previous else []}
             if thread_id != session_state.thread_id:
-                return
+                return False
             from novacode_cli.context.history import effective_messages
 
             # What the agent sees: after a compaction, its summary and the tail.
@@ -9940,7 +9939,7 @@ class NovaApp(App):
 
                 messages.append(HumanMessage(content=pending_prompt))
             if not messages:
-                return
+                return True
             from novacode_cli.config.config import settings
 
             todos = values.get("todos") or getattr(session_state, "todos", None)
@@ -9971,6 +9970,9 @@ class NovaApp(App):
             )
         except Exception:  # noqa: BLE001
             logger.warning("Session recovery save failed", exc_info=True)
+            return False
+        else:
+            return True
 
     def _session_messaging(self):
         from novacode_cli.sessions.tui_messaging import SessionCommunication
@@ -12267,7 +12269,7 @@ class NovaApp(App):
         mode = getattr(self, "_compression_mode", "off")
         enabled = mode != "off"
         toggle.label = {
-            "off": "Compress: off", "caveman": "Caveman: on", "ponytail": "Ponytail: on",
+            "off": "Lite: off", "caveman": "Lite: Caveman", "ponytail": "Lite: Ponytail",
         }[mode]
         toggle.set_class(enabled, "enabled")
 
@@ -12287,34 +12289,6 @@ class NovaApp(App):
         self._refresh_caveman_toggle()
         self.query_one("#prompt", PromptInput).focus()
 
-    async def _run_ponytail(self, text: str) -> None:
-        from novacode_cli.config.nova_config import NovaConfig
-
-        parts = text.split(maxsplit=1)
-        arg = parts[1].strip().lower() if len(parts) > 1 else ""
-        if arg == "settings":
-            await self._run_caveman("/caveman settings")
-            return
-        if arg == "status":
-            config = await asyncio.to_thread(NovaConfig)
-            self.notify(
-                f"Compression: {config.get_compression_mode()} "
-                f"· Ponytail {config.get_ponytail_level()}"
-            )
-            return
-        if arg not in {"", "on", "off", "lite", "full", "ultra"}:
-            self.notify(
-                "Usage: /ponytail [lite|full|ultra|off|settings|status]", severity="warning",
-            )
-            return
-        if arg in {"lite", "full", "ultra"}:
-            try:
-                await asyncio.to_thread(NovaConfig().set_ponytail_level, arg)
-            except (OSError, ValueError) as exc:
-                self.notify(f"Could not save Ponytail intensity: {exc}", severity="error")
-                return
-        await self._set_compression_mode("off" if arg == "off" else "ponytail")
-
     async def _run_ponytail_helper(self, text: str) -> None:
         from novacode_cli.agents.ponytail import helper_prompt
 
@@ -12324,13 +12298,14 @@ class NovaApp(App):
     @on(Button.Pressed, "#caveman-toggle")
     async def _caveman_toggle_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        mode = {"off": "caveman", "caveman": "ponytail", "ponytail": "off"}[self._compression_mode]
-        await self._set_compression_mode(mode)
+        await self._run_lite_mode(
+            "/lite-mode off" if self._compression_mode != "off" else "/lite-mode on"
+        )
 
     @on(Button.Pressed, "#caveman-options")
     async def _caveman_options_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        await self._run_caveman("/caveman settings")
+        await self._run_lite_mode("/lite-mode settings")
 
     @on(Button.Pressed, "#prime-toggle")
     async def _prime_toggle_pressed(self, event: Button.Pressed) -> None:
@@ -12339,23 +12314,23 @@ class NovaApp(App):
         await self._run_prime("/prime")
         self._w("#prompt", PromptInput).focus()
 
-    @on(Button.Pressed, "#handoff-toggle")
-    async def _handoff_toggle_pressed(self, event: Button.Pressed) -> None:
+    @on(Button.Pressed, "#passing-toggle")
+    async def _passing_toggle_pressed(self, event: Button.Pressed) -> None:
         """Apply to subsequent requests without sending or changing the composer's draft."""
         event.stop()
         enabled = getattr(self.session_state, "handoff_enabled", False) is True
-        await self._run_handoff("/handoff off" if enabled else "/handoff on")
+        await self._run_passing("/passing off" if enabled else "/passing on")
         self._w("#prompt", PromptInput).focus()
 
-    async def _run_handoff(self, text: str) -> None:
+    async def _run_passing(self, text: str) -> None:  # noqa: PLR0915 - Existing browser lifecycle.
         """Browse named project handoffs, or change the local mode without execution."""
-        from novacode_cli.commands.handoff_handler import handle_handoff_command
+        from novacode_cli.commands.handoff_handler import handle_passing_command
         from novacode_cli.prime_memory import session_directory
         from novacode_cli.tui.handoff_screen import HandoffScreen
 
         pane = getattr(self, "_active_pane", None)
         if pane is not None and pane.kind == "child":
-            self.notify("Use Handoff from the main session (Alt+1).")
+            self.notify("Use Passing from the main session (Alt+1).")
             return
         parts = text.split(maxsplit=1)
         args = parts[1].strip() if len(parts) > 1 else ""
@@ -12378,7 +12353,7 @@ class NovaApp(App):
                     self._turn_running() or self.session_state is not session
                     or session.thread_id != thread
                 ):
-                    self.notify("The session changed or is busy. Open /handoff again to continue.")
+                    self.notify("The session changed or is busy. Open /passing again to continue.")
                     return
                 from types import SimpleNamespace
 
@@ -12401,7 +12376,7 @@ class NovaApp(App):
                         self._turn_running() or self.session_state is not session
                         or session.thread_id != thread
                     ):
-                        self.notify("The session changed or is busy. Open /handoff again.")
+                        self.notify("The session changed or is busy. Open /passing again.")
                         return
                     prompt = self.query_one("#prompt", PromptInput)
                     prompt.disabled = True
@@ -12409,7 +12384,8 @@ class NovaApp(App):
                     try:
                         planning = session.plan_mode_enabled
                         planner, plan_backend = session.plan_agent, session.plan_backend
-                        await self._run_clear(preserve_previous=True)
+                        if not await self._run_clear(preserve_previous=True):
+                            return
                         session.plan_mode_enabled = planning
                         if planning:
                             session.plan_agent, session.plan_backend = planner, plan_backend
@@ -12438,7 +12414,7 @@ class NovaApp(App):
         if args.startswith("resume ") and self._turn_running():
             self.notify("Wait for the active request to finish before loading a handoff.")
             return
-        message = await asyncio.to_thread(handle_handoff_command, self.session_state, args)
+        message = await asyncio.to_thread(handle_passing_command, self.session_state, args)
         self.notify(message)
         self._update_mode_badge()
         await self._save_session()
@@ -12539,21 +12515,13 @@ class NovaApp(App):
                     return
                 await self._run_prime(f"/prime {action} {event.identity}")
 
-    async def _run_caveman(self, text: str) -> None:
-        from novacode_cli.config.nova_config import CAVEMAN_LEVELS, NovaConfig
+    async def _run_lite_mode(self, text: str) -> None:
+        """Share Lite Mode commands while keeping settings drafts and reports native."""
+        from novacode_cli.config.nova_config import NovaConfig
 
         parts = text.split(maxsplit=1)
         arg = parts[1].strip().lower() if len(parts) > 1 else ""
-        if arg in CAVEMAN_LEVELS:
-            try:
-                config = await asyncio.to_thread(NovaConfig)
-                await asyncio.to_thread(config.set_caveman_level, arg)
-            except (OSError, ValueError) as exc:
-                self.notify(f"Could not save Caveman intensity: {exc}", severity="error")
-                return
-            await self._set_caveman_enabled(True)
-            return
-        if arg == "settings":
+        if arg in {"", "settings"}:
             from novacode_cli.tui.caveman_screen import CavemanOptions, CavemanScreen
 
             config = await asyncio.to_thread(NovaConfig)
@@ -12570,9 +12538,9 @@ class NovaApp(App):
                     self._caveman_enabled = config.get_caveman_enabled()
                     self._refresh_caveman_toggle()
                 except (OSError, ValueError) as exc:
-                    self.notify(f"Could not save Caveman options: {exc}", severity="error")
+                    self.notify(f"Could not save Lite Mode settings: {exc}", severity="error")
 
-            saved = config.get("caveman_features", {})
+            saved = config.get_caveman_feature_preferences()
             self.push_screen(CavemanScreen(
                 saved if isinstance(saved, dict) else {},
                 router_ready=bool(config.get_router_routes()),
@@ -12598,25 +12566,16 @@ class NovaApp(App):
 
                 self._log(Text(json.dumps(result, indent=2)), transcript=True)
             except (OSError, ValueError, TimeoutError) as exc:
-                self.notify(f"Could not read Caveman report: {exc}", severity="error")
+                self.notify(f"Could not read Lite Mode report: {exc}", severity="error")
             return
-        if arg == "status":
-            config = await asyncio.to_thread(NovaConfig)
-            active = ", ".join(k for k, v in config.get_caveman_features().items() if v)
-            self.notify(
-                f"Caveman: {'on' if config.get_caveman_enabled() else 'off'} "
-                f"· {config.get_caveman_level()} · {active or 'none active'}"
-            )
-            return
-        if arg not in {"", "on", "off"}:
-            self.notify(
-                "Usage: /caveman [on|off|lite|full|ultra|wenyan-lite|wenyan-full|wenyan-ultra|"
-                "settings|status|audit|blocks]", severity="warning",
-            )
-            return
-        await self._set_caveman_enabled(
-            not self._caveman_enabled if not arg else arg == "on"
-        )
+        from novacode_cli.commands.lite_mode_handler import handle_lite_mode_command
+
+        message = await asyncio.to_thread(handle_lite_mode_command, arg)
+        config = await asyncio.to_thread(NovaConfig)
+        self._compression_mode = config.get_compression_mode()
+        self._caveman_enabled = config.get_caveman_enabled()
+        self._refresh_caveman_toggle()
+        self.notify(message)
 
     @staticmethod
     def _default_home_theme(style: str | None) -> str:
@@ -15352,7 +15311,7 @@ class NovaApp(App):
             )
         )
 
-    async def _run_clear(self, *, preserve_previous: bool = False) -> None:
+    async def _run_clear(self, *, preserve_previous: bool = False) -> bool:  # noqa: PLR0915 - Existing session lifecycle.
         """Start a fresh chat — a total reset. Save the current conversation first.
 
         Clearing only the transcript would leave the agent's full history in the
@@ -15363,11 +15322,19 @@ class NovaApp(App):
         state and re-baselines token usage. Long-term memory, the Nova learning
         store, and the agent itself are preserved. The previous conversation is
         saved first so nothing is lost.
+        With preserve_previous, a failed save aborts before changing any conversation state.
         """
         saved = self.session_manager is not None
         # /clear hides the old chat from continuation pickers; a handoff keeps
         # the previous conversation available under its original identity.
-        await self._save_session(cleared=not preserve_previous)
+        saved_ok = await self._save_session(cleared=not preserve_previous)
+        if preserve_previous and not saved_ok:
+            self.notify(
+                "Could not save the current chat. Passing continuation was stopped; "
+                "your conversation and draft are unchanged.",
+                severity="warning",
+            )
+            return False
         # Distil this conversation's un-reviewed work before it's gone.
         await self._consolidate_learning()
         # Belt-and-suspenders: explicitly mark the session cleared even if the
@@ -15465,6 +15432,7 @@ class NovaApp(App):
                 style="green",
             )
         )
+        return True
 
     def _banner_compact(self, height: int | None) -> bool:
         """A tight rain box: the dashboard's, or a window too short for the full one."""

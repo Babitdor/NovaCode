@@ -16,6 +16,25 @@ class Terminal(io.StringIO):
         return True
 
 
+@pytest.mark.parametrize("check_only", [True, False])
+def test_update_accepts_legacy_windows_output_encoding(monkeypatch, check_only):
+    raw = io.BytesIO()
+    output = io.TextIOWrapper(raw, encoding="cp1252", errors="strict")
+    monkeypatch.setattr(updates.sys, "stdout", output)
+    monkeypatch.setattr(
+        updates, "check_for_update", lambda **kwargs: updates.UpdateStatus(True, "old", "new")
+    )
+    monkeypatch.setattr(updates, "detect_installation", lambda: updates.Installation("1.0", "uv-tool"))
+    install = Mock(return_value=True)
+    monkeypatch.setattr(updates, "install_update", install)
+    monkeypatch.setattr(updates, "installed_version", lambda python: "1.1")
+    assert updates.update_main(["--check"] if check_only else []) == 0
+    output.flush()
+    rendered = raw.getvalue().decode("cp1252")
+    assert ("Update available" if check_only else "NovaCode updated") in rendered
+    assert install.call_count == (0 if check_only else 1)
+
+
 @pytest.fixture(autouse=True)
 def fast(monkeypatch):
     monkeypatch.setattr(display.time, "sleep", lambda _s: None)

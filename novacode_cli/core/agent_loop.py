@@ -1435,9 +1435,10 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
         )
     if handoff_run is not None:
         yield ev.ContextMessage(
-            handoff_run.error or f"Handoff saved: {handoff_run.record['title']}",
+            handoff_run.notice(),
             event_type="nova_handoff_status",
             record_id=handoff_run.record["id"],
+            data={"summary_status": handoff_run.record["summary_status"]},
         )
     yield ev.Done(had_response=has_responded)
 

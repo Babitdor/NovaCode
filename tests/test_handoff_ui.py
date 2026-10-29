@@ -36,12 +36,12 @@ async def test_toggle_and_keyboard_preview_preserve_draft_and_transcript(
         prompt = app.query_one("#prompt", PromptInput)
         prompt.text = "Keep my draft"
         previous_approval = app.session_state.auto_approve
-        toggle = app.query_one("#handoff-toggle", Button)
+        toggle = app.query_one("#passing-toggle", Button)
         toggle.focus()
         await pilot.press("enter")
         await pilot.pause()
         assert app.session_state.handoff_enabled
-        assert str(toggle.label) == "Handoff: on"
+        assert str(toggle.label) == "Passing: on"
         assert toggle.has_class("enabled")
         assert toggle.region.right <= size[0]
         assert app.session_state.auto_approve is previous_approval
@@ -61,7 +61,7 @@ async def test_toggle_and_keyboard_preview_preserve_draft_and_transcript(
         before_scroll = app._transcript().scroll_y
         log = Mock(wraps=app._log)
         monkeypatch.setattr(app, "_log", log)
-        await app._run_handoff("/handoff")
+        await app._run_passing("/passing")
         await pilot.pause()
         screen = app.screen
         assert isinstance(screen, HandoffScreen)
@@ -99,14 +99,14 @@ async def test_continue_starts_fresh_with_current_model_permissions_and_source_l
     session.plan_mode_enabled = True
     original_model = app.model_name
     original_approval = session.auto_approve
-    saved = AsyncMock()
+    saved = AsyncMock(return_value=True)
     monkeypatch.setattr(app, "_save_session", saved)
     monkeypatch.setattr(app, "_consolidate_learning", AsyncMock())
     dispatch = Mock()
     monkeypatch.setattr(app, "_dispatch_root", dispatch)
     async with app.run_test(size=(110, 38)) as pilot:
         await pilot.pause()
-        await app._run_handoff("/handoff")
+        await app._run_passing("/passing")
         await pilot.pause()
         await app.screen.workers.wait_for_complete()
         await pilot.click("#handoff-continue")
@@ -134,7 +134,7 @@ async def test_empty_project_search_and_status_notifications(
         monkeypatch.setattr(app, "_log", log)
         await app._render(ev.ContextMessage("Handoff saved", event_type="nova_handoff_status"))
         assert not any(call.kwargs.get("transcript") for call in log.call_args_list)
-        await app._run_handoff("/handoff")
+        await app._run_passing("/passing")
         await pilot.pause()
         await app.screen.workers.wait_for_complete()
         assert app.screen.query_one("#handoff-list", OptionList).option_count == 0
@@ -167,7 +167,7 @@ async def test_delete_confirmation_and_cancel_preserve_draft_and_project(
         prompt.text = "Keep my draft"
         log = Mock(wraps=app._log)
         monkeypatch.setattr(app, "_log", log)
-        await app._run_handoff("/handoff")
+        await app._run_passing("/passing")
         await pilot.pause()
         screen = app.screen
         await screen.workers.wait_for_complete()

@@ -373,8 +373,17 @@ restart_request: dict | None = None
 CONTINUE_ENV = "NOVA_CONTINUE_AFTER_UPDATE"
 
 
+def _configure_update_output() -> None:
+    """Keep terminal encoding while escaping unsupported update output characters."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(errors="backslashreplace")
+
+
 def update_main(arguments: list[str]) -> int:
     """Handle nova update independently of onboarding and model credentials."""
+    _configure_update_output()
     parser = argparse.ArgumentParser(
         prog="nova update", description="Update the running Nova installation"
     )
@@ -396,6 +405,7 @@ def update_main(arguments: list[str]) -> int:
 
 def _update_with_progress(*, restarting: bool = False) -> int:
     """Check, install and show the result in the terminal; return an exit code."""
+    _configure_update_output()
     hint = "Restarting Nova…" if restarting else "Run nova to start the new version."
     try:
         old = detect_installation().version

@@ -31,7 +31,8 @@ PNG = base64.b64decode(
 
 async def test_computer_is_visible_and_desktop_tools_load_on_demand(sdk: SimpleNamespace):
     from langchain.agents.middleware.types import ModelRequest
-    from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+    from langchain.tools import ToolRuntime
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
     from novacode_cli.agents.tool_search import ToolSearchMiddleware
     from novacode_cli.prompts import render_template
@@ -54,12 +55,34 @@ async def test_computer_is_visible_and_desktop_tools_load_on_demand(sdk: SimpleN
     status = json.loads(await initial.tools[0].ainvoke({}))
     assert status["phase"] == "stopped"
     sdk.boxes.create.assert_not_awaited()
-    found = middleware._tool_search("computer_screenshot, computer_action")
+    call = {
+        "name": "search_tools",
+        "id": "desktop-tools",
+        "type": "tool_call",
+        "args": {"query": "computer_screenshot, computer_action"},
+    }
+    owning_runtime = ToolRuntime(
+        state={"messages": request.messages},
+        context=None,
+        config={},
+        stream_writer=lambda _: None,
+        store=None,
+        tools=tools,
+        tool_call_id=call["id"],
+    )
+    found = await middleware.tools[0].ainvoke(
+        {
+            **call,
+            "args": {**call["args"], "runtime": owning_runtime},
+        }
+    )
+    assert isinstance(found, ToolMessage)
     loaded = middleware._apply(
         request.override(
             messages=[
                 *request.messages,
-                ToolMessage(found, name="search_tools", tool_call_id="desktop-tools"),
+                AIMessage("", tool_calls=[call]),
+                found,
             ]
         )
     )

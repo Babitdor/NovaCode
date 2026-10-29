@@ -130,14 +130,14 @@ def test_no_suggestion_unless_the_newest_message_is_the_user() -> None:
     assert "messages" not in (_mw()._finish(state, {"skills_metadata": SKILLS}) or {})
 
 
-def test_a_skill_is_not_suggested_twice_in_a_thread() -> None:
+def test_a_suggestion_can_recur_when_the_skill_was_not_loaded() -> None:
     mw, q = _mw(), "optimize my clickhouse database query analytics"
     first = mw._finish({"messages": [HumanMessage(q)]}, {"skills_metadata": SKILLS})["messages"][0]
     again = mw._finish(
         {"messages": [HumanMessage(q), first, AIMessage("done"), HumanMessage(q)]},
         {"skills_metadata": SKILLS},
     )
-    assert "clickhouse-io" not in str((again or {}).get("messages", ""))
+    assert "clickhouse-io" in str((again or {}).get("messages", ""))
 
 
 def test_skill_search_returns_paths() -> None:
@@ -158,13 +158,16 @@ def test_subagents_get_the_tiered_middleware() -> None:
     )._format_skills_list(SKILLS)
 
 
-def test_without_the_embedder_nothing_is_suggested_but_search_works(monkeypatch) -> None:
-    """BM25 alone cannot tell a match from noise ("continue" spikes it)."""
+def test_without_the_embedder_specific_keywords_suggest_and_search_works(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Domain terms can suggest a candidate without a model download."""
     monkeypatch.setattr(R, "_model", lambda: None)
     R._index_cache.clear()
     mw = _mw()
     state = {"messages": [HumanMessage("review my docker-compose files for security")]}
-    assert "messages" not in (mw._finish(state, {"skills_metadata": SKILLS}) or {})
+    assert "docker-reviewer" in str(mw._finish(state, {"skills_metadata": SKILLS})["messages"])
+    assert "messages" not in (mw._finish({"messages": [HumanMessage("continue")]}) or {})
     assert "/skills/docker-reviewer/SKILL.md" in mw.tools[0].invoke({"query": "docker compose"})
 
 

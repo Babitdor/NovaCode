@@ -27,7 +27,7 @@ def cli_main() -> None:
             if isinstance(stream, io.TextIOWrapper) and stream is not sys.stdout:
                 stream.detach()  # this command borrows stdout; it does not own it
         return
-    if sys.argv[1:2] in (["plugin"], ["plugins"]):
+    if sys.argv[1:2] == ["plugin"]:
         from novacode_cli.plugins.cli import main as plugin_main
 
         raise SystemExit(plugin_main(sys.argv[2:]))

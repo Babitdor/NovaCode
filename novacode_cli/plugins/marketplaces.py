@@ -6,9 +6,9 @@ plugins::
     {"name": "ponytail",
      "plugins": [{"name": "ponytail", "source": "./plugins/ponytail", "description": "..."}]}
 
-    /plugins marketplace add DietrichGebert/ponytail
-    /plugins search
-    /plugins install ponytail@ponytail
+    /plugin marketplace add DietrichGebert/ponytail
+    /plugin search
+    /plugin install ponytail@ponytail
 
 This is a thin registry + source resolver on top of ``claude_plugins``: it
 clones marketplaces and resolves a plugin's ``source`` to something
@@ -174,7 +174,7 @@ def install_plugin(spec: str, *, scope: str = "user") -> str:
     ]
     if not matches:
         where = f" in marketplace '{marketplace}'" if marketplace else ""
-        msg = f"Plugin '{plugin}' not found{where}. Try /plugins search."
+        msg = f"Plugin '{plugin}' not found{where}. Try /plugin search."
         raise ValueError(msg)
     if len(matches) > 1:
         opts = ", ".join(f"{m['name']}@{m['marketplace']}" for m in matches)
