@@ -2623,7 +2623,7 @@ class NovaApp(App):
                     ),
                 )
                 yield Button(
-                    "Plan: off",
+                    "plan:off",
                     id="plan-toggle",
                     tooltip="Toggle read-only planning without submitting your draft.",
                 )
@@ -8019,7 +8019,7 @@ class NovaApp(App):
         toggle.label = "Prime: on" if prime else "Prime: off"
         toggle.set_class(bool(prime), "enabled")
         plan_toggle = self._w("#plan-toggle", Button)
-        plan_toggle.label = "Plan: on" if plan else "Plan: off"
+        plan_toggle.label = "plan:on" if plan else "plan:off"
         plan_toggle.set_class(bool(plan), "enabled")
         prime_composer = bool(prime) and not (plan or bash or auto)
         prompt.set_class(prime_composer, "prime-composer")

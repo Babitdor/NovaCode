@@ -241,7 +241,7 @@ async def test_plan_composer_toggle_uses_plan_agent_and_keeps_draft(  # noqa: PL
         factory.assert_called_once()
         assert app.session_state.plan_mode_enabled
         assert app._active_agent() == (planner, backend)
-        assert str(toggle.label) == "Plan: on"
+        assert str(toggle.label) == "plan:on"
         assert toggle.has_class("enabled")
         assert app.screen.has_class("planning-mode")
         assert row.has_class("plan-composer")
@@ -278,7 +278,7 @@ async def test_plan_composer_toggle_uses_plan_agent_and_keeps_draft(  # noqa: PL
         assert not app.session_state.plan_mode_enabled
         assert app._active_agent() == (app.agent, app.backend)
         assert not app.screen.has_class("planning-mode")
-        assert str(toggle.label) == "Plan: off"
+        assert str(toggle.label) == "plan:off"
         assert row.has_class("prime-composer")
         assert prompt.text == "Investigate @parser.py"
         assert app.focused is prompt
