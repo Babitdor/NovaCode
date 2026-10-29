@@ -13470,6 +13470,34 @@ class NovaApp(App):
         if not (screen.saved or screen.deleted):
             return
 
+        if set(screen.saved) & MODEL_PRESETS.keys():
+            from novacode_cli.agents.core_agent import clear_named_subagents_cache
+            from novacode_cli.config.model_create import create_model_from_config
+
+            clear_named_subagents_cache()
+            live_provider = self._model_provider or ModelManager().get_current_provider_id()
+            try:
+                if live_provider in screen.saved:
+                    model = await asyncio.to_thread(
+                        create_model_from_config, live_provider, self.model_name
+                    )
+                    if model is None:
+                        self._log(Text(
+                            "Authentication saved; select a usable model in /model.", style="yellow"
+                        ))
+                    else:
+                        self.agent, self.backend = await self.session_state.switch_model(model)
+                else:
+                    # A different provider can back a subagent in this graph.
+                    model = getattr(self.session_state, "_model", None)
+                    if model is not None:
+                        self.agent, self.backend = await self.session_state.switch_model(model)
+            except Exception:  # noqa: BLE001 -- never expose credential-bearing SDK errors
+                self._log(Text(
+                    "Authentication saved, but the model could not refresh. Retry /model.",
+                    style="yellow",
+                ))
+
         for name in screen.saved:
             self._log(Text(f"● Saved the API key for {provider_display_name(name)}", style="green"))
             if name == "tavily":

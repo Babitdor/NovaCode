@@ -88,6 +88,32 @@ def test_a_saved_key_is_exported_to_the_environment():
     assert os.environ[OPENAI] == "sk-secret"
 
 
+def test_rotated_key_reaches_models_without_restarting(monkeypatch):
+    from types import SimpleNamespace
+
+    from novacode_cli.config import model_create
+    from novacode_cli.config.config import settings
+
+    monkeypatch.setattr(settings, "commandcode_api_key", "old-test-key")
+    monkeypatch.setattr(
+        model_create,
+        "_opencode_chat_class",
+        lambda: lambda **kw: SimpleNamespace(metadata={}, **kw),
+    )
+    assert set_credential("COMMANDCODE_API_KEY", "new-test-key").ok
+    model = model_create.build_chat_model("commandcode", "deepseek/deepseek-v4-flash")
+    assert model.api_key == "new-test-key"
+
+
+def test_deletion_clears_the_cached_credential(monkeypatch):
+    from novacode_cli.config.config import settings
+
+    monkeypatch.setattr(settings, "openai_api_key", "old-test-key")
+    set_credential(OPENAI, "new-test-key")
+    assert delete_credential(OPENAI)
+    assert settings.openai_api_key is None
+
+
 def test_reading_a_stored_key_does_not_export_it(monkeypatch):
     """Status checks call this on every provider; it must have no side effects."""
     _StubSecretManager.store = {"openai_api_key": "sk-secret"}

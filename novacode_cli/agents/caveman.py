@@ -32,6 +32,8 @@ CAVEMAN_CLARITY = """These boundaries override intensity. Do not invent facts or
 Language choice overrides intensity: preserve the user's dominant language
 unless the user explicitly requests another language. Selecting Wenyan does not request translation.
 Keep factual uncertainty. Code stays exact; commit messages and PR descriptions use normal prose.
+Do not convert numbers or units. Copy the user's spelling: \
+30 seconds stays 30 seconds, not 30000 ms.
 Surrounding explanations still use the selected terse style.
 Use full, clear sentences for security warnings, irreversible confirmations,
 multi-step procedures whose order could be misread, when compression itself creates

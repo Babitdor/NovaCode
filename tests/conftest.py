@@ -147,7 +147,16 @@ def _restore_credential_env_vars() -> Iterator[None]:
     saved = {
         name: os.environ.get(name) for name in (*_CREDENTIAL_ENV_VARS, *credential_names().values())
     }
+    from novacode_cli.config.config import settings
+
+    saved_settings = {
+        name.lower(): getattr(settings, name.lower())
+        for name in saved
+        if name.lower().endswith("_api_key") and hasattr(settings, name.lower())
+    }
     yield
+    for field, value in saved_settings.items():
+        setattr(settings, field, value)
     for name, value in saved.items():
         if value is None:
             os.environ.pop(name, None)

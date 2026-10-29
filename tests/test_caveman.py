@@ -120,6 +120,7 @@ def test_skill_boundaries_and_auto_clarity_are_explicit_at_every_intensity():
             "clarify/repeated question",
             "Resume terse prose",
             "skip verification",
+            "Do not convert numbers or units",
         ):
             assert boundary in note
         assert note.index("These boundaries override intensity") > note.index("Intensity:")

@@ -237,3 +237,69 @@ results, not a full interactive terminal session or live browser fetch.
 
 Character reductions describe tool views only, not total request tokens or cost.
 The raw local results are in `reports/caveman-live-2026-10-24.json` (ignored by Git).
+
+### DeepSeek V4 Flash paired check, 2026-10-29
+
+The saved default `commandcode / deepseek/deepseek-v4-flash` was tested with
+30 live calls: five synthetic cases, two repetitions, and off/full/ultra for each.
+The final run used temperature 0, a 4,096-token completion ceiling, no SDK retries,
+and alternating mode order. The saved effort was `off`, which this gateway maps
+to low effort; provider-reported reasoning tokens are included in output totals.
+All 30 final replies finished normally and passed the benchmark's required-fact
+checks. Corrected Python functions were executed against independent-default and
+caller-supplied-list checks using a restricted AST.
+
+| Comparison | Off total | Full total | Full reduction | Ultra total | Ultra reduction |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Prose style, six paired observations | 37,836 | 35,209 | 6.94% | 35,020 | 7.44% |
+| Repeated JSON/log observations, four pairs | 41,561 | 24,788 | 40.36% | 25,392 | 38.90% |
+
+These are provider-reported input plus output tokens, including reasoning and
+cached input. The style instruction overhead is counted: input rose by about
+4.4–4.6% in the prose cases, while output fell by about 46–49%. In the workflow
+cases, the actual middleware compacted/deduplicated synthetic tool observations,
+reducing input by about 40%. Ultra's workflow output increased in this run;
+the total still fell because input savings were larger.
+
+The workflow comparison used the saved feature choices with Auto routing disabled
+in a process-local copy, keeping every call on the requested DeepSeek model.
+Saved preferences and credentials were not changed. This does not measure router
+classification, recovery calls, a live browser, or an entire repository-editing
+session. Cache hits and reasoning varied, so these are token observations rather
+than invoice savings, a statistical guarantee, or proof of complete semantic
+equivalence. Representative explanations were reviewed in addition to exact-fact
+checks; the benchmark cannot establish general response correctness.
+
+The initial 1,200-token probe truncated several replies and was not used for the
+final comparison. The next run exposed a unit-preservation issue: Ultra converted
+`30 segundos` into `30000 ms`. Caveman's clarity instruction now explicitly forbids
+unit conversions, and the final run preserved the requested units in all six
+Portuguese replies. The quality checker also accepts Markdown/case changes in
+the exit-code label while still requiring the exact assertion and exit status;
+negative tests reject incorrect statuses and altered units.
+
+Reproduce the bounded live run, or review its saved synthetic responses offline:
+
+```powershell
+.venv/Scripts/python.exe -m scripts.benchmark_caveman --live --output reports/caveman-deepseek-v4-flash-final.json
+.venv/Scripts/python.exe -m scripts.benchmark_caveman --review reports/caveman-deepseek-v4-flash-final.json
+```
+
+The live command makes 30 provider calls by default; `--repeats 1` makes 15.
+It refuses to fall back if the saved model is not DeepSeek V4 Flash. Local raw
+responses and usage are in the ignored `reports/caveman-deepseek-v4-flash-final.json`.
+
+Authentication was also corrected during this check. Saving a model-provider key
+now updates both the process environment and the startup Settings object; leaving
+`/auth` rebuilds the affected live model client and its delegate graph using the
+existing session/backend. OAuth/auth-mode changes use the same refresh path.
+No application restart is required for subsequent model-provider auth saves once
+this update is loaded. Refresh failures retain the existing graph and show a
+temporary notification without exposing credential-bearing SDK errors.
+
+Validation: 172 focused offline tests passed across Caveman, token accounting,
+credential storage, auth screens/refresh, provider routing and backend-preserving
+rebuilds. The credential module passed targeted strict mypy; the new benchmark,
+regression modules and modified credential/Caveman modules passed ruff. No new
+dependencies were added. The unrelated full-suite baseline failure documented in
+`core-runtime-fixes-evidence.md` was not changed by this work.

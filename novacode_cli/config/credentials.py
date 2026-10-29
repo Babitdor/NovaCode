@@ -42,6 +42,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _set_live_key(env_var: str, key: str | None) -> None:
+    """Keep startup settings and the environment consistent after an auth edit."""
+    from novacode_cli.config.config import settings
+
+    if key is None:
+        os.environ.pop(env_var, None)
+    else:
+        os.environ[env_var] = key
+    field = env_var.lower()
+    if field.endswith("_api_key") and hasattr(settings, field):
+        setattr(settings, field, key)
+
+
 @dataclass(frozen=True)
 class CredentialMeta:
     """The non-secret facts recorded alongside a stored credential.
@@ -241,7 +254,7 @@ class CredentialStore:
                 logger.warning("Could not delete credential for %s", env_var)
                 removed = False
         self._delete_meta(env_var)
-        os.environ.pop(env_var, None)
+        _set_live_key(env_var, None)
         endpoint_var = _base_url_env_var(env_var)
         if endpoint_var is not None:
             os.environ.pop(endpoint_var, None)
@@ -308,7 +321,7 @@ class CredentialStore:
         key = self.get_key(env_var)
         if not key:
             return None
-        os.environ[env_var] = key
+        _set_live_key(env_var, key)
         meta = self.meta(env_var)
         endpoint_var = _base_url_env_var(env_var)
         if endpoint_var is not None:
