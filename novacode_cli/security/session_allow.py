@@ -1,7 +1,8 @@
 """In-memory 'allow for this session' layer for tool approvals.
 
-Holds generalized rules the user accepted for the current process only (cleared
-on exit). Matching is delegated to a throwaway :class:`ApprovalPolicy` built
+Holds generalized rules the user accepted for one project/thread (cleared on
+session close). Standalone callers retain a process-local list. Matching is
+delegated to a throwaway :class:`ApprovalPolicy` built
 from the session rules, so session and persisted rules match identically — and,
 crucially, the policy's built-in deny/dangerous checks still apply, so a session
 rule can never allow a denied command.
@@ -12,6 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from novacode_cli.security.policy import ApprovalPolicy, load_policy
+from novacode_cli.session.runtime_identity import current_identity
 
 if TYPE_CHECKING:
     from novacode_cli.security.rule_synthesis import ProposedRule
@@ -76,11 +78,18 @@ class SessionAllowList:
 
 
 _SESSION_ALLOW: SessionAllowList | None = None
+_SESSION_ALLOWS: dict[str, SessionAllowList] = {}
 
 
-def get_session_allow() -> SessionAllowList:
-    """Return the process-wide session allow-list (created on first use)."""
+def get_session_allow(session: str | None = None) -> SessionAllowList:
+    """Return the invoking session's rules, or the standalone caller's rules."""
     global _SESSION_ALLOW  # noqa: PLW0603 — module-level process singleton
+    identity = current_identity.get()
+    session = session or (identity.session if identity else None)
+    if session is not None:
+        if session not in _SESSION_ALLOWS:
+            _SESSION_ALLOWS[session] = SessionAllowList()
+        return _SESSION_ALLOWS[session]
     if _SESSION_ALLOW is None:
         _SESSION_ALLOW = SessionAllowList()
     return _SESSION_ALLOW
@@ -90,6 +99,12 @@ def reset_session_allow() -> None:
     """Drop the session allow-list (used by tests)."""
     global _SESSION_ALLOW  # noqa: PLW0603 — module-level process singleton
     _SESSION_ALLOW = None
+    _SESSION_ALLOWS.clear()
+
+
+def release_session_allow(session: str) -> None:
+    """Forget grants when their owning session ends."""
+    _SESSION_ALLOWS.pop(session, None)
 
 
 __all__ = [

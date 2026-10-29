@@ -28,6 +28,23 @@ BLOCKED_TOOLS: frozenset[str] = frozenset(
         "execute",
         "bash",
         "execute_code",
+        "python_kernel",
+        "daemon",
+        "eval",  # Can dispatch implementation subagents.
+        "skill_manage",
+        "wiki_write",
+        "wiki_update_index",
+        "remember",
+        "forget",
+        "ui_patch",
+        "ui_commit",
+        "ui_rollback",
+        "sleep_desktop",
+        "restore_file",
+        "restart_task",
+        "terminate_task",
+        "create_artifact",
+        "update_artifact",
         "apply_patch",
         "delete_file",
         "move_file",
@@ -140,6 +157,10 @@ def plan_tool_rejection(  # noqa: PLR0911 -- Reject each disallowed capability a
 ) -> str | None:
     """Classify real tool identity before approval; unknown MCP capabilities fail closed."""
     metadata = metadata or {}
+    if name == "fetch_url" and str(args.get("method", "GET")).upper() not in {
+        "GET", "HEAD", "OPTIONS",
+    }:
+        return "[Plan Mode] HTTP requests must use a read-only method while planning."
     if name == "MCPTool" and args.get("action", "list") in {"list", "describe"}:
         return None
     server, raw = _mcp_identity(name, args, metadata)

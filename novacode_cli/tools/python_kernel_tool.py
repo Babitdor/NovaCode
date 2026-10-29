@@ -23,10 +23,13 @@ import json
 import logging
 import os
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
 from langchain.tools import tool
+
+from novacode_cli.session.runtime_identity import current_identity
 
 logger = logging.getLogger("nova.tools.python_kernel")
 
@@ -38,15 +41,20 @@ _MAX_OUTPUT = 100_000
 _DEFAULT_SNAPSHOT = "kernel_snapshot.pkl"
 
 _kernel: _KernelProcess | None = None
-_kernel_lock = asyncio.Lock()
+_kernels: dict[str, _KernelProcess] = {}
+_kernel_lock = threading.Lock()
 
 
 class _KernelProcess:
     """A managed kernel subprocess with a persistent namespace."""
 
-    def __init__(self) -> None:
+    def __init__(self, cwd: str | None = None) -> None:
         self._proc: asyncio.subprocess.Process | None = None
-        self._cwd = str(Path.cwd())
+        self._cwd = cwd or str(Path.cwd())
+        self._request_lock = asyncio.Lock()
+        self._loop = asyncio.get_running_loop()
+        self._active_request: asyncio.Task[Any] | None = None
+        self._closed = False
 
     async def _ensure(self) -> asyncio.subprocess.Process:
         if self._proc is not None and self._proc.returncode is None:
@@ -65,17 +73,35 @@ class _KernelProcess:
         return self._proc
 
     async def _kill(self) -> None:
-        if self._proc is None:
+        proc, self._proc = self._proc, None
+        if proc is None:
             return
-        if self._proc.returncode is None:
+        if proc.returncode is None:
             with contextlib.suppress(ProcessLookupError):
-                self._proc.kill()
+                proc.kill()
         with contextlib.suppress(ProcessLookupError, ChildProcessError):
-            await self._proc.wait()
-        self._proc = None
+            await proc.wait()
 
     async def request(self, payload: dict[str, Any], timeout_secs: float) -> dict[str, Any]:
-        """Send one request and await the response. Kills/respawns on timeout."""
+        """Serialize exchanges; cancellation cannot leave an unread response."""
+        if self._loop is not asyncio.get_running_loop():
+            message = "A live Python kernel cannot be shared across event loops."
+            raise RuntimeError(message)
+        async with self._request_lock:
+            if self._closed:
+                message = "Python kernel is closed."
+                raise RuntimeError(message)
+            self._active_request = asyncio.current_task()
+            try:
+                return await self._request(payload, timeout_secs)
+            except BaseException:
+                await self._kill()
+                raise
+            finally:
+                self._active_request = None
+
+    async def _request(self, payload: dict[str, Any], timeout_secs: float) -> dict[str, Any]:
+        """Send one request while holding exclusive ownership of the pipes."""
         proc = await self._ensure()
         if proc.stdin is None or proc.stdout is None:
             return {"ok": False, "output": "", "error": "kernel pipes unavailable"}
@@ -109,18 +135,46 @@ class _KernelProcess:
         try:
             return json.loads(raw.decode("utf-8"))
         except json.JSONDecodeError:
+            await self._kill()
             return {"ok": False, "output": "", "error": "kernel returned invalid JSON"}
 
     async def close(self) -> None:
-        await self._kill()
+        self._closed = True
+        active = self._active_request
+        if active is not None and active is not asyncio.current_task():
+            active.cancel()
+        async with self._request_lock:
+            await self._kill()
 
 
 async def _get_kernel() -> _KernelProcess:
     global _kernel  # noqa: PLW0603 — module-level singleton kernel process
-    async with _kernel_lock:
-        if _kernel is None:
+    with _kernel_lock:
+        identity = current_identity.get()
+        if identity is not None:
+            existing = _kernels.get(identity.session)
+            if (
+                existing is None
+                or existing._closed
+                or (existing._proc is None and existing._loop is not asyncio.get_running_loop())
+            ):
+                _kernels[identity.session] = _KernelProcess(identity.project)
+            return _kernels[identity.session]
+        if (
+            _kernel is None
+            or _kernel._closed
+            or (_kernel._proc is None and _kernel._loop is not asyncio.get_running_loop())
+        ):
             _kernel = _KernelProcess()
         return _kernel
+
+
+async def release_session_kernel(session: str) -> None:
+    """Remove and close only the kernel owned by the ending session."""
+    with _kernel_lock:
+        kernel = _kernels.pop(session, None)
+    if kernel is not None:
+        await kernel.close()
 
 
 @tool

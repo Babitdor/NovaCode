@@ -50,3 +50,12 @@ def test_singleton_get_and_reset():
     assert get_session_allow().matches("shell", {"command": "ls -la"}) is True
     reset_session_allow()
     assert get_session_allow().matches("shell", {"command": "ls -la"}) is False
+
+
+def test_domain_grant_and_clear():
+    rules = SessionAllowList()
+    rules.add(synthesize_rule("fetch_url", {"url": "https://example.com/a"}))
+    assert rules.matches("fetch_url", {"url": "https://example.com/b"})
+    assert not rules.matches("fetch_url", {"url": "https://other.invalid/"})
+    rules.clear()
+    assert not rules.matches("fetch_url", {"url": "https://example.com/b"})

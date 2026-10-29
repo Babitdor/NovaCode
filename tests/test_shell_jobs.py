@@ -173,21 +173,33 @@ def test_execute_tool_is_intercepted_for_background_parity() -> None:
     class _Req:
         def __init__(self, name, **args):
             self.tool_call = {"name": name, "id": "c1", "args": args}
+            from langchain_core.tools import StructuredTool
+
+            self.tool = StructuredTool.from_function(
+                lambda command: "backend", name="execute", description="Backend shell",
+            )
+
+        def override(self, **kwargs):
+            from types import SimpleNamespace
+
+            return SimpleNamespace(tool_call=self.tool_call, **kwargs)
 
     # non-execute tool passes through to the handler untouched
     seen = {"h": False}
 
     def handler(_req):
         seen["h"] = True
+        if _req.tool_call["name"] == "execute":
+            return _req.tool.invoke(_req.tool_call["args"])
         return "HANDLER"
 
     assert mw.wrap_tool_call(_Req("read_file", file_path="x"), handler) == "HANDLER"
     assert seen["h"]
 
-    # execute is intercepted (handler NOT called) and runs locally
+    # execute retains the downstream handler and runs locally after its checks
     seen["h"] = False
     msg = mw.wrap_tool_call(_Req("execute", command="echo hi-exec"), handler)
-    assert not seen["h"]
+    assert seen["h"]
     assert "hi-exec" in getattr(msg, "content", str(msg))
 
     # a server started via execute becomes a tracked background task

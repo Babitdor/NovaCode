@@ -298,6 +298,13 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
 
     thread_id = session_state.thread_id
     config = build_agent_config(thread_id, assistant_id)
+    from novacode_cli.config.config import settings
+    from novacode_cli.session.runtime_identity import RuntimeIdentity
+
+    project = getattr(agent, "project", None)
+    if not isinstance(project, str):
+        project = str(settings.get_workspace_root())
+    runtime_session = RuntimeIdentity.from_config(project, config, "").session
     team_host = getattr(agent, "team_coordinator", None)
     if team_host is None:
         from novacode_cli.teams.host import TeamHost
@@ -357,8 +364,7 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
             from novacode_cli.events import nova_event_log
 
             events: list[ev.ContextMessage] = []
-            while nova_event_log:
-                etype, icon, color, msg = nova_event_log.pop(0)
+            for etype, icon, color, msg in nova_event_log.drain(runtime_session):
                 events.append(
                     ev.ContextMessage(message=msg, event_type=etype, icon=icon, color=color)
                 )
@@ -735,7 +741,10 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                             # generic tool HITL interrupt
                             try:
                                 validated = _HITL_REQUEST_ADAPTER.validate_python(interrupt_value)
-                                pending_interrupts.append((interrupt_obj.id, "tool", validated))
+                                pending_interrupts.append((
+                                    interrupt_obj.id, "tool",
+                                    {**validated, "approval_session": runtime_session},
+                                ))
                                 interrupt_occurred = True
                             except ValidationError as e:
                                 yield ev.Error(f"Invalid HITL request data: {e}")

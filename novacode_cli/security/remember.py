@@ -41,6 +41,7 @@ def apply_remember(
     target: str | None = None,
     project_root: Path | None = None,
     rule: ProposedRule | None = None,
+    session: str | None = None,
 ) -> RememberResult:
     """Apply a remember decision.
 
@@ -52,6 +53,7 @@ def apply_remember(
         project_root: Project root for a project-target write.
         rule: An already-synthesized (possibly user-edited) rule; when given,
             synthesis is skipped.
+        session: Host-provided runtime session key for UI callbacks.
 
     Returns:
         A :class:`RememberResult`.
@@ -61,13 +63,13 @@ def apply_remember(
     """
     rule = rule or synthesize_rule(tool_name, args)
     if kind == "session":
-        get_session_allow().add(rule)
+        get_session_allow(session).add(rule)
         return RememberResult(rule=rule, saved_path=None)
     if kind == "always":
         # Remember for the session FIRST so a failed file write still benefits
         # the current run — the rule must take effect even if persistence fails,
         # and a write error must never crash the turn (degrade to session-only).
-        get_session_allow().add(rule)
+        get_session_allow(session).add(rule)
         try:
             path = policy_writer.append_rule(
                 rule, target=target or "project", project_root=project_root

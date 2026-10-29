@@ -81,3 +81,13 @@ class TestNovaEventLog:
             nova_event_log.append(("test", "🔍", "yellow", str(i)))
         cap_event_log()
         assert len(nova_event_log) == _MAX_EVENT_LOG
+
+    def test_sequence_updates_keep_the_active_queue_consistent(self):
+        first = ("test", "", "", "first")
+        second = ("test", "", "", "second")
+        nova_event_log.append(first)
+        nova_event_log[0] = second
+        assert nova_event_log.pop(0) == second
+        nova_event_log[:] = [first, second]
+        nova_event_log.insert(1, first)
+        assert list(nova_event_log) == [first, first, second]

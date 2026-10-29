@@ -29,6 +29,10 @@ from novacode_cli.cli_args import parse_args
 # Suppress transformer warnings before any imports that might trigger them
 import os
 import warnings
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from novacode_cli.session.checkpoint_coordinator import CoordinatedGraph
 
 # Suppress "None of PyTorch, TensorFlow >= 2.0, or Flax have been found" warning
 os.environ["TRANSFORMERS_VERBOSITY"] = "error"
@@ -282,7 +286,9 @@ def _is_api_error(e: Exception) -> bool:
     return False
 
 
-async def _shutdown_background_services(session_state) -> None:
+async def _shutdown_background_services(
+    session_state, *, agent: "CoordinatedGraph | None" = None,
+) -> None:
     """Best-effort teardown of background services on exit. Never raises.
 
     The TUI does its own session save on exit; this teardown makes sure the
@@ -302,6 +308,9 @@ async def _shutdown_background_services(session_state) -> None:
     # by its own timeout — a single slow service (websocket, subprocess, bridge
     # socket) must not make /quit hang or feel unresponsive.
     steps: list = []
+
+    if agent is not None and hasattr(agent, "close_session"):
+        steps.append(_guard(agent.close_session(session_state.thread_id)))
 
     steps.append(_guard(stop_vixie_server()))
 
@@ -764,7 +773,7 @@ async def _run_agent_session(
                 session_manager=session_manager,
             )
         finally:
-            await _shutdown_background_services(session_state)
+            await _shutdown_background_services(session_state, agent=agent)
         session_state.headless_exit_code = exit_code
         return
 
@@ -791,7 +800,7 @@ async def _run_agent_session(
             )
             session_state.headless_exit_code = exit_code
         finally:
-            await _shutdown_background_services(session_state)
+            await _shutdown_background_services(session_state, agent=agent)
         session_state.headless_exit_code = exit_code
         return
 
@@ -879,7 +888,7 @@ async def _run_agent_session(
     finally:
         # Always tear down background services so quitting can't crash on
         # dangling tasks / servers after the TUI exits.
-        await _shutdown_background_services(session_state)
+        await _shutdown_background_services(session_state, agent=agent)
 
 
 def _cleanup_old_checkpoints(checkpoints_dir: Path, max_age_days: int = 30) -> None:

@@ -18859,7 +18859,7 @@ class NovaApp(App):
                 for ar in action_requests:
                     name, args = ar.get("name", ""), ar.get("args", {})
                     if choice == "session":
-                        apply_remember("session", name, args)
+                        apply_remember("session", name, args, session=req.get("approval_session"))
                         self._log(Text(f"● Allowed `{name}` for this session.", style="green"))
                     else:
                         rule = synthesize_rule(name, args)
@@ -18867,7 +18867,8 @@ class NovaApp(App):
                         if out:
                             edited = replace(rule, value=out["value"])
                             res = apply_remember(
-                                "always", name, args, target=out["target"], rule=edited
+                                "always", name, args, target=out["target"], rule=edited,
+                                session=req.get("approval_session"),
                             )
                             if res.saved_path is not None:
                                 self._log(Text(f"● Saved to {res.saved_path}", style="green"))

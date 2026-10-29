@@ -97,7 +97,8 @@ _DEFAULT_TOOL_TIERS: dict[str, Tier] = {
 
 # Built-in shell allowlist — safe, read-only-ish commands that should run silently.
 _DEFAULT_SHELL_ALLOW: list[str] = [
-    r"^\s*git\s+(status|diff|log|show|remote\s+-v|rev-parse|describe|blame|shortlog)",
+    r"^\s*git\s+(?:status|diff|log|show|rev-parse|describe|blame|shortlog)(?=\s|$)",
+    r"^\s*git\s+remote\s+-v\s*$",
     r"^\s*ls\b",
     r"^\s*pwd\b",
     r"^\s*cat\b",
@@ -293,7 +294,12 @@ class ApprovalPolicy:
                 return ApprovalDecision("ask", why, dangerous)
         # allow: explicit allowlist
         import re
-        if re.search(r"[;&|<>`\r\n$%!()]|--(pre|ext-diff|textconv|exec|output)\b", command):
+        git_side_effects = re.match(r"^git\s", command) and re.search(
+            r"--help\b|(?:^|\s)-(?!-)\S*[oh]", command
+        )
+        if git_side_effects or re.search(
+            r"[;&|<>`\r\n$%!()]|--(pre|ext-diff|textconv|exec|output)\b", command
+        ):
             return ApprovalDecision("ask", "Compound shell syntax requires approval", "shell-syntax")
         for pat in self._shell_allow_re:
             if pat.search(command):

@@ -183,7 +183,7 @@ def evaluate_tool_actions(
 
         # Check session allow rules (remembered for this session)
         try:
-            session_allow = get_session_allow()
+            session_allow = get_session_allow(req.get("approval_session"))
             if session_allow.matches(tool_name, args):
                 decisions.append({"type": "approve"})
                 continue

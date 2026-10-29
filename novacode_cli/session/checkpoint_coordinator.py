@@ -347,6 +347,13 @@ class CoordinatedGraph:
         identity = RuntimeIdentity.from_config(
             self.project, {"configurable": {"thread_id": thread}}, ""
         )
+        from novacode_cli.events import nova_event_log
+        from novacode_cli.security.session_allow import release_session_allow
+        from novacode_cli.tools.python_kernel_tool import release_session_kernel
+
+        await release_session_kernel(identity.session)
+        release_session_allow(identity.session)
+        nova_event_log.release_session(identity.session)
         for resource in self.runtime_resources:
             release = getattr(resource, "release_session", None)
             if release:

@@ -352,4 +352,6 @@ def create_plan_agent_with_config(
     # mutation requires coordinated ownership".
     from novacode_cli.session.checkpoint_coordinator import CoordinatedGraph, coordinate_saver
 
-    return CoordinatedGraph(agent, coordinate_saver(plan_checkpointer)), composite_backend
+    return CoordinatedGraph(
+        agent, coordinate_saver(plan_checkpointer), str(workspace_root)
+    ), composite_backend

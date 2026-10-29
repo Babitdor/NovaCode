@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-from langchain.agents.middleware.types import AgentMiddleware, AgentState
+from langchain.agents.middleware.types import AgentMiddleware, AgentState, ToolCallRequest
 from langchain.tools import ToolRuntime
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import StructuredTool
@@ -467,33 +467,42 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
         """Intercept local ``execute`` and run it through Nova's shell path so it
         gets background/Ctrl+B parity with ``shell``. Uses ``prog=None`` (the
         platform default shell) to match deepagents' ``execute`` semantics."""
-        cmd = self._intercept_execute(request)
-        if cmd is None:
+        if self._intercept_execute(request) is None:
             return handler(request)
-        args = request.tool_call.get("args") or {}
-        return self._dispatch_local(
-            cmd,
-            tool_call_id=request.tool_call.get("id"),
-            prog=None,
-            interactive=bool(args.get("interactive", False)),
-            background=bool(args.get("background", False)),
-        )
+        return handler(request.override(tool=self._local_execute_tool(request)))
 
     async def awrap_tool_call(
         self, request: Any, handler: Callable[[Any], Awaitable[ToolMessage | Any]]
     ) -> ToolMessage | Any:
         """Async twin of :meth:`wrap_tool_call`. Runs the (blocking) local dispatch
         in a thread so the event loop keeps serving the ⚙ tasks / detach flow."""
-        cmd = self._intercept_execute(request)
-        if cmd is None:
+        if self._intercept_execute(request) is None:
             return await handler(request)
-        args = request.tool_call.get("args") or {}
-        return await self._adispatch_local(
-            cmd,
-            tool_call_id=request.tool_call.get("id"),
-            prog=None,
-            interactive=bool(args.get("interactive", False)),
-            background=bool(args.get("background", False)),
+        return await handler(request.override(tool=self._local_execute_tool(request)))
+
+    def _local_execute_tool(self, request: ToolCallRequest) -> StructuredTool:
+        """Replace only execution; downstream authorization must still run."""
+        if not isinstance(request.tool, StructuredTool):
+            message = "Local execute requires a structured backend tool."
+            raise ToolException(message)
+        call_id = request.tool_call.get("id")
+
+        def run(command: str, **kwargs: Any) -> str | ToolMessage:
+            return self._dispatch_local(
+                command, tool_call_id=call_id, prog=None,
+                interactive=bool(kwargs.get("interactive", False)),
+                background=bool(kwargs.get("background", False)),
+            )
+
+        async def arun(command: str, **kwargs: Any) -> str | ToolMessage:
+            return await self._adispatch_local(
+                command, tool_call_id=call_id, prog=None,
+                interactive=bool(kwargs.get("interactive", False)),
+                background=bool(kwargs.get("background", False)),
+            )
+
+        return request.tool.model_copy(
+            update={"func": run, "coroutine": arun},
         )
 
     def _run_async(
