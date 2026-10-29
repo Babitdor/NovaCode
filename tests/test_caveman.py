@@ -262,11 +262,11 @@ async def test_composer_toggle_click_keyboard_commands_and_restart(
         assert button.region.width > 0
         assert button.region.height == 1
         assert button.region.right <= size[0]
-        assert str(button.label) == "Lite: off"
+        assert str(button.label) == "lite:off"
         assert await pilot.click("#caveman-toggle")
         await pilot.pause()
         assert NovaConfig().get_caveman_enabled()
-        assert str(button.label) == "Lite: Caveman"
+        assert str(button.label) == "lite:caveman"
         await pilot.pause(0.4)  # Button ignores repeat presses during its active animation.
         button.focus()
         await pilot.press("enter")
@@ -279,7 +279,7 @@ async def test_composer_toggle_click_keyboard_commands_and_restart(
     app = _app()
     async with app.run_test(size=size) as pilot:
         await pilot.pause()
-        assert str(app.query_one("#caveman-toggle", Button).label) == "Lite: Caveman"
+        assert str(app.query_one("#caveman-toggle", Button).label) == "lite:caveman"
 
 
 async def test_failed_save_keeps_current_toggle(monkeypatch: pytest.MonkeyPatch):
@@ -292,7 +292,7 @@ async def test_failed_save_keeps_current_toggle(monkeypatch: pytest.MonkeyPatch)
         )
         await app._set_caveman_enabled(enabled=True)
         assert not app._caveman_enabled
-        assert str(app.query_one("#caveman-toggle", Button).label) == "Lite: off"
+        assert str(app.query_one("#caveman-toggle", Button).label) == "lite:off"
 
 
 @pytest.mark.timeout(40)

@@ -175,7 +175,7 @@ async def test_composer_prime_toggle_keeps_draft_and_permission_colors(size: tup
             "#prime-toggle",
             "#plan-toggle",
             "#caveman-toggle",
-            "#caveman-options",
+            "#passing-toggle",
             "#code-mode-toggle",
         ):
             control = app.query_one(selector, Button)
@@ -263,7 +263,7 @@ async def test_plan_composer_toggle_uses_plan_agent_and_keeps_draft(  # noqa: PL
             "#prime-toggle",
             "#plan-toggle",
             "#caveman-toggle",
-            "#caveman-options",
+            "#passing-toggle",
             "#code-mode-toggle",
         ):
             control = app.query_one(selector, Button)

@@ -1614,8 +1614,8 @@ class NovaApp(App):
     }
     #composer-actions {
         layout: grid;
-        grid-size: 6 1;
-        grid-columns: 14 16 12 16 12 18;
+        grid-size: 5 1;
+        grid-columns: 14 16 12 16 18;
         grid-rows: 1;
         height: 1;
         padding: 0 1;
@@ -1649,11 +1649,6 @@ class NovaApp(App):
         background: $panel;
         text-style: bold;
     }
-    #caveman-options {
-        width: 12; min-width: 12; height: 1; min-height: 1;
-        border: none; padding: 0 1; color: $text-muted; background: $surface;
-    }
-    #caveman-options:hover, #caveman-options:focus { background: $panel; color: $accent; }
     #prompt {
         width: 1fr;
         background: $panel; color: $text;
@@ -2633,16 +2628,13 @@ class NovaApp(App):
                     tooltip="Toggle read-only planning without submitting your draft.",
                 )
                 yield Button(
-                    "Lite: off",
+                    "lite:off",
                     id="caveman-toggle",
                     tooltip=(
                         "Toggle Lite Mode without sending your draft. "
-                        "Settings chooses Caveman or Ponytail; saved across launches."
+                        "Choose Caveman or Ponytail with /lite-mode settings; "
+                        "saved across launches."
                     ),
-                )
-                yield Button(
-                    "Settings", id="caveman-options",
-                    tooltip="Choose a Lite Mode style, strength, and options",
                 )
                 yield Button(
                     "Code Mode: on",
@@ -12269,7 +12261,7 @@ class NovaApp(App):
         mode = getattr(self, "_compression_mode", "off")
         enabled = mode != "off"
         toggle.label = {
-            "off": "Lite: off", "caveman": "Lite: Caveman", "ponytail": "Lite: Ponytail",
+            "off": "lite:off", "caveman": "lite:caveman", "ponytail": "lite:ponytail",
         }[mode]
         toggle.set_class(enabled, "enabled")
 
@@ -12301,11 +12293,6 @@ class NovaApp(App):
         await self._run_lite_mode(
             "/lite-mode off" if self._compression_mode != "off" else "/lite-mode on"
         )
-
-    @on(Button.Pressed, "#caveman-options")
-    async def _caveman_options_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
-        await self._run_lite_mode("/lite-mode settings")
 
     @on(Button.Pressed, "#prime-toggle")
     async def _prime_toggle_pressed(self, event: Button.Pressed) -> None:

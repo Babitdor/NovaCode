@@ -95,12 +95,14 @@ async def test_composer_toggles_last_style_without_cycling_or_submitting(
         await pilot.pause()
         app.query_one("#prompt").text = "Do not send this draft"
         button = app.query_one("#caveman-toggle", Button)
+        assert not app.query("#caveman-options")
+        assert str(button.label) == "lite:off"
         for expected in ("ponytail", "off", "ponytail"):
             button.focus()
             await pilot.press("enter")
             await pilot.pause(0.4)
             assert NovaConfig().get_compression_mode() == expected
-        assert str(button.label) == "Lite: Ponytail"
+        assert str(button.label) == "lite:ponytail"
         assert NovaConfig().get_ponytail_level() == "ultra"
         assert app.query_one("#prompt").text == "Do not send this draft"
         stream.assert_not_called()
@@ -143,4 +145,4 @@ async def test_apply_and_storage_failure_keep_the_effective_state(monkeypatch: p
         )
         await app._run_slash("/lite-mode off")
         assert NovaConfig().get_compression_mode() == "caveman"
-        assert str(app.query_one("#caveman-toggle", Button).label) == "Lite: Caveman"
+        assert str(app.query_one("#caveman-toggle", Button).label) == "lite:caveman"

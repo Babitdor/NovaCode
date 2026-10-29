@@ -289,7 +289,7 @@ async def test_options_save_and_cancel_are_persistent_and_independent(
     app = _app()
     monkeypatch.setattr(type(app), "_sample_home_system", Mock())
     async with app.run_test(size=(80, 32)) as pilot:
-        await pilot.click("#caveman-options")
+        await app._run_lite_mode("/lite-mode settings")
         await pilot.pause()
         assert isinstance(app.screen, CavemanScreen)
         choices = app.screen.query_one(SelectionList)
