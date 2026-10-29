@@ -530,10 +530,14 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
 
     try:
         if getattr(session_state, "handoff_enabled", False) is True:
-            handoff_run = await asyncio.to_thread(HandoffRun, session_state, prime_original_input)
+            handoff_run = await asyncio.to_thread(
+                HandoffRun, session_state, prime_original_input, assistant_id or "nova-agent",
+            )
             current_handoff.set(handoff_run)
         if handoff_run is not None and handoff_run.error:
             yield ev.ContextMessage(handoff_run.error, event_type="nova_handoff_status")
+        if handoff_run is not None and handoff_run.skill_warning:
+            yield ev.ContextMessage(handoff_run.skill_warning, event_type="nova_handoff_status")
         if prime_run is not None:
             yield ev.ContextMessage(
                 "Prime · Define · 0/6 checkpoints",

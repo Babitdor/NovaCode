@@ -198,6 +198,7 @@ novacode_cli = ["assets/Nova.png", "assets/nova-avatar.png"]
 "novacode_cli.remote" = ["rootapp_bot/*.cjs", "rootapp_bot/*.json"]
 "novacode_cli.tui" = ["*.tcss"]
 "novacode_cli.config" = ["provider_catalog.json"]
+"novacode_cli.skills" = ["builtin/*/SKILL.md"]
 
 [tool.ruff]
 line-length = 100

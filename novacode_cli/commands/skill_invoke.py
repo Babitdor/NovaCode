@@ -30,7 +30,7 @@ class SkillInvocation:
 
     prompt: str
     name: str
-    source: str  # "project" | "global"
+    source: str  # "project" | "global" | "bundled"
     description: str
     args: str | None = None
     supporting_files: list[str] = field(default_factory=list)
@@ -114,9 +114,6 @@ def _resolve_skill_invocation(
         plugin_skills_dirs=plugin_skills_dirs,
     )
 
-    if not skills:
-        return None
-
     # Normalize the command to match skill names (hyphens = hyphens)
     # Skill names use hyphens (e.g. "api-testing"), but users might
     # type underscores or spaces.  Normalize to hyphens for matching.
@@ -131,7 +128,15 @@ def _resolve_skill_invocation(
             break
 
     if matched_skill is None:
-        return None
+        # Handoff mode works on a clean install, using the actual bundled
+        # SKILL.md. Installed/project skills always take precedence.
+        bundled = Path(__file__).resolve().parents[1] / "skills/builtin/handoff/SKILL.md"
+        if cmd_normalized != "handoff" or not bundled.is_file():
+            return None
+        matched_skill = {
+            "name": "handoff", "path": str(bundled), "source": "bundled",
+            "description": "Compact the conversation for a fresh agent session.",
+        }
     from novacode_cli.skills.skills_prefs import effective_disabled
 
     if matched_skill["name"] in effective_disabled():
@@ -148,7 +153,9 @@ def _resolve_skill_invocation(
 
     # Resolve display metadata (rendered by the caller, not here).
     source = matched_skill.get("source", "unknown")
-    source_label = "project" if source == "project" else "global"
+    source_label = (
+        "bundled" if source == "bundled" else "project" if source == "project" else "global"
+    )
     description = matched_skill.get("description", "")
     description_short = description[:80] + "..." if len(description) > 80 else description
 
@@ -208,7 +215,12 @@ def _resolve_skill_invocation(
         args=cmd_args,
         supporting_files=sorted(supporting_files.keys()),
         executable=executable_desc,
-        pinned_prompt=f"${skill_name}" + (f" {cmd_args}" if cmd_args else ""),
+        # Bundled defaults are directly resolved here, rather than discovered
+        # through the filesystem middleware's user/project skill mounts.
+        pinned_prompt=(
+            None if source == "bundled"
+            else f"${skill_name}" + (f" {cmd_args}" if cmd_args else "")
+        ),
     )
 
 

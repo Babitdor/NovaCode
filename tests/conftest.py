@@ -15,10 +15,15 @@ def _isolate_prime_records(monkeypatch: pytest.MonkeyPatch) -> None:
     from langgraph.store.memory import InMemoryStore
 
     from novacode_cli import handoff, prime_memory
+    from novacode_cli.commands.skill_invoke import SkillInvocation
 
     store = InMemoryStore()
     monkeypatch.setattr(prime_memory, "get_durable_store", lambda: store)
     monkeypatch.setattr(handoff, "get_durable_store", lambda: store)
+    monkeypatch.setattr(handoff, "load_handoff_skill", lambda *_: SkillInvocation(
+        prompt="Fixture handoff skill: write a concise continuation document.",
+        name="handoff", source="fixture", description="Isolated test skill",
+    ))
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

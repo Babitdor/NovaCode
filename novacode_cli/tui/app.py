@@ -663,7 +663,7 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
         "_run_prime", "Deep Work: on / off / status / report / tasks / checks / resume / forget"
     ),
     "handoff": SlashCommand(
-        "_run_handoff", "project handoffs: browse / on / off / status / preview / resume"
+        "_run_handoff", "project handoffs: browse / on / off / status / preview / resume / delete"
     ),
     "ponytail": SlashCommand(
         "_run_ponytail", "coding efficiency: lite / full / ultra / off / settings / status",
@@ -12364,6 +12364,13 @@ class NovaApp(App):
             directory = session_directory(session)
             thread = session.thread_id
 
+            def deleted(identity: str) -> None:
+                from novacode_cli.handoff import clear_deleted_handoff
+
+                clear_deleted_handoff(session, identity)
+                if self.session_state is session:
+                    self.run_worker(self._save_session(), group="handoff-save", exit_on_error=False)
+
             async def selected(identity: str | None) -> None:
                 if not identity:
                     return
@@ -12423,6 +12430,7 @@ class NovaApp(App):
                 HandoffScreen(
                     directory, can_continue=not self._turn_running(),
                     identity=args.split(maxsplit=1)[1] if args.startswith("preview ") else "",
+                    on_deleted=deleted,
                 ),
                 selected,
             )

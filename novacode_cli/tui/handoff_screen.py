@@ -16,6 +16,8 @@ from textual.widgets.option_list import Option
 from novacode_cli.handoff import HandoffMemory, Record, document
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from textual.app import ComposeResult
     from textual.binding import BindingType
 
@@ -44,14 +46,26 @@ class HandoffScreen(ModalScreen[str | None]):
     HandoffScreen.compact #handoff-body { layout: vertical; }
     HandoffScreen.compact #handoff-list { width: 100%; height: 4; }
     HandoffScreen.compact #handoff-preview-scroll { width: 100%; height: 1fr; }
+    HandoffScreen.compact #handoff-actions {
+        layout: grid; grid-size: 2 2; grid-columns: 1fr 1fr; grid-rows: 3 3; height: 6;
+    }
+    HandoffScreen.compact #handoff-continue { column-span: 2; width: 1fr; }
     """
 
-    def __init__(self, directory: str, *, can_continue: bool = True, identity: str = "") -> None:
+    def __init__(
+        self,
+        directory: str,
+        *,
+        can_continue: bool = True,
+        identity: str = "",
+        on_deleted: Callable[[str], None] | None = None,
+    ) -> None:
         """Preview this project's records, optionally highlighting an explicit selection."""
         super().__init__()
         self.directory = directory
         self.can_continue = can_continue
         self.identity = identity
+        self.on_deleted = on_deleted
         self.records: list[Record] = []
         self.visible_records: list[Record] = []
 
@@ -71,6 +85,7 @@ class HandoffScreen(ModalScreen[str | None]):
                     yield Static("Loading handoffs…", id="handoff-preview", markup=False)
             with Horizontal(id="handoff-actions"):
                 yield Button("Continue in new session", id="handoff-continue", disabled=True)
+                yield Button("Delete", id="handoff-delete", disabled=True)
                 yield Button("Close", id="handoff-close")
 
     def on_resize(self) -> None:
@@ -130,6 +145,7 @@ class HandoffScreen(ModalScreen[str | None]):
             else "No saved handoffs match. Enable Handoff, then send a task."
         )
         self.query_one("#handoff-continue", Button).disabled = not (record and self.can_continue)
+        self.query_one("#handoff-delete", Button).disabled = not (record and self.can_continue)
         self.query_one("#handoff-preview-scroll", VerticalScroll).scroll_home(animate=False)
 
     @on(OptionList.OptionSelected, "#handoff-list")
@@ -149,6 +165,38 @@ class HandoffScreen(ModalScreen[str | None]):
             self.dismiss(record["id"])
         elif event.button.id == "handoff-close":
             self.action_close()
+        elif (
+            event.button.id == "handoff-delete"
+            and self.can_continue
+            and (record := self.selected())
+        ):
+            self.confirm_delete(record)
+
+    def confirm_delete(self, record: Record) -> None:
+        """Bind confirmation to the selected ID, even if a list refresh changes selection."""
+        from novacode_cli.tui.screens import ConfirmModal
+
+        async def confirmed(accepted: bool | None) -> None:  # noqa: FBT001 - Modal callback contract.
+            if not accepted:
+                return
+            try:
+                await asyncio.to_thread(lambda: HandoffMemory(self.directory).delete(record["id"]))
+            except Exception:  # noqa: BLE001 - No transcript entry or raw storage exception.
+                self.notify("Handoff could not be deleted.", severity="warning")
+                return
+            if self.on_deleted:
+                self.on_deleted(record["id"])
+            self.notify(f"Handoff deleted: {record['title']}.")
+            self.identity = ""
+            self.load_records()
+
+        dialog = ConfirmModal(
+            "Delete saved handoff?",
+            Text(
+                f"Delete {record['title']}?\n\nProject files and conversation history stay intact."
+            ),
+        )
+        self.app.push_screen(dialog, confirmed)
 
     def action_close(self) -> None:
         """Dismiss without changing the selected session or running work."""

@@ -9,7 +9,7 @@ import pytest
 from textual.widgets import Button, Input, OptionList, Static
 
 from novacode_cli import ui_events as ev
-from novacode_cli.handoff import HandoffRun
+from novacode_cli.handoff import HandoffMemory, HandoffRun, prepare
 from novacode_cli.tui.handoff_screen import HandoffScreen
 from novacode_cli.tui.widgets import PromptInput
 from tests.test_tui_app import _disable_live_update_checks  # noqa: F401
@@ -142,3 +142,56 @@ async def test_empty_project_search_and_status_notifications(
         assert "No saved" in str(app.screen.query_one("#handoff-preview", Static).render())
         app.screen.query_one("#handoff-search", Input).value = "Nothing"
         await pilot.press("escape")
+
+
+@pytest.mark.timeout(30)
+@pytest.mark.parametrize("size", [(110, 38), (40, 24)])
+async def test_delete_confirmation_and_cancel_preserve_draft_and_project(
+    size: tuple[int, int],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    app = _app()
+    app.session_state.workspace_root = str(tmp_path)
+    run = HandoffRun(app.session_state, "Portfolio handoff")
+    run.save_document("Portfolio handoff", "# Handoff\nContinue the portfolio.")
+    run.finish("complete")
+    prepare(app.session_state, run.record["id"])
+    sentinel = tmp_path / "project.txt"
+    sentinel.write_text("keep")
+    dispatch = Mock()
+    monkeypatch.setattr(app, "_dispatch_root", dispatch)
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        prompt = app.query_one("#prompt", PromptInput)
+        prompt.text = "Keep my draft"
+        log = Mock(wraps=app._log)
+        monkeypatch.setattr(app, "_log", log)
+        await app._run_handoff("/handoff")
+        await pilot.pause()
+        screen = app.screen
+        await screen.workers.wait_for_complete()
+        delete_button = screen.query_one("#handoff-delete", Button)
+        assert delete_button.region.right <= size[0]
+        assert delete_button.region.bottom <= size[1]
+        delete_button.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("n")
+        await pilot.pause()
+        assert HandoffMemory(str(tmp_path)).get(run.record["id"]) is not None
+        delete_button.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("y")
+        await pilot.pause()
+        await screen.workers.wait_for_complete()
+        assert HandoffMemory(str(tmp_path)).get(run.record["id"]) is None
+        assert screen.query_one("#handoff-list", OptionList).option_count == 0
+        assert screen.query_one("#handoff-delete", Button).disabled
+        assert screen.query_one("#handoff-continue", Button).disabled
+        assert app.session_state.handoff_pending is app.session_state.handoff_latest is None
+        assert sentinel.read_text() == "keep"
+        assert prompt.text == "Keep my draft"
+        dispatch.assert_not_called()
+        assert not any(call.kwargs.get("transcript") for call in log.call_args_list)
