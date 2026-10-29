@@ -37,6 +37,7 @@ def isolated_policy(monkeypatch, tmp_path):
     from novacode_cli.security import session_allow
 
     monkeypatch.setattr(session_allow, "_SESSION_ALLOW", None)
+    monkeypatch.setattr(session_allow, "_SESSION_ALLOWS", {})
 
 
 class ScriptedModel(GenericFakeChatModel):
@@ -627,27 +628,44 @@ async def test_auto_approval_model_rejection_is_authoritative(tmp_path, monkeypa
     assert "synthetic model denial" in messages[0].content
 
 
-async def test_existing_session_allow_is_respected(tmp_path, monkeypatch):
-    from types import SimpleNamespace
+@pytest.mark.parametrize("thread", [None, "owner", "other"])
+async def test_existing_session_allow_is_respected(tmp_path, thread):
+    from novacode_cli.security.rule_synthesis import synthesize_rule
+    from novacode_cli.security.session_allow import get_session_allow
+    from novacode_cli.session.runtime_identity import RuntimeIdentity, current_identity
 
-    from novacode_cli.ui import hitl_approval
+    calls = []
 
     @tool("db_read")
     def read(value: int) -> int:
         """Read a number."""
+        calls.append(value)
         return value
 
     mcp = inventory(tmp_path, read)
     get_policy().tool_tiers["db_read"] = "ask"
-    monkeypatch.setattr(
-        hitl_approval,
-        "get_session_allow",
-        lambda: SimpleNamespace(
-            matches=lambda name, args: name == "db_read" and args == {"value": 7}
-        ),
+    owner = RuntimeIdentity.from_config(str(tmp_path), {"configurable": {"thread_id": "owner"}}, "")
+    identity = (
+        RuntimeIdentity.from_config(str(tmp_path), {"configurable": {"thread_id": thread}}, "")
+        if thread is not None
+        else None
     )
-    messages = await execute(graph(mcp, 'return await mcp.call("db","read",{value:7});'))
-    assert json.loads(messages[0].content)["result"] == 7
+    token = current_identity.set(identity)
+    try:
+        get_session_allow(owner.session if thread is not None else None).add(
+            synthesize_rule("db_read", {"value": 7})
+        )
+        messages = await execute(graph(mcp, 'return await mcp.call("db","read",{value:7});'))
+    finally:
+        current_identity.reset(token)
+    if thread == "other":
+        assert messages[0].status == "error"
+        assert "requires approval" in messages[0].content
+        assert calls == []
+    else:
+        assert messages[0].status == "success", messages[0].content
+        assert json.loads(messages[0].content)["result"] == 7
+        assert calls == [7]
 
 
 async def test_injected_runtime_has_unique_nested_call_id(tmp_path):
