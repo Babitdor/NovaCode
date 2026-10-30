@@ -644,7 +644,7 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     ),
     "hooks": SlashCommand("_run_hooks", "list/enable/disable/remove hooks"),
     "browser-use": SlashCommand(
-        "_run_browser_use", "Toggle Browser Mode: Obscura browsing and web research (on/off/status)"
+        "_run_browser_use", "Browser research mode (on/off/status/settings or a task)"
     ),
     "ralph": SlashCommand("_run_ralph_screen", "autonomous looping mode (/ralph <task>)"),
     "trello": SlashCommand("_run_trello", "kanban task board in the browser"),
@@ -2631,7 +2631,7 @@ class NovaApp(App):
                 yield Button(
                     "browser:off",
                     id="browser-toggle",
-                    tooltip="Toggle Obscura browsing and web research; keep the current conversation.",
+                    tooltip="Toggle browser research; choose trusted MCP servers in /browser-use settings.",
                 )
                 yield Button(
                     "lite:off",
@@ -8039,7 +8039,7 @@ class NovaApp(App):
         if browser:
             _paint(
                 badge,
-                Text("  BROWSER MODE — Obscura · web research · shared conversation",
+                Text("  BROWSER MODE — trusted browsers · web research · shared conversation",
                      style=f"bold {pal.accent}"),
             )
             badge.display = True
@@ -17357,16 +17357,43 @@ class NovaApp(App):
         if self._turn_running():
             self.notify("Wait for the active request to finish before changing Browser Mode.")
             return
+        if action == "settings":
+            from novacode_cli.config.nova_config import NovaConfig
+            from novacode_cli.mcp.config import MCPConfig
+            from novacode_cli.tui.browser_settings_screen import BrowserSettingsScreen
+
+            session = self.session_state
+            config = await asyncio.to_thread(NovaConfig)
+            servers = await asyncio.to_thread(lambda: MCPConfig().list_servers())
+            selected = await self.push_screen_wait(
+                BrowserSettingsScreen(
+                    {name: server.disabled for name, server in servers.items()},
+                    config.get_browser_mode_servers(),
+                )
+            )
+            if selected is not None:
+                if self._turn_running() or self.session_state is not session:
+                    self.notify("The session changed or is busy. Open Browser settings again.")
+                    return
+                try:
+                    await asyncio.to_thread(config.set_browser_mode_servers, selected)
+                except (OSError, ValueError):
+                    self.notify("Browser settings could not be saved.", severity="error")
+                    return
+                self.notify("Trusted browser servers saved. Applies to subsequent tool calls.")
+            return
         enabled = (
             not getattr(self.session_state, "browser_mode_enabled", False)
-            if action == "toggle" else action == "on"
+            if action == "toggle"
+            else action == "on"
         )
         self.session_state.browser_mode_enabled = enabled
         self._update_mode_badge()
         self._refresh_status()
         self.notify(
-            "Browser Mode on: Obscura and web research."
-            if enabled else "Browser Mode off. Findings remain in this conversation."
+            "Browser Mode on: selected browsers and web research."
+            if enabled
+            else "Browser Mode off. Findings remain in this conversation."
         )
         if task:
             await self._stream_prompt(task)

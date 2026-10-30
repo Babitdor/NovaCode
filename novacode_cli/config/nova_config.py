@@ -48,6 +48,20 @@ def _config_bool(value: Any, *, default: bool = False) -> bool:
     return default
 
 
+def _browser_server_names(value: object) -> list[str] | None:
+    """Validate exact server identifiers, never wildcard grants."""
+    if not isinstance(value, list) or any(
+        not isinstance(name, str)
+        or not name
+        or name.strip() != name
+        or not name.isprintable()
+        or any(char in name for char in "*?[]")
+        for name in value
+    ):
+        return None
+    return list(dict.fromkeys(value))
+
+
 def _role_key(role: str) -> str:
     """Config key holding one role's model.
 
@@ -1033,6 +1047,18 @@ class NovaConfig:
     def set_code_mode_enabled(self, enabled: bool) -> None:  # noqa: FBT001 -- config setter API.
         """Persist the live Code Mode preference."""
         self.set("code_mode_enabled", bool(enabled))
+
+    def get_browser_mode_servers(self) -> list[str]:
+        """Explicit browser MCP selections; malformed stored grants fail closed."""
+        return _browser_server_names(self.get("browser_mode_servers", ["obscura"])) or []
+
+    def set_browser_mode_servers(self, servers: list[str]) -> None:
+        """Persist exact selections, including an empty list for web-search-only mode."""
+        names = _browser_server_names(servers)
+        if names is None:
+            message = "Browser servers must be a list of exact, nonempty MCP server names."
+            raise ValueError(message)
+        self.set("browser_mode_servers", names)
 
     def get_edit_diagnostics_enabled(self) -> bool:
         """Whether file edits are followed by the project's own lint/type checks."""

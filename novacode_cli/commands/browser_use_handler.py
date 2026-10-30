@@ -27,6 +27,13 @@ async def handle_browser_use_command(
 ) -> bool:
     """Toggle, report status, or start a task using the existing agent and model."""
     action, task = browser_mode_args(cmd_args)
+    if action == "settings":
+        from novacode_cli.config.nova_config import NovaConfig
+
+        servers = NovaConfig().get_browser_mode_servers()
+        console.print(f"Trusted browser MCP servers: {', '.join(servers) or '(none)'}")
+        console.print("Use /browser-use settings in the TUI to change this selection.")
+        return True
     if action == "status":
         console.print(f"Browser Mode: {'on' if session_state.browser_mode_enabled else 'off'}")
         return True
@@ -34,7 +41,7 @@ async def handle_browser_use_command(
         not session_state.browser_mode_enabled if action == "toggle" else action == "on"
     )
     console.print(
-        "Browser Mode on: Obscura and web research."
+        "Browser Mode on: selected browsers and web research."
         if session_state.browser_mode_enabled
         else "Browser Mode off. Findings remain in this conversation."
     )

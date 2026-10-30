@@ -284,7 +284,7 @@ COMMANDS = {
     "files": "Show file operation summary for the session",
     "critique": "Run critique agent on recent changes (e.g., /critique or /critique src/)",
     "ralph": "Run autonomous looping mode (e.g., /ralph <task>, /ralph <task> --iterations 5)",
-    "browser-use": "Toggle Browser Mode: Obscura and web research (/browser-use on|off|status or <task>)",
+    "browser-use": "Browser research mode (/browser-use on|off|status|settings or <task>)",
     "council": "Open the Council web UI (5 agents answer independently, then vote — majority wins)",
     "create": "Open the Skills & Agents web UI (browse, preview, edit, create skills and agents)",
     "dream": "Run memory consolidation to organize and clean up memory files",

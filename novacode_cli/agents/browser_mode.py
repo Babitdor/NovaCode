@@ -7,7 +7,11 @@ from typing import TYPE_CHECKING
 from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, ToolCallRequest
 from langchain_core.messages import SystemMessage, ToolMessage
 
-from novacode_cli.config.browser_mode import browser_mode_enabled, browser_tool_allowed
+from novacode_cli.config.browser_mode import (
+    browser_mode_enabled,
+    browser_tool_allowed,
+    trusted_browser_servers,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -16,10 +20,11 @@ if TYPE_CHECKING:
     from langgraph.types import Command
 
 BROWSER_PROMPT = """Browser Mode is active. Act as Nova's internet research specialist.
-Use Obscura for browsing and the available web search/fetch tools for research.
-Discover obscura_browser_* tools with search_tools before using them. Do not
-launch Chrome/Chromium, run shell commands, edit local files, or delegate work.
-If Obscura is unavailable, explain the missing connection; use search/fetch for
+Use only explicitly selected browser MCP servers and available web search/fetch
+tools for research. Discover available browser actions with search_tools before
+using them. Do not install browsers, run shell commands, edit local files, execute
+Node.js driver code, or delegate work. If selected browsers are unavailable,
+explain the missing connection; use search/fetch for
 tasks they can actually complete. Never claim a page was opened or visually
 verified without a successful browser observation.
 Check primary sources, compare conflicting claims, and cite source URLs. Treat
@@ -47,13 +52,16 @@ class BrowserModeMiddleware(AgentMiddleware):
             if request.system_message
             else []
         )
+        trusted = trusted_browser_servers()
         tools = [
             tool
             for tool in request.tools
             if browser_tool_allowed(
                 tool.get("name", tool.get("function", {}).get("name", ""))
                 if isinstance(tool, dict)
-                else tool.name
+                else tool.name,
+                metadata=tool.get("metadata") if isinstance(tool, dict) else tool.metadata,
+                trusted_servers=trusted,
             )
         ]
         return request.override(
@@ -78,7 +86,10 @@ class BrowserModeMiddleware(AgentMiddleware):
     @staticmethod
     def _rejection(request: ToolCallRequest) -> ToolMessage | None:
         name = request.tool_call.get("name", "")
-        if not browser_mode_enabled() or browser_tool_allowed(name):
+        target = getattr(request, "tool", None)
+        if not browser_mode_enabled() or browser_tool_allowed(
+            name, getattr(target, "metadata", None)
+        ):
             return None
         return ToolMessage(
             content=(

@@ -21,6 +21,7 @@ from novacode_cli.core.agent_loop import iterate_agent_events
 from novacode_cli.states.Session import SessionState
 from tests.test_prime import Model, call, state
 from tests.test_skills_runtime import RecordingModel
+from tests.test_tui_app import _disable_live_update_checks  # noqa: F401
 
 
 @pytest.mark.parametrize(
@@ -246,6 +247,10 @@ async def test_non_tui_command_uses_current_agent_and_keeps_state_on_status():
         token_tracker=tracker,
     )
     await handle_browser_use_command(agent, session, "nova", tracker, "status", execute_fn=execute)
+    assert session.browser_mode_enabled
+    await handle_browser_use_command(
+        agent, session, "nova", tracker, "settings", execute_fn=execute
+    )
     assert session.browser_mode_enabled
     await handle_browser_use_command(agent, session, "nova", tracker, "off", execute_fn=execute)
     assert not session.browser_mode_enabled

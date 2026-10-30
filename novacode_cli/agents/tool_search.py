@@ -42,7 +42,11 @@ from novacode_cli.agents.tool_search_variants import (
     parameter_text,
     regex_matches,
 )
-from novacode_cli.config.browser_mode import browser_mode_enabled, browser_tool_allowed
+from novacode_cli.config.browser_mode import (
+    browser_mode_enabled,
+    browser_tool_allowed,
+    trusted_browser_servers,
+)
 from novacode_cli.skills.retrieval import MIN_COSINE, first_sentence, get_index
 
 if TYPE_CHECKING:
@@ -328,6 +332,7 @@ class ToolSearchMiddleware(AgentMiddleware):
     def _catalog_for(self, tools: Sequence[Any]) -> list[dict]:
         """Discovery metadata belongs to this invocation's current inventory."""
         browsing = browser_mode_enabled()
+        trusted = trusted_browser_servers() if browsing else frozenset()
         return [
             {
                 "name": _name(tool),
@@ -336,10 +341,21 @@ class ToolSearchMiddleware(AgentMiddleware):
                 "parameters": parameter_text(tool),
             }
             for tool in tools
-            if _name(tool) and (not browsing or browser_tool_allowed(_name(tool)))
+            if _name(tool)
+            and (
+                not browsing
+                or browser_tool_allowed(
+                    _name(tool),
+                    metadata=tool.get("metadata")
+                    if isinstance(tool, dict)
+                    else getattr(tool, "metadata", None),
+                    trusted_servers=trusted,
+                )
+            )
         ] + [
             {"name": name, "description": description, "kind": "subagent"}
-            for name, description in self._deferred_subagents.items() if not browsing
+            for name, description in self._deferred_subagents.items()
+            if not browsing
         ]
 
     def _search(
@@ -661,7 +677,7 @@ class ToolSearchMiddleware(AgentMiddleware):
             "specialist subagents are searchable. Capability groups:\n"
             f"{_group(optional_names)}\n\n"
             'Call search_tools("<capability>") or use exact names. query="*" browses; '
-            f'wildcards such as "{"obscura_*" if browsing else "playwright_*"}", '
+            f'wildcards such as "{"*snapshot*" if browsing else "playwright_*"}", '
             'limit and offset inspect further results. '
             f"{REGEX_TOOL} supports regex; {BM25_TOOL} supports keyword search. "
             "Search loads schemas, not permission. Normal approvals and execution policy "
