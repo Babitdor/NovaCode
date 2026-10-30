@@ -252,6 +252,7 @@ def setup_mcp_parser(subparsers: Any) -> argparse.ArgumentParser:  # noqa: ANN40
     )
     add_parser.add_argument(
         "--command",
+        dest="server_command",
         help="Command to execute (required for stdio transport)",
     )
     add_parser.add_argument(

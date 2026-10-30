@@ -842,7 +842,7 @@ def execute_mcp_command(args: argparse.Namespace) -> None:
             name=args.name,
             transport=args.transport,
             url=args.url or args.endpoint,
-            command=args.command,
+            command=args.server_command,
             args=args.args,
             env=env,
             description=args.description,
