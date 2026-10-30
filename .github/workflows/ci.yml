@@ -62,6 +62,9 @@ jobs:
           novacode_cli/plugins/marketplaces.py
           novacode_cli/agents/ponytail.py
           novacode_cli/agents/caveman.py
+          novacode_cli/agents/browser_mode.py
+          novacode_cli/config/browser_mode.py
+          novacode_cli/commands/browser_use_handler.py
           novacode_cli/agents/caveman_support.py
           novacode_cli/agents/prime.py
           novacode_cli/agents/plan_agent/plan_mode_middleware.py
@@ -156,6 +159,8 @@ jobs:
           tests/test_tool_search_safety.py
           tests/test_generic_mcp_tool.py
           tests/test_mcp_cli.py
+          tests/test_browser_mode.py
+          tests/test_browser_mode_ui.py
           tests/test_mcp_code_mode.py
           tests/test_native_code_mode.py
           tests/test_audio

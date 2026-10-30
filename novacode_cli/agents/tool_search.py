@@ -42,6 +42,7 @@ from novacode_cli.agents.tool_search_variants import (
     parameter_text,
     regex_matches,
 )
+from novacode_cli.config.browser_mode import browser_mode_enabled, browser_tool_allowed
 from novacode_cli.skills.retrieval import MIN_COSINE, first_sentence, get_index
 
 if TYPE_CHECKING:
@@ -326,6 +327,7 @@ class ToolSearchMiddleware(AgentMiddleware):
 
     def _catalog_for(self, tools: Sequence[Any]) -> list[dict]:
         """Discovery metadata belongs to this invocation's current inventory."""
+        browsing = browser_mode_enabled()
         return [
             {
                 "name": _name(tool),
@@ -334,10 +336,10 @@ class ToolSearchMiddleware(AgentMiddleware):
                 "parameters": parameter_text(tool),
             }
             for tool in tools
-            if _name(tool)
+            if _name(tool) and (not browsing or browser_tool_allowed(_name(tool)))
         ] + [
             {"name": name, "description": description, "kind": "subagent"}
-            for name, description in self._deferred_subagents.items()
+            for name, description in self._deferred_subagents.items() if not browsing
         ]
 
     def _search(
@@ -643,7 +645,8 @@ class ToolSearchMiddleware(AgentMiddleware):
         deferred: list[Any] = []
         for tool in request.tools:
             (bound if _name(tool) in keep else deferred).append(tool)
-        hidden = [n for n in self._deferred_subagents if n not in loaded_agents]
+        browsing = browser_mode_enabled()
+        hidden = [] if browsing else [n for n in self._deferred_subagents if n not in loaded_agents]
         bound = [self._shorten(t, hidden) for t in bound]
         if not deferred and not hidden:
             return request.override(tools=bound)
@@ -653,11 +656,13 @@ class ToolSearchMiddleware(AgentMiddleware):
         ]
         note = (
             "\n\n## More tools (load on demand)\n\n"
-            f"{len(optional_names)} optional tools and {len(self._deferred_subagents)} "
+            f"{len(optional_names)} optional tools and "
+            f"{0 if browsing else len(self._deferred_subagents)} "
             "specialist subagents are searchable. Capability groups:\n"
             f"{_group(optional_names)}\n\n"
             'Call search_tools("<capability>") or use exact names. query="*" browses; '
-            'wildcards such as "playwright_*", limit and offset inspect further results. '
+            f'wildcards such as "{"obscura_*" if browsing else "playwright_*"}", '
+            'limit and offset inspect further results. '
             f"{REGEX_TOOL} supports regex; {BM25_TOOL} supports keyword search. "
             "Search loads schemas, not permission. Normal approvals and execution policy "
             "still apply. Never guess arguments: load the schema first. "

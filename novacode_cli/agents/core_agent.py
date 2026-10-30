@@ -2523,6 +2523,9 @@ This file stores your preferences and context that persist across sessions.
         for s in subagents
         if isinstance(s, dict) and s.get("name") and s["name"] not in LISTED_SUBAGENTS
     }
+    from novacode_cli.agents.browser_mode import BrowserModeMiddleware
+
+    agent_middleware.append(BrowserModeMiddleware())
     agent_middleware.append(
         ToolSearchMiddleware(
             skills=skills_middleware,

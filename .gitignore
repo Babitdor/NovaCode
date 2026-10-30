@@ -16,6 +16,7 @@ docs/*
 !docs/discord-session-threads.md
 !docs/security-guardrails.md
 !docs/caveman-mode.md
+!docs/browser-mode.md
 !docs/prompt-audit.md
 !docs/mcp-code-mode.md
 !docs/attribution.md

@@ -644,7 +644,7 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     ),
     "hooks": SlashCommand("_run_hooks", "list/enable/disable/remove hooks"),
     "browser-use": SlashCommand(
-        "_run_browser_use", "AI browser automation, results analyzed by the agent"
+        "_run_browser_use", "Toggle Browser Mode: Obscura browsing and web research (on/off/status)"
     ),
     "ralph": SlashCommand("_run_ralph_screen", "autonomous looping mode (/ralph <task>)"),
     "trello": SlashCommand("_run_trello", "kanban task board in the browser"),
@@ -1614,8 +1614,8 @@ class NovaApp(App):
     }
     #composer-actions {
         layout: grid;
-        grid-size: 5 1;
-        grid-columns: 14 16 12 16 18;
+        grid-size: 6 1;
+        grid-columns: 14 16 12 14 16 18;
         grid-rows: 1;
         height: 1;
         padding: 0 1;
@@ -1624,7 +1624,7 @@ class NovaApp(App):
     Screen.narrow #composer-actions {
         grid-size: 2 3; grid-columns: 1fr 1fr; grid-rows: 1 1 1; height: 3;
     }
-    #prime-toggle, #passing-toggle, #plan-toggle, #caveman-toggle, #code-mode-toggle {
+    #prime-toggle, #passing-toggle, #plan-toggle, #browser-toggle, #caveman-toggle, #code-mode-toggle {
         width: 16;
         min-width: 16;
         height: 1;
@@ -1636,14 +1636,15 @@ class NovaApp(App):
     }
     #prime-toggle { width: 14; min-width: 14; }
     #plan-toggle { width: 12; min-width: 12; }
+    #browser-toggle { width: 14; min-width: 14; }
     #code-mode-toggle { width: 18; min-width: 18; }
-    #prime-toggle.enabled, #passing-toggle.enabled, #plan-toggle.enabled,
+    #prime-toggle.enabled, #passing-toggle.enabled, #plan-toggle.enabled, #browser-toggle.enabled,
     #caveman-toggle.enabled, #code-mode-toggle.enabled {
         color: $accent;
         text-style: bold;
     }
     #prime-toggle:focus, #prime-toggle:hover, #passing-toggle:focus, #passing-toggle:hover,
-    #plan-toggle:focus, #plan-toggle:hover,
+    #plan-toggle:focus, #plan-toggle:hover, #browser-toggle:focus, #browser-toggle:hover,
     #caveman-toggle:focus, #caveman-toggle:hover,
     #code-mode-toggle:focus, #code-mode-toggle:hover {
         background: $panel;
@@ -2446,7 +2447,7 @@ class NovaApp(App):
         self._input_pulse_timer: Any = None
         self._pulse_on = False
         # Per-keystroke de-churn: last (plan, bash) mode state + last palette list.
-        self._last_mode_state: tuple[bool, bool, bool, bool, str, bool] | None = None
+        self._last_mode_state: tuple[bool, bool, bool, bool, str, bool, bool] | None = None
         self._last_palette: list[str] | None = None
         # Notification badge: last seen unread count (drives status refresh).
         self._last_notif_count = 0
@@ -2626,6 +2627,11 @@ class NovaApp(App):
                     "plan:off",
                     id="plan-toggle",
                     tooltip="Toggle read-only planning without submitting your draft.",
+                )
+                yield Button(
+                    "browser:off",
+                    id="browser-toggle",
+                    tooltip="Toggle Obscura browsing and web research; keep the current conversation.",
                 )
                 yield Button(
                     "lite:off",
@@ -7980,7 +7986,8 @@ class NovaApp(App):
         mode has a distinct look *and* a distinct animation.
         """
         plan = getattr(self.session_state, "plan_mode_enabled", False)
-        bash = input_value.startswith("!")
+        browser = getattr(self.session_state, "browser_mode_enabled", False)
+        bash = input_value.startswith("!") and not browser
         goal = (
             getattr(self.session_state, "active_goal", None)
             if getattr(self.session_state, "goal_status", "active") == "active"
@@ -8004,9 +8011,9 @@ class NovaApp(App):
         handoff_toggle.set_class(handoff, "enabled")
         pane = getattr(self, "_active_pane", None)
         handoff_toggle.disabled = pane is not None and pane.kind == "child"
-        if self._last_mode_state == (plan, bash, bool(goal), auto, prime, handoff):
+        if self._last_mode_state == (plan, bash, bool(goal), auto, prime, handoff, browser):
             return
-        self._last_mode_state = (plan, bash, bool(goal), auto, prime, handoff)
+        self._last_mode_state = (plan, bash, bool(goal), auto, prime, handoff, browser)
         try:
             badge = self._w("#mode-badge", Static)
             prompt = self._w("#prompt", PromptInput)
@@ -8015,17 +8022,28 @@ class NovaApp(App):
 
         prompt.screen.set_class(bool(prime), "prime-mode")
         prompt.screen.set_class(bool(plan), "planning-mode")
+        prompt.screen.set_class(bool(browser), "browsing-mode")
+        browser_toggle = self._w("#browser-toggle", Button)
+        browser_toggle.label = "browser:on" if browser else "browser:off"
+        browser_toggle.set_class(bool(browser), "enabled")
         toggle = self._w("#prime-toggle", Button)
         toggle.label = "Prime: on" if prime else "Prime: off"
         toggle.set_class(bool(prime), "enabled")
         plan_toggle = self._w("#plan-toggle", Button)
         plan_toggle.label = "plan:on" if plan else "plan:off"
         plan_toggle.set_class(bool(plan), "enabled")
-        prime_composer = bool(prime) and not (plan or bash or auto)
+        prime_composer = bool(prime) and not (plan or browser or bash or auto)
         prompt.set_class(prime_composer, "prime-composer")
 
         pal = self._palette
-        if plan and bash:
+        if browser:
+            _paint(
+                badge,
+                Text("  BROWSER MODE — Obscura · web research · shared conversation",
+                     style=f"bold {pal.accent}"),
+            )
+            badge.display = True
+        elif plan and bash:
             t = Text()
             t.append("  ⏸ PLAN  ", style=f"bold {pal.primary}")
             t.append("$ BASH — ! chat · !! terminal", style=f"bold {pal.accent}")
@@ -8067,16 +8085,18 @@ class NovaApp(App):
         # Drive the input look from CSS classes (bash wins over plan visually).
         prompt.set_class(bash, "bash-mode")
         prompt.set_class(plan and not bash, "plan-mode")
-        prompt.set_class(not plan and not bash, "normal-mode")
-        prompt.set_class(auto and not bash, "auto-approve-mode")
+        prompt.set_class(bool(browser), "browser-mode")
+        prompt.set_class(not plan and not bash and not browser, "normal-mode")
+        prompt.set_class(auto and not bash and not browser, "auto-approve-mode")
 
         # Also style the > prefix chevron and the prompt row to match.
         try:
             prefix = self.query_one("#prompt-prefix", Static)
             prefix.set_class(bash, "bash-mode")
             prefix.set_class(plan and not bash, "plan-mode")
-            prefix.set_class(not plan and not bash, "normal-mode")
-            prefix.set_class(auto and not bash, "auto-approve-mode")
+            prefix.set_class(bool(browser), "browser-mode")
+            prefix.set_class(not plan and not bash and not browser, "normal-mode")
+            prefix.set_class(auto and not bash and not browser, "auto-approve-mode")
             prefix.set_class(prime_composer, "prime-composer")
             _paint(prefix, "$ " if bash else "> ")
         except NoMatches:
@@ -8085,20 +8105,22 @@ class NovaApp(App):
             row = self.query_one("#prompt-row", Horizontal)
             row.set_class(bash, "bash-mode")
             row.set_class(plan and not bash, "plan-mode")
-            row.set_class(not plan and not bash, "normal-mode")
-            row.set_class(auto and not bash, "auto-approve-mode")
+            row.set_class(bool(browser), "browser-mode")
+            row.set_class(not plan and not bash and not browser, "normal-mode")
+            row.set_class(auto and not bash and not browser, "auto-approve-mode")
             row.set_class(prime_composer, "prime-composer")
             plan_composer = bool(plan) and not (bash or auto)
             row.set_class(plan_composer, "plan-composer")
             row.border_title = (
-                "Plan Mode · Read only" if plan_composer
+                "Browser Mode · Internet research" if browser
+                else "Plan Mode · Read only" if plan_composer
                 else "Nova Prime · Deep Work" if prime_composer else ""
             )
         except NoMatches:
             pass
 
         # Distinct animation per mode.
-        self._set_input_pulse("bash" if bash else ("plan" if plan else None))
+        self._set_input_pulse("browser" if browser else "bash" if bash else "plan" if plan else None)
 
     def _set_input_pulse(self, mode: str | None) -> None:
         """Animate the input's tint with a per-mode pulse (no-op if unchanged).
@@ -8125,7 +8147,11 @@ class NovaApp(App):
             prompt.styles.animate("tint", value=Color(0, 0, 0, 0.0), duration=0.3)
             return
 
-        if mode == "bash":
+        if mode == "browser":
+            glow = Color.parse("#73daca")
+            period = 1.3
+            peak = 0.14
+        elif mode == "bash":
             glow = Color.parse("#bb9af7")
             period = 0.55  # fast, alert
             peak = 0.22
@@ -11247,6 +11273,9 @@ class NovaApp(App):
 
     async def _run_bash(self, text: str) -> None:
         """Stream ``!cmd`` in chat or open ``!!cmd`` in a terminal view."""
+        if getattr(self.session_state, "browser_mode_enabled", False):
+            self.notify("Switch Browser Mode off before running a shell command.")
+            return
         terminal_view = text.startswith("!!")
         cmd = text[2 if terminal_view else 1:].strip()
         if not cmd:
@@ -12412,6 +12441,13 @@ class NovaApp(App):
         event.stop()
         enabled = getattr(self.session_state, "plan_mode_enabled", False)
         await self._run_plan("/plan off" if enabled else "/plan")
+        self._w("#prompt", PromptInput).focus()
+
+    @on(Button.Pressed, "#browser-toggle")
+    async def _browser_toggle_pressed(self, event: Button.Pressed) -> None:
+        """Change the browser lens without sending or clearing the current draft."""
+        event.stop()
+        await self._run_browser_use("/browser-use")
         self._w("#prompt", PromptInput).focus()
 
     async def _run_prime(self, text: str) -> None:
@@ -14903,6 +14939,12 @@ class NovaApp(App):
         parts = text.split(maxsplit=1)
         args = parts[1].strip() if len(parts) > 1 else ""
         low = args.lower()
+        if (
+            getattr(self.session_state, "browser_mode_enabled", False)
+            and self._turn_running() and low != "status"
+        ):
+            self.notify("Wait for the browser request to finish before changing modes.")
+            return
         if low == "status":
             enabled = getattr(self.session_state, "plan_mode_enabled", False)
             self._log(
@@ -15916,7 +15958,8 @@ class NovaApp(App):
             branch = "—"  # The root's branch is not the child workspace's branch.
         model = getattr(self, "_routed_model_name", None) or self.model_name or "unknown"
         phase = (
-            "planning"
+            "browsing" if getattr(self.session_state, "browser_mode_enabled", False)
+            else "planning"
             if getattr(self.session_state, "plan_mode_enabled", False)
             else "implementation"
         )
@@ -17301,23 +17344,32 @@ class NovaApp(App):
         await self.push_screen_wait(HooksScreen())
 
     async def _run_browser_use(self, text: str) -> None:
-        """Run /browser-use; the agent analysis streams natively via execute_fn."""
-        from novacode_cli.commands.browser_use_handler import handle_browser_use_command
+        """Toggle browser research on the existing graph and checkpoint thread."""
+        from novacode_cli.config.browser_mode import browser_mode_args
 
         parts = text.split(maxsplit=1)
         args = parts[1].strip() if len(parts) > 1 else ""
-        self._log(Text(f"🌐 Browser task: {args or '(status)'}", style="bold"))
-        # Browser automation + setup prints are captured/discarded; the follow-up
-        # agent run renders natively through _tui_execute_fn.
-        with _rich_console.capture():
-            await handle_browser_use_command(
-                self.agent,
-                self.session_state,
-                self.assistant_id,
-                self.token_tracker,
-                args or None,
-                execute_fn=self._tui_execute_fn,
-            )
+        action, task = browser_mode_args(args)
+        if action == "status":
+            enabled = getattr(self.session_state, "browser_mode_enabled", False)
+            self.notify(f"Browser Mode: {'on' if enabled else 'off'}")
+            return
+        if self._turn_running():
+            self.notify("Wait for the active request to finish before changing Browser Mode.")
+            return
+        enabled = (
+            not getattr(self.session_state, "browser_mode_enabled", False)
+            if action == "toggle" else action == "on"
+        )
+        self.session_state.browser_mode_enabled = enabled
+        self._update_mode_badge()
+        self._refresh_status()
+        self.notify(
+            "Browser Mode on: Obscura and web research."
+            if enabled else "Browser Mode off. Findings remain in this conversation."
+        )
+        if task:
+            await self._stream_prompt(task)
 
     # --- /ralph native widgets -------------------------------------------
     _RALPH_ITER_GLYPH = {

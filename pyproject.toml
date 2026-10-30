@@ -97,7 +97,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Real-browser automation: the /browser-use command and the LinkedIn scraper.
+# Optional legacy browser-use integrations (e.g. the LinkedIn scraper).
+# Nova's /browser-use mode uses Obscura MCP and needs no browser extra.
 # Kept out of the base install because it is ~330 MB (playwright, patchright,
 # google-api-python-client) for two features most sessions never touch; the
 # browser-automation-agent drives a browser through the Playwright MCP server,
@@ -235,6 +236,7 @@ ignore-var-parameters = true
 
 [tool.ruff.lint.per-file-ignores]
 "novacode_cli/config/*" = ["INP001"]  # Existing namespace package; no eager config imports.
+"novacode_cli/agents/browser_mode.py" = ["INP001"]  # Existing agents namespace package.
 "scripts/verify_prime.py" = [
     "T201",  # CLI verification results.
     "S603",  # Current Python interpreter and fixed repository test paths; no shell.

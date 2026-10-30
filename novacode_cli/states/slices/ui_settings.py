@@ -27,6 +27,7 @@ class UISettings:
         self.exit_hint_until: float | None = None
         self.exit_hint_handle: Any = None
         self.plan_mode_enabled: bool = False
+        self.browser_mode_enabled: bool = False
         self.verbose: bool = False
         self.active_goal: str | None = None
 

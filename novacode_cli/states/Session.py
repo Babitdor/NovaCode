@@ -184,6 +184,18 @@ class SessionState:
     @plan_mode_enabled.setter
     def plan_mode_enabled(self, value: bool) -> None:
         self._ui_settings.plan_mode_enabled = value
+        if value:
+            self._ui_settings.browser_mode_enabled = False
+
+    @property
+    def browser_mode_enabled(self) -> bool:
+        return self._ui_settings.browser_mode_enabled
+
+    @browser_mode_enabled.setter
+    def browser_mode_enabled(self, value: bool) -> None:
+        self._ui_settings.browser_mode_enabled = value
+        if value:
+            self._ui_settings.plan_mode_enabled = False
 
     @property
     def verbose(self) -> bool:
@@ -525,7 +537,7 @@ class SessionState:
         # Property-backed fields — use object.__setattr__ which triggers the
         # property descriptor (data descriptors always win).
         if name in {
-            "auto_approve", "no_splash", "plan_mode_enabled", "verbose",
+            "auto_approve", "no_splash", "plan_mode_enabled", "browser_mode_enabled", "verbose",
             "exit_hint_until", "exit_hint_handle",
             "token_tracker", "plan_agent", "plan_backend", "plan_content",
             "approved_plan_content",
@@ -607,7 +619,8 @@ class SessionState:
 
     def toggle_plan_mode(self) -> bool:
         """Toggle plan mode and return new state."""
-        return self._ui_settings.toggle_plan_mode()
+        self.plan_mode_enabled = not self.plan_mode_enabled
+        return self.plan_mode_enabled
 
     def toggle_verbose(self) -> bool:
         """Toggle verbose mode and return new state."""
@@ -668,6 +681,7 @@ class SessionState:
         # Plan mode: exit, drop cached plan agent + in-flight plan content, and
         # discard any approved-but-unconsumed plan.
         self.clear_plan_agent()
+        self.browser_mode_enabled = False
         self.consume_approved_plan()
         # Agent-to-agent mailbox is per-conversation; start the new chat empty.
         try:

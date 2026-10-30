@@ -311,3 +311,19 @@ Screen.planning-mode #plan-toggle.enabled:hover,
 Screen.planning-mode #plan-toggle.enabled:focus {
     background: $primary 75%; color: $text; text-style: bold reverse;
 }
+
+/* Browser research retains the conversation while making its tool boundary visible. */
+Screen.browsing-mode #prompt-row.browser-mode {
+    border: round $accent; border-title-color: $accent;
+    border-title-style: bold; background: $accent 8%;
+}
+Screen.browsing-mode #prompt.browser-mode,
+Screen.browsing-mode #prompt-prefix.browser-mode {
+    color: $accent; background: $accent 8%;
+}
+Screen.browsing-mode #mode-badge {
+    display: block; height: auto; background: $accent 12%; color: $text;
+}
+Screen.browsing-mode #browser-toggle.enabled {
+    background: $accent; color: $background; text-style: bold;
+}
