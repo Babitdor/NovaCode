@@ -134,6 +134,7 @@ jobs:
           tests/test_subagent_hitl.py
           tests/test_subagent_resilience.py
           tests/test_subagent_model_roles.py
+          tests/test_subagent_tasks.py
           tests/test_tui_subagent_panel.py
           tests/test_delegated_auto_approve.py
           tests/test_prompt_injection_guardrails.py

@@ -6537,8 +6537,9 @@ class NovaApp(App):
     def _subagent_task_list(self) -> list[Any]:
         """Active rows in arrival order, capped for a runaway fan-out."""
         rows = [
-            row for row in self._subagent_rows.values()
-            if row.status == "running" and row.phase_kind == "async"
+            row
+            for row in self._subagent_rows.values()
+            if row.status == "running" and (row.phase_kind == "async" or row.compacting)
         ]
         if len(rows) > subagent_tasks.MAX_ROWS:
             rows = rows[-subagent_tasks.MAX_ROWS :]
@@ -18529,6 +18530,11 @@ class NovaApp(App):
             self._ingest_subagent_task(e)
             if e.phase_kind != "async":
                 await self._show_inline_subagent(e)
+        elif isinstance(e, ev.SubagentCompaction):
+            row = self._subagent_rows.get(e.task_id)
+            if row is not None:
+                row.compacting = e.compacting
+                self._schedule_subagents_paint()
         elif isinstance(e, ev.SubagentPreview):
             # Collected unseen; the preview screen reads it when a row is opened.
             row = self._subagent_rows.get(e.task_id)

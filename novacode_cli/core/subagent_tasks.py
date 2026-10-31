@@ -329,6 +329,8 @@ def task_row(
         # The failure text is the whole point of the row, so it gets the space
         # left over rather than the name being truncated to make room for it.
         name = f"{name} — {task.error}"
+    if task.compacting:
+        name = f"⟳ compacting · {name}"
 
     style = {"done": "dim", "failed": "red", "running": "", "stopped": "yellow"}.get(
         task.status, ""

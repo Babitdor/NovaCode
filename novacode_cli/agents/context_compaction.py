@@ -531,7 +531,18 @@ def _announce(event: str = "nova_compaction_start") -> None:
     try:
         from langgraph.config import get_stream_writer
 
-        get_stream_writer()({"type": event})
+        payload: dict[str, Any] = {"type": event}
+        # The task tool stamps its dispatch id into child runnable metadata.
+        # Carry it through so the parent stream can update that subagent's row.
+        from langgraph.config import get_config
+
+        from novacode_cli.core.subagent_tasks import TASK_ID_METADATA_KEY
+
+        metadata = get_config().get("metadata", {})
+        task_id = metadata.get(TASK_ID_METADATA_KEY) if isinstance(metadata, dict) else None
+        if task_id:
+            payload["subagent_task_id"] = str(task_id)
+        get_stream_writer()(payload)
     except Exception:  # noqa: BLE001 - outside a graph run there is no stream
         pass
 

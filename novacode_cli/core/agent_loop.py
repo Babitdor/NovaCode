@@ -629,6 +629,10 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                     # summary: that call does not stream, so without this the UI
                     # would sit silent for as long as the summary takes.
                     if isinstance(data, dict) and data.get("type") == "nova_compaction_start":
+                        subagent_task_id = data.get("subagent_task_id")
+                        if subagent_task_id:
+                            yield ev.SubagentCompaction(str(subagent_task_id), True)
+                            continue
                         compaction_finished = False
                         usage_after_compaction = False
                         if not compaction_status_started:
@@ -646,6 +650,10 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                         "nova_compaction_end",
                         "nova_compaction_failed",
                     ):
+                        subagent_task_id = data.get("subagent_task_id")
+                        if subagent_task_id:
+                            yield ev.SubagentCompaction(str(subagent_task_id), False)
+                            continue
                         compaction_finished = True
                         usage_after_compaction = False
                         if compaction_status_started:

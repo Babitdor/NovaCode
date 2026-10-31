@@ -131,6 +131,22 @@ async def test_local_task_opens_live_preview_without_leaking_details(
         await pilot.press("escape")
 
 
+@pytest.mark.asyncio
+async def test_subagent_compaction_updates_only_its_panel_row():
+    app = _app()
+    async with app.run_test(size=(110, 40)):
+        app._ingest_subagent_task(_task("worker-a", label="research: docs"))
+        app._ingest_subagent_task(_task("worker-b", label="tests: package"))
+        await app._render(ev.SubagentCompaction("worker-a", True))
+        app._paint_subagents()
+        body = str(app.query_one("#subagents-body").render())
+        assert "compacting" in body
+        assert app._subagent_rows["worker-a"].compacting
+        assert not app._subagent_rows["worker-b"].compacting
+        await app._render(ev.SubagentCompaction("worker-a", False))
+        assert not app._subagent_rows["worker-a"].compacting
+
+
 @pytest.mark.parametrize("status,word", [("done", "completed"), ("failed", "failed"), ("stopped", "stopped")])
 async def test_inline_status_updates_same_line_and_keeps_other_agent_running(status, word):
     app = _app()

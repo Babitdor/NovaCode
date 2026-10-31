@@ -171,6 +171,15 @@ class SubagentTask:
     duration_ms: int | None = None  # filled in by the completing event
     error: str = ""
     model: str | None = None  # what the task actually ran on
+    compacting: bool = False
+
+
+@dataclass
+class SubagentCompaction:
+    """A subagent started or finished summarizing its context."""
+
+    task_id: str
+    compacting: bool
 
 
 @dataclass

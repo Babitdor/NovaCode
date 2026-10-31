@@ -297,6 +297,12 @@ def test_glyphs_and_the_model_column():
     assert "—" in running.plain  # an unknown model is shown, not left blank
 
 
+def test_compacting_subagent_is_labeled_in_its_panel_row():
+    row = st.task_row(_task(compacting=True, label="research: docs"), width=100, now=101.0)
+    assert "⟳ compacting" in row.plain
+    assert "research: docs" in row.plain
+
+
 def test_a_finished_rows_time_uses_its_duration_and_a_running_one_ages():
     finished = _task(status="done", duration_ms=38300, started_at=1.0)
     running = _task(started_at=100.0)
