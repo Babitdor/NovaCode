@@ -55,8 +55,10 @@ _NOTICES = {
     ),
     "zdr": (
         "⚠️  No zero-data-retention route for this model\n"
-        "Command Code has no ZDR-capable provider for it. Pick another model, or turn "
-        "zero data retention off for Command Code in /auth.\n"
+        "Command Code has no ZDR-capable upstream for it. Keep zero data retention on "
+        "and choose another model, or explicitly permit non-ZDR upstreams by turning it "
+        "off for Command Code in /auth. Close /auth to refresh the model; if it was "
+        "already off, reselect the model in /model.\n"
         "Details: {text}"
     ),
     "region": (
@@ -141,7 +143,9 @@ def _classify(exc: BaseException | None) -> str | None:
     # A valid key on a plan without API access (Command Code's Go plan).
     if "upgrade_required" in low:
         return "plan"
-    if "cmd_zdr_no_providers" in low:
+    if "cmd_zdr_no_providers" in low or (
+        "no zero-data-retention upstream" in low and "x-cmd-zdr" in low
+    ):
         return "zdr"
 
     # Authentication / authorization.

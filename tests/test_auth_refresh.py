@@ -109,3 +109,32 @@ async def test_other_provider_auth_rebuilds_delegates_without_changing_live_mode
     )
     await NovaApp._run_auth(host)
     switch.assert_awaited_once_with(model)
+
+
+async def test_retention_setting_change_refreshes_without_claiming_an_api_key_save(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from novacode_cli.config import model_create
+
+    replacement = object()
+    build = Mock(return_value=replacement)
+    monkeypatch.setattr(model_create, "create_model_from_config", build)
+    switch = AsyncMock(return_value=("new-agent", "same-backend"))
+
+    async def prompt(screen: AuthManagerScreen) -> None:
+        screen.model_settings_changed.append("commandcode")
+
+    host = SimpleNamespace(
+        push_screen_wait=prompt,
+        _log=Mock(),
+        _model_provider="commandcode",
+        model_name="deepseek/deepseek-v4-flash",
+        session_state=SimpleNamespace(switch_model=switch),
+        agent="old-agent",
+        backend="same-backend",
+    )
+    await NovaApp._run_auth(host)
+    build.assert_called_once_with("commandcode", "deepseek/deepseek-v4-flash")
+    switch.assert_awaited_once_with(replacement)
+    assert host.agent == "new-agent"
+    assert "API key" not in str(host._log.call_args_list)

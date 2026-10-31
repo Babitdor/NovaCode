@@ -55,6 +55,36 @@ async def test_anthropic_console_is_guided_key_setup(monkeypatch):
         assert not Secrets.values
 
 
+@pytest.mark.parametrize("initial", [True, False])
+async def test_commandcode_retention_switch_records_a_model_refresh(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    initial: bool,
+):
+    from novacode_cli.config.nova_config import NovaConfig
+
+    preferences = {"commandcode_zdr": initial}
+    monkeypatch.setattr(
+        NovaConfig, "get", lambda self, key, default=None: preferences.get(key, default)
+    )
+    monkeypatch.setattr(
+        NovaConfig, "set", lambda self, key, value: preferences.update({key: value})
+    )
+    app = App()
+    async with app.run_test(size=(100, 35)) as pilot:
+        manager = AuthManagerScreen(focus="commandcode")
+        await app.push_screen(manager)
+        assert await _settle(pilot, lambda: bool(_rows(manager)))
+        manager.open_prompt()
+        assert await _settle(pilot, lambda: isinstance(app.screen, ProviderSignInChoice))
+        await _click_visible(pilot, app.screen, "#commandcode-zdr")
+        assert await _settle(pilot, lambda: manager.model_settings_changed == ["commandcode"])
+        assert preferences["commandcode_zdr"] is not initial
+        assert manager.saved == []
+        assert manager.deleted == []
+        assert not Secrets.values
+
+
 @pytest.mark.asyncio
 async def test_google_signin_from_manager_then_select_existing_api_key(monkeypatch):
     seen = []

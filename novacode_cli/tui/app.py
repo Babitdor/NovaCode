@@ -13503,23 +13503,24 @@ class NovaApp(App):
         screen = AuthManagerScreen(focus=provider)
         await self.push_screen_wait(screen)
 
-        if not (screen.saved or screen.deleted):
+        changed = set(screen.saved) | set(screen.model_settings_changed)
+        if not (changed or screen.deleted):
             return
 
-        if set(screen.saved) & MODEL_PRESETS.keys():
+        if changed & MODEL_PRESETS.keys():
             from novacode_cli.agents.core_agent import clear_named_subagents_cache
             from novacode_cli.config.model_create import create_model_from_config
 
             clear_named_subagents_cache()
             live_provider = self._model_provider or ModelManager().get_current_provider_id()
             try:
-                if live_provider in screen.saved:
+                if live_provider in changed:
                     model = await asyncio.to_thread(
                         create_model_from_config, live_provider, self.model_name
                     )
                     if model is None:
                         self._log(Text(
-                            "Authentication saved; select a usable model in /model.", style="yellow"
+                            "Provider settings saved; select a usable model in /model.", style="yellow"
                         ))
                     else:
                         self.agent, self.backend = await self.session_state.switch_model(model)
@@ -13530,10 +13531,12 @@ class NovaApp(App):
                         self.agent, self.backend = await self.session_state.switch_model(model)
             except Exception:  # noqa: BLE001 -- never expose credential-bearing SDK errors
                 self._log(Text(
-                    "Authentication saved, but the model could not refresh. Retry /model.",
+                    "Provider settings saved, but the model could not refresh. Retry /model.",
                     style="yellow",
                 ))
 
+        if not (screen.saved or screen.deleted):
+            return
         for name in screen.saved:
             self._log(Text(f"● Saved the API key for {provider_display_name(name)}", style="green"))
             if name == "tavily":

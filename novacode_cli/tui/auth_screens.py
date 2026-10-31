@@ -136,6 +136,7 @@ class AuthManagerScreen(ModalScreen[None]):
         #: order they happened. The caller reports them; the screen does not.
         self.saved: list[str] = []
         self.deleted: list[str] = []
+        self.model_settings_changed: list[str] = []
         self.warnings: list[str] = []
 
     def compose(self) -> ComposeResult:
@@ -368,9 +369,10 @@ class AuthManagerScreen(ModalScreen[None]):
                 config = NovaConfig()
                 on = not _config_bool(config.get("commandcode_zdr", False))
                 config.set("commandcode_zdr", on)
+                self.model_settings_changed.append(name)
                 self.app.notify(
                     f"Command Code zero data retention {'on' if on else 'off'}. "
-                    "Applies the next time a Command Code model loads (/model or restart)."
+                    "Close /auth to refresh the model."
                 )
                 return
             if name == "google":

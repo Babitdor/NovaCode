@@ -117,10 +117,18 @@ def test_jev_on_command_code_uses_only_the_command_code_key(monkeypatch):
     assert tool_verdicts.decision_api_key("http://localhost:1/v1/systemone") == "key:SYSTEM_ONE_API_KEY"
 
 
-def test_no_zdr_route_is_explained_and_not_retried():
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Error code: 422 - {'error': {'code': 'cmd_zdr_no_providers'}}",
+        "Error code: 422 - This model has no zero-data-retention upstream. "
+        "Remove the x-cmd-zdr header or choose a different model.",
+    ],
+)
+def test_no_zdr_route_is_explained_and_not_retried(message: str):
     from novacode_cli.errors.provider_errors import friendly_model_error, is_retryable_model_error
 
-    error = Exception("Error code: 422 - {'error': {'code': 'cmd_zdr_no_providers'}}")
+    error = Exception(message)
     assert "zero-data-retention" in friendly_model_error(error)
     assert not is_retryable_model_error(error)
 

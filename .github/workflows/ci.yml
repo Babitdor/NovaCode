@@ -229,6 +229,10 @@ jobs:
           tests/test_reasoning_content.py
           tests/test_reasoning_settings.py
           tests/test_provider_effort_wiring.py
+          tests/test_auth_refresh.py
+          tests/test_commandcode_provider.py
+          tests/test_provider_errors.py
+          tests/test_provider_signin_ui.py
           tests/test_usage_tree.py
           tests/test_update_success_screen.py
       - name: Upload test results

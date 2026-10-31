@@ -61,6 +61,9 @@ class ProviderSignInChoice(ModalScreen[str | None]):
                 yield Button(
                     f"Zero data retention: {'on' if zdr else 'off'} (switch)", id="commandcode-zdr"
                 )
+                yield Static(
+                    "ZDR requires a compatible upstream. Turning it off permits non-ZDR upstreams."
+                )
                 yield Link("Provider API guide", url="https://commandcode.ai/docs/provider")
             elif self.provider == "google":
                 yield Static("Connect Gemini")
