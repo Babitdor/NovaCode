@@ -9,9 +9,7 @@ downloads; until it has loaded (or if it cannot), search is BM25-only.
 
 from __future__ import annotations
 
-import concurrent.futures
 import copy
-import functools
 import json
 import logging
 import re
@@ -21,11 +19,13 @@ from collections.abc import Mapping
 from typing import Any, Generic, TypeVar
 
 from novacode_cli.computation_cache import digest
+from novacode_cli.embeddings import MODEL_NAME as MODEL_NAME
+from novacode_cli.embeddings import SharedModel, get_model
+from novacode_cli.embeddings import local_snapshot as local_snapshot
+from novacode_cli.embeddings import prewarm as prewarm
 
 logger = logging.getLogger("nova.skills.retrieval")
 SkillT = TypeVar("SkillT", bound=Mapping[str, Any])
-
-MODEL_NAME = "minishlab/potion-code-16M"  # shared with code_search: already cached
 
 # Candidate suggestions, never activation. Absolute similarity and separation
 # from ordinary matches work even for a one-skill specialist library.
@@ -40,85 +40,19 @@ _GENERIC_TERMS = frozenset(
     "implement test tests testing review".split()
 )
 
-_executor: concurrent.futures.ThreadPoolExecutor | None = None
-_model_future: concurrent.futures.Future | None = None
 _index_cache: OrderedDict[str, SkillIndex[Any]] = OrderedDict()
 _index_lock = threading.Lock()
+_MAX_INDEXES = 4  # skills + tools, main agent + subagents
 
 
-def _cached_model_path() -> str:
-    """Return the locally cached snapshot dir for :data:`MODEL_NAME`, or the id.
-
-    ``model2vec`` loads by repo id with ``force_download=True``, which calls
-    ``huggingface_hub.snapshot_download`` and makes a metadata round-trip to the
-    Hub on *every* launch even when the model is already on disk — that is the
-    "Fetching 7 files … 0.00B" bar users see at startup. Asking the Hub for the
-    cache only (``local_files_only``) skips the network entirely and loads in
-    ~0.16 s instead of ~0.8 s.
-
-    Falls back to the repo id when nothing is cached, so the first run (or a
-    cleared cache) still downloads normally.
-    """
-    from huggingface_hub import snapshot_download
-    from huggingface_hub.errors import LocalEntryNotFoundError
-
-    try:
-        return snapshot_download(MODEL_NAME, local_files_only=True)
-    except LocalEntryNotFoundError:
-        return MODEL_NAME
+def local_model() -> SharedModel | None:
+    """Share installed weights only; call from a worker thread."""
+    return get_model()
 
 
-def _load_model() -> Any:
-    from model2vec import StaticModel
-
-    return StaticModel.from_pretrained(_cached_model_path())
-
-
-@functools.cache
-def local_snapshot() -> str | None:
-    """Return installed embedding snapshot identity without a network request."""
-    try:
-        from huggingface_hub import snapshot_download
-
-        return snapshot_download(MODEL_NAME, local_files_only=True)
-    except Exception:  # noqa: BLE001 - missing optional local embeddings.
-        return None
-
-
-@functools.cache
-def local_model() -> Any | None:  # noqa: ANN401 - optional third-party model.
-    """Load existing Model2Vec weights only; call from a worker thread.
-
-    Unlike skill discovery's first-run loader, a knowledge lookup must never
-    download weights. A local directory also prevents Model2Vec's forced fetch.
-    """
-    try:
-        from model2vec import StaticModel
-
-        path = local_snapshot()
-        return StaticModel.from_pretrained(path) if path is not None else None
-    except Exception:  # noqa: BLE001 - exact source-key reuse remains available.
-        return None
-
-
-def _model() -> Any | None:
-    """The embedder if it has loaded, else None. Starts loading on first call."""
-    global _executor, _model_future
-    if _model_future is None:
-        _executor = concurrent.futures.ThreadPoolExecutor(1, thread_name_prefix="skill-embed")
-        _model_future = _executor.submit(_load_model)
-    if not _model_future.done():
-        return None
-    try:
-        return _model_future.result()
-    except Exception:  # noqa: BLE001 — offline / not installed: BM25 still works
-        logger.debug("skill embedder unavailable; BM25 only", exc_info=True)
-        return None
-
-
-def prewarm() -> None:
-    """Start loading the embedder in the background (idempotent)."""
-    _model()
+def _model() -> SharedModel | None:
+    """Start skill loading in the background, retaining lexical fallback."""
+    return get_model(allow_download=True, wait=False)
 
 
 def _doc(item: Mapping[str, Any]) -> str:
@@ -126,7 +60,7 @@ def _doc(item: Mapping[str, Any]) -> str:
     return f"{name}. {item.get('description', '')} {item.get('parameters', '')}".rstrip()
 
 
-def _tokenize(texts: list[str]) -> Any:
+def _tokenize(texts: list[str]) -> Any:  # noqa: ANN401 - bm25s tokenizer types vary.
     import bm25s
 
     return bm25s.tokenize(
@@ -167,9 +101,10 @@ class SkillIndex(Generic[SkillT]):
 
     @property
     def dense(self) -> bool:
+        """Whether this snapshot has semantic vectors as well as lexical terms."""
         return self._emb is not None
 
-    def _query_vector(self, query: str) -> Any:
+    def _query_vector(self, query: str) -> Any:  # noqa: ANN401 - optional numpy vector.
         """Reuse one normalized query vector without retaining the query text."""
         import numpy as np
 
@@ -270,13 +205,14 @@ def get_index(skills: list[SkillT]) -> SkillIndex[SkillT]:
         index = _index_cache.get(key)
         if index is not None:
             _index_cache.move_to_end(key)
-    if index is not None and (index.dense or _model() is None):
+    model = _model()
+    if index is not None and index._model is model:
         return index
     index = SkillIndex(skills)
     with _index_lock:
         _index_cache[key] = index
         _index_cache.move_to_end(key)
-        while len(_index_cache) > 4:  # skills + tools, main agent + subagents
+        while len(_index_cache) > _MAX_INDEXES:
             _index_cache.popitem(last=False)
     return index
 

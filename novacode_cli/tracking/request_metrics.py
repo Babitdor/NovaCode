@@ -15,6 +15,9 @@ if TYPE_CHECKING:
 
 request_purpose: ContextVar[str] = ContextVar("nova_request_purpose", default="unknown")
 task_correlation: ContextVar[str | None] = ContextVar("nova_task_correlation", default=None)
+request_diagnostic: ContextVar[dict[str, object] | None] = ContextVar(
+    "nova_request_diagnostic", default=None
+)
 
 
 @contextmanager

@@ -21,7 +21,7 @@ from langchain_core.tools import BaseTool, tool
 from novacode_cli.agents.model_budget import _bounded_model
 from novacode_cli.context.knowledge_cache import KnowledgeCache, digest
 from novacode_cli.security.paths import resolve_beneath
-from novacode_cli.skills.retrieval import MODEL_NAME, local_model, local_snapshot
+from novacode_cli.skills.retrieval import MODEL_NAME, local_model
 from novacode_cli.tracking.usage_tree import attach_usage_callback, usage_scope
 
 MAX_FILES = 4
@@ -87,8 +87,15 @@ def _public_source(relative: str) -> None:
 
 
 def _embed(text: str) -> list[float] | None:
+    return _embed_with_identity(text)[0]
+
+
+def _embed_with_identity(text: str) -> tuple[list[float] | None, str]:
     model = local_model()
-    return model.encode([text])[0].tolist() if model is not None else None
+    snapshot = model.snapshot if model is not None else None
+    identity = MODEL_NAME + ":" + (Path(snapshot).name if snapshot else "unavailable")
+    vector = model.encode([text])[0].tolist() if model is not None else None
+    return vector, identity
 
 
 def _similarity(left: list[float], right: list[float]) -> float:
@@ -160,11 +167,10 @@ class KnowledgeLookup:
         self.cache = cache or KnowledgeCache(settings.user_deepagents_dir / "cache/knowledge")
         self.embed = embed
 
-    def _embedding_identity(self) -> str:
+    def _embedding(self, text: str) -> tuple[list[float] | None, str]:
         if self.embed is not _embed:
-            return MODEL_NAME
-        snapshot = local_snapshot()
-        return MODEL_NAME + ":" + (Path(snapshot).name if snapshot else "unavailable")
+            return self.embed(text), MODEL_NAME
+        return _embed_with_identity(text)
 
     def _summary_model(self) -> Any:
         """Copy provider budget settings and ensure auxiliary-call accounting."""
@@ -302,8 +308,7 @@ class KnowledgeLookup:
         key = digest(refs + identity) if paths else None
         rows = await self._db("candidates", ns, identity, key)
         if not paths:
-            vector = await asyncio.to_thread(self.embed, query)
-            embedding = await asyncio.to_thread(self._embedding_identity)
+            vector, embedding = await asyncio.to_thread(self._embedding, query)
             rows = (
                 []
                 if vector is None
@@ -388,8 +393,7 @@ class KnowledgeLookup:
             if current != refs or live_root != root or self._identity() != identity:
                 await self._db("event", ns, "invalidations")
                 return None
-            vector = await asyncio.to_thread(self.embed, summary)
-            embedding = await asyncio.to_thread(self._embedding_identity)
+            vector, embedding = await asyncio.to_thread(self._embedding, summary)
             if not await self._db(
                 "publish", ns, key, epoch, owner, refs, summary, identity, embedding, vector
             ):

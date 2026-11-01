@@ -15,8 +15,7 @@ work, so a turn's usage forms a tree:
     ├── compaction      (/compact + auto-compact summarization)
     └── hermes          (out-of-band self-review)
 
-The tree is created by the turn entry points (:func:`execute_task`,
-:func:`run_agent_stream`, the session worker), populated by the callback, and
+The tree is created by the shared event loop or session worker, populated by the callback, and
 persisted to the durable store at turn end. ``/usage`` renders it.
 
 Design notes:
@@ -25,18 +24,22 @@ Design notes:
   contextvar, so it works across ``await`` points inside async generators.
 - Both ``usage_scope`` and the callback are no-ops when no tree is active, so
   tests and non-turn model calls (doctor, model switching) are unaffected.
-- Sync model calls in worker threads lose the contextvar and record nothing;
-  the async path (the norm) is fully attributed.
+- Callback attribution is captured at call start, including worker threads
+  with propagated context, so concurrent completions keep their owning scope.
 """
 
 from __future__ import annotations
 
+# Callback signatures follow LangChain's heterogeneous framework interface.
+# ruff: noqa: ANN401, ARG002
 import contextvars
 import logging
 import re
 import time
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from threading import RLock
 from typing import TYPE_CHECKING, Any
 
 from langchain_core.callbacks import BaseCallbackHandler
@@ -50,6 +53,7 @@ logger = logging.getLogger("nova.tracking.usage_tree")
 
 #: Durable-store namespace for per-turn usage trees.
 _USAGE_NS = ("nova", "usage_trees")
+_MAX_REQUEST_RECORDS = 256
 
 #: Per-1M-token USD prices (input, output) for known models — most-specific
 #: catalog match wins; unlisted variants have unavailable prices (tokens still shown).
@@ -82,6 +86,8 @@ class UsageNode:
     cache_creation_tokens: int = 0
     calls: int = 0
     unavailable_calls: int = 0
+    cache_observed_input_tokens: int = 0
+    cache_observed_read_tokens: int = 0
     model_usage: dict[str, dict[str, int]] = field(default_factory=dict)
     children: list[UsageNode] = field(default_factory=list)
     parent: UsageNode | None = field(default=None, repr=False, compare=False)
@@ -99,6 +105,9 @@ class UsageNode:
         self.output_tokens += int(usage.get("output_tokens", 0))
         self.cache_read_tokens += int(usage.get("cache_read_tokens", 0))
         self.cache_creation_tokens += int(usage.get("cache_creation_tokens", 0))
+        if "cache_read_tokens" in usage and "input_tokens" in usage:
+            self.cache_observed_input_tokens += int(usage.get("input_tokens", 0))
+            self.cache_observed_read_tokens += int(usage["cache_read_tokens"])
         self.calls += 1
         if not usage:
             self.unavailable_calls += 1
@@ -142,6 +151,8 @@ class UsageNode:
             "cache_read_tokens": self.cache_read_tokens,
             "cache_creation_tokens": self.cache_creation_tokens,
             "calls": self.calls,
+            "cache_observed_input_tokens": self.cache_observed_input_tokens,
+            "cache_observed_read_tokens": self.cache_observed_read_tokens,
         }
         for child in self.children:
             sub = child.totals()
@@ -161,6 +172,8 @@ class UsageNode:
             "calls": self.calls,
             "children": [c.to_dict() for c in self.children],
             "unavailable_calls": self.unavailable_calls,
+            "cache_observed_input_tokens": self.cache_observed_input_tokens,
+            "cache_observed_read_tokens": self.cache_observed_read_tokens,
             "model_usage": {model: dict(usage) for model, usage in self.model_usage.items()},
         }
 
@@ -176,6 +189,8 @@ class UsageNode:
             cache_creation_tokens=data.get("cache_creation_tokens", 0),
             calls=data.get("calls", 0),
             unavailable_calls=data.get("unavailable_calls", 0),
+            cache_observed_input_tokens=data.get("cache_observed_input_tokens", 0),
+            cache_observed_read_tokens=data.get("cache_observed_read_tokens", 0),
             model_usage={key: dict(value) for key, value in data.get("model_usage", {}).items()},
         )
         for child in data.get("children", []):
@@ -190,8 +205,18 @@ class UsageTree:
         """Create an empty tree for ``thread_id`` (root scope ``"turn"``)."""
         self.thread_id = thread_id
         self.started_at = started_at if started_at is not None else time.time()
+        self.record_id = uuid.uuid4().hex
         self.root = UsageNode("turn")
         self._nodes: dict[tuple[str, ...], UsageNode] = {("turn",): self.root}
+        self.requests: list[dict[str, Any]] = []
+        self.requests_aggregated = 0
+
+    def record_request(self, diagnostic: dict[str, Any]) -> None:
+        """Retain at most 256 content-free call records; totals live in nodes."""
+        if len(self.requests) < _MAX_REQUEST_RECORDS:
+            self.requests.append(diagnostic)
+        else:
+            self.requests_aggregated += 1
 
     def node_for(self, path: tuple[str, ...]) -> UsageNode:
         """Get-or-create the node at ``path`` (e.g. ``("verification", "main")``).
@@ -216,14 +241,20 @@ class UsageTree:
         return {
             "thread_id": self.thread_id,
             "started_at": self.started_at,
+            "record_id": self.record_id,
             "root": self.root.to_dict(),
+            "requests": [dict(record) for record in self.requests],
+            "requests_aggregated": self.requests_aggregated,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> UsageTree:
         """Rehydrate a tree from :meth:`to_dict` output (rebuilds the index)."""
         tree = cls(data["thread_id"], started_at=data.get("started_at"))
+        tree.record_id = data.get("record_id", tree.record_id)
         tree.root = UsageNode.from_dict(data["root"])
+        tree.requests = [dict(record) for record in data.get("requests", [])[:_MAX_REQUEST_RECORDS]]
+        tree.requests_aggregated = data.get("requests_aggregated", 0)
         # Rebuild the path index from the rehydrated tree.
         tree._nodes = {("turn",): tree.root}
 
@@ -266,6 +297,40 @@ class UsageTree:
             f"{total['input_tokens']:>9,} in  {total['output_tokens']:>7,} out  "
             f"{total['calls']:>3} calls  {cost_text}"
         )
+        if total["cache_observed_input_tokens"]:
+            reuse = total["cache_observed_read_tokens"] / total["cache_observed_input_tokens"] * 100
+            lines.insert(
+                -1,
+                f"Cache reuse: {reuse:.1f}% of observed input tokens "
+                f"({total['cache_observed_input_tokens']:,}/{total['input_tokens']:,} observed); "
+                f"{total['cache_read_tokens']:,} read, "
+                f"{total['cache_creation_tokens']:,} written. "
+                "Missing cache usage is unavailable. Costs are uncached estimates.",
+            )
+        elif total["input_tokens"]:
+            lines.insert(-1, "Cache reuse: unavailable. Costs are uncached estimates.")
+        attributed: dict[tuple[str, ...], dict[str, int]] = {}
+        for record in self.requests:
+            key = tuple(
+                str(record.get(k) or "unknown") for k in ("provider", "model", "purpose", "task_id")
+            )
+            subtotal = attributed.setdefault(
+                key, {"calls": 0, "input_tokens": 0, "cache_read_tokens": 0}
+            )
+            subtotal["calls"] += 1
+            for name in ("input_tokens", "cache_read_tokens"):
+                subtotal[name] += int(record.get("usage", {}).get(name, 0))
+        for (provider, model, purpose, task), subtotal in attributed.items():
+            lines.insert(
+                -1,
+                f"  {provider}/{model} · {purpose} · task {task}: "
+                f"{subtotal['calls']} calls, {subtotal['input_tokens']:,} in, "
+                f"{subtotal['cache_read_tokens']:,} cache read",
+            )
+        if self.requests_aggregated:
+            lines.insert(
+                -1, f"{self.requests_aggregated} additional requests included in scope totals."
+            )
         return "\n".join(lines)
 
 
@@ -309,19 +374,30 @@ def usage_scope(name: str) -> Iterator[None]:
 
 
 async def scoped_stream(source: AsyncIterator[Any], name: str) -> AsyncIterator[Any]:
-    """Wrap an async generator so its lifetime runs inside ``usage_scope(name)``.
-
-    The scope is entered on the first pull and exited on exhaustion/close — the
-    exact duration of the wrapped model stream.
-    """
-    with usage_scope(name):
+    """Attribute stream work without leaving a scope bound across UI yields."""
+    path = _scope_stack.get()
+    if _current_tree.get() is not None:
+        path = (*path, name)
+    try:
+        while True:
+            token = _scope_stack.set(path)
+            try:
+                item = await anext(source)
+            except StopAsyncIteration:
+                break
+            finally:
+                _scope_stack.reset(token)
+            yield item
+    finally:
+        # Closure can run in another task. A fresh token restores that task's
+        # scope while keeping model finalization attributed to this stream.
+        token = _scope_stack.set(path)
         try:
-            async for item in source:
-                yield item
-        finally:
             close = getattr(source, "aclose", None)
             if close is not None:
                 await close()
+        finally:
+            _scope_stack.reset(token)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -329,51 +405,82 @@ async def scoped_stream(source: AsyncIterator[Any], name: str) -> AsyncIterator[
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def _extract_usage(response: Any) -> dict[str, int]:  # noqa: ANN401 — framework object
-    """Pull a normalized usage dict from an ``LLMEndResponse``.
-
-    Tries the langchain-normalized ``message.usage_metadata`` first, then the
-    provider-specific ``llm_output`` shapes (OpenAI ``token_usage``, Anthropic
-    ``usage``).
-    """
+def _extract_usage(response: Any) -> dict[str, int]:
+    """Merge normalized and raw usage without conflating absent fields and zero."""
+    meta: dict = {}
+    raw: dict = {}
     try:
-        gen = response.generations[0][0]
-        meta = getattr(getattr(gen, "message", None), "usage_metadata", None)
-        if meta:
-            if hasattr(meta, "model_dump"):  # pydantic UsageMetadata, not a dict
-                meta = meta.model_dump()
-            return {
-                "input_tokens": int(meta.get("input_tokens", 0)),
-                "output_tokens": int(meta.get("output_tokens", 0)),
-                "cache_read_tokens": int(
-                    meta.get("cache_read_input_tokens", 0)
-                    or (meta.get("input_token_details") or {}).get("cache_read", 0)
-                ),
-                "cache_creation_tokens": int(
-                    meta.get("cache_creation_input_tokens", 0)
-                    or (meta.get("input_token_details") or {}).get("cache_creation", 0)
-                ),
-            }
-    except Exception:  # noqa: S110, BLE001 — best-effort extraction
+        message = response.generations[0][0].message
+        meta = getattr(message, "usage_metadata", None) or {}
+        if hasattr(meta, "model_dump"):
+            meta = meta.model_dump()
+        response_meta = getattr(message, "response_metadata", None) or {}
+        raw.update(response_meta.get("token_usage") or response_meta.get("usage") or {})
+    except (AttributeError, IndexError, TypeError):
         pass
+    output = getattr(response, "llm_output", None) or {}
+    raw.update(output.get("token_usage") or output.get("usage") or {})
 
-    llm_output = getattr(response, "llm_output", None) or {}
-    usage = llm_output.get("token_usage") or llm_output.get("usage") or {}
-    if not usage:
-        return {}
-    details = usage.get("prompt_tokens_details") or {}
-    cache_read = details.get("cached_tokens") or usage.get("cache_read_input_tokens") or 0
-    input_tokens = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
-    # Raw Anthropic input excludes cache subsets; LangChain-normalized metadata
-    # above and OpenAI prompt_tokens already include them.
-    if "cache_read_input_tokens" in usage or "cache_creation_input_tokens" in usage:
-        input_tokens += int(cache_read) + int(usage.get("cache_creation_input_tokens") or 0)
-    return {
+    def first(*values: Any) -> int | None:
+        for value in values:
+            if value is not None:
+                try:
+                    return max(0, int(value))
+                except (ValueError, TypeError, OverflowError):
+                    continue
+        return None
+
+    details = meta.get("input_token_details") or {}
+    raw_details = raw.get("prompt_tokens_details") or raw.get("input_tokens_details") or {}
+    read = first(
+        details.get("cache_read"),
+        details.get("priority_cache_read"),
+        details.get("flex_cache_read"),
+        meta.get("cache_read_input_tokens"),
+        raw_details.get("cached_tokens"),
+        raw.get("cache_read_input_tokens"),
+        raw.get("prompt_cache_hit_tokens"),
+    )
+    write = first(
+        details.get("cache_creation"),
+        meta.get("cache_creation_input_tokens"),
+        raw.get("cache_creation_input_tokens"),
+    )
+    input_tokens = first(meta.get("input_tokens"))
+    if input_tokens is None:
+        input_tokens = first(raw.get("prompt_tokens"), raw.get("input_tokens"))
+        # Anthropic raw input excludes cached tokens; normalized input and OpenAI
+        # prompt_tokens already include them.
+        if (
+            input_tokens is not None
+            and "prompt_tokens" not in raw
+            and ("cache_read_input_tokens" in raw or "cache_creation_input_tokens" in raw)
+        ):
+            input_tokens += (first(raw.get("cache_read_input_tokens")) or 0) + (
+                first(raw.get("cache_creation_input_tokens")) or 0
+            )
+        if (
+            input_tokens is None
+            and "prompt_cache_hit_tokens" in raw
+            and ("prompt_cache_miss_tokens" in raw)
+        ):
+            input_tokens = (first(raw.get("prompt_cache_hit_tokens")) or 0) + (
+                first(raw.get("prompt_cache_miss_tokens")) or 0
+            )
+    result = {
         "input_tokens": input_tokens,
-        "output_tokens": int(usage.get("output_tokens") or usage.get("completion_tokens") or 0),
-        "cache_read_tokens": int(cache_read),
-        "cache_creation_tokens": int(usage.get("cache_creation_input_tokens") or 0),
+        "output_tokens": first(
+            meta.get("output_tokens"), raw.get("output_tokens"), raw.get("completion_tokens")
+        ),
+        "cache_read_tokens": read,
+        "cache_creation_tokens": write,
     }
+    uncached = first(raw.get("prompt_cache_miss_tokens"))
+    if uncached is not None:
+        result["uncached_tokens"] = uncached
+    elif input_tokens is not None and read is not None and write is not None:
+        result["uncached_tokens"] = max(0, input_tokens - read - write)
+    return {key: value for key, value in result.items() if value is not None}
 
 
 def _model_from_serialized(serialized: dict) -> str:
@@ -382,59 +489,94 @@ def _model_from_serialized(serialized: dict) -> str:
 
 
 class UsageCallbackHandler(BaseCallbackHandler):
-    """Records each LLM call's usage into the current tree + scope.
-
-    Stateless across models (reads contextvars at call time), so one shared
-    instance can be attached to every model built by ``build_chat_model``.
-    """
+    """Attribute calls to their starting task, including concurrent callbacks."""
 
     def __init__(self) -> None:
-        """Initialize the usage callback handler."""
+        """Keep active call attribution without retaining messages or credentials."""
         super().__init__()
-        self._model_names: dict[int, str] = {}
+        self._model_names: dict[Any, str] = {}
+        self._runs: dict[Any, dict[str, Any]] = {}
+        self._lock = RLock()
 
-    def on_llm_start(
-        self,
-        serialized: dict,
-        prompts: list[str],  # noqa: ARG002
-        *,
-        run_id: Any,  # noqa: ANN401
-        **kwargs: Any,  # noqa: ARG002
+    def on_chat_model_start(
+        self, serialized: dict, messages: Any, *, run_id: Any, **kwargs: Any
     ) -> None:
-        """Capture the model name for a starting LLM run."""
-        self._model_names[run_id] = _model_from_serialized(serialized)
+        """Capture chat calls without retaining their messages."""
+        self.on_llm_start(serialized, [], run_id=run_id, **kwargs)
 
-    def on_llm_end(
-        self,
-        response: Any,  # noqa: ANN401
-        *,
-        run_id: Any,  # noqa: ANN401
-        **kwargs: Any,  # noqa: ARG002
-    ) -> None:
-        """Record usage for a finished LLM run into the active tree."""
-        model = self._model_names.pop(run_id, "") or ""
-        tree = _current_tree.get()
-        if tree is None:
-            return
-        usage = _extract_usage(response)
-        if not model:
-            llm_output = getattr(response, "llm_output", None) or {}
-            model = str(llm_output.get("model_name") or "")
-        path = _scope_stack.get() or ("turn",)
-        tree.record(path, model, usage)
+    def on_llm_start(self, serialized: dict, prompts: Any, *, run_id: Any, **kwargs: Any) -> None:
+        """Capture timing and attribution before context switches."""
+        from novacode_cli.tracking.request_metrics import (
+            request_diagnostic,
+            request_purpose,
+            task_correlation,
+        )
 
-    def on_llm_error(
-        self,
-        error: Any,  # noqa: ANN401, ARG002 - framework callback
-        *,
-        run_id: Any,  # noqa: ANN401
-        **kwargs: Any,  # noqa: ARG002
+        metadata = kwargs.get("metadata") or {}
+        model = str(
+            metadata.get("nova_model")
+            or metadata.get("ls_model_name")
+            or _model_from_serialized(serialized)
+        )
+        purpose = request_purpose.get()
+        if purpose == "unknown":
+            purpose = (_scope_stack.get() or (str(metadata.get("langgraph_node") or "unknown"),))[
+                -1
+            ]
+        with self._lock:
+            self._model_names[run_id] = model
+            self._runs[run_id] = {
+                "tree": _current_tree.get(),
+                "path": _scope_stack.get() or ("turn",),
+                "started": time.perf_counter(),
+                "model": model,
+                "provider": str(metadata.get("nova_provider") or metadata.get("ls_provider") or ""),
+                "purpose": str(metadata.get("nova_request_purpose") or purpose),
+                "task_id": str(metadata.get("nova_task_id") or task_correlation.get() or ""),
+                "first_token_ms": None,
+                **(request_diagnostic.get() or {}),
+            }
+
+    def on_llm_new_token(
+        self, token: str | list[str | dict[str, Any]], *, run_id: Any, **kwargs: Any
     ) -> None:
-        """Release request metadata on failed or cancelled calls."""
-        self._model_names.pop(run_id, None)
-        tree = _current_tree.get()
-        if tree is not None:
-            tree.record(_scope_stack.get() or ("turn",), "", {})
+        """Observe first-token time only when the adapter emits a token."""
+        with self._lock:
+            run = self._runs.get(run_id)
+            if token and run is not None and run["first_token_ms"] is None:
+                run["first_token_ms"] = (time.perf_counter() - run["started"]) * 1000
+
+    def _finish(self, run_id: Any, usage: dict[str, int], outcome: str) -> None:
+        with self._lock:
+            self._model_names.pop(run_id, None)
+            run = self._runs.pop(run_id, None)
+            if run is None:
+                return
+            tree = run.pop("tree")
+            path = run.pop("path")
+            run["scope"] = list(path)
+            run["duration_ms"] = (time.perf_counter() - run.pop("started")) * 1000
+            run["outcome"] = outcome
+            run["usage"] = dict(usage)
+            if tree is not None:
+                tree.record(path, run["model"], usage)
+                if usage and ("input_tokens" not in usage or "output_tokens" not in usage):
+                    tree.node_for(path).unavailable_calls += 1
+                tree.record_request(run)
+
+    def on_llm_end(self, response: Any, *, run_id: Any, **kwargs: Any) -> None:
+        """Record merged usage and release all in-flight attribution."""
+        with self._lock:
+            run = self._runs.get(run_id)
+            if run is not None and not run["model"]:
+                run["model"] = str(
+                    (getattr(response, "llm_output", None) or {}).get("model_name") or ""
+                )
+        self._finish(run_id, _extract_usage(response), "success")
+
+    def on_llm_error(self, error: Any, *, run_id: Any, **kwargs: Any) -> None:
+        """Release failed/cancelled calls while retaining their attribution."""
+        self._finish(run_id, {}, "error")
 
 
 _HANDLER = UsageCallbackHandler()
@@ -481,30 +623,48 @@ def estimate_cost(input_tokens: int, output_tokens: int, model: str = "") -> flo
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-async def persist_usage_tree(tree: UsageTree, store: Any = None) -> None:  # noqa: ANN401
+async def persist_usage_tree(tree: UsageTree, store: Any = None) -> None:
     """Persist a turn's tree to the durable store (best-effort, never raises)."""
     try:
         if store is None:
             from novacode_cli.memory.store import get_durable_store
 
             store = get_durable_store()
-        key = f"{tree.thread_id}:{int(tree.started_at)}"
+        key = f"{tree.thread_id}:{tree.record_id}"
         await store.aput(_USAGE_NS, key, tree.to_dict())
     except Exception:  # usage tracking must never break a turn
         logger.exception("Failed to persist usage tree")
 
 
-async def load_usage_trees(thread_id: str, store: Any = None, limit: int = 10) -> list[dict]:  # noqa: ANN401
+async def load_usage_trees(thread_id: str, store: Any = None, limit: int = 10) -> list[dict]:
     """Recent usage trees for a thread, newest first (best-effort)."""
+    if limit <= 0:
+        return []
     try:
         if store is None:
             from novacode_cli.memory.store import get_durable_store
 
             store = get_durable_store()
-        items = await store.asearch(_USAGE_NS)
-        trees = [dict(item.value) for item in items if str(item.key).startswith(f"{thread_id}:")]
-        trees.sort(key=lambda t: t.get("started_at", 0), reverse=True)
-        return trees[:limit]
+        trees: list[dict] = []
+        offset = 0
+        page_size = 100
+        # Stores do not guarantee ordering by the record's started_at. Search
+        # this thread in pages, retaining only the newest requested records.
+        while True:
+            items = await store.asearch(
+                _USAGE_NS,
+                filter={"thread_id": thread_id},
+                limit=page_size,
+                offset=offset,
+            )
+            trees.extend(
+                dict(item.value) for item in items if str(item.key).startswith(f"{thread_id}:")
+            )
+            trees.sort(key=lambda t: t.get("started_at", 0), reverse=True)
+            del trees[limit:]
+            if len(items) < page_size:
+                return trees
+            offset += len(items)
     except Exception:  # usage tracking must never break a turn
         logger.exception("Failed to load usage trees")
         return []

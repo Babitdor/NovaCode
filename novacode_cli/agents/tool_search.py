@@ -33,6 +33,12 @@ from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from langchain_core.tools import StructuredTool
 from pydantic import ConfigDict
 
+from novacode_cli.agents.provider_caching import (
+    breakpoint_count,
+    native_tool_search,
+    public_provider,
+    unsupported_native_feature,
+)
 from novacode_cli.agents.tool_search_variants import (
     BM25_TOOL,
     REGEX_TOOL,
@@ -130,6 +136,7 @@ LOADED_MARKER = "Loaded tools:"
 #: and create_artifact, whose natural next step is update_artifact.
 LOADING_TOOLS = frozenset({"search_tools", "tool_search", "create_artifact"}) | SEARCH_VARIANTS
 MAX_SEARCH_LIMIT = 50
+MAX_ANTHROPIC_BREAKPOINTS = 4
 MAX_INVENTORY_CHARS = 2_000
 MAX_INVENTORY_GROUPS = 10
 MAX_GROUP_CHARS = 1_000
@@ -273,7 +280,8 @@ def sent_tools(tools: Sequence[Any], messages: Sequence[Any]) -> list[Any]:
     )
     middleware._frequent = set()
     request = _AccountingRequest(
-        tools=list(tools), messages=list(messages), system_message=SystemMessage(""), state={}
+        tools=list(tools), messages=list(messages), system_message=SystemMessage(""), state={},
+        model=None, model_settings={},
     )
     return list(middleware._apply(request).tools)  # type: ignore[arg-type]
 
@@ -295,6 +303,7 @@ class ToolSearchMiddleware(AgentMiddleware):
         self._skills = skills
         self._frequent: set[str] | None = None  # read once, then frozen
         self._bm25 = BM25Search()
+        self._portable_routes: set[tuple[str, str]] = set()
         self.tools = [
             StructuredTool.from_function(
                 func=update_wrapper(partial(self._search, mode=mode), self._search),
@@ -340,7 +349,7 @@ class ToolSearchMiddleware(AgentMiddleware):
                 "kind": "tool",
                 "parameters": parameter_text(tool),
             }
-            for tool in tools
+            for tool in sorted(tools, key=_name)
             if _name(tool)
             and (
                 not browsing
@@ -354,7 +363,7 @@ class ToolSearchMiddleware(AgentMiddleware):
             )
         ] + [
             {"name": name, "description": description, "kind": "subagent"}
-            for name, description in self._deferred_subagents.items()
+            for name, description in sorted(self._deferred_subagents.items())
             if not browsing
         ]
 
@@ -561,7 +570,7 @@ class ToolSearchMiddleware(AgentMiddleware):
             return
         ranked = sorted(
             (n for n in uses if n not in CORE_TOOLS and n not in NEVER_FREQUENT),
-            key=lambda n: -uses[n],
+            key=lambda n: (-uses[n], n),
         )
         self._frequent = {n for n in ranked[:FREQUENT_TOOLS] if uses[n] >= FREQUENT_MIN_USES}
 
@@ -634,7 +643,6 @@ class ToolSearchMiddleware(AgentMiddleware):
     def _apply(self, request: ModelRequest) -> ModelRequest:
         capabilities = loaded_capabilities(request.messages)
         loaded = {name for kind, name in capabilities if kind == "tool"}
-        loaded_agents = {name for kind, name in capabilities if kind == "subagent"}
         # Skill snapshots activate their optional schemas without a second search.
         # Ordinary registered tools remain independently searchable.
         for message in request.messages:
@@ -659,17 +667,17 @@ class ToolSearchMiddleware(AgentMiddleware):
         )
         bound: list[Any] = []
         deferred: list[Any] = []
-        for tool in request.tools:
+        for tool in sorted(request.tools, key=_name):
             (bound if _name(tool) in keep else deferred).append(tool)
         browsing = browser_mode_enabled()
-        hidden = [] if browsing else [n for n in self._deferred_subagents if n not in loaded_agents]
+        # Search results carry specialist details; discovery never rewrites task's schema.
+        hidden = [] if browsing else sorted(self._deferred_subagents)
         bound = [self._shorten(t, hidden) for t in bound]
-        if not deferred and not hidden:
-            return request.override(tools=bound)
-
         optional_names = [
             _name(tool) for tool in request.tools if _name(tool) and _name(tool) not in CORE_TOOLS
         ]
+        if not optional_names and not hidden:
+            return self._native(request.override(tools=bound), request.tools)
         note = (
             "\n\n## More tools (load on demand)\n\n"
             f"{len(optional_names)} optional tools and "
@@ -678,7 +686,7 @@ class ToolSearchMiddleware(AgentMiddleware):
             f"{_group(optional_names)}\n\n"
             'Call search_tools("<capability>") or use exact names. query="*" browses; '
             f'wildcards such as "{"*snapshot*" if browsing else "playwright_*"}", '
-            'limit and offset inspect further results. '
+            "limit and offset inspect further results. "
             f"{REGEX_TOOL} supports regex; {BM25_TOOL} supports keyword search. "
             "Search loads schemas, not permission. Normal approvals and execution policy "
             "still apply. Never guess arguments: load the schema first. "
@@ -689,10 +697,61 @@ class ToolSearchMiddleware(AgentMiddleware):
             if request.system_message
             else []
         )
-        return request.override(
-            tools=bound,
-            system_message=SystemMessage(content=[*blocks, {"type": "text", "text": note}]),
+        return self._native(
+            request.override(
+                tools=bound,
+                system_message=SystemMessage(content=[*blocks, {"type": "text", "text": note}]),
+            ),
+            request.tools,
         )
+
+    @staticmethod
+    def _route_key(request: ModelRequest) -> tuple[str, str]:
+        metadata = getattr(request.model, "metadata", None) or {}
+        return str(metadata.get("nova_provider", "")), str(metadata.get("nova_model", ""))
+
+    def _native(self, request: ModelRequest, inventory: Sequence[Any]) -> ModelRequest:
+        """Keep native authorized inventories stable; portable routes bind discovered tools."""
+        if self._route_key(request) in self._portable_routes:
+            return request
+        route = native_tool_search(request.model)
+        settings = dict(request.model_settings or {})
+        if route == "anthropic":
+            blocks = [m.content for m in request.messages]
+            if request.system_message:
+                blocks.append(request.system_message.content)
+            explicit = breakpoint_count(blocks)
+            explicit += sum(
+                breakpoint_count(t if isinstance(t, dict) else getattr(t, "extras", None))
+                for t in inventory
+            )
+            if explicit < MAX_ANTHROPIC_BREAKPOINTS:
+                settings.setdefault("cache_control", {"type": "ephemeral"})
+        if not route:
+            return request.override(model_settings=settings)
+        from langchain_core.utils.function_calling import convert_to_openai_tool
+
+        always = CORE_TOOLS | (self._frequent or set())
+        tools = []
+        hidden = [] if browser_mode_enabled() else sorted(self._deferred_subagents)
+        for tool in sorted(inventory, key=_name):
+            if route == "anthropic" and _name(tool) == REGEX_TOOL:
+                continue
+            shortened = self._shorten(tool, hidden)
+            if not isinstance(shortened, dict):
+                extras = {**(getattr(shortened, "extras", None) or {})}
+                extras["defer_loading"] = _name(tool) not in always
+                tools.append(shortened.model_copy(update={"extras": extras}))
+                continue
+            definition = convert_to_openai_tool(shortened)
+            if "function" in definition:
+                definition = {**definition, "defer_loading": _name(tool) not in always}
+            tools.append(definition)
+        if route == "anthropic":
+            tools.append({"type": REGEX_TOOL, "name": "tool_search_tool_regex"})
+        else:
+            tools.append({"type": "tool_search"})
+        return request.override(tools=tools, model_settings=settings)
 
     def wrap_model_call(
         self,
@@ -702,7 +761,20 @@ class ToolSearchMiddleware(AgentMiddleware):
         """Bind only core, frequent and loaded tools (sync: no usage ranking)."""
         if self._frequent is None:
             self._frequent = set()
-        return handler(self._apply(request))
+        try:
+            return handler(self._apply(request))
+        except Exception as exc:
+            if (
+                self._route_key(request) in self._portable_routes
+                or not (
+                    native_tool_search(request.model)
+                    or public_provider(request.model) == "anthropic"
+                )
+                or not unsupported_native_feature(exc)
+            ):
+                raise
+            self._portable_routes.add(self._route_key(request))
+            return handler(self._apply(request))
 
     async def awrap_model_call(
         self,
@@ -711,4 +783,17 @@ class ToolSearchMiddleware(AgentMiddleware):
     ) -> ModelResponse:
         """Bind only core, frequent and loaded tools."""
         await self._read_frequent(request)
-        return await handler(self._apply(request))
+        try:
+            return await handler(self._apply(request))
+        except Exception as exc:
+            if (
+                self._route_key(request) in self._portable_routes
+                or not (
+                    native_tool_search(request.model)
+                    or public_provider(request.model) == "anthropic"
+                )
+                or not unsupported_native_feature(exc)
+            ):
+                raise
+            self._portable_routes.add(self._route_key(request))
+            return await handler(self._apply(request))

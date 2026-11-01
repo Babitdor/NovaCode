@@ -18,6 +18,7 @@ from tests.test_skill_retrieval import _BagOfWords, _skill
 @pytest.fixture(autouse=True)
 def offline(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(retrieval, "_model", _BagOfWords)
+    monkeypatch.setattr("novacode_cli.skills.refreshing_middleware.prewarm", lambda: None)
     monkeypatch.setattr("novacode_cli.skills.skills_prefs.effective_disabled", set)
     retrieval._index_cache.clear()
     yield

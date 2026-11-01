@@ -3,6 +3,7 @@
 import tempfile
 from pathlib import Path
 
+import pytest
 from hypothesis import given, settings, strategies as st
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage, messages_to_dict
 
@@ -64,6 +65,7 @@ def test_tool_pairing_keeps_all_outstanding_calls(completed, outstanding):
     assert len(messages[start].tool_calls) == outstanding
 
 
+@pytest.mark.timeout(60)
 @given(st.binary(max_size=2048), st.text(max_size=1024))
 @settings(deadline=None)  # Filesystem timing is benchmarked separately from round-trip correctness.
 def test_archive_roundtrip_binary_artifacts_and_unicode(binary, text):

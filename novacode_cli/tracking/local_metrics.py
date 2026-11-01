@@ -53,7 +53,7 @@ class LocalMetricsCallback(BaseCallbackHandler):
                 "kind": kind,
                 "run_id": str(run_id),
                 "parent_run_id": str(parent_run_id) if parent_run_id is not None else None,
-                "provider": str(metadata.get("ls_provider") or ""),
+                "provider": str(metadata.get("nova_provider") or metadata.get("ls_provider") or ""),
                 "node": str(metadata.get("langgraph_node") or ""),
                 "scope": list(_scope_stack.get()),
                 "task_id": str(

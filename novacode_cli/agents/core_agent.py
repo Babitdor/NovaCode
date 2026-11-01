@@ -29,6 +29,7 @@ import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 # ── Patch deepagents validate_path to accept Windows paths ──────────────────
 # The deepagents FilesystemMiddleware rejects Windows absolute paths (e.g.
@@ -287,6 +288,40 @@ from novacode_cli.skills.refreshing_middleware import (
 import deepagents.graph as _dgraph  # noqa: E402
 
 _dgraph.SkillsMiddleware = SubagentSkillsMiddleware
+
+_graph_create_agent = getattr(_dgraph, "create_agent")  # noqa: B009 - upstream does not declare this reexport.
+_original_create_agent = getattr(
+    _graph_create_agent,
+    "_nova_original",
+    _graph_create_agent,
+)
+
+
+def _create_agent_with_final_context(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401 - upstream API wrapper.
+    """Compact after the final provider shaping, including profile tool exclusions."""
+    from novacode_cli.agents.context_compaction import ContextCompactionMiddleware
+    from novacode_cli.context.snapshot import ContextSnapshotMiddleware
+
+    assembled = kwargs.get("middleware") or []
+    snapshots = [m for m in assembled if isinstance(m, ContextSnapshotMiddleware)]
+    if snapshots:
+        compactors = [m for m in assembled if isinstance(m, ContextCompactionMiddleware)]
+        kwargs["middleware"] = (
+            [
+                m
+                for m in assembled
+                if not isinstance(m, (ContextCompactionMiddleware, ContextSnapshotMiddleware))
+            ]
+            + compactors
+            + snapshots
+        )
+    return _original_create_agent(*args, **kwargs)
+
+
+setattr(_create_agent_with_final_context, "_nova_original", _original_create_agent)  # noqa: B010 - wrapper marker.
+setattr(_dgraph, "create_agent", _create_agent_with_final_context)  # noqa: B010 - upstream integration.
+# Named and general-purpose children compile through this separate imported entrypoint.
+setattr(_dsub, "create_agent", _create_agent_with_final_context)  # noqa: B010 - upstream integration.
 
 # An async dispatch is a `runs.create` deepagents builds itself, and it names no model,
 # so the remote graph would otherwise run on whatever its container was booted with.
@@ -930,9 +965,9 @@ def _harden_subagent_specs(
         # every subagent: it is swapped in by name, wherever it sits in this
         # list. No model or window is fixed — a subagent may run on its own
         # model, so both are taken from each request.
-        if not any(getattr(m, "name", "") == "SummarizationMiddleware" for m in existing):
-            from novacode_cli.agents.context_compaction import ContextCompactionMiddleware
+        from novacode_cli.agents.context_compaction import ContextCompactionMiddleware
 
+        if not any(getattr(m, "name", "") == "SummarizationMiddleware" for m in existing):
             mw_to_add.append(ContextCompactionMiddleware(backend=skill_backend))
 
         from novacode_cli.agents.attribution import AttributionMiddleware
@@ -958,7 +993,10 @@ def _harden_subagent_specs(
             [] if any(isinstance(m, PromptInjectionMiddleware) for m in existing)
             else [PromptInjectionMiddleware()]
         )
-        new_spec["middleware"] = mw_to_add + existing + guard + strict + [ContextSnapshotMiddleware()]
+        assembled = mw_to_add + existing + guard + strict
+        compactors = [m for m in assembled if isinstance(m, ContextCompactionMiddleware)]
+        assembled = [m for m in assembled if not isinstance(m, ContextCompactionMiddleware)]
+        new_spec["middleware"] = assembled + compactors + [ContextSnapshotMiddleware()]
         out.append(new_spec)
     return out
 
@@ -2568,7 +2606,6 @@ This file stores your preferences and context that persist across sessions.
     from novacode_cli.agents.context_compaction import ContextCompactionMiddleware
     compactors = [m for m in agent_middleware if isinstance(m, ContextCompactionMiddleware)]
     agent_middleware = [m for m in agent_middleware if not isinstance(m, ContextCompactionMiddleware)]
-    agent_middleware.extend(compactors)
     from novacode_cli.agents.attribution import AttributionMiddleware
     from novacode_cli.agents.caveman import CavemanMiddleware
     from novacode_cli.agents.caveman_support import caveman_tool
@@ -2601,6 +2638,7 @@ This file stores your preferences and context that persist across sessions.
 
     agent_middleware.append(ToolArgRepairMiddleware())
     agent_middleware.append(StrictToolMiddleware())
+    agent_middleware.extend(compactors)
     agent_middleware.append(ContextSnapshotMiddleware())
 
     # Programmatic calls start before every tool guard. Native and MCP nested

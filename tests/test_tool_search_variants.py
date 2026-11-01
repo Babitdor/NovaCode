@@ -1,9 +1,10 @@
 """Independent search semantics, time bounds and progressive schema loading."""
 
-from types import SimpleNamespace
 from typing import Annotated
 
 import pytest
+from langchain.agents.middleware.types import ModelRequest
+from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from pydantic import Field, ValidationError
@@ -30,13 +31,13 @@ def browser_click(element: str) -> str:
 def prepare():
     middleware = SearchHarness(deferred_subagents={"sql-reviewer": "Reviews database queries"})
     middleware._frequent = set()
-    request = SimpleNamespace(
+    request = ModelRequest(
+        model=FakeListChatModel(responses=["ok"]),
         tools=[database_records, browser_click, *middleware.tools],
         messages=[HumanMessage("hi")],
         state={},
         system_message=SystemMessage(""),
     )
-    request.override = lambda **changes: SimpleNamespace(**{**vars(request), **changes})
     middleware._apply(request)
     return middleware, request
 

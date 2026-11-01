@@ -263,7 +263,7 @@ def test_function_dict_tools_are_discoverable() -> None:
     mw = SearchHarness()
     mw._apply(_request([]).override(tools=tools))
     result = mw.text("`CHECKSUM_FILE`, check_signature")
-    assert "checksum_file, check_signature" in result.splitlines()[0]
+    assert "check_signature, checksum_file" in result.splitlines()[0]
 
 
 def test_search_still_works_if_the_retrieval_index_fails(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -355,6 +355,20 @@ def test_the_note_is_frozen_so_the_prompt_cache_holds() -> None:
     ]
     later = mw._apply(_request(history)).system_message.content_blocks[-1]["text"]
     assert first == later
+
+
+def test_task_and_discovery_note_remain_stable_after_everything_is_loaded() -> None:
+    mw = _mw()
+    first = mw._apply(_request([]))
+    history = []
+    for index, name in enumerate([t.name for t in BROWSER]):
+        history.append(AIMessage("", tool_calls=[{"id": str(index), "name": name, "args": {}}]))
+    history.extend(search_history(mw.invoke({"query": "rust-reviewer"})))
+    later = mw._apply(_request(history))
+    assert first.system_message == later.system_message
+    assert next(t.description for t in first.tools if t.name == "task") == next(
+        t.description for t in later.tools if t.name == "task"
+    )
 
 
 # ── the canonical names and the full-roster deferral ───────────────────────

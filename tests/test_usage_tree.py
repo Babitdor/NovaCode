@@ -37,13 +37,25 @@ class FakeStore:
     async def aput(self, namespace: tuple, key: str, value: dict) -> None:
         self.data.setdefault(tuple(namespace), {})[key] = dict(value)
 
-    async def asearch(self, namespace_prefix: tuple) -> list[SimpleNamespace]:
+    async def asearch(
+        self,
+        namespace_prefix: tuple,
+        *,
+        filter: dict | None = None,  # noqa: A002 - LangGraph store keyword.
+        limit: int = 10,
+        offset: int = 0,
+    ) -> list[SimpleNamespace]:
         prefix = tuple(namespace_prefix)
         out = []
         for ns, items in self.data.items():
             if ns[: len(prefix)] == prefix:
                 out.extend(SimpleNamespace(key=k, value=dict(v)) for k, v in items.items())
-        return out
+        matching = [
+            item
+            for item in out
+            if not filter or all(item.value.get(key) == value for key, value in filter.items())
+        ]
+        return matching[offset : offset + limit]
 
     async def adelete(self, namespace: tuple, key: str) -> None:
         self.data.get(tuple(namespace), {}).pop(key, None)
@@ -251,6 +263,23 @@ class TestPersistence:
 
         trees = await ut.load_usage_trees("t1", store=store)
         assert [t["started_at"] for t in trees] == [200.0, 100.0]
+
+    async def test_latest_turns_are_found_beyond_default_and_paginated_search_limits(self) -> None:
+        from unittest.mock import AsyncMock
+
+        store = FakeStore()
+        for index in range(121):
+            await ut.persist_usage_tree(ut.UsageTree("other", started_at=float(index)), store)
+            await ut.persist_usage_tree(ut.UsageTree("target", started_at=float(index)), store)
+        store.asearch = AsyncMock(wraps=store.asearch)
+        trees = await ut.load_usage_trees("target", store=store, limit=3)
+        assert [tree["started_at"] for tree in trees] == [120.0, 119.0, 118.0]
+        assert store.asearch.await_count == 2
+        assert all(
+            call.kwargs["filter"] == {"thread_id": "target"}
+            for call in store.asearch.await_args_list
+        )
+        assert len(store.data[ut._USAGE_NS]) == 242
 
     def test_format_report(self) -> None:
         tree = ut.UsageTree("t1", started_at=0.0)

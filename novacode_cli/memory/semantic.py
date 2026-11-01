@@ -27,20 +27,16 @@ from contextlib import suppress
 from typing import Any
 
 from novacode_cli.computation_cache import digest
+from novacode_cli.embeddings import get_model
 from novacode_cli.memory.parsed_cache import ParsedMemoryCache
 
 logger = logging.getLogger(__name__)
-
-MODEL_NAME = "minishlab/potion-code-16M"
 
 #: Two bullets at or above this say the same thing.
 SAME_FACT = 0.66
 #: A lesson at or above this bears on the text it is compared with.
 RELEVANT = 0.45
 
-_lock = threading.Lock()
-_model: Any = None
-_unavailable = False
 _CACHE_LIMIT = 4096
 _cache = ParsedMemoryCache(max_entries=_CACHE_LIMIT, max_bytes=8 * 1024 * 1024)
 _cache_model: Any = None
@@ -55,20 +51,7 @@ def enabled() -> bool:
 
 
 def _load() -> Any:  # noqa: ANN401
-    global _model, _unavailable  # noqa: PLW0603
-    if _model is not None or _unavailable:
-        return _model
-    with _lock:
-        if _model is not None or _unavailable:
-            return _model
-        try:
-            from model2vec import StaticModel
-
-            _model = StaticModel.from_pretrained(MODEL_NAME)
-        except Exception:  # noqa: BLE001 — offline, not installed, corrupt cache
-            logger.debug("semantic memory unavailable; using word overlap", exc_info=True)
-            _unavailable = True
-    return _model
+    return get_model()
 
 
 def embed(texts: list[str]) -> Any:  # noqa: ANN401

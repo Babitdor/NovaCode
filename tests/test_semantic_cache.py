@@ -20,8 +20,8 @@ def isolated_embeddings(monkeypatch):
 
 
 def test_a_full_cache_does_not_lose_texts_it_already_held(monkeypatch):
-    monkeypatch.setattr(semantic, "_model", _Model())
-    monkeypatch.setattr(semantic, "_unavailable", False)
+    model = _Model()
+    monkeypatch.setattr(semantic, "_load", lambda: model)
 
     semantic.embed(["the query", "a"])
     vectors = semantic.embed(["the query", "b", "c"])  # overflows: cache is cleared
@@ -37,7 +37,8 @@ def test_recent_embeddings_survive_eviction_without_retaining_input_text(monkeyp
             encoded.extend(texts)
             return super().encode(texts)
 
-    monkeypatch.setattr(semantic, "_model", Model())
+    model = Model()
+    monkeypatch.setattr(semantic, "_load", lambda: model)
     semantic.embed(["hot", "cold"])
     semantic.embed(["hot"])
     semantic.embed(["new"])
@@ -49,7 +50,8 @@ def test_recent_embeddings_survive_eviction_without_retaining_input_text(monkeyp
 
 
 def test_retained_vectors_do_not_keep_evicted_batch_memory(monkeypatch):
-    monkeypatch.setattr(semantic, "_model", _Model())
+    model = _Model()
+    monkeypatch.setattr(semantic, "_load", lambda: model)
     result = semantic.embed([str(n) for n in range(1000)])
     assert result.shape == (1000, 3)
     assert len(semantic._cache) == 2
@@ -60,14 +62,16 @@ def test_retained_vectors_do_not_keep_evicted_batch_memory(monkeypatch):
 
 
 def test_model_changes_invalidate_embedding_values(monkeypatch):
-    monkeypatch.setattr(semantic, "_model", _Model())
+    model = _Model()
+    monkeypatch.setattr(semantic, "_load", lambda: model)
     before = semantic.embed(["same text"])
 
     class Model(_Model):
         def encode(self, texts):
             return np.array([[1.0, 0.0, 0.0]] * len(texts))
 
-    monkeypatch.setattr(semantic, "_model", Model())
+    model = Model()
+    monkeypatch.setattr(semantic, "_load", lambda: model)
     after = semantic.embed(["same text"])
     assert not np.array_equal(before, after)
 
@@ -84,7 +88,8 @@ def test_concurrent_embedding_requests_compute_a_miss_once(monkeypatch):
             time.sleep(0.01)
             return super().encode(texts)
 
-    monkeypatch.setattr(semantic, "_model", Model())
+    model = Model()
+    monkeypatch.setattr(semantic, "_load", lambda: model)
     with ThreadPoolExecutor(max_workers=8) as pool:
         vectors = list(pool.map(lambda _: semantic.embed(["shared"]), range(8)))
     assert encoded == [["shared"]]
@@ -99,7 +104,8 @@ def test_byte_budget_and_cache_disable_do_not_change_results(monkeypatch):
             encoded.append(list(texts))
             return np.ones((len(texts), 512))
 
-    monkeypatch.setattr(semantic, "_model", Model())
+    model = Model()
+    monkeypatch.setattr(semantic, "_load", lambda: model)
     # Each copied vector exceeds this cache's entire byte budget.
     first = semantic.embed(["oversized vector"])
     assert len(semantic._cache) == 0

@@ -256,12 +256,16 @@ def test_failed_result_cannot_be_replayed_as_a_later_success():
 def test_subagent_result_does_not_activate_a_same_named_tool():
     tool = _mcp("reviewer", "Review source code.")
     middleware = ToolSearchMiddleware(deferred_subagents={"reviewer": "Review as a subagent."})
+    before = middleware._apply(_request([]).override(tools=[tool, task])).tools
     messages = call(middleware, [tool, task], "as a subagent", REGEX_TOOL)
     assert ("subagent", "reviewer") in loaded_capabilities(messages)
     assert ("tool", "reviewer") not in loaded_capabilities(messages)
     bound = middleware._apply(_request(messages).override(tools=[tool, task])).tools
     assert tool not in bound
-    assert "- reviewer:" in next(t for t in bound if t.name == "task").description
+    assert next(t for t in bound if t.name == "task").description == next(
+        t for t in before if t.name == "task"
+    ).description
+    assert "Review as a subagent." in messages[-1].content
 
 
 async def test_search_schema_loading_does_not_bypass_a_downstream_denial():

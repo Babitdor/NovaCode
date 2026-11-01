@@ -809,9 +809,8 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
             config,
             force="skills_metadata" in state and state["skills_metadata"] is None,
         )
-        return await asyncio.to_thread(
-            self._pin_named_skills, state, runtime, config, self._finish(state)
-        )
+        update = await asyncio.to_thread(self._finish, state)
+        return await asyncio.to_thread(self._pin_named_skills, state, runtime, config, update)
 
 
 class SubagentSkillsMiddleware(RefreshingSkillsMiddleware):

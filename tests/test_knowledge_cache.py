@@ -348,21 +348,14 @@ async def test_independent_store_instances_share_lease(lookup: KnowledgeLookup, 
 
 
 async def test_local_embedding_loader_never_falls_back_to_repo_id(monkeypatch: pytest.MonkeyPatch):
+    from unittest.mock import Mock
+
     from novacode_cli.skills import retrieval
 
-    retrieval.local_model.cache_clear()
-    retrieval.local_snapshot.cache_clear()
-    try:
-        with monkeypatch.context() as patch:
-            from unittest.mock import Mock
-
-            download = Mock(side_effect=OSError("no local weights"))
-            patch.setattr("huggingface_hub.snapshot_download", download)
-            assert await asyncio.to_thread(retrieval.local_model) is None
-            download.assert_called_once_with(retrieval.MODEL_NAME, local_files_only=True)
-    finally:
-        retrieval.local_model.cache_clear()
-        retrieval.local_snapshot.cache_clear()
+    download = Mock(side_effect=OSError("no local weights"))
+    monkeypatch.setattr("huggingface_hub.snapshot_download", download)
+    assert await asyncio.to_thread(retrieval.local_model) is None
+    download.assert_called_once_with(retrieval.MODEL_NAME, local_files_only=True)
 
 
 @pytest.mark.parametrize("restricted", [False, True])

@@ -3239,7 +3239,7 @@ class UpdateScreen(ModalScreen[None]):
 
 
 class UsageScreen(ModalScreen[None]):
-    """/usage: every plan or key whose usage Nova can read, as progress bars."""
+    """Show provider quotas alongside this session's observed model usage."""
 
     DEFAULT_CSS = """
     UsageScreen #modal-box { width: 90%; max-width: 84; height: auto; max-height: 90%; }
@@ -3248,6 +3248,11 @@ class UsageScreen(ModalScreen[None]):
     UsageScreen #usage-note { height: auto; padding: 0 2 1 2; color: $text-muted; }
     """
     BINDINGS = [("escape", "close", "Close"), ("r", "refresh", "Refresh")]
+
+    def __init__(self, thread_id: str = "") -> None:
+        """Bind the request report to the session that opened this screen."""
+        super().__init__()
+        self._usage_thread_id = thread_id
 
     def compose(self) -> ComposeResult:
         with Vertical(id="modal-box"):
@@ -3269,6 +3274,7 @@ class UsageScreen(ModalScreen[None]):
         """Read every provider off the UI loop; Claude Code only on request."""
         from novacode_cli.commands import planner_usage as pu
         from novacode_cli.commands.provider_usage import all_usage
+        from novacode_cli.tracking.usage_tree import format_usage_report, load_usage_trees
 
         body = self.query_one("#usage-body", Static)
         buttons = [self.query_one(f"#usage-{name}", Button) for name in ("check-claude", "refresh")]
@@ -3278,12 +3284,15 @@ class UsageScreen(ModalScreen[None]):
         try:
             if check_claude:
                 await pu.check_claude_now()  # records a fresh reading for all_usage
-            found = await asyncio.to_thread(all_usage)
-            body.update(
+            found, trees = await asyncio.gather(
+                asyncio.to_thread(all_usage), load_usage_trees(self._usage_thread_id)
+            )
+            quotas = (
                 Text("\n\n").join([pu.usage_text(usage) for usage in found])
                 if found
                 else Text("Nothing to show: no Claude Code, Codex or keyed provider has usage.")
             )
+            body.update(Text("\n\n").join([quotas, Text(format_usage_report(trees))]))
         except Exception as exc:  # noqa: BLE001 - leave a retryable screen
             body.update(Text(f"Could not read usage: {exc}", style="red"))
         finally:
@@ -3408,6 +3417,13 @@ class ContextScreen(ModalScreen[None]):
             if observed is not None:
                 hero.append(f"\nProvider-reported input: {observed:,}.", style="dim")
             hero.append(f"\nCheckpoint: {snapshot['generation'][:16]}", style="dim")
+            changes = snapshot.get("prefix_changes", [])
+            if snapshot.get("prefix_fingerprints"):
+                hero.append(
+                    "\nObserved request changes: "
+                    + (", ".join(changes) or "none / first request")
+                    + ". Provider cache-miss cause: unknown.", style="dim",
+                )
             for reference in snapshot.get("recovery", []):
                 hero.append(f"\nRecovery: {reference}", style="dim")
         self.query_one("#context-hero", Static).update(hero)

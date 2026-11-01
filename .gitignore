@@ -29,6 +29,7 @@ docs/*
 !docs/TEAM-WORKSPACE-EVIDENCE.md
 !docs/essential-tools.md
 !docs/temporary-sharing.md
+!docs/caching-validation.md
 # Any nested docs/ folder stays ignored, as the old bare docs/ rule had it.
 */**/docs/
 # Any nested docs/ folder stays ignored, as the old bare docs/ rule had it.

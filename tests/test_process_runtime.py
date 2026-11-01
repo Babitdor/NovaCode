@@ -36,6 +36,13 @@ async def _cleanup(process, descendants=()) -> None:
         await asyncio.wait_for(process.wait(), 3)
 
 
+def _terminated(process: psutil.Process) -> bool:
+    try:
+        return not process.is_running() or process.status() == psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
+        return True
+
+
 @pytest.mark.timeout(20)
 async def test_managed_output_is_drained_without_a_callback(tmp_path):
     script = tmp_path / "noisy.py"
@@ -118,10 +125,10 @@ async def test_stop_managed_process_stops_descendants(tmp_path, force):
         descendants = psutil.Process(info.pid).children(recursive=True)
         assert await manager.stop_process(info.pid, timeout=0.2, force=force)
         for _ in range(100):
-            if not child.is_running() or child.status() == psutil.STATUS_ZOMBIE:
+            if _terminated(child):
                 break
             await asyncio.sleep(0.01)
-        assert not child.is_running() or child.status() == psutil.STATUS_ZOMBIE
+        assert _terminated(child)
         assert manager.get_process(info.pid) is None
     finally:
         await _cleanup(info._process, descendants)
@@ -200,10 +207,10 @@ async def test_test_runner_timeout_and_cancel_stop_descendants(tmp_path, cancel)
         with pytest.raises(asyncio.CancelledError if cancel else TimeoutError):
             await task
         for _ in range(100):
-            if not child.is_running() or child.status() == psutil.STATUS_ZOMBIE:
+            if _terminated(child):
                 break
             await asyncio.sleep(0.01)
-        assert not child.is_running() or child.status() == psutil.STATUS_ZOMBIE
+        assert _terminated(child)
     finally:
         if not task.done():
             task.cancel()

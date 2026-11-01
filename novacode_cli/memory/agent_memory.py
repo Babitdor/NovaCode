@@ -337,6 +337,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
         """Compatibility name for current-content identity, including deletion."""
         try:
             from novacode_cli.memory.parsed_cache import file_hash
+
             return file_hash(path)
         except OSError:
             return None
@@ -766,14 +767,21 @@ class AgentMemoryMiddleware(AgentMiddleware):
             imported = {r.evidence[0] for r in ledger.list() if r.origin == "legacy" and r.evidence}
         from novacode_cli.session.runtime_identity import current_identity
         from novacode_cli.hermes.activation import active_artifacts
+
         captured = active_artifacts.get() if current_identity.get() else None
         if captured is not None:
             records = []
         signatures.append(tuple(r.reference for r in records))
         signatures.append(tuple(sorted(imported)))
         from novacode_cli.hermes.activation import content_hash
-        signatures.append(tuple((kind, target, content_hash(content.encode()))
-                                for kind, target, content in captured) if captured is not None else None)
+
+        signatures.append(
+            tuple(
+                (kind, target, content_hash(content.encode())) for kind, target, content in captured
+            )
+            if captured is not None
+            else None
+        )
         signature = tuple(signatures)
         # Compare the WHOLE signature. Comparing only the newest mtime (the old
         # ``signature[1]``) discarded the file count, so deleting a topic file
@@ -784,6 +792,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
 
         from novacode_cli.memory.parsed_cache import MemoryCorpus, ParsedMemoryCache, file_hash
         from novacode_cli.memory.wiki import HUBS, MANAGED
+
         parsed = getattr(self, "_parsed_memory_cache", None)
         if parsed is None:
             parsed = self._parsed_memory_cache = ParsedMemoryCache()
@@ -809,12 +818,20 @@ class AgentMemoryMiddleware(AgentMiddleware):
             # Approved generated knowledge remains data, separate from standing
             # instructions; stable IDs prevent topic collisions and overwrites.
             title = record.applicability or record.kind
-            corpus.add(f"learning-{record.id}", _tokens(title), record.content,
-                       content_hash(record.content.encode()))
+            corpus.add(
+                f"learning-{record.id}",
+                _tokens(title),
+                record.content,
+                content_hash(record.content.encode()),
+            )
         for index, (kind, target, content) in enumerate(captured or ()):
             if kind in {"lesson", "habit"}:
-                corpus.add(f"activated-{index}", _tokens(target or kind), content,
-                           content_hash(content.encode()))
+                corpus.add(
+                    f"activated-{index}",
+                    _tokens(target or kind),
+                    content,
+                    content_hash(content.encode()),
+                )
         # The lessons every installation starts with (see builtin_lessons).
         # Recalled like any other; a learned topic of the same name wins.
         from novacode_cli.memory import builtin_lessons
@@ -833,9 +850,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
         try:
             with os.scandir(mem_dir) as entries:
                 names = sorted(entry.name for entry in entries if entry.name.endswith(".md"))
-            return tuple(
-                (name, file_hash(mem_dir / name)) for name in names
-            )
+            return tuple((name, file_hash(mem_dir / name)) for name in names)
         except FileNotFoundError:
             return ()
         except OSError:
@@ -1229,22 +1244,20 @@ class AgentMemoryMiddleware(AgentMiddleware):
         and standing memory use separate breakpoints, so a memory update can
         still reuse the core. Per-turn retrieval follows both breakpoints.
 
-        Falls back to a plain concatenated SystemMessage for non-Anthropic
-        models. Uses module-name inspection instead of an isinstance check to
-        avoid importing langchain_anthropic on every call (and to stay safe when
-        the package is absent or partially installed).
+        Falls back to plain content unless the route is explicitly native Anthropic.
         """
         from langchain_core.messages import SystemMessage
 
-        model_module = type(request.model).__module__.lower()
-        if "anthropic" in model_module:
+        from novacode_cli.agents.provider_caching import public_provider
+
+        if public_provider(request.model) == "anthropic":
             # Keep a reusable core breakpoint when standing memory changes.
             # Other providers benefit from the same stable leading text via
             # their automatic prefix caching, without extra request fields.
             base = request.system_prompt or ""
             parts = [stable_prompt]
             if base and stable_prompt.startswith(base + "\n\n"):
-                parts = [base, stable_prompt[len(base) + 2:]]
+                parts = [base, stable_prompt[len(base) + 2 :]]
             content: list[Any] = [
                 {
                     "type": "text",

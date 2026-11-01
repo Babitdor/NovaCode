@@ -208,6 +208,11 @@ jobs:
           tests/test_diff_preview.py
           tests/test_diff_highlight.py
           tests/test_context_snapshot.py
+          tests/test_cache_diagnostics.py
+          tests/test_shared_embeddings.py
+          tests/test_provider_caching.py
+          tests/test_compaction_prefix.py
+          tests/test_usage_lifecycle.py
           tests/test_remote_cron.py
           tests/test_rootapp_remote.py
           tests/test_discord_session_threads.py

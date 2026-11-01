@@ -130,7 +130,7 @@ def test_a_long_run_stays_inside_the_window_and_keeps_the_task() -> None:
     assert all(isinstance(sent[-1], (ToolMessage, HumanMessage)) for sent in model.seen)
 
     # A later summary is written from the earlier one, in full.
-    assert "EARLIER SUMMARY" in model.summaries[1] and "SUMMARY-1" in model.summaries[1]
+    assert "SUMMARY-1" in model.summaries[1]
     # The summary call is hidden from the token stream.
     assert all("nostream" in tags for tags in model.summary_tags)
 

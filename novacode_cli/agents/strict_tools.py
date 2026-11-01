@@ -257,6 +257,9 @@ class StrictToolMiddleware(AgentMiddleware):
             return request.override(model_settings=settings)
         prepared = []
         for tool in request.tools:
+            if isinstance(tool, dict) and str(tool.get("type", "")).startswith("tool_search"):
+                prepared.append(tool)
+                continue
             definition = convert_to_openai_tool(tool)
             function = definition.get("function")
             if function is None or function.get("strict") is False:
@@ -311,6 +314,17 @@ class StrictToolMiddleware(AgentMiddleware):
             else definition
             for original, definition in zip(request.tools, prepared, strict=True)
         ]
+        for original, definition in zip(request.tools, prepared, strict=True):
+            extras = original if isinstance(original, dict) else getattr(original, "extras", {})
+            if isinstance(extras, dict) and isinstance(definition, dict):
+                for field in (
+                    "defer_loading",
+                    "cache_control",
+                    "allowed_callers",
+                    "input_examples",
+                ):
+                    if field in extras:
+                        definition[field] = extras[field]
         if not any(
             isinstance(t, dict)
             and (

@@ -21,7 +21,7 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from langchain.agents.middleware.human_in_the_loop import HITLRequest
 from langchain_core.messages import HumanMessage, ToolMessage
@@ -67,6 +67,9 @@ from novacode_cli.ui.ui_elements import (
     format_tool_result_preview,
 )
 from novacode_cli import ui_events as ev
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
 
 _HITL_REQUEST_ADAPTER = TypeAdapter(HITLRequest)
 
@@ -229,7 +232,60 @@ def _save_unresumed_plan(approved_plan: tuple[str, bool] | None, session_state: 
         return None
 
 
-async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
+async def iterate_agent_events(
+    user_input: str,
+    agent: Any,  # noqa: ANN401 - frontend agents include compiled and wrapped graphs.
+    assistant_id: str | None,
+    session_state: Any,  # noqa: ANN401 - TUI, headless, and remote session adapters.
+    *,
+    backend: Any = None,  # noqa: ANN401 - forwards the existing backend interface.
+    image_tracker: Any = None,  # noqa: ANN401 - forwards the existing tracker interface.
+    seen_message_ids: set[str] | None = None,
+    skip_file_mentions: bool = False,
+) -> AsyncGenerator[Any, None]:
+    """Drive one turn with usage attribution shared by every frontend."""
+    from novacode_cli.tracking.usage_tree import (
+        UsageTree,
+        _current_tree,
+        get_current_tree,
+        persist_usage_tree,
+    )
+
+    previous = get_current_tree()
+    tree = previous if previous is not None else UsageTree(session_state.thread_id)
+    stream = _iterate_agent_events(
+        user_input,
+        agent,
+        assistant_id,
+        session_state,
+        backend=backend,
+        image_tracker=image_tracker,
+        seen_message_ids=seen_message_ids,
+        skip_file_mentions=skip_file_mentions,
+    )
+    try:
+        while True:
+            # A consumer may close this generator from a different task. Bind
+            # only while advancing it, and restore the caller before yielding.
+            token = _current_tree.set(tree)
+            try:
+                event = await anext(stream)
+            except StopAsyncIteration:
+                break
+            finally:
+                _current_tree.reset(token)
+            yield event
+    finally:
+        token = _current_tree.set(tree)
+        try:
+            await stream.aclose()
+        finally:
+            _current_tree.reset(token)
+            if previous is None and tree.root.totals()["calls"]:
+                await persist_usage_tree(tree)
+
+
+async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     user_input: str,
     agent,
     assistant_id: str | None,
@@ -239,7 +295,7 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     image_tracker=None,
     seen_message_ids: set[str] | None = None,
     skip_file_mentions: bool = False,
-) -> AsyncIterator[Any]:
+) -> AsyncGenerator[Any, None]:
     """Run the agent and yield UI events.
 
     Yields instances from :mod:`novacode_cli.ui_events`. Terminates with a
@@ -874,24 +930,17 @@ async def iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                     # attach usage_metadata to a *final chunk with empty content*,
                     # which has no blocks — skipping it here lost all token counts.
                     if is_main_agent:
-                        usage = getattr(message, "usage_metadata", None)
+                        from types import SimpleNamespace
+
+                        from novacode_cli.tracking.usage_tree import _extract_usage
+
+                        usage = _extract_usage(SimpleNamespace(
+                            generations=[[SimpleNamespace(message=message)]]
+                        ))
                         if usage:
-                            details = usage.get("input_token_details") or {}
-                            cache_read = details.get("cache_read")
-                            if cache_read is None:
-                                cache_read = details.get("priority_cache_read")
-                            if cache_read is None:
-                                cache_read = details.get("flex_cache_read")
-                            if cache_read is None:
-                                cache_read = usage.get("cache_read_input_tokens", 0)
-                            cache_create = details.get(
-                                "cache_creation", usage.get("cache_creation_input_tokens", 0)
-                            )
+                            cache_read = usage.get("cache_read_tokens", 0)
+                            cache_create = usage.get("cache_creation_tokens", 0)
                             actual = usage.get("input_tokens", 0)
-                            # Legacy raw Anthropic usage excludes cached input;
-                            # normalized LangChain usage already includes it.
-                            if "input_token_details" not in usage:
-                                actual += cache_read + cache_create
                             out = usage.get("output_tokens", 0)
                             if actual or out:
                                 metadata = _metadata if isinstance(_metadata, dict) else {}

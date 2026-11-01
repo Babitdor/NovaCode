@@ -3615,15 +3615,19 @@ class NovaApp(App):
         from novacode_cli.tui.screens import USAGE_NOTE, UsageScreen
 
         if command_output.get() is None:
-            self.push_screen(UsageScreen())
+            self.push_screen(UsageScreen(self.session_state.thread_id))
             return
         from novacode_cli.commands.planner_usage import usage_text
         from novacode_cli.commands.provider_usage import all_usage
+        from novacode_cli.tracking.usage_tree import format_usage_report, load_usage_trees
 
-        found = await asyncio.to_thread(all_usage)
+        found, trees = await asyncio.gather(
+            asyncio.to_thread(all_usage), load_usage_trees(self.session_state.thread_id)
+        )
         block = Text("\n\n").join([usage_text(usage) for usage in found])
         if not found:
             block = Text("No usage to show: no Claude Code, Codex or keyed provider with a usage API.")
+        block.append("\n\n" + format_usage_report(trees))
         block.append(f"\n\n{USAGE_NOTE}", style="dim")
         self._log(block, transcript=True)
 

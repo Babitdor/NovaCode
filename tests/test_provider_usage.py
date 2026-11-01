@@ -94,8 +94,20 @@ def test_only_providers_with_a_key_are_asked(monkeypatch):
 async def test_usage_opens_a_modal_and_settings_no_longer_shows_it(monkeypatch):
     from textual.widgets import Static
 
+    from novacode_cli.tracking import usage_tree
     from novacode_cli.tui.screens import SettingsScreen, UsageScreen
     from tests.test_tui_compaction_row import _app
+
+    tree = usage_tree.UsageTree("session")
+    tree.record(("main",), "gpt-5", {
+        "input_tokens": 100, "output_tokens": 10, "cache_read_tokens": 50,
+    })
+
+    async def requests_for_session(thread_id: str) -> list[dict]:
+        assert thread_id == app.session_state.thread_id
+        return [tree.to_dict()]
+
+    monkeypatch.setattr(usage_tree, "load_usage_trees", requests_for_session)
 
     monkeypatch.setattr(pu, "all_usage", lambda: [pu.opencode_go_usage("k")])
     app = _app()
@@ -106,6 +118,8 @@ async def test_usage_opens_a_modal_and_settings_no_longer_shows_it(monkeypatch):
         assert isinstance(screen, UsageScreen)
         body = str(screen.query_one("#usage-body", Static).render())
         assert "OpenCode Go" in body and "monthly" in body
+        assert "Cache reuse: 50.0%" in body
+        assert isinstance(screen._thread_id, int)
         await pilot.press("escape")
         await pilot.pause()
         app.push_screen(SettingsScreen())

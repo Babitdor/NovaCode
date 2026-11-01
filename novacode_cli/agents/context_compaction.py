@@ -285,6 +285,7 @@ def recent_files(head: Sequence[AnyMessage], tail: Sequence[AnyMessage]) -> list
     Files the kept tail already shows are left out, as are Nova's own history
     and cleared-result files.
     """
+
     def paths(messages: Sequence[AnyMessage]) -> list[str]:
         found = []
         for message in reversed(messages):
@@ -297,7 +298,12 @@ def recent_files(head: Sequence[AnyMessage], tail: Sequence[AnyMessage]) -> list
     shown = set(paths(tail))
     picked: list[str] = []
     for path in paths(head):
-        if path in shown or path in picked or "/conversation_history/" in path or "/cleared/" in path:
+        if (
+            path in shown
+            or path in picked
+            or "/conversation_history/" in path
+            or "/cleared/" in path
+        ):
             continue
         picked.append(path)
         if len(picked) == RESTORE_FILES:
@@ -719,24 +725,28 @@ class ContextCompactionMiddleware(AgentMiddleware):
     @property
     def _refused(self) -> dict[int, int]:
         from novacode_cli.session.runtime_identity import current_identity
+
         identity = current_identity.get()
         return self._refusals.setdefault(identity.session if identity else "unbound", {})
 
     @_refused.setter
     def _refused(self, value: dict[int, int]) -> None:
         from novacode_cli.session.runtime_identity import current_identity
+
         identity = current_identity.get()
         self._refusals[identity.session if identity else "unbound"] = value
 
     @property
     def _scale(self) -> float:
         from novacode_cli.session.runtime_identity import current_identity
+
         identity = current_identity.get()
         return self._scales.get(identity.session if identity else "unbound", 1.0)
 
     @_scale.setter
     def _scale(self, value: float) -> None:
         from novacode_cli.session.runtime_identity import current_identity
+
         identity = current_identity.get()
         self._scales[identity.session if identity else "unbound"] = value
 
@@ -855,10 +865,14 @@ class ContextCompactionMiddleware(AgentMiddleware):
                 pruned = list(messages)
                 # On a refusal, clear all it may; otherwise only the oldest
                 # results that bring the request under the threshold.
-                edit = self._prune_edit if force else prune_just_enough(
-                    self._prune_edit,
-                    messages,
-                    raw(messages) - int(limits.prune * PRUNE_TARGET / self._scale),
+                edit = (
+                    self._prune_edit
+                    if force
+                    else prune_just_enough(
+                        self._prune_edit,
+                        messages,
+                        raw(messages) - int(limits.prune * PRUNE_TARGET / self._scale),
+                    )
                 )
                 try:
                     # Whether to prune is decided above; the edit's own trigger
@@ -905,6 +919,85 @@ class ContextCompactionMiddleware(AgentMiddleware):
         quiet = model.with_config(tags=["nostream"], metadata={"lc_source": SUMMARY_SOURCE})
         return await summarize_conversation(quiet, head, context_window=window, tail_kept=True)
 
+    async def _fork_summary(
+        self,
+        request: ModelRequest,
+        plan: _Plan,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> str | None:
+        """Summarize through the assembled request without entering the tool graph."""
+        from langchain_core.runnables.config import RunnableConfig, var_child_runnable_config
+
+        from novacode_cli.compaction import SUMMARY_TIMEOUT_SECONDS, SummaryUnavailableError
+        from novacode_cli.context.snapshot import ContextSnapshot
+        from novacode_cli.tracking.request_metrics import dispatch
+
+        # A configured alternate summarizer must keep its own route and budget.
+        if self._model is not None and self._model is not request.model:
+            return None
+        history = self.dispatch_view(plan.messages, plan.collapse_boundary)
+        cutoff = len(history)
+        if plan.cutoff < len(plan.messages):
+            boundary = plan.messages[plan.cutoff]
+            cutoff = next(
+                (
+                    index
+                    for index, message in enumerate(history)
+                    if message is boundary or (boundary.id and message.id == boundary.id)
+                ),
+                0,
+            )
+        pending: set[str] = set()
+        for message in history:
+            if isinstance(message, AIMessage):
+                pending.update(
+                    identity for call in message.tool_calls if (identity := call.get("id"))
+                )
+            elif isinstance(message, ToolMessage):
+                pending.discard(message.tool_call_id)
+        if not cutoff or pending:
+            return None
+        instruction = HumanMessage(
+            content=(
+                "Summarize conversation history messages 1 through "
+                f"{cutoff} (counting after the system message). "
+                "Later messages remain verbatim and are context only. Return only a factual "
+                "continuation summary preserving the task, constraints, decisions, files changed, "
+                "completed work, failures and remaining steps. Carry earlier summaries forward. "
+                "Do not perform work or call tools."
+            )
+        )
+        fork = request.override(messages=[*history, instruction])
+        snapshot = await asyncio.to_thread(ContextSnapshot.capture, fork)
+        if snapshot.estimated_input_tokens + snapshot.output_reservation > plan.limits.window:
+            return None
+        config: RunnableConfig = {**(var_child_runnable_config.get() or {})}
+        config["tags"] = [*(config.get("tags") or []), "nostream"]
+        config["metadata"] = {**(config.get("metadata") or {}), "lc_source": SUMMARY_SOURCE}
+        token = var_child_runnable_config.set(config)
+        try:
+            with dispatch("summary.prefix_fork"):
+                response = await asyncio.wait_for(handler(fork), SUMMARY_TIMEOUT_SECONDS)
+        except Exception as error:
+            if _is_overflow(error):
+                return None
+            raise
+        finally:
+            var_child_runnable_config.reset(token)
+        response = getattr(response, "model_response", response)
+        replies = response.result
+        if any(
+            getattr(reply, "tool_calls", None) or getattr(reply, "invalid_tool_calls", None)
+            for reply in replies
+        ):
+            return None
+        summary = "\n".join(
+            _text(reply) for reply in replies if isinstance(reply, AIMessage)
+        ).strip()
+        if not summary:
+            raise SummaryUnavailableError
+        return summary
+
     async def _archive(self, head: list[AnyMessage]) -> str | None:
         """Save the messages being replaced; the path, or ``None`` if it failed."""
         stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -921,10 +1014,13 @@ class ContextCompactionMiddleware(AgentMiddleware):
         try:
             from novacode_cli.context.archives import default_recovery_store
             from novacode_cli.session.runtime_identity import current_identity
+
             identity = current_identity.get()
             manifest = await asyncio.to_thread(
-                default_recovery_store().archive, identity.thread if identity else "unbound",
-                list(head), source="automatic",
+                default_recovery_store().archive,
+                identity.thread if identity else "unbound",
+                list(head),
+                source="automatic",
             )
             # Keep the readable backend transcript as a compatibility reference;
             # its companion manifest is the authoritative recovery format.
@@ -950,10 +1046,18 @@ class ContextCompactionMiddleware(AgentMiddleware):
                 continue
             data = getattr(result, "file_data", None) or {}
             text = data.get("content") if isinstance(data, dict) else None
-            if getattr(result, "error", None) or not isinstance(text, str) or data.get("encoding") not in (None, "utf-8"):
+            if (
+                getattr(result, "error", None)
+                or not isinstance(text, str)
+                or data.get("encoding") not in (None, "utf-8")
+            ):
                 continue
             limit = min(RESTORE_FILE_CHARS, budget_chars)
-            clipped = text if len(text) <= limit else text[:limit] + "\n… (clipped; read_file for the rest)"
+            clipped = (
+                text
+                if len(text) <= limit
+                else text[:limit] + "\n… (clipped; read_file for the rest)"
+            )
             budget_chars -= len(clipped)
             sections.append(f"### {path}\n```\n{clipped}\n```")
         if not sections:
@@ -964,8 +1068,13 @@ class ContextCompactionMiddleware(AgentMiddleware):
         )
 
     def _summary_message(
-        self, head: list[AnyMessage], summary: str, path: str | None, limits: Limits,
-        todos: object = None, restored: str = "",
+        self,
+        head: list[AnyMessage],
+        summary: str,
+        path: str | None,
+        limits: Limits,
+        todos: object = None,
+        restored: str = "",
     ) -> HumanMessage:
         from novacode_cli.context.task_progress import render_task_progress, task_progress
 
@@ -1008,7 +1117,12 @@ class ContextCompactionMiddleware(AgentMiddleware):
         )
 
     async def _compact(
-        self, request: ModelRequest, plan: _Plan, *, overflow: bool
+        self,
+        request: ModelRequest,
+        plan: _Plan,
+        *,
+        overflow: bool,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]] | None = None,
     ) -> tuple[list[AnyMessage], dict[str, Any] | None]:
         """Stage 3. Returns the messages to send and the state update, if any."""
         state = request.state or {}
@@ -1038,14 +1152,19 @@ class ContextCompactionMiddleware(AgentMiddleware):
             )
             _announce()
             try:
-                summary = await self._summarize(
-                    self._model or request.model, head, plan.limits.window
-                )
+                if handler is not None and not overflow:
+                    summary = await self._fork_summary(request, plan, handler)
+                if summary is None:
+                    summary = await self._summarize(
+                        self._model or request.model, head, plan.limits.window
+                    )
             except Exception as error:  # noqa: BLE001 - a failed summary never fails the turn
                 failures += 1
                 logger.warning("Context summary failed (attempt %d): %s", failures, error)
             finally:
-                _announce("nova_compaction_end" if summary is not None else "nova_compaction_failed")
+                _announce(
+                    "nova_compaction_end" if summary is not None else "nova_compaction_failed"
+                )
         if summary is None:
             if not overflow and failures < FAILURES_BEFORE_DIGEST:
                 update = None
@@ -1113,7 +1232,9 @@ class ContextCompactionMiddleware(AgentMiddleware):
                 return _with_update(response, plan.collapse_update)
 
         if plan.cutoff:
-            messages, update = await self._compact(request, plan, overflow=learned is not None)
+            messages, update = await self._compact(
+                request, plan, overflow=learned is not None, handler=handler
+            )
         else:  # too long, and nothing before the tail to summarize
             messages = _clip_results(self.dispatch_view(plan.messages, plan.collapse_boundary))
             update = None
@@ -1133,6 +1254,7 @@ class ContextCompactionMiddleware(AgentMiddleware):
         if update is None:
             return response
         from novacode_cli.context.snapshot import ContextSnapshot
+
         source = (update.get("_summarization_event") or {}).get("source_generation")
         if source and ContextSnapshot.capture(request).generation != source:
             return response
@@ -1164,7 +1286,13 @@ class ContextCompactionMiddleware(AgentMiddleware):
                 return _with_update(response, plan.collapse_update)
 
         if plan.cutoff:
-            messages, update = _run_sync(self._compact(request, plan, overflow=learned is not None))
+
+            async def summary_handler(fork: ModelRequest) -> ModelResponse:
+                return handler(fork)
+
+            messages, update = _run_sync(
+                self._compact(request, plan, overflow=learned is not None, handler=summary_handler)
+            )
         else:  # too long, and nothing before the tail to summarize
             messages = _clip_results(self.dispatch_view(plan.messages, plan.collapse_boundary))
             update = None
@@ -1184,6 +1312,7 @@ class ContextCompactionMiddleware(AgentMiddleware):
         if update is None:
             return response
         from novacode_cli.context.snapshot import ContextSnapshot
+
         source = (update.get("_summarization_event") or {}).get("source_generation")
         if source and ContextSnapshot.capture(request).generation != source:
             return response

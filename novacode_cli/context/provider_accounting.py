@@ -52,44 +52,47 @@ def instrument_http(model: Any) -> bool:
 def prepared_request(request: Any, messages: Any, schemas: Any) -> Any:
     """Prepare OpenAI/Anthropic payloads using their installed adapter code."""
     model = request.model
-    module = type(model).__module__
-    if not module.startswith(("langchain_openai.", "langchain_anthropic.")):
+    # Inspect adapter ancestry before importing optional providers. Nova's
+    # gateway wrappers live in model_create but inherit the installed adapter.
+    modules = tuple(base.__module__ for base in type(model).__mro__)
+    anthropic = openai = False
+    if any(module.startswith("langchain_anthropic.") for module in modules):
+        from langchain_anthropic import ChatAnthropic
+
+        anthropic = isinstance(model, ChatAnthropic)
+    elif any(module.startswith("langchain_openai.") for module in modules):
+        from langchain_openai import ChatOpenAI
+
+        openai = isinstance(model, ChatOpenAI)
+    if not (openai or anthropic):
         return (), None
     prepare = getattr(model, "_get_request_payload", None)
     if prepare is None:
         return (), None
     settings = dict(getattr(request, "model_settings", None) or {})
     if schemas:
-        tools = [json.loads(schema) for schema in schemas]
-        if module.startswith("langchain_anthropic."):
-            tools = [
-                {
-                    "name": t["function"]["name"],
-                    "description": t["function"].get("description", ""),
-                    "input_schema": t["function"].get("parameters", {}),
-                }
-                for t in tools
-            ]
-        settings["tools"] = tools
+        # The adapters' binding paths preserve built-ins and provider extras;
+        # generic schema conversion loses server search and deferred definitions.
+        settings["tools"] = model.bind_tools(request.tools).kwargs["tools"]
     response_format = getattr(request, "response_format", None)
     if response_format is not None:
         from langchain.agents.structured_output import ProviderStrategy, ToolStrategy
 
-        if isinstance(response_format, ProviderStrategy) and module.startswith("langchain_openai."):
+        if isinstance(response_format, ProviderStrategy) and openai:
             settings.update(response_format.to_model_kwargs())
-        elif isinstance(response_format, ToolStrategy) and module.startswith("langchain_openai."):
+        elif isinstance(response_format, ToolStrategy) and openai:
             tools = list(settings.get("tools", []))
-            for spec in response_format.schema_specs:
-                tools.append(
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": spec.name,
-                            "description": spec.description or "",
-                            "parameters": spec.json_schema,
-                        },
-                    }
-                )
+            tools.extend(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": spec.name,
+                        "description": spec.description or "",
+                        "parameters": spec.json_schema,
+                    },
+                }
+                for spec in response_format.schema_specs
+            )
             settings["tools"] = tools
         else:
             return (), None

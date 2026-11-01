@@ -39,7 +39,11 @@ async def _summary_call(model: BaseChatModel, prompt: str, purpose: str) -> Base
     from novacode_cli.tracking.request_metrics import dispatch
 
     with dispatch(purpose):
-        return await model.ainvoke([HumanMessage(content=prompt)])
+        response = await model.ainvoke([HumanMessage(content=prompt)])
+    if getattr(response, "tool_calls", None) or getattr(response, "invalid_tool_calls", None):
+        message = "Summary provider returned tool calls"
+        raise SummaryUnavailableError(message)
+    return response
 
 
 def _state_generation(state: Any) -> str:  # noqa: ANN401 - compiled graph state is framework-defined

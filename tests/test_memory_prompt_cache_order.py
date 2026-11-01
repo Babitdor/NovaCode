@@ -12,18 +12,25 @@ from __future__ import annotations
 
 import time
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from langchain_core.messages import HumanMessage
 
 from novacode_cli.memory.agent_memory import AgentMemoryMiddleware
 
+if TYPE_CHECKING:
+    from langchain_anthropic import ChatAnthropic
 
-class _Anthropicish:
-    """Stands in for an Anthropic chat model (module name drives the branch)."""
 
+def _anthropic_adapter() -> ChatAnthropic:
+    """An offline native Anthropic adapter with explicit Nova routing metadata."""
+    from langchain_anthropic import ChatAnthropic
 
-_Anthropicish.__module__ = "langchain_anthropic.chat_models"
+    return ChatAnthropic(
+        model="claude-sonnet-4-6",
+        api_key="test-only",
+        metadata={"nova_provider": "anthropic", "nova_model": "claude-sonnet-4-6"},
+    )
 
 
 def _request(model: Any, prompt: str = "BASE SYSTEM PROMPT") -> Any:
@@ -76,7 +83,7 @@ def _req(mw: Any, text: str = "hello") -> Any:
 
 def test_breakpoint_lands_on_the_stable_block_only() -> None:
     msg = AgentMemoryMiddleware._make_system_message(
-        _request(_Anthropicish()), "STABLE", "VOLATILE"
+        _request(_anthropic_adapter()), "STABLE", "VOLATILE"
     )
 
     content: Any = msg.content
@@ -92,7 +99,7 @@ def test_breakpoint_lands_on_the_stable_block_only() -> None:
 
 
 def test_volatile_block_omitted_when_nothing_retrieved() -> None:
-    msg = AgentMemoryMiddleware._make_system_message(_request(_Anthropicish()), "STABLE", "")
+    msg = AgentMemoryMiddleware._make_system_message(_request(_anthropic_adapter()), "STABLE", "")
 
     content: Any = msg.content
     assert isinstance(content, list)
@@ -147,7 +154,7 @@ def test_stable_prompt_is_identical_across_differently_worded_turns(tmp_path) ->
 def test_memory_updates_keep_the_core_prompt_prefix_cacheable(tmp_path) -> None:
     mw = _bare_middleware(tmp_path)
     base = "CORE INSTRUCTIONS " * 1000
-    req = _request(_Anthropicish(), base)
+    req = _request(_anthropic_adapter(), base)
     req.state = {"user_memory": "earlier lesson"}
     before = mw._build_system_prompt(req)
     req.state = {"user_memory": "updated lesson"}

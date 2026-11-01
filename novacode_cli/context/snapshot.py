@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hashlib
 import json
@@ -32,6 +33,71 @@ if TYPE_CHECKING:
     from novacode_cli.agents.strict_tools import StrictToolMiddleware
     from novacode_cli.plugins.hooks import PluginHooksMiddleware
     from novacode_cli.security.prompt_injection import PromptInjectionMiddleware
+
+
+def _prefix_diagnostics(
+    request: ModelRequest, prepared: tuple[str, ...], schemas: tuple[str, ...]
+) -> tuple[tuple[tuple[str, str], ...], tuple[str, ...]]:
+    """Compare final request component hashes, retaining no prompt content."""
+    # Hash actual adapter output when observable. Only hashes leave this scope.
+    payload = json.loads(prepared[0]) if prepared else {}
+    components = {
+        "system": payload.get(
+            "system",
+            payload.get(
+                "instructions",
+                [request.system_message.content if request.system_message else None],
+            ),
+        ),
+        "tools": payload.get("tools", schemas),
+        "settings": {
+            key: value
+            for key, value in payload.items()
+            if key not in {"system", "instructions", "tools", "messages", "input"}
+        }
+        if prepared
+        else (getattr(request, "model_settings", None) or {}),
+        "history": payload.get(
+            "messages",
+            payload.get(
+                "input",
+                [
+                    m.model_dump(exclude={"id", "usage_metadata", "response_metadata"})
+                    for m in request.messages
+                ],
+            ),
+        ),
+    }
+    # OpenAI may embed system instructions in either messages or Responses input.
+    if (
+        isinstance(components["history"], list)
+        and prepared
+        and ("messages" in payload or "input" in payload)
+        and "system" not in payload
+        and "instructions" not in payload
+    ):
+        history = components["history"]
+        components["system"] = [
+            m for m in history if isinstance(m, dict) and m.get("role") in {"system", "developer"}
+        ]
+        components["history"] = [
+            m
+            for m in history
+            if not isinstance(m, dict) or m.get("role") not in {"system", "developer"}
+        ]
+    fingerprints = tuple(
+        (
+            key,
+            hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest(),
+        )
+        for key, value in components.items()
+    )
+    prior = (request.state or {}).get("_context_snapshot")
+    previous = prior.get("prefix_fingerprints", {}) if isinstance(prior, dict) else {}
+    if not isinstance(previous, dict):
+        previous = {}
+    changes = tuple(key for key, value in fingerprints if previous and previous.get(key) != value)
+    return fingerprints, changes
 
 
 class ProtectedContextOverflowError(RuntimeError):
@@ -66,6 +132,8 @@ class ContextSnapshot:
     mcp_schema_tokens: int = 0
     #: The MCP server/tool list injected into the system prompt.
     mcp_prompt_tokens: int = 0
+    prefix_fingerprints: tuple[tuple[str, str], ...] = ()
+    prefix_changes: tuple[str, ...] = ()
 
     @classmethod
     def capture(cls, request: ModelRequest) -> ContextSnapshot:
@@ -80,7 +148,9 @@ class ContextSnapshot:
         )
         encoded = tuple(m.model_dump_json() for m in messages)
         schemas = tuple(
-            json.dumps(convert_to_openai_tool(t), sort_keys=True, default=str)
+            json.dumps(
+                t if isinstance(t, dict) else convert_to_openai_tool(t), sort_keys=True, default=str
+            )
             for t in request.tools or []
         )
         protected = tuple(user_messages(request.messages, 0))
@@ -127,6 +197,7 @@ class ContextSnapshot:
         from novacode_cli.context.provider_accounting import prepared_request
 
         prepared, effective_reservation = prepared_request(request, messages, schemas)
+        fingerprints, changes = _prefix_diagnostics(request, prepared, schemas)
         structured_tokens = 0
         if prepared:
             payload = json.loads(prepared[0])
@@ -147,7 +218,10 @@ class ContextSnapshot:
             identity,
             task_correlation.get() or "",
             hashlib.sha256(source_identity.encode()).hexdigest(),
-            type(request.model).__module__,
+            str(
+                (getattr(request.model, "metadata", None) or {}).get("nova_provider")
+                or type(request.model).__module__
+            ),
             str(
                 getattr(request.model, "model_name", None)
                 or getattr(request.model, "model", "unknown")
@@ -173,6 +247,8 @@ class ContextSnapshot:
             len(mcp_tools),
             mcp_schema_tokens,
             mcp_prompt_tokens,
+            fingerprints,
+            changes,
         )
 
     def diagnostics(self) -> dict[str, object]:
@@ -181,6 +257,10 @@ class ContextSnapshot:
 
         return {
             "generation": self.generation,
+            "provider": self.provider,
+            "prefix_fingerprints": dict(self.prefix_fingerprints),
+            "prefix_changes": list(self.prefix_changes),
+            "cache_miss_cause": "unknown",
             "model": self.model,
             "estimated_input_tokens": self.estimated_input_tokens,
             "estimated_text_tokens": self.estimated_text_tokens,
@@ -262,9 +342,7 @@ def _mcp_prompt_tokens(system_message: object) -> int:
         return 0
     content = getattr(system_message, "content", "")
     if not isinstance(content, str):
-        content = "\n".join(
-            str(b.get("text", "")) for b in content or [] if isinstance(b, dict)
-        )
+        content = "\n".join(str(b.get("text", "")) for b in content or [] if isinstance(b, dict))
     start = content.find(_MCP_HEADING)
     if start < 0:
         return 0
@@ -308,7 +386,7 @@ class ContextSnapshotMiddleware(AgentMiddleware[SnapshotState]):
     ) -> ExtendedModelResponse:
         """Capture the asynchronous dispatch and its observed usage."""
         request = request.override(messages=compact_observations(request.messages))
-        snapshot = self._capture(request)
+        snapshot = await asyncio.to_thread(self._capture, request)
         from novacode_cli.context.provider_accounting import (
             AttemptCounter,
             http_attempts,
@@ -317,11 +395,22 @@ class ContextSnapshotMiddleware(AgentMiddleware[SnapshotState]):
 
         counter = AttemptCounter(observed=instrument_http(request.model))
         token = http_attempts.set(counter)
+        from novacode_cli.tracking.request_metrics import request_diagnostic
+
+        diagnostic_token = request_diagnostic.set(
+            {
+                "prefix_fingerprints": dict(snapshot.prefix_fingerprints),
+                "prefix_changes": list(snapshot.prefix_changes),
+                "estimated_input_tokens": snapshot.estimated_input_tokens,
+                "output_reservation": snapshot.output_reservation,
+            }
+        )
         try:
             response = await handler(request)
             return self._result(response, snapshot, counter.count if counter.observed else None)
         finally:
             http_attempts.reset(token)
+            request_diagnostic.reset(diagnostic_token)
 
     def wrap_model_call(
         self, request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]
@@ -329,7 +418,20 @@ class ContextSnapshotMiddleware(AgentMiddleware[SnapshotState]):
         """Capture the synchronous dispatch and its observed usage."""
         request = request.override(messages=compact_observations(request.messages))
         snapshot = self._capture(request)
-        return self._result(handler(request), snapshot)
+        from novacode_cli.tracking.request_metrics import request_diagnostic
+
+        token = request_diagnostic.set(
+            {
+                "prefix_fingerprints": dict(snapshot.prefix_fingerprints),
+                "prefix_changes": list(snapshot.prefix_changes),
+                "estimated_input_tokens": snapshot.estimated_input_tokens,
+                "output_reservation": snapshot.output_reservation,
+            }
+        )
+        try:
+            return self._result(handler(request), snapshot)
+        finally:
+            request_diagnostic.reset(token)
 
     @staticmethod
     def _result(
@@ -381,11 +483,11 @@ def background_context_middleware() -> list[
 
     backend = FilesystemBackend(root_dir=str(workspace_root()), virtual_mode=True)
     return [
-        ContextCompactionMiddleware(backend=backend),
         AttributionMiddleware(),
         CavemanMiddleware(style_only=True),
         PluginHooksMiddleware(lifecycle=False),
         PromptInjectionMiddleware(),
         StrictToolMiddleware(),
+        ContextCompactionMiddleware(backend=backend),
         ContextSnapshotMiddleware(),
     ]
