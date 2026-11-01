@@ -92,6 +92,37 @@ def test_dense_search_can_return_every_match_beyond_twenty() -> None:
     assert {item["name"] for item, _cosine, _bm25 in results} == {item["name"] for item in items}
 
 
+def test_suggestion_and_repeated_search_reuse_the_query_embedding(monkeypatch):
+    encoded = []
+
+    class Model(_BagOfWords):
+        def encode(self, texts):
+            encoded.append(list(texts))
+            return super().encode(texts)
+
+    model = Model()
+    monkeypatch.setattr(R, "_model", lambda: model)
+    index = R.get_index(SKILLS)
+    query = "review docker compose files for security and correctness"
+    index.suggest(query)
+    first = index.search(query)
+    assert index.search(query) == first
+    assert encoded[1:] == [[query]], "suggest/search must share one normalized query vector"
+    assert all(len(key) == 64 for key in R._index_cache)
+
+
+def test_index_cache_preserves_recent_inventories():
+    inventories = [[_skill(f"skill-{i}", f"Description {i}")] for i in range(5)]
+    first = R.get_index(inventories[0])
+    second = R.get_index(inventories[1])
+    R.get_index(inventories[2])
+    R.get_index(inventories[3])
+    assert R.get_index(inventories[0]) is first
+    R.get_index(inventories[4])
+    assert R.get_index(inventories[0]) is first
+    assert R.get_index(inventories[1]) is not second
+
+
 def test_shared_index_does_not_confuse_tool_and_subagent_metadata() -> None:
     tool = {"name": "reviewer", "description": "Review code.", "kind": "tool"}
     agent = {**tool, "kind": "subagent"}

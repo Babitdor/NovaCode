@@ -103,6 +103,12 @@ def test_parsed_memory_lru_and_both_limits():
     before = cache.resident_bytes
     del cache["49"]
     assert cache.resident_bytes < before
+    cache.clear()
+    assert cache.resident_bytes == 0
+    assert not cache._sizes
+    cache["new"] = "x" * 1000
+    assert cache["new"] == "x" * 1000
+    assert 0 < cache.resident_bytes <= cache.max_bytes
 
 
 def test_streamed_hash_changes_even_when_timestamp_restored(tmp_path):

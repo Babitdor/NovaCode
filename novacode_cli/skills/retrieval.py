@@ -15,8 +15,12 @@ import functools
 import json
 import logging
 import re
+import threading
+from collections import OrderedDict
 from collections.abc import Mapping
 from typing import Any, Generic, TypeVar
+
+from novacode_cli.computation_cache import digest
 
 logger = logging.getLogger("nova.skills.retrieval")
 SkillT = TypeVar("SkillT", bound=Mapping[str, Any])
@@ -38,7 +42,8 @@ _GENERIC_TERMS = frozenset(
 
 _executor: concurrent.futures.ThreadPoolExecutor | None = None
 _model_future: concurrent.futures.Future | None = None
-_index_cache: dict[str, SkillIndex[Any]] = {}
+_index_cache: OrderedDict[str, SkillIndex[Any]] = OrderedDict()
+_index_lock = threading.Lock()
 
 
 def _cached_model_path() -> str:
@@ -125,7 +130,9 @@ def _tokenize(texts: list[str]) -> Any:
     import bm25s
 
     return bm25s.tokenize(
-        [text.replace("_", " ") for text in texts], stopwords="en", show_progress=False,
+        [text.replace("_", " ") for text in texts],
+        stopwords="en",
+        show_progress=False,
     )
 
 
@@ -149,6 +156,8 @@ class SkillIndex(Generic[SkillT]):
         self._bm25 = bm25s.BM25()
         self._bm25.index(_tokenize(docs), show_progress=False)
         self._model = _model()
+        self._query_cache: tuple[str, Any] | None = None
+        self._query_lock = threading.Lock()
         self._emb = None
         if self._model is not None:
             import numpy as np
@@ -159,6 +168,21 @@ class SkillIndex(Generic[SkillT]):
     @property
     def dense(self) -> bool:
         return self._emb is not None
+
+    def _query_vector(self, query: str) -> Any:
+        """Reuse one normalized query vector without retaining the query text."""
+        import numpy as np
+
+        assert self._model is not None  # noqa: S101 - only called by dense index paths
+        key = digest(query)
+        with self._query_lock:
+            cached = self._query_cache
+            if cached is not None and cached[0] == key:
+                return cached[1]
+            vector = self._model.encode([query])[0]
+            vector = vector / (np.linalg.norm(vector) + 1e-9)
+            self._query_cache = (key, vector)
+            return vector
 
     def search(self, query: str, k: int = 5) -> list[tuple[SkillT, float, float]]:
         """Top ``k`` skills as ``(skill, cosine, bm25)``, best first."""
@@ -173,8 +197,7 @@ class SkillIndex(Generic[SkillT]):
         ranked = [i for i, s in bm25.items() if s > 0]
         cosine: dict[int, float] = {}
         if self._emb is not None and self._model is not None:
-            q = self._model.encode([query])[0]
-            sims = self._emb @ (q / (np.linalg.norm(q) + 1e-9))
+            sims = self._emb @ self._query_vector(query)
             dense = np.argsort(-sims)[:candidates].tolist()
             cosine = {i: float(sims[i]) for i in dense}
             fused: dict[int, float] = {}
@@ -187,7 +210,10 @@ class SkillIndex(Generic[SkillT]):
         return [(self.skills[i], cosine.get(i, 0.0), bm25.get(i, 0.0)) for i in ranked[:k]]
 
     def suggest(
-        self, query: str, k: int = 3, exclude: set[str] | frozenset[str] = frozenset(),
+        self,
+        query: str,
+        k: int = 3,
+        exclude: set[str] | frozenset[str] = frozenset(),
         usage: dict[str, int] | None = None,
     ) -> list[SkillT]:
         """Offer relevant candidates; lexical matches also work without embeddings.
@@ -201,8 +227,7 @@ class SkillIndex(Generic[SkillT]):
             return []
         baseline = 0.0
         if self._emb is not None and self._model is not None and len(self.skills) > 1:
-            q = self._model.encode([query])[0]
-            baseline = float(np.median(self._emb @ (q / (np.linalg.norm(q) + 1e-9))))
+            baseline = float(np.median(self._emb @ self._query_vector(query)))
         terms = _terms(query)
         candidates = []
         for skill, cosine, _bm25 in self.search(query, k=len(self.skills)):
@@ -212,7 +237,10 @@ class SkillIndex(Generic[SkillT]):
             denied = re.search(
                 r"\b(?:do not|don't|never|without|skip|avoid)\s+"
                 r"(?:(?:use|using|load|loading)\s+)?(?:the\s+)?[/$]?"
-                + re.escape(name) + r"(?![\w.-])", query, re.IGNORECASE,
+                + re.escape(name)
+                + r"(?![\w.-])",
+                query,
+                re.IGNORECASE,
             )
             if denied:
                 continue
@@ -222,7 +250,8 @@ class SkillIndex(Generic[SkillT]):
             overlap = terms & _terms(_doc(skill))
             lexical = len(overlap) >= MIN_LEXICAL_TERMS or bool(terms & _terms(name))
             semantic = (
-                len(query.split()) >= MIN_TASK_WORDS and cosine >= MIN_COSINE
+                len(query.split()) >= MIN_TASK_WORDS
+                and cosine >= MIN_COSINE
                 and cosine - baseline >= MIN_DENSE_MARGIN
             )
             if exact or lexical or semantic:
@@ -236,13 +265,19 @@ def get_index(skills: list[SkillT]) -> SkillIndex[SkillT]:
     """A cached index for this exact skill list (rebuilt once the embedder is up)."""
     # The cached index holds source objects, not just vectors. Include their
     # complete identity so a different project or tool metadata cannot leak in.
-    key = json.dumps(skills, sort_keys=True, default=str)
-    index = _index_cache.get(key)
-    if index is None or (not index.dense and _model() is not None):
-        index = SkillIndex(skills)
-        if len(_index_cache) >= 4:  # skills + tools, main agent + subagents
-            _index_cache.pop(next(iter(_index_cache)))
+    key = digest(json.dumps(skills, sort_keys=True, default=str))
+    with _index_lock:
+        index = _index_cache.get(key)
+        if index is not None:
+            _index_cache.move_to_end(key)
+    if index is not None and (index.dense or _model() is None):
+        return index
+    index = SkillIndex(skills)
+    with _index_lock:
         _index_cache[key] = index
+        _index_cache.move_to_end(key)
+        while len(_index_cache) > 4:  # skills + tools, main agent + subagents
+            _index_cache.popitem(last=False)
     return index
 
 
@@ -261,15 +296,17 @@ def skill_summary(text: str, limit: int = 600) -> str:
         return text
     sentences = re.split(r"(?<=[.!?])\s+", text)
     boundaries = [
-        sentence for sentence in sentences[1:]
+        sentence
+        for sentence in sentences[1:]
         if re.search(
             r"\b(?:use when|only|not for|do not|don't|skip|never|avoid|trigger)\b",
-            sentence, re.IGNORECASE,
+            sentence,
+            re.IGNORECASE,
         )
     ]
     if not boundaries:
-        return text[:limit - 1].rstrip() + "…"
+        return text[: limit - 1].rstrip() + "…"
     lead = first_sentence(sentences[0], min(150, limit // 3))
     rest = " ".join(boundaries)
     remaining = limit - len(lead) - 1
-    return lead + " " + (rest if len(rest) <= remaining else rest[:remaining - 1].rstrip() + "…")
+    return lead + " " + (rest if len(rest) <= remaining else rest[: remaining - 1].rstrip() + "…")

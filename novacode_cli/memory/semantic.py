@@ -23,7 +23,11 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from contextlib import suppress
 from typing import Any
+
+from novacode_cli.computation_cache import digest
+from novacode_cli.memory.parsed_cache import ParsedMemoryCache
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +41,10 @@ RELEVANT = 0.45
 _lock = threading.Lock()
 _model: Any = None
 _unavailable = False
-_cache: dict[str, Any] = {}
 _CACHE_LIMIT = 4096
+_cache = ParsedMemoryCache(max_entries=_CACHE_LIMIT, max_bytes=8 * 1024 * 1024)
+_cache_model: Any = None
+_embed_lock = threading.Lock()
 
 
 def enabled() -> bool:
@@ -71,23 +77,38 @@ def embed(texts: list[str]) -> Any:  # noqa: ANN401
         return None
     import numpy as np
 
-    # Read hits into a local dict first: the cache may be cleared below (or by
-    # another thread), and a text cached a moment ago must still be returned.
-    found = {t: v for t in dict.fromkeys(texts) if (v := _cache.get(t)) is not None}
-    missing = [t for t in dict.fromkeys(texts) if t not in found]
-    if missing:
-        try:
-            vectors = _load().encode(missing)
-        except Exception:  # noqa: BLE001
-            logger.debug("embedding failed", exc_info=True)
-            return None
-        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
-        vectors = vectors / np.where(norms == 0, 1.0, norms)
-        if len(_cache) + len(missing) > _CACHE_LIMIT:
+    global _cache_model  # noqa: PLW0603
+    model = _load()
+    cache_enabled = os.environ.get("NOVA_DISABLE_COMPUTATION_CACHE") != "1"
+    # Concurrent memory searches share one miss computation. The lock also
+    # protects LRU promotion and eviction; no network calls happen in encode.
+    with _embed_lock:
+        if _cache_model is not model:
             _cache.clear()
-        for text, vector in zip(missing, vectors, strict=True):
-            _cache[text] = found[text] = vector
-    return np.stack([found[t] for t in texts])
+            _cache_model = model
+        unique = dict.fromkeys(texts)
+        keys = {text: digest(text) for text in unique}
+        found = {}
+        for text in unique:
+            if cache_enabled:
+                with suppress(KeyError):
+                    found[text] = _cache[keys[text]]
+        missing = [text for text in unique if text not in found]
+        if missing:
+            try:
+                vectors = model.encode(missing)
+            except Exception:  # noqa: BLE001
+                logger.debug("embedding failed", exc_info=True)
+                return None
+            norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+            vectors = vectors / np.where(norms == 0, 1.0, norms)
+            for text, vector in zip(missing, vectors, strict=True):
+                # A row view would retain the entire batch allocation even if
+                # every other row was evicted, defeating the byte budget.
+                found[text] = vector.copy()
+                if cache_enabled:
+                    _cache[keys[text]] = found[text]
+        return np.stack([found[text] for text in texts])
 
 
 def best_match(text: str, candidates: list[str]) -> tuple[float, int]:

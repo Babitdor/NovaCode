@@ -1214,7 +1214,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
         # separate trailing block, after the cache breakpoint.
 
         if base_system_prompt:
-            system_prompt += "\n\n" + base_system_prompt
+            system_prompt = base_system_prompt + "\n\n" + system_prompt
 
         return system_prompt
 
@@ -1225,10 +1225,9 @@ class AgentMemoryMiddleware(AgentMiddleware):
         """Build a SystemMessage, marking only the STABLE prefix as cached.
 
         Anthropic caches a *prefix*: the ``cache_control`` breakpoint belongs on
-        the last block that is byte-identical across requests. The stable block
-        (memory sections + base system prompt) qualifies; the per-turn retrieval
-        block does not, so it is emitted after the breakpoint and never
-        invalidates the cached prefix.
+        the last block that is byte-identical across requests. Core instructions
+        and standing memory use separate breakpoints, so a memory update can
+        still reuse the core. Per-turn retrieval follows both breakpoints.
 
         Falls back to a plain concatenated SystemMessage for non-Anthropic
         models. Uses module-name inspection instead of an isinstance check to
@@ -1239,12 +1238,20 @@ class AgentMemoryMiddleware(AgentMiddleware):
 
         model_module = type(request.model).__module__.lower()
         if "anthropic" in model_module:
+            # Keep a reusable core breakpoint when standing memory changes.
+            # Other providers benefit from the same stable leading text via
+            # their automatic prefix caching, without extra request fields.
+            base = request.system_prompt or ""
+            parts = [stable_prompt]
+            if base and stable_prompt.startswith(base + "\n\n"):
+                parts = [base, stable_prompt[len(base) + 2:]]
             content: list[Any] = [
                 {
                     "type": "text",
-                    "text": stable_prompt,
+                    "text": part,
                     "cache_control": {"type": "ephemeral"},
                 }
+                for part in parts
             ]
             if volatile_prompt:
                 # After the breakpoint on purpose: varying content must not sit

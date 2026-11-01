@@ -68,9 +68,7 @@ def _bare_middleware(tmp_path, *, topics: dict[str, str] | None = None) -> Any:
 
 
 def _req(mw: Any, text: str = "hello") -> Any:
-    return SimpleNamespace(
-        state={}, system_prompt="BASE", messages=[HumanMessage(content=text)]
-    )
+    return SimpleNamespace(state={}, system_prompt="BASE", messages=[HumanMessage(content=text)])
 
 
 # -- cache-block structure -------------------------------------------------
@@ -146,9 +144,31 @@ def test_stable_prompt_is_identical_across_differently_worded_turns(tmp_path) ->
     assert first == second, "stable prompt changed with the user's wording"
 
 
+def test_memory_updates_keep_the_core_prompt_prefix_cacheable(tmp_path) -> None:
+    mw = _bare_middleware(tmp_path)
+    base = "CORE INSTRUCTIONS " * 1000
+    req = _request(_Anthropicish(), base)
+    req.state = {"user_memory": "earlier lesson"}
+    before = mw._build_system_prompt(req)
+    req.state = {"user_memory": "updated lesson"}
+    after = mw._build_system_prompt(req)
+    assert before != after, "updated memory must remain immediately visible"
+    assert before.startswith(base) and after.startswith(base)
+    first = AgentMemoryMiddleware._make_system_message(req, before, "retrieved A")
+    second = AgentMemoryMiddleware._make_system_message(req, after, "retrieved B")
+    assert first.content[0] == second.content[0]
+    assert first.content[0]["text"] == base
+    assert first.content[0]["cache_control"] == {"type": "ephemeral"}
+    assert first.content[1]["text"] != second.content[1]["text"]
+    assert first.content[1]["cache_control"] == {"type": "ephemeral"}
+    assert "cache_control" not in second.content[-1]
+
+
 def test_volatile_part_carries_the_retrieved_lessons(tmp_path) -> None:
     """Retrieval still works — it just lives in the volatile part now."""
-    mw = _bare_middleware(tmp_path, topics={"context-budgeting": "context window budgeting lessons"})
+    mw = _bare_middleware(
+        tmp_path, topics={"context-budgeting": "context window budgeting lessons"}
+    )
 
     stable, volatile = mw._build_system_prompt_parts(
         _req(mw, "please audit context window budgeting")
@@ -274,4 +294,3 @@ def test_corpus_signature_uses_current_file_content(tmp_path) -> None:
     assert len(before) == 1
     assert before[0][0] == "a-topic.md"
     assert len(before[0][1]) == 64
-

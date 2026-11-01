@@ -21,6 +21,9 @@ CACHE_BYTES = 8 * 1024 * 1024
 PROCESS_BYTES = 32 * 1024 * 1024
 _LOCK = RLock()
 _ENTRIES: OrderedDict[tuple[str, str], bytes] = OrderedDict()
+_NAMESPACES: dict[str, OrderedDict[str, None]] = {}
+_BYTES: dict[str, int] = {}
+_RETAINED_BYTES = 0
 _STATS: dict[str, dict[str, int]] = {}
 
 
@@ -43,7 +46,7 @@ def _event(namespace: str, outcome: str) -> None:
                             "cache": namespace,
                             "outcome": outcome,
                             "entries": len(_ENTRIES),
-                            "retained_bytes": sum(map(len, _ENTRIES.values())),
+                            "retained_bytes": _RETAINED_BYTES,
                             "validation_ns": stats.get("validation_ns", 0),
                             "computation_ns": stats.get("computation_ns", 0),
                         }
@@ -70,11 +73,27 @@ def get(namespace: str, key: str) -> object | None:
         if payload is None:
             return None
         _ENTRIES.move_to_end((namespace, key))
-        return cast("object", json.loads(payload))
+        _NAMESPACES[namespace].move_to_end(key)
+    # Immutable bytes remain valid across eviction; decoding a defensive copy
+    # must not hold the shared lock while other sessions access their caches.
+    return cast("object", json.loads(payload))
+
+
+def _remove(namespace: str, key: str) -> None:
+    """Update both LRU orders and byte accounting while the caller holds the lock."""
+    global _RETAINED_BYTES  # noqa: PLW0603
+    payload = _ENTRIES.pop((namespace, key))
+    _RETAINED_BYTES -= len(payload)
+    _BYTES[namespace] -= len(payload)
+    del _NAMESPACES[namespace][key]
+    if not _NAMESPACES[namespace]:
+        del _NAMESPACES[namespace]
+        del _BYTES[namespace]
 
 
 def put(namespace: str, key: str, value: object) -> None:
     """Retain JSON data within both namespace and shared process budgets."""
+    global _RETAINED_BYTES  # noqa: PLW0603
     if os.environ.get("NOVA_DISABLE_COMPUTATION_CACHE") == "1":
         return
     try:
@@ -87,26 +106,33 @@ def put(namespace: str, key: str, value: object) -> None:
     if len(payload) > CACHE_BYTES:
         return
     with _LOCK:
-        _ENTRIES.pop((namespace, key), None)
+        if (namespace, key) in _ENTRIES:
+            _remove(namespace, key)
         _ENTRIES[namespace, key] = payload
-        while True:
-            own = [k for k in _ENTRIES if k[0] == namespace]
-            if len(own) > ENTRY_LIMIT or sum(len(_ENTRIES[k]) for k in own) > CACHE_BYTES:
-                victim = own[0]
-            elif sum(map(len, _ENTRIES.values())) > PROCESS_BYTES:
-                victim = next(iter(_ENTRIES))
-            else:
-                break
-            del _ENTRIES[victim]
-            _event(victim[0], "eviction")
+        _NAMESPACES.setdefault(namespace, OrderedDict())[key] = None
+        _BYTES[namespace] = _BYTES.get(namespace, 0) + len(payload)
+        _RETAINED_BYTES += len(payload)
+        while namespace in _NAMESPACES and (
+            len(_NAMESPACES[namespace]) > ENTRY_LIMIT or _BYTES[namespace] > CACHE_BYTES
+        ):
+            _remove(namespace, next(iter(_NAMESPACES[namespace])))
+            _event(namespace, "eviction")
+        while _RETAINED_BYTES > PROCESS_BYTES:
+            victim_namespace, victim_key = next(iter(_ENTRIES))
+            _remove(victim_namespace, victim_key)
+            _event(victim_namespace, "eviction")
 
 
 def clear(namespace: str | None = None) -> None:
     """Explicit configuration/workspace invalidation and process teardown."""
     with _LOCK:
-        for key in list(_ENTRIES):
-            if namespace is None or key[0] == namespace:
-                del _ENTRIES[key]
+        keys = (
+            list(_ENTRIES)
+            if namespace is None
+            else [(namespace, key) for key in _NAMESPACES.get(namespace, {})]
+        )
+        for owner, key in keys:
+            _remove(owner, key)
         if namespace is None:
             _STATS.clear()
         else:
@@ -118,8 +144,15 @@ def snapshot() -> dict[str, object]:
     with _LOCK:
         return {
             "entries": len(_ENTRIES),
-            "retained_bytes": sum(map(len, _ENTRIES.values())),
-            "caches": {name: dict(stats) for name, stats in _STATS.items()},
+            "retained_bytes": _RETAINED_BYTES,
+            "caches": {
+                name: {
+                    **_STATS.get(name, {}),
+                    "entries": len(_NAMESPACES.get(name, {})),
+                    "retained_bytes": _BYTES.get(name, 0),
+                }
+                for name in dict.fromkeys([*_STATS, *_NAMESPACES])
+            },
         }
 
 

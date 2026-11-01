@@ -65,6 +65,28 @@ def test_concurrent_cache_operations():
     assert cache.snapshot()["entries"] <= 256
 
 
+def test_cache_accounting_after_replacement_lru_eviction_and_clear(monkeypatch):
+    monkeypatch.setattr(cache, "ENTRY_LIMIT", 2)
+    cache.put("a", "one", [1])
+    cache.put("a", "two", [2])
+    cache.put("b", "one", [3])
+    cache.get("a", "one")
+    cache.put("a", "three", [4])
+    assert cache.get("a", "two") is None
+    state = cache.snapshot()
+    assert state["entries"] == 3
+    assert state["retained_bytes"] == 9
+    assert state["caches"]["a"]["entries"] == 2
+    assert state["caches"]["a"]["retained_bytes"] == 6
+    cache.put("a", "one", [1234])
+    assert cache.snapshot()["retained_bytes"] == 12
+    cache.clear("a")
+    assert cache.snapshot()["retained_bytes"] == 3
+    assert cache.snapshot()["entries"] == 1
+    cache.clear()
+    assert cache.snapshot()["retained_bytes"] == 0
+
+
 def test_parsed_agent_exact_content_and_mutation(monkeypatch):
     from novacode_cli.agents.agent_file import _split
 

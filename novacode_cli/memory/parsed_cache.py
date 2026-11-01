@@ -62,6 +62,12 @@ class ParsedMemoryCache(OrderedDict):
         super().__delitem__(key)
         self.resident_bytes -= self._sizes.pop(key)
 
+    def clear(self) -> None:
+        """Release entries and their resident-size accounting together."""
+        super().clear()
+        self._sizes.clear()
+        self.resident_bytes = 0
+
 
 class MemoryCorpus(Mapping):
     """Keep discovery order while caching parsed bodies independently of corpus size."""

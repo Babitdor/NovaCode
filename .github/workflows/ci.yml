@@ -54,6 +54,10 @@ jobs:
           uv run --no-sync ruff check --select F,I
           novacode_cli/agents/strict_tools.py
           novacode_cli/process_manager.py
+          novacode_cli/computation_cache.py
+          novacode_cli/memory/semantic.py
+          novacode_cli/memory/parsed_cache.py
+          novacode_cli/skills/retrieval.py
           novacode_cli/shell/processes.py
           novacode_cli/shell/output.py
           novacode_cli/tui/shell_output.py
@@ -159,6 +163,10 @@ jobs:
           tests/test_passing_fixes.py
           tests/test_skills_runtime.py
           tests/test_skill_retrieval.py
+          tests/test_semantic_cache.py
+          tests/test_memory_prompt_cache_order.py
+          tests/test_context_learning_properties.py
+          tests/test_phase45.py
           tests/test_skill_selection.py
           tests/test_refreshing_skills.py
           tests/test_skill_libraries_and_resolvers.py
