@@ -1043,58 +1043,9 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
         it runs on the shared background loop that every running command and
         background task drains on, so nothing here may block that thread.
         """
-        if proc.returncode is not None:
-            return
-        import os
-        import signal
+        from novacode_cli.shell.processes import terminate_process_tree
 
-        # Windows terminate() kills only the shell. Once it exits taskkill /T
-        # cannot find the descendants, so stop the tree while its root exists.
-        if sys.platform == "win32":
-            from novacode_cli.utils.windows import taskkill_executable
-
-            killer = None
-            try:
-                killer = await asyncio.create_subprocess_exec(
-                    taskkill_executable(), "/PID", str(proc.pid), "/T", "/F",
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
-                )
-                code = await asyncio.wait_for(killer.wait(), timeout=5)
-                if code != 0 and proc.returncode is None:
-                    proc.kill()
-            except (OSError, TimeoutError):
-                if killer is not None and killer.returncode is None:
-                    killer.kill()
-                    await killer.wait()
-                with contextlib.suppress(ProcessLookupError):
-                    proc.kill()
-            return
-
-        try:
-            group = os.getpgid(proc.pid)
-        except ProcessLookupError:
-            return
-        if grace > 0:
-            try:
-                os.killpg(group, signal.SIGTERM)
-            except (ProcessLookupError, OSError):
-                pass
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=grace)
-            except (TimeoutError, asyncio.TimeoutError):
-                pass
-        # Still alive → force-kill the whole tree.
-        try:
-            # The shell can exit before a descendant that ignores SIGTERM.
-            # Retain the original group and finish cleaning it up in that case.
-            os.killpg(group, signal.SIGKILL)
-        except Exception:  # noqa: BLE001 — last resort
-            try:
-                proc.kill()
-            except Exception:  # noqa: BLE001
-                pass
+        await terminate_process_tree(proc, grace=grace)
 
     def _launch_background(self, command: str, prog: list[str] | None = None):
         """Registry launcher: start ``command`` as a fresh background job."""

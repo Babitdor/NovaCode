@@ -16850,16 +16850,42 @@ class NovaApp(App):
             command = cmd_args
             self._log(Text(f"Running: {command}", style="dim"))
 
-        loop_tid = threading.get_ident()
+        output_log = OutputLog(
+            classes="test-run-output",
+            max_lines=_LOG_MAX_LINES,
+            markup=False,
+        )
+        await self._mount(output_log)
+        pending = OutputTail()
+        pending_lock = threading.Lock()
+        flush_timer = None
+        flush_scheduled = False
+        output_closed = False
+
+        def flush_output() -> None:
+            nonlocal flush_timer, flush_scheduled
+            flush_timer = None
+            with pending_lock:
+                flush_scheduled = False
+                text = pending.drain()
+            if text:
+                output_log.write(Text(text, style="dim"))
+
+        def schedule_output() -> None:
+            nonlocal flush_timer
+            if not output_closed and flush_timer is None:
+                flush_timer = self.set_timer(0.05, flush_output)
 
         def _cb(line: str) -> None:
-            if threading.get_ident() == loop_tid:
-                self._log(Text(line, style="dim"), transcript=True)
-            else:
-                try:
-                    self.call_from_thread(self._log, Text(line, style="dim"), transcript=True)
-                except Exception:  # noqa: BLE001
-                    pass
+            nonlocal flush_scheduled
+            with pending_lock:
+                if output_closed:
+                    return
+                pending.append(line + "\n")
+                if flush_scheduled:
+                    return
+                flush_scheduled = True
+            self._post_to_ui(schedule_output)
 
         self._turn_active = True
         self._turn_start = time.monotonic()
@@ -16889,6 +16915,11 @@ class NovaApp(App):
         except Exception as ex:  # noqa: BLE001
             self._log(Text(f"Test run failed: {ex}", style="red"))
         finally:
+            with pending_lock:
+                output_closed = True
+            if flush_timer is not None:
+                flush_timer.stop()
+            flush_output()
             self._turn_active = False
             self._set_status("ready")
 

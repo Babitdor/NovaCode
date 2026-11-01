@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import contextlib
+import logging
 import os
 import signal
 import sys
@@ -17,6 +19,14 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+from novacode_cli.shell.jobs import BoundedLog
+from novacode_cli.shell.output import OutputWindow, shell_output_batches
+from novacode_cli.shell.processes import (
+    kill_process_tree,
+    process_group_options,
+    terminate_process_tree,
+)
 
 
 class ProcessStatus(Enum):
@@ -30,10 +40,9 @@ class ProcessStatus(Enum):
     FAILED = "failed"
 
 
-# Maximum number of captured output lines retained per managed process. The
-# buffer is only read via ``ProcessInfo.output`` (used for short-lived test/dev
-# runs); an unbounded list leaks memory for long-running servers.
-_MAX_OUTPUT_LINES = 5000
+logger = logging.getLogger(__name__)
+# Keep model-facing test results bounded; larger output is archived by OutputWindow.
+_MAX_OUTPUT_CHARS = 200_000
 
 
 @dataclass
@@ -60,7 +69,7 @@ class ProcessInfo:
     working_dir: str = "."
     health_check_url: str | None = None
     _process: asyncio.subprocess.Process | None = field(default=None, repr=False)
-    _output_lines: list[str] = field(default_factory=list, repr=False)
+    _output_lines: BoundedLog = field(default_factory=BoundedLog, repr=False)
 
     @property
     def is_alive(self) -> bool:
@@ -79,7 +88,7 @@ class ProcessInfo:
     @property
     def output(self) -> str:
         """Get the captured output."""
-        return "\n".join(self._output_lines)
+        return "".join(self._output_lines).rstrip("\n")
 
     def _append_output(self, line: str) -> None:
         """Append a captured output line, bounding the buffer.
@@ -87,9 +96,7 @@ class ProcessInfo:
         The buffer is only read via ``output`` (used for short-lived test/dev
         runs); an unbounded list leaks memory for long-running servers.
         """
-        self._output_lines.append(line)
-        if len(self._output_lines) > _MAX_OUTPUT_LINES:
-            del self._output_lines[: len(self._output_lines) - _MAX_OUTPUT_LINES]
+        self._output_lines.append(line + "\n")
 
 
 class ProcessManager:
@@ -171,19 +178,7 @@ class ProcessManager:
                     if info._process.stdin:
                         info._process.stdin.close()
 
-                    info._process.terminate()
-                    # Give it a moment to terminate - use kill() on Windows
-                    # since wait() can cause issues with ProactorEventLoop
-                    if sys.platform == "win32":
-                        try:
-                            info._process.kill()
-                        except Exception:
-                            pass
-                    else:
-                        try:
-                            info._process.wait()
-                        except Exception:
-                            info._process.kill()
+                    kill_process_tree(pid)
                 except ProcessLookupError:
                     pass
                 except Exception:
@@ -235,6 +230,8 @@ class ProcessManager:
                     stderr=asyncio.subprocess.STDOUT,
                     cwd=str(working_dir),
                     env=process_env,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    **process_group_options(),
                 )
             except Exception as e:
                 raise RuntimeError(f"Failed to start process: {e}") from e
@@ -257,10 +254,9 @@ class ProcessManager:
             self._name_to_pid[name] = process.pid
 
             # Start output streaming task (non-blocking)
-            if output_callback:
-                from novacode_cli.utils.tasks import spawn
+            from novacode_cli.utils.tasks import spawn
 
-                spawn(self._stream_output(process, info, output_callback))
+            spawn(self._stream_output(process, info, output_callback))
 
             return info
 
@@ -297,30 +293,39 @@ class ProcessManager:
         self,
         process: asyncio.subprocess.Process,
         info: ProcessInfo,
-        callback: Callable[[str], None],
+        callback: Callable[[str], None] | None,
     ) -> None:
         """Stream process output to callback in real-time."""
         try:
-            while True:
-                if process.stdout is None:
-                    break
-                line = await process.stdout.readline()
-                if not line:
-                    break
-                decoded = line.decode("utf-8", errors="replace").rstrip("\n\r")
-                info._append_output(decoded)
-                try:
-                    callback(decoded)
-                except Exception:
-                    pass  # Don't let callback errors kill streaming
+            if process.stdout is not None:
+                async for lines in shell_output_batches(process.stdout):
+                    for line in lines:
+                        info._append_output(line)
+                        if callback is not None:
+                            with contextlib.suppress(Exception):
+                                callback(line)
+            await process.wait()
+            info.status = ProcessStatus.STOPPED if process.returncode == 0 else ProcessStatus.FAILED
         except asyncio.CancelledError:
+            await asyncio.shield(terminate_process_tree(process, grace=0))
+            with contextlib.suppress(Exception):
+                async with asyncio.timeout(3):
+                    if process.stdout is not None:
+                        async for _ in shell_output_batches(process.stdout):
+                            pass
+                    await process.wait()
             raise
         except Exception:
-            pass  # Process may have terminated
+            logger.exception("Managed process output failed: %s", info.name)
+            await terminate_process_tree(process, grace=0)
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(process.wait(), timeout=3)
+            info.status = ProcessStatus.FAILED
         finally:
-            # The process has exited (EOF) or streaming was cancelled; drop it
-            # from the registries so completed processes don't accumulate.
-            self._remove_process(info.pid)
+            # EOF alone does not mean the process exited. Failed readers must
+            # stop their child instead of silently abandoning a running process.
+            if not info.is_alive:
+                self._remove_process(info.pid)
 
     async def stop_process(
         self,
@@ -351,24 +356,18 @@ class ProcessManager:
                 return True
 
             try:
-                if force:
-                    info._process.kill()
-                else:
-                    info._process.terminate()
-
+                await terminate_process_tree(info._process, grace=0 if force else timeout)
                 try:
-                    await asyncio.wait_for(info._process.wait(), timeout=timeout)
-                except asyncio.CancelledError:
-                    info._process.kill()
-                    await info._process.wait()
-                    raise
+                    await asyncio.wait_for(info._process.wait(), timeout=max(2.0, timeout))
                 except TimeoutError:
-                    # Force kill if graceful termination timed out
-                    info._process.kill()
-                    await info._process.wait()
+                    info.status = ProcessStatus.FAILED
+                    return False
 
                 info.status = ProcessStatus.STOPPED
 
+            except asyncio.CancelledError:
+                await asyncio.shield(terminate_process_tree(info._process, grace=0))
+                raise
             except ProcessLookupError:
                 # Process already gone
                 info.status = ProcessStatus.STOPPED
@@ -386,7 +385,8 @@ class ProcessManager:
                     pass
                 # Drop the terminated process from the registries so completed
                 # processes don't accumulate.
-                self._remove_process(pid)
+                if not info.is_alive:
+                    self._remove_process(pid)
 
             return True
 
@@ -521,7 +521,7 @@ async def stream_subprocess_output(
         env: Optional environment variables
 
     Returns:
-        Tuple of (exit_code, full_output)
+        Tuple of (exit_code, bounded_output); truncated output includes its full log path.
 
     Raises:
         asyncio.TimeoutError: If process exceeds timeout
@@ -537,36 +537,43 @@ async def stream_subprocess_output(
         stderr=asyncio.subprocess.STDOUT,
         cwd=working_dir,
         env=process_env,
+        stdin=asyncio.subprocess.DEVNULL,
+        **process_group_options(),
     )
 
-    output_lines: list[str] = []
+    output = OutputWindow(_MAX_OUTPUT_CHARS)
 
     async def read_stream() -> None:
-        while True:
-            if process.stdout is None:
-                break
-            line = await process.stdout.readline()
-            if not line:
-                break
-            decoded = line.decode("utf-8", errors="replace").rstrip("\n\r")
-            output_lines.append(decoded)
-            try:
-                callback(decoded)
-            except Exception:
-                pass
+        if process.stdout is not None:
+            async for lines in shell_output_batches(process.stdout):
+                # Full-log writes can contend with an install/build's disk IO.
+                # Finish each write before closing the window on cancellation.
+                write = asyncio.create_task(asyncio.to_thread(output.add, "\n".join(lines) + "\n"))
+                try:
+                    await asyncio.shield(write)
+                except asyncio.CancelledError:
+                    await write
+                    raise
+                for line in lines:
+                    with contextlib.suppress(Exception):
+                        callback(line)
 
     try:
-        await asyncio.wait_for(read_stream(), timeout=timeout)
-        await process.wait()
-    except asyncio.CancelledError:
-        process.kill()
-        await process.wait()
-        raise
-    except TimeoutError:
-        process.kill()
-        await process.wait()
+        async with asyncio.timeout(timeout):
+            await read_stream()
+            await process.wait()
+    except BaseException:
+        # Timeout, cancellation and reader errors all retain ownership of the tree.
+        await asyncio.shield(terminate_process_tree(process, grace=0))
+        with contextlib.suppress(Exception):
+            async with asyncio.timeout(3):
+                if process.stdout is not None:
+                    async for _ in shell_output_batches(process.stdout):
+                        pass
+                await process.wait()
         raise
     finally:
+        await asyncio.to_thread(output.close)
         # Close stdin (StreamWriter) to prevent ResourceWarning on Windows
         # Note: stdout/stderr are StreamReader and don't have close()
         try:
@@ -575,4 +582,4 @@ async def stream_subprocess_output(
         except Exception:
             pass
 
-    return process.returncode or 0, "\n".join(output_lines)
+    return process.returncode or 0, output.text().rstrip("\n")

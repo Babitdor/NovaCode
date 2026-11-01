@@ -105,6 +105,24 @@ class _Model:
         return AIMessage(content="SUMMARY")
 
 
+def test_compaction_statistics_never_call_provider_token_count(monkeypatch) -> None:
+    """Some providers implement token counting with a blocking network request."""
+    calls = []
+    model = _Model()
+
+    def count(_messages):
+        calls.append(True)
+        return 100
+
+    model.get_num_tokens_from_messages = count
+    monkeypatch.setattr(C, "_rehydration_note", lambda: "")
+    result = asyncio.run(C.compact_conversation(_Agent(_turn(1)), model, "t"))
+    assert result.success, result.error
+    assert result.original_tokens > 0
+    assert result.new_tokens > 0
+    assert calls == []
+
+
 def test_compaction_keeps_the_last_turn_verbatim_after_the_summary(monkeypatch) -> None:
     monkeypatch.setattr(C, "_rehydration_note", lambda: "")
     history = _turn(1) + _turn(2) + _turn(3)

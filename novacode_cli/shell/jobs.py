@@ -384,22 +384,9 @@ def get_registry() -> JobRegistry:
 
 def _kill_pid_tree(pid: int) -> None:
     """Force-kill a process and its children by pid (sync; for atexit)."""
-    import os
-    import signal
-    import subprocess
-    import sys
+    from novacode_cli.shell.processes import kill_process_tree
 
-    try:
-        if sys.platform == "win32":
-            from novacode_cli.utils.windows import taskkill_executable
-
-            subprocess.run(
-                [taskkill_executable(), "/PID", str(pid), "/T", "/F"], capture_output=True, timeout=5
-            )
-        else:
-            os.killpg(os.getpgid(pid), signal.SIGKILL)
-    except Exception:  # noqa: BLE001
-        pass
+    kill_process_tree(pid)
 
 
 _exit_cleanup_registered = False

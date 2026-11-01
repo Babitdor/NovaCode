@@ -595,23 +595,23 @@ async def _compact_conversation(
             saver = agent.coordinator.saver
             original = await saver.aget_tuple(state.config)
             if original:
-                packed = {"checkpoint": saver.serde.dumps_typed(original.checkpoint),
-                          "pending": saver.serde.dumps_typed(original.pending_writes),
-                          "metadata": original.metadata}
+                packed = {
+                    "checkpoint": saver.serde.dumps_typed(original.checkpoint),
+                    "pending": saver.serde.dumps_typed(original.pending_writes),
+                    "metadata": original.metadata,
+                }
                 archived = await asyncio.to_thread(
-                    default_recovery_store().archive, thread_id, messages, checkpoint=packed,
+                    default_recovery_store().archive,
+                    thread_id,
+                    messages,
+                    checkpoint=packed,
                 )
 
-        # Count original tokens using the model's tokenizer when available,
-        # falling back to the rough 4-chars-per-token approximation.
-        original_text = " ".join(
-            _format_message_content(msg.content) for msg in messages if hasattr(msg, "content")
-        )
-        try:
-            _orig = model.get_num_tokens_from_messages([HumanMessage(content=original_text)])
-            original_tokens = _orig if isinstance(_orig, int) else len(original_text) // 4
-        except Exception:
-            original_tokens = len(original_text) // 4
+        # These display statistics are estimates. Provider token counters may
+        # make synchronous network calls; use Nova's local, image-aware estimate.
+        from novacode_cli.context.estimates import estimate_content
+
+        original_tokens = (await asyncio.to_thread(estimate_content, messages)).total
 
         # Keep the recent tail verbatim; summarize only what precedes it.
         keep_tokens = min(
@@ -702,12 +702,7 @@ async def _compact_conversation(
                 **commit_options,
             )
 
-        # Count new tokens using the model's tokenizer when available.
-        try:
-            _new = model.get_num_tokens_from_messages([summary_message, *tail])
-            new_tokens = _new if isinstance(_new, int) else len(body) // 4
-        except Exception:
-            new_tokens = (len(body) + sum(_message_chars(m) for m in tail)) // 4
+        new_tokens = (await asyncio.to_thread(estimate_content, [summary_message, *tail])).total
 
         # Persist the summary as a durable memory lesson so the conversation's
         # knowledge survives the rewrite (best-effort; never fails compaction).

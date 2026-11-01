@@ -12,9 +12,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import codecs
 import contextlib
 import re
 import signal
+from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, TextIO
 from uuid import uuid4
 
@@ -26,6 +29,39 @@ if TYPE_CHECKING:
 # ponytail: keep-newest pruning on each new log; switch to age-based cleanup if
 # many concurrent sessions need longer history.
 MAX_SHELL_LOGS = 50
+
+
+async def shell_output_batches(
+    stream: asyncio.StreamReader, *, flush_partial: bool = False
+) -> AsyncIterator[list[str]]:
+    """Decode bounded output batches and yield between ready pipe reads."""
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    pending = ""
+    while True:
+        try:
+            if flush_partial:
+                chunk = await asyncio.wait_for(stream.read(16384), 0.1)
+            else:
+                chunk = await stream.read(16384)
+        except TimeoutError:
+            if pending:
+                yield [pending.rstrip("\r")]
+                pending = ""
+            continue
+        pending += decoder.decode(chunk, final=not chunk)
+        lines = pending.split("\n")
+        pending = lines.pop()
+        while len(pending) > 16384:
+            lines.append(pending[:16384])
+            pending = pending[16384:]
+        if not chunk and pending:
+            lines.append(pending)
+        if lines:
+            yield [line.rstrip("\r") for line in lines]
+        if not chunk:
+            break
+        await asyncio.sleep(0)
+
 
 _NO_MATCH_TOOLS = frozenset({"grep", "egrep", "fgrep", "rg", "ag", "findstr", "select-string"})
 _DIFF_TOOLS = frozenset({"diff", "cmp", "fc"})
