@@ -62,7 +62,9 @@ async def test_task_selection_and_tabs_do_not_load_or_run_until_explicit_action(
         assert rows.display
         assert str(rows.get_option_at_index(rows.highlighted).prompt) == chosen_title
         await pilot.click("#prime-prepare")
-        await pilot.pause()
+        async with asyncio.timeout(5):
+            while "Loaded:" not in str(panel.query_one("#prime-hint", Static).render()):
+                await pilot.pause(0.05)
         loaded_goal = app.session_state.prime_pending["goal"]
         assert loaded_goal in chosen_title
         assert "Loaded:" in str(panel.query_one("#prime-hint", Static).render())

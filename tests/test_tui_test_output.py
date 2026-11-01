@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -24,8 +25,10 @@ async def test_test_command_batches_output_and_keeps_recent_lines(monkeypatch):
     async with app.run_test(size=(100, 35)) as pilot:
         app._log = lambda *args, **kwargs: reports.append(args)
         await app._run_tests("/tests pytest")
-        await pilot.pause(0.1)
         output = app.query_one(".test-run-output", OutputLog)
+        async with asyncio.timeout(5):
+            while "test-4999 passed" not in output._output_body.content.plain:
+                await pilot.pause(0.05)
         assert len(reports) < 5
         assert len(output.lines) <= output.max_lines
         assert "test-4999 passed" in output._output_body.content.plain
