@@ -16,7 +16,10 @@ import inspect
 import logging
 import os
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from novacode_cli.ui_events import InterruptRequest
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +132,9 @@ async def remote_message_processor(
 ) -> None:
     """Process messages from the remote message queue."""
     from novacode_cli.config.config import COLORS
+    from novacode_cli.remote.approvals import RemoteApprovalBroker
+
+    approvals = RemoteApprovalBroker()
 
     lock = getattr(session_state, "_remote_message_lock", None)
     if lock is None:
@@ -309,6 +315,31 @@ async def remote_message_processor(
                     if status is not None:
                         session_state._remote_todo_notify = status.note_todos
 
+                    previous_approval_handler = getattr(
+                        session_state, "_remote_approval_handler", None
+                    )
+
+                    async def request_approval(event: InterruptRequest) -> dict:
+                        payload = event.payload
+                        if event.kind == "plan" and isinstance(payload, dict):
+                            from novacode_cli.ui.interrupt_handlers import resolve_plan_content
+
+                            plan, _path = await asyncio.to_thread(
+                                resolve_plan_content,
+                                getattr(session_state, "todos", None),
+                                session_state,
+                                backend,
+                                inline_plan=payload.get("plan"),
+                            )
+                            payload["plan"] = plan or ""
+                        return await approvals.request(
+                            remote_msg,
+                            event.kind,
+                            payload,
+                            label=f"Session {session_state.thread_id}",
+                        )
+
+                    session_state._remote_approval_handler = request_approval
                     try:
                         config = {
                             "configurable": {"thread_id": session_state.thread_id}
@@ -351,6 +382,7 @@ async def remote_message_processor(
                             pass
 
                     finally:
+                        session_state._remote_approval_handler = previous_approval_handler
                         if answer is not None and not answer.closed:
                             answer.cancelled = True
                             await answer.finalize()
@@ -391,6 +423,9 @@ async def remote_message_processor(
     while True:
         try:
             remote_msg = await queue.get()
+            if await approvals.handle(remote_msg):
+                queue.task_done()
+                continue
             await _debug_log(f"DEQUEUED from queue {id(queue)}: {remote_msg.text[:80]}")
 
             redirect = redirect_text(remote_msg.text)

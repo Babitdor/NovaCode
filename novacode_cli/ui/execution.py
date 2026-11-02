@@ -897,6 +897,9 @@ async def execute_task(  # type: ignore
                 # loop awaiting the future forever.
 
                 try:
+                    remote_approval_handler = getattr(
+                        session_state, "_remote_approval_handler", None
+                    )
 
                     if event.kind == "tool":
                         # New contract: agent_loop already applied the policy gate
@@ -921,6 +924,8 @@ async def execute_task(  # type: ignore
                                     "any_rejected": True,
                                 }
                             )
+                        elif callable(remote_approval_handler):
+                            event.future.set_result(await remote_approval_handler(event))
                         else:
                             _ars = (req or {}).get("action_requests", [])
                             event.future.set_result(
@@ -931,6 +936,9 @@ async def execute_task(  # type: ignore
                                     "any_rejected": False,
                                 }
                             )
+
+                    elif event.kind == "plan" and callable(remote_approval_handler):
+                        event.future.set_result(await remote_approval_handler(event))
 
                     elif event.kind == "question":
 

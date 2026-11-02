@@ -44,6 +44,20 @@ prompt and response to the session thread automatically.
 `/remote status` and the native `/remote` screen show the active thread IDs.
 Session tabs display **DC** when connected.
 
+## Approvals for remote tasks
+
+Starting Telegram or Discord preserves the session's approval setting; it no
+longer turns auto-approve on. When a task started in chat needs tool or plan
+approval, Nova shows the full request in its originating conversation. Reply
+with the displayed `Approve <id>` or `Reject <id>` command. Only the original
+sender in the same chat and topic can decide, and each request expires after
+five minutes. Approval applies to that request only; plan approval does not
+enable auto-approve. Policy denials still apply.
+
+Terminal-started tasks keep their local approval prompts, even while their
+output is mirrored to chat. If your current session is already in auto mode,
+use `/auto-approve off` to restore requests where the policy requires them.
+
 ## History and lifecycle
 
 - Reconnecting or resuming the same saved session reuses its thread and history.

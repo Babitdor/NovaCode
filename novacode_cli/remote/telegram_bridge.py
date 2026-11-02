@@ -20,7 +20,7 @@ import asyncio
 import hashlib
 import logging
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
@@ -33,6 +33,9 @@ from novacode_cli.remote.telegram_format import render as render_markdown
 from novacode_cli.remote.telegram_format import to_plain
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 _TELEGRAM_API = "https://api.telegram.org"
 
@@ -525,20 +528,31 @@ class TelegramBridge:
         *,
         thread_id: int | None = None,
         sid: str | None = None,
+        require_complete: bool = False,
     ) -> list[int]:
         """Send markdown ``text`` as Telegram HTML (chunked, topic-aware).
 
         Returns the ids of the messages sent, so a caller can delete them.
+        ``require_complete`` retracts delivered chunks if any remaining chunk fails.
         """
         ids: list[int] = []
-        for chunk in await asyncio.to_thread(render_markdown, text):
-            sent = await self._send_html(
-                "sendMessage", self._thread_params({"chat_id": chat_id}, thread_id), chunk
-            )
-            self._remember(sent, sid)
-            mid = (sent or {}).get("result", {}).get("message_id")
-            if mid is not None:
-                ids.append(mid)
+        delivered_all = False
+        try:
+            for chunk in await asyncio.to_thread(render_markdown, text):
+                sent = await self._send_html(
+                    "sendMessage", self._thread_params({"chat_id": chat_id}, thread_id), chunk
+                )
+                self._remember(sent, sid)
+                mid = (sent or {}).get("result", {}).get("message_id")
+                if mid is not None:
+                    ids.append(mid)
+                elif require_complete:
+                    error_message = "Telegram could not deliver the complete approval prompt"
+                    raise RuntimeError(error_message)
+            delivered_all = True
+        finally:
+            if require_complete and not delivered_all and ids:
+                await self._delete_messages(chat_id, ids)
         return ids
 
     async def _delete_messages(self, chat_id: int, message_ids: list[int]) -> None:
@@ -549,6 +563,51 @@ class TelegramBridge:
             except Exception as e:  # noqa: BLE001 — a leftover message is not worth a crash
                 logger.debug(f"Telegram deleteMessage failed for {mid}: {e}")
             self._owner.pop(mid, None)
+
+    def _approval_check(
+        self, chat_id: int, thread_id: int | None = None,
+    ) -> Callable[[str], bool]:
+        """A private-chat peer owns the chat; shared-chat approvals require current grants."""
+
+        def authorized(sender_id: str) -> bool:
+            if not self.is_connected:
+                return False
+            if chat_id != self._config.chat_id and chat_id not in self._config.allowed_ids:
+                return False
+            if thread_id is not None and (
+                thread_id not in self._topic_handlers
+                and all(tid != thread_id for _, tid in self._session_topics.values())
+            ):
+                return False
+            if chat_id > 0:
+                return str(sender_id) == str(chat_id)
+            return str(sender_id) in {str(user) for user in self._config.allowed_user_ids}
+
+        return authorized
+
+    def _asker(
+        self, chat_id: int, route: dict[str, Any],
+    ) -> Callable[[str], Awaitable[Callable[[], Awaitable[None]]]]:
+        """Deliver a retractable prompt, surfacing connection and zero-delivery failures."""
+
+        async def ask(text: str) -> Callable[[], Awaitable[None]]:
+            if not self.is_connected:
+                message = "Telegram bridge is disconnected"
+                raise RuntimeError(message)
+            ids = await self._send_message(
+                chat_id, text, thread_id=route.get("thread"), sid=route.get("sid"),
+                require_complete=True,
+            )
+            if not ids:
+                message = "Telegram could not deliver the approval prompt"
+                raise RuntimeError(message)
+
+            async def retract() -> None:
+                await self._delete_messages(chat_id, ids)
+
+            return retract
+
+        return ask
 
     def _editor(self, chat_id: int, route: dict):
         from novacode_cli.remote.streaming import PagedEditor
@@ -736,19 +795,6 @@ class TelegramBridge:
                             _chat_id, response_text, thread_id=_route["thread"], sid=_route["sid"]
                         )
 
-                    async def ask_fn(
-                        question_text: str, _chat_id: int = chat_id, _route: dict = route
-                    ):  # noqa: ANN202
-                        """Send a question; return a coroutine fn that deletes it."""
-                        ids = await self._send_message(
-                            _chat_id, question_text, thread_id=_route["thread"], sid=_route["sid"]
-                        )
-
-                        async def retract() -> None:
-                            await self._delete_messages(_chat_id, ids)
-
-                        return retract
-
                     async def typing_fn(_chat_id: int = chat_id, _route: dict = route) -> None:
                         await self._trigger_typing(_chat_id, _route["thread"])
 
@@ -767,7 +813,8 @@ class TelegramBridge:
                         typing_fn=typing_fn,
                         edit_fn=edit_fn,
                         answer_edit_fn=answer_edit_fn,
-                        ask_fn=ask_fn,
+                        ask_fn=self._asker(chat_id, route),
+                        approval_check=self._approval_check(chat_id, thread_id),
                         user_mention=user_mention,
                         thread_id=thread_id,
                         reply_to_owner=reply_owner,

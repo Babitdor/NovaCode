@@ -57,6 +57,8 @@ if TYPE_CHECKING:
     from novacode_cli.file_ops import FileOperationRecord
     from novacode_cli.image_utils import ImageData
     from novacode_cli.memory.dream_gates import GateReport
+    from novacode_cli.remote.approvals import RemoteApprovalBroker
+    from novacode_cli.remote.bridge import RemoteMessage
     from novacode_cli.session.history_tree import HistoryTree
     from novacode_cli.sessions.supervisor import SessionSupervisor
 
@@ -2347,6 +2349,7 @@ class NovaApp(App):
         self._remote_project_pickers: dict[tuple[str, str, str], dict[str, Any]] = {}
         self._remote_tab_closers: dict[tuple[str, str, str], dict[str, Any]] = {}
         self._remote_question_future: asyncio.Future | None = None
+        self._remote_approvals: RemoteApprovalBroker | None = None
         # Live tool output arrives on the shell's background loop thread, one
         # ~1KB chunk at a time. It is buffered here and painted in batches.
         self._tool_out_lock = threading.Lock()
@@ -3241,6 +3244,14 @@ class NovaApp(App):
             return
         pane.status = _status_for_event(event, pane.status)
         self._sync_child_activity(pane)
+        if (
+            isinstance(event, ev.InterruptRequest)
+            and event.kind in {"tool", "plan"}
+            and pane is not getattr(self, "_active_pane", pane)
+            and NovaApp._remote_approval_origin(self, pane)
+        ):
+            await self._handle_interrupt(event, pane=pane)
+            return
         async with self._pane_render_lock:
             if pane is getattr(self, "_active_pane", pane):
                 if pane.buffer:
@@ -4405,12 +4416,11 @@ class NovaApp(App):
             pane.status = "needs-approval"
             pane.pending_interrupt = msg
             # Remote connection alone never authorizes tool execution.
-            remote_tool = (
-                pane.remote_turns
-                and str(msg.get("kind") or "tool") == "tool"
-                and getattr(pane.state.get("session_state"), "auto_approve", False)
+            remote_approval = (
+                str(msg.get("kind") or "tool") in {"tool", "plan"}
+                and NovaApp._remote_approval_origin(self, pane)
             )
-            if pane is self._active_pane or remote_tool:
+            if pane is self._active_pane or remote_approval:
                 # @work: returns a Worker, not an awaitable. The handler shows
                 # approval modals via push_screen_wait, which Textual only
                 # permits inside a worker — child interrupts arrive on the
@@ -4528,16 +4538,25 @@ class NovaApp(App):
         )
         prev_state = self.session_state
         proxy = pane.state.get("session_state")
+        remote_approval = (
+            request.kind in {"tool", "plan"} and NovaApp._remote_approval_origin(self, pane)
+        )
         try:
-            if proxy is not None:
-                self.session_state = proxy
-            await self._handle_interrupt(request)
+            if remote_approval:
+                await self._handle_interrupt(request, pane=pane)
+            else:
+                if proxy is not None:
+                    self.session_state = proxy
+                await self._handle_interrupt(request)
             result = await fut
         except Exception:  # noqa: BLE001 — never leave the child blocked
             result = None
         finally:
-            self.session_state = prev_state
+            if not remote_approval:
+                self.session_state = prev_state
 
+        if remote_approval and pane.status != "needs-approval":
+            return
         await self._supervisor().reply_interrupt(pane.sid, str(msg.get("id")), result)
         pane.status = "running"
         self._sync_child_activity(pane)
@@ -4555,6 +4574,7 @@ class NovaApp(App):
             return
         index = self._panes.index(pane)
         self._panes.remove(pane)
+        NovaApp._cancel_remote_approvals(self, pane)
         if pane is self._active_pane:
             self._tab_switch_generation += 1
             async with self._pane_render_lock:
@@ -4894,6 +4914,9 @@ class NovaApp(App):
         """
         from novacode_cli.remote.routing import ROOT, RemoteRouter
 
+        approvals = getattr(self, "_remote_approvals", None)
+        if approvals is not None and await approvals.handle(msg):
+            return True
         panel = getattr(self, "_remote_command_panel", None)
         if panel is not None and await panel.handle(msg):
             return True
@@ -5463,6 +5486,7 @@ class NovaApp(App):
 
     async def _finish_remote_turn(self, pane, error: str | None = None) -> None:
         """Settle the oldest remote turn of a spawned session and send its answer."""
+        NovaApp._cancel_remote_approvals(self, pane)
         await self._finish_remote_mirrors(pane, error=error)
         if not pane.remote_turns:
             return
@@ -18840,6 +18864,41 @@ class NovaApp(App):
         except Exception:  # noqa: BLE001
             pass
 
+    @staticmethod
+    def _remote_approval_label(pane: SessionPane | None) -> str:
+        return f"Session {pane.sid}" if pane is not None else "main"
+
+    def _cancel_remote_approvals(self, pane: SessionPane) -> None:
+        """A stopped session cannot accept a decision intended for its old turn."""
+        approvals = getattr(self, "_remote_approvals", None)
+        if approvals is not None:
+            approvals.cancel(NovaApp._remote_approval_label(pane))
+
+    def _remote_approval_origin(self, pane: SessionPane | None = None) -> RemoteMessage | None:
+        """Only remote-origin turns can request approval in their originating chat."""
+        pane = pane if pane is not None else getattr(self, "_active_pane", None)
+        if pane is not None and getattr(pane, "kind", "root") == "child":
+            turns = getattr(pane, "remote_turns", ())
+            origin = turns[0].msg if turns else None
+        else:
+            origin = getattr(self, "_remote_msg", None)
+        platform = getattr(getattr(origin, "platform", None), "value", None)
+        return origin if platform in {"telegram", "discord"} else None
+
+    async def _ask_remote_approval(
+        self, kind: str, payload: dict, origin: RemoteMessage, pane: SessionPane | None = None,
+    ) -> dict:
+        """Wait for a single scoped decision without changing the approval policy."""
+        from novacode_cli.remote.approvals import RemoteApprovalBroker
+
+        broker = getattr(self, "_remote_approvals", None)
+        if broker is None:
+            broker = self._remote_approvals = RemoteApprovalBroker()
+        self.notify("Approval required in the originating remote chat.", severity="warning")
+        return await broker.request(
+            origin, kind, payload, label=NovaApp._remote_approval_label(pane)
+        )
+
     async def _ask_remote_question(self, question_request: dict) -> dict:
         """Route an agent question to the remote user via Discord/Telegram."""
         prompt = (
@@ -18954,34 +19013,50 @@ class NovaApp(App):
             # Hand focus back, or the prompt stays dead to the keyboard.
             self.query_one("#prompt", PromptInput).focus()
 
-    async def _handle_interrupt(self, e: "ev.InterruptRequest") -> None:
+    async def _handle_interrupt(
+        self, e: "ev.InterruptRequest", *, pane: SessionPane | None = None,
+    ) -> None:
         # Resolve in a finally so a handler that raises before set_result fails
         # closed (reject) instead of leaving the agent loop awaiting forever.
         try:
-            await self._handle_interrupt_inner(e)
+            await self._handle_interrupt_inner(e, pane=pane)
         finally:
             if not e.future.done():
                 from novacode_cli.core.agent_loop import default_interrupt_response
 
                 e.future.set_result(default_interrupt_response(e.kind))
 
-    async def _handle_interrupt_inner(self, e: "ev.InterruptRequest") -> None:
+    async def _handle_interrupt_inner(
+        self, e: "ev.InterruptRequest", *, pane: SessionPane | None = None,
+    ) -> None:
+        state = (
+            pane.state.get("session_state", self.session_state)
+            if pane is not None and pane is not getattr(self, "_active_pane", None)
+            else self.session_state
+        )
+        backend = pane.state.get("backend") if pane is not None else getattr(self, "backend", None)
+        origin = NovaApp._remote_approval_origin(self, pane)
         if e.kind == "tool":
             req = e.payload
             from novacode_cli.ui.hitl_approval import check_plan_mode_blocked
 
-            blocked, rejection = check_plan_mode_blocked(req, self.session_state.plan_mode_enabled)
+            blocked, rejection = check_plan_mode_blocked(req, state.plan_mode_enabled)
             if blocked and rejection:
                 e.future.set_result({"decisions": rejection["decisions"], "any_rejected": True})
                 return
             action_requests = req["action_requests"]
-            if self.session_state.auto_approve and not req.get("requires_owner_approval"):
+            if state.auto_approve and not req.get("requires_owner_approval"):
                 e.future.set_result(
                     {
                         "decisions": [{"type": "approve"} for _ in action_requests],
                         "any_rejected": False,
                     }
                 )
+                return
+            if origin is not None:
+                e.future.set_result(await NovaApp._ask_remote_approval(
+                    self, "tool", req, origin, pane
+                ))
                 return
             choice = await self.push_screen_wait(
                 ApprovalModal(
@@ -19043,7 +19118,7 @@ class NovaApp(App):
 
             if choice == "auto":
                 # Approve everything for the rest of this session.
-                self.session_state.auto_approve = True
+                state.auto_approve = True
                 self._log(Text("● Auto-approve enabled for this session.", style="green"))
             e.future.set_result(
                 {
@@ -19063,22 +19138,35 @@ class NovaApp(App):
             try:
                 from novacode_cli.ui.interrupt_handlers import resolve_plan_content
 
-                content, _ = resolve_plan_content(
-                    getattr(self.session_state, "todos", None),
-                    self.session_state,
-                    backend=self.backend,
-                    inline_plan=(
-                        (e.payload or {}).get("plan") if isinstance(e.payload, dict) else None
-                    ),
-                )
+                inline = e.payload.get("plan") if isinstance(e.payload, dict) else None
+                if origin is not None and pane is not None and pane.kind == "child":
+                    # Only the worker can resolve its own workspace's saved plan.
+                    content = inline
+                else:
+                    content, _ = resolve_plan_content(
+                        getattr(state, "todos", None), state, backend=backend, inline_plan=inline,
+                    )
                 if content:
                     body = Markdown(content)
             except Exception:  # noqa: BLE001
                 pass
-            choice = await self.push_screen_wait(PlanApprovalModal("Plan requires approval", body))
+            if origin is not None:
+                # The canonical loop resumes from this same payload. Bind it to
+                # what the owner sees, rather than a later version of a plan file.
+                plan_payload = e.payload if isinstance(e.payload, dict) else {}
+                plan_payload["plan"] = content if isinstance(e.payload, dict) else None
+                result = await NovaApp._ask_remote_approval(
+                    self, "plan", plan_payload, origin, pane
+                )
+                choice = "manual" if result.get("response", {}).get("approved") else "refine"
+            else:
+                choice = await self.push_screen_wait(
+                    PlanApprovalModal("Plan requires approval", body)
+                )
             if choice in ("auto", "manual"):
-                self.session_state.plan_mode_enabled = False
-                self._update_mode_badge()
+                state.plan_mode_enabled = False
+                if pane is None or pane is getattr(self, "_active_pane", None):
+                    self._update_mode_badge()
                 if choice == "auto":
                     # "Auto-approve edits" is scoped to THIS plan's execution
                     # run. auto_approve is session-global and agent_loop
@@ -19087,15 +19175,15 @@ class NovaApp(App):
                     # "auto" silently self-approved every later plan.
                     # _maybe_run_approved_plan restores the flag when the run
                     # ends (unless the user had auto-approve on globally).
-                    if not getattr(self.session_state, "auto_approve", False):
+                    if not getattr(state, "auto_approve", False):
                         self._plan_scoped_auto_approve = True
-                    self.session_state.auto_approve = True
+                    state.auto_approve = True
                 # A separate plan agent never executes, so retain its resolved
                 # text for the main-agent handoff. Self-planning is captured by
                 # the canonical loop and handed off there after approval.
-                if content and getattr(self.session_state, "plan_agent", None) is not None:
+                if content and getattr(state, "plan_agent", None) is not None:
                     try:
-                        self.session_state.set_approved_plan(content)
+                        state.set_approved_plan(content)
                     except Exception:  # noqa: BLE001
                         pass
                 e.future.set_result(

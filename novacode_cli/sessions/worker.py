@@ -191,18 +191,48 @@ class SessionWorker:
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending[iid] = fut
 
-        self._emit(
-            {
-                "t": "interrupt",
-                "id": iid,
-                "kind": event.kind,
-                "payload": protocol.jsonable(event.payload),
-            }
-        )
-
         result: Any = None
         try:
-            result = await fut
+            if (
+                event.kind == "plan"
+                and isinstance(event.payload, dict)
+                and not event.payload.get("plan")
+            ):
+                from novacode_cli.ui.interrupt_handlers import resolve_plan_content
+
+                content, _path = await asyncio.to_thread(
+                    resolve_plan_content,
+                    getattr(self.session_state, "todos", None),
+                    self.session_state,
+                    self.backend,
+                )
+                # The parent sees a serialized copy; bind this worker's original
+                # interrupt to the same snapshot before it crosses the pipe.
+                event.payload["plan"] = content or ""
+            payload = protocol.jsonable(event.payload)
+            if event.kind in {"tool", "plan"}:
+                if not isinstance(event.payload, dict):
+                    return
+                field = "action_requests" if event.kind == "tool" else "plan"
+                if payload.get(field) != event.payload.get(field):
+                    return
+            self._emit(
+                {
+                    "t": "interrupt",
+                    "id": iid,
+                    "kind": event.kind,
+                    "payload": payload,
+                }
+            )
+            reply = await fut
+            if event.kind in {"tool", "plan"}:
+                field = "action_requests" if event.kind == "tool" else "plan"
+                if (
+                    not isinstance(event.payload, dict)
+                    or event.payload.get(field) != payload.get(field)
+                ):
+                    return
+            result = reply
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 — a broken reply must not wedge the graph

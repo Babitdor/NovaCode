@@ -1086,13 +1086,6 @@ async def _handle_remote_command(cmd_args: str | None, session_state, console) -
                     except Exception:  # noqa: BLE001
                         pass  # non-forum groups just use the main chat
 
-            # Auto-approve tool actions so remote messages don't block waiting
-            # for local CLI input.  The processor also sets/restores this per-message,
-            # but having it on persistently prevents any approval prompt from hanging.
-            if not session_state.auto_approve:
-                session_state._pre_remote_auto_approve = False  # was off before remote
-                session_state.auto_approve = True
-                console.print("  [dim]Auto-approve enabled for remote bridge.[/dim]")
         else:
             console.print(f"  [red]\u2717[/red] Failed to start {platform_str.title()} bridge: {error_msg}")
         console.print()

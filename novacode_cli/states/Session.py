@@ -149,6 +149,7 @@ class SessionState:
         self._voice_pipeline: Any = None  # main.py, tui/app.py
         self._remote_tool_notify: Any = None  # remote/processor.py, ui/execution.py
         self._remote_todo_notify: Any = None  # remote/processor.py, ui/execution.py
+        self._remote_approval_handler: Any = None  # scoped to a remote processor turn
         self._remote_processor_task: Any = None  # main.py (shutdown)
 
         # Pending approval Futures keyed by action_id.
@@ -506,6 +507,7 @@ class SessionState:
         "_ralph_stop_requested", "_ralph_checkpoint_requested",
         "_background_threads", "_voice_pipeline",
         "_remote_tool_notify", "_remote_todo_notify", "_remote_processor_task",
+        "_remote_approval_handler",
     })
 
     def __getattr__(self, name: str) -> Any:

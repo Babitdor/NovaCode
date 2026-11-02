@@ -28,7 +28,7 @@ import asyncio
 import logging
 import re
 from collections import OrderedDict
-from typing import Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
 from novacode_cli.remote.bridge import (
     BridgeConfig,
@@ -39,6 +39,11 @@ from novacode_cli.remote.discord_threads import DiscordSessionThreads
 from novacode_cli.remote.processor import _debug_log
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from discord.abc import Messageable
 
 
 class DiscordBridge(DiscordSessionThreads):
@@ -115,6 +120,59 @@ class DiscordBridge(DiscordSessionThreads):
             await message.delete()
 
         return PagedEditor(render, send, edit, delete)
+
+    def _approval_check(self, channel: object, *, private: bool) -> Callable[[str], bool]:
+        """Use the actual DM peer or current guild grants, never the message author as owner."""
+
+        def authorized(sender_id: str) -> bool:
+            if not self.is_connected or self._incoming_destination(channel) is None:
+                return False
+            if private:
+                peer_id = getattr(getattr(channel, "recipient", None), "id", None)
+                return peer_id is not None and str(sender_id) == str(peer_id)
+            return str(sender_id) in {str(user) for user in self._config.allowed_user_ids}
+
+        return authorized
+
+    def _asker(
+        self, channel: Messageable, route: dict[str, Any],
+    ) -> Callable[[str], Awaitable[Callable[[], Awaitable[None]]]]:
+        """Send every prompt page or fail; retract exactly the pages this prompt created."""
+        import discord
+
+        from novacode_cli.remote.discord_format import render
+
+        async def ask(text: str) -> Callable[[], Awaitable[None]]:
+            if not self.is_connected:
+                error_message = "Discord bridge is disconnected"
+                raise RuntimeError(error_message)
+            sent: list[discord.Message] = []
+
+            async def retract() -> None:
+                for message in sent:
+                    try:
+                        await message.delete()
+                    except Exception:  # noqa: BLE001 - cleanup must preserve delivery errors.
+                        logger.debug("Discord approval prompt deletion failed", exc_info=True)
+                    finally:
+                        self._outgoing_owners.pop(message.id, None)
+
+            try:
+                for page in render(text):
+                    message = await channel.send(
+                        page, allowed_mentions=discord.AllowedMentions.none(),
+                    )
+                    sent.append(message)
+                    self._remember_owner(message, route)
+            except (Exception, asyncio.CancelledError):
+                await retract()
+                raise
+            if not sent:
+                error_message = "Discord could not deliver the approval prompt"
+                raise RuntimeError(error_message)
+            return retract
+
+        return ask
 
     async def stream_target(self, *, sid: str = "root") -> RemoteMessage | None:
         if not self.is_connected or self._client is None:
@@ -310,6 +368,10 @@ class DiscordBridge(DiscordSessionThreads):
                     react_fn=react_fn,
                     edit_fn=edit_fn,
                     answer_edit_fn=answer_edit_fn,
+                    ask_fn=self._asker(message.channel, route),
+                    approval_check=self._approval_check(
+                        message.channel, private=getattr(message, "guild", None) is None,
+                    ),
                     user_mention=user_mention,
                     sender_id=message.author.id,
                     message_id=message.id,
@@ -329,6 +391,10 @@ class DiscordBridge(DiscordSessionThreads):
                     react_fn=react_fn,
                     edit_fn=edit_fn,
                     answer_edit_fn=answer_edit_fn,
+                    ask_fn=self._asker(message.channel, route),
+                    approval_check=self._approval_check(
+                        message.channel, private=getattr(message, "guild", None) is None,
+                    ),
                     user_mention=user_mention,
                     sender_id=message.author.id,
                     message_id=message.id,

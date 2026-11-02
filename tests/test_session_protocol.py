@@ -78,6 +78,9 @@ def _sample(name: str):
         "SubagentPreview": lambda: ev.SubagentPreview(
             task_id="ptc_task_ab12cd34", kind="tool", text="grep(docling)"
         ),
+        "SubagentCompaction": lambda: ev.SubagentCompaction(
+            task_id="ptc_task_ab12cd34", compacting=True
+        ),
         "UsageUpdate": lambda: ev.UsageUpdate(
             input_tokens=10, output_tokens=2, cache_read_tokens=1, cache_creation_tokens=4
         ),

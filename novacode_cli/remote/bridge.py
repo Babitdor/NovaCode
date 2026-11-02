@@ -113,6 +113,8 @@ class RemoteMessage:
     message_id: int | None = None
     #: Validated image data, kept separate from prompt text and credentials.
     images: list[ImageData] = field(default_factory=list)
+    #: Revalidate approval senders against the live bridge and current authorization.
+    approval_check: Callable[[str], bool] | None = None
 
 
 @dataclass
