@@ -125,6 +125,8 @@ def test_resource_read_is_paged_and_does_not_execute(skill):
     assert "line 0" in result and "line 499" not in result
 
 
+# Creating 150 real files can exceed the default 10s on Windows CI runners.
+@pytest.mark.timeout(60)
 def test_inventory_never_reads_contents_and_has_a_limit(tmp_path, monkeypatch):
     for i in range(150):
         (tmp_path / f"reference-{i}.md").write_text("private reference")
