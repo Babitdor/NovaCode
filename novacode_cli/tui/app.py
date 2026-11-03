@@ -1660,11 +1660,6 @@ class NovaApp(App):
            and stops before it eats the transcript. */
         height: auto; min-height: 1; max-height: 15;
         border: none;
-        /* Smooth fade when switching into/out of a mode. */
-        transition: background 300ms in_out_cubic;
-    }
-    #prompt:focus {
-        background: $boost;
     }
     /* The > chevron prefix for the input. */
     #prompt-prefix {
@@ -1688,9 +1683,6 @@ class NovaApp(App):
     #prompt.bash-mode {
         background: $accent 12%; color: $text;
     }
-    #prompt:focus.bash-mode {
-        background: $accent 20%;
-    }
     #prompt-row.bash-mode {
         border-top: solid $accent 60%;
         border-bottom: solid $accent 60%;
@@ -1699,9 +1691,6 @@ class NovaApp(App):
     /* PLAN mode — blue, calm. */
     #prompt.plan-mode {
         background: $primary 14%; color: $text;
-    }
-    #prompt:focus.plan-mode {
-        background: $primary 22%;
     }
     #prompt-row.plan-mode {
         border-top: solid $primary 60%;
@@ -1718,8 +1707,6 @@ class NovaApp(App):
     Screen #prompt-prefix.auto-approve-mode.plan-mode {
         background: $warning 15%; color: $text;
     }
-    Screen #prompt:focus.auto-approve-mode.normal-mode,
-    Screen #prompt:focus.auto-approve-mode.plan-mode { background: $warning 23%; }
     Screen #prompt-prefix.auto-approve-mode.normal-mode,
     Screen #prompt-prefix.auto-approve-mode.plan-mode { color: $warning; }
     /* Input-mode badge (plan / bash / goal). Sits between the input and the
@@ -2598,10 +2585,10 @@ class NovaApp(App):
             with Horizontal(id="prompt-row", classes="normal-mode"):
                 yield Static("> ", id="prompt-prefix", classes="normal-mode")
                 yield PromptInput(
-                    placeholder="Type your message or @path/to/file  (shift+enter for a new line)",
                     id="prompt",
                     classes="normal-mode",
                     soft_wrap=True,
+                    highlight_cursor_line=False,
                     paste_tracker=self.paste_tracker,
                     on_large_paste=self._on_large_paste,
                     on_clipboard_image=self._on_clipboard_image,
@@ -15608,11 +15595,6 @@ class NovaApp(App):
         if classes != root.classes:
             root.set_classes(classes)
         self._apply_interface_style()
-        self.query_one("#prompt", PromptInput).placeholder = (
-            "Ask Nova anything…  @file or /command"
-            if self._home_style in STYLED_HOME_STYLES
-            else "Type your message or @path/to/file. (Shift+Enter for a new line)"
-        )
         rain = self._home_banner
         if isinstance(rain, MatrixRain):
             rain.set_animation_enabled(

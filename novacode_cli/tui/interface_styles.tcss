@@ -226,7 +226,6 @@ Screen.conversation-style.signal-ui #prompt-dock {
 Screen.conversation-style.signal-ui #prompt-row.normal-mode {
     border: round $border; background: $panel; padding: 0;
 }
-Screen.signal-ui #prompt-row.normal-mode:focus-within { border: round $accent; }
 Screen.conversation-style.signal-ui #prompt.normal-mode,
 Screen.conversation-style.signal-ui #prompt:focus.normal-mode,
 Screen.signal-ui #prompt-prefix.normal-mode { background: $panel; }
@@ -284,7 +283,6 @@ Screen.prime-mode #prompt-row.prime-composer.normal-mode {
 }
 Screen.prime-mode #prompt.prime-composer.normal-mode,
 Screen.prime-mode #prompt-prefix.prime-composer.normal-mode { background: $accent 8%; }
-Screen.prime-mode #prompt:focus.prime-composer.normal-mode { background: $accent 14%; }
 Screen.prime-mode #prompt-prefix.prime-composer.normal-mode { color: $accent; text-style: bold; }
 Screen.prime-mode #mode-badge {
     display: block; height: auto; background: $accent 12%; color: $text;
