@@ -14,6 +14,7 @@
 <link rel="icon" type="image/png" href="../assets/favicon.png">
 <link rel="preload" as="font" type="font/woff2" href="../assets/fonts/geist-var.woff2" crossorigin>
 <link rel="preload" as="font" type="font/woff2" href="../assets/fonts/geist-mono-var.woff2" crossorigin>
+<link rel="preload" as="font" type="font/woff2" href="../assets/fonts/archivo-400_700-normal.woff2" crossorigin>
 <script>document.documentElement.classList.add("js")</script>
 <script src="../assets/theme.js"></script>
 
@@ -30,55 +31,61 @@
    regions below. Everything outside those markers is hand-authored; the
    shipped page never needs the tool.
 
-   System, followed everywhere:
+   System, followed everywhere (DESIGN.md):
      · one accent (--accent / --accent-ink), nothing else is coloured
-     · radius: 999px on anything you press, 14px on anything you look at
-     · hairline borders, two-part shadows, no third shadow
+     · radius: 2px everywhere — paper has square corners, so nothing is a pill
+     · depth is hairline weight, never blur: a frame rule, no soft shadow
      · motion is entrance and feedback only, off under reduced-motion
    ============================================================ */
 @font-face{font-family:"Geist";src:url("../assets/fonts/geist-var.woff2") format("woff2");font-weight:100 900;font-style:normal;font-display:swap}
 @font-face{font-family:"Geist Mono";src:url("../assets/fonts/geist-mono-var.woff2") format("woff2");font-weight:100 900;font-style:normal;font-display:swap}
+@font-face{font-family:"Archivo";src:url("../assets/fonts/archivo-400_700-normal.woff2") format("woff2");font-weight:400 700;font-style:normal;font-stretch:62% 125%;font-display:swap}
 
 :root{color-scheme:light;
-  --bg:#fafafa;--surface:#f0f0f2;--raised:#ffffff;
-  --text:#17171a;--muted:#5b5b65;--line:#dedee3;
-  --page-text:#17171a;--page-muted:#5b5b65;--page-line:#dedee3;
-  --page-accent:#c2410c;--page-on-accent:#ffffff;
-  --accent:#c2410c;--on-accent:#ffffff;--accent-wash:#fbe9e0;
-  /* Accent text on a wash or chip fails AA in light mode at plain --accent (4.22:1 on the code
-     chip, 4.43:1 on a link onto the page ground). Deepening 15% toward the text measures 5.07:1
-     in light and 6.96:1 in dark; it resolves per scheme because it reads the token, not a hex. */
+  --bg:#EFEDE7;--surface:#F7F5F0;--raised:#FDFBF7;
+  --text:#17181A;--muted:#5B5A54;--line:#CFCCC3;
+  --page-text:#17181A;--page-muted:#5B5A54;--page-line:#CFCCC3;
+  --page-accent:#B23C0A;--page-on-accent:#F7F5F0;
+  --accent:#B23C0A;--on-accent:#F7F5F0;--accent-wash:#F3E3D7;
+  /* Accent text on a wash or chip fails AA in light mode at plain --accent (4.27:1 on the 12%
+     chip over the ground). Deepening 15% toward the text measures 5.14:1 on that chip and 6.09:1
+     on the ground in light, 6.25:1 and 7.22:1 in dark; it resolves per scheme because it reads
+     the token, not a hex. */
   --accent-ink:color-mix(in srgb,var(--accent) 85%,var(--text) 15%);
-  --shadow:0 1px 2px rgb(23 23 26 / .06),0 18px 40px -18px rgb(23 23 26 / .22);
-  --sans:"Geist",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --shadow:none;
+  /* One family for the whole sheet: Archivo at 400 is the text face on the landing too, and the
+     display face is the same font with a wider wdth. Geist stays behind it as the fallback. */
+  --sans:"Archivo","Geist",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --display:var(--sans);
   --mono:"Geist Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
-  --r-press:999px;--r-view:14px;--wrap:1240px;
+  /* 2px, as on the landing: paper has square corners, so there are no pills here. */
+  --r-press:2px;--r-view:2px;--wrap:1240px;
   --gutter:clamp(20px,4vw,40px);--ease:cubic-bezier(.16,1,.3,1);
-  --glow:0 0 0 0 transparent;--grid:transparent;
+  --frame:14px;--glow:none;--grid:transparent;
   /* 80px clears the 64px sticky topnav by 16px for every release anchor. It is the
      page's only scroll offset, so a release heading never lands under the bar. */
   --anchor-lead:80px;
   --z-nav:20;--z-skip:30;--z-scan:-1;
 }
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){color-scheme:dark;
-    --bg:#0e0e10;--surface:#17171b;--raised:#1d1d22;
-    --text:#ececef;--muted:#a1a1ac;--line:#2a2a31;
-    --page-text:#ececef;--page-muted:#a1a1ac;--page-line:#2a2a31;
-    --page-accent:#f4723f;--page-on-accent:#16110e;
-    --accent:#f4723f;--on-accent:#16110e;--accent-wash:#2a1810;
-    --shadow:0 1px 2px rgb(0 0 0 / .4),0 22px 48px -20px rgb(0 0 0 / .7);
-    --glow:0 0 44px -10px color-mix(in srgb,var(--accent) 55%,transparent);
-    --grid:rgb(255 255 255 / .028);
+    --bg:#121316;--surface:#191A1E;--raised:#202126;
+    --text:#E8E6E1;--muted:#9A9A94;--line:#2C2D31;
+    --page-text:#E8E6E1;--page-muted:#9A9A94;--page-line:#2C2D31;
+    --page-accent:#FF6A2B;--page-on-accent:#121316;
+    --accent:#FF6A2B;--on-accent:#121316;--accent-wash:#2A1B12;
+    --shadow:none;
+    --glow:none;
+    --grid:transparent;
   }}
 :root[data-theme="dark"]{color-scheme:dark;
-    --bg:#0e0e10;--surface:#17171b;--raised:#1d1d22;
-    --text:#ececef;--muted:#a1a1ac;--line:#2a2a31;
-    --page-text:#ececef;--page-muted:#a1a1ac;--page-line:#2a2a31;
-    --page-accent:#f4723f;--page-on-accent:#16110e;
-    --accent:#f4723f;--on-accent:#16110e;--accent-wash:#2a1810;
-    --shadow:0 1px 2px rgb(0 0 0 / .4),0 22px 48px -20px rgb(0 0 0 / .7);
-    --glow:0 0 44px -10px color-mix(in srgb,var(--accent) 55%,transparent);
-    --grid:rgb(255 255 255 / .028);
+    --bg:#121316;--surface:#191A1E;--raised:#202126;
+    --text:#E8E6E1;--muted:#9A9A94;--line:#2C2D31;
+    --page-text:#E8E6E1;--page-muted:#9A9A94;--page-line:#2C2D31;
+    --page-accent:#FF6A2B;--page-on-accent:#121316;
+    --accent:#FF6A2B;--on-accent:#121316;--accent-wash:#2A1B12;
+    --shadow:none;
+    --glow:none;
+    --grid:transparent;
   }
 
 /* A manual theme switch opens the new palette as a circle from the toggle. */
@@ -90,28 +97,17 @@
 html.theme-fade,html.theme-fade *,html.theme-fade *::before,html.theme-fade *::after{transition:background-color .45s var(--ease),border-color .45s var(--ease),color .45s var(--ease),fill .45s var(--ease),stroke .45s var(--ease),box-shadow .45s var(--ease),outline-color .45s var(--ease) !important}
 
 *,*::before,*::after{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%;scroll-padding-top:var(--anchor-lead)}
+html{-webkit-text-size-adjust:100%;scroll-padding-top:var(--anchor-lead);background:var(--bg)}
+/* Lenis drives the scroll position itself, so the page lets it own the height. */
+html.lenis,html.lenis body{height:auto}
 body{
   margin:0;background:var(--bg);color:var(--text);
   font:400 1.0625rem/1.6 var(--sans);
   -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
   overflow-x:clip;
 }
-body::before{
-  content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
-  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
-  background-size:64px 64px;
-  mask-image:radial-gradient(ellipse 90% 70% at 50% 0%,#000 30%,transparent 100%);
-}
-/* Scanlines are texture, not chrome: --z-scan:-1 keeps them behind every layer, so they never
-   cross text, a focus ring or the skip link. The grid (::before) follows the same rule. */
-body::after{
-  content:"";position:fixed;inset:0;z-index:var(--z-scan);pointer-events:none;
-  background:repeating-linear-gradient(0deg,rgb(0 0 0 / .05) 0 1px,transparent 1px 3px);
-  opacity:0;
-}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) body::after{opacity:1}}
-:root[data-theme="dark"] body::after{opacity:1}
+/* No grid and no scanlines: the sheet is paper, and paper is one flat ground plus a frame rule. */
+.sheet-frame{position:fixed;inset:var(--frame);border:1px solid var(--line);pointer-events:none;z-index:2}
 
 img,svg{display:block;max-width:100%}
 img{height:auto}
@@ -122,52 +118,60 @@ code,pre,kbd{font-family:var(--mono)}
 /* anywhere, not break-word: a long dotted identifier such as PromptEvolutionEngine.maybe_auto_evolve()
    is one unbreakable token, and only anywhere also shrinks the min-content width, so the line breaks
    instead of pushing the page past a 390px viewport. */
-code{font-size:.88em;padding:.12em .42em;border-radius:6px;background:color-mix(in srgb,var(--text) 8%,transparent);overflow-wrap:anywhere}
-:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:6px}
+code{font-size:.88em;padding:.12em .42em;border-radius:2px;background:color-mix(in srgb,var(--text) 8%,transparent);overflow-wrap:anywhere}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}
 
 .skip{position:absolute;left:16px;top:-60px;z-index:var(--z-skip);background:var(--text);color:var(--bg);padding:10px 16px;border-radius:var(--r-press);text-decoration:none;font-weight:500}
 .skip:focus{top:12px}
 
-h1{font-size:clamp(2rem,3vw+.6rem,2.8rem);font-weight:620;letter-spacing:-.035em;line-height:1.06}
+h1{font:700 clamp(2.4rem,4vw + .8rem,3.6rem)/.94 var(--display);letter-spacing:-.035em;font-stretch:112%}
 .lede{color:var(--muted);font-size:1.125rem;max-width:56ch}
 .body{color:var(--muted);max-width:68ch}
 .head{display:grid;gap:16px;margin-bottom:clamp(28px,3.4vw,44px)}
 
-.cmdline{display:flex;align-items:center;gap:.6ch;white-space:nowrap;overflow:hidden;font:500 .86rem/1.4 var(--mono);color:var(--muted)}
-.cmdline .ps{color:var(--accent);font-weight:600}
+/* Sheet furniture: the three-cell strip the landing prints across the top of its cover. */
+.zones{display:flex;justify-content:space-between;gap:16px;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--line);font:500 9px/1 var(--mono);letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+.zones span{white-space:nowrap}
+
+.cmdline{display:flex;align-items:center;gap:10px;white-space:nowrap;overflow:hidden;font:500 11px/1.4 var(--mono);letter-spacing:.06em;color:var(--muted)}
+/* The prompt symbol becomes the 6px accent square the landing uses to mark a dimension. */
+.cmdline .ps{flex:none;width:6px;height:6px;background:var(--accent);font-size:0;overflow:hidden}
 .cmdline .c{color:var(--text);overflow:hidden;text-overflow:ellipsis}
 
-.btn{display:inline-flex;align-items:center;gap:10px;white-space:nowrap;min-height:46px;padding:0 22px;border-radius:var(--r-press);font:550 .9rem/1 var(--mono);text-decoration:none;cursor:pointer;border:1px solid transparent;transition:transform .2s var(--ease),background-color .2s,border-color .2s,color .2s}
-.btn:active{transform:translateY(1px) scale(.985)}
-.btn-primary{background:var(--accent);color:var(--on-accent);box-shadow:var(--glow)}
-.btn-primary::before{content:"\276F";font-weight:700}
-.btn-primary:hover{background:color-mix(in oklab,var(--accent) 88%,var(--text))}
+.btn{position:relative;isolation:isolate;overflow:hidden;display:inline-flex;align-items:center;gap:10px;white-space:nowrap;min-height:46px;padding:0 22px;border-radius:var(--r-press);font:600 15px/1 var(--sans);letter-spacing:-.01em;text-decoration:none;cursor:pointer;border:1px solid var(--text);color:var(--text);background:transparent;transition:transform .16s var(--ease),color .2s,border-color .2s}
+.btn svg{width:17px;height:17px;flex:none}
+.btn:active{transform:translateY(1px)}
+.btn-primary{background:var(--text);color:var(--bg);border-color:var(--text)}
+.btn-primary::before{content:"";position:absolute;inset:0;background:var(--accent);transform:scaleX(0);transform-origin:left;transition:transform .34s var(--ease);z-index:-1}
+.btn-primary:hover::before{transform:scaleX(1)}
+.btn-primary:hover{color:var(--on-accent);border-color:var(--accent)}
 
 /* ---------- topnav: the same bar as the docs, ending in the page's own prompt ---------- */
+/* Solid ground and 56px, as on the landing: an opaque bar keeps the sheet frame reading as a frame
+   instead of a seam showing through a translucent one. */
 .topnav{
-  position:sticky;top:0;z-index:var(--z-nav);height:64px;
-  display:flex;align-items:center;gap:18px;
-  background:color-mix(in srgb,var(--bg) 82%,transparent);
-  backdrop-filter:blur(16px) saturate(160%);-webkit-backdrop-filter:blur(16px) saturate(160%);
+  position:sticky;top:0;z-index:var(--z-nav);height:56px;
+  display:flex;align-items:center;gap:clamp(14px,3vw,34px);
+  background:var(--bg);
   border-bottom:1px solid var(--line);
-  padding-inline:clamp(20px,4vw,40px);
-}
-@media (prefers-reduced-transparency: reduce){
-  .topnav{background:var(--bg);backdrop-filter:none;-webkit-backdrop-filter:none}
+  padding-inline:clamp(20px,4vw,40px) calc(clamp(20px,4vw,40px) + var(--frame));
 }
 .topnav .spacer{margin-left:auto}
-.topnav a{text-decoration:none;font:500 .86rem/1 var(--mono);color:var(--muted);transition:color .2s}
+.topnav a{text-decoration:none;color:var(--muted);transition:color .2s}
+/* The landing's nav rule: a hairline that draws left to right on hover. */
+.topnav a.tn-aux{position:relative;font:500 15px/1 var(--sans);padding-block:6px}
+.topnav a.tn-aux::after{content:"";position:absolute;left:0;right:0;bottom:0;height:1px;background:var(--text);transform:scaleX(0);transform-origin:left;transition:transform .28s var(--ease)}
+.topnav a.tn-aux:hover::after{transform:scaleX(1)}
 /* .topnav a is one class plus a type, so it outranks .btn-primary: restate the button's own
-   colour here or the primary action renders muted-on-accent (1.29:1). */
-.topnav a.btn-primary{color:var(--on-accent)}
-.topnav .btn-primary{min-height:44px;padding:0 14px;font-size:.86rem}
+   colour here or the primary action renders muted-on-ink (1.3:1). */
+.topnav a.btn-primary{color:var(--bg)}
+.topnav .btn-primary{min-height:44px;padding:0 16px;font-size:15px}
 .topnav a:hover{color:var(--text)}
-.tn-brand{display:inline-flex;flex:none;align-items:center;min-height:44px;gap:10px;font:600 .9rem/1 var(--mono);color:var(--text)}
-.tn-brand picture{display:flex;flex:none}
-.tn-brand img{width:32px;height:32px;border-radius:50%;border:1px solid var(--line)}
-.tn-brand b{color:var(--accent)}
-.tn-brand span{color:var(--muted);font-weight:500}
-.tn-page{font:500 .86rem/1 var(--mono);color:var(--text)}
+/* The landing's mark: emblem chip plus a display wordmark, with the sheet tag beside it in mono. */
+.tn-brand{display:inline-flex;flex:none;align-items:center;min-height:44px;gap:9px;font:700 1.0625rem/1 var(--display);letter-spacing:-.03em;font-stretch:112%;color:var(--text)}
+/* Same emblem chip as the landing header, so the mark never restyles with the theme. */
+.tn-brand img{width:28px;height:28px;border-radius:50%;background:#17181A;box-shadow:0 0 0 1px var(--line)}
+.tn-page{font:500 10px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
 
 /* ---------- layout: one column, centred, prose left-aligned ----------
    There is no release index and no sidebar: 50 entries of navigation cost a rail
@@ -231,12 +235,13 @@ footer{border-top:1px solid var(--line);padding-block:28px 72px}
    Nothing collapses, because there is nothing beside the column any more: the measure
    narrows with the viewport and the padding follows it. */
 @media (max-width:620px){
-  .topnav{padding-inline:14px;gap:10px}
+  .topnav{padding-inline:24px calc(24px + var(--frame));gap:10px}
   .topnav .tn-aux{display:none}
-  .tn-brand span{display:none}
-  .cl-main-in{padding-inline:16px}
-  .foot{padding-inline:16px}
+  .cl-main-in{padding-inline:24px}
+  .foot{padding-inline:24px}
   .foot nav{margin-left:0}
+  /* Three cells do not fit 390px: the middle one is the one nobody reads twice. */
+  .zones span:nth-child(2){display:none}
 }
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{animation:none !important;transition:none !important}
@@ -244,9 +249,11 @@ footer{border-top:1px solid var(--line);padding-block:28px 72px}
 /* Native disclosure controls remain usable without JavaScript or a network. */
 .changelog-entry{border-top:1px solid var(--line);scroll-margin-top:90px}
 .changelog-entry:target{border-color:var(--accent)}
-.entry-toggle{cursor:pointer;padding:24px 0;min-height:48px;transition:background .2s}
-.entry-toggle:hover{background:var(--surface)}
-.entry-toggle:active{background:var(--line)}
+.entry-toggle{cursor:pointer;padding:24px 0;min-height:48px;position:relative}
+/* Feedback is the same 2px accent rule the target state draws, not a wash: the sheet has no
+   filled surfaces to hover. It sits in the column's own padding, so nothing reflows. */
+.entry-toggle::before{content:"";position:absolute;left:-14px;top:12px;bottom:12px;width:2px;background:var(--accent);opacity:0;transition:opacity .2s}
+.entry-toggle:hover::before,.entry-toggle:focus-visible::before{opacity:1}
 .entry-toggle::marker{color:var(--accent)}
 .version{display:inline;font:600 1.15rem/1.5 var(--mono);letter-spacing:-.03em}
 .entry-toggle time{margin-left:16px;color:var(--muted);font-size:.86rem}
@@ -282,14 +289,12 @@ footer{border-top:1px solid var(--line);padding-block:28px 72px}
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
+<div class="sheet-frame" aria-hidden="true"></div>
 
 <header class="topnav">
-  <a class="tn-brand" href="../index.html" aria-label="nova@code:~$, back to the landing page">
-    <picture>
-      <source data-theme-source media="(prefers-color-scheme: dark)" srcset="../assets/avatar-dark.webp">
-      <img src="../assets/avatar-light.webp" width="32" height="32" alt="">
-    </picture>
-    <span><b>nova</b>@code:~$</span>
+  <a class="tn-brand" href="../index.html" aria-label="Nova, back to the landing page">
+    <img src="../assets/emblem-128.webp" width="128" height="128" alt="" decoding="async">
+    <b>nova</b>
   </a>
   <span class="tn-page">changelog</span>
   <span class="spacer"></span>
@@ -302,8 +307,9 @@ footer{border-top:1px solid var(--line);padding-block:28px 72px}
 
 <main id="main">
   <div class="cl-main-in">
+    <div class="zones"><span>changelog sheet</span><span>novacode &middot; every release</span><span>scale 1:1</span></div>
     <div class="head">
-      <p class="cmdline"><span class="ps">nova &#10095;</span><span class="c">cat changelog/CHANGELOG-v*.md</span></p>
+      <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="c">cat changelog/CHANGELOG-v*.md</span></p>
       <h1>Changelog</h1>
       <!-- generated:changelog-summary -->
 <p class="lede">56 releases &middot; v1.0.0 &rarr; v1.0.55 &middot; from the repository's <code>changelog/</code> directory</p>
@@ -1184,5 +1190,13 @@ footer{border-top:1px solid var(--line);padding-block:28px 72px}
 </footer>
 
 <script src="../assets/changelog.js" defer></script>
+<script src="../assets/lenis.min.js"></script>
+<script>
+  /* Same smoothing as the landing and docs pages; the release anchors and the sticky bar still
+     work because Lenis moves the real scroll position. Reduced motion keeps native scrolling. */
+  if (window.Lenis && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    new Lenis({ autoRaf: true, lerp: 0.11 });
+  }
+</script>
 </body>
 </html>

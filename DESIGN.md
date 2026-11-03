@@ -1,74 +1,216 @@
-# Nova site repair
+# Nova site: the drawing sheet
 
 The audience is developers installing Nova and looking up documentation and release notes.
-Keep the existing static HTML, CSS and JavaScript: GitHub Pages serves the `gh-pages`
-branch at `/NovaCode/`; release Markdown belongs to `main/changelog/`.
+GitHub Pages serves the `gh-pages` branch at `/NovaCode/`; release Markdown belongs to
+`main/changelog/`.
 
-The existing concept is an editorial manual with terminal chrome. Keep its Geist and
-Geist Mono fonts, neutral light/dark surfaces, orange accent, pill buttons and 14px panels.
-Preserve the landing page composition and product examples. This is a functional repair,
-so no new visual concept, framework or invented content is needed. The boot screen and
-the theme reveal are the only additions.
-The hero uses the matched generated day/night artwork in `assets/hero-source/`, based
-on `Nova-Hero-light.png` and `Nova-Hero.png`. The originals and prompts remain versioned.
-`tools/make_hero_assets.py` encodes responsive WebP images. Native picture
-sources follow the OS without JavaScript; `assets/theme.js` also applies a saved theme.
-The transparent header uses the theme's text palette and matching face portraits from
-the generated artwork. Its compact rounded nav gains glass only after scrolling. Six
-primary links show on desktop; the mobile menu retains all nine section links. The
-smallest screens hide only the redundant @code suffix so all controls keep touch targets.
-Docs and Changelog use the same theme-aware portraits and keep their header controls
-within a 320px viewport.
-Manual theme switches open the new palette as a circle from the theme toggle over 700ms
-using native View Transitions, after the next image set has decoded. The whole page,
-including the hero, navigation and prompt, is revealed by the same wipe, so no text is
-cross-faded. Older browsers fade the palette in place; reduced motion switches
-immediately. Repeated toggles supersede the previous reveal.
-The landing page opens with a boot screen once per tab: a terminal line, a hairline
-progress bar driven by font, hero and load milestones, and a curtain lift. The boot
-screen is hidden without JavaScript and under reduced motion, and a hard timeout means
-it can never hold the page.
-The hero is four actual full-frame image planes: sky/city, room/code panels,
-coder/desk, and near foliage. The room, subject and foliage are real RGBA cutouts;
-the sky is a complete clean plate behind them. `tools/make_hero_assets.py` encodes
-each plane and composites the same assets into the static fallback. All planes share
-the same crop and fixed 1.08 scale; only their translations differ. No shader, depth
-map, canvas, mesh deformation or pixel displacement is used.
-Pointer, touch and phone tilt move foreground planes farther than the background.
-One passive scroll handler updates CSS translations at different speeds. A frame of
-overscan keeps edges covered. Touch release settles after 1.4 seconds. Reduced motion,
-no JavaScript or failed layer loading shows the complete neutral composite.
-On touch devices served over HTTPS, phone orientation drives the same camera target by
-default, with no tilt button. Browsers requiring sensor permission request it on the first
-completed tap (click), when transient user activation exists; denial leaves touch
-available without repeated prompts. Listening alone never disables the touch fallback:
-only a valid orientation reading gives the sensor control. Mobile tilt
-and touch never show the cursor glow; it is limited to desktop mouse
-input above 900px. The first valid
-reading calibrates the current holding position; screen rotation recalibrates it. Tilt
-pauses offscreen, and is disabled by reduced motion. Touch remains the
-fallback when orientation is unavailable or permission is denied.
-Both themes use the same plane order and motion rules. Theme transitions wait for the
-selected image set to decode. The static composite remains visible until every required
-plane is ready, including when a layer fails to load.
-The release archive stays still at rest for reading. Native disclosure controls provide feedback.
+This file is the binding art direction for the landing page (`index.html`). Everything below
+is derived from one idea; if a change cannot be traced to it, it does not belong.
 
-Navigation must work under a project subdirectory, through history, and from bookmarked
-documentation/release fragments. Without JavaScript, documentation and release notes remain readable.
-The changelog ships complete HTML from main's Markdown, then checks main for new or edited
-releases in the browser. Errors and API rate limits leave the saved archive readable.
+## Concept Card
 
-Feature content follows the root `FEATURES.md` inventory (v1.0.99): each landing section
-names its command, its requirement and where it stops, and preview or experimental work is
-labelled. New sections reuse the existing furniture (cmdline, `.win` panels with a bar,
-ledger, pair, split, tree, caps, install tabs) rather than inline styles or extra colours.
-The contents panel links every feature section. Docs carry the full catalog on the
-`#page-features` topic.
+```
+Idea:        The landing page is a technical drawing of the product. Every claim is
+             dimensioned on the sheet, and its limit is printed as a tolerance.
+Metaphor:    An engineering drawing sheet: title block, edge zone references, dimension
+             lines with end ticks, tolerance callouts, detail views, a parts list.
+Signature:   The measure. Under each claim a hairline dimension line is drawn to the
+             claim's true measured width, and an orange tolerance label sits at the far
+             end of it. It re-measures on resize, so the number is real, not decorative.
+Emotion:     Calm authority. Someone showing you the tolerances instead of the brochure.
+Motion verb: rule. Lines extend from a fixed datum, type lands on the sheet, nothing floats.
+Screenshot:  A sheet where an 84px expanded claim is dimensioned by a hairline that ends at
+             a small orange "not verified" tolerance.
+```
 
-The light and dark palettes follow the system until the visitor uses the theme toggle in
-the top bar; `assets/theme.js` saves that choice (`nova-theme` in localStorage) and applies
-it before first paint on every page, including the 404. CSS keys dark rules off both
-`[data-theme="dark"]` and the system query, so pages stay themed without script.
+**Why this and not a terminal theme.** Every competitor's page for a coding agent is the same
+dark window with a green prompt. Nova's actual difference is editorial: this site is the only
+one in its category that states where each feature stops. Memory pages can be edited. Council
+votes do not prove a plan is correct. Caveman mode quotes no savings figure. A drawing exists
+for exactly that reason: to record a nominal and its tolerance. So the form carries the
+argument, not a decoration of it.
 
-Validation covers all documentation topics, internal links and assets, disclosure controls,
-old and new deep links, live refresh, failure recovery, mobile layouts and reduced motion.
+**Anchor fact:** the source copy is already structured as claim + limit; `FEATURES.md` and the
+FAQ both end nearly every section with "where it stops". Nothing in the concept is invented.
+
+## Three concepts, scored 1 to 5
+
+| | A. The drawing sheet | B. Session transcript | C. The memory library |
+|---|---|---|---|
+| Territory | material of the profession (drafting) | how the tool actually runs | the product's own object |
+| Idea | claims are dimensioned, limits are tolerances | the page is one long session log you scroll: prompts, tool calls, and the agent's own boundaries as stderr | the page is a card catalogue of the files Nova writes, drawer by drawer |
+| Motion verb | rule | stream | pull, settle |
+| Signature | the measure | the log advances, output arrives line by line | cards fan out of a drawer |
+| Originality | 4 | 3 | 4 |
+| Fit | 5 | 4 | 4 |
+| Feasibility | 4 | 4 | 3 |
+| Portability (lower is better) | 2 | 3 | 3 |
+
+Chosen: **A**. It is the only one that turns the site's own honesty into structure, it stays
+recognisable from a crop, and it is the cheapest to execute at 60 fps in plain CSS. Steal one
+detail from B for the boot screen: the plot sequence is a log of what the sheet is waiting for.
+
+## Art direction
+
+**Palette**, six named roles per theme.
+
+| Role | Light | Dark | Use |
+|---|---|---|---|
+| `--ground` | `#EFEDE7` | `#121316` | the sheet |
+| `--panel` | `#F7F5F0` | `#191A1E` | inset detail views |
+| `--ink` | `#17181A` | `#E8E6E1` | type, rules, inverted sheets |
+| `--muted` | `#63625C` | `#9A9A94` | tolerances, metadata (AA on ground) |
+| `--line` | `#CFCCC3` | `#2C2D31` | hairlines, about 12% ink |
+| `--accent` | `#B23C0A` | `#FF6A2B` | tolerances, ticks, one action (5.1:1 on ground) |
+| `--neg-accent` | `#FF6A2B` | `#B23C0A` | the same pen, on an inverted sheet |
+| `--curtain` | `#17181A` | `#0C0D0F` | the plot overlay |
+
+Orange is the annotation pen. It marks a limit, a dimension, or the one action on the sheet,
+and it is never used for decoration. Because the dividers and the closer paint inverted
+sheets in both themes, the pen needs a second value that survives that swap; `--neg-accent`
+carries it. Chapter dividers invert the sheet: `background: var(--ink)`,
+`color: var(--ground)`, which stays correct in both themes because it swaps roles, not values.
+
+**Type.** Archivo (variable, `wdth` 62 to 125, `wght` 400 to 700, self-hosted) plus Geist Mono
+(already in `assets/fonts/`). One family, two personalities: display is the same Archivo at
+`wdth 112`, weight 700, tracking `-0.03em`, leading 0.92; text is Archivo at `wdth 100`, 400 or
+600. Geist Mono is reserved for things that are genuinely measured or typed: dimensions, file
+paths, commands, zone references, version numbers. Mono is never used as a generic small
+label, and there is no tracked uppercase eyebrow above headings.
+
+Scale: `--t-mega` `clamp(2.7rem, 1rem + 7.2vw, 7rem)`, `--t-xl` `clamp(2rem, 1rem+4vw, 4.2rem)`,
+`--t-l` `clamp(1.6rem, 1.1rem+1.7vw, 2.5rem)`, `--t-m` `clamp(1.25rem, 1rem+.7vw, 1.6rem)`,
+body `1.0625rem`/1.55, small `0.875rem`, mono `0.75rem`.
+
+**Grid.** 12 columns, 20px gutter, sheet margin 28px desktop and 16px phone, max 1400px. Every
+band aligns to it; display type hangs 0.06em into the margin optically. The sheet border is a
+1px frame inset 14px with edge zone references (A–F, 1–8) in mono 10px, which is the one place
+uppercase tracking is correct because it is drawing furniture.
+
+**Shape.** One rule: radius `2px`, on buttons and panels only. Paper has square corners. There
+are no soft shadows anywhere; depth is expressed by hairline weight (1px frame, 1px dimension,
+2px title block), never by blur.
+
+**Phones wrap, never clip.** Below 620px nothing is hidden behind a horizontal scroll region:
+commands wrap at `/` boundaries, code hangs 2ch under its statement so a wrapped expression still
+reads as one statement, and a three-column parts list becomes stacked rows (name, description,
+then the requirement as an accent-ruled mono annotation). Three 30-50px ribbons of text are not
+readable and cost 3000px of scroll. The display change keeps the table's roles in the
+accessibility tree; only the column labels go, and the stacked rows do not need them.
+
+**Section rhythm.** Four sheets, each opened by a full-bleed inverted divider carrying a huge
+sheet number and its index. Inside a sheet, the frame is constant and the detail view changes:
+split, columns, transcript pair, spec table, switch list, revision table. That is how a real
+drawing set works and it is why 18 features share one system without looking uniform.
+
+**Motion language.** One easing family, `cubic-bezier(.16, 1, .3, 1)` for things arriving and
+`cubic-bezier(.4, 0, .2, 1)` for state changes. Micro 240ms, enter 520ms, drawn line 700ms.
+Stagger 40ms. One clock: a single requestAnimationFrame loop reads scroll and time and writes
+CSS custom properties; there is no second loop and no scroll listener doing layout work.
+Under `prefers-reduced-motion` nothing moves, the plot overlay never appears, and the sheet is
+complete and readable.
+
+**Hero depth.** The cover sheet prints on a paper panel down the right of the hero; the drawing
+takes the whole left of the sheet, undimmed, because the artwork is the page's one image and a
+wash over it made it furniture. On scroll the three printed blocks lag by their own factor —
+edge zones .11, title block .06, claim .035 — so the sheet separates from the paper as it leaves,
+and travel stops once three quarters of the hero is gone. This is the one scroll-linked motion on
+the page: it is decorative depth, not feedback, and it is transform-only so it cannot reflow
+anything or widen the document. Under reduced motion the blocks keep their `transform: none` and
+sit still as part of the sheet.
+
+**Idle state.** The measure is the only thing that moves without the visitor acting: on the
+first paint the rule draws left to right over 700ms and its tick lands on the claim's real
+width. It never loops. A gauge was built for this slot and removed — it competed with the
+title block, vanished on the inverted bands, and asked the visitor to read a second index
+before reading the claim. The measure states one number and stops.
+
+**Micro-interactions**, one treatment per role from the motion verb:
+- Action (Install): a hairline sweeps across the block and an accent tick slides in; press
+  depresses the block 1px. No colour swap.
+- Nav: the underline draws left to right.
+- Index rows and links: the row's rule extends and an accent tick appears in the left margin.
+- Disclosure: the rule thickens and the marker rotates 90 degrees; a 1px accent tick arrives
+  in the left margin on hover and on focus.
+- Copy: the same ink wipe as the CTA, from the left edge, so the sixth primary target answers
+  with geometry rather than a colour swap.
+- Utility links (footer, legal): colour only, as the role allows.
+
+## Composition plan
+
+```
+HERO                                    01 MEMORY
++-------------------------------+----+   +------------------------------+
+| A                             | TB |   | [chapter divider, inverted]  |
+|  claim, wdth112, 7rem         | v  |   | 01  What it knows            |
+|  _______________________|± lim|  e  |   | memory /dream council        |
+|  command block    MIT Python  | r  |   +------------------------------+
+|  sheet index 01..04           | t  |   | tree (mono)   | page body    |
++-------------------------------+----+   |               |              |
+                                         | leader line connecting both  |
+03 DESK (spec table)                     04 RECORD (tolerance table)
++--------+--------+--------+--------+   +--------+--------+--------+
+| part   | what   | needs  | modal  |   | claim  | stops  | file   |
++--------+--------+--------+--------+   | ...    | ...    | ...    |
+```
+
+Each feature section is a detail view with the same three parts: a dimensioned claim, an inset
+panel showing the real artefact (file tree, transcript, code, table), and a tolerance in the
+margin. Varying the *inside* of the panel is what keeps 18 sections from reading as a grid.
+
+## Genericness test
+
+*Would a generic model given "a site for a terminal coding agent" land here?* No: it lands on a
+black terminal window with a green prompt and three equal feature cards, or a centered hero
+over a gradient. Checked and changed: no dark-window mockups, no equal card grid, no eyebrow
+labels, no mono for every small label, no 01/02/03 where the content is not a sequence. The
+radii are 2px rather than the current 999px pills because paper does not have pill corners, and
+orange survives the redesign because an annotation pen is the concept's own colour.
+
+## What this file also governs (unchanged by the redesign)
+
+- **Two-branch contract.** Site files live on `gh-pages`; release Markdown lives on
+  `main/changelog/`. This checkout holds only the generated `changelog/index.html`.
+- **Theme.** `assets/theme.js` follows the system until the visitor picks, then stores
+  `nova-theme` and applies it before first paint on every page. Manual switches open the new
+  palette as a circle from the toggle over 700ms through native View Transitions; the circle
+  radius arrives in `--theme-r`, which `index.html` consumes. Reduced motion switches at once.
+  Both palettes are designed; neither is a filter over the other.
+- **The hero drawing.** `assets/hero-layers/` holds the cover art as four planes (sky, room,
+  subject, plants) in light and dark, plus a flat composite. Planes carry a theme `<source>` and a
+  `--depth`/`--scroll-speed`; `.art` gets `layered` only once all four decode, and the flat
+  composite shows until then and under reduced motion (no transforms at all). Wide screens are a
+  split sheet: the words print on a solid paper panel whose width is `min(48%, 720px)` (the cap
+  keeps the measure readable on large monitors) and the drawing takes all the width that is
+  left, undimmed, which is what keeps the artwork reading as the page's image.
+  At `≤900px` the sheet prints on paper and the drawing follows beneath it as a band — 4:3 on
+  phones, 16:9 above 560px — because a 16:9 drawing behind a tall narrow hero is only a slice of
+  itself.
+- **The plot overlay.** `#boot` is the only overlay. It is hidden without JavaScript, removed
+  from the DOM when it finishes, capped at 1.4s by a hard timeout, and states real milestones
+  (fonts, hero, sheet) rather than a fake counter.
+- **No-JS.** Documentation and release notes stay readable, the sheet renders complete, and
+  every measure degrades to a static rule with its label.
+- **Stars.** A single fixed `<canvas id="page-stars">` sits behind the page (`z-index:-1`, so
+  `html`, not `body`, carries the ground colour) and draws the sky the hero art implies:
+  faint stars that twinkle on their own clock, a 130px pointer repulsion that brightens the ones
+  near the cursor, a shooting star every 3.4–9s, and one launched by a tap. Tint is per theme
+  (`236,242,255` on ink, `150,92,32` on paper). The block is skipped entirely under reduced
+  motion, pauses when the tab hides, and resizes on a debounce.
+- **The mark.** `assets/emblem-128.webp` on the `--curtain` ink chip, the same in both themes.
+  It replaced the inline triangle so the header and footer carry the Nova emblem.
+- **Scrolling.** `assets/lenis.min.js` (Lenis 1.3.27, self-hosted) smooths wheel and touch on the
+  real scroll position, so anchors, sticky chrome and the parallax offsets still work. `html.lenis`
+  turns off the CSS smooth behaviour, and reduced motion never instantiates it.
+- **Docs and changelog** keep their own layouts. Both take the same role values, Archivo display
+  face and emblem chip, so the three pages print on the same paper.
+
+## Validation
+
+`python tools/verify_site.py` covers internal links, all documentation topics, disclosure
+controls, both permalink formats, live refresh and failure recovery, desktop and phone,
+reduced motion, the designed 404, and axe when `axe-core` is installed. It asserts no console
+errors, no horizontal overflow, and that `#boot` leaves the DOM. `tools/verify_hero.py`
+recomputes the claim's widest rendered line and asserts the rule and the printed number match
+it, in both themes, on a phone and under reduced motion; it also checks that a saved theme
+repaints the browser chrome.

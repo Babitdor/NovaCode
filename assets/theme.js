@@ -36,7 +36,7 @@
     /* The browser chrome follows the page, not the OS, once a theme is chosen. */
     Array.prototype.forEach.call(document.querySelectorAll('meta[name="theme-color"]'), function (m) {
       var forDark = saved ? dark : /dark/.test(m.getAttribute("media") || "");
-      m.setAttribute("content", forDark ? "#0e0e10" : "#fafafa");
+      m.setAttribute("content", forDark ? "#121316" : "#EFEDE7");
     });
     Array.prototype.forEach.call(document.querySelectorAll("[data-theme-toggle]"), function (b) {
       b.hidden = false;

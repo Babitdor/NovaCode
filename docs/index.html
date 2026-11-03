@@ -20,44 +20,47 @@
 <style>
 @font-face{font-family:"Geist";src:url("../assets/fonts/geist-var.woff2") format("woff2");font-weight:100 900;font-style:normal;font-display:swap}
 @font-face{font-family:"Geist Mono";src:url("../assets/fonts/geist-mono-var.woff2") format("woff2");font-weight:100 900;font-style:normal;font-display:swap}
+@font-face{font-family:"Archivo";src:url("../assets/fonts/archivo-400_700-normal.woff2") format("woff2");font-weight:400 700;font-style:normal;font-stretch:62% 125%;font-display:swap}
 
 :root{color-scheme:light;
-  --bg:#fafafa;--surface:#f0f0f2;--raised:#ffffff;
-  --text:#17171a;--muted:#5b5b65;--line:#dedee3;
-  --page-text:#17171a;--page-muted:#5b5b65;--page-line:#dedee3;
-  --page-accent:#c2410c;--page-on-accent:#ffffff;
-  --accent:#c2410c;--on-accent:#ffffff;--accent-wash:#fbe9e0;
+  --bg:#EFEDE7;--surface:#F7F5F0;--raised:#FDFBF7;
+  --text:#17181A;--muted:#5B5A54;--line:#CFCCC3;
+  --page-text:#17181A;--page-muted:#5B5A54;--page-line:#CFCCC3;
+  --page-accent:#B23C0A;--page-on-accent:#F7F5F0;
+  --accent:#B23C0A;--on-accent:#F7F5F0;--accent-wash:#F3E3D7;
   /* Accent text on a wash or chip fails AA in light mode at plain --accent (4.22:1 on the code
      chip, 4.43:1 on the sidebar wash). Deepening 15% toward the text measures 5.07:1 and 5.45:1
      in light, 6.96:1 in dark; it resolves per scheme because it reads the token, not a hex. */
   --accent-ink:color-mix(in srgb,var(--accent) 85%,var(--text) 15%);
-  --shadow:0 1px 2px rgb(23 23 26 / .06),0 18px 40px -18px rgb(23 23 26 / .22);
-  --sans:"Geist",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  /* Depth is hairline weight, never blur: the landing carries no soft shadow, so neither does this
+     page. --shadow/--glow stay declared so the rules that read them cost nothing to keep in step. */
+  --shadow:none;
+  /* One family for the whole sheet: Archivo at 400 is the text face on the landing too, and the
+     display face is the same font with a wider wdth. Geist stays behind it as the fallback. */
+  --sans:"Archivo","Geist",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --display:var(--sans);
   --mono:"Geist Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
-  --r-press:999px;--r-view:14px;--wrap:1240px;
+  /* 2px, as on the landing: paper has square corners, so there are no pills here. */
+  --r-press:2px;--r-view:2px;--wrap:1240px;
   --gutter:clamp(20px,4vw,40px);--ease:cubic-bezier(.16,1,.3,1);
-  --glow:0 0 0 0 transparent;--grid:transparent;
+  --frame:14px;--glow:none;--grid:transparent;
   --z-nav:20;--z-status:25;--z-skip:30;--z-scan:-1;--z-sidebar:15;
 }
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){color-scheme:dark;
-    --bg:#0e0e10;--surface:#17171b;--raised:#1d1d22;
-    --text:#ececef;--muted:#a1a1ac;--line:#2a2a31;
-    --page-text:#ececef;--page-muted:#a1a1ac;--page-line:#2a2a31;
-    --page-accent:#f4723f;--page-on-accent:#16110e;
-    --accent:#f4723f;--on-accent:#16110e;--accent-wash:#2a1810;
-    --shadow:0 1px 2px rgb(0 0 0 / .4),0 22px 48px -20px rgb(0 0 0 / .7);
-    --glow:0 0 44px -10px color-mix(in srgb,var(--accent) 55%,transparent);
-    --grid:rgb(255 255 255 / .028);
+    --bg:#121316;--surface:#191A1E;--raised:#202126;
+    --text:#E8E6E1;--muted:#9A9A94;--line:#2C2D31;
+    --page-text:#E8E6E1;--page-muted:#9A9A94;--page-line:#2C2D31;
+    --page-accent:#FF6A2B;--page-on-accent:#121316;
+    --accent:#FF6A2B;--on-accent:#121316;--accent-wash:#2A1B12;
+    --shadow:none;--glow:none;--grid:transparent;
   }}
 :root[data-theme="dark"]{color-scheme:dark;
-    --bg:#0e0e10;--surface:#17171b;--raised:#1d1d22;
-    --text:#ececef;--muted:#a1a1ac;--line:#2a2a31;
-    --page-text:#ececef;--page-muted:#a1a1ac;--page-line:#2a2a31;
-    --page-accent:#f4723f;--page-on-accent:#16110e;
-    --accent:#f4723f;--on-accent:#16110e;--accent-wash:#2a1810;
-    --shadow:0 1px 2px rgb(0 0 0 / .4),0 22px 48px -20px rgb(0 0 0 / .7);
-    --glow:0 0 44px -10px color-mix(in srgb,var(--accent) 55%,transparent);
-    --grid:rgb(255 255 255 / .028);
+    --bg:#121316;--surface:#191A1E;--raised:#202126;
+    --text:#E8E6E1;--muted:#9A9A94;--line:#2C2D31;
+    --page-text:#E8E6E1;--page-muted:#9A9A94;--page-line:#2C2D31;
+    --page-accent:#FF6A2B;--page-on-accent:#121316;
+    --accent:#FF6A2B;--on-accent:#121316;--accent-wash:#2A1B12;
+    --shadow:none;--glow:none;--grid:transparent;
   }
 
 /* A manual theme switch opens the new palette as a circle from the toggle. */
@@ -69,28 +72,30 @@
 html.theme-fade,html.theme-fade *,html.theme-fade *::before,html.theme-fade *::after{transition:background-color .45s var(--ease),border-color .45s var(--ease),color .45s var(--ease),fill .45s var(--ease),stroke .45s var(--ease),box-shadow .45s var(--ease),outline-color .45s var(--ease) !important}
 
 *,*::before,*::after{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;scroll-padding-top:88px}
+html{-webkit-text-size-adjust:100%;background:var(--bg);scroll-behavior:smooth;scroll-padding-top:88px}
+/* Lenis drives the scroll position itself, so the CSS smooth behaviour has to stand down. */
+html.lenis,html.lenis body{height:auto}
+html.lenis{scroll-behavior:auto}
 body{
   margin:0;background:var(--bg);color:var(--text);
   font:400 1.0625rem/1.6 var(--sans);
   -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
   overflow-x:clip;
 }
-body::before{
-  content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
-  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
-  background-size:64px 64px;
-  mask-image:radial-gradient(ellipse 90% 70% at 50% 0%,#000 30%,transparent 100%);
+/* The grid and scanline layers the terminal chrome painted are gone: the landing's sheet is plain
+   paper, and texture behind a reading surface competed with the text it sat under. */
+
+/* The landing's sheet furniture: a 1px frame inset from the paper edge, and the zone strip that
+   opens the sheet. Both are drawing furniture, so they are aria-hidden and never take a click. */
+/* The frame stops at the status strip, so its bottom edge is that strip's top rule rather than a
+   hairline hidden behind it. */
+.sheet-frame{position:fixed;inset:var(--frame) var(--frame) 34px;border:1px solid var(--line);pointer-events:none;z-index:2}
+.zones{
+  display:flex;justify-content:space-between;gap:12px;
+  font:500 9px/1 var(--mono);letter-spacing:.18em;text-transform:uppercase;color:var(--muted);
+  padding-bottom:10px;border-bottom:1px solid var(--line);
 }
-/* Scanlines are texture, not chrome: --z-scan:-1 keeps them behind every layer, so they never
-   cross text, a focus ring or the skip link. The grid (::before) follows the same rule. */
-body::after{
-  content:"";position:fixed;inset:0;z-index:var(--z-scan);pointer-events:none;
-  background:repeating-linear-gradient(0deg,rgb(0 0 0 / .05) 0 1px,transparent 1px 3px);
-  opacity:0;
-}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) body::after{opacity:1}}
-:root[data-theme="dark"] body::after{opacity:1}
+.zones span{white-space:nowrap}
 
 img,svg{display:block;max-width:100%}
 img{height:auto}
@@ -104,37 +109,46 @@ code,pre,kbd{font-family:var(--mono)}
 .skip{position:absolute;left:16px;top:-60px;z-index:var(--z-skip);background:var(--text);color:var(--bg);padding:10px 16px;border-radius:var(--r-press);text-decoration:none;font-weight:500}
 .skip:focus{top:12px}
 
-h1{font-size:clamp(2rem,3vw+.6rem,2.8rem);font-weight:620;letter-spacing:-.035em;line-height:1.06}
-h2{font-size:clamp(1.6rem,2.4vw+.5rem,2.4rem);font-weight:600;letter-spacing:-.03em;line-height:1.08}
+/* Display type is the landing's: the same Archivo widened to wdth 112, tracking -0.03em and
+   leading 0.94. Nothing else in the heading changes, because the pages differ in layout, not face. */
+h1{font:700 clamp(2rem,3vw+.6rem,2.8rem)/.94 var(--display);letter-spacing:-.035em;font-stretch:112%}
+h2{font:700 clamp(1.6rem,2.4vw+.5rem,2.4rem)/1 var(--display);letter-spacing:-.03em;font-stretch:110%}
 /* Three heading levels are in use: h1 (page), h2 (section), h3 (card / step). There is no h4.
    A card or step that sits directly under the page h1, with no section h2 between them, is an h2:
    jumping h1 -> h3 is a heading-order failure. The size rules below cover both levels. */
 h3{font-size:1rem;font-weight:600;letter-spacing:-.01em}
-h1 b,h2 b{font-weight:inherit;color:var(--accent)}
+/* The landing prints display type in ink only. Orange is the annotation pen, so a bold word in a
+   heading stays ink instead of turning the one accent into decoration. */
+h1 b,h2 b{font-weight:inherit}
 .lede{color:var(--muted);font-size:1.125rem;max-width:56ch}
 .body{color:var(--muted);max-width:68ch}
 .eyebrow{font:500 .78rem/1 var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
 .head{display:grid;gap:16px;margin-bottom:clamp(32px,4vw,48px)}
 
-.cmdline{display:flex;align-items:center;gap:.6ch;white-space:nowrap;overflow:hidden;font:500 .86rem/1.4 var(--mono);color:var(--muted)}
-.cmdline .ps{color:var(--accent);font-weight:600}
+/* The prompt glyph was terminal theatre. The sheet's equivalent is a mono annotation with an accent
+   tick in the margin — the same mark the landing uses to label a dimension. */
+.cmdline{display:flex;align-items:center;gap:8px;white-space:nowrap;overflow:hidden;font:500 11px/1.4 var(--mono);letter-spacing:.06em;color:var(--muted)}
+.cmdline .ps{flex:none;width:6px;height:6px;background:var(--accent);font-size:0}
 .cmdline .typed{display:inline-block;overflow:hidden;white-space:nowrap;color:var(--text)}
 .cmdline .cm{color:var(--muted)}
 .caret{display:inline-block;width:.62em;height:1.15em;background:var(--accent);box-shadow:var(--glow);translate:0 .05em}
 .bar{display:flex;align-items:center;gap:7px;height:38px;padding:0 14px;border-bottom:1px solid var(--line);font:500 .78rem/1 var(--mono);color:var(--muted)}
-.bar i{width:9px;height:9px;border-radius:50%;background:var(--line)}
-.bar i:first-child{background:var(--accent);box-shadow:var(--glow)}
+.bar i{width:9px;height:9px;border-radius:2px;background:var(--line)}
+.bar i:first-child{background:var(--accent)}
 .bar span{margin-left:8px}
 .win{border:1px solid var(--line);transition:border-color .3s,box-shadow .3s}
 .win:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--line));box-shadow:var(--glow)}
 section{padding-block:clamp(48px,6vw,80px)}
 
-.btn{display:inline-flex;align-items:center;gap:10px;white-space:nowrap;min-height:46px;padding:0 22px;border-radius:var(--r-press);font:550 .9rem/1 var(--mono);text-decoration:none;cursor:pointer;border:1px solid transparent;transition:transform .2s var(--ease),background-color .2s,border-color .2s,color .2s}
+/* The landing's button: a hairline block whose ink sweeps in from the left, with an accent tick
+   arriving on hover. No colour swap and no glow — the geometry answers instead. */
+.btn{position:relative;isolation:isolate;overflow:hidden;display:inline-flex;align-items:center;gap:10px;white-space:nowrap;min-height:46px;padding:0 22px;border-radius:var(--r-press);font:600 15px/1 var(--sans);letter-spacing:-.01em;text-decoration:none;cursor:pointer;border:1px solid var(--text);color:var(--text);background:transparent;transition:transform .16s var(--ease),color .2s,border-color .2s}
 .btn svg{width:17px;height:17px;flex:none}
-.btn:active{transform:translateY(1px) scale(.985)}
-.btn-primary{background:var(--accent);color:var(--on-accent);box-shadow:var(--glow)}
-.btn-primary::before{content:"\276F";font-weight:700}
-.btn-primary:hover{background:color-mix(in oklab,var(--accent) 88%,var(--text))}
+.btn:active{transform:translateY(1px)}
+.btn-primary{background:var(--text);color:var(--bg);border-color:var(--text)}
+.btn-primary::before{content:"";position:absolute;inset:0;background:var(--accent);transform:scaleX(0);transform-origin:left;transition:transform .34s var(--ease);z-index:-1}
+.btn-primary:hover::before{transform:scaleX(1)}
+.btn-primary:hover{color:var(--on-accent);border-color:var(--accent)}
 .btn-quiet{border-color:var(--line);color:var(--text);background:transparent}
 .btn-quiet:hover{border-color:var(--text)}
 
@@ -144,17 +158,18 @@ section{padding-block:clamp(48px,6vw,80px)}
   border-right:1px solid var(--line);background:var(--bg);
   padding:20px 0 40px;z-index:var(--z-sidebar);
 }
-.sidebar-brand{display:flex;align-items:center;gap:10px;padding:0 20px 16px;text-decoration:none;font:600 .95rem/1 var(--mono)}
-.sidebar-brand b{color:var(--accent)}
-.sidebar-brand span{color:var(--muted);font-weight:500}
+/* The landing's mark: emblem chip plus a display wordmark, with the sheet tag beside it in mono. */
+.sidebar-brand{display:flex;align-items:center;gap:9px;padding:0 20px 16px;text-decoration:none;font:700 1.0625rem/1 var(--display);letter-spacing:-.03em;font-stretch:112%;color:var(--text)}
 .sidebar-brand picture{display:flex;flex:none}
-.sidebar-brand img{width:32px;height:32px;border-radius:50%;border:1px solid var(--line)}
+/* Same emblem chip as the landing header, so the mark never restyles with the theme. */
+.sidebar-brand img{width:28px;height:28px;border-radius:50%;background:#17181A;box-shadow:0 0 0 1px var(--line)}
+.sidebar-brand .mark-tag{font:500 10px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-stretch:100%}
 .sidebar-nav{padding:0 12px}
 .sidebar-group{margin-bottom:4px}
 .sidebar-group-title{
   display:flex;align-items:center;gap:8px;width:100%;padding:10px 12px;
   border:0;background:transparent;cursor:pointer;
-  font:600 .78rem/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
+  font:500 .6875rem/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);
   transition:color .2s;border-radius:var(--r-press);
 }
 .sidebar-group-title:hover{color:var(--text)}
@@ -162,47 +177,54 @@ section{padding-block:clamp(48px,6vw,80px)}
 .sidebar-group.open .sidebar-group-title::after{transform:rotate(225deg)}
 .sidebar-links{display:none;gap:2px;padding:2px 0 8px}
 .sidebar-group.open .sidebar-links{display:flex;flex-direction:column}
+/* Sheet rows, not pills: the active page is marked by an accent rule in the left margin, the same
+   way the landing marks a dimension, and the wash is gone with the 999px radius. */
 .sidebar-links a{
-  display:block;padding:8px 12px 8px 24px;text-decoration:none;
-  font:500 .86rem/1.3 var(--mono);color:var(--muted);border-radius:var(--r-press);
+  display:block;padding:7px 12px 7px 22px;text-decoration:none;
+  font:400 .875rem/1.35 var(--sans);color:var(--muted);border-radius:var(--r-press);
   transition:color .2s,background-color .2s;
 }
-.sidebar-links a:hover{color:var(--text);background:color-mix(in srgb,var(--text) 5%,transparent)}
-/* the label has to clear 4.5:1 on its own wash: plain --accent measures 4.43:1 in light mode,
-   so the active label uses --accent-ink (5.45 light / 6.96 dark). */
-.sidebar-links a.active{color:var(--accent-ink);background:color-mix(in srgb,var(--accent) 8%,transparent);font-weight:600}
-.sidebar-links a.active::before{content:"";display:inline-block;width:4px;height:4px;border-radius:50%;background:var(--accent);margin-right:8px;vertical-align:middle}
+.sidebar-links a:hover{color:var(--text)}
+/* the label has to clear 4.5:1 on the page: plain --accent measures 4.4:1 in light mode, so the
+   active label uses --accent-ink (5.45 light / 6.96 dark) for the rule and the text alike. */
+.sidebar-links a.active{color:var(--accent-ink);font-weight:600;box-shadow:inset 2px 0 0 var(--accent)}
 
 .docs-main{min-width:0;padding:0 clamp(24px,4vw,56px) 120px}
 .docs-content{max-width:820px;padding-top:clamp(32px,4vw,56px)}
 .docs-content section{padding-block:clamp(32px,4vw,48px)}
 .docs-content section + section{border-top:1px solid var(--line)}
 
+/* Solid ground and 56px, as on the landing: an opaque bar keeps the sheet frame reading as a frame
+   instead of a seam showing through a translucent one. */
 .docs-topnav{
   margin-inline:calc(-1 * clamp(24px,4vw,56px));
-  position:sticky;top:0;z-index:var(--z-nav);height:64px;
-  display:flex;align-items:center;gap:20px;
-  background:color-mix(in srgb,var(--bg) 82%,transparent);
-  backdrop-filter:blur(16px) saturate(160%);-webkit-backdrop-filter:blur(16px) saturate(160%);
+  position:sticky;top:0;z-index:var(--z-nav);height:56px;
+  display:flex;align-items:center;gap:clamp(14px,3vw,34px);
+  background:var(--bg);
   border-bottom:1px solid var(--line);
-  padding-inline:clamp(24px,4vw,56px);
+  padding-inline:clamp(24px,4vw,56px) calc(clamp(24px,4vw,56px) + var(--frame));
 }
 .docs-topnav .spacer{margin-left:auto}
-.docs-topnav a{text-decoration:none;font:500 .86rem/1 var(--mono);color:var(--muted);transition:color .2s}
-/* .docs-topnav a is one class + a type, so it outranks .btn-primary: restate the button's own
-   colour here or the primary action renders muted-on-accent (1.29:1). */
-.docs-topnav a.btn-primary{color:var(--on-accent)}
+.docs-topnav a{text-decoration:none;color:var(--muted);transition:color .2s}
+/* The landing's nav rule: a hairline that draws left to right on hover. */
+.docs-topnav a.topnav-aux{position:relative;font:500 15px/1 var(--sans);padding-block:6px}
+.docs-topnav a.topnav-aux::after{content:"";position:absolute;left:0;right:0;bottom:0;height:1px;background:var(--text);transform:scaleX(0);transform-origin:left;transition:transform .28s var(--ease)}
+.docs-topnav a.topnav-aux:hover::after{transform:scaleX(1)}
+.docs-topnav a.topnav-aux:hover{color:var(--text)}
+/* .docs-topnav a is one class plus a type, so it outranks .btn-primary: restate the button's own
+   colour here or the primary action renders muted-on-ink (1.3:1). */
+.docs-topnav a.btn-primary{color:var(--bg)}
+.docs-topnav a.btn-primary:hover{color:var(--on-accent)}
 .docs-topnav .menu-btn{min-height:44px;padding:0 12px}
-.docs-topnav .btn-primary{min-height:44px;padding:0 14px;font-size:.86rem}
-.docs-title{font:600 .9rem/1 var(--mono);white-space:nowrap}
-.docs-title b{color:var(--accent)}
-.docs-topnav a:hover{color:var(--text)}
+.docs-topnav .btn-primary{min-height:44px;padding:0 16px;font-size:15px}
+/* The page's own name, printed the way the landing prints a sheet tag. */
+.docs-title{font:500 10px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
 
 /* anywhere, not break-word: a long dotted identifier such as PromptEvolutionEngine.maybe_auto_evolve()
    is one unbreakable token, and only anywhere also shrinks the min-content width, so the line breaks
    instead of pushing the page past a 390px viewport. */
 code{font-size:.88em;padding:.12em .42em;border-radius:6px;background:color-mix(in srgb,var(--text) 8%,transparent);overflow-wrap:anywhere}
-.codeblock{position:relative;border-radius:var(--r-view);overflow:hidden;background:color-mix(in srgb,var(--surface) 86%,transparent);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);margin:16px 0}
+.codeblock{position:relative;border-radius:var(--r-view);overflow:hidden;background:var(--surface);margin:16px 0}
 .codeblock pre{padding:20px 24px;margin:0;overflow-x:auto;font-size:.88rem;line-height:1.75;color:var(--text)}
 .codeblock .c{color:var(--muted)}
 .codeblock .k{color:var(--accent);font-weight:500}
@@ -227,7 +249,9 @@ td code{font-size:.85em}
 td:first-child{font-family:var(--mono);font-size:.88rem;color:var(--accent-ink);font-weight:500;white-space:nowrap}
 td.desc{color:var(--muted)}
 
-.callout{display:flex;gap:14px;padding:16px 18px;border-radius:var(--r-view);border:1px solid var(--line);background:color-mix(in srgb,var(--surface) 60%,transparent);margin:16px 0}
+/* An inset detail view, as the landing draws one: hairline box on the panel tone, with the accent
+   rule in the left margin instead of a wash. */
+.callout{display:flex;gap:14px;padding:16px 18px;border-radius:var(--r-view);border:1px solid var(--line);border-left:2px solid var(--accent);background:var(--surface);margin:16px 0}
 .callout .icon{flex:none;width:20px;height:20px;color:var(--accent);margin-top:2px}
 .callout p{font-size:.95rem;color:var(--muted);max-width:64ch}
 .callout p b{color:var(--text)}
@@ -237,26 +261,28 @@ td.desc{color:var(--muted)}
 /* A chip is a flex item, so it cannot shrink below the min-content width of a long code token.
    max-width plus overflow-wrap:anywhere (which does affect min-content sizing, unlike break-word)
    keeps a long identifier inside the pill instead of pushing the page wider than a 390px viewport. */
-.proof li{display:inline-flex;align-items:center;gap:7px;max-width:100%;overflow-wrap:anywhere;padding:6px 13px 6px 11px;border-radius:var(--r-press);border:1px solid var(--line);background:color-mix(in srgb,var(--raised) 70%,transparent);font:500 .8rem/1.3 var(--mono);color:var(--muted)}
+.proof li{display:inline-flex;align-items:center;gap:7px;max-width:100%;overflow-wrap:anywhere;padding:5px 9px;border-radius:var(--r-press);border:1px solid var(--line);background:var(--surface);font:500 .75rem/1.35 var(--mono);color:var(--muted)}
 .proof li::before{content:"\2713";color:var(--accent);font-weight:700;font-size:.9em}
 .proof code{background:none;padding:0;font-size:inherit;color:var(--text)}
 
-.install-box{border-radius:var(--r-view);overflow:hidden;background:color-mix(in srgb,var(--surface) 86%,transparent);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);margin:16px 0}
+/* No blur: the landing expresses depth with hairline weight only, and a backdrop filter over an
+   already-flat panel buys nothing. */
+.install-box{border-radius:var(--r-view);overflow:hidden;background:var(--surface);margin:16px 0}
 .tabs{display:flex;gap:4px;padding:10px;border-bottom:1px solid var(--line)}
 .tab{min-height:38px;padding:0 18px;border-radius:var(--r-press);cursor:pointer;border:0;background:transparent;color:var(--muted);font:500 .84rem/1 var(--mono);transition:background-color .2s,color .2s}
 .tab:hover{color:var(--text)}
 .tab[aria-selected="true"]{background:var(--raised);color:var(--text);box-shadow:0 0 0 1px var(--line)}
 .pane{display:none;padding:8px 10px 10px}
 .pane.on{display:block}
-.cmd{display:flex;align-items:center;gap:14px;padding:13px 14px;border-radius:10px}
+.cmd{display:flex;align-items:center;gap:14px;padding:13px 14px;border-radius:var(--r-view)}
 .cmd + .cmd{border-top:1px solid var(--line);border-radius:0}
 .cmd::before{content:"$";font:600 .92rem/1 var(--mono);color:var(--accent)}
 .cmd code{flex:1;min-width:0;overflow-x:auto;white-space:nowrap;background:none;padding:0;font-size:.92rem}
 
 #page-features td:first-child{white-space:normal;min-width:11ch}
 .feature-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;margin:20px 0}
-.feature-card{border:1px solid var(--line);border-radius:var(--r-view);padding:20px;background:color-mix(in srgb,var(--surface) 50%,transparent);transition:border-color .3s,box-shadow .3s}
-.feature-card:hover{border-color:color-mix(in srgb,var(--accent) 40%,var(--line));box-shadow:var(--glow)}
+.feature-card{border:1px solid var(--line);border-radius:var(--r-view);padding:20px;background:var(--surface);transition:border-color .3s}
+.feature-card:hover{border-color:color-mix(in srgb,var(--accent) 40%,var(--line))}
 .feature-card :is(h2,h3){margin-bottom:8px;font-size:1rem}
 .feature-card :is(h2,h3) code{color:var(--accent-ink);font-size:.9em}
 .feature-card p{font-size:.92rem;color:var(--muted);line-height:1.55}
@@ -264,15 +290,17 @@ td.desc{color:var(--muted)}
 .steps{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px;margin:20px 0;position:relative}
 .steps::before{content:"";position:absolute;left:0;right:0;top:20px;height:2px;background:var(--line);border-radius:2px}
 .steps li{padding-top:44px;display:grid;gap:6px;align-content:start;position:relative}
-.steps li::before{content:"";position:absolute;top:14px;left:0;width:14px;height:14px;border-radius:50%;background:var(--bg);border:2px solid var(--line)}
-.steps li.key::before{border-color:var(--accent);background:var(--accent);box-shadow:var(--glow)}
+.steps li::before{content:"";position:absolute;top:14px;left:0;width:12px;height:12px;border-radius:2px;background:var(--bg);border:1px solid var(--line)}
+.steps li.key::before{border-color:var(--accent);background:var(--accent)}
 .steps :is(h2,h3){font-size:.95rem}
 .steps p{font-size:.88rem;color:var(--muted)}
 
-.statusline{position:fixed;inset:auto 0 0 0;z-index:var(--z-status);display:flex;align-items:center;gap:16px;height:34px;padding:0 14px 0 0;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-top:1px solid var(--line);font:500 .76rem/1 var(--mono);color:var(--muted)}
-.statusline .mode{align-self:stretch;display:flex;align-items:center;padding:0 12px;background:var(--accent);color:var(--on-accent);font-weight:700;letter-spacing:.08em}
+/* The landing has no status chrome, so this bar prints as one more rule on the sheet: opaque
+   ground, hairline on top, and the mode in the accent pen instead of an orange block. */
+.statusline{position:fixed;inset:auto 0 0 0;z-index:var(--z-status);display:flex;align-items:center;gap:16px;height:34px;padding:0 calc(14px + var(--frame)) 0 0;background:var(--bg);border-top:1px solid var(--line);font:500 .7rem/1 var(--mono);letter-spacing:.06em;color:var(--muted)}
+.statusline .mode{align-self:stretch;display:flex;align-items:center;padding:0 12px 0 calc(12px + var(--frame));color:var(--accent);font-weight:600;letter-spacing:.14em;text-transform:uppercase}
 .statusline .where{color:var(--text)}
-.statusline .gauge{margin-left:auto;width:min(26vw,220px);height:6px;border-radius:6px;background:var(--line);overflow:hidden}
+.statusline .gauge{margin-left:auto;width:min(26vw,220px);height:2px;background:var(--line);overflow:hidden}
 .statusline .gauge i{display:block;height:100%;background:var(--accent);transform-origin:left;transform:scaleX(0)}
 @supports (animation-timeline: scroll()){.statusline .gauge i{animation:fill linear both;animation-timeline:scroll(root block)}}
 @supports not (animation-timeline: scroll()){.statusline .gauge{display:none}}
@@ -304,8 +332,10 @@ td.desc{color:var(--muted)}
 @media (min-width:901px){.menu-btn{display:none}.sidebar-overlay{display:none}}
 
 @media (max-width:620px){
-  .docs-topnav{padding-inline:14px;gap:10px}
+  .docs-topnav{padding-inline:24px calc(24px + var(--frame));gap:10px}
   .docs-topnav .topnav-aux{display:none}
+  /* Three cells do not fit 390px: the middle one is the one nobody reads twice. */
+  .zones span:nth-child(2){display:none}
 }
 
 @media (prefers-reduced-motion: no-preference){
@@ -323,7 +353,9 @@ td.desc{color:var(--muted)}
   *,*::before,*::after{animation:none !important;transition:none !important}
 }
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
-.head .page-title{font-size:clamp(2rem,3vw + .6rem,2.8rem);font-weight:620;letter-spacing:-.035em;line-height:1.06}
+/* The landing's display scale: wdth 112, leading 0.94. The page titles were the last type on this
+   sheet still set in the old narrow widths. */
+.head .page-title{font:700 clamp(2.4rem,4vw + .8rem,3.6rem)/.94 var(--display);letter-spacing:-.035em;font-stretch:112%}
 html:not(.js) .sidebar-links{display:flex;flex-direction:column}
 @media(max-width:900px){html:not(.js) .sidebar{position:static;transform:none;visibility:visible;width:auto;height:auto}html:not(.js) .menu-btn{display:none}}
 @media(max-width:620px){.cmd{align-items:flex-start}.cmd code{white-space:pre-wrap;overflow-wrap:anywhere;overflow-x:visible}}
@@ -344,24 +376,22 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
 @media (hover: hover){.theme-btn:hover{border-color:var(--accent);color:var(--accent)}.theme-btn:hover svg{rotate:-30deg}}
 .theme-btn:active{transform:scale(.94)}
 @media (max-width:620px){.docs-topnav .theme-btn{width:44px;height:44px}}
-@media (max-width:420px){.docs-topnav{gap:6px}.docs-title .docs-suffix{display:none}}
+@media (max-width:420px){.docs-topnav{gap:6px}}
 </style>
 <link rel="canonical" href="https://babitdor.github.io/NovaCode/docs/">
 <meta name="twitter:card" content="summary_large_image">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
+<div class="sheet-frame" aria-hidden="true"></div>
 
 <div class="docs-layout">
   <aside class="sidebar" id="sidebar" aria-label="Documentation navigation">
     <!-- The brand is the way home, so it carries no data-page: the page switcher collects every
          [data-page] and preventDefault()s it, which would swallow a link to the landing page. -->
-    <a class="sidebar-brand" href="../index.html" aria-label="nova@code:~$, back to the landing page">
-      <picture>
-        <source data-theme-source media="(prefers-color-scheme: dark)" srcset="../assets/avatar-dark.webp">
-        <img src="../assets/avatar-light.webp" width="32" height="32" alt="">
-      </picture>
-      <span><b>nova</b>@code:~$</span>
+    <a class="sidebar-brand" href="../index.html" aria-label="Nova, back to the landing page">
+      <img src="../assets/emblem-128.webp" width="128" height="128" alt="" decoding="async">
+      <b>nova</b><small class="mark-tag">documentation</small>
     </a>
     <nav class="sidebar-nav" id="sidebar-nav">
       <div class="sidebar-group open">
@@ -428,7 +458,7 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
       <button class="btn btn-quiet menu-btn" id="menu-btn" aria-label="Toggle navigation" aria-expanded="false" aria-controls="sidebar">
         <svg width="18" height="18" viewBox="0 0 256 256" fill="currentColor"><path d="M224,128a8,8,0,0,1-8,8H40a8,8,0,0,1,0-16H216A8,8,0,0,1,224,128ZM40,72H216a8,8,0,0,0,0-16H40a8,8,0,0,0,0,16ZM216,184H40a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16Z"/></svg>
       </button>
-      <span class="docs-title"><b>nova</b><span class="docs-suffix">@code:~$</span> docs</span>
+      <span class="docs-title">docs</span>
       <span class="spacer"></span>
       <a class="topnav-aux" href="https://github.com/Babitdor/NovaCode">GitHub</a>
       <a class="topnav-aux" href="../changelog/index.html">Changelog</a>
@@ -438,6 +468,7 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
     </nav>
 
     <main id="main" class="docs-content">
+      <div class="zones" aria-hidden="true"><span>documentation sheet</span><span>novacode &middot; rev 1.0.99</span><span>scale 1:1</span></div>
       <h1 class="sr-only">NovaCode documentation</h1>
 
       <!-- 1. WHAT NOVACODE IS -->
@@ -2873,6 +2904,14 @@ uv pip install novacode-cli[voice-pocket]</pre>
   markScrollables();
   window.addEventListener('resize', markScrollables);
 })();
+</script>
+<script src="../assets/lenis.min.js"></script>
+<script>
+  /* Smooths wheel and touch scrolling on the real scroll position, so the hash router, sticky
+     top bar and scroll-padding keep working. Reduced motion keeps native scrolling. */
+  if (window.Lenis && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    new Lenis({ autoRaf: true, lerp: 0.11 });
+  }
 </script>
 </body>
 </html>
