@@ -72,6 +72,7 @@ class TeamCoordinator:
         limits: Limits | None = None,
         workspace: Path | None = None,
         context_budget: int = 32000,
+        handoff_pid: int | None = None,
     ) -> None:
         """Bind one root lazily; constructing a disabled graph never opens SQLite."""
         self.lead = lead
@@ -80,6 +81,7 @@ class TeamCoordinator:
         self.limits = limits or Limits()
         self.workspace = (workspace or Path.cwd()).resolve()
         self.context_budget = context_budget
+        self.handoff_pid = handoff_pid
         scope = hashlib.sha256(f"{lead.project}\0{lead.root}".encode()).hexdigest()[:32]
         self.path = directory / scope / "teams.sqlite3"
         self._store: TeamStore | None = None
@@ -112,7 +114,10 @@ class TeamCoordinator:
                     self._store = await asyncio.to_thread(TeamStore, self.path, self.limits)
                     try:
                         await asyncio.to_thread(
-                            self._store.acquire_owner, self.lead, self._owner_token
+                            self._store.acquire_owner,
+                            self.lead,
+                            self._owner_token,
+                            handoff_pid=self.handoff_pid,
                         )
                     except BaseException:
                         await asyncio.to_thread(self._store.close)

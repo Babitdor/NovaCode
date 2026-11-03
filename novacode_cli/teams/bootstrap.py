@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import os
 import threading
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -76,6 +77,12 @@ def attach(  # noqa: PLR0915 - Ordered runtime assembly.
     from novacode_cli.config.config import settings
 
     profile = NovaConfig()
+    handoff_value = os.environ.pop("NOVA_UPDATE_HANDOFF_PID", "")
+    try:
+        handoff_pid = int(handoff_value) if handoff_value else None
+    except ValueError:
+        handoff_pid = None
+    pending_handoff_pid = handoff_pid
     base_tools = tuple(tools)
     specs = {
         spec["name"]: spec
@@ -200,6 +207,9 @@ def attach(  # noqa: PLR0915 - Ordered runtime assembly.
             adapters["remote"] = ContainerAdapter(process_model, container_profile)
 
     def factory(root_id: str) -> TeamCoordinator:
+        nonlocal pending_handoff_pid
+        owner_handoff_pid = pending_handoff_pid
+        pending_handoff_pid = None
         coordinator = TeamCoordinator(
             settings.user_deepagents_dir / "sessions",
             Identity(project, root_id),
@@ -207,6 +217,7 @@ def attach(  # noqa: PLR0915 - Ordered runtime assembly.
             workspace=workspace,
             swarm_enabled=profile.get_agent_team_settings()["swarm"],
             context_budget=max(1, int(_window_tokens(model) * 0.75)),
+            handoff_pid=owner_handoff_pid,
         )
         coordinator.capabilities = capabilities
         return coordinator

@@ -72,7 +72,9 @@ class TeamStore:
                 self.db.execute("ROLLBACK")
                 raise
 
-    def acquire_owner(self, caller: Identity, token: str) -> None:
+    def acquire_owner(
+        self, caller: Identity, token: str, *, handoff_pid: int | None = None
+    ) -> None:
         """Reject a second live parent atomically; PID reuse is not ownership."""
         import psutil
 
@@ -82,13 +84,18 @@ class TeamStore:
                 (caller.project, caller.root),
             ).fetchone()
             if row and row[0] != token:
-                try:
-                    alive = psutil.Process(row[1]).create_time() == row[2]
-                except psutil.NoSuchProcess:
+                if row[1] == handoff_pid:
+                    # The updater explicitly identified its old process as the
+                    # owner being replaced by this resumed runtime.
                     alive = False
-                except psutil.AccessDenied as exc:
-                    msg = "Cannot establish coordinator ownership"
-                    raise TeamError(msg) from exc
+                else:
+                    try:
+                        alive = psutil.Process(row[1]).create_time() == row[2]
+                    except psutil.NoSuchProcess:
+                        alive = False
+                    except psutil.AccessDenied as exc:
+                        msg = "Cannot establish coordinator ownership"
+                        raise TeamError(msg) from exc
                 if alive:
                     msg = "This root already has a live coordinator owner"
                     raise TeamError(msg)

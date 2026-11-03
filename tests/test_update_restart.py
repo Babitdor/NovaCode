@@ -51,10 +51,12 @@ def test_relaunch_runs_this_environment_into_the_session_and_waits(monkeypatch):
     command = popen.call_args.args[0]
     assert command == [sys.executable, "-m", "novacode_cli", "--continue", "s1"]
     assert popen.call_args.kwargs["env"][updates.CONTINUE_ENV] == "1"
+    assert popen.call_args.kwargs["env"]["NOVA_UPDATE_HANDOFF_PID"] == str(updates.os.getpid())
 
     updates._relaunch(None, continue_turn=False)
     assert popen.call_args.args[0] == [sys.executable, "-m", "novacode_cli"]
     assert updates.CONTINUE_ENV not in popen.call_args.kwargs["env"]
+    assert popen.call_args.kwargs["env"]["NOVA_UPDATE_HANDOFF_PID"] == str(updates.os.getpid())
 
 
 def test_restarting_update_says_it_restarts(monkeypatch, capsys):

@@ -470,6 +470,10 @@ def _relaunch(session_id: str | None, *, continue_turn: bool) -> int:
     if session_id:
         command += ["--continue", session_id]
     env = dict(os.environ)
+    # ``execve`` keeps the PID on POSIX, while on Windows this process remains
+    # alive waiting for the child. Team ownership can therefore still point at
+    # this updater after a failed-but-safe coordinator shutdown.
+    env["NOVA_UPDATE_HANDOFF_PID"] = str(os.getpid())
     if continue_turn:
         env[CONTINUE_ENV] = "1"
     for stream in (sys.stdout, sys.stderr):
