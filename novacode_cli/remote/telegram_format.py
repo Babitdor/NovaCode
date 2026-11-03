@@ -193,6 +193,23 @@ def render(markdown: str) -> list[str]:
     return messages or [esc(markdown.strip()) or "…"]
 
 
+def image_sources(markdown: str) -> list[str]:
+    """Return Markdown image targets without interpreting them as URLs/files."""
+    tree = SyntaxTreeNode(_md.parse(markdown or ""))
+    sources: list[str] = []
+
+    def visit(node: SyntaxTreeNode) -> None:
+        if node.type == "image":
+            source = str(node.attrs.get("src", "")).strip()
+            if source and source not in sources:
+                sources.append(source)
+        for child in node.children:
+            visit(child)
+
+    visit(tree)
+    return sources
+
+
 def to_plain(html_text: str) -> str:
     """Fallback when Telegram still refuses the HTML: the text, no markup."""
     return html.unescape(re.sub(r"<[^>]+>", "", html_text))

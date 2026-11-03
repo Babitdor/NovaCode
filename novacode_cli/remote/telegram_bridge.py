@@ -21,7 +21,9 @@ import hashlib
 import logging
 import re
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import unquote, urlsplit
 
 import aiohttp
 
@@ -30,6 +32,7 @@ from novacode_cli.remote.bridge import (
     RemoteMessage,
     RemotePlatform,
 )
+from novacode_cli.remote.telegram_format import image_sources
 from novacode_cli.remote.telegram_format import render as render_markdown
 from novacode_cli.remote.telegram_format import to_plain
 
@@ -258,6 +261,7 @@ class TelegramBridge:
         *,
         req_timeout: aiohttp.ClientTimeout | None = None,
         return_errors: bool = False,
+        photo: tuple[bytes, str, str] | None = None,
     ) -> dict[str, Any] | None:
         """:meth:`_api_call_once`, resending a call refused as rate-limited.
 
@@ -267,7 +271,7 @@ class TelegramBridge:
         attempts = 1 if method == "getUpdates" else self._RATE_LIMIT_ATTEMPTS
         for attempt in range(attempts):
             result = await self._api_call_once(
-                method, payload, req_timeout=req_timeout, return_errors=return_errors
+                method, payload, req_timeout=req_timeout, return_errors=return_errors, photo=photo
             )
             limited = (self._last_api_error or "").lower().startswith("too many requests")
             if result is not None and not (return_errors and limited):
@@ -284,6 +288,7 @@ class TelegramBridge:
         *,
         req_timeout: aiohttp.ClientTimeout | None = None,
         return_errors: bool = False,
+        photo: tuple[bytes, str, str] | None = None,
     ) -> dict[str, Any] | None:
         """Make a Telegram Bot API call.
 
@@ -306,7 +311,21 @@ class TelegramBridge:
             await asyncio.sleep(delay)
         url = f"{_TELEGRAM_API}/bot{self._config.token}/{method}"
         try:
-            async with session.post(url, json=payload, timeout=req_timeout) as resp:
+            request_data: aiohttp.FormData | None = None
+            if photo is not None:
+                request_data = aiohttp.FormData()
+                for key, value in payload.items():
+                    request_data.add_field(key, str(value))
+                content, filename, mime_type = photo
+                request_data.add_field(
+                    "photo", content, filename=filename, content_type=mime_type
+                )
+            request = (
+                session.post(url, data=request_data, timeout=req_timeout)
+                if request_data is not None
+                else session.post(url, json=payload, timeout=req_timeout)
+            )
+            async with request as resp:
                 data = await resp.json()
                 self._last_api_error = None
                 if not data.get("ok"):
@@ -559,6 +578,72 @@ class TelegramBridge:
                 await self._delete_messages(chat_id, ids)
         return ids
 
+    async def _send_photo(
+        self,
+        chat_id: int,
+        path: Path,
+        *,
+        thread_id: int | None,
+        sid: str | None,
+    ) -> None:
+        """Send one already validated, Telegram-sized image as a native photo."""
+        from novacode_cli.remote.images import prepare_telegram_photo
+
+        photo = await asyncio.to_thread(prepare_telegram_photo, path)
+        payload = self._thread_params(
+            {"chat_id": chat_id, "caption": path.name[:200]}, thread_id
+        )
+        sent = await self._api_call("sendPhoto", payload, photo=photo)
+        if sent is None:
+            logger.warning("Telegram could not send image preview for %s", path.name)
+        self._remember(sent, sid)
+
+    async def _send_image_previews(
+        self,
+        chat_id: int,
+        markdown: str,
+        workspace_root: str | None,
+        *,
+        thread_id: int | None,
+        sid: str | None,
+    ) -> None:
+        """Send Markdown images that resolve inside the active workspace."""
+        if not workspace_root:
+            return
+        root = Path(workspace_root).expanduser().resolve()
+        sources = (await asyncio.to_thread(image_sources, markdown))[:5]
+        for source in sources:
+            windows_absolute = bool(re.match(r"^[A-Za-z]:[\\/]", source))
+            parsed = urlsplit(source)
+            if (parsed.scheme and not windows_absolute) or parsed.netloc:
+                continue
+            raw_path = unquote(source if windows_absolute else parsed.path).strip()
+            if not raw_path:
+                continue
+            candidate = Path(raw_path)
+            # Agent virtual paths such as /diagram.png map to the workspace root.
+            if raw_path.startswith(("/", "\\")) and not candidate.is_relative_to(root):
+                candidate = root / raw_path.lstrip("/\\")
+            elif not candidate.is_absolute():
+                candidate = root / candidate
+            try:
+                resolved = candidate.resolve(strict=True)
+                resolved.relative_to(root)
+            except (OSError, ValueError):
+                continue
+            from novacode_cli.image_utils import is_image_file
+
+            if not resolved.is_file() or not is_image_file(resolved):
+                continue
+            try:
+                await self._send_photo(
+                    chat_id, resolved, thread_id=thread_id, sid=sid
+                )
+            except Exception:
+                logger.warning(
+                    "Telegram image preview skipped for %s", resolved.name, exc_info=True
+                )
+
     async def _delete_messages(self, chat_id: int, message_ids: list[int]) -> None:
         """Delete the bot's own messages. Best-effort: Telegram refuses after 48 h."""
         for mid in message_ids:
@@ -704,6 +789,9 @@ class TelegramBridge:
             reply_fn=reply,
             edit_fn=connected_editor(self, self._editor(chat_id, route)),
             answer_edit_fn=connected_editor(self, self._editor(chat_id, route)),
+            image_preview_fn=lambda markdown, root: self._send_image_previews(
+                chat_id, markdown, root, thread_id=thread, sid=sid
+            ),
             route=route,
         )
 
@@ -847,6 +935,20 @@ class TelegramBridge:
                             _chat_id, response_text, thread_id=_route["thread"], sid=_route["sid"]
                         )
 
+                    async def image_preview_fn(
+                        markdown: str,
+                        workspace_root: str | None,
+                        _chat_id: int = chat_id,
+                        _route: dict = route,
+                    ) -> None:
+                        await self._send_image_previews(
+                            _chat_id,
+                            markdown,
+                            workspace_root,
+                            thread_id=_route["thread"],
+                            sid=_route["sid"],
+                        )
+
                     async def typing_fn(_chat_id: int = chat_id, _route: dict = route) -> None:
                         await self._trigger_typing(_chat_id, _route["thread"])
 
@@ -865,6 +967,7 @@ class TelegramBridge:
                         typing_fn=typing_fn,
                         edit_fn=edit_fn,
                         answer_edit_fn=answer_edit_fn,
+                        image_preview_fn=image_preview_fn,
                         ask_fn=self._asker(chat_id, route),
                         approval_fn=self._approval_asker(chat_id, route),
                         approval_check=self._approval_check(chat_id, thread_id),

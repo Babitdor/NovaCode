@@ -107,6 +107,8 @@ class RemoteMessage:
     route: dict = field(default_factory=dict)
     #: Independent editable answer; edit_fn remains the tool/progress message.
     answer_edit_fn: Callable[..., Awaitable[None]] | None = None
+    #: Optional sender for local image previews in the final response.
+    image_preview_fn: Callable[[str, str | None], Awaitable[None]] | None = None
     #: Stable platform account ID, used for scoped launch confirmations.
     sender_id: str | int | None = None
     #: Incoming message ID, for requester-specific Telegram picker replies.

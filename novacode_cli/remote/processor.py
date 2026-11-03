@@ -381,6 +381,19 @@ async def remote_message_processor(
                         except Exception:
                             pass
 
+                        preview_images = getattr(remote_msg, "image_preview_fn", None)
+                        if preview_images is not None and response_text:
+                            try:
+                                workspace_root = getattr(backend, "root_dir", None) or getattr(
+                                    backend, "cwd", None
+                                )
+                                await preview_images(
+                                    response_text,
+                                    str(workspace_root) if workspace_root is not None else None,
+                                )
+                            except Exception:
+                                logger.debug("Remote image preview delivery failed", exc_info=True)
+
                     finally:
                         session_state._remote_approval_handler = previous_approval_handler
                         if answer is not None and not answer.closed:
