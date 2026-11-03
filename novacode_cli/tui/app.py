@@ -15377,10 +15377,7 @@ class NovaApp(App):
                 # 42-line summary, which overstated what was saved.
                 body.append("◈ summary preserved to memory\n", style="green")
             if summary:
-                body.append(
-                    "\n" + summary[:400] + ("…" if len(summary) > 400 else ""),
-                    style="dim italic",
-                )
+                body.append("\n" + summary, style="dim italic")
             card = Collapsible(
                 Static(body, classes="compact-body"),
                 title=(
