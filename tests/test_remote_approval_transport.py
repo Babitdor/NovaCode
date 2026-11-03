@@ -213,6 +213,7 @@ async def test_telegram_ask_delivers_to_topic_and_retracts_exact_messages() -> N
         thread_id=55,
         sid="root",
         require_complete=True,
+        reply_markup=None,
     )
     await retract()
     bot._delete_messages.assert_awaited_once_with(-100, [201, 202])
@@ -373,3 +374,4 @@ async def test_terminal_stream_mirrors_do_not_gain_approval_capabilities(
     for target in (telegram, discord):
         assert target.ask_fn is None
         assert target.approval_check is None
+        assert target.approval_fn is None

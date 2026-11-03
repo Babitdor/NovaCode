@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -358,7 +359,7 @@ class TelegramBridge:
             {
                 "offset": self._offset,
                 "timeout": _LONG_POLL_SERVER_TIMEOUT,
-                "allowed_updates": ["message"],
+                "allowed_updates": ["message", "callback_query"],
             },
             req_timeout=_LONG_POLL_CLIENT_TIMEOUT,
         )
@@ -529,6 +530,7 @@ class TelegramBridge:
         thread_id: int | None = None,
         sid: str | None = None,
         require_complete: bool = False,
+        reply_markup: dict[str, Any] | None = None,
     ) -> list[int]:
         """Send markdown ``text`` as Telegram HTML (chunked, topic-aware).
 
@@ -538,10 +540,12 @@ class TelegramBridge:
         ids: list[int] = []
         delivered_all = False
         try:
-            for chunk in await asyncio.to_thread(render_markdown, text):
-                sent = await self._send_html(
-                    "sendMessage", self._thread_params({"chat_id": chat_id}, thread_id), chunk
-                )
+            chunks = await asyncio.to_thread(render_markdown, text)
+            for index, chunk in enumerate(chunks):
+                params = self._thread_params({"chat_id": chat_id}, thread_id)
+                if reply_markup is not None and index == len(chunks) - 1:
+                    params["reply_markup"] = reply_markup
+                sent = await self._send_html("sendMessage", params, chunk)
                 self._remember(sent, sid)
                 mid = (sent or {}).get("result", {}).get("message_id")
                 if mid is not None:
@@ -587,6 +591,7 @@ class TelegramBridge:
 
     def _asker(
         self, chat_id: int, route: dict[str, Any],
+        *, reply_markup: dict[str, Any] | None = None,
     ) -> Callable[[str], Awaitable[Callable[[], Awaitable[None]]]]:
         """Deliver a retractable prompt, surfacing connection and zero-delivery failures."""
 
@@ -596,7 +601,7 @@ class TelegramBridge:
                 raise RuntimeError(message)
             ids = await self._send_message(
                 chat_id, text, thread_id=route.get("thread"), sid=route.get("sid"),
-                require_complete=True,
+                require_complete=True, reply_markup=reply_markup,
             )
             if not ids:
                 message = "Telegram could not deliver the approval prompt"
@@ -608,6 +613,49 @@ class TelegramBridge:
             return retract
 
         return ask
+
+    def _approval_asker(
+        self,
+        chat_id: int,
+        route: dict[str, Any],
+    ) -> Callable[[str, str], Awaitable[Callable[[], Awaitable[None]]]]:
+        """Show per-request inline buttons after delivering the complete details."""
+
+        async def ask(text: str, nonce: str) -> Callable[[], Awaitable[None]]:
+            markup = {
+                "inline_keyboard": [
+                    [
+                        {"text": "Approve", "callback_data": f"nova:approve:{nonce}"},
+                        {"text": "Reject", "callback_data": f"nova:reject:{nonce}"},
+                    ]
+                ],
+            }
+            return await self._asker(chat_id, route, reply_markup=markup)(text)
+
+        return ask
+
+    async def _approval_callback(self, callback: dict[str, Any]) -> dict[str, Any] | None:
+        """Convert a button press to the same scoped response as a typed command."""
+        callback_id = callback.get("id")
+        if callback_id:
+            await self._api_call("answerCallbackQuery", {"callback_query_id": callback_id})
+        data = callback.get("data")
+        match = (
+            re.fullmatch(r"nova:(approve|reject):([a-f0-9]{32})", data)
+            if isinstance(data, str)
+            else None
+        )
+        message = callback.get("message")
+        if match is None or not isinstance(message, dict):
+            return None
+        # Telegram's message author is the bot. Authorization must use the human
+        # who pressed the button, never the message's author or original requester.
+        return {
+            **message,
+            "from": callback.get("from") or {},
+            "text": f"{match[1]} {match[2]}",
+            "reply_to_message": message,
+        }
 
     def _editor(self, chat_id: int, route: dict):
         from novacode_cli.remote.streaming import PagedEditor
@@ -699,7 +747,11 @@ class TelegramBridge:
                     _consecutive_errors = 0
 
                 for update in updates:
-                    message = update.get("message")
+                    message = (
+                        await self._approval_callback(update["callback_query"])
+                        if "callback_query" in update
+                        else update.get("message")
+                    )
                     if not message:
                         continue
 
@@ -814,6 +866,7 @@ class TelegramBridge:
                         edit_fn=edit_fn,
                         answer_edit_fn=answer_edit_fn,
                         ask_fn=self._asker(chat_id, route),
+                        approval_fn=self._approval_asker(chat_id, route),
                         approval_check=self._approval_check(chat_id, thread_id),
                         user_mention=user_mention,
                         thread_id=thread_id,

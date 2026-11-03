@@ -28,7 +28,10 @@ async def test_hub_authentication_rejects_other_clients():
 
 
 @pytest.mark.asyncio
-async def test_shared_polling_routes_two_sessions_and_hands_off(monkeypatch):
+@pytest.mark.parametrize("update_kind", ["message", "callback_query"])
+async def test_shared_polling_routes_two_sessions_and_hands_off(
+    monkeypatch: pytest.MonkeyPatch, update_kind: str,
+) -> None:
     store = InMemoryStore()
     monkeypatch.setattr("novacode_cli.memory.store.get_durable_store", lambda: store)
     incoming = asyncio.Queue()
@@ -51,16 +54,22 @@ async def test_shared_polling_routes_two_sessions_and_hands_off(monkeypatch):
         await b.subscribe([(7, 0), (7, 66)])
         assert a.hub is not None and b.hub is None
         for mid, topic in [(1, 55), (2, 66)]:
+            message = {"chat": {"id": 7}, "message_thread_id": topic, "text": str(mid)}
             await incoming.put(
                 {
                     "update_id": mid,
-                    "message": {"chat": {"id": 7}, "message_thread_id": topic, "text": str(mid)},
+                    update_kind: message if update_kind == "message" else {"message": message},
                 }
             )
         first = await asyncio.wait_for(a.next_updates(), 5)
         second = await asyncio.wait_for(b.next_updates(), 5)
-        assert first[0]["message"]["message_thread_id"] == 55
-        assert second[0]["message"]["message_thread_id"] == 66
+        first_message = first[0][update_kind]
+        second_message = second[0][update_kind]
+        if update_kind == "callback_query":
+            first_message = first_message["message"]
+            second_message = second_message["message"]
+        assert first_message["message_thread_id"] == 55
+        assert second_message["message_thread_id"] == 66
         await incoming.put({"update_id": 2, "message": {"chat": {"id": 7}, "message_thread_id": 1}})
         assert (await asyncio.wait_for(a.next_updates(), 5))[0]["message"]["message_thread_id"] == 1
         assert all(name == "a" for name, _ in pollers)

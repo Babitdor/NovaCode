@@ -105,7 +105,9 @@ class TelegramHub:
                 continue
             updates = await self.fetch(offset)
             for update in updates:
-                message = update.get("message", {})
+                message = update.get("message") or update.get("callback_query", {}).get(
+                    "message", {}
+                )
                 key = (message.get("chat", {}).get("id"), message.get("message_thread_id"))
                 client = self.topics.get(key)
                 if client is None and key[1] in (None, 1):

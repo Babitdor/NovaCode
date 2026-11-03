@@ -229,6 +229,8 @@ jobs:
           tests/test_waiter_tools.py
           tests/test_remote_approvals.py
           tests/test_remote_approval_transport.py
+          tests/test_telegram_approval_buttons.py
+          tests/test_telegram_hub.py
           tests/test_remote_approval_processor.py
           tests/test_remote_approval_tui.py
           tests/test_remote_approval_worker.py

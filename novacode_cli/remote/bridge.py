@@ -115,6 +115,10 @@ class RemoteMessage:
     images: list[ImageData] = field(default_factory=list)
     #: Revalidate approval senders against the live bridge and current authorization.
     approval_check: Callable[[str], bool] | None = None
+    #: Optional native approval controls, bound to the broker's single-use nonce.
+    approval_fn: Callable[
+        [str, str], Awaitable[Callable[[], Awaitable[None]] | None]
+    ] | None = None
 
 
 @dataclass

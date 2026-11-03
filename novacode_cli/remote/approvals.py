@@ -192,6 +192,7 @@ class RemoteApprovalBroker:
         self._pending[nonce] = pending
         retracts: list[Callable[[], Awaitable[None]]] = []
         send = getattr(msg, "ask_fn", None) or msg.reply_fn
+        native_approval = getattr(msg, "approval_fn", None)
         approved = False
         try:
             try:
@@ -204,10 +205,19 @@ class RemoteApprovalBroker:
                         prompt = (
                             f"{heading}\nDetails {index}/{len(pages)} (JSON):\n```\n{page}\n```"
                         )
-                        if index == len(pages):
-                            prompt += f"\nApprove {nonce}\nor Reject {nonce}\nExpires in 5 minutes."
+                        final_page = index == len(pages)
+                        if final_page:
+                            prompt += (
+                                "\nChoose Approve or Reject below.\nExpires in 5 minutes."
+                                if native_approval is not None
+                                else f"\nApprove {nonce}\nor Reject {nonce}\nExpires in 5 minutes."
+                            )
                         async with asyncio.timeout(_SEND_TIMEOUT):
-                            retract = await send(prompt)
+                            retract = (
+                                await native_approval(prompt, nonce)
+                                if final_page and native_approval is not None
+                                else await send(prompt)
+                            )
                         if callable(retract):
                             retracts.append(retract)
                     approved = await future
