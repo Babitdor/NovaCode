@@ -61,6 +61,11 @@ jobs:
           novacode_cli/shell/processes.py
           novacode_cli/shell/output.py
           novacode_cli/tui/shell_output.py
+          novacode_cli/remote/async_task_clients.py
+          novacode_cli/remote/async_task_watcher.py
+          novacode_cli/tools/waiter_tools.py
+          scripts/benchmark_background_tasks.py
+          tests/test_background_responsiveness.py
           novacode_cli/agents/attribution.py
           novacode_cli/plugins/claude_plugins.py
           novacode_cli/plugins/components.py
@@ -216,6 +221,8 @@ jobs:
           tests/test_remote_cron.py
           tests/test_remote_start_approval.py
           tests/test_remote_session_resume.py
+          tests/test_background_responsiveness.py
+          tests/test_waiter_tools.py
           tests/test_remote_approvals.py
           tests/test_remote_approval_transport.py
           tests/test_remote_approval_processor.py

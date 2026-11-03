@@ -106,6 +106,8 @@ async def test_slow_task_keeps_monitoring_and_delivers_result(monkeypatch):
     assert client.runs.get.await_count == 3
     assert not watcher.running_tasks()
     assert "a" in watcher._watched
+    client.aclose.assert_not_awaited()  # Shared until this session's watcher closes.
+    await watcher.aclose()
     client.aclose.assert_awaited_once()
 
 
@@ -131,12 +133,13 @@ async def test_connection_failure_is_visible_and_recovers(monkeypatch):
     assert "Connection interrupted" in notices[0][1]
     assert "Connection restored" in notices[1][1]
     assert notices[2][0] == "success"
+    await watcher.aclose()
 
 
 async def test_failed_setup_can_be_watched_again():
     watcher = AsyncTaskWatcher(lambda *args: None)
     watcher._spec_for = lambda name: None
-    state = {"a": {"status": "running", "agent_name": "missing"}}
+    state = {"a": {"status": "running", "agent_name": "missing", "thread_id": "t", "run_id": "r"}}
     watcher.sync_from_state(state)
     await asyncio.gather(*watcher._tasks)
     assert "a" not in watcher._watched
@@ -184,5 +187,5 @@ async def test_slow_tasks_do_not_starve_later_completions(monkeypatch):
         assert maximum <= 2
         assert len(watcher.running_tasks()) == 4
     finally:
-        await watcher.aclose()
+        await asyncio.wait_for(watcher.aclose(), 2)
     assert not watcher._tasks

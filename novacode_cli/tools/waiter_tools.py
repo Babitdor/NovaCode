@@ -8,6 +8,7 @@ import json
 import logging
 import threading
 import time
+from collections import OrderedDict
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -56,7 +57,8 @@ _observers: list[Callable[[], None]] = []
 _interrupts: dict[int, tuple[str, Callable[[], None]]] = {}
 #: Conversations whose wait the user's input released: the next wait call is
 #: refused until the agent has replied (the docstring alone was ignored).
-_released: set[str] = set()
+_MAX_RELEASED_THREADS = 512
+_released: OrderedDict[str, None] = OrderedDict()
 _WaitResult = TypeVar("_WaitResult")
 
 _STOP_WAITING = (
@@ -73,7 +75,8 @@ def _waiting_steps(messages: list) -> int:
         if kind == "human":
             break
         if kind == "ai" and any(
-            call.get("name") == "wait_for_task" for call in getattr(message, "tool_calls", None) or []
+            call.get("name") == "wait_for_task"
+            for call in getattr(message, "tool_calls", None) or []
         ):
             steps += 1
     return steps
@@ -115,7 +118,11 @@ async def _interruptible_wait(
         done, _ = await asyncio.wait((task, interrupted), return_when=asyncio.FIRST_COMPLETED)
         if task in done:
             return task.result()
-        _released.add(thread_id)
+        with _waiters_lock:
+            _released[thread_id] = None
+            _released.move_to_end(thread_id)
+            while len(_released) > _MAX_RELEASED_THREADS:
+                _released.popitem(last=False)
         return None
     finally:
         with _waiters_lock:
@@ -227,50 +234,70 @@ def _remote_client(spec: AsyncSubAgent) -> LangGraphClient:
 
 async def _wait_remote(task: dict, seconds: int) -> dict:
     from novacode_cli.agents.default_subagents.async_subagents import retrieve_async_subagents
+    from novacode_cli.remote.async_task_clients import AsyncTaskClients
 
-    specs = {spec["name"]: spec for spec in retrieve_async_subagents()}
-    spec = specs.get(str(task.get("agent_name", "")))
-    if spec is None:
-        return {"status": "unavailable", "error": "The background subagent is unavailable."}
-    client = _remote_client(spec)
     deadline = time.monotonic() + seconds
+    clients = AsyncTaskClients()
+    result = {
+        "status": "running",
+        "thread_id": task.get("thread_id", task["task_id"]),
+        "timed_out": True,
+    }
     with _tracking(task["task_id"], f"subagent {task['agent_name']}"):
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return {"status": "running", "thread_id": task["thread_id"], "timed_out": True}
-            try:
-                run = await asyncio.wait_for(
-                    client.runs.get(thread_id=task["thread_id"], run_id=task["run_id"]),
-                    timeout=remaining,
-                )
-            except TimeoutError:
-                return {"status": "running", "thread_id": task["thread_id"], "timed_out": True}
-            except Exception as exc:  # noqa: BLE001 - SDK errors are untyped
-                return {"status": "unavailable", "error": f"Could not check subagent: {exc}"}
-            status = run.get("status", "unknown")
-            if status not in {"pending", "running"}:
-                result = {"status": status, "thread_id": task["thread_id"]}
-                if status == "success":
+        try:
+            async with asyncio.timeout(seconds):
+                specs = {
+                    spec["name"]: spec for spec in await asyncio.to_thread(retrieve_async_subagents)
+                }
+                spec = specs.get(str(task.get("agent_name", "")))
+                if spec is None:
+                    return {
+                        "status": "unavailable",
+                        "error": "The background subagent is unavailable.",
+                    }
+                client = await clients.get(spec, lambda: _remote_client(spec))
+                while True:
                     try:
-                        thread = await asyncio.wait_for(
-                            client.threads.get(thread_id=task["thread_id"]),
-                            timeout=max(0.01, deadline - time.monotonic()),
+                        run = await client.runs.get(
+                            thread_id=task["thread_id"],
+                            run_id=task["run_id"],
                         )
-                        messages = (thread.get("values") or {}).get("messages") or []
-                        last = messages[-1] if messages else None
-                        result["result"] = (
-                            last.get("content", "") if isinstance(last, dict) else str(last or "")
-                        )
-                    except Exception as exc:  # noqa: BLE001 - preserve completed status
-                        result["result"] = f"Completed, but result could not be fetched: {exc}"
-                elif status == "error":
-                    result["error"] = str(run.get("error") or "The subagent failed.")
-                return result
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return {"status": status, "thread_id": task["thread_id"], "timed_out": True}
-            await asyncio.sleep(min(POLL_SECONDS, remaining))
+                    except TimeoutError:
+                        raise
+                    except Exception as exc:  # noqa: BLE001 - SDK errors are untyped
+                        return {
+                            "status": "unavailable",
+                            "error": f"Could not check subagent: {exc}",
+                        }
+                    status = run.get("status", "unknown")
+                    if status not in {"pending", "running"}:
+                        result = {"status": status, "thread_id": task["thread_id"]}
+                        if status == "success":
+                            try:
+                                thread = await client.threads.get(thread_id=task["thread_id"])
+                                messages = (thread.get("values") or {}).get("messages") or []
+                                last = messages[-1] if messages else None
+                                result["result"] = (
+                                    last.get("content", "")
+                                    if isinstance(last, dict)
+                                    else str(last or "")
+                                )
+                            except Exception as exc:  # noqa: BLE001 - preserve completed status
+                                result["result"] = (
+                                    f"Completed, but result could not be fetched: {exc}"
+                                )
+                        elif status == "error":
+                            result["error"] = str(run.get("error") or "The subagent failed.")
+                        return result
+                    await asyncio.sleep(min(POLL_SECONDS, max(0, deadline - time.monotonic())))
+        except TimeoutError:
+            if result["status"] == "success":
+                result["result"] = (
+                    "Completed, but result could not be fetched before the wait expired."
+                )
+            return result
+        finally:
+            await clients.aclose()
 
 
 def _remote_result(task: dict, result: dict, runtime: ToolRuntime) -> Command:
@@ -281,7 +308,9 @@ def _remote_result(task: dict, result: dict, runtime: ToolRuntime) -> Command:
     return Command(
         update={
             "messages": [
-                ToolMessage(json.dumps(result), tool_call_id=runtime.tool_call_id, name="wait_for_task")
+                ToolMessage(
+                    json.dumps(result), tool_call_id=runtime.tool_call_id, name="wait_for_task"
+                )
             ],
             "async_tasks": {task["task_id"]: updated},
         }
@@ -312,8 +341,10 @@ async def wait_for_task(
 
     state = getattr(runtime, "state", None) or {}
     refusal = None
-    if thread_id in _released:
-        _released.discard(thread_id)
+    with _waiters_lock:
+        released = thread_id in _released
+        _released.pop(thread_id, None)
+    if released:
         refusal = "The user sent a message while you were waiting: reply to it first."
     elif _waiting_steps(state.get("messages") or []) > MAX_WAIT_STEPS:
         refusal = "You already waited since the user's last message."
@@ -321,8 +352,10 @@ async def wait_for_task(
         job = get_registry().resolve(task_id)
         task = (state.get("async_tasks") or {}).get(task_id.strip())
         status = (
-            _shell_result(job) if job is not None
-            else f"{task_id}: {task.get('status', 'running')}" if task
+            _shell_result(job)
+            if job is not None
+            else f"{task_id}: {task.get('status', 'running')}"
+            if task
             else f"{task_id}: unknown task"
         )
         return f"{status}\n{refusal} {_STOP_WAITING}"
