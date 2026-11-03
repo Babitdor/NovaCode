@@ -15376,10 +15376,11 @@ class NovaApp(App):
                 # entry — counting its newlines reported "42 learnings" for a
                 # 42-line summary, which overstated what was saved.
                 body.append("◈ summary preserved to memory\n", style="green")
+            body_widgets = [Static(body)]
             if summary:
-                body.append("\n" + summary, style="dim italic")
+                body_widgets.append(Markdown(summary))
             card = Collapsible(
-                Static(body, classes="compact-body"),
+                Vertical(*body_widgets, classes="compact-body"),
                 title=(
                     f"● Conversation compacted  ·  "
                     f"{result.messages_before} → {result.messages_after} msgs  ·  "
