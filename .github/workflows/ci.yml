@@ -66,6 +66,8 @@ jobs:
           novacode_cli/tools/waiter_tools.py
           scripts/benchmark_background_tasks.py
           tests/test_background_responsiveness.py
+          novacode_cli/tui/icons.py
+          tests/test_tui_icons.py
           novacode_cli/agents/attribution.py
           novacode_cli/plugins/claude_plugins.py
           novacode_cli/plugins/components.py
@@ -196,6 +198,8 @@ jobs:
           tests/test_tui_voice_output.py
           tests/test_tui_voice_downloads.py
           tests/test_interface_styles.py
+          tests/test_tui_icons.py
+          tests/test_theme_readability.py
           tests/test_home_scenes.py
           tests/test_matrix3.py
           tests/test_computer.py

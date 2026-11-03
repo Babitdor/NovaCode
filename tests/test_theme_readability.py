@@ -62,7 +62,7 @@ def test_cached_reply_recolors_at_same_width_after_theme_switch():
     assert next(s for s in after if "auth.py" in s.text).style.color == expected.color
 
 
-def test_nova_registers_six_distinct_extra_themes(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_nova_registers_seven_distinct_extra_themes(monkeypatch: pytest.MonkeyPatch) -> None:
     from novacode_cli.config.nova_config import NovaConfig
     from novacode_cli.tui.app import NovaApp
 
@@ -74,9 +74,9 @@ def test_nova_registers_six_distinct_extra_themes(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(NovaApp, "register_theme", lambda self, theme: registered.append(theme))
     monkeypatch.setattr(NovaApp, "theme", "tokyo-night")
     app._apply_saved_theme()
-    assert len(NOVA_EXTRA_THEMES) == 6
+    assert len(NOVA_EXTRA_THEMES) == 7
     assert all(theme in registered for theme in NOVA_EXTRA_THEMES)
-    assert len({theme.background for theme in NOVA_EXTRA_THEMES}) == 6
+    assert len({theme.background for theme in NOVA_EXTRA_THEMES}) == 7
 
 
 @pytest.mark.asyncio

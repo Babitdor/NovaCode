@@ -106,7 +106,7 @@ class OnboardingApp(App[bool]):
             (v["display"], v["name"]) for v in OnboardingWizard.PROVIDERS.values()
         ]
         with VerticalScroll(id="box"):
-            yield Static(Text("Welcome to Nova 👋  —  first-time setup"), id="title")
+            yield Static(Text("Welcome to Nova —  first-time setup"), id="title")
             yield Static(Text("LLM provider", style="bold"), classes="lbl")
             yield Select(provider_opts, value="ollama", allow_blank=False, id="provider")
             yield Static("", id="key-label", classes="lbl")

@@ -791,10 +791,10 @@ class SessionHeader(Horizontal):
         self.memory = memory
 
     def compose(self) -> ComposeResult:
-        yield Static(f"🤖 {self.model}", classes="session-pill pill-model")
-        yield Static(f"📦 {self.sandbox}", classes="session-pill pill-sandbox")
-        yield Static(f"🧠 {self.memory}", classes="session-pill pill-memory")
-        yield Static(f"📁 {self.cwd}", classes="breadcrumb")
+        yield Static(f"◇ {self.model}", classes="session-pill pill-model")
+        yield Static(f"▣ {self.sandbox}", classes="session-pill pill-sandbox")
+        yield Static(f"◈ {self.memory}", classes="session-pill pill-memory")
+        yield Static(f"▸ {self.cwd}", classes="breadcrumb")
 
     def update_info(self, model: str, sandbox: str, cwd: str, memory: str) -> None:
         self.model = model
@@ -1337,7 +1337,7 @@ class ChatMessage(Vertical):
         try:
             app.copy_to_clipboard(body)
             app._log(  # type: ignore[attr-defined]
-                Text(f"📋 Copied message ({len(body):,} chars)", style="dim")
+                Text(f"≡ Copied message ({len(body):,} chars)", style="dim")
             )
             event.stop()
         except Exception:  # noqa: BLE001

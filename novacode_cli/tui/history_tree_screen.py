@@ -36,9 +36,9 @@ def node_line(node: Node, *, current: bool) -> Text:
     if node.label:
         line.append(f"★ {node.label}  ", style="bold yellow")
     if node.msg.get("tool_calls"):
-        preview = "⚙ " + ", ".join(c.get("name", "") for c in node.msg["tool_calls"])
+        preview = "≡ " + ", ".join(c.get("name", "") for c in node.msg["tool_calls"])
     elif node.kind == "tool":
-        preview = "⚙ " + (node.msg.get("name") or "result")
+        preview = "≡ " + (node.msg.get("name") or "result")
     else:
         first = next((ln for ln in node.text.splitlines() if ln.strip()), "(empty)")
         preview = ("you: " if node.kind == "user" else "nova: ") + first.strip()

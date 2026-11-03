@@ -278,10 +278,10 @@ class HomeSidebar(VerticalScroll):
             (">  New conversation", "chat"),
             ("▣  Codebase", "codebase"),
             ("⌁  Run tests", "run"),
-            ("⚒  Tools", "tools"),
+            ("⌘  Tools", "tools"),
             ("♧  Agents", "agents"),
             ("⬡  Artifacts", "artifacts"),
-            ("⚙  Settings", "settings"),
+            ("≡  Settings", "settings"),
         ):
             yield HomeNavItem(label, id=f"home-nav-{identifier}", classes="home-nav")
         yield Static("PROJECT", classes="home-card-title home-section")

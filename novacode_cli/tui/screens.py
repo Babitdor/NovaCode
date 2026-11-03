@@ -39,7 +39,8 @@ from novacode_cli.config.config import agent_md as _agent_md
 from novacode_cli.tui.animations import animate_modal_screen
 from novacode_cli.tui.auth_display import format_auth_indicator
 from novacode_cli.tui.decision_settings import DecisionSettings
-from novacode_cli.tui.widgets import DEFAULT_THEME
+from novacode_cli.tui.palette import cached_palette
+from novacode_cli.tui.widgets import DEFAULT_THEME, NOVA_TOKYO_NIGHT
 
 #: Prefix for the non-selectable rows in `ModelScreen` (provider headers and
 #: section labels). Provider ids in `MODEL_PRESETS` are bare words, so no
@@ -1435,7 +1436,7 @@ class McpScreen(ModalScreen[None]):
             self._preset_ids.append(pid)
             already_configured = pid in self._config_names
             marker = "[\u2713]" if already_configured else "[ ]"
-            needs_key = "\U0001f511" if preset.get("setup_key") else ""
+            needs_key = "◇" if preset.get("setup_key") else ""
             label = Text.assemble(
                 (f"{marker}  {pid}  ", "bold #e0af68"),
                 (f"{preset['name']}", ""),
@@ -1448,7 +1449,7 @@ class McpScreen(ModalScreen[None]):
         hint.update(
             Text(
                 f"{len(self._presets)} presets \u00b7 "
-                "\U0001f511 = needs API key \u00b7 [\u2713] = already configured \u00b7 "
+                "◇ = needs API key \u00b7 [\u2713] = already configured \u00b7 "
                 "Tools picks which of a server's tools Nova may use",
                 style="dim",
             )
@@ -5905,7 +5906,7 @@ class RemoteScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="modal-box"):
             yield Static(
-                Text("🔗 Remote Bridges Status & Config", style="bold cyan"), id="modal-title"
+                Text("↗ Remote Bridges Status & Config", style="bold"), id="modal-title"
             )
             with VerticalScroll(id="remote-status-container"):
                 yield Static("", id="remote-status")
@@ -5945,38 +5946,38 @@ class RemoteScreen(ModalScreen[None]):
     def _refresh(self) -> None:
         from novacode_cli.remote.config import load_remote_config
 
+        palette = cached_palette(self.app.get_theme(self.app.theme) or NOVA_TOKYO_NIGHT)
         mgr = getattr(self._ss, "_remote_bridge_manager", None)
         bridges = mgr.active_bridges if mgr is not None else []
         t = Text()
         if bridges:
-            t.append("⚡ Active Bridges:\n", style="bold cyan")
+            t.append("↗ Active Bridges:\n", style=f"bold {palette.accent}")
             for b in bridges:
                 status = b.get("status", "")
                 icon = (
-                    "🟢" if status == "running" else ("🔴" if "error" in status.lower() else "🟡")
+                    "●" if status == "running" else ("✕" if "error" in status.lower() else "◷")
                 )
                 bot = f" (@{b['bot_user']})" if b.get("bot_user") else ""
                 platform = str(b["platform"]).capitalize()
 
                 t.append("  ")
-                t.append(icon)
-                t.append(f" {platform}{bot}", style="bold white")
-                t.append(" — Chat: ")
-                t.append(str(b["chat_id"]), style="yellow")
-                t.append(" — Status: ")
-                status_style = (
-                    "bold green"
-                    if status == "running"
-                    else ("bold red" if "error" in status.lower() else "bold yellow")
+                status_color = (
+                    palette.success if status == "running"
+                    else palette.error if "error" in status.lower() else palette.warning
                 )
-                t.append(status, style=status_style)
+                t.append(icon, style=status_color)
+                t.append(f" {platform}{bot}", style=f"bold {palette.text}")
+                t.append(" — Chat: ")
+                t.append(str(b["chat_id"]), style=palette.muted)
+                t.append(" — Status: ")
+                t.append(status, style=f"bold {status_color}")
                 t.append("\n")
                 for topic in b.get("session_topics", []):
                     t.append(f"    {topic['session_id']} → Topic {topic['topic_id']}\n")
                 for thread in b.get("session_threads", []):
                     t.append(f"    {thread['session_id']} → Thread {thread['thread_id']}\n")
         else:
-            t.append("📭 No bridges active.\n", style="dim italic")
+            t.append("◇ No bridges active.\n", style="dim italic")
         try:
             saved = load_remote_config()
         except Exception:  # noqa: BLE001
@@ -5987,7 +5988,7 @@ class RemoteScreen(ModalScreen[None]):
             Text(f"Authorized {access_platform.title()} users: " + (", ".join(map(str, users)) if users else "none"))
         )
         if saved:
-            t.append("\n💾 Saved Configurations:\n", style="bold magenta")
+            t.append("\n▣ Saved Configurations:\n", style=f"bold {palette.accent}")
             if "rootapp" in saved:
                 root = saved["rootapp"]
                 t.append("  Rootapp", style="bold green")
@@ -6119,7 +6120,7 @@ class RalphScreen(ModalScreen[None]):
     BINDINGS = [("escape", "close", "Close")]
 
     _ITER_GLYPH = {
-        "running": ("▶", "yellow"),
+        "running": ("▸", "yellow"),
         "done": ("●", "green"),
         "failed": ("✖", "red"),
     }
@@ -6189,7 +6190,7 @@ class RalphScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="modal-box"):
             yield Static(
-                Text("🔁 Ralph — Autonomous Mode", style="bold cyan"),
+                Text("↻ Ralph — Autonomous Mode", style="bold"),
                 id="modal-title",
             )
             yield Static("", id="ralph-header")
@@ -6198,8 +6199,8 @@ class RalphScreen(ModalScreen[None]):
             yield Static("", id="ralph-summary")
             yield Static("", id="ralph-status-table")
             with Horizontal(id="modal-buttons"):
-                yield Button("⏹ Stop", id="ralph-stop", variant="error")
-                yield Button("💾 Checkpoint", id="ralph-checkpoint", variant="warning")
+                yield Button("■ Stop", id="ralph-stop", variant="error")
+                yield Button("▣ Checkpoint", id="ralph-checkpoint", variant="warning")
                 yield Button("Close", id="ralph-close")
 
     def on_mount(self) -> None:
@@ -6220,7 +6221,7 @@ class RalphScreen(ModalScreen[None]):
         if isinstance(event, rev.RalphStarted):
             self._iter_cards.clear()
             iters = "unlimited" if event.max_iterations == 0 else str(event.max_iterations)
-            title = "🔁 Ralph Mode (Resumed)" if event.resumed_from else "🔁 Ralph Mode"
+            title = "↻ Ralph Mode (Resumed)" if event.resumed_from else "↻ Ralph Mode"
             t = Text()
             t.append(f"{title}\n", style="bold")
             t.append("Task: ", style="bold")
@@ -6261,7 +6262,7 @@ class RalphScreen(ModalScreen[None]):
         elif isinstance(event, rev.RalphFinished):
             self._finished = True
             t = Text()
-            t.append("📊 Ralph finished", style="bold")
+            t.append("≡ Ralph finished", style="bold")
             t.append(f" — {event.completed} completed", style="green")
             if event.failed:
                 t.append(f", {event.failed} failed", style="red")
@@ -6396,7 +6397,7 @@ class RalphScreen(ModalScreen[None]):
             if self.is_mounted:
                 try:
                     self.query_one("#ralph-summary", Static).update(
-                        Text("⏹ Ralph run stopped / cancelled by user.", style="yellow bold")
+                        Text("■ Ralph run stopped / cancelled by user.", style="yellow bold")
                     )
                     self.query_one("#ralph-stop", Button).disabled = True
                     self.query_one("#ralph-checkpoint", Button).disabled = True
@@ -6429,7 +6430,7 @@ class RalphScreen(ModalScreen[None]):
             if self.is_mounted:
                 try:
                     self.query_one("#ralph-summary", Static).update(
-                        Text("⏹ Stop requested…", style="yellow bold")
+                        Text("■ Stop requested…", style="yellow bold")
                     )
                     self.query_one("#ralph-stop", Button).disabled = True
                     self.query_one("#ralph-checkpoint", Button).disabled = True
@@ -6440,7 +6441,7 @@ class RalphScreen(ModalScreen[None]):
             if self.is_mounted:
                 try:
                     self.query_one("#ralph-summary", Static).update(
-                        Text("💾 Checkpoint requested…", style="yellow")
+                        Text("▣ Checkpoint requested…", style="yellow")
                     )
                     self.query_one("#ralph-stop", Button).disabled = True
                     self.query_one("#ralph-checkpoint", Button).disabled = True
