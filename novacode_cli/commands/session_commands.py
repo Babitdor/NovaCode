@@ -65,6 +65,8 @@ async def handle_save_command(
         project_root = settings.get_workspace_root()
 
         # Save the session (session_id is always set in SessionState.__init__)
+        from novacode_cli.remote.session import remote_connections_payload
+
         session_dir = session_manager.save_session(
             session_id=session_state.session_id,
             thread_id=session_state.thread_id,
@@ -78,6 +80,7 @@ async def handle_save_command(
             sandbox_type=sandbox_type,
             prime=prime_payload(session_state),
             handoff=handoff_payload(session_state),
+            remote_connections=remote_connections_payload(session_state),
         )
 
         console.print(

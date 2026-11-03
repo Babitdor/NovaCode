@@ -440,6 +440,7 @@ async def _autosave(
         todos = state.values.get("todos") or getattr(session_state, "todos", None)
         from novacode_cli.commands.side_commands import goal_state_payload
         from novacode_cli.prime import prime_payload
+        from novacode_cli.remote.session import remote_connections_payload
 
         await asyncio.to_thread(
             session_manager.save_session,
@@ -454,6 +455,7 @@ async def _autosave(
             task_status="failed" if is_error else "completed",
             goal=goal_state_payload(session_state),
             prime=prime_payload(session_state),
+            remote_connections=remote_connections_payload(session_state),
         )
     except Exception as exc:  # noqa: BLE001 — never fail the run on save
         _diagnostic(f"Headless session save skipped: {exc}")

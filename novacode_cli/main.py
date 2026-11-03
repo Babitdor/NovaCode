@@ -656,6 +656,11 @@ async def _run_agent_session(
             pass
 
     session_state._remote_bridge_manager.set_status_callback(_remote_status_callback)
+    if not session_state.headless:
+        from novacode_cli.remote.session import reconnect_remote
+
+        for notice in await reconnect_remote(session_state):
+            boot_status(notice)
 
     # Resume any persisted cron jobs (Enhancement 3). The scheduler is a queue
     # *producer*, so it works in both CLI and TUI mode (both consume the same
@@ -865,6 +870,7 @@ async def _run_agent_session(
                 from novacode_cli.commands.side_commands import goal_state_payload
                 from novacode_cli.prime import prime_payload
                 from novacode_cli.handoff import handoff_payload
+                from novacode_cli.remote.session import remote_connections_payload
 
                 _crash_dir = session_manager.save_session(
                     session_id=session_state.session_id,
@@ -880,6 +886,7 @@ async def _run_agent_session(
                     goal=goal_state_payload(session_state),
                     prime=prime_payload(session_state),
                     handoff=handoff_payload(session_state),
+                    remote_connections=remote_connections_payload(session_state),
                 )
                 console.print(f"[dim]Session saved → {_crash_dir}[/dim]")
             except Exception as _save_err:
@@ -1225,6 +1232,11 @@ async def main(
 
             restore_prime(session_state, getattr(session_data.meta, "prime", None))
             restore_handoff(session_state, getattr(session_data.meta, "handoff", None))
+            from novacode_cli.remote.session import connection_payload
+
+            session_state.remote_connections = connection_payload(
+                getattr(session_data.meta, "remote_connections", []),
+            )
             if isinstance(getattr(session_state, "cli_prime_override", None), bool):
                 session_state.prime_enabled = session_state.cli_prime_override
 

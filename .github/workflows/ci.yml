@@ -215,6 +215,7 @@ jobs:
           tests/test_usage_lifecycle.py
           tests/test_remote_cron.py
           tests/test_remote_start_approval.py
+          tests/test_remote_session_resume.py
           tests/test_remote_approvals.py
           tests/test_remote_approval_transport.py
           tests/test_remote_approval_processor.py

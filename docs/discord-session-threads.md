@@ -81,8 +81,17 @@ If thread creation is unavailable, the main session can still use a regular
 parent text channel. Direct messages and an explicitly configured existing
 thread keep their original behavior; Nova cannot create nested threads there.
 
-`/remote stop` disconnects the bot. It preserves thread history and mappings for
-the next connection.
+Sessions saved with Telegram or Discord enabled reconnect when resumed with
+`--continue`, `/resume`, or in a new tab. Nova reuses the session's recorded
+destination and existing topic/thread mappings. Credentials stay in
+`~/.nova/remote.json`; current sender permissions and approval settings still apply.
+If credentials were forgotten or replaced, start the connection explicitly again.
+Connection failures leave the local conversation usable.
+
+`/remote stop` disconnects the bot and disables automatic reconnection for that
+session on its next save. It preserves thread history and mappings for the next
+explicit connection. Older sessions need one explicit start and save to record
+their reconnect preference.
 
 ## Troubleshooting
 

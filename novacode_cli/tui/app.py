@@ -42,7 +42,7 @@ import uuid
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
@@ -61,6 +61,7 @@ if TYPE_CHECKING:
     from novacode_cli.remote.bridge import RemoteMessage
     from novacode_cli.session.history_tree import HistoryTree
     from novacode_cli.sessions.supervisor import SessionSupervisor
+    from novacode_cli.states.Session import SessionState
 
     # Also annotation-only: the palette module is imported lazily at call sites
     # (see _active_palette), so this adds no module-scope import cost.
@@ -4256,6 +4257,10 @@ class NovaApp(App):
 
         child_state = SessionState(auto_approve=approval_mode, no_splash=True)
         child_state.session_id = saved.session_id if saved else sid
+        if saved:
+            from novacode_cli.remote.session import connection_payload
+
+            child_state.remote_connections = connection_payload(saved.remote_connections)
         pane.state = fresh_state(
             session_state=child_state,
             assistant_id=saved.assistant_id if saved else self.assistant_id,
@@ -4319,6 +4324,14 @@ class NovaApp(App):
             # A close can hide the tab while process creation is still pending.
             # Its cleanup worker waits for start_task and owns shutdown.
             return None
+        if saved:
+            from novacode_cli.remote.session import reconnect_remote
+
+            for notice in await reconnect_remote(
+                self._remote_owner_state(), connections=child_state.remote_connections,
+            ):
+                self._log(Text(notice, style="dim"))
+            self._ensure_remote_consumer()
         await self._open_remote_topics(pane)
         note = Text()
         note.append(f"◆ you are now in session “{name}”\n", style="bold #9ece6a")
@@ -5546,12 +5559,12 @@ class NovaApp(App):
         """Adapters implementing per-session topics or Discord threads."""
         return [*self._remote_telegram_bridges(), *NovaApp._remote_discord_bridges(self)]
 
-    def _remote_owner_state(self):
+    def _remote_owner_state(self) -> SessionState:
         """The root owns the connection even while a child tab is visible."""
         root = getattr(self, "_root_pane", None)
         if root is not None and root is not getattr(self, "_active_pane", root):
-            return root.state.get("session_state", self.session_state)
-        return self.session_state
+            return cast("SessionState", root.state.get("session_state", self.session_state))
+        return cast("SessionState", self.session_state)
 
     async def _sync_remote_topics(self, *, attach_running: bool = True) -> None:
         self._schedule_remote_command_menu()
@@ -9980,6 +9993,7 @@ class NovaApp(App):
             from novacode_cli.commands.side_commands import goal_state_payload
             from novacode_cli.prime import prime_payload
             from novacode_cli.handoff import handoff_payload
+            from novacode_cli.remote.session import remote_connections_payload
 
             # save_session does several synchronous file writes — run it off the
             # event loop so /save, /clear, and quit don't freeze the UI.
@@ -10000,6 +10014,7 @@ class NovaApp(App):
                 goal=goal_state_payload(session_state),
                 prime=prime_payload(session_state),
                 handoff=handoff_payload(session_state),
+                remote_connections=remote_connections_payload(session_state),
                 history=history,
             )
         except Exception:  # noqa: BLE001
@@ -13838,6 +13853,16 @@ class NovaApp(App):
 
         restore_prime(self.session_state, getattr(session_data.meta, "prime", None))
         restore_handoff(self.session_state, getattr(session_data.meta, "handoff", None))
+        from novacode_cli.remote.session import connection_payload, reconnect_remote
+
+        self.session_state.remote_connections = connection_payload(
+            getattr(session_data.meta, "remote_connections", []),
+        )
+        for notice in await reconnect_remote(
+            self._remote_owner_state(), connections=self.session_state.remote_connections,
+        ):
+            self._log(Text(notice, style="dim"))
+        self._ensure_remote_consumer()
         self._update_mode_badge()
 
         # Reset per-conversation UI/tracking and re-baseline token accounting.

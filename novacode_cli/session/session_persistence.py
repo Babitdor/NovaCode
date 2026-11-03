@@ -91,6 +91,7 @@ class SessionMeta:
         goal: Conversation goal objective, lifecycle, and accumulated budget usage.
         prime: Opt-in Deep Work mode and its last thread-bound checkpoint record.
         handoff: Opt-in handoff mode and IDs of selected project context.
+        remote_connections: Opted-in Telegram/Discord destinations, without credentials.
     """
 
     session_id: str
@@ -118,6 +119,7 @@ class SessionMeta:
     goal: dict[str, Any] | None = None
     prime: dict[str, Any] | None = None
     handoff: dict[str, Any] | None = None
+    remote_connections: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -127,7 +129,7 @@ class SessionMeta:
     def from_dict(cls, data: dict[str, Any]) -> SessionMeta:
         """Create from dictionary with backward compatibility."""
         # Provide defaults for new fields to support old sessions
-        defaults = {
+        defaults: dict[str, Any] = {
             "current_task": None,
             "task_status": "active",
             "blocked_reason": None,
@@ -143,6 +145,7 @@ class SessionMeta:
             "goal": None,
             "prime": None,
             "handoff": None,
+            "remote_connections": [],
         }
         # Merge defaults with provided data (data takes precedence)
         merged = {**defaults, **data}
@@ -312,6 +315,7 @@ class SessionManager:
         goal: dict[str, Any] | None = None,
         prime: dict[str, Any] | None = None,
         handoff: dict[str, Any] | None = None,
+        remote_connections: list[dict[str, Any]] | None = None,
         history: list[BaseMessage] | None = None,
     ) -> Path:
         """Save a session to disk.
@@ -331,6 +335,7 @@ class SessionManager:
             goal: Optional conversation goal and its lifecycle/budget state.
             prime: Optional Deep Work mode and observed checkpoint snapshot.
             handoff: Optional handoff toggle and project record IDs.
+            remote_connections: Enabled remote destinations to reconnect on resume.
             history: The full message list for the session tree, when
                 ``messages`` is a compacted view of it. Defaults to ``messages``.
 
@@ -393,6 +398,7 @@ class SessionManager:
             goal=goal,
             prime=prime,
             handoff=handoff,
+            remote_connections=remote_connections or [],
         )
 
         self._save_snapshot(

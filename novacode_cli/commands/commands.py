@@ -682,6 +682,7 @@ async def _handle_remote_command(cmd_args: str | None, session_state, console) -
         async_save_discord_config,
         async_save_telegram_config,
     )
+    from novacode_cli.remote.session import forget_connection, remember_connection
 
     # Get or create the bridge manager on the session state
     if session_state._remote_bridge_manager is None:
@@ -797,6 +798,7 @@ async def _handle_remote_command(cmd_args: str | None, session_state, console) -
 
     # ── /remote stop ──────────────────────────────────────────────
     if args.lower() in ("stop", "stop all"):
+        forget_connection(session_state)
         await manager.stop_all()
         # Restore auto-approve to its pre-remote state
         if session_state._pre_remote_auto_approve is not None:
@@ -813,6 +815,7 @@ async def _handle_remote_command(cmd_args: str | None, session_state, console) -
     stop_match = re.match(r"stop\s+(\S+)", args, re.IGNORECASE)
     if stop_match:
         bridge_id = stop_match.group(1)
+        forget_connection(session_state, bridge_id)
         await manager.stop_bridge(bridge_id)
         # If no more active bridges, restore auto-approve
         if not manager.active_bridges and session_state._pre_remote_auto_approve is not None:
@@ -1052,6 +1055,10 @@ async def _handle_remote_command(cmd_args: str | None, session_state, console) -
             return True
 
         if success:
+            if isinstance(token, str) and token:
+                remember_connection(
+                    session_state, platform_str, str(chat_id), ping=bool(ping), token=token,
+                )
             bridge_id = f"{platform_str}:{chat_id}"
             bridge_info = manager.get_bridge(bridge_id)
             bot_user = ""

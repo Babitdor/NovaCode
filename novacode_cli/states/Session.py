@@ -77,6 +77,7 @@ class SessionState:
         self._ui_settings = UISettings(auto_approve=auto_approve, no_splash=no_splash)
         self._agent_runtime = AgentRuntimeState()
         self._remote_bridge = RemoteBridgeState()
+        self.remote_connections: list[dict[str, Any]] = []
         self._bg_tasks = BackgroundTaskState()
         self._ntf = NotificationState()
         self._wiki = WikiState()
@@ -507,7 +508,7 @@ class SessionState:
         "_ralph_stop_requested", "_ralph_checkpoint_requested",
         "_background_threads", "_voice_pipeline",
         "_remote_tool_notify", "_remote_todo_notify", "_remote_processor_task",
-        "_remote_approval_handler",
+        "_remote_approval_handler", "remote_connections",
     })
 
     def __getattr__(self, name: str) -> Any:
