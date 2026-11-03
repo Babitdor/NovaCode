@@ -18,7 +18,7 @@
 <link rel="preload" as="font" type="font/woff2" href="assets/fonts/archivo-400_700-normal.woff2" crossorigin>
 <link rel="preload" as="font" type="font/woff2" href="assets/fonts/geist-mono-var.woff2" crossorigin>
 <script type="application/ld+json">
-{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Nova","alternateName":"NovaCode","applicationCategory":"DeveloperApplication","softwareVersion":"1.0.99","operatingSystem":"macOS, Linux, Windows","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"license":"https://opensource.org/licenses/MIT","codeRepository":"https://github.com/Babitdor/NovaCode","description":"An open-source coding agent for the terminal with a memory wiki you can read and search, plans you approve, parallel project sessions and hosted or local models."}
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Nova","alternateName":"NovaCode","applicationCategory":"DeveloperApplication","softwareVersion":"1.1.6","operatingSystem":"macOS, Linux, Windows","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"license":"https://opensource.org/licenses/MIT","codeRepository":"https://github.com/Babitdor/NovaCode","description":"An open-source coding agent for the terminal with a memory wiki you can read and search, plans you approve, parallel project sessions and hosted or local models."}
 </script>
 <script>
   document.documentElement.classList.add("js");
@@ -822,7 +822,7 @@ html.lenis{scroll-behavior:auto}
 
   <section class="hero" aria-labelledby="what">
     <div class="wrap">
-    <div class="zones" aria-hidden="true" data-par="zones"><span>cover sheet</span><span>novacode &middot; rev 1.0.99</span><span>scale 1:1</span></div>
+    <div class="zones" aria-hidden="true" data-par="zones"><span>cover sheet</span><span>novacode &middot; rev 1.1.6</span><span>scale 1:1</span></div>
     <div class="hero-grid">
       <div>
         <div class="measure" data-measure data-par="claim">
@@ -833,7 +833,7 @@ html.lenis{scroll-behavior:auto}
             <span class="measure-tol">&plusmn; No benchmark and no savings figure anywhere on this page.</span>
           </div>
         </div>
-        <p class="lead" style="margin-top:clamp(22px,3vw,32px)">Nova is a coding agent for the terminal. Its memory is a wiki of Markdown pages you can read, search and delete. Its plans wait for your approval. Its sessions run side by side, and its models are yours to pick, hosted or local.</p>
+        <p class="lead" style="margin-top:clamp(22px,3vw,32px)">Nova is a coding agent for the terminal, and it leaves its work where you can find it. Memory is a wiki of Markdown pages you can read, search and delete. Plans wait for your approval. Sessions run side by side, and the model is yours to pick, hosted or local.</p>
         <div class="hero-actions">
           <a class="btn solid" href="#install"><span class="tick" aria-hidden="true"></span>Install Nova
             <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 2v11M3.6 8.6 8 13l4.4-4.4" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
@@ -849,7 +849,7 @@ html.lenis{scroll-behavior:auto}
       <dl class="tb" data-par="tb">
         <dt>project</dt><dd>NovaCode</dd>
         <dt>sheet</dt><dd>00 / 04</dd>
-        <dt>revision</dt><dd>1.0.99</dd>
+        <dt>revision</dt><dd>1.1.6</dd>
         <dt>licence</dt><dd>MIT</dd>
         <dt>runtime</dt><dd>Python 3.11+</dd>
         <dt>drawn</dt><dd>in the terminal</dd>
@@ -1269,7 +1269,7 @@ html.lenis{scroll-behavior:auto}
     <div class="sec-head">
       <div data-fade>
         <span class="idx">03.1 &middot; /model</span>
-        <h2 class="l" id="models-title">Your model choices, across the workflow.</h2>
+        <h2 class="l" id="models-title">The model is a setting, not a commitment.</h2>
       </div>
       <p class="lead" data-fade="2">Nova speaks to hosted providers and to local Ollama models. <code>/model</code> sets the main agent and the delegated roles. Optional <code>/router</code> profiles pick among configured routes per turn using a decision model, and fall back to the default route when that decision fails.</p>
     </div>
@@ -1623,7 +1623,7 @@ html.lenis{scroll-behavior:auto}
         <span class="idx">04.5 &middot; questions</span>
         <h2 class="l" id="faq-title">Questions people ask first.</h2>
       </div>
-      <p class="lead" data-fade="2">The twelve that come up before installing, answered the same way the rest of the sheet is: what it does, then where it stops.</p>
+      <p class="lead" data-fade="2">The twelve that come up before installing. Each answer says what it does, then where it stops.</p>
     </div>
     <div>
       <details><summary>What does Nova remember between sessions?<span class="plus" aria-hidden="true"></span></summary>
@@ -1656,12 +1656,12 @@ html.lenis{scroll-behavior:auto}
   <section class="closer" id="start" aria-labelledby="start-title">
     <div class="wrap">
       <p class="say" style="color:var(--neg-accent)">cover sheet &middot; closing</p>
-      <h2 class="xl" id="start-title" style="max-width:20ch">Point it at a repository tonight.</h2>
-      <p class="lead" style="color:var(--neg-muted);margin-top:18px;max-width:52ch">Approval still applies, memory still lands on disk in files you can read, and the first thing it does is look around before it touches anything.</p>
+      <h2 class="xl" id="start-title" style="max-width:20ch">Point it at a repository.</h2>
+      <p class="lead" style="color:var(--neg-muted);margin-top:18px;max-width:52ch">Approval still applies. Memory still lands in files you can read. The first thing it does is look around before it touches anything.</p>
       <div class="closer-links">
-        <a href="https://github.com/Babitdor/NovaCode">Clone the repository<span aria-hidden="true">&nearr;</span></a>
-        <a href="docs/">Read the documentation<span aria-hidden="true">&nearr;</span></a>
         <a href="#install">Install<span aria-hidden="true">&uarr;</span></a>
+        <a href="docs/">Read the documentation<span aria-hidden="true">&nearr;</span></a>
+        <a href="https://github.com/Babitdor/NovaCode">Clone the repository<span aria-hidden="true">&nearr;</span></a>
       </div>
     </div>
   </section>
@@ -1723,7 +1723,7 @@ html.lenis{scroll-behavior:auto}
       <div class="title-block">
         <div>project<b>NovaCode</b></div>
         <div>sheet<b>00 of 04</b></div>
-        <div>revision<b>1.0.99</b></div>
+        <div>revision<b>1.1.6</b></div>
         <div>scale<b>1:1</b></div>
         <div>drawn<b>in the terminal</b></div>
         <div>memory<b>index ready</b></div>
