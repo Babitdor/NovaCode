@@ -4,6 +4,7 @@ import asyncio
 import sys
 from collections import deque
 
+import pytest
 from rich.text import Text
 
 from novacode_cli.tui.output_body import OutputBody
@@ -113,6 +114,7 @@ def test_plain_shell_output_skips_ansi_decoder(monkeypatch):
     assert [line.text for line in output.lines] == ["first", "second"]
 
 
+@pytest.mark.timeout(30)
 async def test_real_noisy_shell_batches_writes_and_prompt_remains_usable(tmp_path, monkeypatch):
     from textual.widgets import Static
 
