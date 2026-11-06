@@ -87,6 +87,7 @@ class TeamStore:
                 if row[1] == handoff_pid:
                     # The updater explicitly identified its old process as the
                     # owner being replaced by this resumed runtime.
+                    self._retire_inprocess_workers(caller, row[1], row[2])
                     alive = False
                 else:
                     try:
@@ -106,6 +107,27 @@ class TeamStore:
                 (caller.project, caller.root, token, os.getpid(), born),
             )
         self._owner = caller, token
+
+    def _retire_inprocess_workers(self, caller: Identity, pid: int, born: float) -> None:
+        """Retire old runtime tasks atomically with an explicit ownership handoff."""
+        rows = self.db.execute(
+            "SELECT body FROM team_records WHERE project=? AND root=? AND kind='agent'",
+            (caller.project, caller.root),
+        ).fetchall()
+        for (body,) in rows:
+            member = json.loads(body)
+            recovery = member.get("recovery")
+            if (
+                isinstance(recovery, dict)
+                and recovery.get("kind") == "inprocess"
+                and recovery.get("pid") == pid
+                and recovery.get("born") == born
+            ):
+                # The updater's event loop has ended even if its process waits
+                # for the new Nova (Windows) or survives execve (POSIX).
+                member["recovery"] = {**recovery, "kind": "absent"}
+                member["version"] = member.get("version", 0) + 1
+                self._put(caller, "agent", member)
 
     def release_owner(self) -> None:
         """Release only this instance's fencing token, never another parent's."""
