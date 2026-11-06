@@ -9,6 +9,12 @@ Every PNG keeps the original full 1672 × 941 composition. Two generated light
 PNGs are 1671px wide: the build pads their far edge by one transparent pixel,
 preserving registration without stretching any object.
 
+The active `light-subject-ink.png` and `dark-subject-ink.png` redraw Nova with
+the coin's inked character style while keeping the original day/night colors,
+pose, objects, and placement. The daylight variant is 1670px wide; the builder
+pads its far edge by two transparent pixels. The original subject planes are
+kept alongside it.
+
 | Plane | Contents | Transparency | Pointer depth | Scroll speed |
 | --- | --- | --- | --- | --- |
 | `sky` | Moon, planets, orbital lines, complete sky and city | Opaque | 0.15 | 0.26 |
@@ -16,9 +22,10 @@ preserving registration without stretching any object.
 | `subject` | Coder, hoodie, laptop, cat, books, pen cup and tabletop | True alpha around the group | 1.0 | 0.10 |
 | `plants` | Soft near foliage at the bottom corners | True soft alpha | 1.8 | 0.02 |
 
-Run `python tools/make_hero_assets.py` to export full-size and 960px WebP planes
-to `assets/hero-layers/`. The builder also composites those same planes into the
-complete static hero, so loading failures and reduced motion retain a whole image.
+Run `python tools/make_hero_assets.py --ink` to export the active subject planes
+and matching full-size and 960px static composites. Run without `--ink` to rebuild
+the original set. Loading failures and reduced motion retain the matching complete
+image, and the original artwork is not overwritten by the ink build.
 
 ## Generation prompt set
 

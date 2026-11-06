@@ -312,7 +312,7 @@ footer{border-top:1px solid var(--line);padding-block:28px 72px}
       <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="c">cat changelog/CHANGELOG-v*.md</span></p>
       <h1>Changelog</h1>
       <!-- generated:changelog-summary -->
-<p class="lede">56 releases &middot; v1.0.0 &rarr; v1.0.55 &middot; from the repository's <code>changelog/</code> directory</p>
+<p class="lede">107 releases &middot; v1.0.0 &rarr; v1.1.6 &middot; from the repository's <code>changelog/</code> directory</p>
 <!-- /generated:changelog-summary -->
       <p class="body"><a class="gh" href="https://github.com/Babitdor/NovaCode/tree/main/changelog" rel="noopener">changelog/ on GitHub &#8599;</a></p>
     </div>
@@ -320,6 +320,779 @@ footer{border-top:1px solid var(--line);padding-block:28px 72px}
     <p id="release-status" role="status" aria-live="polite"></p>
     <div id="releases">
     <!-- generated:changelog-releases -->
+<details class="changelog-entry" id="v1-1-6" data-version="1.1.6" data-sha="0f3c06a3fb0847884b684ffb17ac0d4c1a2d8aa2">
+<summary class="entry-toggle"><h2 class="version">v1.1.6</h2><span class="release-summary">Replace generic UI emojis with compact text symbols that accept theme colors, including tool activity, voice, memory, remote status, and dialogs. Preserve success, warning, and error distinctions without requiring extra fonts.</span></summary>
+<div class="release-content"><h3>Terminal interface</h3>
+<ul>
+<li>Replace generic UI emojis with compact text symbols that accept theme colors, including tool activity, voice, memory, remote status, and dialogs. Preserve success, warning, and error distinctions without requiring extra fonts.</li>
+<li>Keep emojis in conversation content, filenames, tool arguments, and remote reactions unchanged.</li>
+<li>Remove the composer placeholder and focus highlights for a cleaner input area.</li>
+</ul>
+<h3>Remote sessions</h3>
+<ul>
+<li>Request approval through Telegram and Discord for tasks started in remote chat, instead of automatically approving them. Keep terminal task approvals local.</li>
+<li>Reconnect previously enabled remote bridges when resuming a saved session.</li>
+</ul>
+<h3>Performance and caching</h3>
+<ul>
+<li>Reduce background monitoring stalls and improve waiter cancellation and cleanup.</li>
+<li>Share the embedding model across local retrieval features and bound local caches.</li>
+<li>Improve request cache diagnostics and preserve reusable prompt prefixes during tool discovery and compaction, with portable behavior for unsupported routes.</li>
+<li>Record live network load validation results separately from offline checks; cache savings remain dependent on the provider, route, and workload.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-1-5" data-version="1.1.5" data-sha="10ea0c142b60427832abdace9a931166d2aa00a0">
+<summary class="entry-toggle"><h2 class="version">v1.1.5</h2><span class="release-summary">Move built-in compression controls to /lite-mode, leaving /caveman and /ponytail available for skills.</span></summary>
+<div class="release-content"><h3>Lite Mode</h3>
+<ul>
+<li>Move built-in compression controls to <code>/lite-mode</code>, leaving <code>/caveman</code> and <code>/ponytail</code> available for skills.</li>
+<li>Show only the selected style's settings, explain strengths and options, and keep Apply and Cancel visible on small terminals.</li>
+<li>Remember the chosen style when disabled and preserve saved preferences and unfinished composer drafts.</li>
+</ul>
+<h3>Passing and continuation</h3>
+<ul>
+<li>Rename the automatic project handoff mode to <code>/passing</code>, leaving <code>/handoff</code> available for the skill and retaining existing saved records.</li>
+<li>Stop continuation if saving the current conversation fails. Allow interrupted handoff deletion to be retried without resurrecting deleted records.</li>
+<li>Distinguish context snapshots from newly written handoff documents in status messages and shared events.</li>
+</ul>
+<h3>Skill discovery</h3>
+<ul>
+<li>Isolate retrieval caches by source and metadata, and track successful skill loads in usage rankings.</li>
+<li>Offer relevant candidates for small libraries and without embeddings. Preserve applicability and exclusion rules in discovery summaries.</li>
+<li>Use task context for short follow-ups, retain trailing requirements in long requests, and allow unloaded skills to be suggested again.</li>
+</ul>
+<h3>Tool discovery</h3>
+<ul>
+<li>Resolve tool inventories from the owning invocation, including activated skill tools, and keep concurrent searches separate.</li>
+<li>Search parameter names and descriptions, filter unrelated semantic results, and distinguish tools from same-named subagents.</li>
+<li>Bind discovered schemas using successful, correlated structured records. Older text-only discovery reports remain readable and require rediscovery.</li>
+<li>Bound inventory notes and remove full hidden subagent descriptions. Preserve normal approval, execution-policy, and plan-mode checks.</li>
+</ul>
+<h3>Maintenance</h3>
+<ul>
+<li>Standardize plugin management on the singular <code>/plugin</code> command.</li>
+<li>Handle update output on legacy Windows terminal encodings.</li>
+<li>Add offline selection, concurrency, checkpoint, UI, and policy regressions.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-1-4" data-version="1.1.4" data-sha="218a7ef28f47629c7751c96565e3710afd50fcec">
+<summary class="entry-toggle"><h2 class="version">v1.1.4</h2><span class="release-summary">Save project-scoped task, check and evidence records in the existing durable store. Share findings across linked Git worktrees while retaining each run's checkout path, revision and declared input fingerprints.</span></summary>
+<div class="release-content"><h3>Prime project memory and continuation</h3>
+<ul>
+<li>Save project-scoped task, check and evidence records in the existing durable store. Share findings across linked Git worktrees while retaining each run's checkout path, revision and declared input fingerprints.</li>
+<li>Recall up to five relevant check summaries within a 2,000-character allowance. Keep findings as drafts until observed failure is followed by passing checks against changed code. Mark changed or missing inputs stale or unavailable.</li>
+<li>Add <code>/prime tasks</code>, <code>/prime resume &lt;id&gt;</code>, <code>/prime checks</code>, and locally confirmed <code>/prime forget &lt;id&gt;</code>. Preparing a task starts no agent work; continuation uses the current workspace, model, permissions and limits, with separate child runs.</li>
+</ul>
+<h3>Observed verification</h3>
+<ul>
+<li>Define acceptance checks before normal tool execution and bind results to actual tool-call IDs from the owning run. Evaluate exit codes and literal output assertions mechanically; fabricated, missing, truncated or unsupported evidence cannot establish a pass.</li>
+<li>Preserve execution approvals, plan restrictions and cancellation handling. Redact and bound execution artifacts before persistence, and load detailed definitions and evidence only when inspected.</li>
+<li>Report unmet criteria and verification limits even when all six Prime phases have completed. Preserve inspection of older session reports.</li>
+</ul>
+<h3>Prime interface</h3>
+<ul>
+<li>Add a compact Prime strip and an expandable, independently scrollable drawer with task history, evidence and explicit continuation controls.</li>
+<li>Preserve composer drafts, keyboard access, theme styling and transcript scroll position. Keep progress, confirmations and storage warnings temporary.</li>
+<li>Add structured Prime event IDs for shared TUI, headless and remote consumers, plus offline contract and mutation checks in the Windows/Linux CI matrix.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-1-3" data-version="1.1.3" data-sha="6cc2ec15b12690f26493ffbf655d5a6ca162644b">
+<summary class="entry-toggle"><h2 class="version">v1.1.3</h2><span class="release-summary">Add an exclusive Off / Caveman / Ponytail composer selector, preserving drafts and focus without adding toggle messages to the transcript.</span></summary>
+<div class="release-content"><h3>Ponytail compression mode</h3>
+<ul>
+<li>Add an exclusive Off / Caveman / Ponytail composer selector, preserving drafts and focus without adding toggle messages to the transcript.</li>
+<li>Add Ponytail lite, full and ultra levels, plus review, audit, debt, gain and help commands. Settings persist across restarts and migrate existing Caveman preferences. One-shot helpers leave the selected mode unchanged.</li>
+<li>Preserve the pinned upstream Ponytail skill bodies and level filtering, with golden checks against its JavaScript instruction builder. Bundle the MIT license and source checksums without requiring Node at runtime.</li>
+<li>Apply Ponytail to main and delegated model requests without rewriting stored conversations or tool results. Existing permissions remain authoritative.</li>
+<li>Add an opt-in real-provider validation script for all ten compression options. The recorded DeepSeek run passed 19 of 20 checks; one ultra response omitted an exact line reference. Ponytail used more tokens on these small tasks, so token savings and identical model responses are not guaranteed.</li>
+</ul>
+<h3>System One approval fixes</h3>
+<ul>
+<li>Keep approval gates active when auto-approval is enabled, including custom tools, delegated actions and Code Mode. Preserve native question and plan interactions.</li>
+<li>Treat uncertain, malformed, low-confidence or unavailable reviews as requests for owner approval. A surfaced request cannot be silently approved or reviewed again by the TUI, headless runner or pipe adapter.</li>
+<li>Bind review context to the owner's actual request, reuse configured provider authentication and close owned review transports. Preserve hard policy denials and fail closed when policy or configuration loading fails.</li>
+</ul>
+<h3>Jev tool pruning</h3>
+<ul>
+<li>Score only eligible uncached results while retaining full narrative context within the scorer's token budget. Pair tool calls and results chronologically.</li>
+<li>Publish scoring passes only after every batch validates; reject nonfinite and out-of-range scores. Retain bounded in-memory cache hits across runs and version persistent cache keys so earlier entries are not reused under changed semantics.</li>
+<li>Fit scoring context with incremental token accounting. A synthetic 80-message benchmark reduced estimator calls from 15,614 to 394 while preserving the fitted state and token count.</li>
+<li>Extend offline CI coverage for approval decisions, compression modes and pruning.</li>
+<li>Keep the cache-retention regression fixture small enough for the Windows test timeout while still exercising pruning beyond the configured budget.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-1-2" data-version="1.1.2" data-sha="c34fb7dbe7725d49d556669e68f85a513bc7385b">
+<summary class="entry-toggle"><h2 class="version">v1.1.2</h2><span class="release-summary">Add opt-in Deep Work with /prime on, /prime off, /prime status, /prime report, and the --prime / --no-prime launch flags.</span></summary>
+<div class="release-content"><h3>Nova Prime · Deep Work</h3>
+<ul>
+<li>Add opt-in Deep Work with <code>/prime on</code>, <code>/prime off</code>, <code>/prime status</code>, <code>/prime report</code>, and the <code>--prime</code> / <code>--no-prime</code> launch flags.</li>
+<li>Track six ordered checkpoints: define, investigate, implement, verify, challenge and deliver. Delivery records distinguish agent assessments from observed tool results and explicitly identify unverified work.</li>
+<li>Save Prime preferences and the last report with session metadata. Interrupted work remains paused; clearing a conversation removes its report, and late results cannot repopulate a cleared or superseded request.</li>
+<li>Preserve the selected model, existing approvals and execution limits.</li>
+</ul>
+<h3>Composer controls</h3>
+<ul>
+<li>Add Prime and Plan toggles with mouse and keyboard support, preserving drafts and returning focus to the composer without starting agent work.</li>
+<li>Show a theme-aware Prime frame and a blue <strong>Plan Mode · Read only</strong> frame, highlighted toggles and mode indicators. Bash and approval-warning colors retain precedence; controls wrap on narrow terminals.</li>
+<li>Keep Prime and Plan on/off changes silent in the transcript. Explicit status and report commands continue to display their results.</li>
+</ul>
+<h3>Plan-mode guardrails</h3>
+<ul>
+<li>Enforce planning restrictions before synchronous and asynchronous tool execution, including the main agent entering planning mid-conversation.</li>
+<li>Block Serena edits, memory writes, command execution and unknown operations, including calls routed through MCPTool and Code Mode. Reviewed read-only investigation remains available; auto-approval cannot override the guard.</li>
+<li>Preserve authoritative MCP server/tool identity. Other MCP tools must declare read-only behavior without a destructive hint to execute during planning.</li>
+<li>Reject traversal, directory lookalikes and escaped targets in the permitted <code>.nova/plans/</code> and <code>.nova/ralph/</code> write paths.</li>
+</ul>
+<h3>CI fixes</h3>
+<ul>
+<li>Test the shared planning policy directly instead of patching a removed approval-module constant; cover both manual and automatic approval settings.</li>
+<li>Bring reasoning headers into view before mouse hit-testing after folding or expanding long traces, preserving all reopening and full-text assertions.</li>
+<li>Include Prime state, composer controls and MCP planning restrictions in the offline CI regression matrix and focused source lint checks.</li>
+<li>Use a native temporary workspace in plan-path tests so containment checks run against absolute paths on both Linux and Windows.</li>
+<li>Wait for queued keyboard focus and scrollbar-driven layout reflow in composer and Signal transcript tests before sending keys or asserting geometry.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-1-1" data-version="1.1.1" data-sha="14ad84a6935ad3e897ef54390f016569e20f2cbd">
+<summary class="entry-toggle"><h2 class="version">v1.1.1</h2><span class="release-summary">Add /rooms, a Rooms button and Ctrl+Shift+R for project channels, agent DMs and a shared activity board, while retaining existing session tabs.</span></summary>
+<div class="release-content"><h3>Project rooms</h3>
+<ul>
+<li>Add <code>/rooms</code>, a Rooms button and Ctrl+Shift+R for project channels, agent DMs and a shared activity board, while retaining existing session tabs.</li>
+<li>Run Claude Code and Codex through their installed CLIs and existing logins, with separate resumable conversations and attributed replies. Nova uses the shared agent loop with private checkpoints and room-scoped tools.</li>
+<li>Persist messages, tasks, notes and read positions in the canonical project's ignored <code>.nova/workspace/</code> directory. Add a participant-bound local MCP bridge for published context, verified artifacts and structured handoffs.</li>
+<li>Require explicit task approval before implementation, preserve isolated Git worktrees, limit project execution to two workers and six initial task turns, and require a separate owner decision for extensions and integration.</li>
+<li>Keep native CLI permission controls, pause interrupted execution without replay, preserve work on cancellation, and refuse integration into dirty or changed project bases.</li>
+<li>Preserve room drafts, unread indicators and independent transcript scrolling; distinguish agent and file mention suggestions and support narrow terminals.</li>
+<li>Reject stale mention suggestions after typing or switching rooms, keeping older agent completions from replacing newer file input.</li>
+<li>Add explicit Markdown export of selected channel notes and display reported usage, marking unavailable usage as unknown. Validation: 33 release and room checks, all 30 room cases in randomized order, Ruff, formatting and mypy passed after the release fix; the implementation previously passed 119 focused regression tests and 29 room cases in randomized order. Tests use fake provider responses and CLI streams, temporary Git worktrees, real local subprocess/MCP transports and Textual pilots. Live Claude/Codex login and provider smoke tests remain opt-in. Broader suite failures and Windows timeouts are documented in <code>PROJECT_ROOMS_EVIDENCE.md</code>.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-1-0" data-version="1.1.0" data-sha="11f2bdcaef9cdbd47648e39f36ee0e617373c737">
+<summary class="entry-toggle"><h2 class="version">v1.1.0</h2><span class="release-summary">Add a default-enabled workspace knowledge cache with source validation, isolated assistant namespaces, and /cache status|clear|on|off controls.</span></summary>
+<div class="release-content"><h3>Workspace knowledge and teammate approvals</h3>
+<ul>
+<li>Add a default-enabled workspace knowledge cache with source validation, isolated assistant namespaces, and <code>/cache status|clear|on|off</code> controls.</li>
+<li>Add persistent, per-teammate Auto Approve for desktop input, off by default, while retaining durable decisions, pause controls, and recovery safeguards.</li>
+<li>Hide the dedicated Windows QEMU console during computer and teammate startup.</li>
+</ul>
+<h3>Session tabs and interface layouts</h3>
+<ul>
+<li>Add an opt-in experimental side-by-side diff preview in <code>/themes</code>, with line numbers, syntax highlighting, theme-aware change shading, and a narrow-screen fallback.</li>
+<li>Add a <code>+</code> button for opening a blank session with the home screen and focused input.</li>
+<li>Add close controls to extra session tabs. Dismiss tabs immediately while worker shutdown and worktree cleanup continue; restore tabs when shutdown fails.</li>
+<li>Preserve the banner canvas and logo position when opening or switching sessions.</li>
+<li>Keep session navigation at the top in every interface style, including Centered.</li>
+<li>Extend regression coverage across all 14 home styles at wide and narrow sizes.</li>
+<li>Display provider-exposed thinking and reasoning summaries across SDK formats, including completed replies and gateway metadata, without repeating streamed text.</li>
+<li>Request visible summaries for supported OpenAI and Azure reasoning models.</li>
+<li>Respect manual scrolling during thinking, tool updates, and final answers; keep expanded thinking available while the reader is scrolled away.</li>
+</ul>
+<h3>Installation and CI</h3>
+<ul>
+<li>Constrain Parakeet to <code>sherpa-onnx&gt;=1.10.0,&lt;2</code> to avoid missing wheels in 2.0.1.</li>
+<li>Quote version constraints in installation hints and retain the matching lockfile.</li>
+<li>Stabilize resize checks by waiting for the rendered terminal layout. Validation: focused cache, approval, computer, session, interface, installation, and release metadata checks. Parakeet wheel installation and import were verified on Windows Python 3.11; no speech model download or live transcription was required.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-99" data-version="1.0.99" data-sha="6f89936e13de319dca9d309fe13366dcad59cb34">
+<summary class="entry-toggle"><h2 class="version">v1.0.99</h2><span class="release-summary">Add an optional computer extra using Cua 0.9.0 and an explicitly selected local Linux QEMU VM with 2 CPUs and 4 GiB RAM. Check QEMU before guest download.</span></summary>
+<div class="release-content"><h3>Local Linux computer preview</h3>
+<ul>
+<li>Add an optional <code>computer</code> extra using Cua 0.9.0 and an explicitly selected local Linux QEMU VM with 2 CPUs and 4 GiB RAM. Check QEMU before guest download.</li>
+<li>Add <code>/computer start|preview|status|pause|resume|stop</code> with nonblocking startup and a private token-protected loopback browser preview.</li>
+<li>Give the local root agent screenshot and bounded desktop-input tools with observation IDs, normal approvals, plan-mode restrictions and user pause. Delegated agents do not inherit desktop tools; no host files or credentials are mounted by this feature.</li>
+<li>Keep screenshots and actions on the direct multimodal tool path. Attempt guest deletion on shutdown and retain failed-cleanup handles for retry.</li>
+<li>Document prerequisites, temporary guest files, ordinary guest networking and refreshing an existing Windows terminal's PATH after installing QEMU.</li>
+</ul>
+<h3>Documentation and interface catalog</h3>
+<ul>
+<li>Shorten the README to setup essentials and product capabilities; preserve detailed installation, voice and workflow instructions in SETUP.md.</li>
+<li>Refresh FEATURES.md with landing-page copy, native Code Mode, Whistle, lightweight speech options, download progress and explicitly labeled VM preview.</li>
+<li>Include the previously added eight interface styles, character art and animated homes in the v1.0.99 feature reference. Validation: offline computer lifecycle, desktop tools, preview authentication, TUI controls and agent/policy compatibility checks. QEMU 11.1.0 prerequisite inspection succeeds on Windows after refreshing PATH. A real guest boot has not been verified; this release does not claim measured VM or audio performance. The Cua SDK is optional; base installations do not gain a hypervisor dependency.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-98" data-version="1.0.98" data-sha="4a3da2251e4a4cab6b660b2e7234b1d8d9458c17">
+<summary class="entry-toggle"><h2 class="version">v1.0.98</h2><span class="release-summary">Show separate STT and TTS progress rows above the prompt composer during first use, model warmup, and /voice download.</span></summary>
+<div class="release-content"><h3>Voice model download progress</h3>
+<ul>
+<li>Show separate STT and TTS progress rows above the prompt composer during first use, model warmup, and <code>/voice download</code>.</li>
+<li>Display downloaded bytes and percentages when the backend exposes a total; use an indeterminate indicator otherwise. Cached models stay quiet.</li>
+<li>Keep progress responsive while push-to-talk waits for transcription, reject stale pipeline/operation updates, and ignore late worker updates after cancellation.</li>
+<li>Share atomic streaming downloads between Piper, Parakeet, Kokoro, and sanoTTS, with timeout and transfer-length validation.</li>
+<li>Report failed warmup accurately instead of announcing that models are ready.</li>
+</ul>
+<h3>Faster speech startup</h3>
+<ul>
+<li>Limit the additional spoken-summary model call, including model setup, to two seconds; use a short filtered prose fallback when it exceeds that budget.</li>
+<li>Play Piper sentences as soon as they are synthesized instead of buffering the complete response, and stop generating later sentences after cancellation.</li>
+<li>Discard replies whose voice pipeline was replaced during summarization. Keep short spoken summaries and exclude tool calls, tool results, reasoning, and subagent output.</li>
+</ul>
+<h3>Lightweight CPU speech options</h3>
+<ul>
+<li>Add optional Kokoro 82M INT8 speech through <code>voice-kokoro</code>, with six English voices, CPU-only inference, and bounded inference threads. Weights and voice data download to roughly 120 MB total.</li>
+<li>Add optional sanoTTS through <code>voice-sano</code>, with four English voices and roughly 2-4 MB of weights per selected voice. The NumPy runtime needs no GPU or PyTorch.</li>
+<li>Configure both through <code>/model</code>, <code>/settings</code>, or <code>/voice settings tts</code>; preserve existing providers and the default voice selection.</li>
+<li>Pin optional runtimes to <code>kokoro-onnx==0.4.9</code> and <code>sanotts==0.3.0</code>, which share the compatible phonemizer distribution. Include installation hints and updated setup documentation.</li>
+<li>Include the existing feature inventory document for landing-page reference. Validation: the offline voice verifier passed 166 tests with one optional-dependency skip; source type checks and new-file lint/format passed. Actual Kokoro and sanoTTS provider wrappers synthesized audio on Windows CPU in disposable environments. Physical microphone/speaker behavior, peak RAM, and universal low-resource performance were not benchmarked. Download footprints are not total runtime RAM requirements.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-97" data-version="1.0.97" data-sha="00f31ccf3fd1ad61d652c5b21743cbbefe643ed2">
+<summary class="entry-toggle"><h2 class="version">v1.0.97</h2><span class="release-summary">Add a persistent Code Mode toggle below the prompt composer, with mouse and keyboard support.</span></summary>
+<div class="release-content"><h3>Code Mode for native tools</h3>
+<ul>
+<li>Add a persistent Code Mode toggle below the prompt composer, with mouse and keyboard support.</li>
+<li>Compose ordinary registered Nova tools through JavaScript using <code>tools.list</code>, <code>tools.describe</code>, and <code>tools.call</code>, including sessions without MCP servers.</li>
+<li>Preserve existing <code>MCPCode</code> and <code>mcp.*</code> scripts. Nested calls retain argument validation, policy checks, workspace guards, tracing, and execution limits.</li>
+<li>Keep interactive approvals, delegation, and graph-control tools on their direct call paths to avoid replaying completed actions or losing state updates.</li>
+</ul>
+<h3>Whistle speech input</h3>
+<ul>
+<li>Add Whistle as an optional local STT provider through the <code>voice-whistle</code> extra, using the Cactus runtime instead of Faster-Whisper.</li>
+<li>Expose Whistle in voice settings and the model picker, with lazy model loading, normalized audio input, and serialized native calls across instances.</li>
+<li>Install with <code>uv sync --extra voice --extra voice-whistle</code>, then select <code>/voice settings stt whistle</code>. Existing default providers remain unchanged.</li>
+</ul>
+<h3>Voice response fixes</h3>
+<ul>
+<li>Preserve short spoken summaries while excluding tool calls, tool results, reasoning, and subagent payloads from automatic speech.</li>
+<li>Prevent cancelled synthesis from starting playback later, serialize overlapping speech, and preserve microphone echo suppression while speaking.</li>
+<li>Drop late transcripts after listening stops and recheck voice settings after asynchronous summarization or warmup.</li>
+<li>Share playback buffering, padding, and cancellation handling across Piper, Pocket, Orpheus, and ElevenLabs. Validation: 268 focused Code Mode tests and 131 voice tests passed. Native Whistle inference passed on Windows with <code>cactus-needle</code> 3.2.8. Live microphone/speaker quality and transcription accuracy were not benchmarked. Added one optional runtime dependency, <code>cactus-needle</code>; no default-provider dependency changes.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-96" data-version="1.0.96" data-sha="c96b2c8b4e2436cec9f0bfb1ec434937848e586b">
+<summary class="entry-toggle"><h2 class="version">v1.0.96</h2><span class="release-summary">Keep the user's language at every Caveman intensity unless another language is explicitly requested. Selecting Wenyan no longer asks Nova to translate replies into Chinese.</span></summary>
+<div class="release-content"><h3>Preserve reply language in Wenyan mode</h3>
+<ul>
+<li>Keep the user's language at every Caveman intensity unless another language is explicitly requested. Selecting Wenyan no longer asks Nova to translate replies into Chinese.</li>
+<li>Apply classical Chinese styling only to Chinese replies. Use matching Lite, Full or Ultra compression for replies in other languages.</li>
+<li>Cover all three Wenyan levels in main-agent and subagent request paths, preserving model selection and message history.</li>
+<li>Clarify the Options tooltip and document language behavior. Extend the optional live inference script to accept every intensity. Validation: 68 focused tests passed, plus six live English/Portuguese replies using the saved model preserved their requested languages. These probes establish language behavior for those samples, not overall correctness or token savings. No dependencies added.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-95" data-version="1.0.95" data-sha="f2c97df55cd205a96e342d65589bdeb44599df7a">
+<summary class="entry-toggle"><h2 class="version">v1.0.95</h2><span class="release-summary">Add optional attribution.coAuthor.name and attribution.coAuthor.email settings so future Nova-generated commit trailers can credit an existing GitHub account.</span></summary>
+<div class="release-content"><h3>GitHub-linked co-author attribution</h3>
+<ul>
+<li>Add optional <code>attribution.coAuthor.name</code> and <code>attribution.coAuthor.email</code> settings so future Nova-generated commit trailers can credit an existing GitHub account.</li>
+<li>Apply the configured identity to model instructions and structured commit tools while preserving human authors, sign-offs, and independent commit/PR attribution switches.</li>
+<li>Reject malformed identities and multiline trailer injection, falling back to the existing default identity.</li>
+<li>Document GitHub email association, contributor eligibility, account avatars, and the limits of attribution for existing history and commits made outside Nova.</li>
+<li>Test persistence, prompt and tool integration, valid Git trailers, idempotence, opt-outs, and malformed identity handling. No dependencies added. Existing commits are not rewritten; GitHub account and email association must be configured separately.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-94" data-version="1.0.94" data-sha="cdf019d8061375d13d9c39ee04327c1392e0fa6d">
+<summary class="entry-toggle"><h2 class="version">v1.0.94</h2><span class="release-summary">Align Say less with the installed Caveman skill: default Full intensity, exact technical content, normal code/commit/PR prose, no style announcements or tool narration, and clarity overrides for warnings, irreversible actions, ambiguous sequences and clarification requests.</span></summary>
+<div class="release-content"><h3>Caveman skill alignment and token accounting</h3>
+<ul>
+<li>Align Say less with the installed Caveman skill: default Full intensity, exact technical content, normal code/commit/PR prose, no style announcements or tool narration, and clarity overrides for warnings, irreversible actions, ambiguous sequences and clarification requests.</li>
+<li>Replace Nova's exact bundled response-style block in the model request rather than carrying both default and Caveman directives. Preserve custom style blocks and other instructions.</li>
+<li>Add Lite, Full, Ultra and the three Wenyan intensities to <code>/caveman</code> and Options. Persist intensity independently; save the Options draft together and discard it on Cancel.</li>
+<li>Give Nova-managed subagents the selected prose style without overriding their model roles or adding routing/compression utilities to local/background subagents.</li>
+<li>Expand <code>/caveman audit</code> with provider-reported output, total and reasoning tokens, plus usage observation counts. Keep estimates separate from provider usage.</li>
+<li>Add an opt-in paired-inference script using saved credentials and the packaged core/security prompts. Shorter visible output does not guarantee lower total usage or cost on reasoning models.</li>
+<li>Cover all levels, persistence, UI Save/Cancel, small terminals and subagent integration. Give the provider-cancellation regression enough setup time to reach its simulated transport before timing out. No dependencies added. Usage and audit limits: <code>docs/caveman-mode.md</code>.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-93" data-version="1.0.93" data-sha="f4c9e2667b592f423cbac270882883e961ab9056">
+<summary class="entry-toggle"><h2 class="version">v1.0.93</h2><span class="release-summary">Enable commit and PR attribution by default, with independent attribution.commits and attribution.pullRequests opt-out switches in ~/.nova/Nova.config.json.</span></summary>
+<div class="release-content"><h3>Commit and pull request attribution</h3>
+<ul>
+<li>Enable commit and PR attribution by default, with independent <code>attribution.commits</code> and <code>attribution.pullRequests</code> opt-out switches in <code>~/.nova/Nova.config.json</code>.</li>
+<li>Give the main agent and Nova-managed subagents live attribution instructions, and normalize supported structured Git/GitHub creation-tool messages.</li>
+<li>Add a standard NovaCode co-author trailer while preserving human authors and existing trailers. Attribution is commit-level, using an unlinked product identity.</li>
+<li>Display the supplied NovaCode logo in PR attribution footers. Git commit trailers remain plain text; arbitrary shell commands follow agent instructions rather than being rewritten.</li>
+<li>Test persisted opt-outs, schema handling, duplicate prevention, real isolated Git commits, synchronous/asynchronous agent execution, and subagent integration. No new dependencies. Configuration and scope: <code>docs/attribution.md</code>.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-92" data-version="1.0.92" data-sha="8235831b5d36803c128ec03e91559a4b4ae84514">
+<summary class="entry-toggle"><h2 class="version">v1.0.92</h2><span class="release-summary">Add the discoverable MCPCode tool when MCP servers are configured. JavaScript scripts can list tool metadata, inspect JSON schemas, call multiple MCP tools, filter intermediate data and return a compact result.</span></summary>
+<div class="release-content"><h3>MCP Code Mode</h3>
+<ul>
+<li>Add the discoverable <code>MCPCode</code> tool when MCP servers are configured. JavaScript scripts can list tool metadata, inspect JSON schemas, call multiple MCP tools, filter intermediate data and return a compact result.</li>
+<li>Support loops, branching, dependent calls and bounded parallel execution with <code>Promise.all</code>, using the existing QuickJS runtime. Existing <code>eval</code> subagent workflows remain unchanged.</li>
+<li>Validate every target's arguments and preserve configured tool inventories, policy denials, session rules, optional approval-model decisions and downstream tool middleware. Unresolved manual approvals use the ordinary MCPTool path rather than replaying a script.</li>
+<li>Keep script state isolated per call, preserve nested trace IDs, and report the outer script's actual result. Bound code, memory, execution time, call counts, concurrency and output; cancel pending async work on interruption.</li>
+<li>Add offline QuickJS and stdio MCP tests, JSON property checks and a verifier enforcing coverage, lint, types and three assertion-killed negative controls on Windows and Linux CI. Usage and limits: <code>docs/mcp-code-mode.md</code>. This release adds no dependencies. External MCP side effects cannot be rolled back, and JavaScript number precision still applies.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-91" data-version="1.0.91" data-sha="e538d6c65b5f3a66140343499a3a90fc066a2655">
+<summary class="entry-toggle"><h2 class="version">v1.0.91</h2><span class="release-summary">Add a composer toggle, settings panel and /caveman commands for six independent features: concise replies, recoverable tool-output compression, configured model routing, script retrieval, token-waste inspection and compact web results.</span></summary>
+<div class="release-content"><h3>Caveman mode</h3>
+<ul>
+<li>Add a composer toggle, settings panel and <code>/caveman</code> commands for six independent features: concise replies, recoverable tool-output compression, configured model routing, script retrieval, token-waste inspection and compact web results.</li>
+<li>Preserve exact source recovery within the current session and keep script execution under existing permissions. No paid background cache-warming requests are sent.</li>
+<li>Add per-route reasoning-effort settings without changing the saved session model or effort.</li>
+<li>Verify the features with offline tests and nine real-inference probes using saved configuration. The probes use synthetic tool results and do not establish universal token savings.</li>
+</ul>
+<h3>Prompt consistency and memory</h3>
+<ul>
+<li>Share built-in workflow and path guidance between the main and continuation prompts; retain explicit memory discovery and preservation instructions.</li>
+<li>Improve research verification, scoped output delivery, summaries and tool-schema accuracy using public first-party coding-agent sources.</li>
+<li>Keep main prompts package-controlled, preserve Windows and POSIX path handling, and remove stale foreign-runtime placeholders.</li>
+<li>Document the audit and live-check limits in <code>docs/prompt-audit.md</code> and <code>docs/caveman-mode.md</code>.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-90" data-version="1.0.90" data-sha="db6d172a9dc1b0853afe2746cd5b55dffc1d6633">
+<summary class="entry-toggle"><h2 class="version">v1.0.90</h2><span class="release-summary">Add default-on prompt-injection handling across the main agent and built-in subagent paths. Tool results are passed as explicitly untrusted evidence, credential-like values are redacted from model-visible copies, and tool arguments that expose secret environment values are blocked.</span></summary>
+<div class="release-content"><h3>Security guardrails</h3>
+<ul>
+<li>Add default-on prompt-injection handling across the main agent and built-in subagent paths. Tool results are passed as explicitly untrusted evidence, credential-like values are redacted from model-visible copies, and tool arguments that expose secret environment values are blocked.</li>
+<li>Add offline regression coverage, mutation checks, and a CI guardrail verification step. The focused guardrail verifier passed with 100% statement coverage for the new middleware; the configured offline CI regression suite passed (711 passed, 4 skipped, 11 subtests).</li>
+<li>Document the guardrail threat model and limitations in <code>docs/security-guardrails.md</code>. These checks validate the implemented protections and regression behavior; they are not a guarantee against every prompt-injection technique.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-89" data-version="1.0.89" data-sha="27ec95ffa43eee80e538b41cbe67bb076939dd9c">
+<summary class="entry-toggle"><h2 class="version">v1.0.89</h2><span class="release-summary">Mirror full terminal prompts to connected remote chats alongside live tool activity and streamed replies in the matching session thread.</span></summary>
+<div class="release-content"><h3>Fixes</h3>
+<ul>
+<li>Mirror full terminal prompts to connected remote chats alongside live tool activity and streamed replies in the matching session thread.</li>
+<li>Attach local child-session turns to their remote threads when work starts, and include the current terminal prompt when connecting during a running turn.</li>
+<li>Prevent duplicate streams when a Discord connection becomes ready while a terminal prompt is being mirrored. Report prompt delivery failures without interrupting the local agent turn.</li>
+<li>Explain inaccessible Discord parent channels with their channel ID, API error code, permission requirements and steps to repair the saved configuration.</li>
+</ul>
+<h3>Verification</h3>
+<ul>
+<li>Add regressions for full prompt delivery, child-session attachment, late connections, delivery failures and concurrent stream attachment.</li>
+<li>Verify Discord thread lifecycle, routing and unavailable-parent handling.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-88" data-version="1.0.88" data-sha="3e6d5d3d9e617ba990e4b88e22020987a55d819b">
+<summary class="entry-toggle"><h2 class="version">v1.0.88</h2><span class="release-summary">Add the optional Rootapp remote companion, with saved configuration, sender authorization, editable responses and session routing through Root's local DevHost.</span></summary>
+<div class="release-content"><h3>Features</h3>
+<ul>
+<li>Add the optional Rootapp remote companion, with saved configuration, sender authorization, editable responses and session routing through Root's local DevHost.</li>
+<li>Give Discord sessions their own threads or forum posts, restore thread routing on reconnect and resume, and archive threads when their sessions close.</li>
+</ul>
+<h3>Fixes</h3>
+<ul>
+<li>Reject Windows drive, UNC, device, alternate-stream and traversal escapes in virtual filesystem paths. Resolve memory and mounted paths through their actual backend and enforce canonical path denials and teammate memory-write boundaries.</li>
+<li>Correct saved path approval validation, root grants and Windows case handling; persist grants with restrictive atomic file permissions.</li>
+<li>Refuse daemon stop operations when process identity cannot be verified, tighten PID reuse checks, treat exited Linux zombie processes as stopped, and use the Windows system taskkill executable for cleanup.</li>
+<li>Isolate vision configuration tests and block accidental writes to live user settings.</li>
+<li>Update vulnerable Python dependencies and the Root companion's locked dependencies. One OpenTelemetry advisory remains constrained by the optional agent server's upstream dependency requirements.</li>
+</ul>
+<h3>Verification</h3>
+<ul>
+<li>Validate security, remote routing, portable paths, images and daemon operations with focused regression tests, including real daemon process-tree checks on Windows and Ubuntu.</li>
+<li>Include the new security and daemon regressions in Windows and Linux CI.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-87" data-version="1.0.87" data-sha="14571744500debb86c9a6a2bb339e76b572e2f89">
+<summary class="entry-toggle"><h2 class="version">v1.0.87</h2><span class="release-summary">Keep image attachments available to multimodal chat models, and add an on-demand VISION side-call for text-only models. The independent vision model can be configured in /model → Vision without changing the conversation model.</span></summary>
+<div class="release-content"><h3>Features</h3>
+<ul>
+<li>Keep image attachments available to multimodal chat models, and add an on-demand <code>VISION</code> side-call for text-only models. The independent vision model can be configured in <code>/model</code> → <strong>Vision</strong> without changing the conversation model.</li>
+<li>Bound VISION calls to 30 seconds and show initialization, timeout, and provider failures in the tool result so the conversation can continue with a clear reason.</li>
+</ul>
+<h3>Verification</h3>
+<ul>
+<li>Cover deferred image inspection, current-turn image selection, timeout reporting, and independent vision-model selection and persistence.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-86" data-version="1.0.86" data-sha="3c9e91019fdce127ff456dd3548702f11eeb7fe2">
+<summary class="entry-toggle"><h2 class="version">v1.0.86</h2><span class="release-summary">Generalize image-capability detection across routed model aliases using common vision model-name markers and provider-declared profile metadata.</span></summary>
+<div class="release-content"><h3>Fixes</h3>
+<ul>
+<li>Generalize image-capability detection across routed model aliases using common vision model-name markers and provider-declared profile metadata.</li>
+<li>Prefer a recognized vision-capable model family over stale negative metadata from generic provider integrations while retaining explicit <code>/vision off</code>.</li>
+</ul>
+<h3>Verification</h3>
+<ul>
+<li>Cover routed aliases, common profile formats, stale negative profiles, and preservation of explicit user overrides.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-85" data-version="1.0.85" data-sha="36130314fd29fb40add42e2972ede7c2d057eff1">
+<summary class="entry-toggle"><h2 class="version">v1.0.85</h2><span class="release-summary">Recognize MiniMax M3-family models, including the configured M3.1 Flash model, as image-capable so Nova routes screenshots directly to the main model.</span></summary>
+<div class="release-content"><h3>Fixes</h3>
+<ul>
+<li>Recognize MiniMax M3-family models, including the configured M3.1 Flash model, as image-capable so Nova routes screenshots directly to the main model.</li>
+</ul>
+<h3>Verification</h3>
+<ul>
+<li>Add regression coverage for <code>commandcode / minimax/minimax-m3.1-flash:free</code>.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-84" data-version="1.0.84" data-sha="6e7782f5c6997e63c74116f6dc5a85951e5d6bfa">
+<summary class="entry-toggle"><h2 class="version">v1.0.84</h2><span class="release-summary">Clear LangSmith optional settings when the setup form is saved blank, so a stale workspace ID can be removed and does not keep breaking authentication.</span></summary>
+<div class="release-content"><h3>Fixes</h3>
+<ul>
+<li>Clear LangSmith optional settings when the setup form is saved blank, so a stale workspace ID can be removed and does not keep breaking authentication.</li>
+<li>Reset LangSmith's cached client and environment after startup credential hydration, so tracing uses the saved key and settings in the agent stream.</li>
+<li>Clarify that Workspace ID is optional and should be left blank unless the LangSmith workspace requires it. The interactive setup accepts <code>clear</code> to remove an existing optional value.</li>
+</ul>
+<h3>Verification</h3>
+<ul>
+<li>Cover persisted startup configuration, stale-client reset, and clearing an invalid workspace value with offline tests.</li>
+<li>Verify a LangGraph chain and model trace can be sent and read back from LangSmith with the configured account.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-83" data-version="1.0.83" data-sha="869a8f30ac4973895840de1e0c016b8b654ac2b9">
+<summary class="entry-toggle"><h2 class="version">v1.0.83</h2><span class="release-summary">Save LangSmith /trace setup settings across restarts. Store the API key in Nova's credential store and non-secret project, endpoint, workspace, and metadata settings in Nova.config.json.</span></summary>
+<div class="release-content"><h3>Fixes</h3>
+<ul>
+<li>Save LangSmith <code>/trace setup</code> settings across restarts. Store the API key in Nova's credential store and non-secret project, endpoint, workspace, and metadata settings in <code>Nova.config.json</code>.</li>
+<li>Restore saved tracing settings after credentials load and before the agent is created, so newly started sessions can send traces without repeating setup.</li>
+<li>Persist tracing enable and disable choices, and show the destination project where new prompts will appear.</li>
+</ul>
+<h3>Verification</h3>
+<ul>
+<li>Verify saved settings restore across a simulated restart and that the API key never enters the JSON config.</li>
+<li>Runtime tests cover setup changes and LangGraph chain, model, and tool traces using fake credentials and intercepted uploads; live account ingestion is not verified.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-82" data-version="1.0.82" data-sha="e74dcc5d52b90c0cc4207ff850e7ad6014d39efb">
+<summary class="entry-toggle"><h2 class="version">v1.0.82</h2><span class="release-summary">Apply the latest /trace setup configuration inside each running agent stream, overriding stale task-local tracing settings and selecting the current SDK client and project. Close nested streams together so early exits restore the tracing and usage contexts.</span></summary>
+<div class="release-content"><h3>Fixes</h3>
+<ul>
+<li>Apply the latest <code>/trace setup</code> configuration inside each running agent stream, overriding stale task-local tracing settings and selecting the current SDK client and project. Close nested streams together so early exits restore the tracing and usage contexts.</li>
+<li>Preserve an explicit tracing-off flag when rebuilding agents. Keep the enabled flag boolean and honor the project environment when no project override is given.</li>
+<li>Pass the configured endpoint as the SDK's <code>api_url</code> argument, and propagate the optional workspace ID.</li>
+</ul>
+<h3>Improvements</h3>
+<ul>
+<li>Add optional workspace, agent ID and agent environment fields to setup. The agent fields are trace metadata labels with the bundled SDK; project remains the destination. Keep CLI API-key entry masked and the setup form scrollable.</li>
+<li>Test runtime changes against stale async contexts and a real LangGraph graph containing model and tool calls. Trace uploads are intercepted locally with fake credentials; live authentication and ingestion are not exercised.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-81" data-version="1.0.81" data-sha="607581b7c8061b33f2d05923a4e42317ab6f840d">
+<summary class="entry-toggle"><h2 class="version">v1.0.81</h2><span class="release-summary">Base Nova's packaged standing instructions on the supplied prompts/agent.md reference: preserve memory and user work, recall plans, respect project scope, investigate before editing, verify results and communicate concisely.</span></summary>
+<div class="release-content"><h3>Improvements</h3>
+<ul>
+<li>Base Nova's packaged standing instructions on the supplied <code>prompts/agent.md</code> reference: preserve memory and user work, recall plans, respect project scope, investigate before editing, verify results and communicate concisely.</li>
+<li>Share those instructions between the startup agent's <code>core_agent_system.jinja</code> and the default/continuation <code>System_Prompt_Nova.jinja</code>. Keep runtime tool guidance and user memory separate. The shared block is packaged and cannot be replaced by global prompt-history or activated-artifact overrides.</li>
+</ul>
+<h3>Tests</h3>
+<ul>
+<li>Ensure both main prompt paths render the same packaged standing rules.</li>
+<li>Keep update-restart TUI tests offline: disable automatic background update checks while their manual update operations remain explicitly stubbed. This prevents a real update request from holding the Windows test executor open during certificate loading and teardown.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-80" data-version="1.0.80" data-sha="6548f93b81f6e9d1071a6b3da447f3c1ee85f30f">
+<summary class="entry-toggle"><h2 class="version">v1.0.80</h2><span class="release-summary">Require explicit parent approval for teammate file-tool writes that resolve outside the worker's project, even when auto-approve is enabled. Configured path allow rules still permit approved destinations; explicit denies win. Resolve mounted paths and symlinks before approval and recheck the destination before executing. Worktree workers use their own directory.</span></summary>
+<div class="release-content"><h3>Fixes</h3>
+<ul>
+<li>Require explicit parent approval for teammate file-tool writes that resolve outside the worker's project, even when auto-approve is enabled. Configured path allow rules still permit approved destinations; explicit denies win. Resolve mounted paths and symlinks before approval and recheck the destination before executing. Worktree workers use their own directory.</li>
+<li>Identify each teammate's assigned directory in its system instructions and prevent task text or remembered project paths from implying write permission.</li>
+<li>Keep the two main-agent base templates packaged with Nova. Global prompt history and activated prompt experiments cannot replace them. Global agent.md remains persistent memory rather than the source of the base system prompt.</li>
+</ul>
+<h3>Improvements</h3>
+<ul>
+<li>Improve the default Nova coding instructions using Codex.md as inspiration: task-sized planning, meaningful progress updates, project output scope, preserving user changes, approval continuity, focused verification and honest completion reports, adapted to Nova's tools.</li>
+<li>Add workspace and packaged-prompt regression tests to CI on both platforms.</li>
+</ul>
+<h3>Limits</h3>
+<ul>
+<li>File-tool approval checks are not an OS sandbox for shell commands, Python, plugins or external MCP tools. Prose output selections are not silently converted into broad folder grants; external file writes use parent approval or configured path rules. A small filesystem race remains between the final path check and execution.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-79" data-version="1.0.79" data-sha="48224099a4258172e0d61d200fd9b2718dd54576">
+<summary class="entry-toggle"><h2 class="version">v1.0.79</h2><span class="release-summary">Stop the background dream from dying on 'charmap' codec can't decode byte 0x9d. The dream agent served its memory files with upstream deepagents' filesystem backend, whose ripgrep path decoded search output with the platform locale codec (cp1252 on Windows); a single non-ASCII character in a matched line raised UnicodeDecodeError and stopped the dream. The dream memory route now uses NovaCode's own backend, and both its ripgrep path and its Python fallback decode search output as UTF-8 with a replacement fallback instead of depending on the active code page.</span></summary>
+<div class="release-content"><h3>Fixes</h3>
+<ul>
+<li>Stop the background dream from dying on <code>'charmap' codec can't decode byte 0x9d</code>. The dream agent served its memory files with upstream deepagents' filesystem backend, whose ripgrep path decoded search output with the platform locale codec (cp1252 on Windows); a single non-ASCII character in a matched line raised <code>UnicodeDecodeError</code> and stopped the dream. The dream memory route now uses NovaCode's own backend, and both its ripgrep path and its Python fallback decode search output as UTF-8 with a replacement fallback instead of depending on the active code page.</li>
+<li>Make a LangSmith configuration entered at runtime actually take effect. LangSmith caches the environment and the client it built from it, so setting <code>LANGSMITH_*</code> after startup left the tracer detached. <code>/trace enable</code> and <code>/trace disable</code> now clear that cached state as well.</li>
+</ul>
+<h3>Features</h3>
+<ul>
+<li><code>/trace</code> now takes the LangSmith environment from the user and activates tracing with it. A form asks for <code>LANGSMITH_TRACING</code>, <code>LANGSMITH_ENDPOINT</code>, <code>LANGSMITH_API_KEY</code> and <code>LANGSMITH_PROJECT</code> (pre-filled with the values already in use), and the result is applied and switched on without restarting Nova. The same four questions are asked on the command line outside the TUI, where an empty answer keeps the value that is already set.</li>
+<li>Keep the rest of the tracing command working next to the new setup flow: <code>/trace status</code>, <code>/trace enable [KEY] [--project NAME]</code>, <code>/trace disable</code>, <code>/trace projects</code> and <code>/trace traces [--limit N]</code>.</li>
+<li>Add regression coverage for the encoding fix (UTF-8 files through both the ripgrep path and the Python fallback, a cp1252 file in the fallback, and a grep over the dream memory files) and for the tracing setup (the four environment variables, the cache reset that makes a runtime change visible, the TUI form and the command-line prompts).</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-78" data-version="1.0.78" data-sha="e2e8446b0d6b86d0056aba6b7158dce5eff294c1">
+<summary class="entry-toggle"><h2 class="version">v1.0.78</h2><span class="release-summary">Classify spawn_agent teammates separately from remote LangGraph async tasks. Team workers now use inline status lines and cannot open the remote preview that incorrectly reported &quot;The agent server is not available.&quot;</span></summary>
+<div class="release-content"><h3>Fixes</h3>
+<ul>
+<li>Classify <code>spawn_agent</code> teammates separately from remote LangGraph async tasks. Team workers now use inline status lines and cannot open the remote preview that incorrectly reported &quot;The agent server is not available.&quot;</li>
+<li>Keep persistent teammates marked running when the lead finishes or cancels its current turn. Team lifecycle events update the same inline line when the teammate finishes.</li>
+<li>Add offline coverage for real in-process lifecycle events, <code>spawn_agent</code> tool invocation without server startup, and team status rendering without remote-server discovery.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-77" data-version="1.0.77" data-sha="0085d2a6b662a85a611d418f8074184fa5213bd6">
+<summary class="entry-toggle"><h2 class="version">v1.0.77</h2><span class="release-summary">Apply the shared bounded model retry policy to built-in in-process subagents, file-defined dynamic agents, and team workers. Normal async execution allows at most two Nova retries within a four-minute model-call budget, disables nested OpenAI-compatible/Anthropic SDK retries, and keeps slow tool execution outside that budget.</span></summary>
+<div class="release-content"><h3>Fixes</h3>
+<ul>
+<li>Apply the shared bounded model retry policy to built-in in-process subagents, file-defined dynamic agents, and team workers. Normal async execution allows at most two Nova retries within a four-minute model-call budget, disables nested OpenAI-compatible/Anthropic SDK retries, and keeps slow tool execution outside that budget.</li>
+<li>Display local subagents as plain, non-clickable status lines in the chat transcript. Update the same line on completion, failure or cancellation instead of mounting expandable cards and local task panels.</li>
+<li>Preserve inline task status through cancellation and isolate it between session tabs. Remote async tasks retain their existing task panel and persistent monitoring.</li>
+<li>Add offline compiled-graph and TUI regression coverage for request limits, stalled calls, slow tools, duplicate events, clicks, cancellation and session cleanup.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-76" data-version="1.0.76" data-sha="c629ff1169c4fab8c517aa129ca32595c6e8bff8">
+<summary class="entry-toggle"><h2 class="version">v1.0.76</h2><span class="release-summary">Bound background async model turns to four minutes including retry delays, with at most two Nova retries. Disable nested OpenAI-compatible/Anthropic SDK retries and set their request timeout to two minutes without changing the selected model or shared foreground clients.</span></summary>
+<div class="release-content"><h3>Fixes</h3>
+<ul>
+<li>Bound background async model turns to four minutes including retry delays, with at most two Nova retries. Disable nested OpenAI-compatible/Anthropic SDK retries and set their request timeout to two minutes without changing the selected model or shared foreground clients.</li>
+<li>Keep monitoring long-running async tasks instead of silently dropping them after 30 minutes. Warn after five minutes, report repeated server connection failures and recovery, and allow monitoring to restart after setup failures. Limit concurrent status requests rather than entire task watches so slow agents do not block completion notifications for later tasks.</li>
+<li>Add offline regression tests for actual SDK request counts, stalled-call cancellation, client isolation, delayed task completion and monitoring recovery.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-75" data-version="1.0.75" data-sha="d6db47d97f45abc198d30a6c7c89f1418218124c">
+<summary class="entry-toggle"><h2 class="version">v1.0.75</h2><span class="release-summary">Updated release metadata following the agent mention routing audit.</span></summary>
+<div class="release-content"><h3>Maintenance</h3>
+<ul>
+<li>Updated release metadata following the agent mention routing audit.</li>
+<li>Verified existing in-process, file-defined, and background-only agent invocation with 28 offline invocation and async-startup checks. Runtime routing remains unchanged in this release.</li>
+<li>Known limitations: dual-mode agents default to in-process delegation through plain <code>@name</code>; built-in async names require matching agent files for mention recognition.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-74" data-version="1.0.74" data-sha="891b43e3b9dc8328d0558d9ea75890e92b758839">
+<summary class="entry-toggle"><h2 class="version">v1.0.74</h2><span class="release-summary">Team spawn_agent builders now pass Nova's shared store into both in-process and separate-process graphs. Learning-enabled teammates previously failed before their first model call with 'NoneType' object has no attribute 'aget'.</span></summary>
+<div class="release-content"><h3>Fixed</h3>
+<ul>
+<li>Team <code>spawn_agent</code> builders now pass Nova's shared store into both in-process and separate-process graphs. Learning-enabled teammates previously failed before their first model call with <code>'NoneType' object has no attribute 'aget'</code>.</li>
+<li>In-process teammate records now report the selected model identity instead of leaving the model field unset.</li>
+<li>Added a five-teammate regression using real LangGraph execution and learning middleware, and extended process-worker probes to exercise the same store dependency. CI now includes team runtime and usage-accounting checks.</li>
+</ul>
+<h3>Validation</h3>
+<ul>
+<li>Reproduced all five failures with the exact reported error before applying the fix; synthetic-model probes verify successful completion, nonzero model calls, and populated model reporting afterward.</li>
+<li>No new runtime dependencies or changes to the existing <code>task</code> delegation path.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-73" data-version="1.0.73" data-sha="8c90a082c42a87868658c8cdadf38a0901aa5ee4">
+<summary class="entry-toggle"><h2 class="version">v1.0.73</h2><span class="release-summary">Updated the root uv lockfile to match the package release version so Linux and Windows CI can install with uv sync --locked.</span></summary>
+<div class="release-content"><h3>Fixed</h3>
+<ul>
+<li>Updated the root uv lockfile to match the package release version so Linux and Windows CI can install with <code>uv sync --locked</code>.</li>
+<li>Release regression checks now verify the lockfile package version and matching changelog alongside package metadata and public version displays.</li>
+</ul>
+<h3>Validation</h3>
+<ul>
+<li>Checked lockfile freshness and release metadata locally; GitHub Actions is rerun on the pushed commit.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-72" data-version="1.0.72" data-sha="9659afa6c47e168215cd6147269fd6d114aa8324">
+<summary class="entry-toggle"><h2 class="version">v1.0.72</h2><span class="release-summary">Council web workspace now follows the supplied workspace reference with session presets, Synthesized consensus and Full debate views, advisor/model cards, and a live three-stage pipeline.</span></summary>
+<div class="release-content"><h3>Improved</h3>
+<ul>
+<li>Council web workspace now follows the supplied workspace reference with session presets, Synthesized consensus and Full debate views, advisor/model cards, and a live three-stage pipeline.</li>
+<li>Code Audit, Architecture, and Creative Debate presets change web-only specialist perspectives while retaining configured provider/model overrides. Saved Council settings and planning behavior remain unchanged.</li>
+<li>Advisor states, completed responses, valid ballots, and elapsed time reflect actual SSE events. Hardware statistics and confidence percentages are not simulated.</li>
+<li>Full debate displays specialist analyses side by side on desktop; the synthesis view keeps the chairman's streamed and final answer prominent. Clarifications, failures, stop controls, and user approval remain available.</li>
+<li>Clear view removes displayed messages while retaining discussion context. New discussion resets context. Added keyboard-accessible view tabs and responsive controls.</li>
+</ul>
+<h3>Validation</h3>
+<ul>
+<li>Added preset immutability/model-preservation tests, real HTTP/SSE preset routing checks, and browser checks for view switching, pipeline stages, metrics, clear behavior, keyboard navigation, and mobile layout.</li>
+<li>Reviewed desktop and phone screenshots with synthetic streams. No new runtime dependencies.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-71" data-version="1.0.71" data-sha="758e3e86ad7fbb5fbbd1a02c38d0d2393bfb2455">
+<summary class="entry-toggle"><h2 class="version">v1.0.71</h2><span class="release-summary">Web Council advisors now stream independent analyses in parallel, followed by peer ballots and a dedicated chairman synthesis stage.</span></summary>
+<div class="release-content"><h3>Improved</h3>
+<ul>
+<li>Web Council advisors now stream independent analyses in parallel, followed by peer ballots and a dedicated chairman synthesis stage.</li>
+<li>The configured judge seat acts as the web chairman, using its provider/model override or inheriting the session model. Matching member model overrides are reused.</li>
+<li>The chairman receives public analyses, vote reasons, tally, clarifications, and failed-member information. Its instructions require reconciling disagreement, identifying unsupported claims, retaining minority concerns, and proposing next steps.</li>
+<li>Web debates show streaming synthesis before enabling final approval. Ballot totals remain advisory; a failed chairman produces an explicit error instead of presenting a vote as consensus.</li>
+<li>Added bounded parallel stream buffering, worker cleanup on cancellation, and off-thread search execution. Follow-up history includes the consolidated answer.</li>
+<li>Planning Council behavior and model routing are unchanged.</li>
+</ul>
+<h3>Validation</h3>
+<ul>
+<li>Synthetic-provider checks cover simultaneous advisor starts, cancellation cleanup, chairman inputs and streaming, failure handling, model reuse, HTTP SSE synthesis, and final browser approval.</li>
+<li>Existing Council UI, settings, and planning regression checks remain covered. No new runtime dependencies.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-70" data-version="1.0.70" data-sha="da0ce8291d7f5055bc4199069dab5af9ac40d7f6">
+<summary class="entry-toggle"><h2 class="version">v1.0.70</h2><span class="release-summary">Cowork now matches Council's slate and sea-glass palette, editorial welcome typography, and refined conversation, question, permission, and activity panels.</span></summary>
+<div class="release-content"><h3>Improved</h3>
+<ul>
+<li>Cowork now matches Council's slate and sea-glass palette, editorial welcome typography, and refined conversation, question, permission, and activity panels.</li>
+<li>Each Cowork sidebar tab uses one keyboard-scrollable region, including folder controls, grants, tasks, and activity. Tabs, section headings, and workspace status remain fixed.</li>
+<li>Council and Cowork sidebars use slimmer scrollbars, stable scrollbar spacing, and contained scrolling. Long session identifiers no longer crowd out sidebar content.</li>
+<li>Refined mobile spacing and retained workspace permissions, chat, cancellation, and session controls.</li>
+</ul>
+<h3>Validation</h3>
+<ul>
+<li>Added browser coverage with 35 granted folders and 30 tasks on short desktop and phone screens, including keyboard scrolling and access to the final items.</li>
+<li>Existing Council/Cowork browser and Cowork server checks cover the shared layout and preserved behavior. No new runtime dependencies.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-69" data-version="1.0.69" data-sha="72c99fbacbd079457cbfb3500be5560bf111d30a">
+<summary class="entry-toggle"><h2 class="version">v1.0.69</h2><span class="release-summary">Refined the Council web workspace with a slate and sea-glass palette, clearer decision brief, editorial welcome typography, and polished advisor, question, verdict, and composer treatments.</span></summary>
+<div class="release-content"><h3>Improved</h3>
+<ul>
+<li>Refined the Council web workspace with a slate and sea-glass palette, clearer decision brief, editorial welcome typography, and polished advisor, question, verdict, and composer treatments.</li>
+<li>Added Council settings to the web header with all controls from the inline editor: six member identities, judge, personality templates, system prompts, and provider/model overrides with session inheritance.</li>
+<li>Web settings use the same validation and saved configuration as inline Council. Templates, resets, and seat changes remain private drafts until Save; Cancel discards them. Active discussions retain their configuration.</li>
+<li>Added responsive settings navigation, keyboard focus handling, model ID suggestions, and clear labels for the planning-only advisor and judge.</li>
+</ul>
+<h3>Validation</h3>
+<ul>
+<li>Browser checks cover settings drafts, templates, model overrides, save errors, persistence requests, reset, cancel, and narrow-screen layouts alongside existing streaming and decision controls.</li>
+<li>HTTP checks verify shared persistence, validation, provider metadata, cross-origin save rejection, and preservation of the main session model. No new runtime dependencies.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-68" data-version="1.0.68" data-sha="79465be2f3e038db5b02f383f2bf0cb7a030ac28">
+<summary class="entry-toggle"><h2 class="version">v1.0.68</h2><span class="release-summary">Council decision briefs support up to eight options and explicit criteria.</span></summary>
+<div class="release-content"><h3>Improved</h3>
+<ul>
+<li>Council decision briefs support up to eight options and explicit criteria.</li>
+<li>Advisors can ask clarification questions with suggested choices or a free-text answer before presenting independent recommendations, risks, and next steps.</li>
+<li>Decision ballots vote for actual options. Invalid ballots abstain, ties remain unresolved, and the user approves, revises, or rejects the recommendation.</li>
+<li>Added a stop control, SSE heartbeats, bounded buffering, disconnect cancellation, pending-question cleanup, and a single terminal event after history is recorded. Dropped browser streams close explicitly instead of retrying a new debate.</li>
+</ul>
+<h3>Validation</h3>
+<ul>
+<li>Added model-free clarification, option-voting, abstention, HTTP answer-token, heartbeat, cancellation, and end-to-end SSE clarification checks.</li>
+<li>Existing discussion mode and responsive Council/Cowork browser regressions remain covered.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-67" data-version="1.0.67" data-sha="f158db83a540f78794b86abb1711d8fe82d4b22c">
+<summary class="entry-toggle"><h2 class="version">v1.0.67</h2><span class="release-summary">Council now has an advisor sidebar on the left and a dedicated conversation area on the right, with discussion controls and question suggestions.</span></summary>
+<div class="release-content"><h3>Improved</h3>
+<ul>
+<li>Council now has an advisor sidebar on the left and a dedicated conversation area on the right, with discussion controls and question suggestions.</li>
+<li>Cowork uses the same conversation layout, with workspace permissions, tasks, and activity accessible through tabs in the left sidebar.</li>
+<li>Mobile sidebars open as drawers with keyboard focus handling and Escape to close. Both pages use a compact header and a persistent chat composer.</li>
+<li>Added browser regression checks for streaming, follow-ups, approval, workspace grants and revocation, questions, cancellation, and mobile navigation.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-66" data-version="1.0.66" data-sha="b97c42cf608ac94dcb2b7b5e9d9597dea5938606">
+<summary class="entry-toggle"><h2 class="version">v1.0.66</h2><span class="release-summary">Redesigned the artifact collection with responsive cards, file-type accents, version and update metadata, and visible artifact IDs to distinguish repeated titles. Added search by title, type, or ID, sorting, and empty states.</span></summary>
+<div class="release-content"><h3>Improved</h3>
+<ul>
+<li>Redesigned the artifact collection with responsive cards, file-type accents, version and update metadata, and visible artifact IDs to distinguish repeated titles. Added search by title, type, or ID, sorting, and empty states.</li>
+<li>The collection uses no external assets and keeps artifact content isolated inside the existing full-preview sandbox.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-65" data-version="1.0.65" data-sha="97e67c69950598254682975340a0b890d2c0f234">
+<summary class="entry-toggle"><h2 class="version">v1.0.65</h2><span class="release-summary">/share artifacts and /share all now use the same hosting path as artifact creation, fixing the unexpected server keyword error.</span></summary>
+<div class="release-content"><h3>Fixed</h3>
+<ul>
+<li><code>/share artifacts</code> and <code>/share all</code> now use the same hosting path as artifact creation, fixing the unexpected <code>server</code> keyword error.</li>
+<li>Artifact hosting requires Cloudflare Tunnel and reports a missing <code>cloudflared</code> installation while retaining local artifact access. It no longer silently falls back to ngrok.</li>
+<li>Added integration coverage for automatic hosting, both share commands, tunnel reuse, updates, restored artifacts, session cleanup, and startup failures.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-64" data-version="1.0.64" data-sha="e112cbcb5b674a7fafd7b90e5be48fb791c5a76b">
+<summary class="entry-toggle"><h2 class="version">v1.0.64</h2><span class="release-summary">/share now supports artifact previews only. Removed sharing of Council, Cowork, and Create, along with the generated share dashboard. Legacy generated dashboard artifacts are removed when their session is restored.</span></summary>
+<div class="release-content"><h3>Changed</h3>
+<ul>
+<li><code>/share</code> now supports artifact previews only. Removed sharing of Council, Cowork, and Create, along with the generated share dashboard. Legacy generated dashboard artifacts are removed when their session is restored.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-63" data-version="1.0.63" data-sha="64948713d11d672812b879b8fbed55485aae911f">
+<summary class="entry-toggle"><h2 class="version">v1.0.63</h2><span class="release-summary">Artifacts are automatically hosted with free Cloudflare Quick Tunnels, with ngrok as a fallback. Council, Cowork, and Create retain their existing local server behavior; manual /share remains available for those pages. Artifact hosting resumes with a restored session, while /clear revokes that session's hosted artifact page.</span></summary>
+<div class="release-content"><h3>Added</h3>
+<ul>
+<li>Artifacts are automatically hosted with free Cloudflare Quick Tunnels, with ngrok as a fallback. Council, Cowork, and Create retain their existing local server behavior; manual <code>/share</code> remains available for those pages. Artifact hosting resumes with a restored session, while <code>/clear</code> revokes that session's hosted artifact page.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-62" data-version="1.0.62" data-sha="8b9a1492ed7a2ee46f1aa7cbdac7621890ca2094">
+<summary class="entry-toggle"><h2 class="version">v1.0.62</h2><span class="release-summary">Temporary sharing checks that each local page accepts connections before Nova starts a public tunnel, and reports the exact local address if it does not. This avoids publishing a link that immediately returns ngrok 8012.</span></summary>
+<div class="release-content"><h3>Fixed</h3>
+<ul>
+<li>Temporary sharing checks that each local page accepts connections before Nova starts a public tunnel, and reports the exact local address if it does not. This avoids publishing a link that immediately returns ngrok 8012.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-61" data-version="1.0.61" data-sha="a9dbb57f1450e986d6d320c26c4859754c3a233a">
+<summary class="entry-toggle"><h2 class="version">v1.0.61</h2><span class="release-summary">/share all starts temporary shares for Artifacts, Council, Cowork, and Create, then provides one responsive dashboard with links to each page.</span></summary>
+<div class="release-content"><h3>Added</h3>
+<ul>
+<li><code>/share all</code> starts temporary shares for Artifacts, Council, Cowork, and Create, then provides one responsive dashboard with links to each page.</li>
+<li>Sharing pages individually refreshes the dashboard when the Artifacts share is active. The dashboard marks pages that are not currently shared.</li>
+<li>Dashboard links open outside the artifact preview sandbox so each shared app retains its normal browser behavior.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-60" data-version="1.0.60" data-sha="2f2d8001fc367014e8805f54b439f72ebce45d00">
+<summary class="entry-toggle"><h2 class="version">v1.0.60</h2><span class="release-summary">Temporary sharing works with current ngrok agents by avoiding the removed --web-addr flag. Nova disables ngrok's local traffic inspector for its managed tunnels, so multiple shares do not compete for its default port.</span></summary>
+<div class="release-content"><h3>Fixed</h3>
+<ul>
+<li>Temporary sharing works with current ngrok agents by avoiding the removed <code>--web-addr</code> flag. Nova disables ngrok's local traffic inspector for its managed tunnels, so multiple shares do not compete for its default port.</li>
+</ul>
+<h3>Verification</h3>
+<ul>
+<li>Added a regression test for the ngrok startup arguments and URL discovery.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-59" data-version="1.0.59" data-sha="c3033e2e77b09d731f5c7ebff306a5e5b3a147e2">
+<summary class="entry-toggle"><h2 class="version">v1.0.59</h2><span class="release-summary">Temporary public sharing for Artifacts, Council, Cowork, and Create through /share, with commands to list and stop active shares.</span></summary>
+<div class="release-content"><h3>Added</h3>
+<ul>
+<li>Temporary public sharing for Artifacts, Council, Cowork, and Create through <code>/share</code>, with commands to list and stop active shares.</li>
+<li>Responsive mobile layouts for the shared web interfaces.</li>
+<li>Artifact restoration when resuming a saved session. Switching sessions now loads that session's artifacts without retaining artifacts from the previous session.</li>
+</ul>
+<h3>Fixed</h3>
+<ul>
+<li><code>/share</code> without arguments once again uploads a session gist without raising <code>UnboundLocalError</code>.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-58" data-version="1.0.58" data-sha="b5007e75a56034273b6ed1f5c0dca7c477de8513">
+<summary class="entry-toggle"><h2 class="version">v1.0.58</h2><span class="release-summary">NotebookEditTool for inserting, replacing, and deleting Jupyter notebook cells without executing code. Edits preserve unrelated cells and metadata, clear stale outputs from changed code cells, and use atomic file replacement.</span></summary>
+<div class="release-content"><h3>Added</h3>
+<ul>
+<li>NotebookEditTool for inserting, replacing, and deleting Jupyter notebook cells without executing code. Edits preserve unrelated cells and metadata, clear stale outputs from changed code cells, and use atomic file replacement.</li>
+<li>Workspace-bound notebook editing with approval checks, Cowork write grants, and plan-mode restrictions.</li>
+<li>Optional native bfs traversal and ugrep content search, with ripgrep and Python fallbacks. Imported agent definitions recognize GlobTool and GrepTool aliases.</li>
+<li>Animated terminal-title spinner while the active session is working, including single-session mode. The plain title returns when work finishes.</li>
+<li>CI coverage for notebook editing, native search, and terminal-title activity.</li>
+</ul>
+<h3>Fixed</h3>
+<ul>
+<li>Python grep fallback now matches basename globs in nested directories, searches only the requested file, treats literal patterns literally, and skips binary data.</li>
+<li>Renamed CI documentation so GitHub displays the main NovaCode README.</li>
+</ul>
+<h3>Verification</h3>
+<ul>
+<li>266 focused regression tests passed before the version bump, with one optional native-search test skipped on Windows. Real bfs and ugrep checks passed on Linux.</li>
+<li>Broader session tests still have pre-existing banner-layout failures.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-57" data-version="1.0.57" data-sha="9c04ba68750fc4177068552c6a554fa19fc14b17">
+<summary class="entry-toggle"><h2 class="version">v1.0.57</h2><span class="release-summary">Separated remote session labels, progress, plans, and recent tool activity into readable sections, with bounded previews of long plan items.</span></summary>
+<div class="release-content"><h3>Changed</h3>
+<ul>
+<li>Separated remote session labels, progress, plans, and recent tool activity into readable sections, with bounded previews of long plan items.</li>
+<li>Made long Telegram diff previews collapsible while retaining the patch text.</li>
+<li>Rendered Telegram tables as stacked records for phone screens, preserving links and inline formatting.</li>
+<li>Rendered Markdown task lists with completed and pending checkboxes.</li>
+</ul>
+<h3>Fixed</h3>
+<ul>
+<li>Made desktop sleep regression tests explicitly cover Windows, Linux, and macOS commands instead of assuming the host is Windows.</li>
+</ul>
+<h3>Added</h3>
+<ul>
+<li>GitHub Actions CI for Windows and Linux regressions, release metadata checks, focused lint, and Windows package installation and updater checks.</li>
+</ul>
+<h3>Verification</h3>
+<ul>
+<li>116 release version, Telegram, remote status, streaming, and bridge tests passed; live Telegram client rendering remains unverified.</li>
+<li>All three hosted CI jobs passed after the portable desktop sleep test fix.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-0-56" data-version="1.0.56" data-sha="7cabf05d8c631fac2f48fccc5bfbff11592ac4e6">
+<summary class="entry-toggle"><h2 class="version">v1.0.56</h2><span class="release-summary">Generic MCP discovery and execution with bounded results, server allowlists, and approval checks on the underlying tool.</span></summary>
+<div class="release-content"><h3>Added</h3>
+<ul>
+<li>Generic MCP discovery and execution with bounded results, server allowlists, and approval checks on the underlying tool.</li>
+<li>Separate cron create, delete, and list tools using the persistent scheduler.</li>
+<li>Optional context inspection and terminal panel capture tools behind feature gates.</li>
+<li>Regex and BM25 tool search variants alongside the existing hybrid search.</li>
+<li>Provider-aware strict tool schemas and raw argument validation, with documented capabilities and fallbacks for all 18 configured providers.</li>
+<li>Essential tool documentation covering discovery, feature gates, and strict mode.</li>
+</ul>
+<h3>Changed</h3>
+<ul>
+<li>Removed the GitHub trending, Hacker News, LinkedIn jobs, Reddit posts, and package info tools from the agent tool inventory.</li>
+<li>Made desktop sleep discoverable on demand instead of loading it by default.</li>
+<li>Retained shell and Bash for their distinct interpreter support.</li>
+</ul>
+<h3>Fixed</h3>
+<ul>
+<li>Applied shell approval policy to Bash commands.</li>
+<li>Hardened scheduler startup, persistence failures, and loading large job lists.</li>
+<li>Preserved MCP metadata through strict schema binding and rejected invalid raw argument types before tool execution.</li>
+</ul>
+<h3>Verification</h3>
+<ul>
+<li>Focused coverage includes local MCP execution, cron persistence, feature gates, search variants, strict validation, provider adapters, and subagent integration.</li>
+<li>Provider capabilities were checked against documentation and local adapters; live inference across all providers was not tested.</li>
+</ul></div>
+</details>
 <details class="changelog-entry" id="v1-0-55" data-version="1.0.55" data-sha="9d5bf3f4d86e460f01cba84d23c6f9c88886894a">
 <summary class="entry-toggle"><h2 class="version">v1.0.55</h2><span class="release-summary">Fixed async subagent dispatch rejecting requests that combined Nova's run context with deepagents' redundant parent-thread configurable. Parent lookup continues through the child thread metadata.</span></summary>
 <div class="release-content"><h3>Fixed</h3>

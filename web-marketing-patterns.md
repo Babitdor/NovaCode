@@ -1,14 +1,15 @@
-# Landing Page Feature Integration Pattern
+# Landing page content rules
 
-## Section template
-When integrating new features from FEATURES.md into index.html, create a showcase section matching the established structure:
-- `<section id="slug" data-chapter="~/...">` with `.wrap`, `.head rv`, `cmdline`, `h2`, `body`
-- UI mockup uses inline styles + `.window`/`.win` classes
-- Footer note: `<p class="note">` for supplementary detail
-- Update sidebar TOC (`<dt>/<dd>` pairs) and FAQ (new `<details>`)
+The landing page is a short introduction, not a feature catalog. Keep its main story on:
+- The coding workflow: repository context, changes, and review.
+- Readable Markdown memory.
+- Plans and configurable tool approvals.
+- Installation and the few questions a new user needs answered.
 
-## Features added 2026-01-xx
-Web Council (debate cards), Cowork (split-window workspace mockup), Remote Sessions (service comparison table).
+Secondary capabilities belong in the documentation and release notes. Add a landing-page
+section only when it helps explain one of the core points above; do not add a section merely
+because a capability shipped. State setup requirements and preview status wherever a feature is
+mentioned. Use real product captures as evidence rather than invented interface results.
 
-## Lesson
-Always edit top-to-bottom to avoid offset drift on large single-file sites. Inline styles in HTML templates are normal here (zero-build static site). Grid layouts use `repeat(auto-fit, minmax(200px, 1fr))`.
+The site is a zero-build static page. Reuse its existing typography, color tokens, section rhythm,
+and accessible interaction patterns when editing `index.html`.

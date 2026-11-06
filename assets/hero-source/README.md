@@ -8,10 +8,13 @@ references are preserved as `/Nova-Hero.png` and `/Nova-Hero-light.png`.
   light original as its lighting reference.
 
 The current website uses four separately generated planes per theme in
-[`layers/`](layers/README.md), extracted from these original matched scenes.
-Run `python tools/make_hero_assets.py` to encode the planes and their neutral
-composite. The browser translates image planes without warping their pixels.
-Text and controls belong to the HTML.
+[`layers/`](layers/README.md). The active subject planes use the coin's inked
+character style while preserving the original day and night colors. The original
+subject planes and complete scenes remain available. Run
+`python tools/make_hero_assets.py --ink` to encode the active character planes
+and their matching static composites; omit `--ink` to rebuild the original set.
+The browser translates image planes without warping their pixels. Text and
+controls belong to the HTML.
 
 ## Dark prompt
 

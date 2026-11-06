@@ -23,15 +23,14 @@ Screenshot:  A sheet where an 84px expanded claim is dimensioned by a hairline t
              a small orange "not verified" tolerance.
 ```
 
-**Why this and not a terminal theme.** Every competitor's page for a coding agent is the same
-dark window with a green prompt. Nova's actual difference is editorial: this site is the only
-one in its category that states where each feature stops. Memory pages can be edited. Council
-votes do not prove a plan is correct. Caveman mode quotes no savings figure. A drawing exists
-for exactly that reason: to record a nominal and its tolerance. So the form carries the
-argument, not a decoration of it.
+**Why this and not a terminal theme.** Nova's useful distinction is how it keeps work
+understandable: memory lives in files you can inspect, plans can be reviewed, and tool approvals
+follow a policy you control. The drawing-sheet form makes those claims and their limits easy to
+scan without turning the landing page into a catalog of every capability.
 
-**Anchor fact:** the source copy is already structured as claim + limit; `FEATURES.md` and the
-FAQ both end nearly every section with "where it stops". Nothing in the concept is invented.
+**Anchor fact:** the product's memory is readable Markdown, plans are saved for later review, and
+tool approvals follow configurable policy with hard-coded denials still enforced. `FEATURES.md`
+remains the detailed reference for secondary capabilities and setup requirements.
 
 ## Three concepts, scored 1 to 5
 
@@ -65,11 +64,10 @@ detail from B for the boot screen: the plot sequence is a log of what the sheet 
 | `--neg-accent` | `#FF6A2B` | `#B23C0A` | the same pen, on an inverted sheet |
 | `--curtain` | `#17181A` | `#0C0D0F` | the plot overlay |
 
-Orange is the annotation pen. It marks a limit, a dimension, or the one action on the sheet,
-and it is never used for decoration. Because the dividers and the closer paint inverted
-sheets in both themes, the pen needs a second value that survives that swap; `--neg-accent`
-carries it. Chapter dividers invert the sheet: `background: var(--ink)`,
-`color: var(--ground)`, which stays correct in both themes because it swaps roles, not values.
+Orange is the annotation pen. It marks a limit, a dimension, or an action on the sheet.
+Chapter dividers invert with the selected theme; the closing panel and coin use the original
+dark palette to frame their monochrome engravings. `--neg-accent` keeps the annotation legible
+on an inverted surface.
 
 **Type.** Archivo (variable, `wdth` 62 to 125, `wght` 400 to 700, self-hosted) plus Geist Mono
 (already in `assets/fonts/`). One family, two personalities: display is the same Archivo at
@@ -91,17 +89,13 @@ uppercase tracking is correct because it is drawing furniture.
 are no soft shadows anywhere; depth is expressed by hairline weight (1px frame, 1px dimension,
 2px title block), never by blur.
 
-**Phones wrap, never clip.** Below 620px nothing is hidden behind a horizontal scroll region:
-commands wrap at `/` boundaries, code hangs 2ch under its statement so a wrapped expression still
-reads as one statement, and a three-column parts list becomes stacked rows (name, description,
-then the requirement as an accent-ruled mono annotation). Three 30-50px ribbons of text are not
-readable and cost 3000px of scroll. The display change keeps the table's roles in the
-accessibility tree; only the column labels go, and the stacked rows do not need them.
+**Phones wrap, never clip.** Below 620px the workflow becomes a vertical sequence, text and
+commands wrap, and the page does not hide content behind horizontal scrolling.
 
-**Section rhythm.** Four sheets, each opened by a full-bleed inverted divider carrying a huge
-sheet number and its index. Inside a sheet, the frame is constant and the detail view changes:
-split, columns, transcript pair, spec table, switch list, revision table. That is how a real
-drawing set works and it is why 18 features share one system without looking uniform.
+**Section rhythm.** Three focused chapters—workflow, memory, and control—each open with an
+inverted divider and a large sheet number. Installation and a short FAQ follow. A real terminal
+capture shows the product; monochrome engravings illustrate memory and review without inventing
+interface results. Detailed feature inventories remain in the documentation.
 
 **Motion language.** One easing family, `cubic-bezier(.16, 1, .3, 1)` for things arriving and
 `cubic-bezier(.4, 0, .2, 1)` for state changes. Micro 240ms, enter 520ms, drawn line 700ms.
@@ -111,8 +105,8 @@ Under `prefers-reduced-motion` nothing moves, the plot overlay never appears, an
 complete and readable.
 
 **Hero depth.** The cover sheet prints on a paper panel down the right of the hero; the drawing
-takes the whole left of the sheet, undimmed, because the artwork is the page's one image and a
-wash over it made it furniture. On scroll the three printed blocks lag by their own factor —
+takes the whole left of the sheet, undimmed, because it is the cover art. The real terminal
+capture later on the page provides product evidence. On scroll the three printed blocks lag by their own factor —
 edge zones .11, title block .06, claim .035 — so the sheet separates from the paper as it leaves,
 and travel stops once three quarters of the hero is gone. This is the one scroll-linked motion on
 the page: it is decorative depth, not feedback, and it is transform-only so it cannot reflow
@@ -132,31 +126,27 @@ before reading the claim. The measure states one number and stops.
 - Index rows and links: the row's rule extends and an accent tick appears in the left margin.
 - Disclosure: the rule thickens and the marker rotates 90 degrees; a 1px accent tick arrives
   in the left margin on hover and on focus.
-- Copy: the same ink wipe as the CTA, from the left edge, so the sixth primary target answers
-  with geometry rather than a colour swap.
+- Copy: the same ink wipe as the CTA, from the left edge, so command copy controls answer with
+  geometry rather than a colour swap.
 - Utility links (footer, legal): colour only, as the role allows.
 
 ## Composition plan
 
 ```
-HERO                                    01 MEMORY
+HERO                                    01 WORKFLOW
 +-------------------------------+----+   +------------------------------+
 | A                             | TB |   | [chapter divider, inverted]  |
-|  claim, wdth112, 7rem         | v  |   | 01  What it knows            |
-|  _______________________|± lim|  e  |   | memory /dream council        |
-|  command block    MIT Python  | r  |   +------------------------------+
-|  sheet index 01..04           | t  |   | tree (mono)   | page body    |
-+-------------------------------+----+   |               |              |
-                                         | leader line connecting both  |
-03 DESK (spec table)                     04 RECORD (tolerance table)
-+--------+--------+--------+--------+   +--------+--------+--------+
-| part   | what   | needs  | modal  |   | claim  | stops  | file   |
-+--------+--------+--------+--------+   | ...    | ...    | ...    |
+|  coding agent, terminal       | v  |   | 01  From task to review      |
+|  _______________________|± lim|  e  |   | three steps + real capture   |
+|  install     MIT / Python     | r  |   +------------------------------+
+|  contents: workflow, memory,  | t  |   | task → code → review         |
+|  control                      |   |   |                              |
++-------------------------------+----+   02 MEMORY / 03 CONTROL
+                                         | files / configurable policy |
 ```
 
-Each feature section is a detail view with the same three parts: a dimensioned claim, an inset
-panel showing the real artefact (file tree, transcript, code, table), and a tolerance in the
-margin. Varying the *inside* of the panel is what keeps 18 sections from reading as a grid.
+Each main section answers one question: how Nova works, where its memory lives, or how you
+control plans and tool use. Deeper feature and integration details remain in the documentation.
 
 ## Genericness test
 
@@ -177,7 +167,9 @@ orange survives the redesign because an annotation pen is the concept's own colo
   radius arrives in `--theme-r`, which `index.html` consumes. Reduced motion switches at once.
   Both palettes are designed; neither is a filter over the other.
 - **The hero drawing.** `assets/hero-layers/` holds the cover art as four planes (sky, room,
-  subject, plants) in light and dark, plus a flat composite. Planes carry a theme `<source>` and a
+  subject, plants) in light and dark, plus a matching flat composite. The active `subject-ink`
+  planes give Nova the coin's inked character style while retaining the original colors; the
+  original planes remain in the source directory. Planes carry a theme `<source>` and a
   `--depth`/`--scroll-speed`; `.art` gets `layered` only once all four decode, and the flat
   composite shows until then and under reduced motion (no transforms at all). Wide screens are a
   split sheet: the words print on a solid paper panel whose width is `min(48%, 720px)` (the cap
@@ -199,6 +191,8 @@ orange survives the redesign because an annotation pen is the concept's own colo
   motion, pauses when the tab hides, and resizes on a debounce.
 - **The mark.** `assets/emblem-128.webp` on the `--curtain` ink chip, the same in both themes.
   It replaced the inline triangle so the header and footer carry the Nova emblem.
+- **The coin.** A monochrome Nova seal with real SVG rim lettering turns on the existing CSS 3D
+  disc. The dark field carries fine orbital guides; dragging and the arrow keys turn the coin.
 - **Scrolling.** `assets/lenis.min.js` (Lenis 1.3.27, self-hosted) smooths wheel and touch on the
   real scroll position, so anchors, sticky chrome and the parallax offsets still work. `html.lenis`
   turns off the CSS smooth behaviour, and reduced motion never instantiates it.

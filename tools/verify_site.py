@@ -141,19 +141,22 @@ def main():
             # Use GitHub-shaped responses to prove new releases and edited notes load dynamically.
             context.unroute('https://api.github.com/**')
             listing = page.locator('.changelog-entry').evaluate_all('entries => entries.map(e => ({name: "CHANGELOG-v" + e.dataset.version + ".md", sha:e.dataset.sha, type:"file"}))')
-            listing.append({'name': 'CHANGELOG-v1.0.100.md', 'sha': 'new-test-release', 'type': 'file'})
+            versions = page.locator('.changelog-entry').evaluate_all('entries => entries.map(e => e.dataset.version)')
+            test_version = f'{max(int(v.split(".")[0]) for v in versions) + 1}.0.100'
+            test_id = 'v' + test_version.replace('.', '-')
+            listing.append({'name': f'CHANGELOG-v{test_version}.md', 'sha': 'new-test-release', 'type': 'file'})
             next(entry for entry in listing if entry['name'] == 'CHANGELOG-v1.0.54.md')['sha'] = 'edited-test-release'
             context.route('https://api.github.com/**', lambda route: route.fulfill(json=listing, headers={'Access-Control-Allow-Origin': '*'}))
-            context.route('https://raw.githubusercontent.com/**', lambda route: route.fulfill(headers={'Access-Control-Allow-Origin': '*'}, body='# NovaCode v1.0.100\n\n## Fixed\n- A wrapped `regression`\n  continuation <img src=x onerror=alert(1)>\n- **Second item**\n'))
-            page.goto(base + 'changelog/#v1-0-100')
+            context.route('https://raw.githubusercontent.com/**', lambda route: route.fulfill(headers={'Access-Control-Allow-Origin': '*'}, body=f'# NovaCode v{test_version}\n\n## Fixed\n- A wrapped `regression`\n  continuation <img src=x onerror=alert(1)>\n- **Second item**\n'))
+            page.goto(base + f'changelog/#{test_id}')
             page.reload()
             page.wait_for_function("document.querySelector('#release-status').textContent === 'Up to date with the repository.'")
             assert page.locator('.changelog-entry').count() == archive_count + 1
-            assert page.locator('.changelog-entry').first.get_attribute('data-version') == '1.0.100'
-            assert page.locator('#v1-0-100').get_attribute('open') is not None
-            assert page.locator('#v1-0-100 li').count() == 2
-            assert page.locator('#v1-0-100 img').count() == 0
-            assert 'continuation <img' in page.locator('#v1-0-100 li').first.inner_text()
+            assert page.locator('.changelog-entry').first.get_attribute('data-version') == test_version
+            assert page.locator(f'#{test_id}').get_attribute('open') is not None
+            assert page.locator(f'#{test_id} li').count() == 2
+            assert page.locator(f'#{test_id} img').count() == 0
+            assert 'continuation <img' in page.locator(f'#{test_id} li').first.inner_text()
             assert page.locator('#v1-0-54').get_attribute('data-sha') == 'edited-test-release'
             results['checks'].append('New and edited live releases, numeric sorting, wrapped bullets, HTML escaping')
             context.unroute('https://raw.githubusercontent.com/**')
