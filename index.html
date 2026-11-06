@@ -74,6 +74,17 @@
   color-scheme:dark;
 }
 
+/* A manual theme switch opens the new palette as a circle from the toggle. The
+   page is snapshotted whole, so the reveal moves one hard edge instead of
+   cross-fading every glyph. */
+::view-transition{pointer-events:none}
+::view-transition-group(root){animation:none}
+::view-transition-old(root){animation:none;mix-blend-mode:normal}
+::view-transition-new(root){animation:theme-reveal .7s cubic-bezier(.76,0,.24,1) both;mix-blend-mode:normal}
+@keyframes theme-reveal{from{clip-path:circle(0 at var(--theme-x,50%) var(--theme-y,0))}to{clip-path:circle(var(--theme-r,150vmax) at var(--theme-x,50%) var(--theme-y,0))}}
+/* Older browsers fade the palette in place. */
+html.theme-fade,html.theme-fade *,html.theme-fade *::before,html.theme-fade *::after{transition:background-color .45s var(--ease-out),border-color .45s var(--ease-out),color .45s var(--ease-out),fill .45s var(--ease-out),stroke .45s var(--ease-out),box-shadow .45s var(--ease-out),outline-color .45s var(--ease-out) !important}
+
 /* ---------------------------------------------- base */
 *,*::before,*::after{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
@@ -585,6 +596,12 @@ html.plot-skip #boot{display:none}
 .art picture,.art img{position:absolute;inset:0;width:100%;height:100%}
 .art img{object-fit:cover;object-position:42% 38%}
 .scene-flat{--depth:.8;--scroll-speed:.12}
+/* The hero art is one drawing assembled from five files, so it fades in as
+   one composite once the flat plate has decoded rather than dropping in as a
+   hard rectangle. The four planes still crossfade in over it when ready. */
+html.js .art{opacity:0;transition:opacity .8s var(--ease-state)}
+html.js .art.art-ready{opacity:1}
+@media (prefers-reduced-motion:reduce){html.js .art{opacity:1;transition:none}}
 .scene-layers{position:absolute;inset:0;z-index:1;opacity:0;pointer-events:none}
 .scene-sky{--depth:.15;--scroll-speed:.26}
 .scene-room{--depth:.5;--scroll-speed:.18}
@@ -1219,6 +1236,21 @@ html.lenis{scroll-behavior:auto}
         if ((attempt || 0) < 3) requestAnimationFrame(function () { readyScene((attempt || 0) + 1); });
       }).catch(function () { if (current === rev) art.classList.remove("layered"); });
     };
+    /* Fade in the whole drawing once its base plate exists. Two frames let the
+       hidden style commit first, so the class change starts a real transition. */
+    var flatImg = $(".scene-flat img", art), artShown = false;
+    var showArt = function () {
+      if (artShown) return;
+      artShown = true;
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { art.classList.add("art-ready"); });
+      });
+    };
+    if (flatImg) {
+      if (flatImg.decode) flatImg.decode().then(showArt, showArt);
+      else if (flatImg.complete) showArt();
+      else flatImg.addEventListener("load", showArt);
+    } else { showArt(); }
     sceneImgs.forEach(function (i) { i.addEventListener("load", readyScene); });
     document.addEventListener("themechange", function () { art.classList.remove("layered"); requestAnimationFrame(readyScene); });
     art.addEventListener("pointermove", function (e) {

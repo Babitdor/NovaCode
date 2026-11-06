@@ -6,9 +6,11 @@
    without script they could not do anything.
 
    A manual switch uses native View Transitions: the new palette is revealed as a
-   circle growing from the toggle, after the next image set has decoded. Browsers
-   without View Transitions fade the palette in place; reduced motion switches
-   immediately. A newer choice supersedes an in-flight reveal. */
+   circle growing from the toggle, after the next image set has decoded. The
+   unselected image set is decoded during idle time so that first switch does not
+   open with a stall. Browsers without View Transitions fade the palette in place;
+   reduced motion switches immediately. A newer choice supersedes an in-flight
+   reveal. */
 (function () {
   "use strict";
   var root = document.documentElement, KEY = "nova-theme";
@@ -64,6 +66,34 @@
     return Promise.all(images.map(function (img) {
       return img.decode ? img.decode().catch(function () { /* keep the native image fallback */ }) : Promise.resolve();
     }));
+  }
+
+  /* Rasterise both palettes ahead of the first toggle. The picture elements only
+     hold one theme at a time, so decode the alternate candidates through detached
+     images; the browser reuses them when the real source switches. */
+  function warmThemedImages() {
+    var pending = [];
+    Array.prototype.forEach.call(document.querySelectorAll("picture"), function (picture) {
+      var themed = picture.querySelector("source[data-theme-source]");
+      if (!themed) return;
+      var candidates = [themed], img = picture.querySelector("img");
+      if (img) candidates.push(img);
+      Array.prototype.forEach.call(candidates, function (candidate) {
+        var srcset = candidate.getAttribute("srcset");
+        var src = candidate.getAttribute("src");
+        if (!srcset && !src) return;
+        var loader = new Image();
+        var sizes = candidate.getAttribute("sizes");
+        if (sizes) loader.sizes = sizes;
+        loader.decoding = "async";
+        /* Set the descriptor before the source so the viewport-sized candidate
+           is the one that gets fetched, not the browser's 100vw default. */
+        if (srcset) loader.srcset = srcset;
+        else loader.src = src;
+        pending.push(loader.decode().catch(function () { /* the selected palette still works */ }));
+      });
+    });
+    return Promise.all(pending);
   }
 
   function revealOrigin(button) {
@@ -140,4 +170,12 @@
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", wire);
   else wire();
+
+  function warmWhenIdle() {
+    var warm = function () { warmThemedImages(); };
+    if (window.requestIdleCallback) window.requestIdleCallback(warm, { timeout: 2000 });
+    else window.setTimeout(warm, 900);
+  }
+  if (document.readyState === "complete") warmWhenIdle();
+  else window.addEventListener("load", warmWhenIdle);
 })();
