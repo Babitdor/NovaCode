@@ -82,8 +82,9 @@ async def test_owned_task_mount_keeps_git_and_worktree_ownership_on_host(
     command = handle.container_command(["NOVA_FACTORY_BASE_REVISION", "OPENAI_API_KEY"])
     assert command[-3:] == ["python", "-c", WORKER_BOOTSTRAP]
     assert command.count("--mount") == 1
-    assert str(factory_request.cwd) in command[command.index("--mount") + 1]
-    assert str(source) not in str(command)
+    mounts = [command[index + 1] for index, arg in enumerate(command) if arg == "--mount"]
+    assert str(factory_request.cwd) in mounts[0]
+    assert all(str(source) not in mount for mount in mounts)
     assert "--pull=never" in command
     assert "--read-only" in command
     assert "--cap-drop=ALL" in command

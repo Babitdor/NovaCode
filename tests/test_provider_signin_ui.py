@@ -49,7 +49,7 @@ async def test_anthropic_console_is_guided_key_setup(monkeypatch):
         manager.open_prompt()
         assert await _settle(pilot, lambda: isinstance(app.screen, ProviderSignInChoice))
         assert "restricted" in str(app.screen.query(Static)[1].content)
-        await pilot.click("#anthropic-console")
+        await _click_visible(pilot, app.screen, "#anthropic-console")
         assert await _settle(pilot, lambda: isinstance(app.screen, AuthPromptScreen))
         assert urls == ["https://platform.claude.com/settings/keys"]
         assert not Secrets.values

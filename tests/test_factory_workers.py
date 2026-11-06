@@ -109,8 +109,8 @@ async def test_host_execution_bounds_output_and_releases_process_capacity(
     runner = SpecialistRunner(controller)
     runner.authorize = AsyncMock(return_value=True)
     before = PROCESS_BUDGET.used
-    code, output, _ = await runner.execute(argv, root)
-    assert code == 0
+    code, output, error = await runner.execute(argv, root)
+    assert code == 0, error
     assert len(output) < MAX_COMMAND_OUTPUT + 100
     assert "truncated" in output
     assert PROCESS_BUDGET.used == before
@@ -126,7 +126,9 @@ async def test_pause_terminates_owned_command(controller: FactoryController):
     before = PROCESS_BUDGET.used
     task = asyncio.create_task(runner.execute(argv, root))
     async with asyncio.timeout(10):
-        while not controller.handles:  # noqa: ASYNC110 - Observe process registration before pause.
+        while not controller.handles:
+            if task.done():
+                pytest.fail(f"Command exited before pause: {await task}")
             await asyncio.sleep(0.01)
     controller.request_pause()
     with pytest.raises(FactoryError, match="suspended"):

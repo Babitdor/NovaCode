@@ -8,7 +8,7 @@ the agent can still ``pip``/``npm``/``git`` but cannot scribble over ``/etc`` or
 ``$HOME``.
 
 - **Linux:** ``bwrap`` (bubblewrap). The whole filesystem is bind-mounted
-  read-only, then the workspace (and a writable HOME/cache) are bind-mounted
+  read-only, then the workspace and a private temporary cache are mounted
   read-write over it. Network is shared (allowed) by default.
 - **macOS:** ``sandbox-exec`` with a generated Seatbelt profile that denies
   ``file-write*`` everywhere except the workspace and the temp dirs. Deprecated
@@ -106,7 +106,7 @@ def detect_backend(*, force_probe: bool = False) -> str | None:
 def _bwrap_command(command: str, policy: OSSandboxPolicy) -> str:
     """Build a ``bwrap`` invocation that runs *command* confined to the workspace.
 
-    The whole FS is read-only; the workspace and a writable HOME/cache are bound
+    The whole FS is read-only; the workspace and a private temporary cache are mounted
     read-write so reads work everywhere but writes are contained. ``--die-with-parent``
     ties the sandbox lifetime to Nova so a killed turn never orphans it.
 
@@ -115,8 +115,7 @@ def _bwrap_command(command: str, policy: OSSandboxPolicy) -> str:
     so a POSIX path is never mangled when this module is imported on Windows.
     """
     ws = policy.workspace_root
-    # A writable HOME inside the sandbox so pip/npm/uv caches (~/.cache, ~/.npm)
-    # don't fail against the read-only root.
+    # Keep HOME/config readable while placing XDG caches in the private tmpfs.
     args: list[str] = [
         "bwrap",
         "--ro-bind",
@@ -128,8 +127,9 @@ def _bwrap_command(command: str, policy: OSSandboxPolicy) -> str:
         "/proc",
         "--tmpfs",
         "/tmp",  # noqa: S108 — in-sandbox tmpfs, not a host path
-        "--tmpfs",
-        "/root/.cache",
+        "--setenv",
+        "XDG_CACHE_HOME",
+        "/tmp/nova-cache",  # noqa: S108 — private to the tmpfs above
         "--bind",
         ws,
         ws,

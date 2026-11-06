@@ -7,6 +7,8 @@ via injected backend) and the ``resolve_sandbox_type`` default-resolution helper
 
 from __future__ import annotations
 
+import shlex
+
 import pytest
 
 from novacode_cli.shell import os_sandbox
@@ -38,6 +40,16 @@ def test_bwrap_wraps_command_and_confines_workspace():
     # The original command is handed to bash -c (as a single quoted token).
     assert "bash -c" in wrapped
     assert "pytest -q" in wrapped
+
+
+def test_bwrap_cache_uses_private_tmpfs_for_unprivileged_users():
+    args = shlex.split(wrap_command("true", OSSandboxPolicy(WS, backend=BWRAP)))
+    assert args[args.index("--setenv") + 1 : args.index("--setenv") + 3] == [
+        "XDG_CACHE_HOME",
+        "/tmp/nova-cache",  # noqa: S108 — private sandbox tmpfs, not a host directory
+    ]
+    assert "HOME" not in args
+    assert "/root/.cache" not in args
 
 
 def test_bwrap_allows_network_by_default():
