@@ -22,6 +22,9 @@ def encode_control(value: dict[str, Any]) -> str:
 
 def validate_handshake(expected: dict[str, Any], actual: dict[str, Any]) -> None:
     """Validate exact worker, model, workspace, attempt and policy before dispatch."""
+    if "factory" in expected and actual.get("factory") != expected["factory"]:
+        message = "Worker handshake mismatch: factory"
+        raise TeamError(message)
     for field in (
         "version",
         "agent",

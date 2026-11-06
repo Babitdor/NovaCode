@@ -2715,6 +2715,11 @@ This file stores your preferences and context that persist across sessions.
     agent.agent_definitions_signature = definitions_before_build
     agent.agent_definitions_workspace = str(workspace_root)
     agent.agent_definition_options = definition_options
+    model_metadata = getattr(model, "metadata", None) or {}
+    agent.factory_model_route = {
+        "provider": model_metadata.get("nova_provider"),
+        "model": model_metadata.get("nova_model"),
+    }
     agent.runtime_resources = [
         *compactors,
         *([learning] if learning else []),

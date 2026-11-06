@@ -76,6 +76,7 @@ class SpawnRequest:
     messages: tuple[AnyMessage, ...] = ()
     context_hash: str = ""
     auto_approve: bool = False
+    factory: dict[str, Any] | None = None
 
 
 class AgentHandle(Protocol):

@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
 
-def build_catalog_model(provider: str, model_name: str) -> BaseChatModel:
+def build_catalog_model(provider: str, model_name: str, *, max_retries: int = 5) -> BaseChatModel:
     """Build exactly the requested provider, without fallback or network calls.
 
     Raises:
@@ -48,12 +48,14 @@ def build_catalog_model(provider: str, model_name: str) -> BaseChatModel:
             vertexai=True,
             project=os.environ["GOOGLE_VERTEX_PROJECT"],
             location=os.environ.get("GOOGLE_VERTEX_LOCATION", "global"),
-            max_retries=5,
+            max_retries=max_retries,
         )
     if protocol in {"gitlab", "watsonx", "sap"} or preset["protocol"] == "gitlab":
         from novacode_cli.config.provider_transports import build_managed_model
 
-        return build_managed_model(provider, model_name, key or "", override)
+        return build_managed_model(
+            provider, model_name, key or "", override, max_retries=max_retries
+        )
 
     base_url = provider_base_url(provider, model_name)
 
@@ -66,7 +68,7 @@ def build_catalog_model(provider: str, model_name: str) -> BaseChatModel:
             api_key=SecretStr(key or ""),
             base_url=base_url.removesuffix("/v1"),
             max_tokens_to_sample=16_384,
-            max_retries=5,
+            max_retries=max_retries,
             timeout=300,
             stop=None,
         )
@@ -85,7 +87,7 @@ def build_catalog_model(provider: str, model_name: str) -> BaseChatModel:
         model=model_name,
         api_key=key or "nova-local",
         base_url=base_url,
-        max_retries=5,
+        max_retries=max_retries,
         # Usage chunks are optional extensions, not part of the chat contract.
         stream_usage=False,
         use_responses_api=protocol == "responses",

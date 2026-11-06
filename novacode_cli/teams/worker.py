@@ -52,6 +52,13 @@ async def serve(bootstrap: dict[str, Any], output_fd: int) -> int:  # noqa: PLR0
         return original_get(instance, key, default)
 
     NovaConfig.get = configured_get  # type: ignore[method-assign, assignment]
+    if bootstrap.get("factory"):
+        # Factory specialists use one host-budgeted model. Optional background
+        # scoring/learning must not create clients outside that exact role route.
+        NovaConfig.get_tool_verdicts_enabled = lambda _instance: False  # type: ignore[method-assign]
+        NovaConfig.get_learning_enabled = lambda _instance: False  # type: ignore[method-assign]
+        NovaConfig.get_router_enabled = lambda _instance: False  # type: ignore[method-assign]
+        NovaConfig.get_edit_diagnostics_enabled = lambda _instance: False  # type: ignore[method-assign]
     original_base_url = NovaConfig.get_model_base_url
     NovaConfig.get_model_base_url = lambda instance: (  # type: ignore[method-assign, assignment]
         bootstrap.get("base_url") or original_base_url(instance)
@@ -69,7 +76,22 @@ async def serve(bootstrap: dict[str, Any], output_fd: int) -> int:  # noqa: PLR0
         agent=None, assistant_id="nova-agent", session_state=state, model_name=bootstrap["model"]
     )
     binding = Binding(identity, worker.session_request)
-    model = await asyncio.to_thread(build_chat_model, bootstrap["provider"], bootstrap["model"])
+    model = await asyncio.to_thread(
+        build_chat_model,
+        bootstrap["provider"],
+        bootstrap["model"],
+        **({"max_retries": 0} if bootstrap.get("factory") else {}),
+    )
+    if bootstrap.get("factory"):
+        from novacode_cli.prime_factory import DEFAULT_OUTPUT_LIMIT
+        from novacode_cli.prime_factory.worker import FactoryUsageCallback, enforce_output_limit
+
+        limit = bootstrap["factory"].get("output_token_limit", DEFAULT_OUTPUT_LIMIT)
+        enforce_output_limit(model, limit)
+        model.callbacks = [
+            *(model.callbacks or []),
+            FactoryUsageCallback(worker.session_request, limit),
+        ]
     from novacode_cli.tracking.usage_tree import attach_usage_callback
 
     attach_usage_callback(model)
@@ -87,6 +109,8 @@ async def serve(bootstrap: dict[str, Any], output_fd: int) -> int:  # noqa: PLR0
         "provider": metadata.get("nova_provider"),
         "model": metadata.get("nova_model"),
     }
+    if bootstrap.get("factory"):
+        state.team_handshake["factory"] = bootstrap["factory"]
     tools = _session_tools(state)
     if "allowed_tools" in bootstrap:
         allowed = set(bootstrap["allowed_tools"])

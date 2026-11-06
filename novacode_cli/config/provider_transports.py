@@ -176,6 +176,8 @@ def build_managed_model(
     model_name: str,
     key: str,
     override: dict[str, Any],
+    *,
+    max_retries: int = 5,
 ) -> BaseChatModel:
     """Build a standard SDK client with provider-owned credential transport."""
     from novacode_cli.config.model_create import _opencode_chat_class
@@ -223,20 +225,20 @@ def build_managed_model(
             api_key=SecretStr("nova-managed"),
             base_url=endpoint,
             max_tokens_to_sample=16_384,
-            max_retries=5,
+            max_retries=max_retries,
             timeout=300,
             stop=None,
         )
         model.__dict__["_client"] = anthropic.Anthropic(
             api_key="nova-managed",
             base_url=endpoint,
-            max_retries=5,
+            max_retries=max_retries,
             http_client=sync,
         )
         model.__dict__["_async_client"] = anthropic.AsyncAnthropic(
             api_key="nova-managed",
             base_url=endpoint,
-            max_retries=5,
+            max_retries=max_retries,
             http_client=async_,
         )
         return model
@@ -245,7 +247,7 @@ def build_managed_model(
         model=wire_model,
         api_key="nova-managed",
         base_url=endpoint,
-        max_retries=5,
+        max_retries=max_retries,
         stream_usage=False,
         use_responses_api=protocol == "responses",
         default_headers=headers,

@@ -940,6 +940,12 @@ async def execute_task(  # type: ignore
                     elif event.kind == "plan" and callable(remote_approval_handler):
                         event.future.set_result(await remote_approval_handler(event))
 
+                    elif event.kind == "plan" and (
+                        isinstance(event.payload, dict)
+                        and event.payload.get("factory") is True
+                    ):
+                        event.future.set_result(default_interrupt_response("plan"))
+
                     elif event.kind == "question":
 
                         _dbg(

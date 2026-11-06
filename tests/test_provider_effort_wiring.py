@@ -55,6 +55,37 @@ def test_constructed_sdk_payload_contains_the_configured_effort(
     assert payload.get(key, payload.get("extra_body", {}).get(key)) == expected
 
 
+@pytest.mark.parametrize(
+    ("provider", "name"),
+    [
+        ("openai", "gpt-5.5"),
+        ("ollama", "qwen3:8b"),
+        ("anthropic", "claude-sonnet-4-6"),
+    ],
+)
+@pytest.mark.usefixtures("configured")
+def test_factory_sdk_calls_have_real_output_bounds_and_no_hidden_retries(provider: str, name: str):
+    from novacode_cli.prime_factory.worker import enforce_output_limit
+
+    model = model_create.build_chat_model(provider, name, max_retries=0)
+    enforce_output_limit(model, 1200)
+    payload = model._get_request_payload([HumanMessage("hello")])
+    observed = (
+        payload.get("max_tokens")
+        or payload.get("max_completion_tokens")
+        or payload.get("max_output_tokens")
+        or payload.get("extra_body", {}).get("max_tokens")
+    )
+    assert observed == 1200
+    assert model.max_retries == 0
+    clients = [
+        getattr(model, "root_client", None),
+        getattr(model, "_client", None),
+        getattr(getattr(model, "_client", None), "_client", None),
+    ]
+    assert any(getattr(client, "max_retries", None) == 0 for client in clients)
+
+
 @pytest.mark.parametrize("provider", ["commandcode", "opencode", "opencode_zen"])
 def test_gateway_deepseek_medium_maps_to_high_and_off_requests_minimum(provider: str):
     helper = model_create.gateway_reasoning_kwargs

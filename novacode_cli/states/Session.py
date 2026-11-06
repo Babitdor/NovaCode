@@ -130,6 +130,8 @@ class SessionState:
         self.prime_report: dict[str, Any] | None = None
         self.prime_pending: dict[str, Any] | None = None
         self.prime_forget_pending: str | None = None
+        self.prime_factory: Any | None = None
+        self.prime_factory_resume: str | None = None
         self.handoff_enabled: bool = False
         self.handoff_pending: dict[str, Any] | None = None
         self.handoff_latest: dict[str, Any] | None = None
@@ -500,6 +502,7 @@ class SessionState:
         "headless_trust_workspace", "headless_result_emitted",
         "workspace_root", "verify_enabled", "active_goal", "active_rubric",
         "prime_enabled", "prime_report", "cli_prime_override", "prime_pending", "prime_forget_pending",
+        "prime_factory", "prime_factory_resume",
         "handoff_enabled", "handoff_pending", "handoff_latest", "handoff_delete_pending",
         "goal_status", "goal_turns_used", "goal_max_turns", "goal_thread_id",
         "goal_revision",
@@ -658,6 +661,15 @@ class SessionState:
         the Nova learning store, the compiled agent + backend + model, and
         explicit UX toggles (``auto_approve``, ``verbose``, ``no_splash``).
         """
+        pause = getattr(self.prime_factory, "request_pause", None)
+        if callable(pause):
+            try:
+                pause()
+            except ValueError:
+                # Storage failure already fences the controller and its workers.
+                pass
+        self.prime_factory = None
+        self.prime_factory_resume = None
         self.thread_id = str(uuid.uuid4())
         self.session_id = str(uuid.uuid4())
         self.active_goal = None

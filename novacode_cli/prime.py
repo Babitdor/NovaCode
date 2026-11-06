@@ -38,6 +38,7 @@ MAX_EVIDENCE = 8
 MAX_CHECKS = 32
 MAX_CHECK_RESULTS = 64
 MAX_EXIT_CODE = 255
+MAX_FACTORY_REPORT = 2_000_000
 Record = dict[str, Any]
 
 
@@ -556,6 +557,10 @@ current_run: ContextVar[PrimeRun | None] = ContextVar("nova_prime_run", default=
 
 def receipt(report: Record) -> str:
     """Separate checkpoint assessments from observed facts in a compact delivery record."""
+    if report.get("version") == 2 and report.get("factory") is True:  # noqa: PLR2004
+        from novacode_cli.commands.prime_handler import factory_receipt
+
+        return factory_receipt(report)
     records = report.get("checkpoints", [])
     lines = [
         f"Prime Deep Work · {report.get('status', 'incomplete').replace('_', ' ')}",
@@ -661,11 +666,15 @@ def _valid_saved_records(report: Record) -> bool:
     )
 
 
-def restore_prime(session: Any, saved: object) -> None:  # noqa: ANN401 - Session proxy boundary.
+def restore_prime(  # noqa: PLR0911 - Versioned session deserialization fails closed.
+    session: Any,  # noqa: ANN401 - Session proxy boundary.
+    saved: object,
+) -> None:
     """Old sessions default off; interrupted records stay paused with no automatic replay."""
     session.prime_enabled = False
     session.prime_report = None
     session.prime_pending = None
+    session.prime_factory_resume = None
     if not isinstance(saved, dict):
         return
     session.prime_enabled = saved.get("enabled") is True
@@ -675,6 +684,25 @@ def restore_prime(session: Any, saved: object) -> None:  # noqa: ANN401 - Sessio
     try:
         encoded = json.dumps(report, ensure_ascii=False, allow_nan=False)
     except (ValueError, TypeError):
+        return
+    if report.get("version") == 2 and report.get("factory") is True:  # noqa: PLR2004
+        if (
+            len(encoded) > MAX_FACTORY_REPORT
+            or any(
+                not isinstance(report.get(key), str) for key in ("id", "goal", "stage", "status")
+            )
+            or any(not isinstance(report.get(key), list) for key in ("tasks", "sources", "checks"))
+            or any(
+                not isinstance(item, dict)
+                for key in ("tasks", "sources", "checks")
+                for item in report[key]
+            )
+            or not isinstance(report.get("budget"), dict)
+            or not isinstance(report.get("usage"), dict)
+        ):
+            return
+        status = report["status"] if report["status"] in {"published", "cancelled"} else "paused"
+        session.prime_report = {**deepcopy(report), "status": status, "approvals": {}}
         return
     if (
         len(encoded) > MAX_REPORT

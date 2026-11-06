@@ -398,7 +398,7 @@ async def test_concurrent_continuations_keep_separate_children(tmp_path: Path):
     assert current_handoff.get() is None
 
 
-async def test_prime_and_handoff_can_share_the_foreground_loop(tmp_path: Path):
+async def test_prime_explanation_keeps_handoff_without_starting_a_factory_job(tmp_path: Path):
     from novacode_cli.agents.prime import PrimeMiddleware
     from novacode_cli.prime import current_run
 
@@ -415,5 +415,5 @@ async def test_prime_and_handoff_can_share_the_foreground_loop(tmp_path: Path):
     ]
     assert not [e for e in events if isinstance(e, ev.Error)]
     assert session.handoff_latest["status"] == "saved"
-    assert session.prime_report["status"] == "incomplete"
+    assert session.prime_report is None
     assert current_handoff.get() is current_run.get() is None

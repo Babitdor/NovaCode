@@ -21,6 +21,7 @@ WRITE_TOOLS = frozenset(
         "edit_file",
         "str_replace",
         "delete_file",
+        "delete",
         "NotebookEditTool",
         "write_memory",
     }

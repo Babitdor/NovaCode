@@ -8032,7 +8032,7 @@ class NovaApp(App):
             pass
         if getattr(self.session_state, "prime_enabled", False):
             report = getattr(self.session_state, "prime_report", None) or {}
-            prime = f" · PRIME {report.get('phase', 'define').title()}"
+            prime = f" · PRIME {report.get('stage', report.get('phase', 'define')).title()}"
         # Skip the badge/class/pulse work entirely when the mode is unchanged —
         # this runs on every keystroke, so the common case (mode didn't change)
         # must be a cheap no-op.
@@ -12547,7 +12547,7 @@ class NovaApp(App):
                     f'Loaded "{panel.record_label(identity)}".',
                     1,
                 )
-            self._log(Text(message), transcript=args.strip().lower() in {"status", "report"})
+            self._log(Text(message), transcript=action in {"status", "report", "tasks", "checks", "agents", "sources"})
         self._update_mode_badge(self.query_one("#prompt", PromptInput).text)
         await self._save_session()
 
@@ -12560,7 +12560,8 @@ class NovaApp(App):
         elif event.action == "continue":
             if self._turn_running():
                 self.notify("Wait for the active request to finish before continuing Prime.")
-            elif getattr(self.session_state, "prime_pending", None):
+            elif (getattr(self.session_state, "prime_pending", None)
+                  or getattr(self.session_state, "prime_factory_resume", None)):
                 self._dispatch_root(
                     "Continue the prepared Prime task within the current permissions and limits."
                 )
@@ -19181,7 +19182,9 @@ class NovaApp(App):
                 state.plan_mode_enabled = False
                 if pane is None or pane is getattr(self, "_active_pane", None):
                     self._update_mode_badge()
-                if choice == "auto":
+                if choice == "auto" and not (
+                    isinstance(e.payload, dict) and e.payload.get("factory") is True
+                ):
                     # "Auto-approve edits" is scoped to THIS plan's execution
                     # run. auto_approve is session-global and agent_loop
                     # auto-approves FUTURE plan interrupts when it's set — so

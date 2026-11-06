@@ -170,6 +170,9 @@ class ProcessHandle:
             "base_url": model.get("base_url"),
             "auth_mode": model.get("auth_mode"),
         }
+        if request.factory is not None:
+            self.bootstrap["factory"] = request.factory
+            self.bootstrap["attempt"] = request.factory["attempt"]
 
     async def start(
         self, argv: list[str] | None = None, *, env: dict[str, str] | None = None
@@ -198,6 +201,7 @@ class ProcessHandle:
                 "pid": self.child.proc.pid,
                 "born": born,
                 "attempt": self.bootstrap["attempt"],
+                "budget_key": f"session:{id(self.supervisor)}:{self.request.identity.agent}",
             }
         encode_control({"t": "team_bootstrap", **self.bootstrap})
         await self.supervisor._send(self.child, {"t": "team_bootstrap", **self.bootstrap})

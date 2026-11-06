@@ -130,6 +130,13 @@ jobs:
           tests/test_release_version.py
           tests/test_prime.py
           tests/test_prime_records.py
+          tests/test_factory_controller.py
+          tests/test_factory_knowledge.py
+          tests/test_factory_workspace.py
+          tests/test_factory_workers.py
+          tests/test_factory_workflow.py
+          tests/test_factory_container.py
+          tests/test_factory_interfaces.py
           tests/test_shell_prompts.py
           tests/test_shell_nonblocking.py
           tests/test_shell_output_responsiveness.py
@@ -264,6 +271,8 @@ jobs:
           tests/test_team_accounting.py
           tests/test_team_approvals.py
           tests/test_team_workspace.py
+          tests/test_team_update_handoff.py
+          tests/test_team_recovery.py
           tests/test_packaged_main_prompts.py
           tests/test_core_prompt_subagents.py
           tests/test_prompt_contracts.py

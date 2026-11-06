@@ -15,6 +15,15 @@ from novacode_cli.config.config import Settings, console
 #: graphs on the LangGraph server; ``dynamic`` the agents discovered in the agent
 #: directories (which is also what an ``/eval`` fan-out dispatches).
 ROLE_NAMES: tuple[str, ...] = ("main", "subagent", "async", "dynamic")
+FACTORY_ROLES: tuple[str, ...] = (
+    "requirements",
+    "research",
+    "architecture",
+    "developer",
+    "test_engineer",
+    "verification",
+    "security",
+)
 CAVEMAN_LEVELS: tuple[str, ...] = (
     "lite", "full", "ultra", "wenyan-lite", "wenyan-full", "wenyan-ultra",
 )
@@ -243,6 +252,53 @@ class NovaConfig:
             if isinstance(entry, dict):
                 found[role] = dict(entry)
         return found
+
+    def get_factory_model(self, role: str) -> dict[str, str] | None:
+        """Return an explicit factory route, or inherit the session model when unset."""
+        if role not in FACTORY_ROLES:
+            message = f"Unknown factory role {role!r}"
+            raise ValueError(message)
+        self._load()
+        entry = self._config.get(f"factory_model_{role}")
+        if entry is None:
+            return None
+        if (
+            not isinstance(entry, dict)
+            or any(
+                not isinstance(entry.get(key), str) or not entry[key].strip()
+                for key in ("provider", "model")
+            )
+            or ("base_url" in entry and not isinstance(entry["base_url"], str))
+        ):
+            message = f"Invalid factory model route for {role!r}"
+            raise ValueError(message)
+        return dict(entry)
+
+    def set_factory_model(
+        self, role: str, provider: str, model: str, base_url: str | None = None
+    ) -> None:
+        """Save one specialist route without changing ordinary agent model settings."""
+        if role not in FACTORY_ROLES:
+            message = f"Unknown factory role {role!r}"
+            raise ValueError(message)
+        if not provider.strip() or not model.strip():
+            message = "Factory routes require a provider and model"
+            raise ValueError(message)
+        self._load()
+        entry = {"provider": provider, "model": model}
+        if base_url:
+            entry["base_url"] = base_url
+        self._config[f"factory_model_{role}"] = entry
+        self._save()
+
+    def clear_factory_model(self, role: str) -> None:
+        """Restore session model inheritance for one factory specialist."""
+        if role not in FACTORY_ROLES:
+            message = f"Unknown factory role {role!r}"
+            raise ValueError(message)
+        self._load()
+        self._config.pop(f"factory_model_{role}", None)
+        self._save()
 
     # ── Credential metadata ─────────────────────────────────────────────────
     #

@@ -244,6 +244,12 @@ async def iterate_agent_events(
     skip_file_mentions: bool = False,
 ) -> AsyncGenerator[Any, None]:
     """Drive one turn with usage attribution shared by every frontend."""
+    from novacode_cli.prime_factory.runtime import is_factory_request, iterate_factory_events
+
+    if is_factory_request(user_input, session_state):
+        async for event in iterate_factory_events(user_input, session_state, agent=agent):
+            yield event
+        return
     from novacode_cli.tracking.usage_tree import (
         UsageTree,
         _current_tree,
@@ -262,6 +268,7 @@ async def iterate_agent_events(
         image_tracker=image_tracker,
         seen_message_ids=seen_message_ids,
         skip_file_mentions=skip_file_mentions,
+        legacy_prime=False,
     )
     try:
         while True:
@@ -295,6 +302,7 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     image_tracker=None,
     seen_message_ids: set[str] | None = None,
     skip_file_mentions: bool = False,
+    legacy_prime: bool = True,
 ) -> AsyncGenerator[Any, None]:
     """Run the agent and yield UI events.
 
@@ -567,7 +575,7 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
 
     prime_run = (
         PrimeRun(session_state, prime_original_input)
-        if getattr(session_state, "prime_enabled", False) is True
+        if legacy_prime and getattr(session_state, "prime_enabled", False) is True
         else None
     )
     prime_token = current_run.set(prime_run)

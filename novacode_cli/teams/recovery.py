@@ -62,6 +62,9 @@ class RecoveryHandle:
         certain = await self._stop()
         if certain:
             PROCESS_BUDGET.release(self._budget_key)
+            original_key = self.recovery.get("budget_key")
+            if isinstance(original_key, str):
+                PROCESS_BUDGET.release(original_key)
         return certain
 
     async def _stop(self) -> bool:

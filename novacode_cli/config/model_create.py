@@ -331,16 +331,23 @@ def reasoning_setting_note(  # noqa: PLR0911 — each provider has a different c
 
 def build_chat_model(
     provider: str, model_name: str, *, reasoning_effort: str | None = None,
+    max_retries: int | None = None,
 ) -> BaseChatModel:
     """Build a provider model, with an optional per-route effort override.
 
     The override uses the same capability mappings as the session setting and
     never saves a new global preference.
     """
-    model = (
-        _build_chat_model(provider, model_name, reasoning_effort=reasoning_effort)
-        if reasoning_effort is not None else _build_chat_model(provider, model_name)
-    )
+    if max_retries is not None:
+        # Factory calls must reserve capacity separately for every retry.
+        model = _build_chat_model(
+            provider, model_name, reasoning_effort=reasoning_effort, max_retries=max_retries
+        )
+    else:
+        model = (
+            _build_chat_model(provider, model_name, reasoning_effort=reasoning_effort)
+            if reasoning_effort is not None else _build_chat_model(provider, model_name)
+        )
     # Lossless model identity for new worker processes; never infer a gateway
     # provider from its OpenAI-compatible model class or change its defaults.
     model.metadata = {**(model.metadata or {}), "nova_provider": provider, "nova_model": model_name}
@@ -372,6 +379,7 @@ def ollama_openai_base_url() -> str:
 
 def _build_chat_model(
     provider: str, model_name: str, *, reasoning_effort: str | None = None,
+    max_retries: int = 5,
 ) -> BaseChatModel:
     """THE model constructor — every ChatX(...) in Nova is built here.
 
@@ -395,7 +403,7 @@ def _build_chat_model(
     if provider in CATALOG_PROVIDERS:
         from novacode_cli.config.catalog_models import build_catalog_model
 
-        return build_catalog_model(provider, model_name)
+        return build_catalog_model(provider, model_name, max_retries=max_retries)
 
     if provider == "ollama":
         # Ollama is driven through its OpenAI-compatible endpoint (`/v1`) with
@@ -437,7 +445,7 @@ def _build_chat_model(
             # client renames that to `max_completion_tokens`, which Ollama
             # accepts and ignores — a limit of 25 produced an 800-token reply.
             extra_body={"max_tokens": nova_config.get("max_tokens", 16384)},
-            max_retries=5,
+            max_retries=max_retries,
             # Token usage is only streamed back when asked for, and the client
             # does not ask by default for a custom base URL.
             stream_usage=True,
@@ -467,7 +475,7 @@ def _build_chat_model(
                 base_url=COMMANDCODE_BASE_URL.removesuffix("/v1"),
                 default_headers=zdr,
                 max_tokens=20_000,  # type: ignore[arg-type]
-                max_retries=5,
+                max_retries=max_retries,
                 **anthropic_thinking_kwargs(model_name, effort, int(budget)),
             )
         from novacode_cli.utils.backend_patches import apply_openai_reasoning_content_patch
@@ -479,7 +487,7 @@ def _build_chat_model(
             api_key=api_key,
             base_url=COMMANDCODE_BASE_URL,
             default_headers=zdr,
-            max_retries=5,
+            max_retries=max_retries,
             stream_usage=True,
             **gateway_reasoning_kwargs(provider, model_name, effort),
         )
@@ -505,7 +513,7 @@ def _build_chat_model(
             model=model_name,
             api_key=provider_api_key(provider),
             base_url=base_url,
-            max_retries=5,
+            max_retries=max_retries,
             stream_usage=True,
             **reasoning,
         )
@@ -521,7 +529,7 @@ def _build_chat_model(
             api_key=provider_api_key(provider),
             base_url=provider_base_url(provider),
             max_tokens=20_000,  # type: ignore[arg-type]
-            max_retries=5,
+            max_retries=max_retries,
         )
 
     if provider == "bedrock":
@@ -540,10 +548,16 @@ def _build_chat_model(
             ) from exc
 
         region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
+        bedrock_options = {}
+        if max_retries != 5:
+            from botocore.config import Config
+
+            bedrock_options["config"] = Config(retries={"total_max_attempts": max_retries + 1})
         return ChatBedrockConverse(
             model=model_name,
             region_name=region,
             max_tokens=nova_config.get("max_tokens", 16384),
+            **bedrock_options,
         )
 
     if provider in ("openai", "openrouter", "opencode", "opencode_zen"):
@@ -602,7 +616,7 @@ def _build_chat_model(
                     model=model_name, api_key=openai_kwargs["api_key"],
                     base_url=openai_kwargs["base_url"],
                     default_headers=openai_kwargs["default_headers"],
-                    max_tokens=20_000, max_retries=5,
+                    max_tokens=20_000, max_retries=max_retries,
                     **thinking_kwargs,
                 )
             if api == "responses":
@@ -685,11 +699,11 @@ def _build_chat_model(
 
         if provider in {"opencode", "opencode_zen"}:
             return _opencode_chat_class()(
-                model=model_name, max_retries=5, **openai_kwargs
+                model=model_name, max_retries=max_retries, **openai_kwargs
             )
         if openai_kwargs.get("use_responses_api"):
-            return _chatgpt_plan_chat_class()(model=model_name, max_retries=5, **openai_kwargs)
-        return ChatOpenAI(model=model_name, max_retries=5, **openai_kwargs)
+            return _chatgpt_plan_chat_class()(model=model_name, max_retries=max_retries, **openai_kwargs)
+        return ChatOpenAI(model=model_name, max_retries=max_retries, **openai_kwargs)
 
     if provider == "nvidia":
         # NVIDIA NIM (build.nvidia.com). Its own client rather than ChatOpenAI:
@@ -759,7 +773,7 @@ def _build_chat_model(
         return ChatAnthropic(
             model_name=model_name,
             max_tokens=20_000,  # type: ignore[arg-type]
-            max_retries=5,
+            max_retries=max_retries,
             **thinking_kwargs,
         )
 
@@ -793,7 +807,7 @@ def _build_chat_model(
             model=model_name,
             temperature=0,
             max_tokens=None,
-            max_retries=5,
+            max_retries=max_retries,
             **google_kwargs,
         )
         if oauth_selected:

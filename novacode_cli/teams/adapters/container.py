@@ -226,7 +226,12 @@ class ContainerHandle(ProcessHandle):
         self.bootstrap["cwd"] = "/workspace"
         self.supervisor._process_budget = None  # Reserve the container, not its transient CLI.
         self._reserved = False
-        self.recovery = {"kind": "container", "name": self.name, "labels": self.labels}
+        self.recovery = {
+            "kind": "container",
+            "name": self.name,
+            "labels": self.labels,
+            "budget_key": f"container:{self.bootstrap['attempt']}",
+        }
 
     async def start(
         self,
@@ -235,6 +240,14 @@ class ContainerHandle(ProcessHandle):
         env: dict[str, str] | None = None,  # noqa: ARG002 - Framework interface.
     ) -> None:
         """Forward only configured model credentials by environment name."""
+        values = self.container_environment()
+        command = self.container_command(sorted(values))
+        PROCESS_BUDGET.reserve(f"container:{self.bootstrap['attempt']}")
+        self._reserved = True
+        await super().start(command, env=values)
+
+    def container_environment(self) -> dict[str, str]:
+        """Forward only the configured provider's credentials and workspace environment."""
         from novacode_cli.config.model_manager import MODEL_PRESETS, provider_api_key
 
         provider = self.bootstrap["provider"]
@@ -268,12 +281,13 @@ class ContainerHandle(ProcessHandle):
                 GIT_CONFIG_KEY_0="safe.directory",
                 GIT_CONFIG_VALUE_0="/workspace",
             )
-        command = container_argv(
-            self.profile, self.request.cwd, self.name, self.labels, sorted(values)
+        return values
+
+    def container_command(self, environment_names: list[str]) -> list[str]:
+        """Build the owned worker launch without allocating another workspace."""
+        return container_argv(
+            self.profile, self.request.cwd, self.name, self.labels, environment_names
         )
-        PROCESS_BUDGET.reserve(f"container:{self.bootstrap['attempt']}")
-        self._reserved = True
-        await super().start(command, env=values)
 
     async def _message(self, agent_id: str, message: dict[str, Any]) -> None:
         if message.get("t") == "exited" and self.ready.done() and not self.stopped:

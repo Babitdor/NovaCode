@@ -193,7 +193,7 @@ async def test_fake_model_real_cli_and_plan_restrictions(
     from novacode_cli import ui_events as ev
     from novacode_cli.agents.plan_agent.plan_mode_middleware import PlanModeMiddleware
     from novacode_cli.agents.prime import PrimeMiddleware
-    from novacode_cli.core.agent_loop import iterate_agent_events
+    from novacode_cli.core.agent_loop import _iterate_agent_events as iterate_agent_events
     from novacode_cli.security import delegated_approval
     from novacode_cli.shell.middleware import ShellMiddleware
     from tests.test_prime import Model, call

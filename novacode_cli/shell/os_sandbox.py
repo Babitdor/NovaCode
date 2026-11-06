@@ -58,6 +58,7 @@ class OSSandboxPolicy:
     allow_network: bool = True
     enabled: bool = True
     backend: str | None = None
+    writable_roots: tuple[str, ...] = ()
 
 
 def detect_backend(*, force_probe: bool = False) -> str | None:
@@ -137,6 +138,8 @@ def _bwrap_command(command: str, policy: OSSandboxPolicy) -> str:
         "--die-with-parent",
     ]
     args += ["--share-net"] if policy.allow_network else ["--unshare-net"]
+    for root in policy.writable_roots:
+        args += ["--bind", root, root]
     # bwrap runs the program directly (no shell): hand it bash -c <command>.
     args += ["bash", "-c", command]
     # We return a single shell string (callers use create_subprocess_shell), so
@@ -155,6 +158,9 @@ def _seatbelt_profile(policy: OSSandboxPolicy) -> str:
         ' (subpath "/private/tmp") (subpath "/private/var/tmp")'
         ' (subpath "/dev"))',
     ]
+    rules.extend(
+        f"(allow file-write* (subpath {_sb_quote(root)}))" for root in policy.writable_roots
+    )
     if not policy.allow_network:
         rules.append("(deny network*)")
     return "".join(rules)

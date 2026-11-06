@@ -13,6 +13,7 @@ from textual.message import Message
 from textual.widgets import Button, OptionList, Static
 from textual.widgets.option_list import Option
 
+from novacode_cli.commands.prime_handler import factory_receipt, factory_records, is_factory_report
 from novacode_cli.prime import receipt
 from novacode_cli.prime_memory import (
     PrimeMemory,
@@ -38,11 +39,19 @@ def _saved_records(
     memory = PrimeMemory(project_context(session_directory(session)))
     rows = []
     records = memory.records(kind)
+    if kind == "tasks":
+        records = factory_records(session) + records
+    elif kind == "checks" and is_factory_report(getattr(session, "prime_report", None)):
+        records = [
+            {**check, "_factory_check": True} for check in session.prime_report.get("checks", [])
+        ] + records
     if identity and not any(record.get("id") == identity for record in records):
         requested = memory.get(kind, identity)
         if requested is not None:
             records.append(requested)
     for record in records:
+        if "id" not in record:
+            continue
         label = " ".join(str(record.get("goal") or record.get("purpose") or "Untitled").split())[
             :150
         ]
@@ -66,6 +75,18 @@ def _saved_records(
 
 def _record_details(session: Any, record: Record) -> str:  # noqa: ANN401 - Session boundary.
     """Present task context or captured check evidence in readable text, without ID plumbing."""
+    if is_factory_report(record):
+        if record.get("summary_only"):
+            record = next(iter(factory_records(session, record["id"])), record)
+        return factory_receipt(record)
+    if record.get("_factory_check"):
+        import json
+
+        return json.dumps(
+            {key: value for key, value in record.items() if not key.startswith("_")},
+            ensure_ascii=False,
+            indent=2,
+        )
     title = str(record.get("goal") or record.get("purpose") or record["_label"])
     lines = [title, "", "Status: " + record["_status"]]
     if record["_kind"] == "tasks":
@@ -223,7 +244,15 @@ class PrimePanel(Vertical):
         )
         for selector in ("#prime-inspect", "#prime-forget"):
             self.query_one(selector, Button).disabled = self._loading or record is None
-        pending = getattr(self._session, "prime_pending", None)
+        pending = getattr(self._session, "prime_pending", None) or (
+            {
+                "goal": (getattr(self._session, "prime_report", None) or {}).get(
+                    "goal", "Saved factory"
+                )
+            }
+            if getattr(self._session, "prime_factory_resume", None)
+            else None
+        )
         self.query_one("#prime-continue", Button).disabled = not bool(pending)
         self.query_one("#prime-back", Button).display = self._detail and self._view != "progress"
         self.query_one("#prime-records").display = not self._detail and self._view != "progress"
@@ -287,6 +316,22 @@ class PrimePanel(Vertical):
             f"{report.get('phase', 'define')[:3].title()} · R:{len(report.get('recalled', []))} "
             f"P:{counts['passed']} F:{counts['failed']} ?:{counts['unverified']}"
         )
+        if is_factory_report(report):
+            running = sum(
+                attempt.get("status") in {"running", "starting"}
+                for attempt in report.get("attempts", report.get("tasks", []))
+            )
+            budget, usage = report.get("budget", {}), report.get("usage", {})
+            label = (
+                f"Factory · {report.get('stage', 'requirements')} · "
+                f"{report.get('status', 'paused')} · {running}/3 agents · "
+                f"{usage.get('tokens', 0)}/{budget.get('tokens', 500_000)} tokens · "
+                f"{len(report.get('blockers', []))} blockers"
+            )
+            compact = (
+                f"Factory · {report.get('stage', 'requirements')} · "
+                f"{running} agents · {len(report.get('blockers', []))} blockers"
+            )
         strip = self.query_one("#prime-strip", Button)
         strip.label = compact if self.app.size.width < COMPACT_WIDTH else label
         strip.tooltip = label + " · Open saved work"
@@ -377,7 +422,8 @@ class PrimePanel(Vertical):
             if not record:
                 self._detail = False
             if requested == "progress":
-                content = await asyncio.to_thread(receipt, report_at_start or {})
+                render = factory_receipt if is_factory_report(report_at_start) else receipt
+                content = await asyncio.to_thread(render, report_at_start or {})
             elif self._detail and record:
                 content = await asyncio.to_thread(_record_details, session, record)
             else:

@@ -19,7 +19,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from novacode_cli import ui_events as ev
 from novacode_cli.agents.prime import INSTRUCTIONS, PrimeMiddleware, prime_checkpoint
 from novacode_cli.commands.prime_handler import handle_prime_command
-from novacode_cli.core.agent_loop import iterate_agent_events
+from novacode_cli.core.agent_loop import _iterate_agent_events as iterate_agent_events
 from novacode_cli.prime import PHASES, PrimeRun, current_run, prime_payload, receipt, restore_prime
 from novacode_cli.states.Session import SessionState
 
