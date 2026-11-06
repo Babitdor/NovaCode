@@ -495,8 +495,8 @@ html.plot-skip #boot{display:none}
   content:"";position:absolute;width:calc(var(--disc) * 1.82);aspect-ratio:1;border:1px solid rgb(239 237 231 / .08);border-radius:50%;pointer-events:none;
 }
 .coin{
-  /* Half the thickness: 10% of the face — a slim struck disc. */
-  --half:calc(var(--disc) * .05);
+  /* A slim struck disc: 6% of the face in total, half on each side. */
+  --half:calc(var(--disc) * .03);
   position:relative;z-index:1;width:var(--disc);aspect-ratio:1;
   /* A dark mid-plane disc: it fills the gap between the faces, so the rim never reads hollow if the
      script has not stacked the slices yet. */
@@ -1440,7 +1440,7 @@ html.lenis{scroll-behavior:auto}
     var coin = $(".coin", stage);
     /* The rim is a stack of flat discs between the two faces: CSS cannot loop, so build them here.
        They sit inside the faces, never on them, so the front and back are never z-fought. */
-    var half = coin.offsetWidth * 0.05 || 12, slices = 18, i;
+    var half = coin.offsetWidth * 0.03 || 7, slices = 18, i;
     /* Same number for the faces and the stack: the CSS calc is only the no-script fallback. */
     coin.style.setProperty("--half", half + "px");
     var ring = document.createElement("div");
