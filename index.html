@@ -504,13 +504,13 @@ html.plot-skip #boot{display:none}
   transform-style:preserve-3d;will-change:transform;
   transform:rotateX(var(--tilt,-12deg)) rotateY(var(--spin,-18deg));
 }
-/* The rim: flat discs stacked between the two faces, so the edge reads as solid metal from any
-   angle. The count is set in script because CSS cannot loop; this only styles them. */
-.coin-slice{
-  position:absolute;inset:0;border-radius:50%;
-  /* The lit bands sit at the outer 6%, because that is all the rim ever shows once the faces are
-     in front of it. */
-  background:linear-gradient(90deg,#17181A 0%,#EFEDE7 6%,#8B8A85 16%,#27282B 50%,#8B8A85 84%,#EFEDE7 94%,#17181A 100%);
+/* The rim: thin panels around the circumference form a cylinder, so the edge reads as one
+   continuous struck surface instead of a stack of discs. The count and placement are set in
+   script because CSS cannot loop; this only styles them. */
+.coin-rim{
+  position:absolute;left:50%;top:50%;backface-visibility:hidden;
+  /* The lit bands sit just inside each face, so the edge catches light along the circumference. */
+  background:linear-gradient(180deg,#17181A 0%,#EFEDE7 7%,#8B8A85 18%,#27282B 50%,#8B8A85 82%,#EFEDE7 93%,#17181A 100%);
 }
 .coin-face{
   position:absolute;inset:0;border-radius:50%;overflow:hidden;display:grid;place-items:center;
@@ -1438,10 +1438,12 @@ html.lenis{scroll-behavior:auto}
   var stage = $("[data-coin]");
   if (stage) {
     var coin = $(".coin", stage);
-    /* The rim is a stack of flat discs between the two faces: CSS cannot loop, so build them here.
-       They sit inside the faces, never on them, so the front and back are never z-fought. */
-    var half = coin.offsetWidth * 0.02 || 5, slices = 18, i;
-    /* Same number for the faces and the stack: the CSS calc is only the no-script fallback. */
+    /* The rim is a ring of thin panels around the circumference: a cylinder surface, so the
+       edge reads as one continuous struck band. CSS cannot loop, so build it here. */
+    var radius = coin.offsetWidth / 2, half = coin.offsetWidth * 0.02 || 5, segments = 64, i;
+    var segmentW = 2 * radius * Math.sin(Math.PI / segments) + 0.7;
+    var segmentH = 2 * half + 0.5, apothem = radius * Math.cos(Math.PI / segments);
+    /* Same number for the faces and the rim: the CSS calc is only the no-script fallback. */
     coin.style.setProperty("--half", half + "px");
     var ring = document.createElement("div");
     ring.className = "coin-sparks";
@@ -1452,11 +1454,17 @@ html.lenis{scroll-behavior:auto}
       ring.appendChild(ember);
     }
     coin.insertBefore(ring, coin.firstChild);
-    for (i = 0; i < slices; i++) {
-      var slice = document.createElement("i");
-      slice.className = "coin-slice";
-      slice.style.transform = "translateZ(" + (-half + (2 * half * (i + 0.5)) / slices).toFixed(2) + "px)";
-      coin.appendChild(slice);
+    for (i = 0; i < segments; i++) {
+      var phi = (i + 0.5) * 2 * Math.PI / segments;
+      var panel = document.createElement("i");
+      panel.className = "coin-rim";
+      panel.style.width = segmentW.toFixed(2) + "px";
+      panel.style.height = segmentH.toFixed(2) + "px";
+      panel.style.margin = (-segmentH / 2).toFixed(2) + "px 0 0 " + (-segmentW / 2).toFixed(2) + "px";
+      panel.style.transform = "translate3d(" + (apothem * Math.cos(phi)).toFixed(2) + "px,"
+        + (apothem * Math.sin(phi)).toFixed(2) + "px,0) rotateZ("
+        + (phi * 180 / Math.PI - 90).toFixed(2) + "deg) rotateX(90deg)";
+      coin.appendChild(panel);
     }
     var BASE = -18, REST_TILT = -12;
     var rest = BASE, spin = BASE, spinTo = BASE, tilt = REST_TILT, tiltTo = REST_TILT;
