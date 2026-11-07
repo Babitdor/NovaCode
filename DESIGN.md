@@ -167,11 +167,13 @@ orange survives the redesign because an annotation pen is the concept's own colo
   radius arrives in `--theme-r`, which `index.html` consumes. Reduced motion switches at once.
   Both palettes are designed; neither is a filter over the other.
 - **The hero drawing.** `assets/hero-layers/` holds the cover art as four planes (sky, room,
-  subject, plants) in light and dark, plus a matching flat composite. The active `subject-ink`
-  planes give Nova the coin's inked character style while retaining the original colors; the
-  original planes remain in the source directory. Planes carry a theme `<source>` and a
+  subject, plants) in light and dark, plus a matching flat composite. The active `*-ink`
+  planes share the coin's illustration style while retaining the original colors; the original
+  planes remain in the source directory. The subject uses one regenerated `subject-ink`
+  drawing in both themes to keep the face identical; sky, room and plants carry a theme `<source>`. Each plane has a
   `--depth`/`--scroll-speed`; `.art` gets `layered` only once all four decode, and the flat
-  composite shows until then and under reduced motion (no transforms at all). Wide screens are a
+  composite shows until then and under reduced motion (no transforms at all). The planes start
+  registered at the top, separate on scroll, and ignore touch movement as a pointer effect. Wide screens are a
   split sheet: the words print on a solid paper panel whose width is `min(48%, 720px)` (the cap
   keeps the measure readable on large monitors) and the drawing takes all the width that is
   left, undimmed, which is what keeps the artwork reading as the page's image.
@@ -189,6 +191,15 @@ orange survives the redesign because an annotation pen is the concept's own colo
   near the cursor, a shooting star every 3.4–9s, and one launched by a tap. Tint is per theme
   (`236,242,255` on ink, `150,92,32` on paper). The block is skipped entirely under reduced
   motion, pauses when the tab hides, and resizes on a debounce.
+- **Launches and Nova.** The same starfield clock draws one small rocket at a time,
+  with a curved, accelerating ascent, warm exhaust and a fading particle trail.
+  It launches after the cover sheet leaves, then at 18–30 second intervals. Nova's
+  coin-inspired chibi sprite sits beside the page contents: she watches the pointer
+  and reacts to a tap, click or Enter/Space, which also requests a launch. An active
+  flight is never duplicated. Reduced motion keeps the click reaction and greeting,
+  without cursor tracking, a bounce or a rocket. The companion stays in document
+  flow and disappears without JavaScript. Sources live in `characters/nova/`;
+  served aligned atlases live in `assets/mascots/`.
 - **The mark.** `assets/emblem-128.webp` on the `--curtain` ink chip, the same in both themes.
   It replaced the inline triangle so the header and footer carry the Nova emblem.
 - **The coin.** A monochrome Nova seal with real SVG rim lettering turns on the existing CSS 3D
@@ -200,6 +211,19 @@ orange survives the redesign because an annotation pen is the concept's own colo
   face and emblem chip, so the three pages print on the same paper.
 
 ## Validation
+
+Header icon controls have 44px hit areas while the theme switch keeps its compact
+visual track. Header and sheet-content links, plus primary buttons, give keyboard
+focus the same feedback as hover. Metadata and illustration captions use at least
+11px text; redundant labels above section headings are omitted. Illustration
+panels size from their available width, without a minimum height forcing overflow
+on 320px screens. The loading strip uses cream text on its fixed dark surface in
+both themes.
+
+Mechanical scan exceptions reviewed in the browser: drafting hairlines sit on
+their grid boundaries; section padding is inherited through wrappers and
+`padding-block`; Geist Mono is reserved for commands and measured metadata;
+repeating stripes form the coin's machined rim rather than a page background.
 
 `python tools/verify_site.py` covers internal links, all documentation topics, disclosure
 controls, both permalink formats, live refresh and failure recovery, desktop and phone,

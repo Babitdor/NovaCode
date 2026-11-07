@@ -9,11 +9,25 @@ Every PNG keeps the original full 1672 × 941 composition. Two generated light
 PNGs are 1671px wide: the build pads their far edge by one transparent pixel,
 preserving registration without stretching any object.
 
-The active `light-subject-ink.png` and `dark-subject-ink.png` redraw Nova with
-the coin's inked character style while keeping the original day/night colors,
-pose, objects, and placement. The daylight variant is 1670px wide; the builder
-pads its far edge by two transparent pixels. The original subject planes are
-kept alongside it.
+The active `*-ink.png` planes redraw the sky, room, subject, and plants in the
+coin's inked style while keeping the original day/night colors, pose, objects,
+and placement. Some generated transparent planes are one or two pixels narrower;
+the builder pads their far edge without stretching them. The original planes are
+kept alongside the new set.
+
+The active subject is now `subject-ink.png`, one regenerated master reused by
+both themes and both static composites. It has balanced warm lighting; no
+theme-specific face is generated or selected. The older light/dark subject
+sources remain archived. Rebuild with `python tools/make_hero_assets.py --ink`.
+
+Generated with the built-in image tool using the light subject as the composition
+reference and `assets/coin.png` as the facial/style reference. Prompt: regenerate
+one transparent 1672 x 941 subject plane in the coin's inked style, retaining the
+warm brown hair, peach skin, navy hoodie, lavender laptop, wood desk, cat, books,
+pen cup, exact placement and chin-on-hand pose; balanced warm neutral light;
+no background, crop, recentering, text or watermark. A corrective edit removed
+an extra arm, requiring exactly two arms/hands in the original pose while
+preserving the regenerated face and all other objects.
 
 | Plane | Contents | Transparency | Pointer depth | Scroll speed |
 | --- | --- | --- | --- | --- |
@@ -22,8 +36,8 @@ kept alongside it.
 | `subject` | Coder, hoodie, laptop, cat, books, pen cup and tabletop | True alpha around the group | 1.0 | 0.10 |
 | `plants` | Soft near foliage at the bottom corners | True soft alpha | 1.8 | 0.02 |
 
-Run `python tools/make_hero_assets.py --ink` to export the active subject planes
-and matching full-size and 960px static composites. Run without `--ink` to rebuild
+Run `python tools/make_hero_assets.py --ink` to export the active planes and
+matching full-size and 960px static composites. Run without `--ink` to rebuild
 the original set. Loading failures and reduced motion retain the matching complete
 image, and the original artwork is not overwritten by the ink build.
 

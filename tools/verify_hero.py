@@ -63,6 +63,66 @@ def hero(page, label):
     return m
 
 
+def parallax(browser, base, errors):
+    context = browser.new_context(viewport={'width': 1440, 'height': 900}, color_scheme='light')
+    page = context.new_page()
+    page.on('pageerror', lambda e: errors.append(str(e)))
+    page.goto(base)
+    page.wait_for_function("document.querySelector('.art').matches('.layered.art-ready')", timeout=15000)
+    assert page.locator('.scene-layer').count() == 4
+    assert float(page.locator('.plate').evaluate("e => e.style.getPropertyValue('--ps')")) == 0
+    assert page.locator('.scene-layer img').evaluate_all(
+        "es => es.every(e => e.naturalWidth > 0 && e.currentSrc.includes('-ink'))"
+    )
+    art = page.locator('.art')
+    subject_source = page.locator('.scene-subject img').evaluate('e => e.currentSrc')
+    box = art.bounding_box()
+    page.mouse.move(box['x'] + box['width'] * .8, box['y'] + box['height'] * .3)
+    page.wait_for_timeout(600)
+    shifts = page.locator('.scene-layer').evaluate_all(
+        "es => es.map(e => new DOMMatrix(getComputedStyle(e).transform).m41)"
+    )
+    assert len({round(shift, 1) for shift in shifts}) == 4, shifts
+    pointer = art.evaluate("e => e.style.getPropertyValue('--mx')")
+    art.dispatch_event('pointermove', {'pointerType': 'touch', 'clientX': 0, 'clientY': 0})
+    assert art.evaluate("e => e.style.getPropertyValue('--mx')") == pointer
+    page.evaluate('window.scrollTo(0, 350)')
+    page.wait_for_function("parseFloat(document.querySelector('.plate').style.getPropertyValue('--ps')) > .1")
+    page.get_by_role('button', name='Dark theme').click()
+    page.wait_for_function("""() => document.documentElement.dataset.theme === 'dark'
+        && document.querySelector('.art').classList.contains('layered')
+        && [...document.querySelectorAll('.scene-layer img')].every(i =>
+          (i.closest('.scene-subject') || i.currentSrc.includes('/dark-')) && i.naturalWidth > 0)""", timeout=15000)
+    assert page.locator('.scene-subject img').evaluate('e => e.currentSrc') == subject_source
+    context.close()
+
+    context = browser.new_context(viewport={'width': 1440, 'height': 900}, color_scheme='light')
+    context.add_init_script("""(() => {
+      const decode = HTMLImageElement.prototype.decode;
+      Object.defineProperty(HTMLImageElement.prototype, 'decode', {
+        configurable: true, get() { return this.closest('.art') ? undefined : decode; }
+      });
+    })()""")
+    page = context.new_page()
+    page.on('pageerror', lambda e: errors.append(str(e)))
+    page.goto(base)
+    page.wait_for_function("document.querySelector('.art').matches('.layered.art-ready')", timeout=15000)
+    context.close()
+
+    context = browser.new_context(viewport={'width': 1440, 'height': 900}, color_scheme='light')
+    page = context.new_page()
+    page.on('pageerror', lambda e: errors.append(str(e)))
+    page.route('**/light-room-ink*.webp', lambda route: route.abort())
+    page.goto(base)
+    page.wait_for_function("""() => document.querySelector('.art').classList.contains('art-ready')
+        && document.querySelector('.scene-flat img').naturalWidth > 0""", timeout=15000)
+    page.wait_for_timeout(500)
+    assert not page.locator('.art').evaluate("e => e.classList.contains('layered')")
+    assert float(page.locator('.scene-flat').evaluate('e => getComputedStyle(e).opacity')) > .9
+    context.close()
+    print('  parallax: aligned start, pointer and scroll depth, touch, theme and image fallbacks')
+
+
 def main():
     server = ThreadingHTTPServer(('127.0.0.1', 0), partial(Handler, directory=str(ROOT)))
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -76,6 +136,7 @@ def main():
                 ('desk-light', {'viewport': {'width': 1440, 'height': 900}, 'color_scheme': 'light'}),
                 ('desk-dark', {'viewport': {'width': 1440, 'height': 900}, 'color_scheme': 'dark'}),
                 ('phone', {'viewport': {'width': 390, 'height': 844}, 'is_mobile': True, 'has_touch': True}),
+                ('phone-small', {'viewport': {'width': 320, 'height': 740}, 'is_mobile': True, 'has_touch': True}),
                 ('reduce', {'viewport': {'width': 1440, 'height': 900}, 'reduced_motion': 'reduce'}),
             ):
                 context = browser.new_context(**options)
@@ -84,10 +145,15 @@ def main():
                 page.on('console', lambda m: errors.append(m.text) if m.type == 'error' else None)
                 page.goto(f'http://127.0.0.1:{server.server_port}/NovaCode/')
                 m = hero(page, label)
+                if options.get('has_touch'):
+                    for control in ('[data-theme-toggle]', '#menu-btn'):
+                        box = page.locator(control).bounding_box()
+                        assert box['width'] >= 44 and box['height'] >= 44, (control, box)
                 if label == 'reduce':
                     assert m['ruleScale'] == 1, 'reduced motion: rule should be drawn statically'
                 page.screenshot(path=str(shots / f'{label}-hero.png'))
                 context.close()
+            parallax(browser, f'http://127.0.0.1:{server.server_port}/NovaCode/', errors)
             # The saved choice must also restyle the browser chrome it paints.
             context = browser.new_context(viewport={'width': 1440, 'height': 900}, color_scheme='light')
             page = context.new_page()

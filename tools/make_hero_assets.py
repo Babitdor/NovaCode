@@ -1,7 +1,7 @@
 """Encode aligned image planes and their neutral composite for the hero.
 
 Run: python tools/make_hero_assets.py (requires Pillow).
-Use --ink to build the new character planes and matching composites without
+Use --ink to build the inked planes and matching composites without
 overwriting the original artwork or its social assets.
 The browser translates complete planes; no depth map or pixel displacement.
 """
@@ -17,7 +17,7 @@ OUT = ROOT / "assets"
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--ink", action="store_true", help="build the inked character variant")
+    parser.add_argument("--ink", action="store_true", help="build the inked artwork variant")
     ink = parser.parse_args().ink
     OUT.mkdir(parents=True, exist_ok=True)
     layers_out = OUT / "hero-layers"
@@ -28,7 +28,10 @@ def main() -> None:
             stem += "-ink"
         scene = Image.new("RGBA", (1672, 941))
         for part in ("sky", "room", "subject", "plants"):
-            layer_name = f"{theme}-{part}" + ("-ink" if ink and part == "subject" else "")
+            layer_name = f"{theme}-{part}" + ("-ink" if ink else "")
+            if ink and part == "subject":
+                # Both themes share the same drawing so facial features cannot drift.
+                layer_name = "subject-ink"
             path = OUT / "hero-source" / "layers" / f"{layer_name}.png"
             layer = Image.open(path)
             # Generated planes may be one or two pixels narrower; pad without stretching.
@@ -36,14 +39,15 @@ def main() -> None:
                 layer = layer.crop((0, 0, 1672, 941))
             if layer.size != scene.size:
                 raise ValueError(f"{path}: expected full aligned canvas {scene.size}, got {layer.size}")
+            if part == "sky" and layer.convert("RGBA").getchannel("A").getextrema()[0] != 255:
+                raise ValueError(f"{path}: the sky must be opaque")
             if part != "sky" and (layer.mode != "RGBA" or layer.getchannel("A").getextrema()[0] != 0
                                   or layer.getchannel("A").getextrema()[1] < 128):
                 raise ValueError(f"{path}: a real transparent cutout is required")
             scene = Image.alpha_composite(scene, layer.convert("RGBA"))
-            if not ink or part == "subject":
-                layer.save(layers_out / f"{layer_name}.webp", "WEBP", quality=86, method=6)
-                layer.resize((960, 540), Image.LANCZOS).save(
-                    layers_out / f"{layer_name}-960.webp", "WEBP", quality=82, method=6)
+            layer.save(layers_out / f"{layer_name}.webp", "WEBP", quality=86, method=6)
+            layer.resize((960, 540), Image.LANCZOS).save(
+                layers_out / f"{layer_name}-960.webp", "WEBP", quality=82, method=6)
         art = scene.convert("RGB")
         scenes[theme] = art
         w, h = art.size
