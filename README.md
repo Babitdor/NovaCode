@@ -12,19 +12,30 @@ Built with Python, LangGraph, deepagents and Textual. [MIT licensed](LICENSE).
 
 ## Get started
 
-Requires **Python 3.11+**, **Git** and **uv**, plus a supported model provider or
-a running Ollama instance with a model installed.
+Install the latest release from [PyPI](https://pypi.org/project/novacode-cli/)
+with **uv** on Windows CMD, macOS or Linux. Nova requires Python 3.11+; uv can
+install Python 3.11 for the tool. You also need a supported model provider or
+a running Ollama instance with a model installed. Current release: **1.2.1**.
 
-```bash
+```text
+uv tool install --python 3.11 novacode-cli
+nova
+```
+
+First-run setup guides provider configuration and workspace approval. Hosted
+models may charge for usage. Run `nova` from your project directory. Upgrade a
+PyPI tool install with `uv tool upgrade novacode-cli`. To replace a Git-based
+installation, use `uv tool install --python 3.11 --force novacode-cli`, adding any
+wanted extras. To pin this release, use `novacode-cli==1.2.1` in the install command.
+
+For local development of Nova itself, use Git and a source checkout:
+
+```text
 git clone https://github.com/Babitdor/NovaCode.git
 cd NovaCode
 uv sync
 uv run nova
 ```
-
-First-run setup guides provider configuration and workspace approval. Hosted
-models may charge for usage. To install a global `nova` command from this checkout,
-run `uv tool install .`, then launch `nova` from your project directory.
 
 ## What Nova can do
 
@@ -65,7 +76,7 @@ landing-page copy.
 Attach files with `@`; use **Shift+Enter** for a new line. For a one-shot task:
 
 ```bash
-uv run nova -p "Summarize the changes in this repository"
+nova -p "Summarize the changes in this repository"
 ```
 
 **New to a project? Start with `/onboard`.** Inspired by
@@ -97,15 +108,29 @@ Plan Mode prevents building or refreshing the saved analysis.
 
 ## Optional features
 
-Install selected extras from this checkout, for example:
+Install common optional features into the isolated Nova tool environment:
+
+```text
+uv tool install --python 3.11 --force "novacode-cli[browser,voice,agents-server,server,bedrock,computer]"
+```
+
+Keep every wanted extra in the quoted requirement when reinstalling. Alternative
+voice extras include `voice-orpheus`, `voice-parakeet`, `voice-pocket`,
+`voice-whistle`, `voice-kokoro` and `voice-sano`. For example, use
+`"novacode-cli[voice,voice-kokoro]"` for voice with Kokoro. Installing all voice
+engines together has not been verified on Windows; native engines may require
+platform support or build tools.
+
+For a source checkout, select extras when syncing instead:
 
 ```bash
 uv sync --extra voice --extra voice-kokoro
 ```
 
 Keep all desired `--extra` flags when syncing. Speech models download on first
-use. See [setup and usage](SETUP.md) for global installation, voice providers,
-browser automation and background-agent requirements.
+use. Extras install Python dependencies; browser binaries, models and external
+runtimes may need separate setup. See [setup and usage](https://babitdor.github.io/NovaCode/docs/#page-installation)
+and the [extras reference](https://babitdor.github.io/NovaCode/docs/#page-extras).
 
 **Local computer preview:** the `computer` extra lets Nova operate a
 separate Linux QEMU VM with a private live browser preview and pause/resume/stop
@@ -115,7 +140,7 @@ The Windows WHPX compatibility fix in this checkout has passed a real desktop bo
 
 ## Documentation and contributing
 
-[Setup and usage](SETUP.md) · [Feature catalog](FEATURES.md) ·
+[Setup and usage](https://babitdor.github.io/NovaCode/docs/#page-installation) · [Feature catalog](FEATURES.md) ·
 [Code Mode](docs/mcp-code-mode.md) · [Permissions](docs/security-guardrails.md) ·
 [Sharing](docs/temporary-sharing.md) · [Changelog](changelog/)
 
