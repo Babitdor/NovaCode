@@ -614,9 +614,27 @@ async def test_core_registers_code_mode_without_mcp(
     monkeypatch.setattr("novacode_cli.agents.invocation.definition_signature", lambda: "test")
     build = Mock(wraps=core_agent.create_deep_agent)
     monkeypatch.setattr(core_agent, "create_deep_agent", build)
+    inventories = []
+
+    def capture_tools(self: ScriptedModel, tools: list, **_kwargs: object) -> ScriptedModel:
+        inventories.append({t.name if hasattr(t, "name") else t.get("name") for t in tools})
+        return self
+
+    monkeypatch.setattr(ScriptedModel, "bind_tools", capture_tools)
+    get_policy().tool_tiers["search_tools"] = "allow"
     model = ScriptedModel(
         messages=iter(
             [
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "search",
+                            "name": "search_tools",
+                            "args": {"query": "execute"},
+                        }
+                    ],
+                ),
                 AIMessage(
                     content="",
                     tool_calls=[
@@ -645,6 +663,20 @@ async def test_core_registers_code_mode_without_mcp(
     assert "execute" in build.call_args.kwargs["interrupt_on"]
     first_middleware = build.call_args.kwargs["middleware"][0]
     assert isinstance(first_middleware, CodeModeMiddleware)
-    messages = await execute(graph, {"configurable": {"thread_id": "native-no-mcp"}})
-    assert "read_file" in data(messages)["result"]
-    assert "MCPTool" not in data(messages)["result"]
+    from langchain_core.messages import HumanMessage
+
+    output = await graph.ainvoke(
+        {"messages": [HumanMessage(content="Run the synthetic workflow")]},
+        {"configurable": {"thread_id": "native-no-mcp"}, "recursion_limit": 50},
+    )
+    messages = [m for m in output["messages"] if isinstance(m, ToolMessage)]
+    code_messages = [m for m in messages if m.name == "MCPCode"]
+    assert any(m.name == "search_tools" and m.status == "success" for m in messages), messages
+    assert "read_file" in data(code_messages)["result"]
+    assert "MCPTool" not in data(code_messages)["result"]
+    assert inventories
+    assert all("eval" in names for names in inventories)
+    assert all(
+        not names.intersection({"execute", "shell", "ls", "grep", "MCPTool", "task"})
+        for names in inventories
+    )

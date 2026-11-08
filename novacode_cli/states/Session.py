@@ -670,6 +670,10 @@ class SessionState:
                 pass
         self.prime_factory = None
         self.prime_factory_resume = None
+        for future in self._pending_approvals.values():
+            if not future.done():
+                future.cancel()
+        self._pending_approvals.clear()
         self.thread_id = str(uuid.uuid4())
         self.session_id = str(uuid.uuid4())
         self.active_goal = None

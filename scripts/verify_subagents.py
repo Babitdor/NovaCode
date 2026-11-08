@@ -126,7 +126,7 @@ async def local_routes(report: dict) -> list[str]:
                 report["in_process"][name] = f"{type(exc).__name__}: {exc}"
         print(f"In-process: {len(names)} configured agents checked", flush=True)
 
-        from langchain_quickjs import CodeInterpreterMiddleware
+        from novacode_cli.agents.code_mode import CodeModeMiddleware
 
         code = (
             f"const names = {json.dumps(names)}; "
@@ -144,7 +144,10 @@ async def local_routes(report: dict) -> list[str]:
         )
         try:
             dynamic = create_deep_agent(
-                model=parent, tools=[], subagents=specs, middleware=[CodeInterpreterMiddleware()]
+                model=parent,
+                tools=[],
+                subagents=specs,
+                middleware=[CodeModeMiddleware(auto_approve=True, max_calls=max(32, len(names)))],
             )
             result = await asyncio.wait_for(
                 dynamic.ainvoke({"messages": [HumanMessage("fan out")]}), 120

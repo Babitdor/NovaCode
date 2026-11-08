@@ -589,6 +589,10 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     from novacode_cli.security.approval_context import current_user_request
 
     approval_request_token = current_user_request.set(prime_original_input)
+    from novacode_cli.core.code_approvals import CodeApprovals, current_code_approvals
+
+    code_approvals = CodeApprovals(lambda: session_state.thread_id == thread_id)
+    code_approvals_token = current_code_approvals.set(code_approvals)
     prime_outcome = "interrupted"
 
     # Resuming after an interrupt restarts LangGraph's recursion counter, so a
@@ -663,6 +667,34 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                 _namespace, current_stream_mode, data = chunk
 
                 if current_stream_mode == "custom":
+                    if isinstance(data, dict) and data.get("type") == "nova_code_approval":
+                        pending = code_approvals.pending.get(data.get("id"))
+                        if pending is not None and code_approvals.active:
+                            payload, future = pending
+                            if not future.done():
+                                if session_state.thread_id != thread_id:
+                                    code_approvals.close()
+                                    continue
+                                approval_payload = {
+                                    **payload, "requires_owner_approval": True,
+                                    "approval_session": runtime_session,
+                                }
+                                notice = session_state.add_notification(
+                                    level="approval", title="Tool action requires approval",
+                                    message=format_interrupt_notification("tool", approval_payload),
+                                    source="system", action_id=data["id"], action_type="approve",
+                                )
+                                session_state.register_pending_approval(data["id"], future)
+                                try:
+                                    yield ev.InterruptRequest(
+                                        kind="tool", payload=approval_payload, future=future
+                                    )
+                                    await future
+                                    if session_state.thread_id != thread_id:
+                                        code_approvals.close()
+                                finally:
+                                    session_state.dismiss_notification(notice)
+                        continue
                     if (
                         prime_run is not None
                         and prime_run.is_current()
@@ -1480,6 +1512,8 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
         yield ev.Error(str(e), exception=e)
         return
     finally:
+        code_approvals.close()
+        current_code_approvals.reset(code_approvals_token)
         _auto_approve_var.reset(token)
         active_plan_session.reset(plan_session_token)
         current_user_request.reset(approval_request_token)

@@ -106,6 +106,11 @@ def forced_tool(request: ModelRequest) -> str | None:
         return None
     name = match.group(1)
     bound = {t.get("name") if isinstance(t, dict) else t.name for t in request.tools}
+    if name == "task" and "eval" in bound:
+        from novacode_cli.config.nova_config import NovaConfig
+
+        if NovaConfig().get_code_mode_enabled():
+            return "eval"
     return name if name in bound else None
 
 

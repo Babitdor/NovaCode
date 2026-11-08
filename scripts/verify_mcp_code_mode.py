@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TEST = "tests/test_mcp_code_mode.py"
 NATIVE_TEST = "tests/test_native_code_mode.py"
-TESTS = [TEST, NATIVE_TEST, "tests/test_code_mode_toggle.py"]
+TESTS = [TEST, NATIVE_TEST, "tests/test_code_mode_toggle.py", "tests/test_unified_code_mode.py"]
 REGRESSION_TESTS = [
     "tests/test_deepagents_compat.py",
     "tests/test_generic_mcp_tool.py",
@@ -23,12 +23,16 @@ REGRESSION_TESTS = [
     "tests/test_approval_policy.py",
     "tests/test_team_workspace.py",
     "tests/test_cowork_policy.py",
+    "tests/test_agent_invocation.py",
+    "tests/test_session_clear.py",
+    "tests/test_subagent_tasks.py",
 ]
 SOURCES = [
     "novacode_cli/agents/code_mode.py",
     "novacode_cli/agents/code_runtime.py",
     "novacode_cli/mcp/code_mode.py",
     "novacode_cli/mcp/code_runtime.py",
+    "novacode_cli/core/code_approvals.py",
 ]
 
 

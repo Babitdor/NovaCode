@@ -2516,26 +2516,6 @@ This file stores your preferences and context that persist across sessions.
     # from the system-prompt list and the agent's reach). See /skills toggles.
     agent_middleware.append(SkillCurationMiddleware())
 
-    # Dynamic subagents — a QuickJS `eval` tool whose scripts can dispatch
-    # subagents via a top-level `task()` host function (fan-out, verify, loop
-    # patterns; triggered by "workflow" prompts). It bridges into the same
-    # `task` tool deepagents registers, so dispatches reuse the hardened
-    # subagent specs above. Host `task()` awaits pause the JS timeout clock,
-    # so long subagent runs don't trip the 5s eval budget. Import-guarded so
-    # installs that predate the langchain-quickjs dependency still boot.
-    # ponytail: PTC off (tools.* not exposed to scripts); enable with an
-    # allowlist if scripts need glob/grep discovery.
-    try:
-        import warnings
-
-        from langchain_quickjs import CodeInterpreterMiddleware
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")  # beta-API warning would print every boot
-            agent_middleware.append(CodeInterpreterMiddleware())
-    except ImportError:
-        pass
-
     # Repair malformed tool-call history before EVERY model call. deepagents'
     # own PatchToolCalls runs once per invocation, so damage that happens
     # mid-turn reached the next call unrepaired. sanitize_history also drops

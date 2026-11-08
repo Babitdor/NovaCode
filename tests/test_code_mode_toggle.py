@@ -100,7 +100,7 @@ async def test_live_graph_hides_and_rejects_code_but_keeps_other_tools(tmp_path:
     )
     sync = Mock()
     middleware.wrap_model_call(request, sync)
-    assert sync.call_args.args[0] is request
+    assert {t.name for t in sync.call_args.args[0].tools} == {"eval", "MCPCode"}
     model = ScriptedModel(
         messages=iter(
             [
@@ -125,11 +125,11 @@ async def test_live_graph_hides_and_rejects_code_but_keeps_other_tools(tmp_path:
     g = create_agent(model, middleware=[middleware, mcp])
     NovaConfig().set_code_mode_enabled(False)
     middleware.wrap_model_call(request, sync)
-    assert sync.call_args.args[0].tools == request.tools[1:]
+    assert sync.call_args.args[0].tools == request.tools[2:]
     handler = AsyncMock()
     await middleware.awrap_model_call(request, handler)
-    assert handler.call_args.args[0].tools == request.tools[1:]
-    assert len(request.tools) == 3
+    assert handler.call_args.args[0].tools == request.tools[2:]
+    assert len(request.tools) == 4
     assert "MCPCode" not in mcp._inject_mcp_section(request).system_message.text
     messages = await execute(g)
     assert messages[0].status == "error"
@@ -137,7 +137,7 @@ async def test_live_graph_hides_and_rejects_code_but_keeps_other_tools(tmp_path:
     assert calls == []
     NovaConfig().set_code_mode_enabled(True)
     await middleware.awrap_model_call(request, handler)
-    assert handler.call_args.args[0] is request
+    assert {t.name for t in handler.call_args.args[0].tools} == {"eval", "MCPCode"}
     assert "MCPCode" in mcp._inject_mcp_section(request).system_message.text
     assert (await execute(g))[0].status == "success"
     assert calls == [True]

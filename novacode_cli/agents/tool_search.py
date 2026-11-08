@@ -641,6 +641,13 @@ class ToolSearchMiddleware(AgentMiddleware):
         return tool
 
     def _apply(self, request: ModelRequest) -> ModelRequest:
+        from novacode_cli.config.nova_config import NovaConfig
+
+        if NovaConfig().get_code_mode_enabled() and any(_name(t) == "eval" for t in request.tools):
+            from novacode_cli.agents.code_mode import code_mode_surface
+
+            # Provider search must never reintroduce the host-only inventory.
+            return request.override(tools=code_mode_surface(request.tools))
         capabilities = loaded_capabilities(request.messages)
         loaded = {name for kind, name in capabilities if kind == "tool"}
         # Skill snapshots activate their optional schemas without a second search.
