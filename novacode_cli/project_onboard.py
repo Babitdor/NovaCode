@@ -488,7 +488,10 @@ def impact(graph: dict[str, Any], query: str) -> str:
 
 
 def dashboard(root: Path, graph: dict[str, Any], changes: list[str]) -> str:
-    """Render an offline dashboard; project text never becomes HTML or script."""
+    """Render an offline dashboard with escaped graph data and raw HTML disabled in guides."""
+    from novacode_cli.artifacts.server import _render_markdown
+    from novacode_cli.brand import wordmark
+
     template = (
         files("novacode_cli.prompts")
         .joinpath("onboard_dashboard.jinja")
@@ -500,6 +503,7 @@ def dashboard(root: Path, graph: dict[str, Any], changes: list[str]) -> str:
         **graph,
         "changes": changes,
         "guide": guide_text,
+        "wordmark": wordmark(),
     }
     encoded = (
         json.dumps(payload, ensure_ascii=True)
@@ -507,4 +511,6 @@ def dashboard(root: Path, graph: dict[str, Any], changes: list[str]) -> str:
         .replace(">", "\\u003e")
         .replace("&", "\\u0026")
     )
-    return template.replace("__NOVA_ONBOARD_DATA__", encoded)
+    rendered = template.replace("__NOVA_ONBOARD_DATA__", encoded, 1)
+    # Replace the earlier guide slot once, leaving template markers in user data literal.
+    return rendered.replace("__NOVA_ONBOARD_GUIDE__", _render_markdown(guide_text), 1)

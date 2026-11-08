@@ -278,7 +278,14 @@ async def test_corrupt_graph_requires_explicit_refresh(project: Path) -> None:
 
 
 async def test_dashboard_escapes_untrusted_project_text(project: Path) -> None:
+    from novacode_cli.brand import wordmark
+
     graph = await onboard.analyze(project)
+    (onboard.storage(project) / "guide.md").write_text(
+        "# A guide\n\n`main.py`\n\n<script>window.__xss=true</script>\n\n"
+        "`__NOVA_ONBOARD_DATA__ __NOVA_ONBOARD_GUIDE__`",
+        encoding="utf-8",
+    )
     graph["project"] = "</script><script>alert('host')</script>"
     html = onboard.dashboard(project, graph, ["new.py"])
     assert graph["project"] not in html
@@ -289,6 +296,12 @@ async def test_dashboard_escapes_untrusted_project_text(project: Path) -> None:
     assert not any(cdn in html for cdn in ("unpkg.com", "jsdelivr.net"))
     payload = html.split("const data = ", 1)[1].split(";\nconst $", 1)[0]
     assert json.loads(payload)["project"] == graph["project"]
+    assert json.loads(payload)["wordmark"] == wordmark()
+    assert "<h1>A guide</h1>" in html
+    assert "<code>main.py</code>" in html
+    assert "<script>window.__xss=true</script>" not in html
+    article = html.split('<article id="guide-text">', 1)[1].split("</article>", 1)[0]
+    assert "__NOVA_ONBOARD_DATA__ __NOVA_ONBOARD_GUIDE__" in article
 
 
 async def test_tui_command_and_home_suggest_onboarding() -> None:
