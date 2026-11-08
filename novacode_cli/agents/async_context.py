@@ -236,7 +236,9 @@ def install_async_model_context() -> None:
 
         def wrapped(*args: Any, _factory: Any = factory, **kwargs: Any) -> Any:
             """Bind the run context onto the client the factory just built."""
-            return _bind_context(_factory(*args, **kwargs))
+            from novacode_cli.agents.async_task_errors import bind_run_errors
+
+            return bind_run_errors(_bind_context(_factory(*args, **kwargs)))
 
         wrapped._nova_context_bound = True  # type: ignore[attr-defined]
         setattr(async_subagents, name, wrapped)

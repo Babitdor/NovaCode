@@ -145,6 +145,7 @@ async def test_real_noisy_shell_batches_writes_and_prompt_remains_usable(tmp_pat
         assert app.query_one("#prompt", PromptInput).value == "ready"
 
 
+@pytest.mark.timeout(30)
 async def test_noisy_interactive_terminal_parses_off_the_ui_loop(tmp_path, monkeypatch):
     import threading
 

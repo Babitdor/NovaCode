@@ -63,6 +63,7 @@ jobs:
           novacode_cli/tui/shell_output.py
           novacode_cli/remote/async_task_clients.py
           novacode_cli/remote/async_task_watcher.py
+          novacode_cli/agents/async_task_errors.py
           novacode_cli/tools/waiter_tools.py
           scripts/benchmark_background_tasks.py
           tests/test_background_responsiveness.py
@@ -166,6 +167,7 @@ jobs:
           tests/test_attribution.py
           tests/test_deepagents_compat.py
           tests/test_async_model_context.py
+          tests/test_async_task_errors.py
           tests/test_async_task_watcher.py
           tests/test_model_retry_progress.py
           tests/test_async_on_demand.py

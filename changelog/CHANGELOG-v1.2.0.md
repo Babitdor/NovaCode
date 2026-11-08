@@ -1,5 +1,11 @@
 # NovaCode 1.2.0
 
+## Async-agent diagnostics
+
+- Report failed background runs' checkpoint errors instead of a generic failure,
+  including provider permission and expired-model errors. Match diagnostics to
+  the exact run, redact credentials, bound output, and keep child transcripts private.
+
 ## Startup fixes
 
 - Remove provider token-count API calls from startup and use local approximations
