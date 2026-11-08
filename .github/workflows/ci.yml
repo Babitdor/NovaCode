@@ -123,6 +123,8 @@ jobs:
           novacode_cli/commands/rootapp_remote.py
           scripts/check_caveman_style.py
           scripts/verify_prime.py
+      - name: Verify project onboarding
+        run: uv run --no-sync pytest -q --tb=short tests/test_project_onboard.py
       - name: Verify Prime evidence boundaries
         run: uv run --no-sync python scripts/verify_prime.py --mutations
       - name: Verify native and MCP Code Mode boundaries
@@ -130,7 +132,6 @@ jobs:
       - name: Run offline regression tests
         run: >-
           uv run --no-sync pytest -v --tb=short --junitxml=test-results/regression.xml
-          tests/test_project_onboard.py
           tests/test_release_version.py
           tests/test_prime.py
           tests/test_prime_records.py
