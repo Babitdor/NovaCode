@@ -156,6 +156,7 @@ jobs:
           tests/test_tui_test_output.py
           tests/test_compaction.py
           tests/test_compaction_tail.py
+          tests/test_tui_app.py::test_tui_compact_card
           tests/test_prime_ui.py
           tests/test_prime_browser.py
           tests/test_tui_notices.py

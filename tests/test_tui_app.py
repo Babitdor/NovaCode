@@ -5082,7 +5082,7 @@ def test_tui_bg_agent_reports_back():
     asyncio.run(_drive_bg_agent_reports_back())
 
 
-async def _drive_compact_card() -> None:
+async def _drive_compact_card(summary_text: str) -> None:
     """A compaction renders as a collapsed one-line card, not an inline dump.
 
     Regression: the result was written straight into the transcript as a
@@ -5091,10 +5091,12 @@ async def _drive_compact_card() -> None:
     collapsed by default, with the stats in the title and the summary in the
     body.
     """
+    from textual.containers import Vertical
     from textual.widgets import Static
 
     from novacode_cli import compaction
     from novacode_cli.tui.app import NovaApp
+    from novacode_cli.tui.widgets import CachedMarkdown
     from novacode_cli.ui.ui_elements import TokenTracker
 
     class _Result:
@@ -5103,7 +5105,7 @@ async def _drive_compact_card() -> None:
         messages_after = 72
         tokens_saved = 79612
         learnings = "a summary"
-        summary = "The user asked for a nicer compaction card."
+        summary = summary_text
         error = ""
 
     async def fake_compact(**_kw: object) -> _Result:
@@ -5118,6 +5120,7 @@ async def _drive_compact_card() -> None:
         image_tracker=None,
         model_name="m",
     )
+    app.session_state._model = object()  # The compaction stub never invokes a model.
     async with app.run_test(size=(100, 40)) as pilot:
         await pilot.pause()
         orig = compaction.compact_conversation
@@ -5139,17 +5142,34 @@ async def _drive_compact_card() -> None:
         assert "79,612" in title, title
 
         # The body holds the detail, and the summary is not truncated away.
-        body = card.query_one(".compact-body", Static)
-        text = str(body.content)
+        body = card.query_one(".compact-body", Vertical)
+        details = list(body.query(Static))
+        text = str(details[0].content)
         assert "tokens saved" in text, text
         assert "summary preserved to memory" in text, text
-        assert "nicer compaction card" in text, text
+        assert len(details) == (2 if summary_text else 1)
+        if summary_text:
+            assert isinstance(details[1].content, CachedMarkdown)
+            assert details[1].content.markup == summary_text
+        card.collapsed = False
+        await pilot.pause()
+        assert details[0].region.height > 0
 
 
-def test_tui_compact_card():
+@pytest.mark.parametrize(
+    "summary_text",
+    [
+        "",
+        "## Summary\n\n- Keep `auth.py` intact.\n\n"
+        + "detail " * 100
+        + "\n\n```python\nprint('done')\n```",
+    ],
+    ids=["empty", "markdown"],
+)
+def test_tui_compact_card(summary_text: str):
     if not _HAS_TEXTUAL:
         return
-    asyncio.run(_drive_compact_card())
+    asyncio.run(_drive_compact_card(summary_text))
 
 
 async def _drive_ralph_screen():

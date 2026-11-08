@@ -15416,7 +15416,7 @@ class NovaApp(App):
                 body.append("◈ summary preserved to memory\n", style="green")
             body_widgets = [Static(body)]
             if summary:
-                body_widgets.append(Markdown(summary))
+                body_widgets.append(Static(Markdown(summary)))
             card = Collapsible(
                 Vertical(*body_widgets, classes="compact-body"),
                 title=(
