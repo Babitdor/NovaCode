@@ -261,3 +261,69 @@ async def test_resume_reconciles_process_started_before_pid_checkpoint(
         if process.returncode is None:
             process.kill()
             await process.wait()
+
+
+def test_start_recovery_does_not_skip_owned_nonce_after_clock_change(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from novacode_cli.prime_factory import recovery
+
+    process = Mock(pid=123, info={"username": "owner", "create_time": 95.0})
+    process.environ.return_value = {"NOVA_TEAM_ATTEMPT": "owned-nonce"}
+    monkeypatch.setattr("psutil.process_iter", lambda *_args, **_kwargs: [process])
+    stop = Mock(return_value=True)
+    monkeypatch.setattr(recovery, "stop_process", stop)
+
+    assert recovery._find_and_stop({"owner": "owner", "since": 100.0, "attempt": "owned-nonce"})
+    stop.assert_called_once_with(
+        {
+            "kind": "process",
+            "pid": 123,
+            "born": 95.0,
+            "attempt": "owned-nonce",
+        }
+    )
+
+
+def test_start_recovery_never_signals_foreign_owner_or_nonce(monkeypatch: pytest.MonkeyPatch):
+    from novacode_cli.prime_factory import recovery
+
+    foreign_owner = Mock(pid=123, info={"username": "other", "create_time": 100.0})
+    foreign_owner.environ.return_value = {"NOVA_TEAM_ATTEMPT": "owned-nonce"}
+    foreign_nonce = Mock(pid=124, info={"username": "owner", "create_time": 95.0})
+    foreign_nonce.environ.return_value = {"NOVA_TEAM_ATTEMPT": "different-nonce"}
+    monkeypatch.setattr(
+        "psutil.process_iter", lambda *_args, **_kwargs: [foreign_owner, foreign_nonce]
+    )
+    stop = Mock(return_value=True)
+    monkeypatch.setattr(recovery, "stop_process", stop)
+
+    assert recovery._find_and_stop({"owner": "owner", "since": 100.0, "attempt": "owned-nonce"})
+    stop.assert_not_called()
+    foreign_owner.environ.assert_not_called()
+
+
+@pytest.mark.parametrize(("born", "expected"), [(95.0, True), (100.0, False)])
+def test_start_recovery_preserves_protected_process_uncertainty(
+    monkeypatch: pytest.MonkeyPatch, born: float, *, expected: bool
+):
+    import psutil
+
+    from novacode_cli.prime_factory import recovery
+
+    process = Mock(pid=123, info={"username": "owner", "create_time": born})
+    process.environ.side_effect = psutil.AccessDenied(123)
+    monkeypatch.setattr("psutil.process_iter", lambda *_args, **_kwargs: [process])
+    stop = Mock(return_value=True)
+    monkeypatch.setattr(recovery, "stop_process", stop)
+    assert (
+        recovery._find_and_stop(
+            {
+                "owner": "owner",
+                "since": 100.0,
+                "attempt": "owned-nonce",
+            }
+        )
+        is expected
+    )
+    stop.assert_not_called()

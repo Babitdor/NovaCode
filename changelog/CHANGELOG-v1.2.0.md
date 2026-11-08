@@ -5,6 +5,8 @@
 - Report failed background runs' checkpoint errors instead of a generic failure,
   including provider permission and expired-model errors. Match diagnostics to
   the exact run, redact credentials, bound output, and keep child transcripts private.
+- Reconcile nonce-owned factory workers even when OS birth timestamps differ
+  from the launch clock, preserving PID birth checks before termination.
 
 ## Startup fixes
 

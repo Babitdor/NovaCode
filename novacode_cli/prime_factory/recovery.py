@@ -9,7 +9,7 @@ from novacode_cli.teams.recovery import stop_process
 
 
 def _find_and_stop(record: dict[str, Any]) -> bool:
-    """Use the persisted owner, birth bound and nonce; never signal a reused identity."""
+    """Find the owner's nonce, then verify the exact PID birth before signaling."""
     import psutil
 
     candidates = []
@@ -21,8 +21,7 @@ def _find_and_stop(record: dict[str, Any]) -> bool:
         if born is None:
             uncertain = True
             continue
-        if born < record["since"] - 1:
-            continue
+        # OS birth timestamps and launch wall time can diverge after clock changes.
         try:
             if process.environ().get("NOVA_TEAM_ATTEMPT") == record["attempt"]:
                 candidates.append(
@@ -36,7 +35,8 @@ def _find_and_stop(record: dict[str, Any]) -> bool:
         except psutil.NoSuchProcess:
             continue
         except psutil.AccessDenied:
-            uncertain = True
+            # Old protected processes were excluded by the original time filter.
+            uncertain |= born >= record["since"] - 1
     results = [stop_process(candidate) for candidate in candidates]
     return not uncertain and all(results)
 
