@@ -11,6 +11,11 @@ Files you created or already edited count as read. On rejection, run
 - `old_string` must be unique: include enough surrounding lines to disambiguate.
 - Match indentation and whitespace exactly; never reflow untouched lines.
 - One logical change per edit.
+- Submit at most one direct file mutation per path in each assistant response;
+  edits to different files may run in parallel. For several edits to one file,
+  wait for each result before submitting the next edit.
+- After a parallel-mutation rejection, inspect the earlier edit's result and
+  re-read the file before retrying only the rejected change; never replay the batch.
 - Prefer editing an existing file over creating one.
 
 **`write_file` vs `edit_file`:** `write_file` CREATES a file and FAILS if the path already exists — even for a full rewrite, `read_file` then `edit_file`. Check with `ls` when unsure. An "already exists" error IS the answer: switch to read + edit, never retry the write.
