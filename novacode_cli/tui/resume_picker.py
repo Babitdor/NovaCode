@@ -103,7 +103,7 @@ class ResumeSessionScreen(PickScreen):
         """Build a compact browser with a separate, scrollable details pane."""
         with Vertical(id="resume-shell"):
             yield Static(self._title, id="modal-title", markup=False)
-            yield Static("Choose a saved conversation to continue.", id="resume-subtitle")
+            yield Static("Choose a saved conversation from any project.", id="resume-subtitle")
             yield Input(
                 placeholder="Search task, project, model or session ID…", id="resume-search"
             )
@@ -342,5 +342,67 @@ class ResumeModeScreen(PickScreen):
         self.set_class(height < _TINY_HEIGHT, "resume-tiny")
 
 
+class ResumeDirectoryScreen(PickScreen):
+    """Choose a workspace independently of the conversation being restored."""
+
+    BINDINGS: ClassVar[list[BindingType]] = [
+        ("escape", "use_session", "Use session directory"),
+        ("ctrl+c", "cancel", "Cancel"),
+    ]
+    DEFAULT_CSS = ResumeModeScreen.DEFAULT_CSS.replace("ResumeModeScreen", "ResumeDirectoryScreen")
+
+    def __init__(self, session: Path, current: Path) -> None:
+        """Keep both paths for literal labels without changing either directory."""
+        super().__init__("Working directory · resume", [])
+        self.add_class("resume-dialog")
+        self._session_directory = session
+        self._current_directory = current
+
+    def compose(self) -> ComposeResult:
+        """Present the directory choices and a separate cancel action."""
+        with Vertical(id="resume-shell"):
+            yield Static(self._title, id="modal-title", markup=False)
+            yield Static(
+                "Session = saved workspace · Current = this workspace", id="resume-subtitle"
+            )
+            yield OptionList(id="pick-list")
+            with Horizontal(id="modal-buttons"):
+                yield Button("Cancel", id="cancel")
+                yield Button("Continue", id="select", variant="primary")
+            yield Static(
+                "↑/↓ choose · Enter continue · Esc session · Ctrl+C cancel", id="pick-hint"
+            )
+
+    def on_mount(self) -> None:
+        """Default to the saved directory and render paths without markup."""
+        listing = self.query_one("#pick-list", OptionList)
+        for label in (
+            f"Use session directory ({self._session_directory})",
+            f"Use current directory ({self._current_directory})",
+            "Always use session directory",
+            "Always use current directory",
+        ):
+            listing.add_option(Option(Text(label)))
+        listing.highlighted = 0
+        listing.focus()
+        self._resize_layout(self.size.height)
+
+    def action_use_session(self) -> None:
+        """Use the screenshot's Escape shortcut without saving a preference."""
+        self.dismiss(0)
+
+    def on_resize(self, event: events.Resize) -> None:
+        """Keep the choices and footer reachable in short terminals."""
+        self._resize_layout(event.size.height)
+
+    def _resize_layout(self, height: int) -> None:
+        self.set_class(height < _SHORT_HEIGHT, "resume-short")
+        self.set_class(height < _TINY_HEIGHT, "resume-tiny")
+
+
 # App-level rules must win over the shared picker and compact-dialog defaults.
-RESUME_CSS = ResumeSessionScreen.DEFAULT_CSS + ResumeModeScreen.DEFAULT_CSS
+RESUME_CSS = (
+    ResumeSessionScreen.DEFAULT_CSS
+    + ResumeModeScreen.DEFAULT_CSS
+    + ResumeDirectoryScreen.DEFAULT_CSS
+)

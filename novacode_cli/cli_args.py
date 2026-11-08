@@ -564,6 +564,7 @@ def parse_args() -> argparse.Namespace:  # noqa: PLR0912, PLR0915 — one existi
         action="store_true",
         help="Interactively select and resume a session",
     )
+    parser.add_argument("--compact-on-resume", action="store_true", help=argparse.SUPPRESS)
     # Headless (non-interactive) mode: run one prompt to completion and exit.
     from novacode_cli.headless.input import positive_int, positive_seconds
 
@@ -668,6 +669,10 @@ def parse_args() -> argparse.Namespace:  # noqa: PLR0912, PLR0915 — one existi
         help="Load a standard directory plugin in this session without installing it",
     )
     args = parser.parse_args()
+    if args.resume and args.continue_session:
+        parser.error("--resume and --continue are mutually exclusive")
+    if args.compact_on_resume and not (args.resume or args.continue_session):
+        parser.error("--compact-on-resume requires --resume or --continue")
     if args.headless:
         args.mode = "pipe"
     if args.mode == "pipe" and (

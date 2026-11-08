@@ -8,7 +8,8 @@ Each app returns its result through ``App.exit(value)``.
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+import sys
+from typing import TYPE_CHECKING, Any
 
 from rich.text import Text
 from textual import work
@@ -18,6 +19,8 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Footer, Input, OptionList, Select, Static
 from textual.widgets.option_list import Option
 
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class SessionPickerApp(App[tuple[str, bool] | None]):
@@ -73,6 +76,32 @@ class SessionPickerApp(App[tuple[str, bool] | None]):
 async def pick_session_tui(sessions: list[Any]) -> tuple[str, bool] | None:
     """Run the --resume picker; ``(session_id, compact)`` or None."""
     return await SessionPickerApp(sessions).run_async()
+
+
+async def pick_resume_directory_tui(session: Path, current: Path) -> int | None:
+    """Ask the shared directory question before the main app is built."""
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return None
+
+    from novacode_cli.config.nova_config import NovaConfig
+    from novacode_cli.tui.app import NovaApp
+    from novacode_cli.tui.home import home_style
+    from novacode_cli.tui.resume_picker import ResumeDirectoryScreen
+
+    class DirectoryPickerApp(App[int | None]):
+        CSS = NovaApp.CSS
+
+        def on_mount(self) -> None:
+            config = NovaConfig()
+            self._home_style = home_style(
+                config.get("home_style"), legacy_dashboard=config.get("home_dashboard_enabled", True)
+            )
+            NovaApp._apply_saved_theme(self)  # type: ignore[arg-type]
+            screen = ResumeDirectoryScreen(session, current)
+            screen.add_class(f"{self._home_style}-ui")
+            self.push_screen(screen, self.exit)
+
+    return await DirectoryPickerApp().run_async()
 
 
 class OnboardingApp(App[bool]):

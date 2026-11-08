@@ -559,7 +559,7 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
         "_run_worktree_command",
         "isolated git worktree + session for feature work (/worktree <name>[: task] · remove)",
     ),
-    "resume": SlashCommand("_run_resume", "resume a saved session for this path (/resume <id>)"),
+    "resume": SlashCommand("_run_resume", "resume a saved session from any project (/resume <id>)"),
     "artifacts": SlashCommand("_run_artifacts", "open the artifacts list", wants_text=False),
     "subagents": SlashCommand(
         "_run_subagents", "create/manage subagents (sync or async background)", wants_text=False
@@ -3692,7 +3692,26 @@ class NovaApp(App):
         name, _, task = rest.partition(":")
         await self.spawn_session(name.strip(), task.strip())
 
-    async def _resume_tab(self, selector: str = "") -> None:
+    def _saved_session_pane(self, session_id: str) -> Any | None:
+        """Find an already-owned saved identity before loading a second copy."""
+        for pane in self._panes:
+            state = (
+                self.session_state if pane is self._active_pane else pane.state.get("session_state")
+            )
+            if getattr(state, "session_id", None) == session_id and pane.status not in (
+                "crashed",
+                "exited",
+            ):
+                return pane
+        return None
+
+    async def _resume_tab(
+        self,
+        selector: str = "",
+        *,
+        compact_on_resume: bool = False,
+        expected_directory: Path | None = None,
+    ) -> None:
         """Reopen a saved conversation in its own approved project tab."""
         from novacode_cli.sessions.resume import resolve_saved_tab
         from novacode_cli.tui.resume_picker import ResumeSessionScreen
@@ -3729,20 +3748,20 @@ class NovaApp(App):
             selector = sessions[selected].session_id
         try:
             meta = await asyncio.to_thread(resolve_saved_tab, manager, selector)
+            if expected_directory is not None and (
+                not meta.project_root
+                or await asyncio.to_thread(Path(meta.project_root).resolve) != expected_directory
+            ):
+                message = "The saved workspace changed; select the session again."
+                raise ValueError(message)
         except (OSError, ValueError) as exc:
             self._log(Text(f"Could not resume tab: {exc}", style="yellow"))
             return
-        for pane in self._panes:
-            state = (
-                self.session_state if pane is self._active_pane else pane.state.get("session_state")
-            )
-            if getattr(state, "session_id", None) == meta.session_id and pane.status not in (
-                "crashed",
-                "exited",
-            ):
-                await self._switch_to(pane)
-                self._log(Text("That session is already open; switched to its tab.", style="dim"))
-                return
+        pane = self._saved_session_pane(meta.session_id)
+        if pane is not None:
+            await self._switch_to(pane)
+            self._log(Text("That session is already open; switched to its tab.", style="dim"))
+            return
         pending = getattr(self, "_resuming_session_ids", None)
         if pending is None:
             pending = self._resuming_session_ids = set()
@@ -3755,6 +3774,7 @@ class NovaApp(App):
                 f"{Path(meta.project_root).name} · {meta.session_id[:8]}",
                 directory=Path(meta.project_root),
                 resume_id=meta.session_id,
+                **({"compact_on_resume": True} if compact_on_resume else {}),
             )
         except (OSError, ValueError) as exc:
             self._log(Text(f"Could not resume tab: {exc}", style="yellow"))
@@ -4175,6 +4195,7 @@ class NovaApp(App):
         directory: Path | None = None,
         auto_approve: bool | None = None,
         resume_id: str | None = None,
+        compact_on_resume: bool = False,
     ) -> Any | None:
         """Create a child session in a worktree or approved folder and show its tab."""
         import uuid
@@ -4296,7 +4317,9 @@ class NovaApp(App):
             return None
 
         try:
-            continuation = {"resume_id": saved.session_id} if saved else {}
+            continuation: dict[str, Any] = {"resume_id": saved.session_id} if saved else {}
+            if saved and compact_on_resume:
+                continuation["compact_on_resume"] = True
             pane.start_task = asyncio.create_task(
                 sup.spawn(
                     session_id=sid,
@@ -13652,14 +13675,14 @@ class NovaApp(App):
         )
 
     async def _run_resume(self, text: str) -> None:
-        """Resume a saved session for the current path.
+        """Resume saved history in the current or original workspace.
 
-        ``/resume``       → pick from sessions saved for THIS workspace.
+        ``/resume``       → pick from sessions saved across all projects.
         ``/resume <id>``  → resume that session id directly (any path).
 
-        The current conversation is auto-saved first, then replaced by the
-        chosen session's history and identity on a clean, fresh thread — the
-        same continuation build the ``nova --continue`` startup path uses.
+        The current conversation is saved after the choices are complete.
+        Current-directory resumes replace it on a fresh thread; another
+        directory opens in an isolated, approved session tab.
         """
         if self.session_manager is None:
             self._log(Text("Session resume is unavailable.", style="yellow"))
@@ -13685,22 +13708,21 @@ class NovaApp(App):
         parts = text.split(maxsplit=1)
         arg = parts[1].strip() if len(parts) > 1 else ""
 
-        # Resolve the target session id: explicit arg, else a cwd-filtered picker.
+        # Resolve the target session id: explicit arg, else a cross-project picker.
         if arg:
-            target_id: str | None = arg
+            target_id = arg
         else:
-            ws = str(workspace_root)
-            current_id = getattr(self.session_state, "session_id", None)
             sessions = [
                 s
                 # Reads every session's metadata file: off the UI loop.
                 for s in await asyncio.to_thread(sm.list_sessions, limit=200)
-                if s.project_root == ws and s.session_id != current_id
-            ][:20]
+                if self._saved_session_pane(s.session_id) is None
+                and not getattr(s, "cleared", False)
+            ]
             if not sessions:
                 self._log(
                     Text(
-                        "No saved sessions for this path yet. "
+                        "No saved sessions available yet. "
                         "(Sessions autosave as you work; use /save to force one.)",
                         style="yellow",
                     )
@@ -13712,6 +13734,12 @@ class NovaApp(App):
             if idx is None or not (0 <= idx < len(sessions)):
                 return
             target_id = sessions[idx].session_id
+
+        open_pane = self._saved_session_pane(target_id)
+        if open_pane is not None:
+            await self._switch_to(open_pane)
+            self._log(Text("That session is already open; switched to its tab.", style="dim"))
+            return
 
         from novacode_cli.tui.resume_picker import ResumeModeScreen
 
@@ -13727,6 +13755,44 @@ class NovaApp(App):
             self._log(Text(f"Session '{target_id[:8]}' not found.", style="yellow"))
             return
         session_data, warnings = result
+
+        from novacode_cli.session.resume_workspace import choose_resume_directory
+        from novacode_cli.tui.resume_picker import ResumeDirectoryScreen
+
+        async def pick_directory(session: Path, current: Path) -> int | None:
+            return await self.push_screen_wait(ResumeDirectoryScreen(session, current))
+
+        try:
+            directory = await choose_resume_directory(
+                session_data.meta, workspace_root, pick_directory
+            )
+        except (OSError, ValueError) as exc:
+            self._log(Text(f"Could not resume session: {exc}", style="yellow"))
+            return
+        if directory is None:
+            return
+        if directory != workspace_root.resolve():
+            from novacode_cli.path_approval import PathApprovalManager
+
+            approval = PathApprovalManager()
+            if not await asyncio.to_thread(approval.is_path_approved, directory):
+                scope = await self.push_screen_wait(
+                    PickScreen(
+                        "Allow Nova to work in the saved workspace?",
+                        ["Allow folder and subfolders", "Allow this folder only"],
+                        hint=f"{directory}\nThis saves workspace trust. Tool approvals still apply.",
+                    )
+                )
+                if scope not in (0, 1):
+                    return
+                await asyncio.to_thread(approval.approve_path, directory, recursive=scope == 0)
+            await self._save_session()
+            await self._resume_tab(
+                session_data.meta.session_id,
+                compact_on_resume=compact,
+                expected_directory=directory,
+            )
+            return
 
         recent_messages, current_workspace, nova_md = await asyncio.gather(
             asyncio.to_thread(sm.load_recent_messages, session_data.meta.session_id),

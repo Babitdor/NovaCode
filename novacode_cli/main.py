@@ -1932,10 +1932,54 @@ def cli_main() -> None:
             sys.exit(run_doctor())
         else:
             # Create session state from args
+            if (
+                headless_prompt is None
+                and not pipe_mode
+                and not getattr(args, "session_worker", False)
+                and (args.resume or isinstance(args.continue_session, str))
+            ):
+                from novacode_cli.session.resume_workspace import (
+                    prepare_cli_resume,
+                    relaunch_resume,
+                    resume_argv,
+                )
+                from novacode_cli.session.session_persistence import SessionManager
+
+                try:
+                    selected = asyncio.run(
+                        prepare_cli_resume(
+                            SessionManager(),
+                            Path.cwd(),
+                            resume=args.resume,
+                            session_id=(
+                                args.continue_session
+                                if isinstance(args.continue_session, str)
+                                else None
+                            ),
+                            compact=getattr(args, "compact_on_resume", False),
+                        )
+                    )
+                    if selected is None:
+                        return
+                    saved_id, compact, directory = selected
+                    if directory != Path.cwd().resolve():
+                        raise SystemExit(
+                            relaunch_resume(
+                                directory, resume_argv(sys.argv[1:], saved_id, compact=compact)
+                            )
+                        )
+                except (OSError, ValueError) as exc:
+                    console.print(f"Could not resume session: {exc}", markup=False)
+                    return
+                args.resume = False
+                args.continue_session = saved_id
+                args.compact_on_resume = compact
+
             session_state = SessionState(
                 auto_approve=args.auto_approve,
                 no_splash=args.no_splash or headless_prompt is not None or pipe_mode,
             )
+            session_state.compact_on_resume = getattr(args, "compact_on_resume", False)
             # The TUI is the only interactive UI; `headless` selects the
             # non-interactive path (see the branch order in main()).
             session_state.headless = headless_prompt is not None or pipe_mode
@@ -2007,14 +2051,6 @@ def cli_main() -> None:
                 sandbox_type, explicit_sandbox = resolve_sandbox_type(args.sandbox, args.no_sandbox)
             except ValueError as e:
                 console.print(f"[red]Error: {e}[/red]")
-                sys.exit(1)
-
-            # --resume and --continue are mutually exclusive
-            if args.resume and args.continue_session:
-                console.print("[red]Error: --resume and --continue are mutually exclusive.[/red]")
-                console.print(
-                    "[dim]Use --resume to pick a session interactively, or --continue <id> to resume a specific session.[/dim]"
-                )
                 sys.exit(1)
 
             # API key validation happens in create_model()

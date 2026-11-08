@@ -166,7 +166,14 @@ class SessionSupervisor:
             "PYTHONPATH": f"{pkg_root}{os.pathsep}{existing}" if existing else str(pkg_root),
         }
 
-    def _argv(self, session_id: str, assistant_id: str, resume_id: str | None = None) -> list[str]:
+    def _argv(
+        self,
+        session_id: str,
+        assistant_id: str,
+        resume_id: str | None = None,
+        *,
+        compact_on_resume: bool = False,
+    ) -> list[str]:
         argv = [
             sys.executable,
             "-m",
@@ -179,6 +186,8 @@ class SessionSupervisor:
         ]
         if resume_id:
             argv.extend(["--continue", resume_id])
+            if compact_on_resume:
+                argv.append("--compact-on-resume")
         return argv
 
     async def spawn(
@@ -191,6 +200,7 @@ class SessionSupervisor:
         assistant_id: str = "nova-agent",
         argv: list[str] | None = None,
         resume_id: str | None = None,
+        compact_on_resume: bool = False,
         env: dict[str, str] | None = None,
     ) -> ChildSession:
         """Launch a child bound to *worktree*.
@@ -214,7 +224,12 @@ class SessionSupervisor:
             if self._process_budget is not None:
                 self._process_budget.reserve(reservation)
             proc = await asyncio.create_subprocess_exec(
-                *(argv or self._argv(session_id, assistant_id, resume_id)),
+                *(
+                    argv
+                    or self._argv(
+                        session_id, assistant_id, resume_id, compact_on_resume=compact_on_resume
+                    )
+                ),
                 cwd=str(worktree),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,

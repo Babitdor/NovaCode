@@ -300,9 +300,7 @@ async def select_session_interactive(
 
     Args:
         session_manager: Optional SessionManager instance. If None, creates one.
-        project_root: Only list this project's sessions, as the in-app /resume
-            does. Another project's session stays reachable by id
-            (``nova --continue <id>``).
+        project_root: Retained for callers; the picker now spans all projects.
 
     Returns:
         ``(session_id, compact)`` -- compact when the user chose to resume from
@@ -320,15 +318,12 @@ async def select_session_interactive(
         s
         for s in session_manager.list_sessions(limit=200)
         if not getattr(s, "cleared", False)
-        and (project_root is None or s.project_root == str(project_root))
-    ][:20]
+    ]
 
     if not sessions:
         console.print()
         console.print(
-            "[yellow]No saved sessions for this project.[/yellow]"
-            if project_root is not None
-            else "[yellow]No saved sessions found.[/yellow]"
+            "[yellow]No saved sessions found.[/yellow]"
         )
         console.print("[dim]Sessions are saved automatically every 5 minutes or 5 messages.[/dim]")
         console.print("[dim]Use /save to manually save a session.[/dim]")

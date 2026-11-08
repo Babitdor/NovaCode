@@ -65,13 +65,18 @@ async def test_resume_picker_excludes_cleared(monkeypatch):
     assert selected == ("keep", False)
 
 
-async def test_resume_picker_lists_only_this_project(monkeypatch):
-    """`nova --resume` lists the sessions of the project it was started in."""
+async def test_resume_picker_lists_all_projects(monkeypatch):
+    """`nova --resume` discovers conversations beyond the launch project."""
     sm = SessionManager(sessions_dir=pathlib.Path(tempfile.mkdtemp()))
     msgs = [HumanMessage(content="hi")]
     here, there = pathlib.Path(tempfile.mkdtemp()), pathlib.Path(tempfile.mkdtemp())
     sm.save_session(session_id="mine", thread_id="t1", messages=msgs, assistant_id="nova", project_root=here)
     sm.save_session(session_id="other", thread_id="t2", messages=msgs, assistant_id="nova", project_root=there)
+    for index in range(25):
+        sm.save_session(
+            session_id=f"older-{index}", thread_id=f"thread-{index}", messages=msgs,
+            assistant_id="nova", project_root=there,
+        )
 
     captured: dict = {}
 
@@ -86,4 +91,4 @@ async def test_resume_picker_lists_only_this_project(monkeypatch):
     monkeypatch.setattr(sys.stdout, "isatty", lambda: True, raising=False)
 
     await select_session_interactive(sm, project_root=here)
-    assert captured["ids"] == ["mine"]
+    assert set(captured["ids"]) == {"mine", "other", *(f"older-{index}" for index in range(25))}

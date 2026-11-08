@@ -10,13 +10,85 @@ from textual.widgets import Button, Input, OptionList, Static
 from novacode_cli.config.nova_config import NovaConfig
 from novacode_cli.session.session_persistence import SessionMeta
 from novacode_cli.tui.pickers import SessionPickerApp
-from novacode_cli.tui.resume_picker import ResumeModeScreen, ResumeSessionScreen
+from novacode_cli.tui.resume_picker import (
+    ResumeDirectoryScreen,
+    ResumeModeScreen,
+    ResumeSessionScreen,
+)
 from novacode_cli.tui.widgets import PromptInput
 from tests.test_tui_app import _disable_live_update_checks  # noqa: F401
 from tests.test_tui_home_preferences import _app, no_system_sampling  # noqa: F401
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+@pytest.mark.parametrize("choice", [0, 1, 2, 3])
+async def test_directory_picker_returns_each_choice_and_literal_paths(
+    choice: int,
+    tmp_path: Path,
+) -> None:
+    session, current = tmp_path / "saved [bold]project", tmp_path / "current project"
+    selected = []
+    app = _app()
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.push_screen(ResumeDirectoryScreen(session, current), selected.append)
+        await pilot.pause()
+        listing = app.screen.query_one(OptionList)
+        assert listing.option_count == 4
+        assert str(session) in listing.get_option_at_index(0).prompt.plain
+        assert str(current) in listing.get_option_at_index(1).prompt.plain
+        await pilot.press(*(["down"] * choice), "enter")
+        await pilot.pause()
+    assert selected == [choice]
+
+
+@pytest.mark.parametrize(("key", "expected"), [("escape", 0), ("ctrl+c", -1)])
+async def test_directory_shortcuts_keep_footer_visible_in_small_terminals(
+    key: str,
+    expected: int,
+    tmp_path: Path,
+) -> None:
+    selected = []
+    app = _app()
+    async with app.run_test(size=(48, 16)) as pilot:
+        screen = ResumeDirectoryScreen(tmp_path / "saved", tmp_path / "current")
+        app.push_screen(screen, selected.append)
+        await pilot.pause()
+        for identity in ("select", "cancel"):
+            assert screen.query_one(f"#{identity}").region.bottom <= 16
+        assert screen.query_one(OptionList).size.height > 0
+        await pilot.press(key)
+        await pilot.pause()
+    assert selected == [expected]
+
+
+async def test_standalone_directory_picker_uses_the_saved_theme(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    from textual.app import App
+
+    from novacode_cli.tui.pickers import pick_resume_directory_tui
+
+    NovaConfig().set("home_style", "classic")
+    NovaConfig().set("theme", "nova-paper")
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True, raising=False)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True, raising=False)
+
+    async def drive(app: App) -> int | None:
+        async with app.run_test(size=(90, 25)) as pilot:
+            await pilot.pause()
+            assert app.theme == "nova-paper"
+            assert isinstance(app.screen, ResumeDirectoryScreen)
+            assert app.screen.has_class("classic-ui")
+            await pilot.press("down", "enter")
+        return app.return_value
+
+    monkeypatch.setattr(App, "run_async", drive)
+    assert await pick_resume_directory_tui(tmp_path / "saved", tmp_path / "current") == 1
 
 
 @pytest.fixture

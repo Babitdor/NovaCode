@@ -62,6 +62,13 @@ def test_worker_argv_separates_transport_id_and_saved_identity():
     assert resumed[resumed.index("--session-id") + 1] == "s-new"
 
 
+def test_worker_resume_retains_the_requested_compaction_mode():
+    supervisor = SessionSupervisor(AsyncMock())
+    argv = supervisor._argv("s-new", "saved-agent", "saved-12345678", compact_on_resume=True)
+    assert "--compact-on-resume" in argv
+    assert argv[argv.index("--continue") + 1] == "saved-12345678"
+
+
 def test_session_without_saved_project_is_rejected(saved_session):
     manager, project = saved_session
     manager.save_session("no-project", "thread", [HumanMessage("Q")], "nova")
@@ -87,8 +94,9 @@ def prepare_app(monkeypatch, manager, *, approved=True):
     return app, supervisor
 
 
+@pytest.mark.parametrize("compact", [False, True])
 async def test_resume_opens_saved_project_history_without_replacing_root(
-    monkeypatch, saved_session
+    monkeypatch, saved_session, compact,
 ):
     from novacode_cli.tui.session_transcript import SessionTranscript
 
@@ -96,7 +104,7 @@ async def test_resume_opens_saved_project_history_without_replacing_root(
     app, supervisor = prepare_app(monkeypatch, manager)
     root_agent, root_state = app.agent, app.session_state
     async with app.run_test() as pilot:
-        await app._run_tabs_command("/tabs resume saved-123")
+        await app._resume_tab("saved-123", compact_on_resume=compact)
         pane = app._active_pane
         assert pane.kind == "child" and pane.worktree == project.resolve()
         assert pane.sid != "saved-12345678"
@@ -110,6 +118,7 @@ async def test_resume_opens_saved_project_history_without_replacing_root(
         ]
         assert supervisor.spawn.call_args.kwargs["resume_id"] == "saved-12345678"
         assert supervisor.spawn.call_args.kwargs["worktree"] == project.resolve()
+        assert supervisor.spawn.call_args.kwargs.get("compact_on_resume", False) is compact
         supervisor.send_prompt.assert_not_called()
         await app._on_child_message(
             pane.sid,
@@ -151,6 +160,15 @@ async def test_invalid_project_does_not_open_or_spawn(monkeypatch, saved_session
     app, supervisor = prepare_app(monkeypatch, manager, approved=failure != "unapproved")
     async with app.run_test():
         await app._run_tabs_command("/tabs resume saved-123")
+        supervisor.spawn.assert_not_called()
+        assert app._active_pane is app._root_pane and len(app._panes) == 1
+
+
+async def test_changed_workspace_after_selection_does_not_launch(monkeypatch, saved_session, tmp_path):
+    manager, project = saved_session
+    app, supervisor = prepare_app(monkeypatch, manager)
+    async with app.run_test():
+        await app._resume_tab("saved-123", expected_directory=tmp_path)
         supervisor.spawn.assert_not_called()
         assert app._active_pane is app._root_pane and len(app._panes) == 1
 

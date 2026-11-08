@@ -647,6 +647,24 @@ async def run_session_worker(
         session_manager=session_manager,
     )
     try:
+        if getattr(session_state, "compact_on_resume", False):
+            from novacode_cli.compaction import compact_conversation
+            from novacode_cli.config.config import settings
+
+            try:
+                result = await compact_conversation(
+                    agent=agent,
+                    model=session_state._model,
+                    thread_id=session_state.thread_id,
+                    context_window=session_state.token_tracker.context_window_size,
+                    agent_dir=await asyncio.to_thread(settings.get_agent_dir, assistant_id),
+                )
+                if not result.success:
+                    logger.warning("Resume compaction was skipped: %s", result.error)
+            except Exception:  # noqa: BLE001 - Continue with the saved context, like the TUI.
+                logger.warning("Resume compaction failed; continuing with saved context")
+            finally:
+                session_state.compact_on_resume = False
         return await worker.run()
     finally:
         worker._emit.close()

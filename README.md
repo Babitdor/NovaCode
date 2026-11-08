@@ -73,6 +73,13 @@ landing-page copy.
 | `/mcp`, `/remote` | External tools and remote chat setup |
 | `/restore` | Recoverable file snapshots |
 
+Source builds on `main` let `/resume` and `nova --resume` browse saved sessions
+across projects. For another project's session, choose its saved workspace or
+your current workspace; either choice can be remembered with “Always use…”.
+Choosing the saved workspace inside Nova opens an isolated session tab, keeping
+the current chat available. Workspace trust and tool approvals still apply.
+Reset the directory preference with `nova config set resume_directory ask`.
+
 Attach files with `@`; use **Shift+Enter** for a new line. For a one-shot task:
 
 ```bash
