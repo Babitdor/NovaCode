@@ -110,6 +110,8 @@ def source_files(root: Path) -> list[Path]:
         result = subprocess.run(  # noqa: S603 - Fixed Git operation; no shell.
             [
                 shutil.which("git") or "git",
+                "-c",
+                "core.fsmonitor=false",
                 "-C",
                 str(root),
                 "ls-files",

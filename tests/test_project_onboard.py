@@ -87,6 +87,7 @@ def test_git_failure_never_falls_back_to_reading_ignored_files(
     monkeypatch.setattr(onboard.subprocess, "run", Mock(side_effect=error))
     with pytest.raises(ValueError, match="safely"):
         onboard.fingerprints(project)
+    assert "core.fsmonitor=false" in onboard.subprocess.run.call_args.args[0]
 
 
 def test_linked_inputs_and_storage_cannot_escape_workspace(project: Path, tmp_path: Path) -> None:
