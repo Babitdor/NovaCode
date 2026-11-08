@@ -6,6 +6,11 @@ MCP schemas stay in the host registry; the model composes operations in JavaScri
 Tool searches, including provider-native search and its fallback, do not restore
 ordinary schemas to the model inventory.
 
+Nova pins `langchain-quickjs` to the tested `0.3.2` release because the guarded
+bridge uses its private interpreter and snapshot APIs. Fresh installations must
+honor the package dependency constraint; upgrading this library requires testing
+and adapting the bridge first.
+
 Interaction, planning, workspace transitions, background-task controls and media
 fallbacks remain directly available. Plan Mode and Browser Mode retain their
 restricted direct-tool paths. Disabling Code Mode restores ordinary tool exposure

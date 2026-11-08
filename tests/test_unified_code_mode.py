@@ -75,6 +75,41 @@ async def test_variables_survive_snippets_turns_and_compatibility_but_not_other_
     assert json.loads((await invoke(graph, "new-chat")).content)["result"] == "undefined"
 
 
+async def test_host_bridge_survives_multiple_snippets_in_one_turn():
+    calls = []
+
+    @tool
+    def echo(value: int) -> int:
+        """Return the current invocation's value."""
+        calls.append(value)
+        return value
+
+    get_policy().tool_tiers["echo"] = "allow"
+    messages = [
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": f"snippet-{value}",
+                    "name": "eval",
+                    "args": {"code": f"await tools.call('echo', {{value:{value}}});"},
+                }
+            ],
+        )
+        for value in (1, 2)
+    ]
+    graph = create_agent(
+        ScriptedModel(messages=iter([*messages, AIMessage(content="done")])),
+        tools=[echo],
+        middleware=[CodeModeMiddleware()],
+    )
+    output = await graph.ainvoke({"messages": [HumanMessage(content="Use two snippets")]})
+    results = [m for m in output["messages"] if isinstance(m, ToolMessage)]
+    assert all(m.status == "success" for m in results), results
+    assert [json.loads(m.content)["result"] for m in results] == ["1", "2"]
+    assert calls == [1, 2]
+
+
 async def test_real_deepagents_task_uses_unified_interpreter():
     from deepagents import create_deep_agent
 

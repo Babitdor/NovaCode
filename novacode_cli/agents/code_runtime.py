@@ -16,7 +16,8 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterator
 
 BOOTSTRAP = """
-globalThis.__nova_mcp = tools.novaDispatch;
+// The library reuses its bridge when the registered tool names haven't changed.
+globalThis.__nova_mcp = tools.novaDispatch ?? globalThis.__nova_mcp;
 globalThis.tools = Object.freeze({
   list: (options = {}) => __nova_mcp({raw:JSON.stringify({
     ...options, namespace:'tools', action:'list'

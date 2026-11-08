@@ -336,6 +336,8 @@ jobs:
           uv tool install --python 3.11 $wheel
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $launcher = Join-Path $env:UV_TOOL_BIN_DIR 'nova.exe'
+          $toolPython = Join-Path $env:UV_TOOL_DIR 'novacode-cli/Scripts/python.exe'
+          $codeModeSmoke = Join-Path $env:GITHUB_WORKSPACE 'scripts/verify_installed_code_mode.py'
           $expected = uv run --no-sync python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           # Run outside the checkout so source files cannot hide packaging errors.
@@ -346,6 +348,8 @@ jobs:
             if (($output -join "`n") -notmatch [regex]::Escape("v$expected")) {
               throw "Installed launcher did not report v$expected"
             }
+            & $toolPython $codeModeSmoke
+            if ($LASTEXITCODE -ne 0) { throw 'Installed Code Mode runtime failed' }
             uv tool install --python 3.11 --force --reinstall $wheel
             if ($LASTEXITCODE -ne 0) { throw 'Wheel reinstall failed' }
             $output = & $launcher --version
@@ -353,6 +357,8 @@ jobs:
             if (($output -join "`n") -notmatch [regex]::Escape("v$expected")) {
               throw "Reinstalled launcher did not report v$expected"
             }
+            & $toolPython $codeModeSmoke
+            if ($LASTEXITCODE -ne 0) { throw 'Reinstalled Code Mode runtime failed' }
           } finally {
             Pop-Location
           }
