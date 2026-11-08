@@ -1,5 +1,14 @@
 # NovaCode 1.2.0
 
+## Startup fixes
+
+- Remove provider token-count API calls from startup and use local approximations
+  for unsupported counters without caching them as native counts.
+- Defer user async-agent validation until the first background delegation,
+  preserving validation before server launch and shutdown/cancellation handling.
+- Skip unrelated external-server probes and bound MCP discovery without waiting
+  for slow worker cleanup.
+
 ## Project onboarding
 
 - Add `/onboard` to build a persistent workspace code graph and onboarding guide

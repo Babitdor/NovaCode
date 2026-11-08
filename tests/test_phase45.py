@@ -279,6 +279,8 @@ def test_baseline_counts_bind_identity_and_never_persist_fallback(monkeypatch, t
             return 50
 
     model = Model()
+    # The production path only invokes counters implemented by the local OpenAI tokenizer.
+    Model.get_num_tokens_from_messages.__module__ = "langchain_openai.chat_models.base"
 
     def count():
         return tokens.calculate_baseline_tokens(model, tmp_path, "prompt", "agent")
@@ -298,6 +300,41 @@ def test_baseline_counts_bind_identity_and_never_persist_fallback(monkeypatch, t
     assert count() == 12
     assert model.calls == 4
     assert (tmp_path / "token_cache.json").read_bytes() == before
+
+
+def test_startup_token_count_never_calls_remote_or_custom_counters(monkeypatch, tmp_path):
+    import anthropic
+    import tiktoken
+
+    from novacode_cli import token_utils as tokens
+
+    calls = []
+
+    class Model:
+        model = "stealth/glyph-cluster:free"
+
+        def get_num_tokens_from_messages(self, messages):
+            calls.append("remote model counter")
+            raise NotImplementedError
+
+    def remote_client(*args, **kwargs):
+        calls.append("Anthropic client")
+        message = "no network in startup"
+        raise RuntimeError(message)
+
+    monkeypatch.setattr(anthropic, "Anthropic", remote_client)
+    monkeypatch.setattr(
+        tiktoken,
+        "get_encoding",
+        lambda name: type("Encoding", (), {"encode": lambda self, text: list(text)})(),
+    )
+    monkeypatch.setattr("novacode_cli.config.config._find_project_root", lambda: None)
+    monkeypatch.setattr(tokens, "get_memory_system_prompt", lambda *args: "memory")
+    for module in ("langchain_anthropic.chat_models", "custom_provider"):
+        Model.get_num_tokens_from_messages.__module__ = module
+        assert tokens.calculate_baseline_tokens(Model(), tmp_path, "prompt", "agent") > 0
+    assert calls == []
+    assert not (tmp_path / "token_cache.json").exists()
 
 
 def test_model_boundary_specs_and_schemas_match_with_cache_disabled(monkeypatch, tmp_path):

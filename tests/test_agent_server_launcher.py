@@ -233,6 +233,95 @@ def test_start_get_a_running_child_and_stop_really_stops_it(stubbed_child):
     assert out["url"] == f"http://127.0.0.1:{out['port']}"
 
 
+def test_user_graphs_are_prepared_once_before_concurrent_first_starts(
+    stubbed_child, monkeypatch, tmp_path
+):
+    prepared = []
+    generated = tmp_path / "generated" / "langgraph.json"
+    generated.parent.mkdir()
+    generated.write_text('{"graphs": {}}', encoding="utf-8")
+
+    def prepare() -> tuple[pathlib.Path, list[str]]:
+        prepared.append(True)
+        return generated, ["valid-user-agent"]
+
+    monkeypatch.setattr(sl, "_user_graph_config", prepare)
+    server = _stub_process(include_user_agents=True)
+    original_spawn = server._spawn
+
+    def spawn() -> subprocess.Popen[bytes]:
+        assert prepared == [True]
+        assert server.config_path == generated
+        assert server.cwd == generated.parent
+        assert server.graph_names == ["valid-user-agent"]
+        return original_spawn()
+
+    monkeypatch.setattr(server, "_spawn", spawn)
+
+    async def drive() -> None:
+        await asyncio.gather(server.start(), server.start())
+        assert server.running
+
+    try:
+        asyncio.run(drive())
+    finally:
+        server.stop()
+    assert prepared == [True]
+
+
+def test_restart_discards_a_removed_user_graph(stubbed_child, monkeypatch, tmp_path):
+    generated = tmp_path / "langgraph.json"
+    generated.write_text('{"graphs": {}}', encoding="utf-8")
+    configs = iter([(generated, ["user-agent"]), None])
+    monkeypatch.setattr(sl, "_user_graph_config", lambda: next(configs))
+    server = _stub_process(include_user_agents=True)
+
+    async def drive() -> None:
+        await server.start()
+        assert server.config_path == generated
+        await server.restart()
+        assert server.config_path == sl._config_path()
+        assert "user-agent" not in server.graph_names
+
+    try:
+        asyncio.run(drive())
+    finally:
+        server.stop()
+
+
+@pytest.mark.parametrize("action", ["cancel", "stop", "shutdown"])
+async def test_interrupted_preflight_never_spawns_a_child(monkeypatch, tmp_path, action):
+    entered, release = threading.Event(), threading.Event()
+
+    def prepare() -> tuple[pathlib.Path, list[str]]:
+        entered.set()
+        assert release.wait(3)
+        return tmp_path / "langgraph.json", ["user-agent"]
+
+    def unexpected_spawn() -> None:
+        pytest.fail("interrupted preparation must not launch a server")
+
+    monkeypatch.setattr(sl, "_user_graph_config", prepare)
+    server = _stub_process(include_user_agents=True)
+    monkeypatch.setattr(server, "_spawn", unexpected_spawn)
+    pending = asyncio.create_task(server.start())
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        if action == "cancel":
+            pending.cancel()
+        elif action == "stop":
+            server.stop()
+        else:
+            monkeypatch.setitem(sl._state, "planned", server)
+            sl.shutdown_agent_server()
+        release.set()
+        with pytest.raises(asyncio.CancelledError if action == "cancel" else RuntimeError):
+            await pending
+        assert not server.running
+    finally:
+        release.set()
+
+
 def test_a_failed_start_leaves_nothing_running(stubbed_child, monkeypatch):
     server = _stub_process()
 
@@ -272,7 +361,7 @@ def test_find_free_port_hands_back_something_bindable():
 
 
 def test_ensure_does_nothing_when_a_server_already_answers(monkeypatch):
-    async def reachable(*, refresh: bool = False) -> bool:
+    def reachable(*, refresh: bool = False) -> bool:
         return True
 
     monkeypatch.setattr(
@@ -290,7 +379,7 @@ def test_ensure_does_nothing_when_a_server_already_answers(monkeypatch):
 
 
 def test_ensure_does_nothing_without_the_extra(monkeypatch):
-    async def unreachable(*, refresh: bool = False) -> bool:
+    def unreachable(*, refresh: bool = False) -> bool:
         return False
 
     monkeypatch.setattr(

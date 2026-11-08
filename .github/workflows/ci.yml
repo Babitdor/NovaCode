@@ -169,6 +169,10 @@ jobs:
           tests/test_async_task_watcher.py
           tests/test_model_retry_progress.py
           tests/test_async_on_demand.py
+          tests/test_agent_server_launcher.py
+          tests/test_user_async_agents.py
+          tests/test_async_mcp_tools.py
+          tests/test_mcp_sessions.py
           tests/test_async_subagent_gating.py
           tests/test_subagent_hitl.py
           tests/test_subagent_resilience.py

@@ -15,11 +15,14 @@ manual server run.
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from novacode_cli.agents.async_agents import _mcp_tools
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class _FakeTool:
@@ -360,19 +363,13 @@ def test_build_specialist_graph_survives_a_broken_mcp_server(monkeypatch):
 # ── the user's own agents ───────────────────────────────────────────────────
 
 
-def test_every_user_agent_marked_async_is_collected():
-    """The four agents this change flagged, plus Serena, are all served.
-
-    Skipped when the user's agent directory is absent, so the suite stays
-    hermetic on a machine that has never created an agent.
-    """
+def test_every_user_agent_marked_async_is_collected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every async definition is served without depending on the user's files."""
     from novacode_cli.agents.user_async_agents import collect_user_async_agents
+    from novacode_cli.config.config import settings
 
-    agents_root = Path.home() / ".nova" / "agents"
-    if not agents_root.is_dir():
-        pytest.skip("no user agent directory on this machine")
-
-    collected = {graph_id for graph_id, _md in collect_user_async_agents()}
     expected = {
         "code-explorer",
         "code-reviewer",
@@ -380,5 +377,15 @@ def test_every_user_agent_marked_async_is_collected():
         "serena",
         "ultra-mode-agent",
     }
+    definitions = []
+    for name in expected:
+        agent_dir = tmp_path / name
+        agent_dir.mkdir()
+        (agent_dir / "agent.md").write_text(
+            "---\nasync: true\n---\nReview the project.\n", encoding="utf-8"
+        )
+        definitions.append((name, agent_dir, "global"))
+    monkeypatch.setattr(settings, "get_all_agents", lambda: definitions)
+    collected = {graph_id for graph_id, _md in collect_user_async_agents()}
     missing = expected - collected
     assert not missing, f"not collected as async: {sorted(missing)}"

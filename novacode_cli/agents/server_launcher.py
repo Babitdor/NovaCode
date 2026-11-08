@@ -411,6 +411,7 @@ class AgentServerProcess:
         port: int = EPHEMERAL_PORT,
         timeout: float = HEALTH_TIMEOUT,
         workspace: Path | None = None,
+        include_user_agents: bool = False,
     ) -> None:
         """Remember what to launch; nothing is started until :meth:`start`."""
         #: The project the graphs work in (see ``agents/async_workspace.py``).
@@ -422,6 +423,7 @@ class AgentServerProcess:
         self.cwd = Path(cwd)
         self.graph_names = list(graph_names)
         self.timeout = timeout
+        self._include_user_agents = include_user_agents
         self._process: subprocess.Popen[bytes] | None = None
         self._log_file: IO[str] | None = None
         self._log_path: Path | None = None
@@ -470,6 +472,18 @@ class AgentServerProcess:
             if self.running:
                 return
             self._stopped = False
+            if self._include_user_agents:
+                # Validate before spawning; boot only reserves this server's URL.
+                generated = await asyncio.to_thread(_user_graph_config)
+                self.config_path, self.graph_names = generated or (
+                    _config_path(),
+                    _graph_names(_config_path()),
+                )
+                self.cwd = self.config_path.parent
+                with self._state_lock:
+                    if self._stopped:
+                        message = "Agent server stopped during preparation."
+                        raise RuntimeError(message)
             process = self._spawn()
             try:
                 await wait_healthy(
@@ -661,7 +675,7 @@ def notify_user_async_agents_changed() -> None:
     global _user_config_dir  # noqa: PLW0603 — one dir per process, by design
 
     with _server_lock:
-        process = _state["process"]
+        process = _state["process"] or _state["planned"]
         _state["process"] = None
         _state["planned"] = None
     if process is not None:
@@ -735,7 +749,7 @@ def _plan(*, port: int | None = None, timeout: float = HEALTH_TIMEOUT) -> AgentS
     with _server_lock:
         if _state["process"] is not None or _state["planned"] is not None:
             return _state["process"] or _state["planned"]
-    if async_agents_available(refresh=True) and async_agents_see_workspace():
+    if async_agents_see_workspace() and async_agents_available(refresh=True):
         logger.debug("an agent server for this workspace is already reachable")
         return None
 
@@ -748,12 +762,6 @@ def _plan(*, port: int | None = None, timeout: float = HEALTH_TIMEOUT) -> AgentS
 
     config_path = _config_path()
     graphs = _graph_names(config_path)
-    # A user's async agents cannot be registered in the package's own config, so
-    # when there are any the launcher serves a generated one instead — same
-    # graphs plus theirs.
-    generated = _user_graph_config()
-    if generated is not None:
-        config_path, graphs = generated
     if not config_path.is_file() or not graphs:
         logger.warning("cannot launch an agent server: %s has no graphs", config_path)
         return None
@@ -767,6 +775,7 @@ def _plan(*, port: int | None = None, timeout: float = HEALTH_TIMEOUT) -> AgentS
         port=find_free_port(DEFAULT_HOST) if port is None else port,
         timeout=timeout,
         workspace=_session_workspace(),
+        include_user_agents=True,
     )
 
 
@@ -826,9 +835,14 @@ async def ensure_started(*, announce: bool = False) -> bool:
         # The reserved port was taken in the meantime. Specs built earlier still
         # name the old one; new ones pick this up.
         logger.warning("agent server moved from %s to %s", planned_url, process.url)
-    os.environ["ASYNC_AGENT_BASE_URL"] = process.url
     with _server_lock:
-        _state["process"], _state["planned"] = process, None
+        stale = _state["planned"] is not process and _state["process"] is not process
+        if not stale:
+            os.environ["ASYNC_AGENT_BASE_URL"] = process.url
+            _state["process"], _state["planned"] = process, None
+    if stale:
+        await asyncio.to_thread(process.stop)
+        return False
     logger.info(
         "agent server ready at %s after %.1fs (log: %s)",
         process.url,
@@ -855,7 +869,8 @@ def agent_server_status() -> dict[str, object]:
 def shutdown_agent_server() -> Path | None:
     """Stop any server this session launched; returns its log path if kept."""
     with _server_lock:
-        process, _state["process"] = _state["process"], None
+        process = _state["process"] or _state["planned"]
+        _state["process"] = None
         _state["planned"] = None
     if process is None:
         return None

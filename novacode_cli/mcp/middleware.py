@@ -18,8 +18,6 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, NotRequired, TypedDict
 
-from mcp.types import Tool as MCPTool
-
 from langchain.agents.middleware.types import (
     AgentMiddleware,
     AgentState,
@@ -29,6 +27,7 @@ from langchain.agents.middleware.types import (
 from langchain_core.tools import BaseTool
 from langgraph.runtime import Runtime
 from mcp.client.session import ClientSession
+from mcp.types import Tool as MCPTool
 
 from novacode_cli.config.config import console
 from novacode_cli.mcp.client import MultiServerMCPClient
@@ -36,6 +35,7 @@ from novacode_cli.mcp.config import MCPConfig
 from novacode_cli.prompts import render_template
 
 logger = logging.getLogger(__name__)
+_DISCOVERY_TIMEOUT = 90.0
 
 
 class _PersistentSessionPool:
@@ -528,14 +528,17 @@ class MCPMiddleware(AgentMiddleware):
 
         import concurrent.futures
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(asyncio.run, self._discover_tools_async())
-            # 90-second blanket timeout — discovery involves network I/O and
-            # cold process starts for stdio servers (e.g. ``npx``/``uvx`` may
-            # download packages on first run). A short timeout abandons the
-            # result while the worker is still spawning servers, leaving
-            # ``self.tools`` empty so MCP tools never register.
-            future.result(timeout=90)
+        async def discover() -> None:
+            async with asyncio.timeout(_DISCOVERY_TIMEOUT):
+                await self._discover_tools_async()
+
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
+            future = pool.submit(asyncio.run, discover())
+            future.result(timeout=_DISCOVERY_TIMEOUT)
+        finally:
+            # The async deadline cancels discovery; never wait here for slow cleanup.
+            pool.shutdown(wait=False, cancel_futures=True)
 
     def _convert_raw_tools(
         self,

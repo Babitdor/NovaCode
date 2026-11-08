@@ -116,10 +116,10 @@ def _save_token_cache(agent_dir: Path, prompt_hash: str, tokens: int) -> None:
 def calculate_baseline_tokens(
     model: BaseChatModel, agent_dir: Path, system_prompt: str, assistant_id: str
 ) -> int:
-    """Calculate baseline context tokens using the model's official tokenizer.
+    """Count startup context without making a provider token-count request.
 
-    This uses the model's get_num_tokens_from_messages() method to get
-    accurate token counts for the initial context (system prompt + agent.md).
+    Known local OpenAI counters retain native counts. Remote and custom counters
+    use a local approximation until provider usage arrives with the first response.
 
     Supported native counters use a versioned digest of the complete prompt,
     model configuration, tokenizer and installed SDK versions. Ambiguous
@@ -180,6 +180,13 @@ def calculate_baseline_tokens(
     if cached is not None:
         return cached
 
+    counter = model.get_num_tokens_from_messages
+    if (
+        not getattr(counter, "__module__", "").startswith("langchain_openai.")
+        or getattr(model, "custom_get_token_ids", None) is not None
+    ):
+        return _count_fallback_tokens(model, full_system_prompt)
+
     # --- Compute ---
     # A fallback must never be recorded under the native counter's identity.
     try:
@@ -188,7 +195,7 @@ def calculate_baseline_tokens(
                 "ignore", message="Token indices sequence length is longer than"
             )
             warnings.filterwarnings("ignore", message=".*transformers.*")
-            tokens = model.get_num_tokens_from_messages([SystemMessage(content=full_system_prompt)])
+            tokens = counter([SystemMessage(content=full_system_prompt)])
         if type(tokens) is not int or tokens < 0:
             message = "Invalid native token count"
             raise ValueError(message)  # noqa: TRY301 - discard invalid counters
@@ -199,48 +206,8 @@ def calculate_baseline_tokens(
     return tokens
 
 
-def _count_tokens_for_prompt(model: BaseChatModel, full_system_prompt: str) -> int:
-    """Run the actual (potentially slow) token counting, with fallbacks."""
-    messages = [SystemMessage(content=full_system_prompt)]
-
-    try:
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore",
-                message="Token indices sequence length is longer than",
-            )
-            warnings.filterwarnings(
-                "ignore",
-                message=".*transformers.*",
-            )
-            return model.get_num_tokens_from_messages(messages)
-    except Exception:
-        pass
-
-    return _count_fallback_tokens(model, full_system_prompt)
-
-
-def _count_fallback_tokens(model: BaseChatModel, full_system_prompt: str) -> int:
-    """Fallback counts are never stored as a successful native count."""
-    # Fallback 1: Anthropic SDK native token counter
-    try:
-        import anthropic
-
-        client = anthropic.Anthropic()
-        response = client.messages.count_tokens(  # type: ignore
-            model=getattr(
-                model,
-                "model_name",
-                getattr(model, "model", "claude-3-5-sonnet-20241022"),
-            ),
-            system=full_system_prompt,
-            messages=[],
-        )
-        return response.input_tokens
-    except Exception:
-        pass
-
-    # Fallback 2: tiktoken cl100k_base
+def _count_fallback_tokens(_model: BaseChatModel, full_system_prompt: str) -> int:
+    """Estimate locally; never persist an approximation as a native model count."""
     try:
         import tiktoken
 
@@ -249,7 +216,6 @@ def _count_fallback_tokens(model: BaseChatModel, full_system_prompt: str) -> int
     except Exception:
         pass
 
-    # Fallback 3: character estimate
     return len(full_system_prompt) // 4
 
 

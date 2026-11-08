@@ -1,5 +1,33 @@
 # Background task responsiveness — 2026-11-03
 
+## Startup follow-up — 2026-11-08
+
+Nova now reserves the async server URL at boot and validates user graphs when
+background delegation is first requested. Validation still excludes broken graphs
+before the server starts. Concurrent starts share one validation; cancellation,
+shutdown and replaced plans cannot publish a stale server. Restarting after all
+user graphs are removed restores the packaged configuration. External servers
+are probed only when their declared workspace matches this session.
+
+Startup token counting uses known local OpenAI counters or a local approximation;
+it does not call Anthropic's token-count API or invoke remote/custom counters.
+Approximate counts are not stored as native counts. Existing native cache entries
+remain usable. MCP discovery has an async cancellation deadline and releases the
+caller without waiting for slow worker cleanup.
+
+Two alternating baseline/candidate pairs on Windows, using the installed Python
+environment and warm filesystem caches, measured preparation medians of **7.90 s
+and 5.83 s** (26% lower). Async planning fell from **3.24 s to 0.0014 s**. Some
+necessary SDK imports move from planning into the main build, so the planning
+reduction is larger than the total improvement. Baseline token-count requests
+were intercepted; the candidate attempted none. These measurements exclude actual
+remote latency, session restore and first-frame rendering.
+
+No dependencies, model selection or execution permissions changed. The first
+background delegation now pays the deferred graph-validation cost.
+
+## Earlier background-task measurements
+
 Baseline: main commit 994d5a6. Candidate: the accompanying performance changes.
 Measurements: Windows, CPython 3.11.13, the locked development environment.
 

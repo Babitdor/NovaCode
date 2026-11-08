@@ -15,10 +15,40 @@ sessions get created", which needs no browser to observe.
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
+from unittest.mock import Mock
 
 import pytest
 
 from novacode_cli.mcp import middleware as mw
+
+
+def test_sync_discovery_deadline_cancels_worker_without_waiting_for_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cancelled, release_cleanup = threading.Event(), threading.Event()
+    middleware = mw.MCPMiddleware()
+    middleware.mcp_config = Mock()
+    middleware.mcp_config.list_servers.return_value = ["slow-server"]
+
+    async def slow_discovery() -> None:
+        try:
+            await asyncio.sleep(10)
+        finally:
+            cancelled.set()
+            release_cleanup.wait(2)
+
+    monkeypatch.setattr(mw, "_DISCOVERY_TIMEOUT", 0.05)
+    monkeypatch.setattr(middleware, "_discover_tools_async", slow_discovery)
+    started = time.monotonic()
+    try:
+        with pytest.raises(TimeoutError):
+            middleware._discover_tools_sync()
+        assert time.monotonic() - started < 1
+        assert cancelled.wait(1), "the timed-out discovery was left running"
+    finally:
+        release_cleanup.set()
 
 
 class _FakeSession:
@@ -218,7 +248,8 @@ def test_only_stdio_tools_are_bound_to_a_persistent_session(monkeypatch):
         from langchain_core.tools import StructuredTool
 
         return StructuredTool.from_function(
-            func=lambda: "x", name=f"{kwargs.get('server_name')}_{raw.name}",
+            func=lambda: "x",
+            name=f"{kwargs.get('server_name')}_{raw.name}",
             description="d",
         )
 

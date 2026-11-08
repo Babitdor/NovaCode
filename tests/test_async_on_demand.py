@@ -7,6 +7,11 @@ import asyncio
 import subprocess
 import sys
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
+from unittest.mock import Mock
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def test_only_a_dispatch_starts_the_server(monkeypatch):
@@ -51,6 +56,44 @@ def test_a_failed_launch_tells_the_agent_to_delegate_in_process(monkeypatch):
     assert "`task` tool" in out.content
 
 
+async def test_a_replaced_plan_cannot_publish_its_old_server_or_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from novacode_cli.agents import server_launcher as sl
+
+    replacement = SimpleNamespace(url="http://localhost:2222")
+
+    async def start() -> None:
+        sl._state["planned"] = replacement
+        monkeypatch.setenv("ASYNC_AGENT_BASE_URL", replacement.url)
+
+    old = SimpleNamespace(url="http://localhost:1111", running=False, start=start, stop=Mock())
+    monkeypatch.setitem(sl._state, "planned", old)
+    monkeypatch.setitem(sl._state, "process", None)
+    monkeypatch.setenv("ASYNC_AGENT_BASE_URL", old.url)
+    assert not await sl.ensure_started()
+    old.stop.assert_called_once()
+    assert sl._state["planned"] is replacement
+    assert sl._state["process"] is None
+    assert __import__("os").environ["ASYNC_AGENT_BASE_URL"] == replacement.url
+
+
+def test_planning_skips_external_probe_without_a_matching_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from novacode_cli.agents import server_launcher as sl
+    from novacode_cli.agents.default_subagents import async_subagents as agents
+
+    probe = Mock(side_effect=AssertionError("an unrelated server must not delay startup"))
+    monkeypatch.setitem(sl._state, "planned", None)
+    monkeypatch.setitem(sl._state, "process", None)
+    monkeypatch.setattr(agents, "async_agents_see_workspace", lambda: False)
+    monkeypatch.setattr(agents, "async_agents_available", probe)
+    monkeypatch.setattr(sl, "server_extra_available", lambda: False)
+    assert not sl.plan_agent_server()
+    probe.assert_not_called()
+
+
 def test_a_planned_server_offers_the_tools_without_running(monkeypatch, tmp_path):
     """Boot must not start a process, yet the async tools have to be offered."""
     from novacode_cli.agents import server_launcher as sl
@@ -65,14 +108,19 @@ def test_a_planned_server_offers_the_tools_without_running(monkeypatch, tmp_path
     monkeypatch.setitem(sl._state, "process", None)
     monkeypatch.setitem(sl._state, "planned", None)
     monkeypatch.delenv("ASYNC_AGENT_BASE_URL", raising=False)
-    monkeypatch.setattr(a, "async_agents_available", a.async_agents_available)  # restore on teardown
+    monkeypatch.setattr(
+        a, "async_agents_available", a.async_agents_available
+    )  # restore on teardown
 
     spawned: list = []
     monkeypatch.setattr(sl.AgentServerProcess, "_spawn", lambda self: spawned.append(self))
+    preflights = []
+    monkeypatch.setattr(sl, "_user_graph_config", lambda: preflights.append(True))
 
     try:
         assert sl.plan_agent_server() is True
         assert spawned == [], "planning must not start anything"
+        assert preflights == [], "planning must not compile user graphs or discover their MCP tools"
         plan = sl._state["planned"]
         assert plan is not None and plan.workspace == project.resolve()
         specs = a.retrieve_async_subagents()
