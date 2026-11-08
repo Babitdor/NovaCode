@@ -32,6 +32,9 @@
   }
 </script>
 <script src="assets/theme.js"></script>
+<script src="assets/view.js"></script>
+<link rel="help" href="llms.txt" type="text/plain" title="LLM/agent entry point">
+<meta name="nova-view" content="human">
 <style>
 /* ---------------------------------------------- tokens */
 @font-face{
@@ -183,7 +186,8 @@ html.js #boot{display:flex}
 .bar-mini{display:flex;align-items:center;gap:6px}
 .bar-mini .icon-btn{width:44px;height:44px;border:0;background:none}
 /* Theme switch: the knob's position is the state, so no icon is needed. */
-.bar-mini .theme-switch{
+.bar-mini .view-toggle{min-height:36px;padding:0 8px;font-size:10px}
+  .bar-mini .theme-switch{
   position:relative;
 }
 .bar-mini .theme-switch::after{
@@ -737,6 +741,78 @@ html.lenis{scroll-behavior:auto}
   [data-fade],[data-draw]{opacity:1;transform:none}
 }
 
+/* ---------------------------------------------- human/agent view toggle */
+.view-toggle{display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:0 10px;border:1px solid var(--line);border-radius:2px;background:transparent;color:var(--muted);font:500 11px/1 var(--f-mono);letter-spacing:.06em;text-transform:uppercase;transition:color .2s var(--ease-state),border-color .2s var(--ease-state)}
+.view-toggle:hover,.view-toggle:focus-visible{color:var(--ink);border-color:var(--ink)}
+.view-toggle[aria-pressed="true"]{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,var(--line));background:color-mix(in srgb,var(--accent) 8%,transparent)}
+.view-toggle .dot{width:6px;height:6px;background:currentColor;opacity:.8}
+html[data-view="agent"] #page-stars,
+html[data-view="agent"] .sheet-frame,
+html[data-view="agent"] #boot,
+html[data-view="agent"] .scene,
+html[data-view="agent"] .scene-layers,
+html[data-view="agent"] .nova-companion,
+html[data-view="agent"] .plate,
+html[data-view="agent"] .coin-band,
+html[data-view="agent"] .index .index-cols,
+html[data-view="agent"] .divider .num,
+html[data-view="agent"] .zones,
+html[data-view="agent"] [data-par]{display:none !important}
+html[data-view="agent"] .hero{min-height:0;display:block;padding-top:18px}
+html[data-view="agent"] .hero-grid{display:block}
+html[data-view="agent"] .hero .measure,
+html[data-view="agent"] .hero .lead,
+html[data-view="agent"] .hero-actions,
+html[data-view="agent"] .hero .meta-line,
+html[data-view="agent"] .hero .tb{display:none !important}
+html[data-view="agent"] [data-fade],html[data-view="agent"] [data-draw]{opacity:1 !important;transform:none !important;transition:none !important;animation:none !important}
+html[data-view="agent"] .measure-rule .measure-num,
+html[data-view="agent"] .measure-rule .measure-line{display:none}
+html[data-view="agent"] .feature-art picture,html[data-view="agent"] .feature-art img,html[data-view="agent"] .product-shot img{display:none !important}
+html[data-view="agent"] .feature-art{display:block;aspect-ratio:auto;border:1px solid var(--line);padding:12px 14px;background:var(--panel)}
+html[data-view="agent"] .feature-art figcaption{position:static;inset:auto;color:var(--muted);background:transparent;padding:0}
+html[data-view="agent"] .split,html[data-view="agent"] .workflow,html[data-view="agent"] .foot-grid,html[data-view="agent"] .title-block{display:block !important}
+html[data-view="agent"] .workflow article,html[data-view="agent"] .workflow article+article{border:0;padding:0 0 14px;margin:0 0 14px;border-bottom:1px solid var(--line)}
+html[data-view="agent"] .workflow article:last-child{border-bottom:0;margin-bottom:0;padding-bottom:0}
+html[data-view="agent"] .divider{background:transparent;color:var(--ink);border-top:1px solid var(--line);padding-block:20px}
+html[data-view="agent"] .divider .wrap{display:block}
+html[data-view="agent"] .divider .sub{color:var(--muted)}
+html[data-view="agent"] .closer{background:transparent;color:var(--ink);border-top:1px solid var(--line);padding-block:24px}
+html[data-view="agent"] .closer .lead{color:var(--muted) !important}
+html[data-view="agent"] .closer-links a{color:var(--accent);border-bottom-color:color-mix(in srgb,var(--accent) 35%,transparent)}
+html[data-view="agent"] details summary .plus{display:none}
+html[data-view="agent"] details[data-agent-expand],
+html[data-view="agent"] details.changelog-entry{border:1px solid var(--line);background:var(--panel);margin:0 0 10px}
+html[data-view="agent"] details[data-agent-expand] summary,
+html[data-view="agent"] details.changelog-entry summary{padding:10px 12px}
+html[data-view="agent"] details[data-agent-expand] p{padding:0 12px 12px}
+html[data-view="agent"] .agent-only{display:block !important}
+.agent-only{display:none}
+.agent-block,.agent-doc{border:1px solid var(--line);background:var(--panel);padding:16px 18px;margin:0 0 18px;max-width:none}
+.agent-block h2,.agent-doc h2{font:600 13px/1.3 var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin:0 0 10px}
+.agent-doc h3{font:600 1rem/1.35 var(--f-display);margin:18px 0 8px;color:var(--ink)}
+.agent-doc p,.agent-doc li,.agent-doc dd{color:var(--muted);font-size:.98rem;line-height:1.6}
+.agent-doc ul,.agent-doc ol{margin:8px 0 0;padding-left:20px;display:grid;gap:6px}
+.agent-doc dl{display:grid;gap:8px;margin:8px 0 0}
+.agent-doc dt{font:600 .9rem/1.4 var(--f-mono);color:var(--ink)}
+.agent-doc a{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
+.agent-doc code{font-size:.92em}
+.agent-doc .agent-note{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);font-size:.92rem}
+html[data-view="agent"] .hero .agent-doc{margin:0 0 6px}
+html[data-view="agent"] .index{padding:14px 0;border-top:1px solid var(--line)}
+html[data-view="agent"] .index-head{display:block;margin:0 0 10px}
+html[data-view="agent"] .index-col{border:0;padding:0;margin:0 0 10px}
+html[data-view="agent"] .index-col a{display:block;padding:4px 0}
+html[data-view="agent"] .spec,html[data-view="agent"] .spec tbody,html[data-view="agent"] .spec tr,html[data-view="agent"] .spec th,html[data-view="agent"] .spec td{display:block;width:auto;white-space:normal}
+html[data-view="agent"] .spec thead{display:none}
+html[data-view="agent"] .spec tr{padding:10px 0;border-top:1px solid var(--line)}
+html[data-view="agent"] .spec th{padding:0 0 4px}
+html[data-view="agent"] .spec td{padding:0}
+html[data-view="agent"] .cmd{border:1px solid var(--line);background:var(--panel);padding:10px 12px}
+html[data-view="agent"] .btn::before,html[data-view="agent"] .hero-actions .btn{transform:none}
+html[data-view="agent"] .mobile-menu{display:none !important}
+html[data-view="agent"] .page-progress{display:none !important}
+
 /* ---------------------------------------------- phones: wrap, never clip
    Long cells, commands and code would otherwise sit behind a scroll region a
    thumb cannot discover. Wrapping keeps every character on screen. */
@@ -802,6 +878,7 @@ html.lenis{scroll-behavior:auto}
         <a class="bar-cta" href="#install">Install</a>
       </nav>
       <div class="bar-mini">
+        <button class="view-toggle" data-view-toggle hidden aria-pressed="false" aria-label="Switch to agent view" title="Human view (click for agent)"><span class="dot" aria-hidden="true"></span><span data-view-label>Human</span></button>
         <button class="icon-btn theme-switch" data-theme-toggle hidden aria-pressed="false" aria-label="Dark theme"></button>
         <a class="icon-btn" href="https://github.com/Babitdor/NovaCode" aria-label="GitHub">
           <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38v-1.34c-2.23.48-2.7-1.07-2.7-1.07-.36-.93-.89-1.18-.89-1.18-.73-.5.06-.49.06-.49.81.06 1.23.83 1.23.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.65-.89-3.65-3.96 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.08-1.87 3.75-3.66 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
@@ -826,6 +903,8 @@ html.lenis{scroll-behavior:auto}
     </div>
   </div>
   <div class="scroll">
+    <h2>View</h2>
+    <button class="view-toggle" data-view-toggle hidden aria-pressed="false" aria-label="Switch to agent view" type="button" style="width:100%;justify-content:flex-start;margin:4px 0 10px"><span class="dot" aria-hidden="true"></span><span data-view-label>Human</span> view</button>
     <h2>Sheet 00 &middot; cover</h2>
     <a href="#what">Start here</a>
     <a href="#install">Install</a>
@@ -849,6 +928,56 @@ html.lenis{scroll-behavior:auto}
     <div class="zones" aria-hidden="true" data-par="zones"><span>cover sheet</span><span>novacode &middot; rev 1.1.6</span><span>scale 1:1</span></div>
     <div class="hero-grid">
       <div>
+        <section class="agent-only agent-doc" aria-label="Agent-readable hero and page summary">
+          <h2>Agent view — NovaCode landing (linear)</h2>
+          <p>This is the full landing page transformed for AI agent readability. Toggle to Human for the visual presentation. Verify current behavior, versions, and limits against the docs, changelog, and source repository.</p>
+          <h3>Product</h3>
+          <ul>
+            <li><strong>Name:</strong> NovaCode / Nova — open-source terminal coding assistant/agent (MIT). <a href="https://github.com/Babitdor/NovaCode">Source</a>.</li>
+            <li><strong>Headline:</strong> A coding agent with readable memory. Open source. Runs in your repository.</li>
+            <li><strong>What it does:</strong> Give Nova a task in your repository. It explores code, edits files, and runs commands in your terminal. You can review plans before implementation and configure which tool actions need approval.</li>
+            <li><strong>Requirements (as stated):</strong> Python 3.11+, MIT licensed, hosted or local models (macOS/Linux/Windows; some providers require credentials).</li>
+            <li><strong>Canonical pages:</strong> <a href="./">Home</a> · <a href="docs/">Documentation</a> · <a href="docs/#page-features">Feature guide</a> · <a href="changelog/">Changelog</a> · <a href="llms.txt">llms.txt</a> · <a href="sitemap.xml">sitemap.xml</a></li>
+          </ul>
+          <h3>Install</h3>
+          <ul>
+            <li><strong>macOS/Linux (installed copy):</strong> <code>uv tool install "novacode-cli @ git+https://github.com/Babitdor/NovaCode.git"</code></li>
+            <li><strong>Windows / from source:</strong> <code>git clone https://github.com/Babitdor/NovaCode.git; cd NovaCode; uv sync</code></li>
+            <li><strong>Run:</strong> <code>nova</code>. Note: an installed copy is not a development checkout; to work on Nova itself use the source checkout (<code>uv run nova</code> as documented).</li>
+          </ul>
+          <h3>Workflow</h3>
+          <ol>
+            <li><strong>Describe the change:</strong> point Nova at a repository and explain the bug, feature, or question.</li>
+            <li><strong>Work with the code:</strong> Nova explores relevant files, proposes plans when useful, and makes changes using its coding tools.</li>
+            <li><strong>Inspect the result:</strong> review conversation/file changes; ask Nova to run the checks your project needs.</li>
+          </ol>
+          <h3>Readable memory</h3>
+          <ul>
+            <li>Preferences/topic notes are kept in readable Markdown on your machine (example: <code>~/.nova/agents/&lt;agent&gt;/memories/</code>).</li>
+            <li>Memory is <strong>context, not verification</strong>. You can read, edit, search, or remove notes.</li>
+            <li><a href="docs/#page-memory">Memory documentation</a></li>
+          </ul>
+          <h3>Plans and approvals</h3>
+          <ul>
+            <li>Plan mode lets Nova investigate before changing code; review the approach before implementation.</li>
+            <li>Tool approvals follow a configurable policy; <strong>hard-coded denials are still enforced</strong>.</li>
+            <li>Approved plans are saved with the project and in Nova's archive (as stated on page).</li>
+            <li><a href="docs/#page-security">Security/permissions documentation</a></li>
+          </ul>
+          <h3>FAQ highlights</h3>
+          <ul>
+            <li><strong>What does Nova do?</strong> Open-source terminal coding agent; explores repos, edits files, runs commands, helps understand code.</li>
+            <li><strong>Where is memory kept?</strong> Markdown under <code>~/.nova/agents/&lt;agent&gt;/memories/</code>; user-readable/editable.</li>
+            <li><strong>Do I approve every action?</strong> Configurable by operation; plan mode for review; hard-coded denials cannot be disabled by policy.</li>
+            <li><strong>Models/OS?</strong> Hosted providers and local Ollama; Python 3.11+; macOS/Linux/Windows.</li>
+          </ul>
+          <h3>Navigation</h3>
+          <ul>
+            <li><a href="#install">Install section</a> · <a href="#workflow">Workflow</a> · <a href="#memory">Memory</a> · <a href="#control">Plans & approvals</a> · <a href="#faq">FAQ</a></li>
+            <li><a href="https://github.com/Babitdor/NovaCode/issues">Issues</a> · <a href="https://github.com/Babitdor/NovaCode/releases">Releases</a></li>
+          </ul>
+          <p class="agent-note"><strong>Limits/caveats:</strong> Feature availability depends on install extras, provider, platform, and configuration. Not a benchmark. Prefer docs/changelog/source for current behavior.</p>
+        </section>
         <div class="measure" data-measure data-par="claim">
           <h1 class="mega measure-claim" id="what">A coding agent with readable memory.</h1>
           <div class="measure-rule">

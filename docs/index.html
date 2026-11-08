@@ -16,6 +16,9 @@
 <link rel="preload" as="font" type="font/woff2" href="../assets/fonts/geist-mono-var.woff2" crossorigin>
 <script>document.documentElement.classList.add("js")</script>
 <script src="../assets/theme.js"></script>
+<script src="../assets/view.js"></script>
+<link rel="help" href="../llms.txt" type="text/plain" title="LLM/agent entry point">
+<meta name="nova-view" content="human">
 
 <style>
 @font-face{font-family:"Geist";src:url("../assets/fonts/geist-var.woff2") format("woff2");font-weight:100 900;font-style:normal;font-display:swap}
@@ -219,6 +222,24 @@ section{padding-block:clamp(48px,6vw,80px)}
 .docs-topnav a.btn-primary:hover{color:var(--on-accent)}
 .docs-topnav .menu-btn{min-height:44px;padding:0 12px}
 .docs-topnav .btn-primary{min-height:44px;padding:0 16px;font-size:15px}
+.view-toggle{display:inline-flex;align-items:center;gap:7px;min-height:38px;padding:0 10px;border:1px solid var(--line);border-radius:2px;background:transparent;color:var(--muted);font:500 10px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;cursor:pointer;transition:color .2s,border-color .2s}
+.view-toggle:hover,.view-toggle:focus-visible{color:var(--text);border-color:var(--text)}
+.view-toggle[aria-pressed="true"]{color:var(--accent-ink);border-color:color-mix(in srgb,var(--accent) 45%,var(--line));background:color-mix(in srgb,var(--accent) 10%,transparent)}
+.view-toggle .dot{width:6px;height:6px;background:currentColor}
+html[data-view="agent"] .sheet-frame{display:none !important}
+html[data-view="agent"] .sidebar{display:none !important}
+html[data-view="agent"] .sidebar-overlay{display:none !important}
+html[data-view="agent"] .docs-layout{grid-template-columns:1fr !important}
+html[data-view="agent"] .menu-btn{display:none !important}
+html[data-view="agent"] .js .page-section{display:block !important}
+html[data-view="agent"] .rv{opacity:1 !important;transform:none !important}
+html[data-view="agent"] .caret,html[data-view="agent"] .typed{animation:none !important;width:auto !important}
+.agent-docs-note{display:none}
+html[data-view="agent"] .agent-docs-note{display:block !important;border:1px solid var(--line);background:var(--surface);padding:14px 16px;margin:0 0 20px;max-width:none}
+html[data-view="agent"] .agent-docs-note h2{font:600 12px/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin:0 0 8px}
+html[data-view="agent"] .agent-docs-note p,html[data-view="agent"] .agent-docs-note li{color:var(--muted);font-size:.95rem;line-height:1.55;margin:6px 0 0}
+html[data-view="agent"] .agent-docs-note ul{margin:8px 0 0;padding-left:18px;display:grid;gap:4px}
+html[data-view="agent"] .agent-docs-note a{color:var(--accent-ink);text-decoration:underline;text-underline-offset:2px}
 /* The page's own name, printed the way the landing prints a sheet tag. */
 .docs-title{font:500 10px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
 
@@ -377,7 +398,7 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
 @keyframes theme-icon-in{from{opacity:0;rotate:-35deg;scale:.72}to{opacity:1;rotate:0deg;scale:1}}
 @media (hover: hover){.theme-btn:hover{border-color:var(--accent);color:var(--accent)}.theme-btn:hover svg{rotate:-30deg}}
 .theme-btn:active{transform:scale(.94)}
-@media (max-width:620px){.docs-topnav .theme-btn{width:44px;height:44px}}
+@media (max-width:620px){.docs-topnav .theme-btn{width:44px;height:44px}.view-toggle{min-height:44px;padding:0 8px}}
 @media (max-width:420px){.docs-topnav{gap:6px}}
 </style>
 <link rel="canonical" href="https://babitdor.github.io/NovaCode/docs/">
@@ -467,6 +488,7 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
       <a class="topnav-aux" href="https://github.com/Babitdor/NovaCode">GitHub</a>
       <a class="topnav-aux" href="../changelog/index.html">Changelog</a>
       <a class="topnav-aux" href="../index.html">Landing</a>
+      <button class="view-toggle" type="button" data-view-toggle hidden aria-pressed="false" aria-label="Switch to agent view" title="Human view (click for agent)"><span class="dot" aria-hidden="true"></span><span data-view-label>Human</span></button>
       <button class="theme-btn" type="button" data-theme-toggle aria-pressed="false" aria-label="Dark theme" hidden><svg class="i-moon" viewBox="0 0 256 256" aria-hidden="true"><path fill="currentColor" d="M233.54,142.23a8,8,0,0,0-8-2,88.08,88.08,0,0,1-109.8-109.8,8,8,0,0,0-10-10,104.84,104.84,0,0,0-52.91,37A104,104,0,0,0,136,224a103.09,103.09,0,0,0,62.52-20.88,104.84,104.84,0,0,0,37-52.91A8,8,0,0,0,233.54,142.23ZM188.9,190.36A88,88,0,0,1,65.66,67.11a89,89,0,0,1,31.4-26A106,106,0,0,0,96,56,104.11,104.11,0,0,0,200,160a106,106,0,0,0,14.92-1.06A89,89,0,0,1,188.9,190.36Z"/></svg><svg class="i-sun" viewBox="0 0 256 256" aria-hidden="true"><path fill="currentColor" d="M120,40V16a8,8,0,0,1,16,0V40a8,8,0,0,1-16,0Zm72,88a64,64,0,1,1-64-64A64.07,64.07,0,0,1,192,128Zm-16,0a48,48,0,1,0-48,48A48.05,48.05,0,0,0,176,128ZM58.34,69.66A8,8,0,0,0,69.66,58.34l-16-16A8,8,0,0,0,42.34,53.66Zm0,116.68-16,16a8,8,0,0,0,11.32,11.32l16-16a8,8,0,0,0-11.32-11.32ZM192,72a8,8,0,0,0,5.66-2.34l16-16a8,8,0,0,0-11.32-11.32l-16,16A8,8,0,0,0,192,72Zm5.66,114.34a8,8,0,0,0-11.32,11.32l16,16a8,8,0,0,0,11.32-11.32ZM48,128a8,8,0,0,0-8-8H16a8,8,0,0,0,0,16H40A8,8,0,0,0,48,128Zm80,80a8,8,0,0,0-8,8v24a8,8,0,0,0,16,0V216A8,8,0,0,0,128,208Zm112-88H216a8,8,0,0,0,0,16h24a8,8,0,0,0,0-16Z"/></svg></button>
       <a class="btn btn-primary" href="#page-installation" data-page="installation">Install</a>
     </nav>
@@ -474,6 +496,16 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
     <main id="main" class="docs-content">
       <div class="zones" aria-hidden="true"><span>documentation sheet</span><span>novacode &middot; rev 1.1.6</span><span>scale 1:1</span></div>
       <h1 class="sr-only">NovaCode documentation</h1>
+      <section class="agent-docs-note agent-only" aria-label="Agent-readable documentation index">
+        <h2>Agent view — documentation (all topics, linear)</h2>
+        <p>This is a client-side documentation SPA presented linearly for agent readability. The sidebar is hidden in agent mode to avoid fixed/overlay UI; all sidebar links are listed here. Original in-browser anchors use <code>#page-&lt;topic&gt;</code> (e.g. <code>#page-features</code>). Verify details against repository/docs; capability depends on install/config/provider/platform.</p>
+        <p><strong>Orientation:</strong> <a href="#page-overview">What NovaCode is</a> · <a href="#page-features">Feature guide</a> · <a href="#page-installation">Installation &amp; setup</a></p>
+        <p><strong>Operating NovaCode:</strong> <a href="#page-cli">CLI reference</a> · <a href="#page-config">Configuration</a> · <a href="#page-tui">The TUI</a> · <a href="#page-slash">Slash commands</a> · <a href="#page-headless">Headless mode</a></p>
+        <p><strong>Capabilities:</strong> <a href="#page-tools">Tools</a> · <a href="#page-subagents">Subagents</a> · <a href="#page-memory">Memory system</a> · <a href="#page-skills">Skills system</a> · <a href="#page-mcp">MCP integration</a> · <a href="#page-plugins">Plugin system</a> · <a href="#page-hermes">Autonomous learning</a> · <a href="#page-verification">Verification loop</a> · <a href="#page-remote">Remote bridges</a> · <a href="#page-voice">Voice I/O</a></p>
+        <p><strong>Under the hood:</strong> <a href="#page-middleware">Middleware stack</a> · <a href="#page-sessions">Session management</a> · <a href="#page-context">Context management</a> · <a href="#page-security">Security &amp; safety</a> · <a href="#page-sandbox">Sandbox execution</a> · <a href="#page-infrastructure">Infrastructure</a></p>
+        <p><strong>Reference:</strong> <a href="#page-directory">Directory structure</a> · <a href="#page-extras">Optional dependencies</a> · <a href="#page-troubleshooting">Troubleshooting</a> · <a href="../changelog/index.html">Changelog</a></p>
+        <p><strong>Links:</strong> <a href="../llms.txt">llms.txt</a> · <a href="../index.html">Landing</a> · <a href="https://github.com/Babitdor/NovaCode">Source</a></p>
+      </section>
 
       <!-- 1. WHAT NOVACODE IS -->
       <div class="page-section active" id="page-overview">

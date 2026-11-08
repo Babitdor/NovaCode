@@ -17,6 +17,9 @@
 <link rel="preload" as="font" type="font/woff2" href="../assets/fonts/archivo-400_700-normal.woff2" crossorigin>
 <script>document.documentElement.classList.add("js")</script>
 <script src="../assets/theme.js"></script>
+<script src="../assets/view.js"></script>
+<link rel="help" href="../llms.txt" type="text/plain" title="LLM/agent entry point">
+<meta name="nova-view" content="human">
 
 <style>
 /* ============================================================
@@ -281,7 +284,18 @@ footer{border-top:1px solid var(--line);padding-block:28px 72px}
 @keyframes theme-icon-in{from{opacity:0;rotate:-35deg;scale:.72}to{opacity:1;rotate:0deg;scale:1}}
 @media (hover: hover){.theme-btn:hover{border-color:var(--accent);color:var(--accent)}.theme-btn:hover svg{rotate:-30deg}}
 .theme-btn:active{transform:scale(.94)}
-@media (max-width:620px){.topnav .theme-btn{width:44px;height:44px}.topnav .tn-aux[href="../docs/index.html"]{min-height:44px}}
+.view-toggle{display:inline-flex;align-items:center;gap:7px;min-height:38px;padding:0 10px;border:1px solid var(--line);border-radius:var(--r-press);background:transparent;color:var(--muted);font:500 10px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;cursor:pointer;transition:color .2s,border-color .2s}
+.view-toggle:hover,.view-toggle:focus-visible{color:var(--text);border-color:var(--text)}
+.view-toggle[aria-pressed="true"]{color:var(--accent-ink);border-color:color-mix(in srgb,var(--accent) 45%,var(--line));background:color-mix(in srgb,var(--accent) 10%,transparent)}
+.view-toggle .dot{width:6px;height:6px;background:currentColor}
+html[data-view="agent"] .sheet-frame{display:none !important}
+html[data-view="agent"] .changelog-entry{display:block !important}
+html[data-view="agent"] .changelog-entry[open], html[data-view="agent"] .changelog-entry{open:true}
+.agent-cl-note{display:none}
+html[data-view="agent"] .agent-cl-note{display:block;border:1px solid var(--line);background:var(--surface);padding:14px 16px;margin:0 0 18px}
+html[data-view="agent"] .agent-cl-note h2{font:600 12px/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin:0 0 8px}
+html[data-view="agent"] .agent-cl-note p{color:var(--muted);font-size:.95rem;line-height:1.55;margin:0}
+@media (max-width:620px){.topnav .theme-btn{width:44px;height:44px}.topnav .tn-aux[href="../docs/index.html"]{min-height:44px}.view-toggle{min-height:44px;padding:0 8px}}
 @media (max-width:420px){.topnav{gap:6px}.tn-page{display:none}}
 </style>
 <link rel="canonical" href="https://babitdor.github.io/NovaCode/changelog/">
@@ -301,6 +315,7 @@ footer{border-top:1px solid var(--line);padding-block:28px 72px}
   <a class="tn-aux" href="https://github.com/Babitdor/NovaCode" rel="noopener">GitHub</a>
   <a class="tn-aux" href="../docs/index.html">Docs</a>
   <a class="tn-aux" href="../index.html">Landing</a>
+  <button class="view-toggle" type="button" data-view-toggle hidden aria-pressed="false" aria-label="Switch to agent view" title="Human view (click for agent)"><span class="dot" aria-hidden="true"></span><span data-view-label>Human</span></button>
   <button class="theme-btn" type="button" data-theme-toggle aria-pressed="false" aria-label="Dark theme" hidden><svg class="i-moon" viewBox="0 0 256 256" aria-hidden="true"><path fill="currentColor" d="M233.54,142.23a8,8,0,0,0-8-2,88.08,88.08,0,0,1-109.8-109.8,8,8,0,0,0-10-10,104.84,104.84,0,0,0-52.91,37A104,104,0,0,0,136,224a103.09,103.09,0,0,0,62.52-20.88,104.84,104.84,0,0,0,37-52.91A8,8,0,0,0,233.54,142.23ZM188.9,190.36A88,88,0,0,1,65.66,67.11a89,89,0,0,1,31.4-26A106,106,0,0,0,96,56,104.11,104.11,0,0,0,200,160a106,106,0,0,0,14.92-1.06A89,89,0,0,1,188.9,190.36Z"/></svg><svg class="i-sun" viewBox="0 0 256 256" aria-hidden="true"><path fill="currentColor" d="M120,40V16a8,8,0,0,1,16,0V40a8,8,0,0,1-16,0Zm72,88a64,64,0,1,1-64-64A64.07,64.07,0,0,1,192,128Zm-16,0a48,48,0,1,0-48,48A48.05,48.05,0,0,0,176,128ZM58.34,69.66A8,8,0,0,0,69.66,58.34l-16-16A8,8,0,0,0,42.34,53.66Zm0,116.68-16,16a8,8,0,0,0,11.32,11.32l16-16a8,8,0,0,0-11.32-11.32ZM192,72a8,8,0,0,0,5.66-2.34l16-16a8,8,0,0,0-11.32-11.32l-16,16A8,8,0,0,0,192,72Zm5.66,114.34a8,8,0,0,0-11.32,11.32l16,16a8,8,0,0,0,11.32-11.32ZM48,128a8,8,0,0,0-8-8H16a8,8,0,0,0,0,16H40A8,8,0,0,0,48,128Zm80,80a8,8,0,0,0-8,8v24a8,8,0,0,0,16,0V216A8,8,0,0,0,128,208Zm112-88H216a8,8,0,0,0,0,16h24a8,8,0,0,0,0-16Z"/></svg></button>
       <a class="btn btn-primary" href="../index.html#install">Install</a>
 </header>
@@ -318,6 +333,10 @@ footer{border-top:1px solid var(--line);padding-block:28px 72px}
     </div>
 
     <p id="release-status" role="status" aria-live="polite"></p>
+    <div class="agent-cl-note agent-only" aria-label="Agent view">
+      <h2>Agent view</h2>
+      <p>Release entries are expanded for linear reading where supported. For canonical release sources, see the repository changelog on main and <a href="../llms.txt">llms.txt</a>.</p>
+    </div>
     <div id="releases">
     <!-- generated:changelog-releases -->
 <details class="changelog-entry" id="v1-1-6" data-version="1.1.6" data-sha="0f3c06a3fb0847884b684ffb17ac0d4c1a2d8aa2">

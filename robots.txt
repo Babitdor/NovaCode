@@ -2,3 +2,5 @@ User-agent: *
 Allow: /
 
 Sitemap: https://babitdor.github.io/NovaCode/sitemap.xml
+# Agent-facing entry point (static)
+# https://babitdor.github.io/NovaCode/llms.txt
