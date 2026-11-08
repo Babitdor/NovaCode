@@ -47,6 +47,8 @@ from deepagents.backends.filesystem import FilesystemBackend
 from deepagents.backends.local_shell import LocalShellBackend
 from deepagents.backends.protocol import EditResult, GlobResult, GrepResult, ReadResult, WriteResult
 
+from novacode_cli.core.tool_results import current_read_capture
+
 __all__ = ["OptimizedFilesystemBackend", "OptimizedLocalShellBackend"]
 
 # Wall-clock budget for a single grep, in seconds. Defined locally rather than
@@ -680,6 +682,9 @@ class OptimizedFilesystemBackend(FilesystemBackend):
                     f"with offset={last_page}, or start again with offset=0."
                 )
             )
+        capture = current_read_capture.get()
+        if capture is not None:
+            capture.record(result)
         return result
 
     def _read_fallback_encoding(

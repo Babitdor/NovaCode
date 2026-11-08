@@ -40,6 +40,8 @@ from langchain.tools.tool_node import ToolCallRequest
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.types import Command
 
+from novacode_cli.core.tool_results import append_display_note
+
 if TYPE_CHECKING:
     from langchain.tools import BaseTool
 
@@ -397,7 +399,7 @@ class LoopGuardMiddleware(AgentMiddleware):
             f"{self._repeats} in a row. Running the same thing again, or the same thing under "
             "another name, will not change it — do something different.]"
         )
-        return result.model_copy(update={"content": result.content + note})
+        return append_display_note(result, note)
 
     def wrap_tool_call(
         self,

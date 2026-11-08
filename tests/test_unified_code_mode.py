@@ -22,6 +22,8 @@ from novacode_cli.security.policy import get_policy
 from tests.test_mcp_code_mode import ScriptedModel, inventory, isolated_policy  # noqa: F401
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from novacode_cli.security.policy import ApprovalDecision
 
 pytestmark = pytest.mark.timeout(40)
@@ -108,6 +110,207 @@ async def test_host_bridge_survives_multiple_snippets_in_one_turn():
     assert all(m.status == "success" for m in results), results
     assert [json.loads(m.content)["result"] for m in results] == ["1", "2"]
     assert calls == [1, 2]
+
+
+@pytest.mark.parametrize(
+    "original",
+    [
+        '@@ lines 1-2 of 2 @@\n[note: literal file content]\n{"name":"Nova"}\n',
+        "Error: this is real file content\n",
+        "[MCP error] this is real file content\n",
+    ],
+)
+async def test_repeated_native_file_reads_round_trip_exact_text_through_edits(
+    tmp_path: Path, original
+):
+    from deepagents.middleware.filesystem import FilesystemMiddleware
+
+    from novacode_cli.backends.filesystem import OptimizedFilesystemBackend
+    from novacode_cli.tracking.file_tracker import FileTrackerMiddleware
+    from novacode_cli.tracking.loop_guard import LoopGuardMiddleware
+
+    # These strings are real source, not presentation markers to strip heuristically.
+    path = tmp_path / "guide.md"
+    path.write_text(original, encoding="utf-8")
+    for name in ("read_file", "edit_file"):
+        get_policy().tool_tiers[name] = "allow"
+    graph = scripted(
+        [
+            (
+                "eval",
+                r"""
+var first = await tools.call('read_file', {file_path:'/guide.md'});
+var again = await tools.call('read_file', {file_path:'/guide.md'});
+await tools.call('edit_file', {
+  file_path:'/guide.md', old_string:again, new_string:again + 'Updated\n'
+});
+first === again;
+""",
+            )
+        ],
+        middleware=[
+            CodeModeMiddleware(),
+            FileTrackerMiddleware(workspace_root=str(tmp_path)),
+            LoopGuardMiddleware(),
+            FilesystemMiddleware(
+                backend=OptimizedFilesystemBackend(root_dir=tmp_path, virtual_mode=True)
+            ),
+        ],
+    )
+    message = await invoke(graph)
+    assert message.status == "success", message.content
+    assert path.read_text(encoding="utf-8") == original + "Updated\n"
+    assert json.loads(message.content)["result"] == "true"
+
+
+@pytest.mark.parametrize(
+    "source", ["source line\n" * 100, "x" * 1_000_001], ids=["display", "intermediate"]
+)
+async def test_raw_file_reads_do_not_bypass_display_truncation(tmp_path: Path, source):
+    from deepagents.middleware.filesystem import FilesystemMiddleware
+
+    from novacode_cli.backends.filesystem import OptimizedFilesystemBackend
+
+    (tmp_path / "large.txt").write_text(source, encoding="utf-8")
+    get_policy().tool_tiers["read_file"] = "allow"
+    graph = scripted(
+        [("eval", "await tools.call('read_file', {file_path:'/large.txt'});")],
+        middleware=[
+            CodeModeMiddleware(),
+            FilesystemMiddleware(
+                backend=OptimizedFilesystemBackend(root_dir=tmp_path, virtual_mode=True),
+                tool_token_limit_before_evict=20,
+            ),
+        ],
+    )
+    message = await invoke(graph)
+    assert message.status == "error"
+    assert "smaller" in message.content
+
+
+async def test_loop_notes_remain_visible_but_do_not_change_structured_native_data(monkeypatch):
+    from novacode_cli.tracking.loop_guard import LoopGuardMiddleware
+
+    @tool
+    def records() -> str:
+        """Return structured records without presentation notes."""
+        return '{"count":42,"private":"INTERMEDIATE_ONLY"}'
+
+    guard = LoopGuardMiddleware()
+    record = guard._record
+    traces = []
+
+    def traced(signature, result) -> ToolMessage:
+        result = record(signature, result)
+        traces.append(result)
+        return result
+
+    monkeypatch.setattr(guard, "_record", traced)
+    get_policy().tool_tiers["records"] = "allow"
+    graph = scripted(
+        [
+            (
+                "eval",
+                "await tools.call('records'); var selected = await tools.call('records'); "
+                "selected.count;",
+            )
+        ],
+        tools=[records],
+        middleware=[CodeModeMiddleware(), guard],
+    )
+    message = await invoke(graph)
+    assert message.status == "success", message.content
+    assert json.loads(message.content)["result"] == "42"
+    assert "INTERMEDIATE_ONLY" not in message.content
+    assert any("[note: this is the same result" in trace.content for trace in traces)
+
+
+async def test_raw_file_capture_does_not_bypass_repeat_blocks(tmp_path: Path):
+    from deepagents.middleware.filesystem import FilesystemMiddleware
+
+    from novacode_cli.backends.filesystem import OptimizedFilesystemBackend
+    from novacode_cli.tracking.loop_guard import LoopGuardMiddleware
+
+    (tmp_path / "guide.md").write_text("unchanged\n", encoding="utf-8")
+    get_policy().tool_tiers["read_file"] = "allow"
+    graph = scripted(
+        [("eval", "for(var i=0;i<3;i++) await tools.call('read_file', {file_path:'/guide.md'});")],
+        middleware=[
+            CodeModeMiddleware(),
+            LoopGuardMiddleware(threshold=2),
+            FilesystemMiddleware(
+                backend=OptimizedFilesystemBackend(root_dir=tmp_path, virtual_mode=True)
+            ),
+        ],
+    )
+    message = await invoke(graph)
+    assert message.status == "error"
+    assert "LOOP STOPPED" in message.content
+
+
+async def test_parallel_file_pages_keep_their_own_exact_text(tmp_path: Path):
+    from deepagents.middleware.filesystem import FilesystemMiddleware
+
+    from novacode_cli.backends.filesystem import OptimizedFilesystemBackend
+    from novacode_cli.core.tool_results import current_read_capture
+
+    (tmp_path / "left.txt").write_text("first\nleft second\nlast\n", encoding="utf-8")
+    (tmp_path / "right.txt").write_text("right\n", encoding="utf-8")
+    get_policy().tool_tiers["read_file"] = "allow"
+    graph = scripted(
+        [
+            (
+                "eval",
+                """
+var pages = await Promise.all([
+  tools.call('read_file', {file_path:'/left.txt', offset:1, limit:1}),
+  tools.call('read_file', {file_path:'/right.txt'})
+]);
+pages[0] + '|' + pages[1];
+""",
+            )
+        ],
+        middleware=[
+            CodeModeMiddleware(),
+            FilesystemMiddleware(
+                backend=OptimizedFilesystemBackend(root_dir=tmp_path, virtual_mode=True)
+            ),
+        ],
+    )
+    message = await invoke(graph)
+    assert message.status == "success", message.content
+    assert json.loads(message.content)["result"] == "left second\n|right\n"
+    assert current_read_capture.get() is None
+
+
+@pytest.mark.parametrize(
+    "note",
+    [
+        {"before": "PRIVATE_VALUE", "after": "original display"},
+        {"after": "REDACTED"},
+    ],
+)
+def test_display_metadata_cannot_restore_transformed_or_malformed_data(note):
+    from novacode_cli.core.tool_results import DISPLAY_NOTE
+
+    result = ToolMessage(
+        content="REDACTED",
+        tool_call_id="read",
+        additional_kwargs={DISPLAY_NOTE: note},
+    )
+    assert CodeModeMiddleware._result_value(result) == "REDACTED"
+
+
+def test_stacked_diagnostics_preserve_structured_tool_data():
+    from novacode_cli.core.tool_results import append_display_note
+
+    message = ToolMessage(content='{"count":42}', tool_call_id="native")
+    repaired = append_display_note(message, "\n[Nova repaired arguments]")
+    repeated = append_display_note(repaired, "\n[note: repeated result]")
+    assert (
+        repeated.content == message.content + "\n[Nova repaired arguments]\n[note: repeated result]"
+    )
+    assert CodeModeMiddleware._result_value(repeated) == {"count": 42}
 
 
 async def test_truncated_reads_can_be_inspected_without_repeating_host_calls():
@@ -415,6 +618,7 @@ async def test_real_deepagents_task_uses_unified_interpreter():
 async def test_composed_native_mcp_parallel_delegation_keeps_intermediates_private(tmp_path):
     dispatched = []
     active = maximum = 0
+    both_started = asyncio.Event()
 
     @tool
     def inputs() -> list:
@@ -432,7 +636,9 @@ async def test_composed_native_mcp_parallel_delegation_keeps_intermediates_priva
         nonlocal active, maximum
         active += 1
         maximum = max(maximum, active)
-        await asyncio.sleep(0.03)
+        if active == 2:
+            both_started.set()
+        await asyncio.wait_for(both_started.wait(), timeout=2)
         dispatched.append((description, subagent_type))
         active -= 1
         return Command(
@@ -468,7 +674,7 @@ children.join(',');
     output = await graph.ainvoke({"messages": [HumanMessage(content="Compose the workflow")]})
     assert "INTERMEDIATE_ONLY" not in repr(output["messages"])
     assert json.loads(output["messages"][-2].content)["result"] == "2,3"
-    assert dispatched == [("2", "reviewer"), ("3", "reviewer")]
+    assert sorted(dispatched) == [("2", "reviewer"), ("3", "reviewer")]
     assert maximum == 2
 
 

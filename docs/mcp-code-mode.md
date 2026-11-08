@@ -30,6 +30,29 @@ Markdown and other text through `tools.call('read_file', ...)` inside `eval`, us
 exact workspace virtual paths from discovery (for example `/pkg/graph.py`). On a
 missing file, discover the path with `glob` or `ls` before retrying.
 
+Paginated text reads from Nova's filesystem backend return the requested source
+text to JavaScript, including its trailing-newline state. Display gutters,
+pagination headers and loop-warning notes stay out of that string, so it can be
+used directly as `edit_file.old_string`. Literal headers or warning-like text
+inside the file are preserved. Empty-file reminders, media and third-party
+backend result formats retain their existing behavior.
+
+```javascript
+var source = await tools.call("read_file", {file_path: "/guide.md", offset: 0, limit: 60});
+await tools.call("edit_file", {
+  file_path: "/guide.md",
+  old_string: source,
+  new_string: source.replace("# Old heading", "# New heading")
+});
+```
+
+Read data still passes through approvals and all tool middleware. If a page was
+truncated or transformed, Nova rejects the raw read and requests a smaller page;
+it does not expose text that the existing display limits removed. Parallel calls
+keep independent read data, and cancellation discards late results. Repeat
+warnings remain visible in tool output and repeat blocks still stop execution.
+Argument-repair notices use the same separation, including when diagnostics stack.
+
 ## JavaScript API
 
 `eval` accepts JavaScript statements and expressions, including top-level `await`.
@@ -50,6 +73,10 @@ Use exact names and arguments from discovery. Native calls use
 `tools.call(tool_name, arguments)`; MCP calls use
 `mcp.call(server_name, tool_name, arguments)`. Results retain structured values.
 Loops, filtering and `Promise.all` can combine calls before selecting a small result.
+`tools.list` accepts `offset` and `limit`; filter its `tools` array in JavaScript
+instead of passing `query`. QuickJS provides no Node.js `Buffer`, `process` or
+`require`. Use the file tools for text writes. On Windows, invoke PowerShell
+explicitly when using its cmdlets through `execute`.
 
 ```javascript
 var batches = await Promise.all([1, 2, 3].map(id =>

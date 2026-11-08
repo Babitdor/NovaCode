@@ -47,6 +47,9 @@
   verified QuickJS integration version to prevent startup import failures.
 - Show successful skill reads inline and guide the agent to announce which
   skill it is reading and why.
+- Keep native filesystem page text and structured tool data separate from
+  display formatting and repeat warnings, so reads can safely feed exact edits.
+  Preserve output limits, repeat blocks and independent parallel-read state.
 
 ## Workflow and remote chat
 

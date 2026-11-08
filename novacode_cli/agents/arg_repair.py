@@ -29,6 +29,8 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool
 
+from novacode_cli.core.tool_results import append_display_note
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
@@ -174,7 +176,7 @@ class ToolArgRepairMiddleware(AgentMiddleware):
     @staticmethod
     def _noted(result: Any, note: str) -> Any:
         if isinstance(result, ToolMessage) and isinstance(result.content, str):
-            return result.model_copy(update={"content": result.content + note})
+            return append_display_note(result, note)
         return result
 
     def wrap_tool_call(self, request: ToolCallRequest, handler: Callable) -> Any:

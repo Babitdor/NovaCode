@@ -34,6 +34,7 @@ SOURCES = [
     "novacode_cli/mcp/code_mode.py",
     "novacode_cli/mcp/code_runtime.py",
     "novacode_cli/core/code_approvals.py",
+    "novacode_cli/core/tool_results.py",
 ]
 
 
@@ -52,7 +53,8 @@ def main() -> None:
             "run",
             data,
             "--branch",
-            "--source=novacode_cli.agents.code_mode,novacode_cli.agents.code_runtime",
+            "--source=novacode_cli.agents.code_mode,novacode_cli.agents.code_runtime,"
+            "novacode_cli.core.tool_results",
             "-m",
             "pytest",
             *TESTS,

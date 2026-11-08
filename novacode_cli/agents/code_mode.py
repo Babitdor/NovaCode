@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from novacode_cli.agents.strict_tools import _validator
 from novacode_cli.agents.tool_search_variants import SEARCH_VARIANTS
 from novacode_cli.config.nova_config import NovaConfig
+from novacode_cli.core.tool_results import MAX_INTERMEDIATE_CHARS, capture_file_read, data_text
 from novacode_cli.mcp.generic import MCPInput, build_mcp_tool, resolve_target
 from novacode_cli.security.policy import get_policy
 
@@ -34,7 +35,6 @@ if TYPE_CHECKING:
     from langchain_core.messages.tool import ToolCall
 
 MAX_ARGUMENT_CHARS = 100000
-MAX_INTERMEDIATE_CHARS = 1_000_000
 MAX_OUTPUT_CHARS = 12000
 
 CODE_MODE_GUIDANCE = """
@@ -43,12 +43,18 @@ Use eval as your primary control surface for ordinary operations. Compose discov
 native calls, MCP calls, filtering and bounded Promise.all fan-out in JavaScript.
 Prefer one eval call per step; compose parallel work inside it with Promise.all.
 Use tools.list/describe/call and mcp.list/describe/call; inspect schemas before calls.
+tools.list accepts offset and limit, not query; filter its tools array in JavaScript.
+JavaScript runs in QuickJS: Node.js Buffer, process and require are unavailable.
+On Windows, invoke PowerShell explicitly when using its cmdlets through execute.
 Use task({description, subagentType, responseSchema?}) for configured subagents,
 including explicit @agent requests. tools.describe('task') lists the current roster.
 eval accepts statements and top-level await; its final expression is the selected result.
 Variables persist within this conversation. Keep intermediate data in JavaScript;
 return a compact synthesis or explicitly print selected output with console.log.
 Read text with tools.call('read_file', {file_path:'/exact/discovered/path', offset:0, limit:60}).
+Nova filesystem text pages return source text, preserving newlines, without display headers
+or loop-warning notes. Use that string directly for edit_file.old_string; do not add headers.
+If a raw page exceeds display limits, request a smaller offset/limit instead of a full edit.
 Use exact workspace virtual paths from discovery; do not reconstruct Windows host paths.
 On file-not-found, use glob/ls to discover the correct path before retrying.
 Keep large read batches in variables and return small passages; truncated output is incomplete
@@ -613,17 +619,23 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         }
         if request.runtime is None:
             raise ValueError("MCPCode requires its owning agent runtime.")
-        runtime = replace(request.runtime, tool_call_id=call_id)
-        nested = replace(request, tool=target, tool_call=call, runtime=runtime)
-        deadline = asyncio.timeout(None if updates is not None else self._call_timeout)
-        async with deadline:
-            try:
-                result = await handler(nested)
-            except ValueError as exc:
-                if updates is not None and "matching ToolMessage in Command.update" in str(exc):
-                    # ToolNode's diagnostic includes the child messages verbatim.
-                    raise TypeError("Subagent returned unsupported messages.") from None
-                raise
+        nested = replace(
+            request,
+            tool=target,
+            tool_call=call,
+            runtime=replace(request.runtime, tool_call_id=call_id),
+        )
+        with capture_file_read(enabled=target.name == "read_file" and not mcp) as capture:
+            async with asyncio.timeout(
+                None if updates is not None else self._call_timeout
+            ) as deadline:
+                try:
+                    result = await handler(nested)
+                except ValueError as exc:
+                    if updates is not None and "matching ToolMessage in Command.update" in str(exc):
+                        # ToolNode's diagnostic includes the child messages verbatim.
+                        raise TypeError("Subagent returned unsupported messages.") from None
+                    raise
         # Some MCP adapters convert cancellation into a textual tool result.
         if deadline.expired():
             raise TimeoutError("MCP tool call timeout.")
@@ -656,6 +668,8 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
             raise ValueError(value + hint)
         if isinstance(value, str) and value.startswith("[MCP error]"):
             raise ValueError(value)
+        if capture is not None and (raw := capture.source_text(value)) is not None:
+            value = raw
         return value
 
     def _auto_approval_enabled(self) -> bool:
@@ -737,7 +751,11 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         artifact = result.artifact
         if isinstance(artifact, dict) and "structured_content" in artifact:
             return artifact["structured_content"]
-        value = result.content
+        value = (
+            data_text(result.content, result.additional_kwargs)
+            if isinstance(result.content, str)
+            else result.content
+        )
         if isinstance(value, str):
             try:
                 return json.loads(value)
