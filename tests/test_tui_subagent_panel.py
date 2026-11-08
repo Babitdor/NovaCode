@@ -282,6 +282,7 @@ async def test_worker_cleanup_stops_rows_without_a_terminal_event(
         assert app._subagents_tick is None
 
 
+@pytest.mark.timeout(30)
 async def test_spawned_teammate_uses_inline_lifecycle_without_agent_server(tmp_path, monkeypatch):
     from unittest.mock import AsyncMock, Mock
 

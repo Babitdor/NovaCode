@@ -144,16 +144,7 @@ def home_presentation(
                 f"WORKSPACE  {identity.workspace}\n"
                 f"SESSION    {identity.session_id[:12] or 'New session'}"
             )
-    tip = (
-        "Build. Think. Refine. Together."
-        if style == "centered"
-        else (
-            "Tip  /context shows what occupies the context window.\n"
-            "Type to begin   / commands   @ files   /help"
-        )
-    )
-    if style in introductions:
-        tip = introductions[style][1]
+    tip = "Explore this project: /onboard"
     metadata = Text("Nova", style=palette.accent)
     metadata.append(f"  ·  {identity.provider}  ·  {identity.model}", style=palette.text)
     if identity.context_percent is not None:
@@ -288,6 +279,10 @@ class HomeSidebar(VerticalScroll):
         yield Static("", id="home-workspace", classes="home-side-detail")
         yield Static("BRANCH", classes="home-card-title home-section")
         yield Static("", id="home-branch", classes="home-side-detail")
+        yield Static(
+            "New to this project? Try /onboard for a code map and guided tour.",
+            classes="home-side-detail home-section",
+        )
 
 
 class HomeRightRail(VerticalScroll):

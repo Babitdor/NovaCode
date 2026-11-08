@@ -124,6 +124,9 @@ def build_command_registry() -> CommandRegistry:
     from novacode_cli.commands.cache_handler import register_commands as register_cache
 
     register_cache(registry)
+    from novacode_cli.commands.onboard_handler import register_commands as register_onboard
+
+    register_onboard(registry)
     from novacode_cli.commands.prime_handler import register_commands as register_prime
 
     register_prime(registry)

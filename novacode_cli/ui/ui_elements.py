@@ -1567,6 +1567,10 @@ def show_help() -> None:
         "  /init           Explore codebase and create Nova.MD file",
         style=COLORS["dim"],
     )
+    console.print(
+        "  /onboard        Understand this project: code map, tours, Q&A and change impact",
+        style=COLORS["dim"],
+    )
     console.print("  /sessions       List and manage saved sessions", style=COLORS["dim"])
     console.print(
         "  /tabs              Choose a project or close a running session tab",

@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; img-src 'none'">
+<title>Nova · Project onboarding</title>
+<style>
+:root { color-scheme: light dark; font: 16px/1.5 system-ui,sans-serif; --paper:#f6f5f0; --ink:#242820; --rule:#c7c9bd; --accent:#3f6348; }
+* { box-sizing:border-box } body { margin:0; background:var(--paper); color:var(--ink) }
+header,main { max-width:1440px; margin:auto; padding:24px } header { border-bottom:1px solid var(--rule) }
+h1 { margin:4px 0; font-size:clamp(24px,4vw,40px); letter-spacing:-.04em } h2 { font-size:19px; margin-top:0 }
+p { margin:6px 0 16px } .eyebrow { font-size:12px; letter-spacing:.14em; text-transform:uppercase }
+button,input,select,textarea { font:inherit; color:inherit; background:var(--paper); border:1px solid var(--rule); border-radius:4px; padding:8px 12px }
+button { cursor:pointer; text-align:left } button:hover,button[aria-pressed=true] { border-color:var(--accent); background:color-mix(in srgb,var(--accent) 12%,var(--paper)) }
+:focus-visible { outline:3px solid var(--accent); outline-offset:3px } nav { display:flex; flex-wrap:wrap; gap:8px; margin:20px 0 }
+.workspace { display:grid; grid-template-columns:minmax(230px,1fr) minmax(0,3fr); gap:24px } .box { border:1px solid var(--rule); padding:18px; border-radius:6px; min-width:0 }
+#results { display:flex; flex-direction:column; gap:6px; max-height:62vh; overflow:auto; margin-top:12px }
+#results button { overflow-wrap:anywhere } input,select,textarea { width:100%; margin:5px 0 12px }
+svg { width:100%; height:420px; border:1px solid var(--rule); border-radius:4px } svg text { fill:var(--ink); font-size:12px; pointer-events:none }
+svg line { stroke:var(--rule); stroke-width:1.5 } svg circle { fill:var(--paper); stroke:var(--accent); stroke-width:2 }
+svg g { cursor:pointer } svg g:focus circle,svg g:hover circle { fill:color-mix(in srgb,var(--accent) 25%,var(--paper)) }
+pre { white-space:pre-wrap; overflow-wrap:anywhere; font:inherit } code { overflow-wrap:anywhere } .muted { opacity:.72; font-size:14px }
+.warning { border-left:4px solid #a66a17; padding:10px 16px; margin-top:18px } #relationships { max-height:260px; overflow:auto } #relationships button { display:block; margin:6px 0; width:100% }
+[hidden] { display:none!important } .tour-controls { display:flex; gap:8px; margin:12px 0 }
+@media(prefers-color-scheme:dark) { :root { --paper:#1c211d; --ink:#e9ede6; --rule:#485347; --accent:#a2c7a0 } }
+@media(max-width:760px) { .workspace { grid-template-columns:1fr } #results { max-height:240px } header,main { padding:16px } svg { height:320px } }
+</style>
+</head>
+<body>
+<header><div class="eyebrow">Nova / Project onboarding</div><h1 id="project"></h1><p id="stats" class="muted"></p><div id="freshness" role="status"></div></header>
+<main>
+<nav aria-label="Explore project">
+<button type="button" data-tab="map" aria-pressed="true">Code map</button>
+<button type="button" data-tab="tour" aria-pressed="false">Guided tour</button>
+<button type="button" data-tab="guide" aria-pressed="false">Architecture &amp; guide</button>
+<button type="button" data-tab="ask" aria-pressed="false">Ask Nova</button>
+</nav>
+<section id="map" class="workspace">
+<aside class="box"><h2>Find your way</h2><label for="search">Search files and symbols</label><input id="search" type="search" placeholder="Name or path…"><label for="layer">Directory group</label><select id="layer"><option value="">All groups</option></select><p id="result-count" class="muted" aria-live="polite"></p><div id="results"></div></aside>
+<div class="box"><h2 id="selection">Select a node</h2><p id="location" class="muted"></p><svg id="graph" viewBox="0 0 800 420" aria-label="Dependency neighborhood" role="group"></svg><p class="muted">Select a neighbor to follow the graph. The view shows up to 40 neighbors; search covers all nodes.</p><button id="impact" type="button">Show potential change impact</button><h2 style="margin-top:18px">Relationships</h2><div id="relationships"></div></div>
+</section>
+<section id="tour" class="box" hidden><h2>Guided learning tour</h2><p>Start with entry points and documentation, then inspect highly connected files. This order is structural; ask Nova to explain the business flow.</p><div class="tour-controls"><button id="previous" type="button">Previous</button><button id="next" type="button">Next</button><button id="tour-map" type="button">Explore this file</button></div><h3 id="tour-title"></h3><p id="tour-path"></p><div id="tour-symbols"></div></section>
+<section id="guide" class="box" hidden><h2>Architecture &amp; onboarding guide</h2><pre id="guide-text"></pre></section>
+<section id="ask" class="box" hidden><h2>Ask Nova about this project</h2><p>Questions run in your Nova conversation, using the saved graph and source tools with your normal permissions. This offline dashboard has no model credentials or host access.</p><label for="question">Your question</label><textarea id="question" rows="3" placeholder="How does a request reach the database?"></textarea><button id="prepare" type="button">Prepare question</button><label for="ask-command">Copy this command into Nova</label><textarea id="ask-command" rows="3" readonly></textarea><p class="muted">Use /onboard impact &lt;name or path&gt; for dependencies, /onboard refresh after edits, and /onboard open to reopen the saved analysis.</p></section>
+<p class="muted" id="limits"></p>
+</main>
+<script>
+'use strict';
+const data = __NOVA_ONBOARD_DATA__;
+const $ = id => document.getElementById(id);
+const byId = new Map(data.nodes.map(n => [n.id,n]));
+const incoming = new Map(), adjacent = new Map();
+for (const e of data.edges) {
+  for (const id of [e.source,e.target]) { if (!adjacent.has(id)) adjacent.set(id,[]); adjacent.get(id).push(e); }
+  if (e.type !== 'contains') { if (!incoming.has(e.target)) incoming.set(e.target,[]); incoming.get(e.target).push(e.source); }
+}
+let selected=null, tourIndex=0;
+function text(id,value) { $(id).textContent=value; }
+function button(label,action) { const b=document.createElement('button'); b.type='button'; b.textContent=label; b.addEventListener('click',action); return b; }
+function tab(id) { document.querySelectorAll('main > section').forEach(s => s.hidden=s.id!==id); document.querySelectorAll('[data-tab]').forEach(b => b.setAttribute('aria-pressed',String(b.dataset.tab===id))); }
+document.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click',()=>tab(b.dataset.tab)));
+text('project',data.project);
+text('stats',`${Object.keys(data.fingerprints).length} files · ${data.nodes.length} nodes · ${data.edges.length} relationships · ${data.analyzed_at}`);
+text('freshness',data.changes.length ? `Saved analysis is stale: ${data.changes.length} changed, new or deleted files. Run /onboard refresh.` : 'Matches the workspace when this dashboard was opened. Reopen to check for changes.');
+if(data.changes.length) $('freshness').className='warning';
+text('guide-text',data.guide); text('limits',data.limits);
+for(const name of data.layers) { const option=document.createElement('option'); option.value=name; option.textContent=name; $('layer').append(option); }
+function results() {
+  const query=$('search').value.toLowerCase(), group=$('layer').value;
+  const matches=data.nodes.filter(n => (n.name+' '+n.path).toLowerCase().includes(query) && (!group || (n.path.includes('/') ? n.path.split('/')[0] : 'Project root')===group));
+  $('results').replaceChildren(...matches.slice(0,100).map(n=>button(`${n.name} · ${n.kind}`,()=>select(n.id))));
+  text('result-count',`${matches.length} matches${matches.length>100 ? ' · showing first 100; refine your search' : ''}`);
+}
+$('search').addEventListener('input',results); $('layer').addEventListener('change',results);
+function element(name,attrs) { const el=document.createElementNS('http://www.w3.org/2000/svg',name); for(const [key,value] of Object.entries(attrs)) el.setAttribute(key,String(value)); return el; }
+function select(id) {
+  selected=byId.get(id); if(!selected) return;
+  text('selection',selected.name); text('location',`${selected.path} ${selected.line ? '· '+selected.line : ''} · ${selected.kind}`);
+  const edges=adjacent.get(id)||[], neighbors=[...new Set(edges.flatMap(e=>[e.source,e.target]))].filter(n=>n!==id && byId.has(n)).slice(0,40);
+  $('graph').replaceChildren(); const points=new Map([[id,[400,210]]]);
+  neighbors.forEach((n,i)=>{ const a=i*2*Math.PI/neighbors.length; points.set(n,[400+290*Math.cos(a),210+160*Math.sin(a)]); });
+  for(const n of neighbors) { const [x,y]=points.get(n); $('graph').append(element('line',{x1:400,y1:210,x2:x,y2:y})); }
+  for(const [nodeId,[x,y]] of points) {
+    const n=byId.get(nodeId), g=element('g',{tabindex:0,role:'button','aria-label':n.name});
+    g.append(element('circle',{cx:x,cy:y,r:nodeId===id ? 15 : 8}));
+    const title=element('title',{}); title.textContent=n.name+' — '+n.path; g.append(title);
+    const label=element('text',{x,y:y+25,'text-anchor':'middle'}); label.textContent=n.name.length>25 ? n.name.slice(0,22)+'…' : n.name; g.append(label);
+    g.addEventListener('click',()=>select(nodeId)); g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();select(nodeId);}}); $('graph').append(g);
+  }
+  $('relationships').replaceChildren(...edges.slice(0,100).map(e=>{
+    const other=e.source===id ? e.target : e.source;
+    return button(`${e.source===id ? '→' : '←'} ${e.type}: ${byId.get(other)?.name||other}`,()=>select(other));
+  }));
+}
+$('impact').addEventListener('click',()=>{
+  if(!selected) return;
+  let frontier=new Set(data.nodes.filter(n=>n.path===selected.path).map(n=>n.id)), seen=new Set(frontier);
+  for(let hop=0;hop<4;hop++) { const next=new Set(); for(const id of frontier) for(const caller of incoming.get(id)||[]) if(!seen.has(caller)){seen.add(caller);next.add(caller);} frontier=next; }
+  const affected=[...seen].map(id=>byId.get(id)).filter(Boolean);
+  $('relationships').replaceChildren(); const note=document.createElement('p'); note.textContent=`Potential impact: ${affected.length} nodes within 4 incoming dependency hops of this file; showing up to 100. Dynamic dependencies may be missing.`; $('relationships').append(note,...affected.slice(0,100).map(n=>button(`${n.name} — ${n.path}`,()=>select(n.id))));
+});
+function tour() { const path=data.tour[tourIndex]; text('tour-title',`Stop ${tourIndex+1} of ${data.tour.length}`); text('tour-path',path||'No tour available'); $('previous').disabled=tourIndex===0; $('next').disabled=tourIndex>=data.tour.length-1; $('tour-symbols').replaceChildren(...data.nodes.filter(n=>n.path===path).slice(0,30).map(n=>button(n.name,()=>{tab('map');select(n.id);}))); }
+$('previous').addEventListener('click',()=>{tourIndex--;tour();}); $('next').addEventListener('click',()=>{tourIndex++;tour();}); $('tour-map').addEventListener('click',()=>{tab('map');select('file:'+data.tour[tourIndex]);});
+$('prepare').addEventListener('click',()=>{ $('ask-command').value='/onboard ask '+$('question').value.replace(/\s+/g,' ').trim(); $('ask-command').focus(); $('ask-command').select(); });
+results(); tour(); select(data.hotspots[0]||data.nodes[0]?.id);
+</script>
+</body>
+</html>

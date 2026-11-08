@@ -80,6 +80,9 @@ jobs:
           novacode_cli/agents/browser_mode.py
           novacode_cli/config/browser_mode.py
           novacode_cli/commands/browser_use_handler.py
+          novacode_cli/commands/onboard_handler.py
+          novacode_cli/project_onboard.py
+          tests/test_project_onboard.py
           novacode_cli/tui/browser_settings_screen.py
           novacode_cli/agents/caveman_support.py
           novacode_cli/agents/prime.py
@@ -126,7 +129,8 @@ jobs:
         run: uv run --no-sync python scripts/verify_mcp_code_mode.py
       - name: Run offline regression tests
         run: >-
-          uv run --no-sync pytest -q --tb=short --junitxml=test-results/regression.xml
+          uv run --no-sync pytest -v --tb=short --junitxml=test-results/regression.xml
+          tests/test_project_onboard.py
           tests/test_release_version.py
           tests/test_prime.py
           tests/test_prime_records.py

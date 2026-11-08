@@ -520,6 +520,9 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
         "_run_redirect", "stop the running task and do this instead (Esc with text in the box)"
     ),
     "init": SlashCommand("_run_init", "generate NOVA.md from the codebase"),
+    "onboard": SlashCommand(
+        "_run_onboard", "understand this project: code map, tours, Q&A and change impact"
+    ),
     "model": SlashCommand(
         "_run_model",
         "configure chat, subagent, and decision models",
@@ -13100,6 +13103,14 @@ class NovaApp(App):
         self._log(t, transcript=True)
         await self._stream_prompt(skill.pinned_prompt or skill.prompt)
         return True
+
+    async def _run_onboard(self, text: str) -> None:
+        """Show transient progress while the shared command maps the workspace."""
+        self._set_status("reading project map…")
+        try:
+            await self._passthrough_command(text)
+        finally:
+            self._set_status("ready")
 
     async def _passthrough_command(self, text: str) -> None:
         """Run a print/toggle-only legacy slash command and show its output.
