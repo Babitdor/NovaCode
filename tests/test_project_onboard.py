@@ -168,6 +168,23 @@ async def test_parser_timeout_kills_process_without_publishing(
     assert not (project / ".nova").exists()
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows DOS short-path aliases")
+async def test_parser_preserves_edges_with_short_temp_paths(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import ctypes
+
+    with onboard.tempfile.TemporaryDirectory(prefix="nova-long-path-test-") as temporary:
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = ctypes.windll.kernel32.GetShortPathNameW(temporary, buffer, len(buffer))
+        if not length or buffer.value.lower() == temporary.lower():
+            pytest.skip("Short path aliases are disabled on this volume")
+        monkeypatch.setattr(onboard.tempfile, "tempdir", buffer.value)
+        graph = await onboard.analyze(project)
+        assert any(edge["type"] == "calls" for edge in graph["edges"]), graph
+        assert "main()" in onboard.impact(graph, "greet")
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows reparse-point boundary")
 def test_windows_junction_storage_is_rejected(project: Path, tmp_path: Path) -> None:
     import _winapi

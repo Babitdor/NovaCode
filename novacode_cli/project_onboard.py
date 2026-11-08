@@ -75,6 +75,7 @@ _WORKER = """
 import json, pathlib, sys
 from graphify.extract import extract
 root, output = map(pathlib.Path, sys.argv[1:])
+root = root.resolve()
 paths = [root / p for p in json.loads((root / 'inputs.json').read_text())]
 result = extract(paths, cache_root=root, parallel=False)
 output.write_text(json.dumps(result), encoding='utf-8')
