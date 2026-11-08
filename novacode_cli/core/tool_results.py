@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -84,7 +85,16 @@ class ReadCapture:
 
         raw = page.file_data["content"]
         rendered = format_content_with_line_numbers(raw, start_line=page.start_line)
-        if not isinstance(display, str) or rendered not in display:
+        complete = isinstance(display, str) and rendered in display
+        if not complete and isinstance(display, str) and page.end_line is not None:
+            # Some installed SDKs emit a status header and verbatim rows, without gutters.
+            total = f" of {page.total_lines}" if page.total_lines is not None else r"(?: of \d+)?"
+            header = re.search(
+                rf"(?m)^@@ lines {page.start_line}-{page.end_line}{total}(?: \| [^\n]*)? @@\n",
+                display,
+            )
+            complete = header is not None and display[header.end() :] == raw.removesuffix("\n")
+        if not complete:
             message = "Read output was transformed or truncated; request a smaller offset/limit."
             raise ValueError(message)
         return raw

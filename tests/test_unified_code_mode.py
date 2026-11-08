@@ -313,6 +313,37 @@ def test_stacked_diagnostics_preserve_structured_tool_data():
     assert CodeModeMiddleware._result_value(repeated) == {"count": 42}
 
 
+@pytest.mark.parametrize(
+    ("display", "valid"),
+    [
+        ("@@ lines 1-2 of 2 @@\n@@ literal header @@\nbody", True),
+        ("[notice]\n@@ lines 1-2 of 2 @@\n@@ literal header @@\nbody", True),
+        ("@@ lines 1-1 of 2 | next offset 1 @@\n@@ literal header @@", False),
+        ("@@ lines 1-2 of 2 @@\nREDACTED", False),
+    ],
+)
+def test_header_renderers_require_the_complete_raw_page(display, valid):
+    from deepagents.backends.protocol import ReadResult
+
+    from novacode_cli.core.tool_results import ReadCapture
+
+    raw = "@@ literal header @@\nbody\n"
+    capture = ReadCapture()
+    capture.record(
+        ReadResult(
+            file_data={"content": raw, "encoding": "utf-8"},
+            start_line=1,
+            end_line=2,
+            total_lines=2,
+        )
+    )
+    if valid:
+        assert capture.source_text(display) == raw
+    else:
+        with pytest.raises(ValueError, match="smaller"):
+            capture.source_text(display)
+
+
 async def test_truncated_reads_can_be_inspected_without_repeating_host_calls():
     calls = []
 
