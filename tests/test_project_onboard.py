@@ -43,6 +43,20 @@ def context(root: Path, args: str | None = None, **kwargs: Any) -> CommandContex
     )
 
 
+def test_evidence_selection_avoids_changelog_sections_crowding_out_sources() -> None:
+    nodes = [
+        {"id": f"change-{i}", "name": "Changes", "path": "CHANGELOG.md", "kind": "document"}
+        for i in range(60)
+    ]
+    sources = ["README.md", "pkg/graph.py", "pkg/session.py"]
+    nodes.extend({"id": path, "name": path, "path": path, "kind": "file"} for path in sources)
+    graph = {"nodes": nodes, "tour": sources[:2], "hotspots": [sources[2]]}
+    selected = onboard.select_nodes(graph, "")
+    assert [node["path"] for node in selected[:3]] == sources
+    assert sum(node["path"] == "CHANGELOG.md" for node in selected) <= 2
+    assert onboard.select_nodes(graph, "session")[0]["path"] == "pkg/session.py"
+
+
 async def test_real_parsers_persist_graph_and_trace_callers(project: Path) -> None:
     graph = await onboard.analyze(project)
     assert onboard.load_graph(project) == graph
@@ -248,7 +262,7 @@ async def test_command_registered_and_build_returns_normal_agent_prompt(
     commands = CommandRegistry()
     register_commands(commands)
     result = await commands.get("onboard")(context(project))
-    assert "normal file tools and permissions" in result
+    assert "configured tools and existing permissions" in result
     assert ".nova/onboard/guide.md" in result
     assert artifacts.list()[0].type == "dashboard"
     assert "__NOVA_ONBOARD_DATA__" not in artifacts.list()[0].content

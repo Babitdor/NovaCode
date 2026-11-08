@@ -48,6 +48,14 @@ including explicit @agent requests. tools.describe('task') lists the current ros
 eval accepts statements and top-level await; its final expression is the selected result.
 Variables persist within this conversation. Keep intermediate data in JavaScript;
 return a compact synthesis or explicitly print selected output with console.log.
+Read text with tools.call('read_file', {file_path:'/exact/discovered/path', offset:0, limit:60}).
+Use exact workspace virtual paths from discovery; do not reconstruct Windows host paths.
+On file-not-found, use glob/ls to discover the correct path before retrying.
+Keep large read batches in variables and return small passages; truncated output is incomplete
+evidence. Inspect smaller slices from those variables before claiming you reviewed the source.
+For Markdown edits, use quoted strings with newline escapes or arrays joined with '\\n';
+backticks inside JavaScript template literals must be escaped exactly once. Never replay a
+whole script after a runtime failure without checking which side effects already completed.
 MCPCode is a compatibility async-function body using the same guarded runtime.
 Human approvals pause the live script. Never retry completed side effects after failure.
 Interaction, planning, workspace transitions and media fallbacks remain direct tools.
@@ -69,13 +77,29 @@ def code_mode_surface(tools: list) -> list:
             for t in tools
             if (t.get("name") if isinstance(t, dict) else t.name) not in {"eval", "MCPCode"}
         ]
-    return [
+    surface = [
         t
         for t in tools
         if (t.get("name") if isinstance(t, dict) else t.name)
         in (DIRECT_ONLY_TOOLS - {"MCPTool", "task"})
         | {"read_file", "search_tools"}
         | SEARCH_VARIANTS
+    ]
+    # Keep the host tool intact; only its model-facing media exception is advertised.
+    media_description = (
+        "Media fallback only: read an image or PDF through the direct multimodal path. "
+        "For source code, Markdown and all other text files, use eval with "
+        "await tools.call('read_file', {file_path:'/exact/path', offset:0, limit:60})."
+    )
+    return [
+        (
+            {**t, "description": media_description}
+            if isinstance(t, dict)
+            else t.model_copy(update={"description": media_description})
+        )
+        if (t.get("name") if isinstance(t, dict) else t.name) == "read_file"
+        else t
+        for t in surface
     ]
 
 
@@ -352,7 +376,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         except Exception as exc:
             return self._message(request, f"MCPCode failed: {type(exc).__name__}: {exc}"[:4000])
 
-    async def _execute(
+    async def _execute(  # noqa: PLR0915 -- guarded dispatch and bounded result reporting.
         self, request: ToolCallRequest, handler: Callable, code: str
     ) -> ToolMessage | Command:
         from novacode_cli.agents.code_runtime import run_script
@@ -417,6 +441,11 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                 "calls": calls,
                 "failed_calls": failures,
             }
+            if truncated:
+                body["notice"] = (
+                    "Output is incomplete. Inspect smaller slices of your saved interpreter "
+                    "variables; do not claim truncated source was reviewed or replay side effects."
+                )
             warning = self._state_warnings.pop(_resolve_thread_id(self._fallback_thread_id), None)
             if warning is not None:
                 body["state_warning"] = warning
@@ -425,6 +454,14 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                 return Command(update={**updates, "messages": [message]})
             return message  # noqa: TRY300 -- same error boundary covers output serialization.
         except Exception as exc:
+            hint = (
+                "JavaScript syntax error with no host tool calls. For Markdown, prefer quoted "
+                "strings or an array of lines joined with '\\n'; escape template backticks "
+                "exactly once."
+                if calls == 0 and "SyntaxError" in str(exc)
+                else "Inspect completed calls before retrying; "
+                "external side effects are not rolled back."
+            )
             message = self._message(
                 request,
                 json.dumps(
@@ -432,6 +469,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                         "error": f"{type(exc).__name__}: {exc}"[:4000],
                         "calls": calls,
                         "failed_calls": failures,
+                        "hint": hint,
                     }
                 ),
             )
@@ -606,6 +644,16 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         if result.status == "error":
             raise ValueError(str(result.content))
         value = self._result_value(result)
+        if target.name in {"read_file", "write_file", "edit_file", "ls", "glob", "grep"} and (
+            isinstance(value, str) and value.startswith("Error:")
+        ):
+            hint = (
+                " Discover the exact virtual path with glob/ls before retrying; "
+                "do not guess a host path."
+                if "not found" in value.lower()
+                else ""
+            )
+            raise ValueError(value + hint)
         if isinstance(value, str) and value.startswith("[MCP error]"):
             raise ValueError(value)
         return value

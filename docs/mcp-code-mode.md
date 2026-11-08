@@ -25,6 +25,11 @@ fallbacks remain directly available. Plan Mode and Browser Mode retain their
 restricted direct-tool paths. Disabling Code Mode restores ordinary tool exposure
 and removes both interpreter entry points and their instructions.
 
+The direct `read_file` schema is advertised as a media fallback. Read source code,
+Markdown and other text through `tools.call('read_file', ...)` inside `eval`, using
+exact workspace virtual paths from discovery (for example `/pkg/graph.py`). On a
+missing file, discover the path with `glob` or `ls` before retrying.
+
 ## JavaScript API
 
 `eval` accepts JavaScript statements and expressions, including top-level `await`.
@@ -71,6 +76,15 @@ function body with `return` and retains its JSON response envelope: `result`,
 `truncated`, `calls` and `failed_calls`. `eval` uses the same envelope, with the
 interpreter's displayed final-expression result. Explicit console output is
 returned alongside that value. Failed bridge calls are counted even when caught.
+Filesystem tools' textual `Error:` results also fail the nested call; a script
+cannot silently proceed past a failed edit and report a successful update.
+
+Keep large source batches in variables and select small passages to return.
+Truncated results include a recovery notice: inspect smaller slices of those
+variables before making source claims, without replaying completed operations.
+For Markdown writes, arrays of quoted lines joined with `"\n"` avoid nesting
+Markdown backticks inside JavaScript template literals. Syntax failures include
+quoting guidance; Nova does not rewrite or automatically retry the script.
 
 ## State and permissions
 

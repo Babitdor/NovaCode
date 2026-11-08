@@ -21,6 +21,8 @@ MAX_FILES = 5000
 MAX_FILE_BYTES = 1024 * 1024
 MAX_TOTAL_BYTES = 64 * 1024 * 1024
 MAX_GRAPH_BYTES = 32 * 1024 * 1024
+MAX_EVIDENCE_NODES = 40
+MAX_EVIDENCE_NODES_PER_FILE = 2
 PARSER_TIMEOUT_SECONDS = 120
 MAX_PARSER_TIMEOUT_SECONDS = 600
 _SKIP = frozenset(
@@ -446,14 +448,33 @@ def guide(graph: dict[str, Any]) -> str:
 
 
 def select_nodes(graph: dict[str, Any], query: str) -> list[dict[str, Any]]:
-    """Bound graph context to symbols relevant to a question or path."""
+    """Select diverse source evidence instead of a parser's first document sections."""
     terms = query.lower().split()
-    return sorted(
+    priorities = dict.fromkeys(
+        [
+            *graph["tour"],
+            *(node["path"] for node in graph["nodes"] if node["id"] in graph["hotspots"]),
+        ]
+    )
+    rank = {path: index for index, path in enumerate(priorities)}
+    candidates = sorted(
         graph["nodes"],
         key=lambda node: (
-            -sum(term in (node["name"] + " " + node["path"]).lower() for term in terms)
+            -sum(term in (node["name"] + " " + node["path"]).lower() for term in terms),
+            rank.get(node["path"], len(rank)),
+            node["kind"] != "file",
         ),
-    )[:40]
+    )
+    selected = []
+    counts: Counter[str] = Counter()
+    for node in candidates:
+        if counts[node["path"]] >= MAX_EVIDENCE_NODES_PER_FILE:
+            continue
+        selected.append(node)
+        counts[node["path"]] += 1
+        if len(selected) == MAX_EVIDENCE_NODES:
+            break
+    return selected
 
 
 def impact(graph: dict[str, Any], query: str) -> str:

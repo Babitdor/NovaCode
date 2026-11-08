@@ -110,6 +110,133 @@ async def test_host_bridge_survives_multiple_snippets_in_one_turn():
     assert calls == [1, 2]
 
 
+async def test_truncated_reads_can_be_inspected_without_repeating_host_calls():
+    calls = []
+
+    @tool
+    def read_file(file_path: str) -> str:
+        """Return source text."""
+        calls.append(file_path)
+        return "SOURCE" * 3000
+
+    get_policy().tool_tiers["read_file"] = "allow"
+    graph = scripted(
+        [
+            (
+                "eval",
+                "var source = await tools.call('read_file', {file_path:'/pkg/graph.py'}); source",
+            ),
+            ("eval", "source.slice(-12)"),
+        ],
+        tools=[read_file],
+        middleware=[CodeModeMiddleware()],
+        checkpointer=InMemorySaver(),
+    )
+    first = json.loads((await invoke(graph)).content)
+    assert first["truncated"] is True
+    assert "incomplete" in first["notice"]
+    assert json.loads((await invoke(graph)).content)["result"] == "SOURCESOURCE"
+    assert calls == ["/pkg/graph.py"]
+
+
+async def test_markdown_syntax_failure_is_safe_and_quoted_lines_can_be_written():
+    writes = []
+
+    @tool
+    def write_file(file_path: str, content: str) -> str:
+        """Save a guide."""
+        writes.append((file_path, content))
+        return "saved"
+
+    get_policy().tool_tiers["write_file"] = "allow"
+    lines = ["# Guide", "Read `pkg/graph.py`.", "Windows path: B:\\project"]
+    graph = scripted(
+        [
+            ("eval", "const bad = `Read `pkg/graph.py` here`;"),
+            (
+                "eval",
+                "await tools.call('write_file', {file_path:'/.nova/onboard/guide.md', "
+                f"content:{json.dumps(lines)}.join('\\n')}})",
+            ),
+        ],
+        tools=[write_file],
+        middleware=[CodeModeMiddleware()],
+    )
+    failure = json.loads((await invoke(graph)).content)
+    assert "SyntaxError" in failure["error"]
+    assert failure["calls"] == 0
+    assert "no host tool calls" in failure["hint"]
+    assert writes == []
+    assert (await invoke(graph)).status == "success"
+    assert writes == [("/.nova/onboard/guide.md", "\n".join(lines))]
+
+
+@pytest.mark.parametrize("name", ["read_file", "edit_file"])
+async def test_filesystem_error_text_cannot_be_reported_as_a_successful_update(name):
+    @tool(name)
+    def failing_file(file_path: str) -> str:
+        """Return the backend's missing-file error."""
+        return f"Error: File '{file_path}' not found"
+
+    get_policy().tool_tiers[name] = "allow"
+    graph = scripted(
+        [("eval", f"await tools.call('{name}', {{file_path:'/nnovaagents/graph.py'}}); 'updated'")],
+        tools=[failing_file],
+        middleware=[CodeModeMiddleware()],
+    )
+    result = await invoke(graph)
+    body = json.loads(result.content)
+    assert result.status == "error"
+    assert body["failed_calls"] == 1
+    assert "exact virtual path" in body["error"]
+    assert "result" not in body
+
+
+async def test_runtime_syntax_error_does_not_claim_an_earlier_write_was_skipped():
+    writes = []
+
+    @tool
+    def write_file(file_path: str) -> str:
+        """Record an external write."""
+        writes.append(file_path)
+        return "saved"
+
+    get_policy().tool_tiers["write_file"] = "allow"
+    graph = scripted(
+        [
+            (
+                "eval",
+                "await tools.call('write_file', {file_path:'/guide.md'}); "
+                "throw new SyntaxError('runtime error after write');",
+            )
+        ],
+        tools=[write_file],
+        middleware=[CodeModeMiddleware()],
+    )
+    body = json.loads((await invoke(graph)).content)
+    assert body["calls"] == 1
+    assert "not rolled back" in body["hint"]
+    assert "no host tool calls" not in body["hint"]
+    assert writes == ["/guide.md"]
+
+
+def test_media_surface_does_not_advertise_ordinary_text_reads_or_mutate_host_tool():
+    from novacode_cli.agents.code_mode import code_mode_surface
+
+    @tool
+    def read_file(file_path: str) -> str:
+        """Read ordinary source files."""
+        return file_path
+
+    original = read_file.description
+    for host in (read_file, {"name": "read_file", "description": original}):
+        visible = code_mode_surface([host])[0]
+        description = visible["description"] if isinstance(visible, dict) else visible.description
+        assert description.startswith("Media fallback only")
+        assert "await tools.call('read_file'" in description
+        assert (host["description"] if isinstance(host, dict) else host.description) == original
+
+
 async def test_parallel_interpreter_calls_share_state_without_collisions():
     calls = []
     active = maximum = 0
@@ -594,6 +721,11 @@ def test_search_and_provider_fallback_cannot_restore_ordinary_schemas(provider):
         """Execute a command."""
         return command
 
+    @tool
+    def read_file(file_path: str) -> str:
+        """Read ordinary source files."""
+        return file_path
+
     mode = CodeModeMiddleware()
     search = ToolSearchMiddleware()
     search._frequent = {"shell"}
@@ -601,7 +733,7 @@ def test_search_and_provider_fallback_cannot_restore_ordinary_schemas(provider):
         responses=["ok"], metadata={"nova_provider": provider, "nova_model": "test"}
     )
     request = ModelRequest(
-        model=model, state={}, messages=[], tools=[*mode.tools, shell, *search.tools]
+        model=model, state={}, messages=[], tools=[*mode.tools, shell, read_file, *search.tools]
     )
     for portable in (False, True):
         if portable:
@@ -610,4 +742,6 @@ def test_search_and_provider_fallback_cannot_restore_ordinary_schemas(provider):
         names = {t.name if hasattr(t, "name") else t.get("name") for t in bound.tools}
         assert "eval" in names
         assert "shell" not in names
+        media = next(t for t in bound.tools if getattr(t, "name", None) == "read_file")
+        assert media.description.startswith("Media fallback only")
         assert "primary control surface" in bound.system_message.text
