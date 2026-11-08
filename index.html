@@ -19,7 +19,7 @@
 <link rel="preload" as="font" type="font/woff2" href="assets/fonts/geist-mono-var.woff2" crossorigin>
 <link rel="preload" as="image" href="assets/mascots/nova-reactions.webp">
 <script type="application/ld+json">
-{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Nova","alternateName":"NovaCode","applicationCategory":"DeveloperApplication","softwareVersion":"1.1.6","operatingSystem":"macOS, Linux, Windows","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"license":"https://opensource.org/licenses/MIT","codeRepository":"https://github.com/Babitdor/NovaCode","description":"An open-source terminal coding agent with readable Markdown memory and approval controls."}
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Nova","alternateName":"NovaCode","applicationCategory":"DeveloperApplication","softwareVersion":"1.2.1","operatingSystem":"macOS, Linux, Windows","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"license":"https://opensource.org/licenses/MIT","codeRepository":"https://github.com/Babitdor/NovaCode","description":"An open-source terminal coding agent with readable Markdown memory and approval controls."}
 </script>
 <script>
   document.documentElement.classList.add("js");
@@ -372,7 +372,7 @@ code,.path{
   border-radius:2px;padding:11px 12px;font:400 12.5px/1.5 var(--f-mono);
   overflow-x:auto;white-space:nowrap;
 }
-.cmd code{border:0;background:none;padding:0;font-size:inherit}
+.cmd code{min-width:0;flex:1;overflow-x:auto;border:0;background:none;padding:0;font-size:inherit}
 .copy{
   position:relative;isolation:isolate;overflow:hidden;min-height:26px;
   margin-left:auto;flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;
@@ -925,7 +925,7 @@ html[data-view="agent"] .page-progress{display:none !important}
 
   <section class="hero" aria-labelledby="what">
     <div class="wrap">
-    <div class="zones" aria-hidden="true" data-par="zones"><span>cover sheet</span><span>novacode &middot; rev 1.1.6</span><span>scale 1:1</span></div>
+    <div class="zones" aria-hidden="true" data-par="zones"><span>cover sheet</span><span>novacode &middot; rev 1.2.1</span><span>scale 1:1</span></div>
     <div class="hero-grid">
       <div>
         <section class="agent-only agent-doc" aria-label="Agent-readable hero and page summary">
@@ -941,8 +941,9 @@ html[data-view="agent"] .page-progress{display:none !important}
           </ul>
           <h3>Install</h3>
           <ul>
-            <li><strong>macOS/Linux (installed copy):</strong> <code>uv tool install "novacode-cli @ git+https://github.com/Babitdor/NovaCode.git"</code></li>
-            <li><strong>Windows / from source:</strong> <code>git clone https://github.com/Babitdor/NovaCode.git; cd NovaCode; uv sync</code></li>
+            <li><strong>Windows CMD, macOS and Linux:</strong> <code>uv tool install --python 3.11 novacode-cli</code> installs the latest release from <a href="https://pypi.org/project/novacode-cli/">PyPI</a>.</li>
+            <li><strong>Common extras:</strong> <code>uv tool install --python 3.11 --force "novacode-cli[browser,voice,agents-server,server,bedrock,computer]"</code>. Keep all wanted extras when reinstalling; external runtimes and voice models may need separate setup.</li>
+            <li><strong>Upgrade:</strong> <code>uv tool upgrade novacode-cli</code>. To replace a Git-based installation, use <code>uv tool install --python 3.11 --force novacode-cli</code>.</li>
             <li><strong>Run:</strong> <code>nova</code>. Note: an installed copy is not a development checkout; to work on Nova itself use the source checkout (<code>uv run nova</code> as documented).</li>
           </ul>
           <h3>Workflow</h3>
@@ -1002,7 +1003,7 @@ html[data-view="agent"] .page-progress{display:none !important}
       <dl class="tb" data-par="tb">
         <dt>project</dt><dd>NovaCode</dd>
         <dt>sheet</dt><dd>00 / 03</dd>
-        <dt>revision</dt><dd>1.1.6</dd>
+        <dt>revision</dt><dd>1.2.1</dd>
         <dt>licence</dt><dd>MIT</dd>
         <dt>runtime</dt><dd>Python 3.11+</dd>
         <dt>drawn</dt><dd>in the terminal</dd>
@@ -1184,12 +1185,12 @@ html[data-view="agent"] .page-progress{display:none !important}
     </div>
     <div class="stack" data-fade>
       <div>
-        <p class="say">macOS and Linux &middot; installed copy</p>
-        <div class="cmd"><code>uv tool install "novacode-cli @ git+https://github.com/Babitdor/NovaCode.git"</code><button class="copy" data-copy='uv tool install "novacode-cli @ git+https://github.com/Babitdor/NovaCode.git"'>Copy</button></div>
+        <p class="say">Windows, macOS and Linux &middot; PyPI release</p>
+        <div class="cmd"><code>uv tool install --python 3.11 novacode-cli</code><button class="copy" data-copy="uv tool install --python 3.11 novacode-cli">Copy</button></div>
       </div>
       <div>
-        <p class="say">windows &middot; from source</p>
-        <div class="cmd"><code>git clone https://github.com/Babitdor/NovaCode.git; cd NovaCode; uv sync</code><button class="copy" data-copy="git clone https://github.com/Babitdor/NovaCode.git; cd NovaCode; uv sync">Copy</button></div>
+        <p class="say">Optional &middot; browser, voice, agents, server, Bedrock and computer</p>
+        <div class="cmd"><code>uv tool install --python 3.11 --force "novacode-cli[browser,voice,agents-server,server,bedrock,computer]"</code><button class="copy" data-copy='uv tool install --python 3.11 --force "novacode-cli[browser,voice,agents-server,server,bedrock,computer]"'>Copy</button></div>
       </div>
       <div>
         <p class="say">any platform &middot; then run</p>
@@ -1197,8 +1198,8 @@ html[data-view="agent"] .page-progress{display:none !important}
       </div>
     </div>
     <div class="split" style="margin-top:clamp(24px,4vw,34px)">
-      <p class="body">Nova is open source under the MIT license. Choose a hosted model provider or configure a local Ollama model.</p>
-      <p class="tol">&plusmn; An installed copy is not a development checkout. If you want to change Nova, use the clone path and <code style="background:none;border:0;color:inherit;padding:0">uv run nova</code>, or your edits will not load.</p>
+      <p class="body">Release <a href="https://pypi.org/project/novacode-cli/1.2.1/">1.2.1 is on PyPI</a>. Upgrade with <code>uv tool upgrade novacode-cli</code>. Choose a hosted model provider or configure a local Ollama model.</p>
+      <p class="tol">&plusmn; Extras install Python dependencies; voice models, browser binaries and computer runtimes may need separate setup. Keep all wanted extras when reinstalling. For changes to Nova itself, follow the <a href="docs/#page-installation">source checkout instructions</a> and use <code>uv run nova</code>.</p>
     </div>
   </section>
 
@@ -1289,7 +1290,7 @@ html[data-view="agent"] .page-progress{display:none !important}
       <div class="title-block">
         <div>project<b>NovaCode</b></div>
         <div>sheet<b>00 of 03</b></div>
-        <div>revision<b>1.1.6</b></div>
+        <div>revision<b>1.2.1</b></div>
         <div>scale<b>1:1</b></div>
         <div>drawn<b>in the terminal</b></div>
         <div>memory<b>index ready</b></div>

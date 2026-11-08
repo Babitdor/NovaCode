@@ -494,7 +494,7 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
     </nav>
 
     <main id="main" class="docs-content">
-      <div class="zones" aria-hidden="true"><span>documentation sheet</span><span>novacode &middot; rev 1.1.6</span><span>scale 1:1</span></div>
+      <div class="zones" aria-hidden="true"><span>documentation sheet</span><span>novacode &middot; rev 1.2.1</span><span>scale 1:1</span></div>
       <h1 class="sr-only">NovaCode documentation</h1>
       <section class="agent-docs-note agent-only" aria-label="Agent-readable documentation index">
         <h2>Agent view — documentation (all topics, linear)</h2>
@@ -520,7 +520,7 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
           </div>
           <div class="callout rv">
             <svg class="icon" viewBox="0 0 256 256" fill="currentColor"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm-8-80V80a8,8,0,0,1,16,0v48a8,8,0,0,1-16,0Zm20,36a12,12,0,1,1-12-12A12,12,0,0,1,140,172Z"/></svg>
-            <p><b>Version 1.1.6 &middot; MIT licensed &middot; Python 3.11+.</b> Runs locally, brings your
+            <p><b>PyPI release 1.2.1 &middot; MIT licensed &middot; Python 3.11+.</b> Runs locally, brings your
               own model. NovaCode does not retrain your model. What changes are prompts, skills, and
               thresholds on disk, readable and deletable.</p>
           </div>
@@ -760,32 +760,41 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:13">cat README.md</span></p>
-            <h2 class="page-title">Three commands and you are <b>running</b>.</h2>
-            <p class="lede">Python 3.11 or newer. The recommended install is a <code>uv tool</code> install — once installed, the command is <code>nova</code>. For local development you <code>git clone</code>, sync, and use <code>uv run nova</code>.</p>
+            <h2 class="page-title">Install from PyPI and start <b>coding</b>.</h2>
+            <p class="lede">Install the latest release from <a href="https://pypi.org/project/novacode-cli/">PyPI</a> with <code>uv</code>, then run <code>nova</code> from your project directory. Release <b>1.2.1</b> is published. These commands work in Windows CMD, macOS and Linux; uv can install Python 3.11 for the tool. Install <a href="https://docs.astral.sh/uv/getting-started/installation/">uv</a> first if needed. Use the source tab only when developing Nova itself.</p>
           </div>
           <div class="install-box win rv">
             <div class="tabs" role="tablist" aria-label="Install method">
               <button class="tab" role="tab" aria-selected="true" id="t-unix" aria-controls="p-unix">macOS and Linux</button>
-              <button class="tab" role="tab" aria-selected="false" id="t-win" aria-controls="p-win" tabindex="-1">Windows</button>
-              <button class="tab" role="tab" aria-selected="false" id="t-tool" aria-controls="p-tool" tabindex="-1">uv tool</button>
+              <button class="tab" role="tab" aria-selected="false" id="t-win" aria-controls="p-win" tabindex="-1">Windows CMD</button>
+              <button class="tab" role="tab" aria-selected="false" id="t-tool" aria-controls="p-tool" tabindex="-1">From source</button>
             </div>
             <div class="pane on" id="p-unix" role="tabpanel" aria-labelledby="t-unix">
-              <div class="cmd"><code>git clone https://github.com/Babitdor/NovaCode.git</code><button class="copy" type="button" data-copy="git clone https://github.com/Babitdor/NovaCode.git"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
-              <div class="cmd"><code>cd NovaCode &amp;&amp; uv sync</code><button class="copy" type="button" data-copy="cd NovaCode && uv sync"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
-              <div class="cmd"><code>uv run nova</code><button class="copy" type="button" data-copy="uv run nova"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
-                          <p class="install-note">For an installed copy (not development), install as a <code>uv tool</code> — the command is <code>nova</code>.</p>
-            </div>
-            <div class="pane" id="p-win" role="tabpanel" aria-labelledby="t-win">
-              <div class="cmd"><code>git clone https://github.com/Babitdor/NovaCode.git</code><button class="copy" type="button" data-copy="git clone https://github.com/Babitdor/NovaCode.git"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
-              <div class="cmd"><code>cd NovaCode; uv sync</code><button class="copy" type="button" data-copy="cd NovaCode; uv sync"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
-              <div class="cmd"><code>uv run nova</code><button class="copy" type="button" data-copy="uv run nova"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
-                          <p class="install-note">For an installed copy (not development), install as a <code>uv tool</code> — the command is <code>nova</code>.</p>
-            </div>
-            <div class="pane" id="p-tool" role="tabpanel" aria-labelledby="t-tool">
-              <div class="cmd"><code>uv tool install "novacode-cli @ git+https://github.com/Babitdor/NovaCode.git"</code><button class="copy" type="button" data-copy='uv tool install "novacode-cli @ git+https://github.com/Babitdor/NovaCode.git"'><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
+              <div class="cmd"><code>uv tool install --python 3.11 novacode-cli</code><button class="copy" type="button" data-copy="uv tool install --python 3.11 novacode-cli"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
               <div class="cmd"><code>nova</code><button class="copy" type="button" data-copy="nova"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
             </div>
+            <div class="pane" id="p-win" role="tabpanel" aria-labelledby="t-win">
+              <div class="cmd"><code>uv tool install --python 3.11 novacode-cli</code><button class="copy" type="button" data-copy="uv tool install --python 3.11 novacode-cli"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
+              <div class="cmd"><code>nova</code><button class="copy" type="button" data-copy="nova"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
+            </div>
+            <div class="pane" id="p-tool" role="tabpanel" aria-labelledby="t-tool">
+              <div class="cmd"><code>git clone https://github.com/Babitdor/NovaCode.git</code><button class="copy" type="button" data-copy="git clone https://github.com/Babitdor/NovaCode.git"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
+              <div class="cmd"><code>cd NovaCode</code><button class="copy" type="button" data-copy="cd NovaCode"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
+              <div class="cmd"><code>uv sync</code><button class="copy" type="button" data-copy="uv sync"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
+              <div class="cmd"><code>uv run nova</code><button class="copy" type="button" data-copy="uv run nova"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
+            </div>
           </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Extras and upgrades</h2>
+          <p class="body rv">To add the common optional features, reinstall the tool with every extra you want to keep. This changes the isolated Nova tool environment, not the Python environment in your project.</p>
+          <div class="install-box win rv">
+              <div class="cmd"><code>uv tool install --python 3.11 --force "novacode-cli[browser,voice,agents-server,server,bedrock,computer]"</code><button class="copy" type="button" data-copy="uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice,agents-server,server,bedrock,computer]&quot;"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
+              <div class="cmd"><code>uv tool upgrade novacode-cli</code><button class="copy" type="button" data-copy="uv tool upgrade novacode-cli"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
+          </div>
+          <p class="body rv">Upgrade an existing PyPI tool install with <code>uv tool upgrade novacode-cli</code>. To switch from a Git installation, run <code>uv tool install --python 3.11 --force novacode-cli</code>, adding any wanted extras. To pin this release, use <code>novacode-cli==1.2.1</code> or <code>"novacode-cli[voice,agents-server]==1.2.1"</code> in the install command.</p>
+          <p class="body rv">Voice models, browser binaries and external computer runtimes may need separate setup. The <a href="#page-extras" data-page="extras">extras reference</a> lists each option; installing every voice engine together is not verified on Windows.</p>
         </section>
 
         <section>
@@ -2661,29 +2670,21 @@ search_tools("*")            <span class="c"># browse the catalog</span></pre>
       <div class="page-section" id="page-extras">
         <section>
           <div class="head rv">
-            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:16">uv pip install</span></p>
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:15">uv tool install</span></p>
             <h2 class="page-title">Optional <b>dependencies</b>.</h2>
-            <p class="lede">The base install is kept lean. Heavier features are extras.</p>
+            <p class="lede">Choose extras in the isolated uv tool install. Keep all wanted extras in the same quoted requirement when reinstalling.</p>
           </div>
           <div class="codeblock win rv">
-            <pre><span class="c"># Real-browser automation: /browser-use and the LinkedIn scraper (~330 MB)</span>
-uv pip install novacode-cli[browser]
+            <pre><span class="c"># Common optional features (Windows CMD, macOS and Linux)</span>
+uv tool install --python 3.11 --force "novacode-cli[browser,voice,agents-server,server,bedrock,computer]"
 
-<span class="c"># The local server the async agents run on</span>
-uv pip install novacode-cli[agents-server]
+<span class="c"># Voice I/O with the optional Kokoro engine</span>
+uv tool install --python 3.11 --force "novacode-cli[voice,voice-kokoro]"
 
-<span class="c"># Voice I/O (STT + TTS + VAD) - ~2 GB extra</span>
-uv pip install novacode-cli[voice]
-
-<span class="c"># Orpheus TTS - very natural LLM-based local TTS</span>
-uv pip install novacode-cli[voice-orpheus]
-
-<span class="c"># Parakeet STT - NVIDIA local speech-to-text via sherpa-onnx</span>
-uv pip install novacode-cli[voice-parakeet]
-
-<span class="c"># Pocket TTS - lightweight local TTS</span>
-uv pip install novacode-cli[voice-pocket]</pre>
+<span class="c"># Source checkout only: keep all desired extra flags</span>
+uv sync --extra voice --extra voice-kokoro</pre>
           </div>
+          <p class="body rv">Extras install Python dependencies. Models download on first use; browser binaries, QEMU and guest images may need separate installation. <code>voice-orpheus</code> may need a C++ toolchain when installing from PyPI. <code>voice-whistle</code> and other native engines depend on platform support. The all-extras combination is not verified on Windows.</p>
         </section>
 
         <section>
@@ -2692,13 +2693,18 @@ uv pip install novacode-cli[voice-pocket]</pre>
             <table>
               <thead><tr><th>Extra</th><th>Packages</th><th>Description</th></tr></thead>
               <tbody>
-                <tr><td>browser</td><td class="desc">browser-use, playwright</td><td class="desc">Real-browser automation (~330 MB)</td></tr>
+                <tr><td>browser</td><td class="desc">browser-use, playwright</td><td class="desc">Legacy browser-use integrations; /browser-use itself uses MCP without this extra</td></tr>
                 <tr><td>agents-server</td><td class="desc">langgraph-cli[inmem]</td><td class="desc">Local LangGraph server for async agents</td></tr>
                 <tr><td>voice</td><td class="desc">faster-whisper, silero-vad, piper-tts, sounddevice</td><td class="desc">Voice I/O (~2 GB)</td></tr>
                 <tr><td>voice-orpheus</td><td class="desc">orpheus-cpp, llama-cpp-python</td><td class="desc">Orpheus LLM-based TTS</td></tr>
                 <tr><td>voice-parakeet</td><td class="desc">sherpa-onnx</td><td class="desc">NVIDIA Parakeet STT</td></tr>
                 <tr><td>voice-pocket</td><td class="desc">pocket-tts</td><td class="desc">Kyutai Pocket TTS</td></tr>
                 <tr><td>server</td><td class="desc">fastapi, uvicorn</td><td class="desc">Local HTTP server</td></tr>
+                <tr><td>bedrock</td><td class="desc">langchain-aws</td><td class="desc">Amazon Bedrock model provider</td></tr>
+                <tr><td>computer</td><td class="desc">cua</td><td class="desc">Computer-control integration; requires its external runtime</td></tr>
+                <tr><td>voice-whistle</td><td class="desc">cactus-needle</td><td class="desc">Local Whistle speech engine</td></tr>
+                <tr><td>voice-kokoro</td><td class="desc">kokoro-onnx</td><td class="desc">CPU Kokoro text-to-speech</td></tr>
+                <tr><td>voice-sano</td><td class="desc">sanotts</td><td class="desc">Lightweight NumPy text-to-speech</td></tr>
               </tbody>
             </table>
           </div>
@@ -2721,11 +2727,11 @@ uv pip install novacode-cli[voice-pocket]</pre>
             <table>
               <thead><tr><th>Issue</th><th>Solution</th></tr></thead>
               <tbody>
-                <tr><td>Python version mismatch</td><td class="desc"><code>python --version</code>. Use <code>uv venv --python 3.11</code></td></tr>
-                <tr><td>Virtual env not activating (Windows)</td><td class="desc"><code>Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser</code></td></tr>
-                <tr><td>Package installation fails</td><td class="desc"><code>uv cache clean; uv sync --reinstall</code></td></tr>
-                <tr><td>Missing dependencies</td><td class="desc"><code>uv sync --all-extras</code></td></tr>
-                <tr><td>Import errors</td><td class="desc"><code>uv pip install -e . --force-reinstall</code></td></tr>
+                <tr><td>Python version mismatch</td><td class="desc">Use <code>uv tool install --python 3.11 --force novacode-cli</code> to select the tool interpreter.</td></tr>
+                <tr><td>Virtual env not activating (Windows)</td><td class="desc">The PyPI tool install needs no virtual-environment activation. Reopen the terminal or run <code>uv tool update-shell</code> if <code>nova</code> is not on PATH.</td></tr>
+                <tr><td>Package installation fails</td><td class="desc">Read the reported resolver error and platform requirements. For a base reinstall, use <code>uv tool install --python 3.11 --force novacode-cli</code>.</td></tr>
+                <tr><td>Missing dependencies</td><td class="desc">Reinstall with the required extras, for example <code>uv tool install --python 3.11 --force "novacode-cli[voice,agents-server]"</code>. Keep all wanted extras.</td></tr>
+                <tr><td>Import errors</td><td class="desc">For a tool install, reinstall through <code>uv tool install --force novacode-cli</code> with your extras. For a source checkout, use <code>uv sync --locked</code>.</td></tr>
               </tbody>
             </table>
           </div>

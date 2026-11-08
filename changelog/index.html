@@ -327,7 +327,7 @@ html[data-view="agent"] .agent-cl-note p{color:var(--muted);font-size:.95rem;lin
       <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="c">cat changelog/CHANGELOG-v*.md</span></p>
       <h1>Changelog</h1>
       <!-- generated:changelog-summary -->
-<p class="lede">107 releases &middot; v1.0.0 &rarr; v1.1.6 &middot; from the repository's <code>changelog/</code> directory</p>
+<p class="lede">109 releases &middot; v1.0.0 &rarr; v1.2.1 &middot; from the repository's <code>changelog/</code> directory</p>
 <!-- /generated:changelog-summary -->
       <p class="body"><a class="gh" href="https://github.com/Babitdor/NovaCode/tree/main/changelog" rel="noopener">changelog/ on GitHub &#8599;</a></p>
     </div>
@@ -339,6 +339,58 @@ html[data-view="agent"] .agent-cl-note p{color:var(--muted);font-size:.95rem;lin
     </div>
     <div id="releases">
     <!-- generated:changelog-releases -->
+<details class="changelog-entry" id="v1-2-1" data-version="1.2.1" data-sha="cd1466b45c6760b8e30afda76235ac5e4dcfa443">
+<summary class="entry-toggle"><h2 class="version">v1.2.1</h2><span class="release-summary">Publish tagged releases through GitHub Actions using PyPI Trusted Publishing, without a stored API token.</span></summary>
+<div class="release-content"><h3>PyPI releases</h3>
+<ul>
+<li>Publish tagged releases through GitHub Actions using PyPI Trusted Publishing, without a stored API token.</li>
+<li>Check that the release tag, package version, runtime version, lockfile and changelog agree before building.</li>
+<li>Validate PyPI classifiers and package metadata, then upload only the wheel and source archive for the tagged version.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-0" data-version="1.2.0" data-sha="294af31a798a14491b768a4fc870314854717e1b">
+<summary class="entry-toggle"><h2 class="version">v1.2.0</h2><span class="release-summary">Report failed background runs' checkpoint errors instead of a generic failure, including provider permission and expired-model errors. Match diagnostics to the exact run, redact credentials, bound output, and keep child transcripts private.</span></summary>
+<div class="release-content"><h3>Async-agent diagnostics</h3>
+<ul>
+<li>Report failed background runs' checkpoint errors instead of a generic failure, including provider permission and expired-model errors. Match diagnostics to the exact run, redact credentials, bound output, and keep child transcripts private.</li>
+<li>Reconcile nonce-owned factory workers even when OS birth timestamps differ from the launch clock, preserving PID birth checks before termination.</li>
+</ul>
+<h3>Startup fixes</h3>
+<ul>
+<li>Remove provider token-count API calls from startup and use local approximations for unsupported counters without caching them as native counts.</li>
+<li>Defer user async-agent validation until the first background delegation, preserving validation before server launch and shutdown/cancellation handling.</li>
+<li>Skip unrelated external-server probes and bound MCP discovery without waiting for slow worker cleanup.</li>
+</ul>
+<h3>Project onboarding</h3>
+<ul>
+<li>Add <code>/onboard</code> to build a persistent workspace code graph and onboarding guide with the existing Graphify parsers. Suggest the command on the home screen and include it in command completion and help.</li>
+<li>Add <code>/onboard open</code>, <code>/onboard refresh</code>, <code>/onboard tour</code>, <code>/onboard ask &lt;question&gt;</code>, and <code>/onboard impact &lt;symbol or path&gt;</code>.</li>
+<li>Add an interactive dashboard with Nova's Tokyo Night palette and shared block wordmark, a searchable file and symbol explorer, a zoomable dependency map, a symbol inspector, guided tours, and change-impact tracing.</li>
+<li>Render the onboarding guide as formatted Markdown with raw HTML disabled. Prepare Q&amp;A commands for the existing Nova conversation and its normal tool permissions.</li>
+<li>Adapt the dashboard for desktop and mobile, with keyboard navigation, visible focus, and reduced-motion support. Keep dashboard assets local.</li>
+<li>Show an inline spinner and elapsed time while onboarding runs, and remove the indicator on completion, failure, or cancellation.</li>
+<li>Detect changed, new, and deleted inputs with content fingerprints. Preserve the saved analysis when parsing fails, times out, or is cancelled.</li>
+<li>Scale parsing deadlines with input size from two to ten minutes. Normalize Windows short paths before extraction so graph nodes and edges are retained.</li>
+<li>Respect Git ignore rules, reject linked storage paths, and disable repository filesystem-monitor hooks during file discovery. Keep workspace, input-size, graph-size, and Plan Mode checks in place.</li>
+</ul>
+<h3>Code Mode and skill visibility</h3>
+<ul>
+<li>Make <code>eval</code> the primary Code Mode tool, with <code>MCPCode</code> compatibility, variables reused across snippets within a conversation, and guarded access to native tools, MCP tools, and configured subagents.</li>
+<li>Queue simultaneous interpreter snippets within a conversation instead of rejecting them. Keep separate conversations independent.</li>
+<li>Pause live interpreter execution for tool approvals and resume the same script without replaying completed actions.</li>
+<li>Normalize in-workspace Windows paths for nested file operations and pin the verified QuickJS integration version to prevent startup import failures.</li>
+<li>Show successful skill reads inline and guide the agent to announce which skill it is reading and why.</li>
+<li>Guide the agent to sequence edits to the same file and retry only rejected changes after checking earlier results, preserving the parallel-mutation guard.</li>
+<li>Keep native filesystem page text and structured tool data separate from display formatting and repeat warnings, so reads can safely feed exact edits. Preserve output limits, repeat blocks and independent parallel-read state.</li>
+</ul>
+<h3>Workflow and remote chat</h3>
+<ul>
+<li>Replace Prime's earlier continuation loop with a supervised software factory.</li>
+<li>Add native Telegram approval buttons and workspace image previews.</li>
+<li>Render complete compaction summaries as Markdown in the compact card.</li>
+<li>Improve team ownership handoff and retire superseded in-process workers during updates.</li>
+</ul></div>
+</details>
 <details class="changelog-entry" id="v1-1-6" data-version="1.1.6" data-sha="0f3c06a3fb0847884b684ffb17ac0d4c1a2d8aa2">
 <summary class="entry-toggle"><h2 class="version">v1.1.6</h2><span class="release-summary">Replace generic UI emojis with compact text symbols that accept theme colors, including tool activity, voice, memory, remote status, and dialogs. Preserve success, warning, and error distinctions without requiring extra fonts.</span></summary>
 <div class="release-content"><h3>Terminal interface</h3>

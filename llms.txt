@@ -12,7 +12,10 @@ This site is the NovaCode marketing and documentation site (GitHub Pages, served
 
 ## Quick facts (verify against docs/changelog for current details)
 
-- Install: `pip install novacode-cli` (then run `nova`). Python 3.11+.
+- Install on Windows CMD, macOS or Linux: `uv tool install --python 3.11 novacode-cli`, then run `nova` from your project. Published release: 1.2.1, https://pypi.org/project/novacode-cli/1.2.1/ .
+- Upgrade: `uv tool upgrade novacode-cli`. Replace a Git-based tool install with `uv tool install --python 3.11 --force novacode-cli`.
+- Common extras: `uv tool install --python 3.11 --force "novacode-cli[browser,voice,agents-server,server,bedrock,computer]"`. Keep every wanted extra when reinstalling. Other voice extras: voice-orpheus, voice-parakeet, voice-pocket, voice-whistle, voice-kokoro, voice-sano. Models, browser binaries and external runtimes may require separate setup; the all-extras combination is not verified on Windows.
+- Source development: clone https://github.com/Babitdor/NovaCode , enter the checkout, run `uv sync`, then `uv run nova`. Git tags matching the package version publish releases through GitHub Actions and PyPI Trusted Publishing.
 - License: MIT. Source: https://github.com/Babitdor/NovaCode
 - Capabilities highlighted by the project include: specialist/background agents, council/advisory workflows, persistent readable memory/wiki, model choice (cloud/local) and vision companion patterns, Code Mode (bounded JS over eligible tools), voice I/O options, interface themes, remote sessions, artifacts/previews, parallel workspaces/worktrees, and permission/guardrail controls.
 - Limits: Feature availability can depend on install extras, providers, platform, and configuration. An implemented capability is not a benchmark and not proof every provider/platform has been exercised. Treat release notes and the feature guide as the source of truth for current behavior.
