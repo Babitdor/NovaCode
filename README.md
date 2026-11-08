@@ -89,8 +89,9 @@ new, edited and deleted inputs; saved analyses display a staleness notice.
 Scans respect Git ignore rules and skip links, generated directories and common
 secret filenames. Static parsing can miss dynamic dependencies; directory
 groups are not semantic architecture layers. Limits: 5,000 source/Markdown
-files, 1 MiB per file, 64 MiB total input, 32 MiB graph and 120 seconds for
-parsing. Refresh replaces generated graph/guide files, so copy edited guides
+files, 1 MiB per file, 64 MiB total input and 32 MiB graph. The parsing deadline
+scales with file count and input size from two to ten minutes; Escape cancels it.
+Refresh replaces generated graph/guide files, so copy edited guides
 elsewhere before rebuilding. This command currently requires a local workspace;
 Plan Mode prevents building or refreshing the saved analysis.
 

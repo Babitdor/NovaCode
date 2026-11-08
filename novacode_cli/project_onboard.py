@@ -22,6 +22,7 @@ MAX_FILE_BYTES = 1024 * 1024
 MAX_TOTAL_BYTES = 64 * 1024 * 1024
 MAX_GRAPH_BYTES = 32 * 1024 * 1024
 PARSER_TIMEOUT_SECONDS = 120
+MAX_PARSER_TIMEOUT_SECONDS = 600
 _SKIP = frozenset(
     {
         ".git",
@@ -253,6 +254,14 @@ def _atomic_write(path: Path, content: str) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def parsing_deadline(file_count: int, input_bytes: int) -> float:
+    """Allow 0.5 seconds/file or 10 seconds/MiB, bounded to two through ten minutes."""
+    return min(
+        MAX_PARSER_TIMEOUT_SECONDS,
+        max(PARSER_TIMEOUT_SECONDS, file_count * 0.5, input_bytes / 1024**2 * 10),
+    )
+
+
 async def analyze(root: Path) -> dict[str, Any]:
     """Parse an isolated snapshot; kill extraction on timeout or cancellation."""
     root = await asyncio.to_thread(root.resolve)
@@ -263,17 +272,20 @@ async def analyze(root: Path) -> dict[str, Any]:
         raise ValueError(msg)
     with tempfile.TemporaryDirectory(prefix="nova-onboard-") as temporary:
         snapshot = Path(temporary)
+        input_bytes = 0
         for name, expected in hashes.items():
             content = (root / name).read_bytes()
             if hashlib.sha256(content).hexdigest() != expected:
                 msg = "Workspace changed during onboarding; run /onboard refresh again."
                 raise ValueError(msg)
+            input_bytes += len(content)
             destination = snapshot / "source" / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(content)
         source = snapshot / "source"
         (source / "inputs.json").write_text(json.dumps(list(hashes)), encoding="utf-8")
         output = snapshot / "extraction.json"
+        deadline = parsing_deadline(len(hashes), input_bytes)
         environment = {**os.environ, "GRAPHIFY_OUT": str(snapshot / "cache")}
         process = await asyncio.create_subprocess_exec(
             sys.executable,
@@ -288,10 +300,11 @@ async def analyze(root: Path) -> dict[str, Any]:
             stderr=subprocess.DEVNULL,
         )
         try:
-            await asyncio.wait_for(process.wait(), timeout=PARSER_TIMEOUT_SECONDS)
+            await asyncio.wait_for(process.wait(), timeout=deadline)
         except TimeoutError as exc:
             msg = (
-                f"Graphify exceeded its {PARSER_TIMEOUT_SECONDS}-second parsing deadline; "
+                f"Graphify exceeded its {deadline:g}-second parsing deadline "
+                f"for {len(hashes)} files; "
                 "saved analysis was preserved."
             )
             raise TimeoutError(msg) from exc

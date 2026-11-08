@@ -8,7 +8,7 @@ import pytest
 from textual.widgets import Static
 
 from novacode_cli.tui import motion
-from tests.test_tui_app import _disable_live_update_checks  # noqa: F401
+from tests.test_tui_app import _disable_live_update_checks, _wait_until  # noqa: F401
 from tests.test_tui_compaction_row import _app
 
 
@@ -39,8 +39,7 @@ async def test_inline_onboarding_animates_and_always_cleans_up(
             assert first[0] in motion.SPINNER_FRAMES
             assert row.region.height > 0
             assert not app._home_visible
-            await pilot.pause(0.22)
-            assert str(row.render()) != first
+            assert await _wait_until(pilot, lambda: str(row.render()) != first)
             assert "s" in str(row.render())
 
             if outcome == "cancel":

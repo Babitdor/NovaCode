@@ -161,11 +161,51 @@ async def test_parser_failure_preserves_graph(
 async def test_parser_timeout_kills_process_without_publishing(
     project: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    directory = onboard.storage(project)
+    directory.mkdir(parents=True)
+    (directory / "graph.json").write_text("previous graph", encoding="utf-8")
+    (directory / "guide.md").write_text("previous guide", encoding="utf-8")
     monkeypatch.setattr(onboard, "_WORKER", "import time; time.sleep(20)")
     monkeypatch.setattr(onboard, "PARSER_TIMEOUT_SECONDS", 0.1)
+    monkeypatch.setattr(onboard, "MAX_PARSER_TIMEOUT_SECONDS", 0.1)
     with pytest.raises(TimeoutError):
         await onboard.analyze(project)
-    assert not (project / ".nova").exists()
+    assert (directory / "graph.json").read_text(encoding="utf-8") == "previous graph"
+    assert (directory / "guide.md").read_text(encoding="utf-8") == "previous guide"
+
+
+@pytest.mark.parametrize(
+    ("file_count", "input_bytes", "expected"),
+    [(3, 1024, 120), (1000, 1024, 500), (100, 50 * 1024**2, 500), (5000, 64 * 1024**2, 600)],
+)
+def test_parsing_deadline_scales_with_work_and_stays_bounded(
+    file_count: int, input_bytes: int, expected: float
+) -> None:
+    assert onboard.parsing_deadline(file_count, input_bytes) == expected
+
+
+async def test_scan_can_finish_after_the_small_project_deadline(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pathlib import Path
+
+    process = SimpleNamespace(returncode=None, kill=Mock())
+
+    async def wait() -> int:
+        await asyncio.sleep(0.02)
+        process.returncode = 0
+        return 0
+
+    def start(*args: str, **_kwargs: Any) -> SimpleNamespace:
+        Path(args[-1]).write_text('{"nodes": [], "edges": []}', encoding="utf-8")
+        return process
+
+    process.wait = wait
+    monkeypatch.setattr(onboard, "PARSER_TIMEOUT_SECONDS", 0.001)
+    monkeypatch.setattr(onboard.asyncio, "create_subprocess_exec", AsyncMock(side_effect=start))
+    graph = await onboard.analyze(project)
+    assert onboard.load_graph(project) == graph
+    process.kill.assert_not_called()
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows DOS short-path aliases")
