@@ -110,6 +110,139 @@ async def test_host_bridge_survives_multiple_snippets_in_one_turn():
     assert calls == [1, 2]
 
 
+async def test_parallel_interpreter_calls_share_state_without_collisions():
+    calls = []
+    active = maximum = 0
+
+    @tool
+    async def echo(value: int, runtime: ToolRuntime) -> int:
+        """Record a bounded host operation for the current snippet."""
+        nonlocal active, maximum
+        active += 1
+        maximum = max(maximum, active)
+        await asyncio.sleep(0.03)
+        calls.append((value, runtime.tool_call_id))
+        active -= 1
+        return value
+
+    get_policy().tool_tiers["echo"] = "allow"
+    code = "globalThis.counter = (globalThis.counter ?? 0) + 1; "
+    code += "await tools.call('echo', {value: counter}); "
+    tool_calls = [
+        {
+            "id": f"snippet-{i}",
+            "name": name,
+            "args": {"code": code + ("return counter;" if name == "MCPCode" else "counter;")},
+        }
+        for i, name in enumerate(("eval", "MCPCode", "eval"))
+    ]
+    graph = create_agent(
+        ScriptedModel(
+            messages=iter([AIMessage(content="", tool_calls=tool_calls), AIMessage(content="done")])
+        ),
+        tools=[echo],
+        middleware=[CodeModeMiddleware()],
+    )
+    output = await graph.ainvoke({"messages": [HumanMessage(content="Run three snippets")]})
+    results = [m for m in output["messages"] if isinstance(m, ToolMessage)]
+    assert len(results) == 3
+    assert all(m.status == "success" for m in results), results
+    assert sorted(int(json.loads(m.content)["result"]) for m in results) == [1, 2, 3]
+    assert [value for value, _ in calls] == [1, 2, 3]
+    assert len({call_id for _, call_id in calls}) == 3
+    assert maximum == 1
+
+
+async def test_cancelling_queued_snippet_does_not_evict_running_interpreter(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from langchain.agents.middleware.types import ToolCallRequest
+
+    mode = CodeModeMiddleware()
+    started, release = asyncio.Event(), asyncio.Event()
+    executions = []
+
+    async def execute(request, _handler, code) -> ToolMessage:
+        executions.append(code)
+        started.set()
+        await release.wait()
+        return mode._message(request, code, error=False)
+
+    async def handler(request) -> ToolMessage:
+        return await request.tool.coroutine(**request.tool_call["args"])
+
+    monkeypatch.setattr(mode, "_execute", execute)
+    evict = AsyncMock()
+    monkeypatch.setattr(mode._registry, "aevict", evict)
+
+    def request(code) -> ToolCallRequest:
+        return ToolCallRequest(
+            tool_call={"id": code, "name": "eval", "args": {"code": code}},
+            tool=mode.tools[0],
+            state={},
+            runtime=None,
+        )
+
+    running = asyncio.create_task(mode.awrap_tool_call(request("running"), handler))
+    await started.wait()
+    queued_entered = asyncio.Event()
+    lock = mode._execution_locks[mode._fallback_thread_id]
+    acquire = lock.acquire
+
+    async def record_waiter() -> bool:
+        queued_entered.set()
+        return await acquire()
+
+    monkeypatch.setattr(lock, "acquire", record_waiter)
+    queued = asyncio.create_task(mode.awrap_tool_call(request("queued"), handler))
+    await queued_entered.wait()
+    queued.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await queued
+    evict.assert_not_called()
+    release.set()
+    assert (await running).content == "running"
+    assert executions == ["running"]
+    assert (await mode.awrap_tool_call(request("later"), handler)).content == "later"
+
+
+async def test_different_conversations_keep_independent_interpreter_queues():
+    started = []
+    release = asyncio.Event()
+
+    @tool
+    async def echo(runtime: ToolRuntime) -> str:
+        """Wait until both conversations have entered their own interpreter."""
+        thread = runtime.config["configurable"]["thread_id"]
+        started.append(thread)
+        if len(started) == 2:
+            release.set()
+        await asyncio.wait_for(release.wait(), 3)
+        return thread
+
+    get_policy().tool_tiers["echo"] = "allow"
+    call = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": "snippet",
+                "name": "eval",
+                "args": {"code": "globalThis.marker = await tools.call('echo'); marker;"},
+            }
+        ],
+    )
+    model = ScriptedModel(
+        messages=iter([call, call, AIMessage(content="done"), AIMessage(content="done")])
+    )
+    graph = create_agent(
+        model, tools=[echo], middleware=[CodeModeMiddleware()], checkpointer=InMemorySaver()
+    )
+    results = await asyncio.gather(invoke(graph, "first"), invoke(graph, "second"))
+    assert all(result.status == "success" for result in results), results
+    assert [json.loads(result.content)["result"] for result in results] == ["first", "second"]
+    assert set(started) == {"first", "second"}
+
+
 async def test_real_deepagents_task_uses_unified_interpreter():
     from deepagents import create_deep_agent
 

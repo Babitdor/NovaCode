@@ -18596,7 +18596,10 @@ class NovaApp(App):
             message = e.message
             if e.event_type == "nova_prime_receipt":
                 message = message.partition("\n")[0] + ". Use /prime report for details."
-            self._log(Text(message), transcript=e.event_type == "nova_command_output")
+            self._log(
+                Text(message),
+                transcript=e.event_type in {"nova_command_output", "nova_skill_read"},
+            )
         elif isinstance(e, ev.SubagentActivity):
             await self._handle_subagent(e)
         elif isinstance(e, ev.SubagentTask):

@@ -295,8 +295,10 @@ class OptimizedFilesystemBackend(FilesystemBackend):
             return super()._resolve_path(key)
         from deepagents.backends.filesystem import _raise_if_symlink_loop
 
+        from novacode_cli.integrations.host_path import host_path_to_virtual
         from novacode_cli.security.paths import virtual_relative_path
 
+        key = host_path_to_virtual(key, str(self.cwd))
         full = (self.cwd / virtual_relative_path(key)).resolve()
         _raise_if_symlink_loop(full)
         return full

@@ -6,6 +6,15 @@ MCP schemas stay in the host registry; the model composes operations in JavaScri
 Tool searches, including provider-native search and its fallback, do not restore
 ordinary schemas to the model inventory.
 
+Separate `eval` and `MCPCode` calls in one conversation queue for the same
+interpreter instead of colliding. Use `Promise.all` inside one snippet for bounded
+parallel host operations. Waiting for the interpreter does not consume a snippet's
+execution deadline. Other conversations keep their own interpreter.
+
+Successful skill reads show an inline “Reading skill: …” notice, including reads
+inside `eval`. Nova is also instructed to announce the skill and why it applies
+before reading it. Discovery and failed reads do not announce skill use.
+
 Nova pins `langchain-quickjs` to the tested `0.3.2` release because the guarded
 bridge uses its private interpreter and snapshot APIs. Fresh installations must
 honor the package dependency constraint; upgrading this library requires testing

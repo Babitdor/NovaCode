@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from deepagents.middleware.skills import SkillMetadata, SkillsState, SkillsStateUpdate
+    from langchain.agents.middleware.types import ToolCallRequest
     from langchain_core.runnables import RunnableConfig
     from langgraph.runtime import Runtime
 
@@ -96,9 +97,11 @@ Most-used skills:
 If the shortlist is missing or the match is unclear, search by the actual task
 and inspect scope instead of guessing or loading the library.
 
-**Using one.** Call `skills_load(name)` before implementation or applying its
-workflow. Briefly tell the user which skill you are using and why, once, when
-the requested output format permits. Reuse already loaded instructions still
+**Using one.** Before calling `skills_load(name)` or reading a `SKILL.md`, briefly
+announce inline that you are reading that skill and why it applies. Do this even
+when the read is composed inside `eval`; do not hide skill use only in tool logs.
+Call `skills_load(name)` before implementation or applying its workflow.
+Reuse already loaded instructions still
 in context; do not reload on every turn. You can also
 read its `SKILL.md` with `read_file` when that path is mounted in your file backend.
 Resolve relative paths
@@ -459,7 +462,9 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
         """Recheck activation and runtime context before dispatching private tools."""
         name = request.tool_call["name"]
         if request.tool is not None:
-            return handler(request)
+            result = handler(request)
+            self._announce_skill_read(request, result)
+            return result
         resolved = self._resolve_tools(request.state.get("messages", []), request.runtime)
         if name in resolved:
             return handler(request.override(tool=resolved[name]))
@@ -475,7 +480,9 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
         """Async activation/context check, with no shared resolved-tool cache."""
         name = request.tool_call["name"]
         if request.tool is not None:
-            return await handler(request)
+            result = await handler(request)
+            self._announce_skill_read(request, result)
+            return result
         resolved = await self._aresolve_tools(request.state.get("messages", []), request.runtime)
         if name in resolved:
             return await handler(request.override(tool=resolved[name]))
@@ -487,6 +494,54 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
             )
         return await handler(request)
 
+    def _announce_skill_read(self, request: ToolCallRequest, result: object) -> None:
+        """Publish actual successful skill reads, including Code Mode host calls."""
+        tool_name = request.tool_call["name"]
+        if tool_name not in {"skills_load", "skills_read_resource", "read_file"}:
+            return
+        if not isinstance(result, ToolMessage) or result.status == "error":
+            return
+        if isinstance(result.content, str) and result.content.lstrip().lower().startswith("error:"):
+            return
+        args = request.tool_call.get("args") or {}
+        name = path = ""
+        if tool_name == "skills_load" and isinstance(result.artifact, dict):
+            skill = result.artifact.get("skill") or {}
+            if not isinstance(skill, dict):
+                return
+            name, path = skill.get("name", ""), skill.get("path", "")
+        elif tool_name == "skills_read_resource":
+            name, path = args.get("name", ""), args.get("path", "")
+        elif tool_name == "read_file":
+            path = str(args.get("file_path", "")).replace("\\", "/")
+            if path.rsplit("/", 1)[-1].lower() != "skill.md":
+                return
+            skill = next((s for s in self._skills if s["path"].replace("\\", "/") == path), None)
+            name = skill["name"] if skill else path.rpartition("/")[0].rsplit("/", 1)[-1]
+            name = name or "SKILL.md"
+        if not name:
+            return
+        self._publish_skill_read(name, path, request.runtime, request.tool_call["id"])
+
+    @staticmethod
+    def _publish_skill_read(
+        name: str, path: str, runtime: ToolRuntime | Runtime, call_id: str = ""
+    ) -> None:
+        """Keep the notice separate from instruction bodies and model history."""
+        writer = getattr(runtime, "stream_writer", None)
+        if callable(writer):
+            try:
+                writer(
+                    {
+                        "type": "nova_skill_read",
+                        "name": " ".join(str(name).split())[:200],
+                        "path": str(path)[:2000],
+                        "call_id": call_id,
+                    }
+                )
+            except Exception:  # noqa: BLE001 -- observability must not break a successful read.
+                logger.debug("Could not publish skill read notice", exc_info=True)
+
     # ── skills_search ──────────────────────────────────────────────────────
 
     def _skill_search(self, query: str) -> str:
@@ -497,6 +552,7 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
         """
         hits = get_index(self._skills).search(query, k=5) if self._skills else []
         from novacode_cli.hermes.activation import active_artifacts
+
         reviewed = [f"- **{name}** (reviewed generated skill; use skills_load): {first_sentence(body, 300)}"
                     for kind, name, body in active_artifacts.get() if kind == "skill"
                     and any(word.lower() in (name + " " + body).lower() for word in query.split())]
@@ -731,6 +787,7 @@ class RefreshingSkillsMiddleware(SkillsMiddleware):
                 pins.append(
                     pinned_message(skill, self._download_skill(skill, runtime, state, config))
                 )
+                self._publish_skill_read(name, skill["path"], runtime)
             except (OSError, ValueError, UnicodeError):
                 logger.debug("Could not pin skill %s", name, exc_info=True)
         if pins:

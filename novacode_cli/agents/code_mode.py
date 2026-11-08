@@ -41,6 +41,7 @@ CODE_MODE_GUIDANCE = """
 ## Code Mode
 Use eval as your primary control surface for ordinary operations. Compose discovery,
 native calls, MCP calls, filtering and bounded Promise.all fan-out in JavaScript.
+Prefer one eval call per step; compose parallel work inside it with Promise.all.
 Use tools.list/describe/call and mcp.list/describe/call; inspect schemas before calls.
 Use task({description, subagentType, responseSchema?}) for configured subagents,
 including explicit @agent requests. tools.describe('task') lists the current roster.
@@ -190,7 +191,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         self._call_timeout = call_timeout
         self._memory_limit = memory_limit
         self._state_warnings: dict[str, str] = {}
-        self._executions: set[str] = set()
+        self._execution_locks: dict[str, asyncio.Lock] = {}
 
         def unavailable(code: str) -> str:  # noqa: ARG001 -- public tool schema.
             return "MCPCode requires its owning agent middleware."
@@ -250,6 +251,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
     async def aafter_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
         """Keep the installed snapshot lifecycle and surface snapshot loss."""
         update = await super().aafter_agent(state, runtime)
+        self._execution_locks.pop(_resolve_thread_id(self._fallback_thread_id), None)
         if update is not None and update.get("_quickjs_snapshot_payload") is None:
             thread = _resolve_thread_id(self._fallback_thread_id)
             self._state_warnings[thread] = (
@@ -331,16 +333,14 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         async def execute_code(code: str) -> ToolMessage | Command:
             params = CodeInput(code=code)
             thread = _resolve_thread_id(self._fallback_thread_id)
-            if thread in self._executions:
-                return self._message(request, "Concurrent interpreter execution is unsupported.")
-            self._executions.add(thread)
-            try:
-                return await self._execute(request, handler, params.code)
-            except asyncio.CancelledError:
-                await self._registry.aevict(thread)
-                raise
-            finally:
-                self._executions.discard(thread)
+            lock = self._execution_locks.setdefault(thread, asyncio.Lock())
+            # One persistent VM per conversation; queue separate scripts, not their host calls.
+            async with lock:
+                try:
+                    return await self._execute(request, handler, params.code)
+                except asyncio.CancelledError:
+                    await self._registry.aevict(thread)
+                    raise
 
         # Execute inside ToolNode, so tool callbacks and downstream wrappers see
         # the actual duration, result and failures, not a preliminary probe.

@@ -45,6 +45,95 @@ def test_pin_in_message_loads_body_once_and_not_references(skill):
     assert "skills_metadata" not in result
 
 
+@pytest.mark.parametrize("through_code", [False, True])
+async def test_successful_skill_load_announces_inline_in_the_custom_stream(
+    skill: tuple, monkeypatch: pytest.MonkeyPatch, *, through_code: bool
+):
+    from novacode_cli.agents.code_mode import CodeModeMiddleware
+    from novacode_cli.security.policy import get_policy
+
+    middleware, _, _ = skill
+    monkeypatch.setitem(get_policy().tool_tiers, "skills_load", "allow")
+    call = {"id": "load", "name": "skills_load", "args": {"name": "review"}}
+    stack = [middleware]
+    if through_code:
+        call = {
+            "id": "eval",
+            "name": "eval",
+            "args": {"code": "await tools.call('skills_load', {name:'review'});"},
+        }
+        stack.insert(0, CodeModeMiddleware())
+    model = RecordingModel(responses=[AIMessage("", tool_calls=[call]), AIMessage("Done")])
+    graph = create_agent(model, middleware=stack)
+    notices = []
+    async for kind, data in graph.astream(
+        {"messages": [HumanMessage("Load a skill")]}, stream_mode=["custom", "updates"]
+    ):
+        if kind == "custom" and data.get("type") == "nova_skill_read":
+            notices.append(data)
+    assert len(notices) == 1
+    assert notices[0]["name"] == "review"
+    assert notices[0]["path"].endswith("/review/SKILL.md")
+    assert "Inspect then verify" not in repr(notices)
+
+
+def test_explicit_skill_pin_announces_the_actual_instruction_read(skill: tuple):
+    middleware, _, _ = skill
+    notices = []
+    runtime = SimpleNamespace(stream_writer=notices.append)
+    output = middleware._pin_named_skills(
+        {"messages": [HumanMessage("Use $review")]}, runtime, {}, None
+    )
+    assert output["messages"]
+    assert len(notices) == 1
+    assert notices[0]["name"] == "review"
+
+
+@pytest.mark.parametrize(
+    ("name", "args"),
+    [
+        ("read_file", {"file_path": r"C:\skills\review\SKILL.md"}),
+        ("skills_read_resource", {"name": "review", "path": "reference.md"}),
+    ],
+)
+def test_skill_file_and_reference_reads_emit_bounded_notices(skill: tuple, name: str, args: dict):
+    middleware, _, _ = skill
+    notices = []
+    request = SimpleNamespace(
+        tool_call={"name": name, "args": args, "id": "read"},
+        runtime=SimpleNamespace(stream_writer=notices.append),
+    )
+    middleware._announce_skill_read(
+        request, ToolMessage(content="Error handling instructions", tool_call_id="read")
+    )
+    assert len(notices) == 1
+    assert notices[0]["name"] == "review"
+
+
+@pytest.mark.parametrize(
+    ("name", "args", "content", "status"),
+    [
+        ("read_file", {"file_path": "/review/SKILL.md"}, "Error: denied", "success"),
+        ("read_file", {"file_path": "/review/SKILL.md"}, "denied", "error"),
+        ("read_file", {"file_path": "/review/notes.md"}, "Notes", "success"),
+        ("skills_search", {"query": "review"}, "review", "success"),
+    ],
+)
+def test_failed_reads_and_discovery_do_not_announce_skill_use(
+    skill: tuple, name: str, args: dict, content: str, status: str
+):
+    middleware, _, _ = skill
+    notices = []
+    request = SimpleNamespace(
+        tool_call={"name": name, "args": args, "id": "read"},
+        runtime=SimpleNamespace(stream_writer=notices.append),
+    )
+    middleware._announce_skill_read(
+        request, ToolMessage(content=content, status=status, tool_call_id="read")
+    )
+    assert not notices
+
+
 def test_explicit_pin_input_consumed_and_disabled_skills_skipped(skill, monkeypatch):
     middleware, _, _ = skill
     monkeypatch.setattr("novacode_cli.skills.skills_prefs.effective_disabled", lambda: {"review"})

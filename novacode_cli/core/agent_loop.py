@@ -667,6 +667,16 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                 _namespace, current_stream_mode, data = chunk
 
                 if current_stream_mode == "custom":
+                    if isinstance(data, dict) and data.get("type") == "nova_skill_read":
+                        name = " ".join(str(data.get("name") or "").split())[:200]
+                        if name:
+                            yield ev.ContextMessage(
+                                message=f"Reading skill: {name}",
+                                event_type="nova_skill_read",
+                                icon="📖",
+                                color="cyan",
+                            )
+                        continue
                     if isinstance(data, dict) and data.get("type") == "nova_code_approval":
                         pending = code_approvals.pending.get(data.get("id"))
                         if pending is not None and code_approvals.active:

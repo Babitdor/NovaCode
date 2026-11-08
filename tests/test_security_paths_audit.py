@@ -127,6 +127,18 @@ def test_optimized_virtual_backend_allows_dotted_names(tmp_path):
     assert backend._resolve_path("/version..txt") == tmp_path / "version..txt"
 
 
+@pytest.mark.parametrize("separator", ["/", "\\"])
+def test_optimized_virtual_backend_maps_own_workspace_host_paths(tmp_path: Path, separator: str):
+    from novacode_cli.backends.filesystem import OptimizedFilesystemBackend
+
+    target = tmp_path / "src" / "file.txt"
+    backend = OptimizedFilesystemBackend(str(tmp_path), virtual_mode=True)
+    host_path = str(target).replace("\\", "/").replace("/", separator)
+    assert backend._resolve_path(host_path) == target
+    with pytest.raises(ValueError, match="traversal"):
+        backend._resolve_path(str(tmp_path) + "/../outside/file.txt")
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows device names / alternate streams")
 @pytest.mark.parametrize("key", ["/file.txt:stream", "/CON", "/nul.txt", "/dir/PRN"])
 def test_optimized_virtual_backend_blocks_windows_special_files(tmp_path, key):

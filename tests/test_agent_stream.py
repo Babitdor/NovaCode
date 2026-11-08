@@ -64,6 +64,21 @@ def _collect(agent, user_input="hi", on_interrupt=None, session_state=None):
     return asyncio.run(_run())
 
 
+def test_skill_read_stream_becomes_an_inline_notice_without_instruction_content():
+    class Agent:
+        async def aget_state(self, _config: object) -> _State:
+            return _State([])
+
+        async def astream(self, _inp: object, **_kw: object) -> AsyncIterator[object]:
+            yield ((), "custom", {"type": "nova_skill_read", "name": "review"})
+            yield ((), "custom", {"type": "nova_skill_read", "name": ""})
+
+    notices = [event for event in _collect(Agent()) if isinstance(event, ev.ContextMessage)]
+    assert len(notices) == 1
+    assert notices[0].event_type == "nova_skill_read"
+    assert notices[0].message == "Reading skill: review"
+
+
 def test_agent_stream_applies_runtime_tracing_despite_an_old_disabled_context(monkeypatch):
     import langsmith
     from langsmith import utils
