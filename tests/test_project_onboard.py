@@ -252,16 +252,12 @@ async def test_dashboard_escapes_untrusted_project_text(project: Path) -> None:
 
 
 async def test_tui_command_and_home_suggest_onboarding() -> None:
-    from novacode_cli.tui.app import TUI_COMMANDS, NovaApp
+    from novacode_cli.tui.app import TUI_COMMANDS
     from novacode_cli.tui.home import HomeIdentity, home_presentation
     from novacode_cli.tui.palette import palette_for
     from novacode_cli.tui.widgets import NOVA_TOKYO_NIGHT
 
     assert TUI_COMMANDS["onboard"].handler == "_run_onboard"
-    app = SimpleNamespace(_set_status=Mock(), _passthrough_command=AsyncMock())
-    await NovaApp._run_onboard(app, "/onboard refresh")
-    app._passthrough_command.assert_awaited_once_with("/onboard refresh")
-    assert app._set_status.call_args.args == ("ready",)
     identity = HomeIdentity("test", "model", "provider", "project", "session", None)
     presentation = home_presentation("centered", 80, identity, palette_for(NOVA_TOKYO_NIGHT))
     assert "/onboard" in presentation.tip.plain

@@ -83,6 +83,7 @@ jobs:
           novacode_cli/commands/onboard_handler.py
           novacode_cli/project_onboard.py
           tests/test_project_onboard.py
+          tests/test_tui_onboard_progress.py
           novacode_cli/tui/browser_settings_screen.py
           novacode_cli/agents/caveman_support.py
           novacode_cli/agents/prime.py
@@ -124,7 +125,9 @@ jobs:
           scripts/check_caveman_style.py
           scripts/verify_prime.py
       - name: Verify project onboarding
-        run: uv run --no-sync pytest -q --tb=short tests/test_project_onboard.py
+        run: >-
+          uv run --no-sync pytest -q --tb=short
+          tests/test_project_onboard.py tests/test_tui_onboard_progress.py
       - name: Verify Prime evidence boundaries
         run: uv run --no-sync python scripts/verify_prime.py --mutations
       - name: Verify native and MCP Code Mode boundaries

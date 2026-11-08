@@ -13106,10 +13106,36 @@ class NovaApp(App):
 
     async def _run_onboard(self, text: str) -> None:
         """Show transient progress while the shared command maps the workspace."""
+        from novacode_cli.tui import motion
+
+        self._set_home_visible(visible=False)
+        self._close_tool_group()
+        row = Static(classes="nova-event nova-onboard-progress")
+        started = time.monotonic()
+        timer = None
+
+        def animate() -> None:
+            elapsed = time.monotonic() - started
+            frame = motion.spinner(int(elapsed * motion.CLOCK_FPS))
+            row.update(
+                Text(
+                    f"{frame} Onboarding project…  {elapsed:.1f}s",
+                    style=self._palette.accent,
+                )
+            )
+
         self._set_status("reading project map…")
         try:
+            animate()
+            await self._transcript().mount(row)
+            self._scroll_end()
+            timer = self.set_interval(0.2 if self._low_resource_mode else 0.1, animate)
             await self._passthrough_command(text)
         finally:
+            if timer is not None:
+                timer.stop()
+            with contextlib.suppress(Exception):  # The session may be closing or cleared.
+                await row.remove()
             self._set_status("ready")
 
     async def _passthrough_command(self, text: str) -> None:
