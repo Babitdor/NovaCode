@@ -1,0 +1,66 @@
+name: Publish to PyPI
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-pypi
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: pypi
+      url: https://pypi.org/p/novacode-cli
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      UV_PYTHON: "3.11"
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+
+      - name: Validate release metadata
+        id: metadata
+        run: |
+          uv run --no-project --with trove-classifiers python - <<'PY'
+          import os
+          import runpy
+          import tomllib
+          from pathlib import Path
+          from trove_classifiers import classifiers
+
+          project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]
+          version = project["version"]
+          assert project["name"] == "novacode-cli", "Unexpected package name"
+          assert os.environ["GITHUB_REF_NAME"] == f"v{version}", "Tag must match package version"
+          assert runpy.run_path("novacode_cli/_version.py")["__version__"] == version
+          lock = tomllib.loads(Path("uv.lock").read_text(encoding="utf-8"))
+          assert any(p["name"] == "novacode-cli" and p["version"] == version for p in lock["package"])
+          assert Path("changelog", f"CHANGELOG-v{version}.md").is_file(), "Missing changelog"
+          invalid = set(project.get("classifiers", [])) - classifiers
+          assert not invalid, f"Invalid PyPI classifiers: {sorted(invalid)}"
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"version={version}\n")
+          PY
+
+      - name: Build release artifacts
+        run: uv build
+
+      - name: Validate package metadata
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: uvx twine check "dist/novacode_cli-${VERSION}-py3-none-any.whl" "dist/novacode_cli-${VERSION}.tar.gz"
+
+      - name: Publish with PyPI Trusted Publishing
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: uv publish --trusted-publishing always "dist/novacode_cli-${VERSION}-py3-none-any.whl" "dist/novacode_cli-${VERSION}.tar.gz"
