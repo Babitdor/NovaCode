@@ -47,15 +47,23 @@ VERIFY_GATE_MARKER = "Internal context: verification after edit."
 
 _EDIT_TOOLS = frozenset({"write_file", "edit_file", "NotebookEditTool"})
 _COMMAND_TOOLS = frozenset({"bash", "execute", "powershell"})
+# Interpreter prefixes accepted before a check command: bare tools (`pytest`),
+# `py -m pytest`, `python -m pytest`, `python3.11 -m pytest`, and full paths to a
+# project venv interpreter (`.venv/Scripts/python.exe -m pytest`, `…/python -m ruff`).
+_INTERPRETER = r"(?:py|python(?:3(?:\.\d+)?)?(?:\.exe)?|[^\s]*python(?:3(?:\.\d+)?)?(?:\.exe)?)"
+
 _CHECK_COMMAND = re.compile(
-    r"(?:^|[;&|\n])\s*(?:(?:uv|poetry|pipenv)\s+run\s+)?"
-    r"(?:(?:python(?:3(?:\.\d+)?)?|py)\s+-m\s+)?"
+    rf"(?:^|[;&|\n])\s*(?:(?:uv|poetry|pipenv)\s+run\s+)?(?:{_INTERPRETER}\s+-m\s+)?"
     r"(?:pytest|unittest|tox|nox|ruff|mypy|pyright|compileall|"
     r"cargo\s+test|go\s+test|dotnet\s+test|mvn\s+test|"
     r"gradle\s+test|make\s+(?:test|check)|"
     r"(?:npm|pnpm|yarn)\s+(?:run\s+)?test)\b",
     re.IGNORECASE,
 )
+# Failure markers inside check output. Structured exit codes cover most cases; these
+# catch content-only failures (pytest `FAILED`/`ERROR:` lines, tracebacks) that carry no
+# exit-code artifact.
+_CHECK_FAILED = re.compile(r"(?im)^\s*(?:FAILED|ERROR|Traceback|SyntaxError)\b")
 _SHELL_FAILURE = re.compile(
     r"(?m)^(?:exit=[1-9]\d*\b|Exit code: [1-9]\d*\b|"
     r"\[Command failed with exit code [1-9]\d*\])"
@@ -149,7 +157,8 @@ def _check_failed(result: ToolMessage) -> bool:
         return exit_code != 0
     if artifact.get("execution_outcome") == "failure":
         return True
-    return bool(_SHELL_FAILURE.search(str(result.content)))
+    content = str(result.content)
+    return bool(_SHELL_FAILURE.search(content) or _CHECK_FAILED.search(content))
 
 
 def _verification_gap(messages: list[Any]) -> str | None:

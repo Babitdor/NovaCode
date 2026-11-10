@@ -147,6 +147,67 @@ def test_check_must_follow_last_successful_edit() -> None:
     assert _gate([*start, *edit, *check, AIMessage(content="Done")], todos=None) is None
 
 
+def test_check_via_venv_interpreter_path_clears_reminder() -> None:
+    """A check run through a full venv interpreter path still counts as the check."""
+    history = [
+        HumanMessage(content="fix it"),
+        *_tool_step("edit_file", "e", {"file_path": "x.py"}),
+        *_tool_step(
+            "bash",
+            "t",
+            {"command": r"C:\repo\.venv\Scripts\python.exe -m pytest -q"},
+            "1 passed",
+        ),
+        AIMessage(content="Done"),
+    ]
+    assert _gate([*history, AIMessage(content="Done")], todos=None) is None
+
+
+def test_check_via_venv_interpreter_path_that_fails_still_triggers_reminder() -> None:
+    history = [
+        HumanMessage(content="fix it"),
+        *_tool_step("edit_file", "e", {"file_path": "x.py"}),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "t",
+                    "name": "bash",
+                    "args": {"command": r"B:\venv\Scripts\python.exe -m pytest -q"},
+                }
+            ],
+        ),
+        ToolMessage(
+            content="FAILED test_x.py",
+            tool_call_id="t",
+            artifact={"exit_code": 1},
+            status="success",
+        ),
+        AIMessage(content="Done"),
+    ]
+    out = _gate(history, todos=None)
+    assert out is not None
+    assert out["messages"][0].content.startswith(td.VERIFY_GATE_MARKER)
+
+
+def test_content_only_check_failure_is_detected() -> None:
+    """Failure text without an exit-code artifact still fails the check."""
+    history = [
+        HumanMessage(content="fix it"),
+        *_tool_step("edit_file", "e", {"file_path": "x.py"}),
+        AIMessage(
+            content="",
+            tool_calls=[{"id": "t", "name": "bash", "args": {"command": "python -m pytest -q"}}],
+        ),
+        ToolMessage(content="FAILED test_x.py", tool_call_id="t", status="success"),
+        AIMessage(content="Done"),
+    ]
+    out = _gate(history, todos=None)
+    assert out is not None
+    assert out["messages"][0].content.startswith(td.VERIFY_GATE_MARKER)
+    assert "failed" in out["messages"][0].content
+
+
 def test_failed_check_after_edit_does_not_satisfy_verification() -> None:
     history = [
         HumanMessage(content="fix it"),
