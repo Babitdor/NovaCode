@@ -64,6 +64,38 @@ Acceptance criteria:
 7. Verify with adversarial tests, a real compiled offline tool-calling graph,
    existing security/agent regressions, lint, coverage and negative controls.
 
+## Optional stacked guardrails: PII, blocked terms, output review
+
+The decision-model approval gate above is the mandatory approval layer. Nova also
+stacks optional, persisted guardrails built on the LangChain middleware model:
+
+* **PII handling** — opt-in via `/guardrails on` (default off). LangChain's
+  `PIIMiddleware` applies to input, model output and tool results. Defaults:
+  email addresses are redacted, credit card numbers are masked (last four digits),
+  and the remaining built-in types (`ip`, `mac_address`, `url`) are not enabled.
+  URL redaction is deliberately omitted because it mangles links a coding
+  assistant is expected to read and write. The display path redacts the same text
+  because Nova commits streamed chunks rather than post-model state, and a
+  `block` strategy is enforced before the model call via the preflight filter.
+* **Blocked request terms** — `/guardrails keyword add <term>` (or the persisted
+  `guardrails.blocked_keywords` config). A deterministic
+  `ContentFilterMiddleware` refuses the request before the model runs and replaces
+  a final answer that still contains a term, so the check is not limited to the
+  user message.
+* **Model output review** — `/guardrails review on` adds an optional reviewer for
+  the final answer. An explicit denial withholds the response; an unavailable or
+  malformed verdict fails open and surfaces a content-free skip notice. The
+  reviewer sees bounded request/answer text and does not rewrite the answer.
+
+HITL remains the sole approval layer; the optional PII and content filters are
+added to the agent stack only when enabled, and local subagents receive the PII
+middleware as well.
+
+LangChain reference: [Guardrails](https://docs.langchain.com/oss/python/langchain/guardrails),
+[middleware](https://docs.langchain.com/oss/python/langchain/middleware),
+[PII detection](https://docs.langchain.com/oss/python/langchain/middleware#pii-detection),
+[human-in-the-loop](https://docs.langchain.com/oss/python/langchain/human-in-the-loop).
+
 ## Limits
 
 These controls reduce risk; they do not prove a model will resist every prompt

@@ -203,6 +203,8 @@ def build_command_registry() -> CommandRegistry:
         _r(registry)
 
     # Plugin-contributed commands last, so built-ins always win on collision.
+    from novacode_cli.commands.guardrails_handler import register_commands as register_guardrails
+    register_guardrails(registry)
     from novacode_cli.commands.learning_handler import register_commands as register_learning
     register_learning(registry)
     _register_plugin_commands(registry)

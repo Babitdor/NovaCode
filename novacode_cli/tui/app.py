@@ -705,6 +705,10 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "learning": SlashCommand(
         "_run_learning", "Nova's learning loop (/learning on|off|status|auto on|off|review)"
     ),
+    "guardrails": SlashCommand(
+        "_passthrough_command",
+        "PII, blocked request terms and output review (/guardrails status)",
+    ),
     "learn": SlashCommand("_passthrough_command", "learn a source or workflow as a skill proposal"),
 }
 
@@ -15385,8 +15389,9 @@ class NovaApp(App):
 
         The install itself runs after Nova exits (``updates.restart_after_update``,
         called from ``main``), in this terminal with ``nova update``'s progress,
-        and Nova restarts into this session. A running turn is stopped first and
-        continued after the restart.
+        and Nova restarts into this session. On Windows a fresh interpreter takes
+        over once this one exits, so uv can replace loaded native modules. A
+        running turn is stopped first and continued after the restart.
         """
         from novacode_cli import updates
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from unittest.mock import Mock
 
@@ -25,6 +26,7 @@ def clear_request(monkeypatch):
 @pytest.mark.parametrize(("update_code", "relaunched"), [(0, True), (1, True), (130, False)])
 def test_restart_updates_then_reopens_the_session(monkeypatch, update_code, relaunched):
     calls = []
+    monkeypatch.setattr(updates.sys, "platform", "linux")
     monkeypatch.setattr(updates, "restart_request", {"session": "s1", "continue": True})
     monkeypatch.setattr(
         updates, "_update_with_progress", lambda **kw: calls.append(("update", kw)) or update_code
@@ -49,14 +51,120 @@ def test_relaunch_runs_this_environment_into_the_session_and_waits(monkeypatch):
     monkeypatch.setattr(updates.subprocess, "Popen", popen)
     assert updates._relaunch("s1", continue_turn=True) == 3
     command = popen.call_args.args[0]
-    assert command == [sys.executable, "-m", "novacode_cli", "--continue", "s1"]
+    assert command == [sys.executable, "-P", "-m", "novacode_cli", "--continue", "s1"]
     assert popen.call_args.kwargs["env"][updates.CONTINUE_ENV] == "1"
     assert popen.call_args.kwargs["env"]["NOVA_UPDATE_HANDOFF_PID"] == str(updates.os.getpid())
 
     updates._relaunch(None, continue_turn=False)
-    assert popen.call_args.args[0] == [sys.executable, "-m", "novacode_cli"]
+    assert popen.call_args.args[0] == [sys.executable, "-P", "-m", "novacode_cli"]
     assert updates.CONTINUE_ENV not in popen.call_args.kwargs["env"]
     assert popen.call_args.kwargs["env"]["NOVA_UPDATE_HANDOFF_PID"] == str(updates.os.getpid())
+
+
+def test_windows_restart_leaves_the_update_to_a_clean_interpreter(monkeypatch):
+    monkeypatch.setattr(updates.sys, "platform", "win32")
+    monkeypatch.setattr(updates, "restart_request", {"session": "s1", "continue": True})
+    handoff = Mock(return_value=True)
+    monkeypatch.setattr(updates, "_hand_off_update", handoff)
+    update = Mock()
+    monkeypatch.setattr(updates, "_update_with_progress", update)
+
+    assert updates.restart_after_update() == 0
+    handoff.assert_called_once_with({"session": "s1", "continue": True})
+    update.assert_not_called()  # the running process must not touch its own mapped files
+
+
+def test_a_handoff_that_cannot_start_reports_failure(monkeypatch):
+    monkeypatch.setattr(updates.sys, "platform", "win32")
+    monkeypatch.setattr(updates, "restart_request", {})
+    monkeypatch.setattr(updates, "_hand_off_update", lambda _request: False)
+    monkeypatch.setattr(updates, "_update_with_progress", Mock())
+
+    assert updates.restart_after_update() == 1
+
+
+def test_handoff_starts_a_clean_update_that_waits_for_this_process(monkeypatch):
+    popen = Mock()
+    monkeypatch.setattr(updates.subprocess, "Popen", popen)
+    monkeypatch.setenv(updates.CONTINUE_ENV, "leftover-from-an-earlier-restart")
+
+    assert updates._hand_off_update({"session": "s1", "continue": True}) is True
+
+    assert popen.call_args.args[0] == [sys.executable, "-P", "-m", "novacode_cli", "update"]
+    env = popen.call_args.kwargs["env"]
+    assert env[updates.CLEAN_UPDATE_ENV] == "1"
+    assert env[updates.HANDOFF_PID_ENV] == str(os.getpid())
+    assert env[updates.RESTART_SESSION_ENV] == "s1"
+    assert env[updates.CONTINUE_ENV] == "1"
+
+
+def test_handoff_clears_a_stale_continue_marker(monkeypatch):
+    popen = Mock()
+    monkeypatch.setattr(updates.subprocess, "Popen", popen)
+    monkeypatch.setenv(updates.CONTINUE_ENV, "1")
+
+    updates._hand_off_update({"session": None, "continue": False})
+
+    env = popen.call_args.kwargs["env"]
+    assert updates.CONTINUE_ENV not in env
+    assert updates.RESTART_SESSION_ENV not in env
+
+
+def test_handoff_wait_waits_for_the_exited_process(monkeypatch):
+    import ctypes
+
+    kernel = Mock()
+    kernel.OpenProcess.return_value = 123
+    monkeypatch.setattr(ctypes, "WinDLL", Mock(return_value=kernel), raising=False)
+    monkeypatch.setattr(updates.sys, "platform", "win32")
+    monkeypatch.setenv(updates.HANDOFF_PID_ENV, "4242")
+
+    updates._wait_for_handoff()
+
+    kernel.OpenProcess.assert_called_once()
+    kernel.WaitForSingleObject.assert_called_once_with(123, 60_000)
+    kernel.CloseHandle.assert_called_once_with(123)
+    assert updates.HANDOFF_PID_ENV not in os.environ
+
+
+def test_handoff_wait_without_a_parent_is_a_no_op(monkeypatch):
+    monkeypatch.setenv(updates.HANDOFF_PID_ENV, "")
+
+    updates._wait_for_handoff()
+
+    assert updates.HANDOFF_PID_ENV not in os.environ
+
+
+@pytest.mark.parametrize(("update_code", "relaunched"), [(0, True), (1, False), (130, False)])
+def test_the_clean_updater_waits_then_updates_then_restarts(
+    monkeypatch, capsys, update_code, relaunched
+):
+    calls = []
+    monkeypatch.setenv(updates.CLEAN_UPDATE_ENV, "1")
+    monkeypatch.setenv(updates.RESTART_SESSION_ENV, "s1")
+    monkeypatch.setenv(updates.CONTINUE_ENV, "1")
+    monkeypatch.setattr(updates, "_wait_for_handoff", lambda: calls.append("wait"))
+    monkeypatch.setattr(
+        updates, "_update_with_progress", lambda **kw: calls.append(("update", kw)) or update_code
+    )
+    monkeypatch.setattr(
+        updates, "_relaunch", lambda session, **kw: calls.append(("relaunch", session, kw)) or 7
+    )
+
+    result = updates.update_main([])
+
+    assert calls[0] == "wait", "the loader of the old process must be gone before uv runs"
+    assert calls[1] == ("update", {"restarting": True})
+    assert updates.CLEAN_UPDATE_ENV not in os.environ
+    assert updates.RESTART_SESSION_ENV not in os.environ
+    if relaunched:
+        assert calls[2] == ("relaunch", "s1", {"continue_turn": True})
+        assert result == 7
+    else:
+        assert len(calls) == 2
+        assert result == update_code
+        if update_code == 1:
+            assert "Nova was not restarted" in capsys.readouterr().err
 
 
 def test_restarting_update_says_it_restarts(monkeypatch, capsys):

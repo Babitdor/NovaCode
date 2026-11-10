@@ -812,11 +812,15 @@ def _harden_subagent_specs(
     from novacode_cli.agents.model_retry import NovaSubagentRetryMiddleware as ModelRetryMiddleware
     from novacode_cli.agents.agent_file import FilesystemToolFilter
     from novacode_cli.agents.agent_mailbox import read_agent_messages, send_agent_message
+    from novacode_cli.config.nova_config import NovaConfig
+    from novacode_cli.security.guardrails import build_pii_middleware
     from novacode_cli.sessions.gateway import SESSION_TOOLS
     from novacode_cli.bootstrap import VisionCaptionMiddleware
     from novacode_cli.errors import is_retryable_model_error
     from novacode_cli.security.middleware import SecurityMiddleware
     from novacode_cli.tracking.loop_guard import LoopGuardMiddleware
+
+    _guardrails = NovaConfig().get_guardrails()
 
     # Tools that raise a HITL ``interrupt()`` directly in their body (not via
     # ``interrupt_on``). Clearing ``interrupt_on`` below doesn't neutralise these,
@@ -887,6 +891,7 @@ def _harden_subagent_specs(
         has_curation = any(type(m).__name__ == "SkillCurationMiddleware" for m in existing)
         has_loopguard = any(type(m).__name__ == "LoopGuardMiddleware" for m in existing)
         has_async = any(type(m).__name__ == "AsyncSubAgentMiddleware" for m in existing)
+        has_pii = any(type(m).__name__ == "PIIMiddleware" for m in existing)
 
         # Share the source mounts, but give each graph its own selected library
         # and activation state. Respect explicitly configured source roots.
@@ -940,6 +945,11 @@ def _harden_subagent_specs(
         # instance per spec — the guard keeps per-instance history state.
         if not has_loopguard:
             mw_to_add.append(LoopGuardMiddleware(threshold=3))
+        # Apply the same PII rules inside subagents: their tool results and
+        # model text also reach the parent and the UI. Fresh instances per spec;
+        # the main agent remains the sole HITL boundary.
+        if not has_pii and _guardrails.pii_enabled:
+            mw_to_add.extend(build_pii_middleware(_guardrails))
         # A Claude-style `tools:` allowlist also limits deepagents' file/shell tools.
         fs_allow = new_spec.pop("_nova_fs_allow", None)
         if fs_allow is not None and not any(
@@ -1602,6 +1612,10 @@ def _build_middleware_stack(
     from novacode_cli.bootstrap.steering import SteeringMiddleware
     from novacode_cli.hermes.middleware import NovaLearningMiddleware
     from novacode_cli.memory.agent_memory import AgentMemoryMiddleware
+    from novacode_cli.security.guardrails import (
+        ContentFilterMiddleware,
+        build_pii_middleware,
+    )
     from novacode_cli.security.middleware import SecurityMiddleware
     from novacode_cli.shell import ShellMiddleware
     from novacode_cli.tracking.file_tracker import FileTrackerMiddleware
@@ -1610,7 +1624,9 @@ def _build_middleware_stack(
     # Task-end review is enabled unless the user explicitly turns learning off.
     from novacode_cli.config.nova_config import NovaConfig
 
-    _learning_enabled = NovaConfig().get_learning_enabled()
+    _config = NovaConfig()
+    _learning_enabled = _config.get_learning_enabled()
+    _guardrails = _config.get_guardrails()
     # Which codebase this session is in: project-scoped lessons are written to,
     # and read from, that project's own memory only.
     from novacode_cli.hermes.memory_tiers import project_memory_key
@@ -1773,6 +1789,19 @@ def _build_middleware_stack(
         TaskDisciplineMiddleware(verify_after_edit=os.environ.get("NOVA_VERIFY_AFTER_EDIT") == "1"),
         PlanTodoGuardMiddleware(),
     ]
+
+    # Stacked guardrails. PII is first so its `after_model` hook runs LAST and
+    # scrubs graph state after every other middleware has finished with it. The
+    # deterministic request filter is built only when terms are configured.
+    # HITL is not duplicated here: create_deep_agent already adds
+    # HumanInTheLoopMiddleware from `interrupt_on`, backed by Nova's policy.
+    _guardrail_middleware: list = build_pii_middleware(_guardrails)
+    if _guardrails.blocked_keywords:
+        _guardrail_middleware.append(
+            ContentFilterMiddleware(_guardrails.blocked_keywords)
+        )
+    if _guardrail_middleware:
+        agent_middleware[0:0] = _guardrail_middleware
 
     # deepagents 0.7 dropped its built-in todo list (0.6 installed one inside
     # create_deep_agent). Without it `write_todos` silently disappears: the

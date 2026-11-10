@@ -3,12 +3,17 @@
 Manages persistent settings stored in ~/.nova/Nova.config.json
 """
 
+from __future__ import annotations
+
 import copy
 import json
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from novacode_cli.config.config import Settings, console
+
+if TYPE_CHECKING:
+    from novacode_cli.security.guardrails import Guardrails
 
 #: The agent roles a model can be chosen for. ``main`` is the agent the user talks
 #: to; ``subagent`` the in-process roster it delegates to; ``async`` the remote
@@ -553,6 +558,23 @@ class NovaConfig:
     def set_learning_auto_approve(self, enabled: bool) -> None:
         """Persist the automatic-approval toggle."""
         self._config["learning_auto_approve"] = bool(enabled)
+        self._save()
+
+    # ── Stacked guardrails (PII, blocked terms, output review) ──────────────
+
+    def get_guardrails(self) -> Guardrails:
+        """Read validated guardrail settings.
+
+        Everything is OFF by default: PII redaction can corrupt legitimate
+        coding tasks, and the output review adds a model call per answer.
+        """
+        from novacode_cli.security.guardrails import Guardrails
+
+        return Guardrails.from_raw(self._config.get("guardrails"))
+
+    def set_guardrails(self, guardrails: Guardrails) -> None:
+        """Persist guardrail settings in their canonical JSON shape."""
+        self._config["guardrails"] = guardrails.to_raw()
         self._save()
 
     # ── Memory injection budget ─────────────────────────────────────────────

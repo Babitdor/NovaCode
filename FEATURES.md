@@ -1,10 +1,12 @@
 # NovaCode feature inventory
 
-<!-- product: novacode-cli; version: 1.0.99; scope: release; reviewed: 2026-10-25 -->
+<!-- product: novacode-cli; version: 1.1.3; scope: main; reviewed: 2026-10-28 -->
 
-Landing-page and documentation reference for **v1.0.99**, including the explicitly marked
-local computer preview. Reviewed against source, command registrations
-and release notes on **25 October 2026**. An implemented capability is not a
+Landing-page and documentation reference for **main (package v1.1.3)**, including
+the explicitly marked local computer preview. Reviewed against source, command
+registrations and release notes on **28 October 2026**. The directory-plugin rework
+is on main at `4dc5a2d`; it has no separate version bump or published release.
+An implemented capability is not a
 benchmark or proof that every provider and platform has been exercised.
 
 Use the short copy for feature cards and the detailed catalog for product pages,
@@ -37,7 +39,8 @@ sessions. Control tool approvals, workspaces and optional integrations.
 | Code Mode | Combine eligible native and MCP tools in bounded JavaScript workflows, with a toggle below the composer. | Composer toggle, a short script and its selected result |
 | Voice conversation | Dictate requests and hear short spoken reply summaries, with lightweight CPU voice options. | Voice model picker and real download progress |
 | Your terminal style | Choose from 14 interface styles, including Nova character art and optional animated homes. | Signal's Classic banner with Matrix3 code rain (unreleased) |
-| Caveman mode | Choose terse answers, recoverable compact tool output and other independent token-efficiency features. | Composer toggle and intensity picker |
+| Compression modes | Switch between Off, Caveman and Ponytail, with selectable levels and recoverable compact tool output. | Composer selector and intensity picker |
+| Directory plugins | Install namespaced skills, commands, agents, hooks and MCP servers from directories or marketplaces. | Installed, Discover and Marketplaces tabs |
 | Remote sessions | Continue through Telegram topics, Discord threads or an optional Rootapp companion. | Matching terminal session and remote conversation |
 | Artifacts | Turn results into web previews and share the session's collection through a temporary Cloudflare URL. | Responsive artifact cards and a phone preview |
 | Parallel workspaces | Run project tabs, exchange explicit messages and isolate changes in Git worktrees. | Session tabs and a worktree transition |
@@ -53,6 +56,8 @@ Do not use the Classic screenshot as evidence of new styles or VM operation.
 
 | Capability | Status | Setup / documentation | Claim boundary |
 | --- | --- | --- | --- |
+| Standard directory plugins | On main after v1.1.3; no separate release | `/plugin`, `nova plugin`, `/reload-plugins`, `--plugin-dir` | Core directory format support; Claude-specific host capabilities remain unsupported and diagnosed. Manual updates. |
+| Ponytail compression | Included in v1.1.3 | Composer selector; `/ponytail lite\|full\|ultra\|off` and helper commands | Core rules, levels and helpers; no Claude-specific band/board UI or universal savings claim. |
 | Native + MCP Code Mode | Released in v1.0.97 | Composer toggle; [Code Mode](docs/mcp-code-mode.md) | Eligible tools only; interactive and graph-control calls remain direct. |
 | Whistle STT | Released in v1.0.97 | `voice` + `voice-whistle`; [voice setup](SETUP.md#optional-capabilities) | Local Cactus runtime; microphone quality and transcription accuracy are not benchmarked. |
 | Kokoro and sanoTTS | Released in v1.0.98 | `voice` + the selected provider extra; [voice setup](SETUP.md#optional-capabilities) | CPU options; download size is not peak RAM or a speed guarantee. |
@@ -305,12 +310,20 @@ Bedrock is an optional installation extra. Do not promise every account or model
 supports vision, strict tool sampling, OAuth or identical effort settings.
 [Reasoning support](docs/reasoning-support.md), [vision routing](novacode_cli/bootstrap/vision_router.py).
 
-## 10. Caveman mode and token visibility
+## 10. Caveman, Ponytail and token visibility
 
 **Benefit:** Choose how to reduce verbosity and unnecessary model context.
 
-The composer toggle, Options panel and `/caveman` expose six independent features.
-The master switch remains opt-in; the individual switches start selected.
+The composer selector switches between **Off / Caveman / Ponytail**. Caveman's
+Options panel and `/caveman` expose six independent features. Compression remains
+opt-in; Caveman's individual switches start selected.
+
+Ponytail supplies its bundled core rules with `lite`, `full` and `ultra` levels,
+selected through `/ponytail <level>` or its settings. Helper skills are available
+as `/ponytail-review`, `/ponytail-audit`, `/ponytail-debt`, `/ponytail-gain` and
+`/ponytail-help`. `/ponytail off`, “stop ponytail” or “normal mode” turn it off.
+Nova provides the selector and settings; Claude-specific band and board UI are
+outside this integration. Existing tool permissions remain in force.
 
 | Feature | Current behavior |
 | --- | --- |
@@ -339,6 +352,8 @@ consume more total tokens on reasoning models. Savings and style compliance
 vary; no paid idle cache-warming requests are sent. The six-part system extends
 the Caveman skill, which itself defines prose style.
 [Configuration, audit and live-check limits](docs/caveman-mode.md).
+The earlier live compression validation passed 19 of 20 checks; this is limited
+provider/model evidence, not a guarantee of savings or identical model behavior.
 
 ## 11. MCP discovery, Code Mode and tool search
 
@@ -472,7 +487,37 @@ restored merely by resuming a conversation.
   `skills_read_resource`, instead of preloading every reference.
 - Activate declared skill tools in the applicable run and scope.
 - Let custom agents restrict their skill library or use the full enabled set.
-- Install and manage plugins, marketplaces and hooks through their controls.
+- Install and manage directory plugins through `/plugin` or
+  `nova plugin`. The TUI offers Installed, Discover and Marketplaces tabs, with
+  temporary operation notifications and user/project/local scope selection.
+- Load an optional `.claude-plugin/plugin.json` and root-level skills, commands,
+  agents, hooks and MCP definitions. Components use `plugin:component` names;
+  supported custom paths and `${CLAUDE_PLUGIN_ROOT}` resolve within the bundle.
+- Add marketplaces using `.claude-plugin/marketplace.json`; identify installs as
+  `name@marketplace`. Local directories and Git sources are supported, including
+  branch/tag refs and repository subdirectories. Full commit-SHA fetching is
+  not implemented. Updates are owner-requested and manual.
+- Keep installs in immutable Nova cache snapshots with atomic registry writes
+  and process locks. Project/local settings live in `.nova/settings.json` and
+  `.nova/settings.local.json`; local overrides project, then user. Legacy installs
+  remain discoverable. Failed updates preserve the previous installation.
+- Derive MCP and hooks from enabled bundles without persisting them into owner
+  configuration. `/reload-plugins` applies component changes to the session;
+  `--plugin-dir PATH` loads a development bundle in place without installing it.
+- Run supported command hooks with event JSON, matchers and bounded time/output.
+  Hooks may add context or deny a tool; they cannot bypass Nova's approvals or
+  tool policies. Plan mode suppresses executable plugin hooks. Installing or
+  validating a bundle does not execute its hooks, servers or package scripts.
+- Uninstall registrations while retaining old snapshots for running sessions.
+  There is no cache garbage collection yet. Uninstall a marketplace's plugins
+  before removing that marketplace.
+
+This implements the core directory-plugin model, not the complete Claude Code
+host. Unsupported declarations produce compatibility diagnostics, including
+mods, LSP, channels, workflows, output styles, `userConfig` and dependencies.
+Desktop bundles and account/organization sync are not supported. Plugins retain
+their native process capabilities; installation is not a security sandbox.
+No new runtime dependencies were added for this rework.
 
 Learning does not certify that a model has learned a correct general rule.
 Memory is contextual evidence, not authorization. [Prompt audit](docs/prompt-audit.md),
@@ -571,6 +616,11 @@ of evidence. [Tracing implementation](novacode_cli/tracking/),
   messages as lower-trust evidence rather than permission or system instructions.
 - Redact supported credential-like values in model-visible tool copies and block
   tool arguments that expose secret environment values.
+- Optionally enable PII handling (`/guardrails on|off`, `/guardrails type ...`,
+  `/guardrails status`): LangChain `PIIMiddleware` redacts/masks emails and credit
+  cards across input, output and tool results, or blocks configured types.
+- Optionally block request terms with `/guardrails keyword add <term>` and/or
+  review final answers with `/guardrails review on`.
 - Keep API-key storage separate from ordinary settings and preserve sender
   authorization on remote bridges.
 
@@ -688,7 +738,10 @@ instructions rather than being rewritten. [Attribution reference](docs/attributi
 - Use `nova update` and `/update` with stage progress, release notes and a
   completion screen.
 - Use the supported update/restart flow to reopen the main session and continue
-  an interrupted turn; failed updates retain a path back to the current version.
+  an interrupted turn. On Windows the installer runs in a fresh process after
+  Nova exits, so loaded native modules do not block the upgrade; a failed update
+  reports the error at the shell instead of restarting an environment that may
+  no longer import.
 - Handle Windows launcher-in-use updates without asking the running executable
   to overwrite itself directly.
 - Verify matching package, lockfile and changelog versions in CI.

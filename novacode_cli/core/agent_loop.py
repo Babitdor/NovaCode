@@ -18,6 +18,7 @@ Bug fixes and feature additions belong *here* so both UIs benefit immediately.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import time
 from collections.abc import AsyncIterator
@@ -81,6 +82,20 @@ class _RepetitionLoop(Exception):
 #: Consecutive policy-rejected resumes (no human asked) before the turn is
 #: aborted. Each resume is a fresh model call, so this bounds a runaway loop.
 MAX_AUTO_REJECT_RESUMES = 3
+
+
+async def _drain_flush(flush_text) -> AsyncIterator[Any]:
+    """Yield events from a sync or async text-flush callback.
+
+    The guardrail-aware flush is async because the optional safety review calls
+    a model; tool handlers accept either so tests and callers that pass the
+    plain ``_flush_events`` keep working.
+    """
+    result = flush_text()
+    if inspect.isawaitable(result):
+        result = await result
+    for event in result or ():
+        yield event
 
 
 def format_interrupt_notification(kind: str, payload: Any) -> str:
@@ -314,6 +329,28 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     from novacode_cli.config.nova_config import NovaConfig
 
     compression_config = await asyncio.to_thread(NovaConfig)
+    from novacode_cli.security.guardrails import (
+        OUTPUT_BLOCKED,
+        PIIRedactor,
+        blocked_keyword_in,
+        review_response,
+        text_from_content,
+    )
+
+    guardrails = compression_config.get_guardrails()
+    pii = PIIRedactor(guardrails.pii_rules) if guardrails.pii_enabled else None
+    display_pii = pii if pii is not None and guardrails.apply_to_output else None
+    tool_pii = pii if pii is not None and guardrails.apply_to_tool_results else None
+    review_enabled = guardrails.safety_review_enabled
+    # Nova commits the answer from streamed chunks, not from the post-model
+    # state. Buffer prose whenever a display guard or the review needs the whole
+    # answer, so a refused or partial value is never rendered first.
+    buffer_output = (
+        display_pii is not None
+        or review_enabled
+        or bool(guardrails.blocked_keywords)
+    )
+
     if (
         compression_config.get_compression_mode() == "ponytail"
         and is_deactivation_command(user_input)
@@ -389,6 +426,26 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
         if assistant_id and assistant_id != "nova-agent"
         else (COLORS["success"] if assistant_id == "nova-agent" else COLORS["agent"])
     )
+
+    # Pre-flight guardrails: refuse before any model call. ContentFilterMiddleware
+    # enforces the same rule inside the graph; this path gives both UIs a clean
+    # refusal instead of a turn that silently jumps to the end.
+    request_text = text_from_content(message_content)
+    block_reason = None
+    if blocked_keyword_in(request_text, guardrails.blocked_keywords):
+        block_reason = "it contains a configured blocked term"
+    elif guardrails.pii_enabled and guardrails.apply_to_input and pii is not None:
+        blocking_type = pii.blocking_type(request_text)
+        if blocking_type:
+            block_reason = f"it contains {blocking_type} data configured to block"
+    if block_reason:
+        yield ev.AssistantMessage(
+            text=f"Nova blocked this request because {block_reason}.",
+            agent_name=agent_display_name,
+            agent_color=agent_colors,
+        )
+        yield ev.Done(had_response=True)
+        return
 
     if seen_message_ids is None:
         seen_message_ids = set()
@@ -521,6 +578,12 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
             return _discard()
 
         text = pending_text.rstrip()
+        if display_pii is not None:
+            text = display_pii.redact(text)
+        if guardrails.blocked_keywords and blocked_keyword_in(
+            text, guardrails.blocked_keywords
+        ):
+            text = OUTPUT_BLOCKED
         msg = ev.AssistantMessage(
             text=text, agent_name=agent_display_name, agent_color=agent_colors
         )
@@ -533,6 +596,55 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
         has_responded = True
         _streamed_pending = False
         return [msg]
+
+    review_model: Any = None
+    review_notice_shown = False
+
+    async def _flush_events_checked() -> list:
+        """Flush prose, running the optional model review before commit."""
+        nonlocal review_model, review_notice_shown
+        events = _flush_events()
+        if not review_enabled:
+            return events
+        out: list = []
+        for event in events:
+            if not isinstance(event, ev.AssistantMessage) or not event.text.strip():
+                out.append(event)
+                continue
+            if review_model is None:
+                from novacode_cli.config.model_create import create_model
+
+                review_model = await asyncio.to_thread(create_model)
+            verdict = await review_response(
+                request=prime_original_input,
+                response=event.text,
+                model=review_model,
+            )
+            if verdict.allowed:
+                out.append(event)
+                if verdict.skipped and not review_notice_shown:
+                    review_notice_shown = True
+                    out.append(
+                        ev.ContextMessage(
+                            message=f"Safety review skipped: {verdict.reason}.",
+                            event_type="nova_guardrails",
+                            icon="!",
+                            color="yellow",
+                        )
+                    )
+            else:
+                out.append(
+                    ev.AssistantMessage(
+                        text=(
+                            "Nova withheld this response.\n\n"
+                            f"Reason: {verdict.reason or 'the safety review rejected it.'}"
+                        ),
+                        agent_name=event.agent_name,
+                        agent_color=event.agent_color,
+                        is_subagent=event.is_subagent,
+                    )
+                )
+        return out
 
     # Seed dedup set with pre-existing messages.
     pre_stream_msg_count: int | None = None
@@ -967,8 +1079,9 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                             file_op_tracker=file_op_tracker,
                             subagent_tracker=subagent_tracker,
                             agent_display_name=agent_display_name,
-                            flush_text=_flush_events,
+                            flush_text=_flush_events_checked,
                             preview_task_id=preview_id,
+                            pii_redactor=tool_pii,
                         ):
                             yield _e
                         continue
@@ -1044,7 +1157,13 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
 
                     _is_completed_msg = type(message).__name__ == "AIMessage"
                     reasoning_key = (str(_namespace), getattr(message, "id", None))
-                    thought = reasoning_text(message, blocks) if is_main_agent else ""
+                    # PII is opt-in and its live surface is buffered: exposing
+                    # partial reasoning could leak a value split across chunks.
+                    thought = (
+                        reasoning_text(message, blocks)
+                        if is_main_agent and display_pii is None
+                        else ""
+                    )
                     if thought and (
                         not _is_completed_msg
                         or reasoning_key[1] is None
@@ -1076,7 +1195,7 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                                             icon="⟳",
                                             color="dim",
                                         )
-                                if not summary_preview_suppressed and (
+                                if not buffer_output and not summary_preview_suppressed and (
                                     preview_started
                                     or not _could_be_session_intent_heading(pending_text)
                                 ):
@@ -1086,7 +1205,7 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                                     yield ev.TextDelta(preview_text)
                                 if text_guard.feed(text):
                                     raise _RepetitionLoop
-                            elif text and preview_id:
+                            elif text and preview_id and display_pii is None:
                                 # Chunks as they stream; a model that does not
                                 # stream delivers one whole message instead.
                                 _mid = getattr(message, "id", None)
@@ -1106,7 +1225,7 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                                 tool_call_to_name=tool_call_to_name,
                                 file_op_tracker=file_op_tracker,
                                 subagent_tracker=subagent_tracker,
-                                flush_text=_flush_events,
+                                flush_text=_flush_events_checked,
                                 preview_task_id=preview_id,
                             ):
                                 # The agent can self-engage plan mode: when it calls
@@ -1137,13 +1256,13 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                     if getattr(message, "chunk_position", None) == "last":
                         if hasattr(message, "id"):
                             seen_message_ids.add(message.id)
-                        for _e in _flush_events():
+                        for _e in await _flush_events_checked():
                             yield _e
 
             _current_stream_gen = None
 
             # Flush any trailing prose.
-            for _e in _flush_events():
+            for _e in await _flush_events_checked():
                 yield _e
 
             # Resolve interrupts (graph is paused).
@@ -1591,6 +1710,7 @@ async def _handle_tool_message(
     agent_display_name: str,
     flush_text,
     preview_task_id: str | None = None,
+    pii_redactor: Any = None,
 ) -> AsyncIterator[Any]:
     """Translate a ToolMessage into events (results, file ops, subagent status)."""
     tool_id = getattr(message, "id", None) or getattr(message, "tool_call_id", None)
@@ -1603,6 +1723,8 @@ async def _handle_tool_message(
     tool_name = tool_call_to_name.get(tool_call_id, "") or getattr(message, "name", "")
     tool_status = getattr(message, "status", "success")
     tool_content = format_tool_message_content(message.content)
+    if pii_redactor is not None and isinstance(tool_content, str) and tool_content:
+        tool_content = pii_redactor.redact(tool_content)
     record = file_op_tracker.complete_with_message(message)
 
     if is_subagent and namespace:
@@ -1659,17 +1781,17 @@ async def _handle_tool_message(
     if is_main_agent:
         # Surface shell / generic errors
         if tool_name == "shell" and tool_status != "success" and tool_content:
-            for _e in flush_text():
+            async for _e in _drain_flush(flush_text):
                 yield _e
             yield ev.ErrorOutput(tool_content)
         elif tool_content and isinstance(tool_content, str):
             if tool_content.lstrip().lower().startswith("error"):
-                for _e in flush_text():
+                async for _e in _drain_flush(flush_text):
                     yield _e
                 yield ev.ErrorOutput(tool_content)
 
         if record:
-            for _e in flush_text():
+            async for _e in _drain_flush(flush_text):
                 yield _e
             yield ev.FileOp(
                 record=record,
@@ -1764,7 +1886,7 @@ async def _handle_tool_call_chunk(
     if not isinstance(parsed_args, dict):
         parsed_args = {"value": parsed_args}
 
-    for _e in flush_text():
+    async for _e in _drain_flush(flush_text):
         yield _e
 
     display_needed = False

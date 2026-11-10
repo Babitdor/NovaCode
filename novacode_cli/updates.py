@@ -28,6 +28,8 @@ from novacode_cli.update_ui import Progress, installed_version, run_command, sho
 REPOSITORY = "Babitdor/NovaCode"
 REPO_URL = f"https://github.com/{REPOSITORY}.git"
 CHECK_INTERVAL = 3600
+#: Exit code for Ctrl+C during an update; no restart.
+EXIT_INTERRUPTED = 130
 
 
 def _fail(message: str) -> NoReturn:
@@ -371,6 +373,12 @@ def _pip_command() -> list[str]:
 restart_request: dict | None = None
 #: Tells the restarted TUI to continue the turn the update interrupted.
 CONTINUE_ENV = "NOVA_CONTINUE_AFTER_UPDATE"
+#: Marks the fresh interpreter that updates after Nova exits on Windows.
+CLEAN_UPDATE_ENV = "NOVA_UPDATE_AFTER_EXIT"
+#: The session that fresh interpreter reopens afterwards.
+RESTART_SESSION_ENV = "NOVA_UPDATE_SESSION"
+#: A process that must exit before the updater may replace mapped files.
+HANDOFF_PID_ENV = "NOVA_UPDATE_HANDOFF_PID"
 
 
 def _configure_update_output() -> None:
@@ -384,6 +392,8 @@ def _configure_update_output() -> None:
 def update_main(arguments: list[str]) -> int:
     """Handle nova update independently of onboarding and model credentials."""
     _configure_update_output()
+    if os.environ.pop(CLEAN_UPDATE_ENV, "") == "1":
+        return _update_after_exit()
     parser = argparse.ArgumentParser(
         prog="nova update", description="Update the running Nova installation"
     )
@@ -440,22 +450,103 @@ def _update_with_progress(*, restarting: bool = False) -> int:
             print("If a file was in use, close other Nova windows and run nova update again.", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
-        return 130
+        return EXIT_INTERRUPTED
 
 
 def restart_after_update() -> int:
-    """After the TUI's "Update now": update here, then start Nova in the same session.
+    """After the TUI's "Update now": update, then start Nova in the same session.
 
-    Runs once Nova has exited, in the same terminal. A failed update still
-    restarts (the current version) so the user is never left at a bare prompt.
+    On Windows uv cannot remove a native extension this process has mapped, so
+    the update is handed to a fresh interpreter that waits for this one to exit.
+    That interpreter also restarts Nova; if the update fails it leaves the shell
+    instead of starting an environment that may no longer import.
+
+    Elsewhere the update runs here (as before): a failed update restarts the
+    current version so the user is never left at a bare prompt.
     """
     request = restart_request or {}
+    if sys.platform == "win32":
+        return 0 if _hand_off_update(request) else 1
     code = _update_with_progress(restarting=True)
-    if code == 130:
+    if code == EXIT_INTERRUPTED:
         return code
     if code:
         print("\nRestarting the current version…", file=sys.stderr)
     return _relaunch(request.get("session"), continue_turn=bool(request.get("continue")))
+
+
+def _hand_off_update(request: dict) -> bool:
+    """Start the updater in a fresh interpreter that waits for this one to exit.
+
+    The running Nova maps extension modules uv has to replace (``xxhash`` and
+    others); on Windows a mapped ``.pyd`` cannot be removed. The new interpreter
+    imports only the update path, so it holds none of them.
+    """
+    env = dict(os.environ)
+    env[CLEAN_UPDATE_ENV] = "1"
+    env[HANDOFF_PID_ENV] = str(os.getpid())
+    env.pop(CONTINUE_ENV, None)
+    if request.get("session"):
+        env[RESTART_SESSION_ENV] = str(request["session"])
+    if request.get("continue"):
+        env[CONTINUE_ENV] = "1"
+    print("Updating Nova in this terminal…", flush=True)
+    try:
+        # ``-P`` keeps the working directory off sys.path, so a checkout named
+        # novacode_cli cannot shadow the installation being updated.
+        subprocess.Popen([sys.executable, "-P", "-m", "novacode_cli", "update"], env=env)
+    except OSError as error:
+        print(f"Could not start the updater: {error}", file=sys.stderr)
+        print("Run `nova update` after Nova exits.", file=sys.stderr)
+        return False
+    return True
+
+
+def _update_after_exit() -> int:
+    """The fresh interpreter from ``_hand_off_update``: wait, update, restart."""
+    session = os.environ.pop(RESTART_SESSION_ENV, "") or None
+    continue_turn = os.environ.pop(CONTINUE_ENV, "") == "1"
+    _wait_for_handoff()
+    code = _update_with_progress(restarting=True)
+    if code == EXIT_INTERRUPTED:
+        return code
+    if code:
+        print("\nNova was not restarted: the update did not finish.", file=sys.stderr)
+        print("Run `nova update` to retry.", file=sys.stderr)
+        return code
+    return _relaunch(session, continue_turn=continue_turn)
+
+
+def _wait_for_handoff(timeout_ms: int = 60_000) -> None:
+    """Wait until the Nova that started this updater has exited.
+
+    Windows keeps a loaded ``.pyd`` locked until its process terminates, which
+    is what made uv fail with "Access is denied" mid-install.
+    """
+    try:
+        pid = int(os.environ.pop(HANDOFF_PID_ENV, ""))
+    except ValueError:
+        return
+    if sys.platform != "win32" or pid <= 0 or pid == os.getpid():
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = kernel32.OpenProcess(0x00100000, wintypes.BOOL(False), pid)  # SYNCHRONIZE
+        if not handle:
+            return
+        try:
+            kernel32.WaitForSingleObject(handle, timeout_ms)
+        finally:
+            kernel32.CloseHandle(handle)
+    except (OSError, AttributeError):
+        return
 
 
 def _relaunch(session_id: str | None, *, continue_turn: bool) -> int:
@@ -466,14 +557,16 @@ def _relaunch(session_id: str | None, *, continue_turn: bool) -> int:
     cannot without returning the console to the shell (exec there is spawn and
     exit), so this process waits for the new one and passes on its exit code.
     """
-    command = [sys.executable, "-m", "novacode_cli"]
+    command = [sys.executable, "-P", "-m", "novacode_cli"]
+    # ``-P`` keeps the working directory off sys.path so a checkout cannot
+    # shadow the code the update just installed.
     if session_id:
         command += ["--continue", session_id]
     env = dict(os.environ)
     # ``execve`` keeps the PID on POSIX, while on Windows this process remains
     # alive waiting for the child. Team ownership can therefore still point at
     # this updater after a failed-but-safe coordinator shutdown.
-    env["NOVA_UPDATE_HANDOFF_PID"] = str(os.getpid())
+    env[HANDOFF_PID_ENV] = str(os.getpid())
     if continue_turn:
         env[CONTINUE_ENV] = "1"
     for stream in (sys.stdout, sys.stderr):

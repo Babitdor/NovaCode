@@ -2097,8 +2097,9 @@ def cli_main() -> None:
                     _std.flush()
                 except (ValueError, OSError):
                     pass
-            # /update's "Update now": Nova has shut down cleanly; update in this
-            # terminal and start again in the same session.
+            # /update's "Update now": Nova has shut down cleanly; hand the update
+            # to a fresh process on Windows (or run it here) and start again in
+            # the same session.
             from novacode_cli import updates
 
             if updates.restart_request is not None:
