@@ -79,6 +79,32 @@ def test_skill_read_stream_becomes_an_inline_notice_without_instruction_content(
     assert notices[0].message == "Reading skill: review"
 
 
+def test_memory_notices_deduplicate_per_turn_and_keep_the_source():
+    class Agent:
+        async def aget_state(self, _config):
+            return _State([])
+
+        async def astream(self, _inp, **_kw):
+            recall = {"type": "nova_memory_read", "name": "packaging",
+                      "path": "/memories/memories/packaging.md", "action": "recall",
+                      "content": "PRIVATE_BODY"}
+            yield ((), "custom", recall)
+            yield ((), "custom", recall)
+            yield ((), "custom", {**recall, "action": "read"})
+            yield ((), "custom", {**recall, "action": "unknown"})
+            yield ((), "custom", {**recall, "action": []})
+            yield ((), "custom", {**recall, "name": ""})
+
+    for _turn in range(2):
+        notices = [event for event in _collect(Agent()) if isinstance(event, ev.ContextMessage)]
+        assert [event.message for event in notices] == [
+            "Recalling memory: packaging · /memories/memories/packaging.md",
+            "Reading memory: packaging · /memories/memories/packaging.md",
+        ]
+        assert all(event.event_type == "nova_memory_read" for event in notices)
+        assert "PRIVATE_BODY" not in repr(notices)
+
+
 def test_agent_stream_applies_runtime_tracing_despite_an_old_disabled_context(monkeypatch):
     import langsmith
     from langsmith import utils

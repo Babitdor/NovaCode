@@ -1,6 +1,7 @@
 """Middleware for loading agent-specific long-term memory into the system prompt."""
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -21,10 +22,13 @@ from langchain.agents.middleware.types import (
     AgentState,
     ModelRequest,
     ModelResponse,
+    ToolCallRequest,
 )
+from langchain_core.messages import ToolMessage
 
 # from langgraph.runtime import Runtime
 from langchain_core.tools import StructuredTool
+from langgraph.types import Command
 
 from novacode_cli.config.config import Settings
 from novacode_cli.memory.limits import (
@@ -315,7 +319,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
         # iterations don't re-scan).
         self._corpus_cache: Mapping[str, tuple[frozenset[str], str, frozenset[str]]] | None = None
         self._corpus_sig: tuple | None = None  # one (count, mtime) per lesson dir
-        self._retrieval_cache: tuple[str, str] | None = None
+        self._retrieval_cache: tuple[str, str, tuple[tuple[str, str], ...]] | None = None
 
         # Progressive disclosure for topic memory: the system prompt carries only
         # a small slice of INDEX.md, and this tool finds the rest (and the topic
@@ -327,8 +331,8 @@ class AgentMemoryMiddleware(AgentMiddleware):
                 description=(
                     "Search your long-term topic memory (cross-session decisions, "
                     "facts and lessons) by what you are trying to recall. Returns "
-                    "the best-matching topics with the `/memories/memories/<topic>.md` "
-                    "path to read for full detail."
+                    "matching summaries with exact virtual paths for file-backed topics. "
+                    "Read relevant full pages for details; activated knowledge may have no page."
                 ),
             )
         ]
@@ -765,8 +769,8 @@ class AgentMemoryMiddleware(AgentMiddleware):
             ledger = LearningLedger(ledger_path)
             records = ledger.list(project=project_key, active=True)
             imported = {r.evidence[0] for r in ledger.list() if r.origin == "legacy" and r.evidence}
-        from novacode_cli.session.runtime_identity import current_identity
         from novacode_cli.hermes.activation import active_artifacts
+        from novacode_cli.session.runtime_identity import current_identity
 
         captured = active_artifacts.get() if current_identity.get() else None
         if captured is not None:
@@ -813,7 +817,8 @@ class AgentMemoryMiddleware(AgentMiddleware):
             except OSError:
                 continue
             title_toks = _tokens(path.stem.replace("-", " ").replace("_", " "))
-            corpus.add(path.stem, title_toks, path, digest)
+            topic = path.relative_to(mem_dir).with_suffix("").as_posix()
+            corpus.add(topic, title_toks, path, digest)
         for record in records:
             # Approved generated knowledge remains data, separate from standing
             # instructions; stable IDs prevent topic collisions and overwrites.
@@ -866,9 +871,19 @@ class AgentMemoryMiddleware(AgentMiddleware):
         ``pathlib.glob`` under this call. Off-loading to a worker thread keeps
         the loop free to paint.
         """
-        return await asyncio.to_thread(self._relevant_memories, request)
+        block, sources = await asyncio.to_thread(self._retrieve_memories, request)
+        for name, path in sources:
+            self._publish_memory_notice(getattr(request, "runtime", None), name, path, "recall")
+        return block
 
     def _relevant_memories(self, request: ModelRequest) -> str:
+        """Retrieve and announce selected sources without changing model history."""
+        block, sources = self._retrieve_memories(request)
+        for name, path in sources:
+            self._publish_memory_notice(getattr(request, "runtime", None), name, path, "recall")
+        return block
+
+    def _retrieve_memories(self, request: ModelRequest) -> tuple[str, tuple[tuple[str, str], ...]]:
         """Retrieve the lessons relevant to this turn, formatted for injection.
 
         Scored per BULLET, not per topic file: a topic collects many facts over
@@ -882,11 +897,11 @@ class AgentMemoryMiddleware(AgentMiddleware):
         query = self._latest_user_text(request)
         situation = self._situation_text(request)
         if not query and not situation:
-            return ""
+            return "", ()
         corpus = self._load_memory_corpus()
         key = f"{query}\x00{situation}\x00{self._corpus_sig}"
         if self._retrieval_cache is not None and self._retrieval_cache[0] == key:
-            return self._retrieval_cache[1]
+            return self._retrieval_cache[1], self._retrieval_cache[2]
 
         from novacode_cli.memory import builtin_lessons
 
@@ -895,6 +910,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
         failing = any(marker in lowered for marker in _FAILURE_MARKERS)
         needed = _MIN_FAILURE_RELEVANCE if failing else _MIN_SITUATION_RELEVANCE
         block = ""
+        sources: tuple[tuple[str, str], ...] = ()
         if q or facing_words:
             scored: list[tuple[int, str, str]] = []
             # (word score, topic, bullet, qualified by shared words)
@@ -934,7 +950,14 @@ class AgentMemoryMiddleware(AgentMiddleware):
                     break
                 by_topic.setdefault(topic, []).append(line)
                 used += len(line)
-            chunks = [f"### {topic}\n" + "\n".join(found) for topic, found in by_topic.items()]
+            sources = tuple((topic, self._topic_path(topic)) for topic in by_topic)
+            chunks = [
+                f"### {topic}"
+                + (f" ({path})" if path else " (no backing file)")
+                + "\n"
+                + "\n".join(by_topic[topic])
+                for topic, path in sources
+            ]
             self._track_recall([ln for found in by_topic.values() for ln in found], situation)
             if chunks:
                 block = (
@@ -944,8 +967,83 @@ class AgentMemoryMiddleware(AgentMiddleware):
                     + "\n\n".join(chunks)
                     + "\n</relevant_memory>"
                 )
-        self._retrieval_cache = (key, block)
-        return block
+        self._retrieval_cache = (key, block, sources)
+        return block, sources
+
+    def _topic_path(self, topic: str) -> str:
+        """Expose a real corpus source; generated knowledge must not invent a page."""
+        source = getattr(self._corpus_cache, "sources", {}).get(topic)
+        if source and isinstance(source[1], Path):
+            return "/memories/" + source[1].relative_to(self.agent_dir).as_posix()
+        return ""
+
+    @staticmethod
+    def _publish_memory_notice(runtime: object, name: str, path: str, action: str) -> None:
+        """Publish source metadata separately from memory bodies and model history."""
+        writer = getattr(runtime, "stream_writer", None)
+        if callable(writer):
+            try:
+                writer(
+                    {
+                        "type": "nova_memory_read",
+                        "action": action,
+                        "name": " ".join(name.split())[:200],
+                        "path": path[:2000],
+                    }
+                )
+            except Exception:  # noqa: BLE001 - Display failures must not break memory use.
+                logger.debug("Could not publish memory notice", exc_info=True)
+
+    def _announce_memory_read(self, request: ToolCallRequest, result: object) -> None:
+        """Report successful explicit page reads, including guarded Code Mode calls."""
+        name = request.tool_call["name"]
+        if name not in {"read_file", "read_memory"}:
+            return
+        if not isinstance(result, ToolMessage) or result.status == "error":
+            return
+        if not isinstance(result.content, str) or result.content.lstrip().lower().startswith(
+            "error:"
+        ):
+            return
+        args = request.tool_call.get("args") or {}
+        path = str(args.get("file_path" if name == "read_file" else "path") or "")
+        if name == "read_memory":
+            try:
+                data = json.loads(result.content)
+            except (TypeError, ValueError):
+                return
+            if (
+                not isinstance(data, dict)
+                or data.get("success") is not True
+                or data.get("exists") is not True
+            ):
+                return
+            path = str(data.get("path") or path)
+        path = path.replace("\\", "/")
+        if not path.endswith(".md") or not (
+            path.startswith(("/memories/memories/", "/project-memory/"))
+            or path in {"/memories/agent.md", "/memories/HABITS.md"}
+        ):
+            return
+        self._publish_memory_notice(request.runtime, Path(path).stem, path, "read")
+
+    def wrap_tool_call(
+        self, request: ToolCallRequest, handler: Callable[[ToolCallRequest], ToolMessage | Command]
+    ) -> ToolMessage | Command:
+        """Keep guards authoritative and announce only completed reads."""
+        result = handler(request)
+        self._announce_memory_read(request, result)
+        return result
+
+    async def awrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]],
+    ) -> ToolMessage | Command:
+        """Async counterpart for normal and programmatic tool dispatch."""
+        result = await handler(request)
+        self._announce_memory_read(request, result)
+        return result
 
     def _track_recall(self, recalled: list[str], situation: str) -> None:
         """Count what was recalled, and credit the last recall if its failure cleared.
@@ -1070,10 +1168,11 @@ class AgentMemoryMiddleware(AgentMiddleware):
         if not scored:
             return f"No memory matches {query!r}. Proceed without it."
         scored.sort(key=lambda t: (-t[0], t[1]))
-        lines = [
-            f"- **{topic}** `/memories/memories/{topic}.md`: {' '.join(body.strip().split())[:240]}"
-            for _score, topic, body in scored[: max(1, min(k, 20))]
-        ]
+        lines = []
+        for _score, topic, body in scored[: max(1, min(k, 20))]:
+            path = self._topic_path(topic)
+            source = f"`{path}`" if path else "(activated knowledge; no backing file)"
+            lines.append(f"- **{topic}** {source}: {' '.join(body.strip().split())[:240]}")
         return "\n".join(lines)
 
     def _build_learning_overview(self) -> str:

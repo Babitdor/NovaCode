@@ -15,8 +15,8 @@ Built with Python, LangGraph, deepagents and Textual. [MIT licensed](LICENSE).
 Install the latest release from [PyPI](https://pypi.org/project/novacode-cli/)
 with **uv** on Windows CMD, macOS or Linux. Nova requires Python 3.11+; uv can
 install Python 3.11 for the tool. You also need a supported model provider or
-a running Ollama instance with a model installed. Current release: **1.2.2**
-([changelog](https://github.com/Babitdor/NovaCode/releases/tag/v1.2.2)).
+a running Ollama instance with a model installed. Current release: **1.2.3**
+([changelog](https://github.com/Babitdor/NovaCode/releases/tag/v1.2.3)).
 
 ```text
 uv tool install --python 3.11 novacode-cli
@@ -27,11 +27,12 @@ First-run setup guides provider configuration and workspace approval. Hosted
 models may charge for usage. Run `nova` from your project directory. Upgrade a
 PyPI tool install with `uv tool upgrade novacode-cli`. To replace a Git-based
 installation, use `uv tool install --python 3.11 --force novacode-cli`, adding any
-wanted extras. To pin this release, use `novacode-cli==1.2.2` in the install command.
+wanted extras. To pin this release, use `novacode-cli==1.2.3` in the install command.
 
-Version 1.2.2 adds cross-project session resume with a saved/current workspace
-chooser and remembered preferences. It also fixes the compacted-summary widget
-crash. See the changelog above for details.
+Version 1.2.3 shows memory recall and successful memory-page reads inline,
+with their sources, like skill reads. Automatic recall stays selective; the
+agent can search summaries and read full pages when needed. See the changelog
+above for details.
 
 For local development of Nova itself, use Git and a source checkout:
 
@@ -49,7 +50,10 @@ uv run nova
 - **Plan and delegate:** compare Council proposals, use specialist agents and
   coordinate project tabs with messages and Git worktrees.
 - **Remember:** inspect and maintain a linked Markdown memory wiki, resume
-  sessions and recover supported file snapshots.
+  sessions and recover supported file snapshots. Inline “Recalling memory” and
+  “Reading memory” notices name the sources being used without displaying their
+  contents. Repeated recall of the same source is shown once per turn; the full
+  memory corpus is never loaded into the prompt at once.
 - **Choose and extend:** select hosted or local models, configure an independent
   vision model, and add skills, plugins and MCP servers.
 - **Compose tools in Code Mode:** toggle it below the composer to combine

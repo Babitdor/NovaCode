@@ -45,7 +45,7 @@ async def test_resume_adopts_only_the_chosen_and_approved_directory(
     current, saved = tmp_path / "current", tmp_path / "saved"
     current.mkdir()
     saved.mkdir()
-    monkeypatch.setattr(settings, "get_workspace_root", lambda: current)
+    monkeypatch.setattr(type(settings), "get_workspace_root", lambda _self: current)
     meta = _Meta(None, None)
     meta.project_root = str(saved)
     _patch_restore(monkeypatch, meta, (None, None))

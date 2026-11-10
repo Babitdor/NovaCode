@@ -601,6 +601,7 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
     # user in the way and no step limit to hit. LoopGuardMiddleware can't see it
     # (the tool never executes), so cap the streak here.
     auto_reject_streak = 0
+    announced_memories: set[tuple[str, str, str, str]] = set()
 
     try:
         if getattr(session_state, "handoff_enabled", False) is True:
@@ -667,6 +668,21 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                 _namespace, current_stream_mode, data = chunk
 
                 if current_stream_mode == "custom":
+                    if isinstance(data, dict) and data.get("type") == "nova_memory_read":
+                        name = " ".join(str(data.get("name") or "").split())[:200]
+                        path = " ".join(str(data.get("path") or "").split())[:2000]
+                        action = str(data.get("action") or "")
+                        key = (str(_namespace), action, name, path)
+                        if name and action in {"recall", "read"} and key not in announced_memories:
+                            announced_memories.add(key)
+                            verb = "Recalling" if action == "recall" else "Reading"
+                            yield ev.ContextMessage(
+                                message=f"{verb} memory: {name}" + (f" · {path}" if path else ""),
+                                event_type="nova_memory_read",
+                                icon="📖",
+                                color="cyan",
+                            )
+                        continue
                     if isinstance(data, dict) and data.get("type") == "nova_skill_read":
                         name = " ".join(str(data.get("name") or "").split())[:200]
                         if name:

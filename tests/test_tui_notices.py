@@ -16,17 +16,26 @@ from tests.test_tui_home_preferences import _app, no_system_sampling  # noqa: F4
 
 
 @pytest.mark.timeout(30)
-async def test_skill_reads_appear_inline_without_a_toast(monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.parametrize(
+    ("kind", "message"),
+    [
+        ("nova_skill_read", "Reading skill: review"),
+        ("nova_memory_read", "Recalling memory: windows-packaging"),
+    ],
+)
+async def test_skill_reads_appear_inline_without_a_toast(
+    monkeypatch: pytest.MonkeyPatch, kind: str, message: str,
+):
     app = _app()
     async with app.run_test(size=(100, 34)) as pilot:
         await pilot.pause()
         toast = Mock()
         monkeypatch.setattr(app, "notify", toast)
         before = len(app._transcript().children)
-        await app._render(ev.ContextMessage("Reading skill: review", event_type="nova_skill_read"))
+        await app._render(ev.ContextMessage(message, event_type=kind))
         await pilot.pause()
         assert len(app._transcript().children) == before + 1
-        assert "Reading skill: review" in str(app._transcript().children[-1].render())
+        assert message in str(app._transcript().children[-1].render())
         toast.assert_not_called()
 
 

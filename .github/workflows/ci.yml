@@ -201,6 +201,9 @@ jobs:
           tests/test_skill_retrieval.py
           tests/test_semantic_cache.py
           tests/test_memory_prompt_cache_order.py
+          tests/test_memory_notices.py
+          tests/test_memory_retrieval.py
+          tests/test_memory_search.py
           tests/test_context_learning_properties.py
           tests/test_phase45.py
           tests/test_skill_selection.py

@@ -18701,7 +18701,9 @@ class NovaApp(App):
                 message = message.partition("\n")[0] + ". Use /prime report for details."
             self._log(
                 Text(message),
-                transcript=e.event_type in {"nova_command_output", "nova_skill_read"},
+                transcript=e.event_type in {
+                    "nova_command_output", "nova_skill_read", "nova_memory_read",
+                },
             )
         elif isinstance(e, ev.SubagentActivity):
             await self._handle_subagent(e)
