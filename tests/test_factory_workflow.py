@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import subprocess
 import sys
@@ -60,6 +61,7 @@ class ScriptedRunner:
         self.fail_repairs = 0
         self.active = 0
         self.peak = 0
+        self.developers_started = asyncio.Event()
 
     async def authorize(self, _name: str, _args: dict[str, Any]):
         return True
@@ -80,6 +82,11 @@ class ScriptedRunner:
         self.active += 1
         self.peak = max(self.peak, self.active)
         try:
+            if role == "developer" and self.active == 1:
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(self.developers_started.wait(), timeout=5)
+            elif role == "developer":
+                self.developers_started.set()
             await asyncio.sleep(0.01)
             if role == "requirements":
                 return {

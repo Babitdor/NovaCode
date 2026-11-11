@@ -195,8 +195,11 @@ async def test_dialog_matches_design_and_keeps_draft_at_small_sizes(
         assert "Model not restored" in str(screen.query_one("#resume-model", Static).render())
         listing = screen.query_one(OptionList)
         listing.focus()
-        await pilot.press("down", "down")
+        await pilot.press("down")
         await pilot.pause()
+        await pilot.press("down")
+        await pilot.pause()
+        assert listing.highlighted == 2
         assert "Run the router tests" in str(screen.query_one("#resume-next", Static).render())
         assert screen.query_one("#resume-status").has_class("resume-blocked")
         (tmp_path / f"resume-{style}.svg").write_text(app.export_screenshot(), encoding="utf-8")
