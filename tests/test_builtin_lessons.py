@@ -90,6 +90,16 @@ def test_every_builtin_leads_with_its_symptom() -> None:
         assert "**Fix:**" in lesson, lesson
 
 
+def test_only_the_symptom_that_matches_is_injected(mw) -> None:
+    """One error is one symptom: the pip and tzdata fixes are different facts."""
+    out = mw._relevant_memories(
+        _facing("E: Unable to locate package nginx\napt-get install failed, exit code: 100")
+    )
+    assert out.count("**Symptom:**") == 1, out
+    assert "tzdata" not in out
+    assert "--break-system-packages" not in out
+
+
 def test_they_can_be_switched_off(mw, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NOVA_BUILTIN_LESSONS", "0")
     assert mw._relevant_memories(_facing("E: Unable to locate package nginx, exit code: 100")) == ""

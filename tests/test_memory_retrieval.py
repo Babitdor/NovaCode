@@ -42,7 +42,9 @@ def _setup(tmp_path: Path) -> Path:
 
 def test_relevant_lesson_body_is_injected(tmp_path: Path):
     mw = _mw(_setup(tmp_path))
-    out = mw._relevant_memories(_req("how do I pass a token to authenticate the websocket handshake?"))
+    out = mw._relevant_memories(
+        _req("how do I pass a token to authenticate the websocket handshake?")
+    )
     assert "websocket-token-auth" in out
     assert "query param because browsers" in out  # the BODY, not just a pointer
     assert "docker-image-sizing" not in out  # irrelevant topic excluded
@@ -107,7 +109,9 @@ def test_a_lesson_surfaces_when_the_agent_hits_the_situation_it_is_about(tmp_pat
     request = "Implement tensor parallel linear layers and make the tests pass."
     assert mw._relevant_memories(_req(request)) == "", "nothing in the request points to it"
 
-    error = "Reading package lists...\nE: Unable to locate package python3\napt-get install exited 100"
+    error = (
+        "Reading package lists...\nE: Unable to locate package python3\napt-get install exited 100"
+    )
     out = mw._relevant_memories(_facing(request, error))
     assert "apt-get update" in out
 
@@ -133,5 +137,132 @@ def test_the_cache_follows_the_situation_not_just_the_request(tmp_path: Path):
     mw = _mw(_tooling(tmp_path))
     request = "Build the project."
     assert mw._relevant_memories(_facing(request, "compiled ok")) == ""
-    out = mw._relevant_memories(_facing(request, "E: Unable to locate package python3 apt-get install"))
+    out = mw._relevant_memories(
+        _facing(request, "E: Unable to locate package python3 apt-get install")
+    )
     assert "apt-get update" in out, "a new tool result must be looked at afresh"
+
+
+# ── the query must describe the task, not just the latest message ──────────
+
+
+def test_a_continuation_keeps_the_task_it_continues(tmp_path: Path):
+    mw = _mw(_setup(tmp_path))
+    request = SimpleNamespace(
+        messages=[
+            {
+                "role": "user",
+                "content": "how do I pass a token to authenticate the websocket handshake?",
+            },
+            {"role": "assistant", "content": ""},
+            {"role": "user", "content": "proceed"},
+        ]
+    )
+    out = mw._relevant_memories(request)
+    assert "websocket-token-auth" in out
+
+
+def test_a_pinned_skill_does_not_replace_the_request(tmp_path: Path):
+    mw = _mw(_setup(tmp_path))
+    request = SimpleNamespace(
+        messages=[
+            {
+                "role": "user",
+                "content": "how do I pass a token to authenticate the websocket handshake?",
+            },
+            {
+                "role": "human",
+                "content": "Spreadsheet formatting instructions with no matching words.",
+                "additional_kwargs": {"lc_source": "pinned_skill"},
+            },
+        ]
+    )
+    out = mw._relevant_memories(request)
+    assert "websocket-token-auth" in out
+
+
+def test_an_explicitly_denied_topic_is_not_injected(tmp_path: Path):
+    mw = _mw(_setup(tmp_path))
+    out = mw._relevant_memories(
+        _req("explain the websocket handshake, but do not use the websocket token auth memory")
+    )
+    assert "websocket-token-auth" not in out
+
+
+# ── precision: a large corpus must not turn ordinary words into recall ─────
+# On the real 7,000-bullet corpus every request "matched" several topics:
+# markdown `---` rules were emitted as lessons, and words like "update",
+# "version" or "test" matched hundreds of unrelated lessons.
+
+
+def test_markdown_rules_are_never_injected_as_lessons(tmp_path: Path):
+    mem = tmp_path / "memories"
+    mem.mkdir(parents=True)
+    (mem / "amy-build.md").write_text(
+        "# Amy build\n\n---\n\n- The websocket handshake takes the token as a query param.\n",
+        encoding="utf-8",
+    )
+    mw = _mw(tmp_path)
+    assert mw._relevant_memories(_req("what is the capital of France?")) == ""
+
+
+def test_words_shared_with_the_whole_corpus_are_not_evidence(tmp_path: Path):
+    mem = tmp_path / "memories"
+    mem.mkdir(parents=True)
+    for index in range(12):
+        (mem / f"filler-{index}.md").write_text(
+            "- Update the version before release and run the project.\n", encoding="utf-8"
+        )
+    mw = _mw(tmp_path)
+    assert mw._relevant_memories(_req("update the version for release")) == ""
+
+
+def test_request_meaning_alone_does_not_recall(tmp_path: Path, monkeypatch):
+    """Embeddings were pulling 0.45-0.59 near-neighbours into ordinary requests."""
+    from novacode_cli.memory import semantic
+
+    calls: list[object] = []
+    monkeypatch.setattr(semantic, "similarities", lambda *args: calls.append(args) or [])
+    mw = _mw(_setup(tmp_path))
+    assert mw._relevant_memories(_req("how do I authenticate a handshake?")) == ""
+    assert calls == []
+
+
+def test_at_most_three_topics_are_injected(tmp_path: Path):
+    mem = tmp_path / "memories"
+    mem.mkdir(parents=True)
+    for name, unique in (
+        ("alpha", "alpha"),
+        ("beta", "beta"),
+        ("gamma", "gamma"),
+        ("delta", "delta"),
+        ("epsilon", "epsilon"),
+    ):
+        (mem / f"{name}.md").write_text(
+            f"- The widget deployment for {unique} keeps its config.\n", encoding="utf-8"
+        )
+    mw = _mw(tmp_path)
+    out = mw._relevant_memories(
+        _req("fix the widget deployment for alpha beta gamma delta epsilon")
+    )
+    assert out.count("### ") == 3, out
+
+
+def test_a_bullet_over_the_budget_does_not_starve_the_smaller_ones(tmp_path: Path):
+    mem = tmp_path / "memories"
+    mem.mkdir(parents=True)
+    (mem / "a-huge.md").write_text(
+        "- " + ("x" * 2500) + " websocket token handshake\n", encoding="utf-8"
+    )
+    (mem / "b-small.md").write_text(
+        "- The websocket token handshake uses a query param.\n", encoding="utf-8"
+    )
+    for index in range(5):  # keep the shared words specific to the two bullets above
+        (mem / f"filler-{index}.md").write_text(
+            f"- Note {index} about an unrelated deployment.\n", encoding="utf-8"
+        )
+    mw = _mw(tmp_path)
+    out = mw._relevant_memories(_req("websocket token handshake"))
+    assert "b-small" in out
+    assert "query param" in out
+    assert "a-huge" not in out

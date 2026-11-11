@@ -196,14 +196,14 @@ def test_parts_builder_returns_two_strings(tmp_path) -> None:
     assert "BASE" in stable
 
 
-def test_latest_user_text_reads_only_human_roles() -> None:
+def test_retrieval_query_reads_only_human_roles() -> None:
     req = SimpleNamespace(
         messages=[
             HumanMessage(content="find the context audit"),
             SimpleNamespace(type="ai", content="ignored"),
         ]
     )
-    assert AgentMemoryMiddleware._latest_user_text(cast("Any", req)) == "find the context audit"
+    assert AgentMemoryMiddleware._retrieval_query(cast("Any", req)) == "find the context audit"
 
 
 def test_retrieval_cache_is_keyed_on_the_query(tmp_path) -> None:

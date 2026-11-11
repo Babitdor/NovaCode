@@ -3,11 +3,12 @@
 import asyncio
 import json
 import logging
+import math
 import os
 import re
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypedDict, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, TypedDict, cast
 
 if TYPE_CHECKING:
     from langchain_core.messages import SystemMessage
@@ -46,30 +47,112 @@ _MEMORY_TRUNCATION_NOTICE = "\n\n... [memory truncated — use read_file for ful
 #: The index is a pointer list; the tail is reachable via ``memory_search``.
 _INDEX_TRUNCATION_NOTICE = "\n\n... [index truncated — `memory_search` finds the rest]"
 
+
+#: A short follow-up ("proceed", "fix it") keeps the task it continues in the
+#: retrieval query; on its own it shares no useful words with any lesson.
+_MEMORY_CONTINUATION = re.compile(
+    r"(?:(?:continue|proceed)(?: with (?:all )?(?:the )?fixes)?|yes|go ahead|"
+    r"do (?:it|that)|fix it|add tests|test it|now implement|implement it)[.!?\s]*",
+    re.IGNORECASE,
+)
+_MIN_TASK_WORDS = 3
+
+
+def _message_text(message: object) -> str:
+    """Text of a message object or a serialized message dict."""
+    content = (
+        message.get("content") if isinstance(message, dict) else getattr(message, "content", "")
+    )
+    if isinstance(content, list):
+        return " ".join(block.get("text", "") for block in content if isinstance(block, dict))
+    return str(content or "")
+
+
+def _message_role(message: object) -> str | None:
+    if isinstance(message, dict):
+        return message.get("role")
+    return getattr(message, "type", None)
+
+
+def _message_source(message: object) -> str:
+    additional = (
+        message.get("additional_kwargs")
+        if isinstance(message, dict)
+        else getattr(message, "additional_kwargs", {})
+    )
+    return str((additional or {}).get("lc_source", ""))
+
+
+def _topic_denied(query: str, topic: str) -> bool:
+    """True when the request says not to use this memory by name."""
+    return bool(
+        re.search(
+            r"\b(?:do not|don't|never|without|skip|avoid)\s+"
+            r"(?:(?:recall|use|load|search)\s+)?(?:the\s+)?[/$]?"
+            + re.escape(str(topic).replace("-", " "))
+            + r"(?![\w.-])",
+            query,
+            re.IGNORECASE,
+        )
+    )
+
+
+def _query_text(messages: list[Any]) -> str:
+    """Latest request text, resolving a short continuation to the task it continues."""
+    humans = [
+        message
+        for message in messages
+        if _message_role(message) in ("human", "user")
+        and _message_source(message) not in {"pinned_skill", "summarization"}
+    ]
+    if not humans:
+        return ""
+    query = _message_text(humans[-1]).strip()
+    if not _MEMORY_CONTINUATION.fullmatch(query):
+        return query
+    for message in reversed(humans[:-1]):
+        previous = _message_text(message).strip()
+        if (
+            previous
+            and not _MEMORY_CONTINUATION.fullmatch(previous)
+            and len(previous.split()) >= _MIN_TASK_WORDS
+        ):
+            return previous
+    return query
+
+
 # Per-turn memory retrieval tunables.
-_MAX_RETRIEVED_MEMORIES = 3  # top-K topic bodies injected per turn
+_MAX_RETRIEVED_MEMORIES = 3  # distinct topics injected per turn
 _RETRIEVAL_PER_FILE_CAP = 900  # chars per injected memory body
 _RETRIEVAL_CHAR_BUDGET = 2200  # total chars across injected bodies
-_MIN_RELEVANCE = 2  # min lexical score to inject (drops weak single-word hits)
+_MIN_RELEVANCE = 2  # min lexical score for memory_search
+# A lesson must share at least two content words with the request (or the
+# failure), and those words must be uncommon enough in the corpus to carry
+# signal. A word in nearly every lesson weighs close to 0; a word in one bullet
+# weighs close to 1 (see ``_term_weight``). This rejects pairs like
+# "update"/"version" or "build"/"project" that appear all over a large memory
+# corpus, while keeping one distinctive term plus one ordinary term.
+_MIN_LEXICAL_SUPPORT = 0.75
+# A single shared word is never enough on its own, however rare: two facts can
+# share one term and mean different things.
+_MIN_SHARED_TOKENS = 2
 # Retrieval also looks at what the agent is facing right now — the tail of its
-# last tool result — not only at what the user asked. A lesson like "`apt-get
-# install` fails until `apt-get update` has run" shares no words with a request
-# to build a web server; it shares several with the error it is about. Tool
-# output is wordier and noisier than a request, so it has to match harder.
+# last tool result — but only when that output is a failure. A lesson like
+# "`apt-get install` fails until `apt-get update` has run" shares no words with
+# a request to build a web server; it shares several with the error it is
+# about. Ordinary output is wordy and reads as related to too many lessons, so
+# it no longer drives recall on its own.
 _SITUATION_TAIL_CHARS = 600
-_MIN_SITUATION_RELEVANCE = 3
-# ...except when that output is a failure. An error is short ("python3: command
-# not found"), is the moment a lesson is most useful, and is far less wordy than
-# a file listing, so two shared words are allowed to count there.
-_MIN_FAILURE_RELEVANCE = 2
 _FAILURE_MARKERS = (
     "error", "not found", "no such", "failed", "cannot", "could not", "unable", "denied",
     "traceback", "exception", "refused", "exit code: 1", "exit code: 2",
     "exit code: 100", "exit code: 126", "exit code: 127",
 )  # fmt: skip
 _MAX_RETRIEVED_BULLETS = 8
-# How far below the best-matching lesson another may be and still be recalled.
-_MEANING_MARGIN = 0.12
+# How far below the best-matching failure lesson another may be and still be
+# recalled. Tight: a real error matches its lesson at ~0.7 and a neighbouring
+# toolchain note at ~0.6.
+_MEANING_MARGIN = 0.08
 
 
 # Generic words (>=4 chars) that survive the length filter but carry no topical
@@ -156,6 +239,56 @@ def _tokens(text: str) -> frozenset[str]:
         for w in re.findall(r"[a-z0-9]+", (text or "").lower())
         if len(w) >= 4 and w not in _STOPWORDS
     )
+
+
+def _bullets(body: str) -> list[str]:
+    """Lesson bullets in a topic body, excluding markdown rules and blanks."""
+    return [
+        line
+        for line in (body or "").splitlines()
+        if line.lstrip().startswith(("-", "*", "•")) and any(ch.isalnum() for ch in line)
+    ]
+
+
+def _failing(text: str) -> bool:
+    """True when text looks like a failure result, not ordinary output."""
+    lowered = (text or "").lower()
+    return any(marker in lowered for marker in _FAILURE_MARKERS)
+
+
+def _topic_named(query: str, topic: str) -> bool:
+    """True when the request names the topic, e.g. "websocket token auth"."""
+    name = str(topic).rsplit("/", 1)[-1].replace("-", " ").replace("_", " ")
+    return bool(re.search(r"(?<![\w.-])" + re.escape(name) + r"(?![\w.-])", query, re.IGNORECASE))
+
+
+def _term_weight(token: str, document_frequency: Mapping[str, int], documents: int) -> float:
+    """Corpus rarity of a token, from ~1 (one bullet) to ~0 (every bullet)."""
+    if documents <= 0:
+        return 1.0
+    return math.log((documents + 1) / (document_frequency.get(token, 0) + 0.5)) / math.log(
+        documents + 1
+    )
+
+
+def _lexical_support(
+    tokens: frozenset[str], document_frequency: Mapping[str, int], documents: int
+) -> float:
+    """Weighted evidence that ``tokens`` are specific enough to act on, else 0."""
+    if len(tokens) < _MIN_SHARED_TOKENS:
+        return 0.0
+    score = sum(_term_weight(token, document_frequency, documents) for token in tokens)
+    return score if score >= _MIN_LEXICAL_SUPPORT else 0.0
+
+
+class _Recall(NamedTuple):
+    """A bullet under consideration, with the evidence that put it there."""
+
+    score: float
+    topic: str
+    line: str
+    supported: bool  # earned by lexical support, not by meaning alone
+    shared: frozenset[str]  # words the failure shares with the bullet
 
 
 class AgentMemoryState(AgentState):
@@ -320,6 +453,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
         self._corpus_cache: Mapping[str, tuple[frozenset[str], str, frozenset[str]]] | None = None
         self._corpus_sig: tuple | None = None  # one (count, mtime) per lesson dir
         self._retrieval_cache: tuple[str, str, tuple[tuple[str, str], ...]] | None = None
+        self._term_stats_cache: tuple[tuple | None, dict[str, int], int] | None = None
 
         # Progressive disclosure for topic memory: the system prompt carries only
         # a small slice of INDEX.md, and this tool finds the rest (and the topic
@@ -718,31 +852,16 @@ class AgentMemoryMiddleware(AgentMiddleware):
             if combined_memories:
                 result["project_memory"] = "\n\n---\n\n".join(combined_memories)
 
+        # Record modification times after successful load (local only)
         if self._backend is None:
             self._record_mtimes(all_paths)
 
         return result
 
     @staticmethod
-    def _latest_user_text(request: ModelRequest) -> str:
-        """Text of the most recent user/human message in the request, or ''."""
-        messages = getattr(request, "messages", None) or []
-        for msg in reversed(messages):
-            role = getattr(msg, "type", None) or (
-                msg.get("role") if isinstance(msg, dict) else None
-            )
-            if role not in ("human", "user"):
-                continue
-            content = getattr(msg, "content", None)
-            if content is None and isinstance(msg, dict):
-                content = msg.get("content")
-            if isinstance(content, str):
-                return content
-            if isinstance(content, list):  # provider block format
-                parts = [b.get("text", "") for b in content if isinstance(b, dict)]
-                return " ".join(p for p in parts if p)
-            return ""
-        return ""
+    def _retrieval_query(request: ModelRequest) -> str:
+        """Query for the current turn, resolving a short continuation to its task."""
+        return _query_text(getattr(request, "messages", None) or [])
 
     def _load_memory_corpus(
         self,
@@ -861,6 +980,30 @@ class AgentMemoryMiddleware(AgentMiddleware):
         except OSError:
             return None
 
+    def _corpus_term_stats(
+        self, corpus: Mapping[str, tuple[frozenset[str], str, frozenset[str]]]
+    ) -> tuple[Mapping[str, int], int]:
+        """How many bullets each token appears in, cached with the corpus.
+
+        The same corpus signature that gates the corpus gates this: a review
+        that adds a topic changes both. Counting at bullet granularity (not
+        topic) is what makes a word used across 200 facts cheap and a word
+        used in one fact valuable.
+        """
+        signature = self._corpus_sig
+        cached = getattr(self, "_term_stats_cache", None)
+        if cached is not None and cached[0] == signature:
+            return cached[1], cached[2]
+        frequency: dict[str, int] = {}
+        documents = 0
+        for _title_toks, body, _body_toks in corpus.values():
+            for line in _bullets(body):
+                documents += 1
+                for token in _tokens(line):
+                    frequency[token] = frequency.get(token, 0) + 1
+        self._term_stats_cache = (signature, frequency, documents)
+        return frequency, documents
+
     async def _relevant_memories_async(self, request: ModelRequest) -> str:
         """Async wrapper around :meth:`_relevant_memories`.
 
@@ -889,12 +1032,14 @@ class AgentMemoryMiddleware(AgentMiddleware):
         Scored per BULLET, not per topic file: a topic collects many facts over
         time and only some bear on the moment, and injecting the head of the
         file (as this used to) sent whichever bullets happened to be newest.
-        A bullet qualifies by sharing words with the user's request (a hit on
-        the topic's title counts double) or, more strictly, with the tail of the
-        last tool result. Cached per (request, situation), so repeated model
-        calls on an unchanged conversation reuse it. '' when nothing scores.
+        A bullet qualifies by sharing enough RARE words with the user's request
+        or, only while the last tool result is a failure, with that failure.
+        Ordinary output no longer drives recall: a file listing reads as
+        "related" to too many lessons. Cached per (request, situation), so
+        repeated model calls on an unchanged conversation reuse it. '' when
+        nothing scores.
         """
-        query = self._latest_user_text(request)
+        query = self._retrieval_query(request)
         situation = self._situation_text(request)
         if not query and not situation:
             return "", ()
@@ -905,51 +1050,82 @@ class AgentMemoryMiddleware(AgentMiddleware):
 
         from novacode_cli.memory import builtin_lessons
 
-        q, facing_words = _tokens(query), _tokens(situation)
-        lowered = situation.lower()
-        failing = any(marker in lowered for marker in _FAILURE_MARKERS)
-        needed = _MIN_FAILURE_RELEVANCE if failing else _MIN_SITUATION_RELEVANCE
+        q = _tokens(query)
+        failing = _failing(situation)
+        facing = _tokens(situation) if failing else frozenset()
         block = ""
         sources: tuple[tuple[str, str], ...] = ()
-        if q or facing_words:
-            scored: list[tuple[int, str, str]] = []
-            # (word score, topic, bullet, qualified by shared words)
-            candidates: list[tuple[int, str, str, bool]] = []
-            for topic, (title_toks, body, body_toks) in corpus.items():
+        if q or facing:
+            frequency, documents = self._corpus_term_stats(corpus)
+            candidates: list[_Recall] = []
+            for topic, (_title_toks, body, _body_toks) in corpus.items():
                 # The built-in lessons answer an error, never a request: a long
                 # task description shares a few words with all of them, which
                 # put every one in front of the model on nearly every turn.
                 builtin = topic == builtin_lessons.TOPIC
                 if builtin and not failing:
                     continue
-                title_bonus = 2 * len(q & title_toks)
-                topic_asked = not builtin and title_bonus + len(q & body_toks) >= _MIN_RELEVANCE
-                lines = [ln for ln in body.splitlines() if ln.lstrip().startswith(("-", "*", "•"))]
-                if not lines and topic_asked:  # a hand-written topic with no bullets
-                    scored.append(
-                        (
-                            title_bonus + len(q & body_toks),
-                            topic,
-                            body.strip()[:_RETRIEVAL_PER_FILE_CAP],
+                if _topic_denied(query, topic):
+                    continue
+                named = not builtin and _topic_named(query, topic)
+                lines = _bullets(body)
+                if not lines:  # a hand-written topic with no bullet markers
+                    shared = frozenset() if builtin else q & _tokens(body)
+                    if named or _lexical_support(shared, frequency, documents) > 0:
+                        candidates.append(
+                            _Recall(
+                                score=1.0,
+                                topic=topic,
+                                line=body.strip()[:_RETRIEVAL_PER_FILE_CAP],
+                                supported=True,
+                                shared=shared,
+                            )
                         )
-                    )
+                    continue
                 for line in lines:
                     words = _tokens(line)
-                    asked, facing = (0 if builtin else len(q & words)), len(facing_words & words)
-                    by_words = (topic_asked and asked > 0) or facing >= needed
+                    asked = frozenset() if builtin else q & words
+                    face = facing & words
+                    asked_support = _lexical_support(asked, frequency, documents)
+                    face_support = _lexical_support(face, frequency, documents)
+                    supported = bool(asked_support or face_support)
+                    score = asked_support + 2 * face_support
+                    if named and asked:
+                        # A request that names the topic ("use the websocket
+                        # token auth memory") need not repeat two of its words.
+                        supported = True
+                        score = max(score, float(len(asked)))
                     candidates.append(
-                        (asked + title_bonus + 2 * facing, topic, line.strip(), by_words)
+                        _Recall(
+                            score=score,
+                            topic=topic,
+                            line=line.strip(),
+                            supported=supported,
+                            shared=face,
+                        )
                     )
-            scored += self._by_meaning(candidates, query, situation)
-            scored.sort(key=lambda t: t[0], reverse=True)
+            ranked = self._by_meaning(candidates, situation)
+            ranked.sort(key=lambda c: (-c.score, c.topic, c.line))
 
             used = 0
+            count = 0
             by_topic: dict[str, list[str]] = {}
-            for _score, topic, line in scored[:_MAX_RETRIEVED_BULLETS]:
-                if used + len(line) > _RETRIEVAL_CHAR_BUDGET:
+            for candidate in ranked:
+                if count >= _MAX_RETRIEVED_BULLETS:
                     break
-                by_topic.setdefault(topic, []).append(line)
-                used += len(line)
+                topic = candidate.topic
+                if topic in by_topic:
+                    # One symptom is enough: each built-in answers a different
+                    # error, and a turn is looking at one error.
+                    if topic == builtin_lessons.TOPIC:
+                        continue
+                elif len(by_topic) >= _MAX_RETRIEVED_MEMORIES:
+                    continue
+                if used + len(candidate.line) > _RETRIEVAL_CHAR_BUDGET:
+                    continue  # skip this bullet, not every smaller one after it
+                by_topic.setdefault(topic, []).append(candidate.line)
+                used += len(candidate.line)
+                count += 1
             sources = tuple((topic, self._topic_path(topic)) for topic in by_topic)
             chunks = [
                 f"### {topic}"
@@ -1054,8 +1230,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
         try:
             from novacode_cli.memory import recall_stats
 
-            lowered = situation.lower()
-            failing = any(marker in lowered for marker in _FAILURE_MARKERS)
+            failing = _failing(situation)
             # A later successful command is an observation, not causal evidence
             # that a recalled lesson improved the result.
             keys = recall_stats.note_recalled(self.agent_dir, recalled)
@@ -1067,59 +1242,47 @@ class AgentMemoryMiddleware(AgentMiddleware):
             logger.debug("recall tracking failed", exc_info=True)
 
     @staticmethod
-    def _by_meaning(
-        candidates: list[tuple[int, str, str, bool]], query: str, situation: str
-    ) -> list[tuple[int, str, str]]:
-        """Keep the bullets that bear on this moment, judged by meaning too.
+    def _by_meaning(candidates: list[_Recall], situation: str) -> list[_Recall]:
+        """Filter candidates to what bears on this moment, judged by meaning too.
 
         Shared words find a lesson only when it happens to use the same ones as
-        the request or the error. The embedding connects ``python3: command not
-        found`` to a lesson that says "install Python with apt-get" (0.50) and
-        keeps a file listing or a passing test run well away from everything
-        (under 0.2). When the model is unavailable this reduces to the word
-        test, which is what ran before.
+        the failure. The embedding connects ``python3: command not found`` to a
+        lesson that describes the fix without quoting the error. It is only
+        consulted for a FAILURE and only against that failure: ordinary
+        requests and ordinary tool output read as weakly similar to far too
+        many lessons, which is how unrelated memories got injected. When the
+        model is unavailable this reduces to the word test.
         """
-        if not candidates:
-            return []
+        if not _failing(situation):
+            return [candidate for candidate in candidates if candidate.supported]
         from novacode_cli.memory import semantic
 
-        bullets = [c[2].lstrip("-*• ").strip() for c in candidates]
+        bullets = [candidate.line.lstrip("-*• ").strip() for candidate in candidates]
         zeros = [0.0] * len(bullets)
-        # Tool output is compared by meaning only when it is a FAILURE. Ordinary
-        # output about the same tool reads as related (`python3 --version`
-        # scores 0.47 against the missing-Python lesson) and is not a moment
-        # anyone needs a lesson.
-        lowered = situation.lower()
-        failing = any(marker in lowered for marker in _FAILURE_MARKERS)
         # An error is usually the last thing printed; the whole tail of a long
         # log dilutes it, so both are tried.
-        last_lines = "\n".join([ln for ln in situation.splitlines() if ln.strip()][-3:])
-        from novacode_cli.memory import builtin_lessons
-
-        to_request = semantic.similarities(query[:1000], bullets) or zeros
-        to_request = [  # built-ins are matched against the error only
-            0.0 if c[1] == builtin_lessons.TOPIC else close
-            for c, close in zip(candidates, to_request, strict=True)
-        ]
+        last_lines = "\n".join([line for line in situation.splitlines() if line.strip()][-3:])
         closeness = [
-            max(scores)
-            for scores in zip(
-                (semantic.similarities(situation, bullets) if failing else None) or zeros,
-                (semantic.similarities(last_lines, bullets) if failing else None) or zeros,
-                to_request,
+            max(whole, tail)
+            for whole, tail in zip(
+                semantic.similarities(situation, bullets) or zeros,
+                semantic.similarities(last_lines, bullets) or zeros,
                 strict=True,
             )
         ]
         # Only the lessons nearly as close as the closest one: the apt error
-        # matches its own lesson at 0.79 and an unrelated pip note at 0.62.
-        floor = max(semantic.RELEVANT, max(closeness) - _MEANING_MARGIN)
-        return [
-            (word_score + round(20 * close), topic, line)
-            for (word_score, topic, line, by_words), close in zip(
-                candidates, closeness, strict=True
-            )
-            if by_words or close >= floor
-        ]
+        # matches its own lesson at ~0.76 and an unrelated pip note at ~0.53.
+        floor = max(semantic.RELEVANT, max(closeness, default=0.0) - _MEANING_MARGIN)
+        kept: list[_Recall] = []
+        for candidate, close in zip(candidates, closeness, strict=True):
+            if candidate.supported:
+                kept.append(candidate._replace(score=candidate.score + 20 * close))
+            elif close >= floor and (candidate.shared or close >= semantic.SAME_FACT):
+                # A failure that shares no words with the fix still recalls it,
+                # but only when the embedding is confident or the failure has
+                # a word in common with the lesson.
+                kept.append(candidate._replace(score=20 * close))
+        return kept
 
     @staticmethod
     def _situation_text(request: ModelRequest) -> str:

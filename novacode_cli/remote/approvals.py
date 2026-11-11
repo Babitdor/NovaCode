@@ -278,5 +278,4 @@ class RemoteApprovalBroker:
             return True
         pending.respondent = owner[-1]
         pending.future.set_result(match.group(1).lower() == "approve")
-        await self._reply(msg, "Approval response recorded.")
         return True

@@ -70,7 +70,7 @@ async def test_relevant_memories_async_does_not_block_the_loop(tmp_path: Path) -
         return {}
 
     mw._load_memory_corpus = slow_load  # type: ignore[method-assign]
-    mw._latest_user_text = lambda _r: "some query about memory"  # type: ignore[method-assign]
+    mw._retrieval_query = lambda _r: "some query about memory"  # type: ignore[method-assign]
 
     ticks = await _count_loop_ticks(lambda: mw._relevant_memories_async(MagicMock()))
 
