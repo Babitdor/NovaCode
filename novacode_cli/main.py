@@ -156,6 +156,7 @@ _auto_configure_tracing()
 from novacode_cli.mcp.commands import execute_mcp_command
 from novacode_cli.migrate import check_migration_status, migrate_agents
 from novacode_cli.path_approval import PathApprovalManager, check_path_approval
+from novacode_cli.startup_trace import mark
 from novacode_cli.states.Session import SessionState
 from novacode_cli.tools import (
     code_search,
@@ -559,6 +560,7 @@ async def _run_agent_session(
 
     apply_filesystem_host_path_patch()
     apply_write_file_dict_content_patch()
+    mark("boot_animation_start")
 
     with BootAnimation.start():
         agent, composite_backend = create_agent_with_config(
@@ -577,6 +579,7 @@ async def _run_agent_session(
             # the cwd it was spawned in, and this is where that binding lands.
             workspace_root=str(settings.get_workspace_root()),
         )
+        mark("agent_built")
 
         # Set agent context in session state for dynamic model switching
         session_state.set_agent_context(
@@ -950,6 +953,8 @@ async def main(
         sandbox_snapshot: Snapshot name to boot from (LangSmith only)
         sandbox_snapshot_id: Snapshot ID to boot from (LangSmith only)
     """
+    mark("session_start")
+
     # Check path approval before creating any resources (model, sandbox, store,
     # checkpointer, Vixie server, etc.). If the user denies access, nothing
     # expensive has been allocated — no cleanup needed.
@@ -973,6 +978,7 @@ async def main(
         console.print("[dim]Path approval is required to ensure safe file system access.[/dim]")
         console.print()
         sys.exit(1)
+    mark("path_approval")
 
     # Hydrate API keys stored in the OS keychain into the environment so model
     # clients (which read os.environ) can find them — keys may live only in the
@@ -980,6 +986,7 @@ async def main(
     from novacode_cli.onboarding import load_secrets_into_env
 
     load_secrets_into_env()
+    mark("secrets")
 
     # Load saved non-secret tracing settings and the LangSmith key from the
     # credential store before any agent is created.
@@ -1001,6 +1008,7 @@ async def main(
     # Skipped in headless mode — it's an interactive desktop-pet feature.
     if not getattr(session_state, "headless", False):
         await start_vixie_server()
+    mark("vixie")
 
     # Dynamic (remote) subagents talk Agent Protocol to a LangGraph server, which
     # Nova launches itself from agents/async_agents/ when the optional
@@ -1011,6 +1019,7 @@ async def main(
     from novacode_cli.agents.server_launcher import plan_agent_server
 
     await asyncio.to_thread(plan_agent_server, enabled=agent_server, port=agent_server_port)
+    mark("agent_server_plan")
 
     from novacode_cli.session.session_persistence import SessionManager
     from novacode_cli.session.session_restore import restore_session
@@ -1035,6 +1044,7 @@ async def main(
     from novacode_cli.memory.store import get_async_durable_store
 
     store = await get_async_durable_store()
+    mark("store_open")
 
     # Use SQLite-backed checkpointer for cross-restart session continuity when available.
     # Falls back to InMemorySaver if langgraph-checkpoint-sqlite is not installed.
@@ -1044,6 +1054,7 @@ async def main(
         # Clean up checkpoint DBs older than 30 days to prevent unbounded growth
         _cleanup_old_checkpoints(checkpoints_dir, max_age_days=30)
         _db_path = str(checkpoints_dir / "nova_checkpoints.db")
+        mark("checkpointer_open")
 
         async def _setup_sqlite_checkpointer():
             # AsyncSqliteSaver.from_conn_string() is an *async context manager*,
@@ -1071,6 +1082,7 @@ async def main(
                 await conn.commit()
             except Exception:
                 pass  # non-fatal — default journal mode still works
+            mark("checkpointer_ready")
             return saver
 
     # Initialize session manager for persistence
@@ -1147,6 +1159,7 @@ async def main(
     else:
         checkpointer = InMemorySaver()
         model = session_model or await asyncio.to_thread(create_model)
+    mark("model_ready")
 
     # Sandbox identity recovered from a resumed session (for reconnect).
     restored_sandbox_id: str | None = None
