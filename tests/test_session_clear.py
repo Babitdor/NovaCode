@@ -65,6 +65,7 @@ async def test_resume_picker_excludes_cleared(monkeypatch):
     assert selected == ("keep", False)
 
 
+@pytest.mark.timeout(60)
 async def test_resume_picker_lists_all_projects(monkeypatch):
     """`nova --resume` discovers conversations beyond the launch project."""
     sm = SessionManager(sessions_dir=pathlib.Path(tempfile.mkdtemp()))
