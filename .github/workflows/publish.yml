@@ -63,4 +63,4 @@ jobs:
       - name: Publish with PyPI Trusted Publishing
         env:
           VERSION: ${{ steps.metadata.outputs.version }}
-        run: uv publish --trusted-publishing always "dist/novacode_cli-${VERSION}-py3-none-any.whl" "dist/novacode_cli-${VERSION}.tar.gz"
+        run: uv publish --trusted-publishing always --check-url https://pypi.org/simple/ "dist/novacode_cli-${VERSION}-py3-none-any.whl" "dist/novacode_cli-${VERSION}.tar.gz"
