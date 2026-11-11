@@ -1,14 +1,19 @@
 """A mis-isolated test must fail before changing the user's saved settings."""
 
-from pathlib import Path
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import pytest
 
 from novacode_cli.config.nova_config import NovaConfig
 
+if TYPE_CHECKING:
+    from pathlib import Path
 
-def test_real_config_writes_are_blocked_before_mutation():
-    path = Path.home() / ".nova" / "Nova.config.json"
+
+def test_real_config_writes_are_blocked_before_mutation(original_nova_home: Path) -> None:
+    path = original_nova_home / "Nova.config.json"
     before = path.read_bytes() if path.exists() else None
     config = NovaConfig()
     # Force the protected destination; no saved fields are printed or changed.

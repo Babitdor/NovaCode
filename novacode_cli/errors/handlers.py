@@ -244,7 +244,6 @@ class ImportErrorRecovery:
             Recovery result with installation suggestions
         """
         module = error.context.get("module", "")
-        import_line = error.context.get("import_line", "")
 
         suggestion = (
             f"Module not found: {module}\n\n"

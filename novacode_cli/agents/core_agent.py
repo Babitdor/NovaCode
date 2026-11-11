@@ -26,7 +26,6 @@ The agent is built using LangGraph's Pregel architecture with:
 import os
 import re
 import shutil
-import time
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -2097,7 +2096,7 @@ def create_agent_with_config(
         ).with_config(recursion_limit=execution_config["recursion_limit"]), None
 
     # Lazy import for tracing (speeds up startup)
-    from novacode_cli.tracking.tracing import is_tracing_enabled, get_tracing_config
+    from novacode_cli.tracking.tracing import is_tracing_enabled
 
     definition_options = {
         "system_prompt": system_prompt,
@@ -2126,9 +2125,8 @@ def create_agent_with_config(
 
     if is_tracing_enabled():
         tracing_enabled = True
-        tracing_config = get_tracing_config()
         # console.print(
-        #     f"[dim]LangSmith tracing enabled: {tracing_config.project_name}[/dim]"
+        #     "[dim]LangSmith tracing enabled[/dim]"
         # )
     else:
         # Try to auto-configure from environment

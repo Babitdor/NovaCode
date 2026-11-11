@@ -5,8 +5,11 @@ This file is organised in two sections:
 2. Tool tests — ``remember`` / ``recall`` / ``list_memories`` / ``forget``
 """
 
+from __future__ import annotations
+
 import sqlite3
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 from novacode_cli.memory.store import get_durable_store
 from novacode_cli.tools.store_memory_tools import (
@@ -17,8 +20,19 @@ from novacode_cli.tools.store_memory_tools import (
     remember,
 )
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 
 # ── store.py tests ──────────────────────────────────────────────────────────
+
+
+def test_store_database_path_is_not_the_original_user_store(
+    original_nova_home: Path,
+) -> None:
+    from novacode_cli.memory.store import _STORE_DB_PATH
+
+    assert original_nova_home / "store.db" != _STORE_DB_PATH
 
 
 def test_get_durable_store_returns_a_store():

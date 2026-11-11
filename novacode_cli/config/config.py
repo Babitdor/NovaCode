@@ -52,8 +52,10 @@ from novacode_cli.brand import (
 
 dotenv.load_dotenv()
 
-# Home directory for NOVA configuration
-HOME_DIR = Path.home() / ".nova"
+# Home directory for NOVA configuration. Tests and hosted environments can
+# override it via NOVA_HOME without touching the developer's real config.
+NOVA_HOME = os.environ.get("NOVA_HOME")
+HOME_DIR = Path(NOVA_HOME).expanduser() if NOVA_HOME and NOVA_HOME.strip() else Path.home() / ".nova"
 
 # Color scheme - Red & White Theme
 COLORS = {

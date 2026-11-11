@@ -21,7 +21,6 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 logger = logging.getLogger("nova.hermes.refinement_log")
 

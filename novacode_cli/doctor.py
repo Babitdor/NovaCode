@@ -148,7 +148,7 @@ def run_doctor() -> int:
             else:
                 # Test cloud provider by creating model instance
                 try:
-                    settings = Settings.from_environment()
+                    Settings.from_environment()
                     _ = create_model()
                     results.append(("✓", f"{provider.title()} connection successful", ""))
                 except Exception as e:  # noqa: BLE001

@@ -27,7 +27,7 @@ Built-in backends (in :mod:`sandbox_factory`):
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Generator
+from collections.abc import Generator
 from typing import Protocol, runtime_checkable
 
 from deepagents.backends.protocol import SandboxBackendProtocol

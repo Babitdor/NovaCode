@@ -522,6 +522,7 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
 
         def _discard(notice: str | None = None) -> list:
             nonlocal pending_text, current_ai_message_id, _streamed_pending
+            nonlocal summary_preview_suppressed, preview_started
             pending_text = ""
             current_ai_message_id = None
             had = _streamed_pending

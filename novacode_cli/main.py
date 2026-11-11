@@ -914,6 +914,80 @@ def _cleanup_old_checkpoints(checkpoints_dir: Path, max_age_days: int = 30) -> N
             pass
 
 
+#: Checkpoint files larger than this are compacted (superseded rows dropped + VACUUM)
+#: during startup; smaller ones are pruned in place without the rewrite.
+_CHECKPOINT_COMPACT_SIZE_BYTES = 268_435_456
+
+
+def _prune_checkpoints(db_path: Path) -> int:
+    """Drop superseded checkpoints, keeping only the newest per thread/state.
+
+    Retention keeps the newest checkpoint per ``(thread_id, checkpoint_ns)`` —
+    the state a resume actually restores — and deletes the writes recorded for
+    superseded checkpoints. A long-lived thread accumulates one full graph-state
+    blob per turn, so history-heavy stores left a multi-gigabyte SQLite file on
+    disk that the first open of the next boot then had to pay for.
+
+    Returns the number of checkpoint rows removed (0 when nothing was stale or
+    the schema is not the expected one yet).
+    """
+    import sqlite3
+
+    removed = 0
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(str(db_path), timeout=30.0)
+        conn.execute("PRAGMA busy_timeout=30000")
+        rows = conn.execute(
+            "SELECT rowid, thread_id, checkpoint_ns, checkpoint_id FROM checkpoints"
+        ).fetchall()
+        latest: dict[tuple[str, str], tuple[int, str]] = {}
+        for rowid, thread_id, checkpoint_ns, checkpoint_id in rows:
+            key = (str(thread_id), str(checkpoint_ns or ""))
+            previous = latest.get(key)
+            if previous is None or rowid > previous[0]:
+                latest[key] = (rowid, str(checkpoint_id))
+        keep = {
+            (thread_key[0], thread_key[1], latest[thread_key][1]) for thread_key in latest
+        }
+        stale = [(r[1], r[2], r[3]) for r in rows if (r[1], r[2], r[3]) not in keep]
+        if stale:
+            conn.executemany(
+                "DELETE FROM checkpoints WHERE thread_id=? AND checkpoint_ns=? AND checkpoint_id=?",
+                stale,
+            )
+            removed = len(stale)
+            stale_writes = {
+                (str(r[0]), str(r[1]), str(r[2]))
+                for r in conn.execute(
+                    "SELECT thread_id, checkpoint_ns, checkpoint_id FROM writes"
+                ).fetchall()
+            } - keep
+            if stale_writes:
+                conn.executemany(
+                    "DELETE FROM writes WHERE thread_id=? AND checkpoint_ns=? AND checkpoint_id=?",
+                    sorted(stale_writes),
+                )
+            conn.commit()
+        if (
+            removed
+            and db_path.exists()
+            and db_path.stat().st_size > _CHECKPOINT_COMPACT_SIZE_BYTES
+        ):
+            # Reclaim the freed pages. Best effort — a lock or a full disk must not
+            # break startup; the stale rows are already gone.
+            with contextlib.suppress(sqlite3.Error):
+                conn.execute("VACUUM")
+    except sqlite3.Error:
+        # A not-yet-migrated or fresh database has no schema yet; nothing to prune.
+        return 0
+    else:
+        return removed
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 async def main(
     assistant_id: str,
     session_state,
@@ -1055,6 +1129,11 @@ async def main(
         _cleanup_old_checkpoints(checkpoints_dir, max_age_days=30)
         _db_path = str(checkpoints_dir / "nova_checkpoints.db")
         mark("checkpointer_open")
+        # Superseded checkpoints (one full graph state per turn, per thread) are
+        # dead weight — a resume only ever reads the newest state. Drop them so the
+        # durable store stays proportional to live threads.
+        await asyncio.to_thread(_prune_checkpoints, checkpoints_dir / "nova_checkpoints.db")
+        mark("checkpointer_prune_done")
 
         async def _setup_sqlite_checkpointer():
             # AsyncSqliteSaver.from_conn_string() is an *async context manager*,

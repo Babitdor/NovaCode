@@ -2,11 +2,51 @@
 
 from __future__ import annotations
 
+import gc
 import os
 import sys
+import tempfile
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+
+_ORIGINAL_USER_HOME = Path.home()
+_ORIGINAL_NOVA_HOME = os.environ.get("NOVA_HOME")
+_TEST_USER_HOME = tempfile.TemporaryDirectory(prefix="novacode-tests-")
+_TEST_USER_HOME_DIR = Path(_TEST_USER_HOME.name)
+os.environ["NOVA_HOME"] = str(_TEST_USER_HOME_DIR / ".nova")
+os.environ["HOME"] = str(_TEST_USER_HOME_DIR)
+os.environ["USERPROFILE"] = str(_TEST_USER_HOME_DIR)
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    del config
+    store_module = sys.modules.get("novacode_cli.memory.store")
+    if store_module is not None:
+        store_module._store = None
+        gc.collect()
+    _TEST_USER_HOME.cleanup()
+
+
+@pytest.fixture
+def original_nova_home() -> Path:
+    if _ORIGINAL_NOVA_HOME and _ORIGINAL_NOVA_HOME.strip():
+        return Path(_ORIGINAL_NOVA_HOME).expanduser()
+    return _ORIGINAL_USER_HOME / ".nova"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_home_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep every test in a temp user home instead of the developer's real config."""
+    from novacode_cli.config import config
+
+    home_dir = tmp_path / ".nova"
+    monkeypatch.setenv("NOVA_HOME", str(home_dir))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setattr(config, "HOME_DIR", home_dir)
+    monkeypatch.setattr(config, "NOVA_HOME", str(home_dir))
 
 
 @pytest.fixture(autouse=True)
@@ -27,7 +67,6 @@ def _isolate_prime_records(monkeypatch: pytest.MonkeyPatch) -> None:
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from pathlib import Path
 
 #: Env vars that carry credentials. Anything that saves a credential writes
 #: these directly into ``os.environ`` (see `config/credentials.py`), and callers
@@ -97,6 +136,7 @@ def _isolate_recovery_archives(tmp_path, monkeypatch):
 def _isolate_prompt_overrides(tmp_path, monkeypatch):
     """A user's active prompts must never alter offline fixture behavior."""
     from jinja2 import Environment, FileSystemLoader, select_autoescape
+
     from novacode_cli import prompts
     from novacode_cli.hermes import prompt_evolution
     directory = tmp_path / "prompt-history"
@@ -223,9 +263,15 @@ def _guard_the_real_user_config() -> Iterator[None]:
     untouched, so that mistake surfaces as a failure instead of as lost data.
     """
     from pathlib import Path
+
     from novacode_cli.config.nova_config import NovaConfig
 
-    path = Path.home() / ".nova" / "Nova.config.json"
+    nova_home = (
+        Path(_ORIGINAL_NOVA_HOME).expanduser()
+        if _ORIGINAL_NOVA_HOME and _ORIGINAL_NOVA_HOME.strip()
+        else _ORIGINAL_USER_HOME / ".nova"
+    )
+    path = nova_home / "Nova.config.json"
     before = path.read_bytes() if path.exists() else None
     original_save = NovaConfig._save
 

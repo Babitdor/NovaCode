@@ -10,6 +10,7 @@ import base64
 import importlib.metadata
 import importlib.util
 import json
+import logging
 import os
 import re
 import shutil
@@ -30,6 +31,8 @@ REPO_URL = f"https://github.com/{REPOSITORY}.git"
 CHECK_INTERVAL = 3600
 #: Exit code for Ctrl+C during an update; no restart.
 EXIT_INTERRUPTED = 130
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _fail(message: str) -> NoReturn:
@@ -464,6 +467,7 @@ def restart_after_update() -> int:
     Elsewhere the update runs here (as before): a failed update restarts the
     current version so the user is never left at a bare prompt.
     """
+    _flush_pending_terminal_input()
     request = restart_request or {}
     if sys.platform == "win32":
         return 0 if _hand_off_update(request) else 1
@@ -569,6 +573,7 @@ def _relaunch(session_id: str | None, *, continue_turn: bool) -> int:
     env[HANDOFF_PID_ENV] = str(os.getpid())
     if continue_turn:
         env[CONTINUE_ENV] = "1"
+    _flush_pending_terminal_input()
     for stream in (sys.stdout, sys.stderr):
         with suppress(OSError, ValueError):
             stream.flush()
@@ -580,3 +585,30 @@ def _relaunch(session_id: str | None, *, continue_turn: bool) -> int:
             return process.wait()
         except KeyboardInterrupt:  # Ctrl+C reaches both; the new Nova handles it
             continue
+
+
+def _flush_pending_terminal_input() -> None:
+    """Discard input buffered during the update before the resumed TUI starts."""
+    try:
+        if not sys.stdin.isatty():
+            return
+        if sys.platform == "win32":
+            import ctypes
+            from ctypes import wintypes
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.GetStdHandle.argtypes = [wintypes.DWORD]
+            kernel32.GetStdHandle.restype = wintypes.HANDLE
+            kernel32.FlushConsoleInputBuffer.argtypes = [wintypes.HANDLE]
+            kernel32.FlushConsoleInputBuffer.restype = wintypes.BOOL
+            handle = kernel32.GetStdHandle(0xFFFFFFF6)  # STD_INPUT_HANDLE (-10)
+            if not handle or handle == wintypes.HANDLE(-1).value:
+                raise ctypes.WinError(ctypes.get_last_error())
+            if not kernel32.FlushConsoleInputBuffer(handle):
+                raise ctypes.WinError(ctypes.get_last_error())
+        else:
+            import termios
+
+            termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+    except (AttributeError, OSError, ValueError) as error:
+        _LOGGER.warning("Could not clear pending terminal input before restart: %s", error)

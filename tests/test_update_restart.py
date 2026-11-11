@@ -46,10 +46,18 @@ def test_restart_updates_then_reopens_the_session(monkeypatch, update_code, rela
 def test_relaunch_runs_this_environment_into_the_session_and_waits(monkeypatch):
     process = Mock()
     process.wait.side_effect = [KeyboardInterrupt, 3, 0]  # Ctrl+C belongs to the new Nova
-    popen = Mock(return_value=process)
+    order = []
+
+    def spawn(*_args: object, **_kwargs: object) -> Mock:
+        order.append("spawn")
+        return process
+
+    popen = Mock(side_effect=spawn)
+    monkeypatch.setattr(updates, "_flush_pending_terminal_input", lambda: order.append("reset"))
     monkeypatch.setattr(updates.os, "name", "nt")
     monkeypatch.setattr(updates.subprocess, "Popen", popen)
     assert updates._relaunch("s1", continue_turn=True) == 3
+    assert order[:2] == ["reset", "spawn"]
     command = popen.call_args.args[0]
     assert command == [sys.executable, "-P", "-m", "novacode_cli", "--continue", "s1"]
     assert popen.call_args.kwargs["env"][updates.CONTINUE_ENV] == "1"
@@ -72,6 +80,51 @@ def test_windows_restart_leaves_the_update_to_a_clean_interpreter(monkeypatch):
     assert updates.restart_after_update() == 0
     handoff.assert_called_once_with({"session": "s1", "continue": True})
     update.assert_not_called()  # the running process must not touch its own mapped files
+
+
+def test_restart_flushes_pending_input_before_handoff(monkeypatch: pytest.MonkeyPatch):
+    import ctypes
+
+    events = []
+    stdin = Mock()
+    stdin.isatty.return_value = True
+
+    kernel32 = Mock()
+    kernel32.GetStdHandle.return_value = 123
+    kernel32.FlushConsoleInputBuffer.side_effect = (
+        lambda _handle: events.append("input-flush") or 1
+    )
+
+    monkeypatch.setattr(updates.sys, "platform", "win32")
+    monkeypatch.setattr(updates.sys, "stdin", stdin)
+    monkeypatch.setattr(ctypes, "WinDLL", Mock(return_value=kernel32), raising=False)
+    monkeypatch.setattr(updates, "restart_request", {"session": "s1", "continue": True})
+    monkeypatch.setattr(
+        updates,
+        "_hand_off_update",
+        lambda _request: events.append("handoff") or True,
+    )
+
+    assert updates.restart_after_update() == 0
+
+    kernel32.FlushConsoleInputBuffer.assert_called_once_with(123)
+    assert events == ["input-flush", "handoff"]
+
+
+def test_posix_restart_flushes_tty_input(monkeypatch: pytest.MonkeyPatch):
+    from types import SimpleNamespace
+
+    stdin = Mock()
+    stdin.isatty.return_value = True
+    stdin.fileno.return_value = 17
+    termios = SimpleNamespace(TCIFLUSH=0, tcflush=Mock())
+    monkeypatch.setattr(updates.sys, "platform", "linux")
+    monkeypatch.setattr(updates.sys, "stdin", stdin)
+    monkeypatch.setitem(sys.modules, "termios", termios)
+
+    updates._flush_pending_terminal_input()
+
+    termios.tcflush.assert_called_once_with(17, 0)
 
 
 def test_a_handoff_that_cannot_start_reports_failure(monkeypatch):

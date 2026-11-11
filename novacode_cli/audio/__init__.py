@@ -209,7 +209,6 @@ def diagnose_voice() -> list[str]:
 def _probe_portaudio_dll(dll_path: str, lines: list[str]) -> None:
     """Probe the PortAudio DLL and append diagnostic lines."""
     import ctypes
-    import platform
 
     lines.append(f"  PortAudio DLL: {dll_path}")
 
@@ -230,7 +229,6 @@ def _probe_portaudio_dll(dll_path: str, lines: list[str]) -> None:
     except OSError as exc:
         err_code = getattr(exc, "winerror", None)
         if err_code == 127:
-            bits = platform.architecture()[0]
             lines.append(
                 f"    [FAIL] DLL failed to load (WinError 127)\n"
                 f"    [red]The PortAudio DLL can't find a required Windows API.\n"

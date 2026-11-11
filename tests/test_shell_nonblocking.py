@@ -214,7 +214,7 @@ def test_tool_output_and_task_events_do_not_wait_for_a_busy_ui() -> None:
 
         app = NovaApp(
             agent=_FakeAgent(), assistant_id="nova-agent", session_state=_SS(), backend=None,
-            token_tracker=TokenTracker(), image_tracker=None, model_name="m",
+            token_tracker=TokenTracker(), image_tracker=None, model_name="m", model_provider="openai",
         )
         async with app.run_test() as pilot:
             await pilot.pause()
