@@ -27,6 +27,7 @@ import os
 import re
 import shutil
 import time
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -246,6 +247,8 @@ from deepagents.backends import CompositeBackend
 from deepagents.backends.protocol import BackendProtocol, SandboxBackendProtocol
 from deepagents.backends.store import StoreBackend
 from deepagents.middleware.subagents import SubAgent
+
+from novacode_cli.agents.model_router import ModelRouterMiddleware
 
 from novacode_cli.agents.tool_offload import UNSAVED as _UNSAVED_TOOL_RESULT
 from novacode_cli.agents.tool_offload import VIRTUAL_PREFIX as _CLEARED_PREFIX
@@ -1534,7 +1537,7 @@ def _resolve_main_model_multimodal(model: str | BaseChatModel) -> bool:
     return resolve_main_model_multimodal(model)
 
 
-def _build_router_middleware():
+def _build_router_middleware() -> ModelRouterMiddleware | None:
     """The model-routing middleware, or ``None`` when routing is off.
 
     Returns ``None`` in three cases, all of which mean "behave as if /router did
@@ -1585,6 +1588,7 @@ def _build_middleware_stack(
     context_window: int = 0,
     main_model_supports_images: bool = False,
     compaction_model: BaseChatModel | None = None,
+    router_middleware: ModelRouterMiddleware | None = None,
 ) -> list:
     """Build the core agent middleware stack.
 
@@ -1598,6 +1602,7 @@ def _build_middleware_stack(
             window from the model on each request.
         compaction_model: The model that writes context summaries; ``None``
             uses the model each request is for.
+        router_middleware: The per-agent router shared with explicit memory searches.
     """
     # Lazy imports for middleware (speeds up startup)
     from novacode_cli.agents.model_retry import NovaModelRetryMiddleware as ModelRetryMiddleware
@@ -1641,6 +1646,12 @@ def _build_middleware_stack(
         else None
     )
     _project_key = project_memory_key(workspace_root, _sandbox_project)
+    _base_memory_model = model if isinstance(model, BaseChatModel) else None
+
+    def resolve_memory_model(state: Mapping[str, Any]) -> BaseChatModel | None:
+        if router_middleware is not None:
+            return router_middleware.model_for_state(state, _base_memory_model)
+        return _base_memory_model
 
     # Decision-model tool-result pruning: opt-in, off by default, because it was
     # measured and lost (see NovaConfig.get_tool_verdicts_enabled). When it is
@@ -1768,6 +1779,7 @@ def _build_middleware_stack(
             settings=settings,
             assistant_id=assistant_id,
             project_key=_project_key,
+            model_resolver=resolve_memory_model,
             # Always load project memory (NOVA.md/CLAUDE.md) into <project_memory>,
             # even on resume. It's standing project config that must be present in
             # the system prompt EVERY turn (and hot-reloaded). The continuation
@@ -2317,6 +2329,8 @@ This file stores your preferences and context that persist across sessions.
     # budget, when one is set), so /context and compaction agree.
     _seed_summarization_profile(wrapped_model, _model_name, window=_context_window)
 
+    _router_middleware = _build_router_middleware()
+
     # Core middleware stack (retry → vision → learning → security → bootstrap →
     # steering → file tracker → loop guard → rubric → shell → agent memory →
     # context compaction). Ordering is load-bearing — see _build_middleware_stack.
@@ -2335,6 +2349,7 @@ This file stores your preferences and context that persist across sessions.
         context_window=_context_window,
         main_model_supports_images=_main_model_supports_images,
         compaction_model=wrapped_model if isinstance(wrapped_model, BaseChatModel) else None,
+        router_middleware=_router_middleware,
     )
 
     if team_binding is not None:
@@ -2586,7 +2601,6 @@ This file stores your preferences and context that persist across sessions.
     # Model routing (/router). Off by default, and absent from the stack entirely
     # when off, so a session that never enables it behaves exactly as before.
     # Placed before the caller-injected middleware so a plugin can still wrap it.
-    _router_middleware = _build_router_middleware()
     if _router_middleware is not None:
         agent_middleware.append(_router_middleware)
 

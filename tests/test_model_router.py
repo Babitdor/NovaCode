@@ -15,6 +15,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from novacode_cli.agents.model_router import (
@@ -390,6 +391,25 @@ def test_middleware_does_nothing_before_a_decision():
     cfg = _configured()
     middleware = ModelRouterMiddleware(ModelRouter(cfg, client=FakeDecisionClient(_answer("fast"))))
     assert middleware._model_for_current_route() is None
+
+
+def test_model_for_state_resolves_the_selected_route_for_memory_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _configured()
+    router = ModelRouter(cfg, client=FakeDecisionClient(_answer("deep")))
+    middleware = ModelRouterMiddleware(router)
+    selected = FakeListChatModel(responses=["unused"])
+    fallback = FakeListChatModel(responses=["fallback"])
+    monkeypatch.setattr(
+        router,
+        "model_for",
+        lambda route_id: selected if route_id == "deep" else None,
+    )
+
+    assert middleware.model_for_state({"model_route": "deep"}, fallback) is selected
+    assert middleware.model_for_state({}, fallback) is fallback
+    assert middleware.model_for_state({"model_route": "unavailable"}, fallback) is fallback
 
 
 def test_wrap_model_call_overrides_only_when_a_model_was_chosen():

@@ -1,16 +1,17 @@
 """Middleware for loading agent-specific long-term memory into the system prompt."""
 
-import asyncio
+from __future__ import annotations
+
 import json
 import logging
-import math
-import os
-import re
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple, TypedDict, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
+
+from langchain.tools import ToolRuntime
 
 if TYPE_CHECKING:
+    from langchain_core.language_models import BaseChatModel
     from langchain_core.messages import SystemMessage
 
 try:
@@ -46,249 +47,6 @@ logger = logging.getLogger(__name__)
 _MEMORY_TRUNCATION_NOTICE = "\n\n... [memory truncated — use read_file for full content]"
 #: The index is a pointer list; the tail is reachable via ``memory_search``.
 _INDEX_TRUNCATION_NOTICE = "\n\n... [index truncated — `memory_search` finds the rest]"
-
-
-#: A short follow-up ("proceed", "fix it") keeps the task it continues in the
-#: retrieval query; on its own it shares no useful words with any lesson.
-_MEMORY_CONTINUATION = re.compile(
-    r"(?:(?:continue|proceed)(?: with (?:all )?(?:the )?fixes)?|yes|go ahead|"
-    r"do (?:it|that)|fix it|add tests|test it|now implement|implement it)[.!?\s]*",
-    re.IGNORECASE,
-)
-_MIN_TASK_WORDS = 3
-
-
-def _message_text(message: object) -> str:
-    """Text of a message object or a serialized message dict."""
-    content = (
-        message.get("content") if isinstance(message, dict) else getattr(message, "content", "")
-    )
-    if isinstance(content, list):
-        return " ".join(block.get("text", "") for block in content if isinstance(block, dict))
-    return str(content or "")
-
-
-def _message_role(message: object) -> str | None:
-    if isinstance(message, dict):
-        return message.get("role")
-    return getattr(message, "type", None)
-
-
-def _message_source(message: object) -> str:
-    additional = (
-        message.get("additional_kwargs")
-        if isinstance(message, dict)
-        else getattr(message, "additional_kwargs", {})
-    )
-    return str((additional or {}).get("lc_source", ""))
-
-
-def _topic_denied(query: str, topic: str) -> bool:
-    """True when the request says not to use this memory by name."""
-    return bool(
-        re.search(
-            r"\b(?:do not|don't|never|without|skip|avoid)\s+"
-            r"(?:(?:recall|use|load|search)\s+)?(?:the\s+)?[/$]?"
-            + re.escape(str(topic).replace("-", " "))
-            + r"(?![\w.-])",
-            query,
-            re.IGNORECASE,
-        )
-    )
-
-
-def _query_text(messages: list[Any]) -> str:
-    """Latest request text, resolving a short continuation to the task it continues."""
-    humans = [
-        message
-        for message in messages
-        if _message_role(message) in ("human", "user")
-        and _message_source(message) not in {"pinned_skill", "summarization"}
-    ]
-    if not humans:
-        return ""
-    query = _message_text(humans[-1]).strip()
-    if not _MEMORY_CONTINUATION.fullmatch(query):
-        return query
-    for message in reversed(humans[:-1]):
-        previous = _message_text(message).strip()
-        if (
-            previous
-            and not _MEMORY_CONTINUATION.fullmatch(previous)
-            and len(previous.split()) >= _MIN_TASK_WORDS
-        ):
-            return previous
-    return query
-
-
-# Per-turn memory retrieval tunables.
-_MAX_RETRIEVED_MEMORIES = 3  # distinct topics injected per turn
-_RETRIEVAL_PER_FILE_CAP = 900  # chars per injected memory body
-_RETRIEVAL_CHAR_BUDGET = 2200  # total chars across injected bodies
-_MIN_RELEVANCE = 2  # min lexical score for memory_search
-# A lesson must share at least two content words with the request (or the
-# failure), and those words must be uncommon enough in the corpus to carry
-# signal. A word in nearly every lesson weighs close to 0; a word in one bullet
-# weighs close to 1 (see ``_term_weight``). This rejects pairs like
-# "update"/"version" or "build"/"project" that appear all over a large memory
-# corpus, while keeping one distinctive term plus one ordinary term.
-_MIN_LEXICAL_SUPPORT = 0.75
-# A single shared word is never enough on its own, however rare: two facts can
-# share one term and mean different things.
-_MIN_SHARED_TOKENS = 2
-# Retrieval also looks at what the agent is facing right now — the tail of its
-# last tool result — but only when that output is a failure. A lesson like
-# "`apt-get install` fails until `apt-get update` has run" shares no words with
-# a request to build a web server; it shares several with the error it is
-# about. Ordinary output is wordy and reads as related to too many lessons, so
-# it no longer drives recall on its own.
-_SITUATION_TAIL_CHARS = 600
-_FAILURE_MARKERS = (
-    "error", "not found", "no such", "failed", "cannot", "could not", "unable", "denied",
-    "traceback", "exception", "refused", "exit code: 1", "exit code: 2",
-    "exit code: 100", "exit code: 126", "exit code: 127",
-)  # fmt: skip
-_MAX_RETRIEVED_BULLETS = 8
-# How far below the best-matching failure lesson another may be and still be
-# recalled. Tight: a real error matches its lesson at ~0.7 and a neighbouring
-# toolchain note at ~0.6.
-_MEANING_MARGIN = 0.08
-
-
-# Generic words (>=4 chars) that survive the length filter but carry no topical
-# signal — they cause unrelated queries to spuriously match a lesson.
-_STOPWORDS = frozenset(
-    {
-        "about",
-        "above",
-        "after",
-        "again",
-        "against",
-        "already",
-        "also",
-        "another",
-        "because",
-        "been",
-        "being",
-        "could",
-        "does",
-        "doing",
-        "done",
-        "each",
-        "else",
-        "even",
-        "ever",
-        "from",
-        "have",
-        "here",
-        "into",
-        "just",
-        "like",
-        "made",
-        "make",
-        "many",
-        "more",
-        "most",
-        "much",
-        "need",
-        "only",
-        "other",
-        "over",
-        "please",
-        "question",
-        "really",
-        "should",
-        "some",
-        "such",
-        "than",
-        "that",
-        "their",
-        "them",
-        "then",
-        "there",
-        "these",
-        "they",
-        "thing",
-        "things",
-        "this",
-        "those",
-        "unrelated",
-        "very",
-        "want",
-        "well",
-        "were",
-        "what",
-        "when",
-        "where",
-        "which",
-        "while",
-        "will",
-        "with",
-        "would",
-        "your",
-        "yours",
-    }
-)
-
-
-def _tokens(text: str) -> frozenset[str]:
-    """Lowercased alphanumeric words of length >= 4, minus generic stopwords —
-    the topical signal used for lexical relevance scoring."""
-    return frozenset(
-        w
-        for w in re.findall(r"[a-z0-9]+", (text or "").lower())
-        if len(w) >= 4 and w not in _STOPWORDS
-    )
-
-
-def _bullets(body: str) -> list[str]:
-    """Lesson bullets in a topic body, excluding markdown rules and blanks."""
-    return [
-        line
-        for line in (body or "").splitlines()
-        if line.lstrip().startswith(("-", "*", "•")) and any(ch.isalnum() for ch in line)
-    ]
-
-
-def _failing(text: str) -> bool:
-    """True when text looks like a failure result, not ordinary output."""
-    lowered = (text or "").lower()
-    return any(marker in lowered for marker in _FAILURE_MARKERS)
-
-
-def _topic_named(query: str, topic: str) -> bool:
-    """True when the request names the topic, e.g. "websocket token auth"."""
-    name = str(topic).rsplit("/", 1)[-1].replace("-", " ").replace("_", " ")
-    return bool(re.search(r"(?<![\w.-])" + re.escape(name) + r"(?![\w.-])", query, re.IGNORECASE))
-
-
-def _term_weight(token: str, document_frequency: Mapping[str, int], documents: int) -> float:
-    """Corpus rarity of a token, from ~1 (one bullet) to ~0 (every bullet)."""
-    if documents <= 0:
-        return 1.0
-    return math.log((documents + 1) / (document_frequency.get(token, 0) + 0.5)) / math.log(
-        documents + 1
-    )
-
-
-def _lexical_support(
-    tokens: frozenset[str], document_frequency: Mapping[str, int], documents: int
-) -> float:
-    """Weighted evidence that ``tokens`` are specific enough to act on, else 0."""
-    if len(tokens) < _MIN_SHARED_TOKENS:
-        return 0.0
-    score = sum(_term_weight(token, document_frequency, documents) for token in tokens)
-    return score if score >= _MIN_LEXICAL_SUPPORT else 0.0
-
-
-class _Recall(NamedTuple):
-    """A bullet under consideration, with the evidence that put it there."""
-
-    score: float
-    topic: str
-    line: str
-    supported: bool  # earned by lexical support, not by meaning alone
-    shared: frozenset[str]  # words the failure shares with the bullet
 
 
 class AgentMemoryState(AgentState):
@@ -382,6 +140,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
         memory_block_chars: int | None = None,
         memory_index_chars: int | None = None,
         project_key: str = "",
+        model_resolver: Callable[[Mapping[str, Any]], BaseChatModel | None] | None = None,
     ) -> None:
         """Initialize the agent memory middleware.
 
@@ -406,6 +165,8 @@ class AgentMemoryMiddleware(AgentMiddleware):
                 ``hermes.memory_tiers.project_memory_key``). Lessons recorded
                 for that project are retrieved alongside the general ones;
                 other projects' lessons are never read.
+            model_resolver: Resolve the model selected for the current run,
+                including a per-run model-router choice, for explicit search reranking.
         """
         self.settings = settings
         self._project_key = project_key
@@ -416,6 +177,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
         self.assistant_id = assistant_id
         self.skip_project_memory = skip_project_memory
         self._backend = backend
+        self._model_resolver = model_resolver
 
         # User paths
         self.agent_dir = settings.get_agent_dir(assistant_id)
@@ -445,28 +207,26 @@ class AgentMemoryMiddleware(AgentMiddleware):
         self._memory_section_cache_time: float = 0
         self._memory_section_cache_ttl: float = 30.0  # 30 seconds TTL
 
-        # Per-turn memory RETRIEVAL: the INDEX only injects topic pointers, so
-        # learned lesson bodies never reach the model unless it chooses to read
-        # them. These cache the scored topic corpus (keyed on the full file
-        # signature) and the last query's retrieved block (so tool-loop
-        # iterations don't re-scan).
-        self._corpus_cache: Mapping[str, tuple[frozenset[str], str, frozenset[str]]] | None = None
-        self._corpus_sig: tuple | None = None  # one (count, mtime) per lesson dir
-        self._retrieval_cache: tuple[str, str, tuple[tuple[str, str], ...]] | None = None
-        self._term_stats_cache: tuple[tuple | None, dict[str, int], int] | None = None
+        from novacode_cli.memory.search import MemorySearchService
+
+        self._memory_search_service = MemorySearchService(
+            self.agent_dir,
+            project_key=project_key,
+        )
 
         # Progressive disclosure for topic memory: the system prompt carries only
         # a small slice of INDEX.md, and this tool finds the rest (and the topic
         # bodies) on demand. Registered like ``skills_search``.
         self.tools = [
             StructuredTool.from_function(
-                coroutine=self._memory_search,
+                coroutine=self._memory_search_tool,
                 name="memory_search",
                 description=(
                     "Search your long-term topic memory (cross-session decisions, "
-                    "facts and lessons) by what you are trying to recall. Returns "
-                    "matching summaries with exact virtual paths for file-backed topics. "
-                    "Read relevant full pages for details; activated knowledge may have no page."
+                    "facts and lessons) by what you are trying to recall. Uses local "
+                    "semantic retrieval and the active model to rerank a small candidate "
+                    "set. Returns exact virtual paths for file-backed topics. Read relevant "
+                    "full pages for details; activated knowledge may have no page."
                 ),
             )
         ]
@@ -859,301 +619,6 @@ class AgentMemoryMiddleware(AgentMiddleware):
         return result
 
     @staticmethod
-    def _retrieval_query(request: ModelRequest) -> str:
-        """Query for the current turn, resolving a short continuation to its task."""
-        return _query_text(getattr(request, "messages", None) or [])
-
-    def _load_memory_corpus(
-        self,
-    ) -> Mapping[str, tuple[frozenset[str], str, frozenset[str]]]:
-        """Load + tokenize the topic memory files (topic -> (title_toks, body, body_toks)).
-
-        Cached in memory, refreshed only when the memories dir changes (reviews
-        add/update files), so scoring doesn't re-read 58 files every turn.
-        """
-        mem_dir = self.agent_dir / "memories"
-        # General lessons, plus the ones recorded for THIS project. Other
-        # projects' lessons sit in sibling directories and are never read.
-        dirs = [mem_dir]
-        project_key = getattr(self, "_project_key", "")  # absent on bare test instances
-        if project_key:
-            dirs.append(mem_dir / "projects" / project_key)
-        signatures = [self._corpus_signature(d) for d in dirs]
-        ledger_path = self.agent_dir / "learning.sqlite3"
-        records = []
-        imported = set()
-        if ledger_path.exists():
-            from novacode_cli.hermes.ledger import LearningLedger
-
-            ledger = LearningLedger(ledger_path)
-            records = ledger.list(project=project_key, active=True)
-            imported = {r.evidence[0] for r in ledger.list() if r.origin == "legacy" and r.evidence}
-        from novacode_cli.hermes.activation import active_artifacts
-        from novacode_cli.session.runtime_identity import current_identity
-
-        captured = active_artifacts.get() if current_identity.get() else None
-        if captured is not None:
-            records = []
-        signatures.append(tuple(r.reference for r in records))
-        signatures.append(tuple(sorted(imported)))
-        from novacode_cli.hermes.activation import content_hash
-
-        signatures.append(
-            tuple(
-                (kind, target, content_hash(content.encode())) for kind, target, content in captured
-            )
-            if captured is not None
-            else None
-        )
-        signature = tuple(signatures)
-        # Compare the WHOLE signature. Comparing only the newest mtime (the old
-        # ``signature[1]``) discarded the file count, so deleting a topic file
-        # that was not the newest left its lessons in the cached corpus — and
-        # therefore injected — for the rest of the session.
-        if self._corpus_cache is not None and self._corpus_sig == signature:
-            return self._corpus_cache
-
-        from novacode_cli.memory.parsed_cache import MemoryCorpus, ParsedMemoryCache, file_hash
-        from novacode_cli.memory.wiki import HUBS, MANAGED
-
-        parsed = getattr(self, "_parsed_memory_cache", None)
-        if parsed is None:
-            parsed = self._parsed_memory_cache = ParsedMemoryCache()
-        corpus = MemoryCorpus(parsed, _tokens)
-        for path in (p for d in dirs if d.is_dir() for p in d.glob("*.md")):
-            if str(path) in imported:
-                continue
-            if path.name == "INDEX.md":
-                continue
-            try:
-                # Generated maps are navigation, not recalled factual lessons.
-                # They remain available through the wiki home and file tools.
-                if path.stem in {f"wiki-{group}" for group in HUBS}:
-                    with path.open("rb") as source:
-                        if MANAGED.encode() in source.read(256):
-                            continue
-                digest = file_hash(path)
-            except OSError:
-                continue
-            title_toks = _tokens(path.stem.replace("-", " ").replace("_", " "))
-            topic = path.relative_to(mem_dir).with_suffix("").as_posix()
-            corpus.add(topic, title_toks, path, digest)
-        for record in records:
-            # Approved generated knowledge remains data, separate from standing
-            # instructions; stable IDs prevent topic collisions and overwrites.
-            title = record.applicability or record.kind
-            corpus.add(
-                f"learning-{record.id}",
-                _tokens(title),
-                record.content,
-                content_hash(record.content.encode()),
-            )
-        for index, (kind, target, content) in enumerate(captured or ()):
-            if kind in {"lesson", "habit"}:
-                corpus.add(
-                    f"activated-{index}",
-                    _tokens(target or kind),
-                    content,
-                    content_hash(content.encode()),
-                )
-        # The lessons every installation starts with (see builtin_lessons).
-        # Recalled like any other; a learned topic of the same name wins.
-        from novacode_cli.memory import builtin_lessons
-
-        if builtin_lessons.enabled() and builtin_lessons.TOPIC not in corpus:
-            text = builtin_lessons.body()
-            corpus.add(builtin_lessons.TOPIC, frozenset(), text, content_hash(text.encode()))
-        self._corpus_cache, self._corpus_sig = corpus, signature
-        return self._corpus_cache
-
-    @staticmethod
-    def _corpus_signature(mem_dir: Path) -> tuple | None:
-        """Current names and contents, including renames and restored timestamps."""
-        from novacode_cli.memory.parsed_cache import file_hash
-
-        try:
-            with os.scandir(mem_dir) as entries:
-                names = sorted(entry.name for entry in entries if entry.name.endswith(".md"))
-            return tuple((name, file_hash(mem_dir / name)) for name in names)
-        except FileNotFoundError:
-            return ()
-        except OSError:
-            return None
-
-    def _corpus_term_stats(
-        self, corpus: Mapping[str, tuple[frozenset[str], str, frozenset[str]]]
-    ) -> tuple[Mapping[str, int], int]:
-        """How many bullets each token appears in, cached with the corpus.
-
-        The same corpus signature that gates the corpus gates this: a review
-        that adds a topic changes both. Counting at bullet granularity (not
-        topic) is what makes a word used across 200 facts cheap and a word
-        used in one fact valuable.
-        """
-        signature = self._corpus_sig
-        cached = getattr(self, "_term_stats_cache", None)
-        if cached is not None and cached[0] == signature:
-            return cached[1], cached[2]
-        frequency: dict[str, int] = {}
-        documents = 0
-        for _title_toks, body, _body_toks in corpus.values():
-            for line in _bullets(body):
-                documents += 1
-                for token in _tokens(line):
-                    frequency[token] = frequency.get(token, 0) + 1
-        self._term_stats_cache = (signature, frequency, documents)
-        return frequency, documents
-
-    async def _relevant_memories_async(self, request: ModelRequest) -> str:
-        """Async wrapper around :meth:`_relevant_memories`.
-
-        The corpus load globs and reads every topic file, which is synchronous
-        disk I/O. Called from ``awrap_model_call`` on the shared UI/agent event
-        loop, it froze the whole TUI: the stall watchdog recorded 70 freezes
-        totalling ~2,071s with the loop blocked in ``pathlib.read_text`` /
-        ``pathlib.glob`` under this call. Off-loading to a worker thread keeps
-        the loop free to paint.
-        """
-        block, sources = await asyncio.to_thread(self._retrieve_memories, request)
-        for name, path in sources:
-            self._publish_memory_notice(getattr(request, "runtime", None), name, path, "recall")
-        return block
-
-    def _relevant_memories(self, request: ModelRequest) -> str:
-        """Retrieve and announce selected sources without changing model history."""
-        block, sources = self._retrieve_memories(request)
-        for name, path in sources:
-            self._publish_memory_notice(getattr(request, "runtime", None), name, path, "recall")
-        return block
-
-    def _retrieve_memories(self, request: ModelRequest) -> tuple[str, tuple[tuple[str, str], ...]]:
-        """Retrieve the lessons relevant to this turn, formatted for injection.
-
-        Scored per BULLET, not per topic file: a topic collects many facts over
-        time and only some bear on the moment, and injecting the head of the
-        file (as this used to) sent whichever bullets happened to be newest.
-        A bullet qualifies by sharing enough RARE words with the user's request
-        or, only while the last tool result is a failure, with that failure.
-        Ordinary output no longer drives recall: a file listing reads as
-        "related" to too many lessons. Cached per (request, situation), so
-        repeated model calls on an unchanged conversation reuse it. '' when
-        nothing scores.
-        """
-        query = self._retrieval_query(request)
-        situation = self._situation_text(request)
-        if not query and not situation:
-            return "", ()
-        corpus = self._load_memory_corpus()
-        key = f"{query}\x00{situation}\x00{self._corpus_sig}"
-        if self._retrieval_cache is not None and self._retrieval_cache[0] == key:
-            return self._retrieval_cache[1], self._retrieval_cache[2]
-
-        from novacode_cli.memory import builtin_lessons
-
-        q = _tokens(query)
-        failing = _failing(situation)
-        facing = _tokens(situation) if failing else frozenset()
-        block = ""
-        sources: tuple[tuple[str, str], ...] = ()
-        if q or facing:
-            frequency, documents = self._corpus_term_stats(corpus)
-            candidates: list[_Recall] = []
-            for topic, (_title_toks, body, _body_toks) in corpus.items():
-                # The built-in lessons answer an error, never a request: a long
-                # task description shares a few words with all of them, which
-                # put every one in front of the model on nearly every turn.
-                builtin = topic == builtin_lessons.TOPIC
-                if builtin and not failing:
-                    continue
-                if _topic_denied(query, topic):
-                    continue
-                named = not builtin and _topic_named(query, topic)
-                lines = _bullets(body)
-                if not lines:  # a hand-written topic with no bullet markers
-                    shared = frozenset() if builtin else q & _tokens(body)
-                    if named or _lexical_support(shared, frequency, documents) > 0:
-                        candidates.append(
-                            _Recall(
-                                score=1.0,
-                                topic=topic,
-                                line=body.strip()[:_RETRIEVAL_PER_FILE_CAP],
-                                supported=True,
-                                shared=shared,
-                            )
-                        )
-                    continue
-                for line in lines:
-                    words = _tokens(line)
-                    asked = frozenset() if builtin else q & words
-                    face = facing & words
-                    asked_support = _lexical_support(asked, frequency, documents)
-                    face_support = _lexical_support(face, frequency, documents)
-                    supported = bool(asked_support or face_support)
-                    score = asked_support + 2 * face_support
-                    if named and asked:
-                        # A request that names the topic ("use the websocket
-                        # token auth memory") need not repeat two of its words.
-                        supported = True
-                        score = max(score, float(len(asked)))
-                    candidates.append(
-                        _Recall(
-                            score=score,
-                            topic=topic,
-                            line=line.strip(),
-                            supported=supported,
-                            shared=face,
-                        )
-                    )
-            ranked = self._by_meaning(candidates, situation)
-            ranked.sort(key=lambda c: (-c.score, c.topic, c.line))
-
-            used = 0
-            count = 0
-            by_topic: dict[str, list[str]] = {}
-            for candidate in ranked:
-                if count >= _MAX_RETRIEVED_BULLETS:
-                    break
-                topic = candidate.topic
-                if topic in by_topic:
-                    # One symptom is enough: each built-in answers a different
-                    # error, and a turn is looking at one error.
-                    if topic == builtin_lessons.TOPIC:
-                        continue
-                elif len(by_topic) >= _MAX_RETRIEVED_MEMORIES:
-                    continue
-                if used + len(candidate.line) > _RETRIEVAL_CHAR_BUDGET:
-                    continue  # skip this bullet, not every smaller one after it
-                by_topic.setdefault(topic, []).append(candidate.line)
-                used += len(candidate.line)
-                count += 1
-            sources = tuple((topic, self._topic_path(topic)) for topic in by_topic)
-            chunks = [
-                f"### {topic}"
-                + (f" ({path})" if path else " (no backing file)")
-                + "\n"
-                + "\n".join(by_topic[topic])
-                for topic, path in sources
-            ]
-            self._track_recall([ln for found in by_topic.values() for ln in found], situation)
-            if chunks:
-                block = (
-                    "<relevant_memory>\n"
-                    "Lessons from past sessions relevant to this request "
-                    "(retrieved automatically — apply them):\n\n"
-                    + "\n\n".join(chunks)
-                    + "\n</relevant_memory>"
-                )
-        self._retrieval_cache = (key, block, sources)
-        return block, sources
-
-    def _topic_path(self, topic: str) -> str:
-        """Expose a real corpus source; generated knowledge must not invent a page."""
-        source = getattr(self._corpus_cache, "sources", {}).get(topic)
-        if source and isinstance(source[1], Path):
-            return "/memories/" + source[1].relative_to(self.agent_dir).as_posix()
-        return ""
-
-    @staticmethod
     def _publish_memory_notice(runtime: object, name: str, path: str, action: str) -> None:
         """Publish source metadata separately from memory bodies and model history."""
         writer = getattr(runtime, "stream_writer", None)
@@ -1221,122 +686,28 @@ class AgentMemoryMiddleware(AgentMiddleware):
         self._announce_memory_read(request, result)
         return result
 
-    def _track_recall(self, recalled: list[str], situation: str) -> None:
-        """Count what was recalled, and credit the last recall if its failure cleared.
-
-        Runs once per new (request, situation), never on a cache hit. Never raises:
-        statistics must not be able to break a turn.
-        """
-        try:
-            from novacode_cli.memory import recall_stats
-
-            failing = _failing(situation)
-            # A later successful command is an observation, not causal evidence
-            # that a recalled lesson improved the result.
-            keys = recall_stats.note_recalled(self.agent_dir, recalled)
-            if recalled:
-                self._last_recall = (keys, failing)
-            elif situation:
-                self._last_recall = None  # a later success is not this lesson's doing
-        except Exception:  # noqa: BLE001
-            logger.debug("recall tracking failed", exc_info=True)
-
-    @staticmethod
-    def _by_meaning(candidates: list[_Recall], situation: str) -> list[_Recall]:
-        """Filter candidates to what bears on this moment, judged by meaning too.
-
-        Shared words find a lesson only when it happens to use the same ones as
-        the failure. The embedding connects ``python3: command not found`` to a
-        lesson that describes the fix without quoting the error. It is only
-        consulted for a FAILURE and only against that failure: ordinary
-        requests and ordinary tool output read as weakly similar to far too
-        many lessons, which is how unrelated memories got injected. When the
-        model is unavailable this reduces to the word test.
-        """
-        if not _failing(situation):
-            return [candidate for candidate in candidates if candidate.supported]
-        from novacode_cli.memory import semantic
-
-        bullets = [candidate.line.lstrip("-*• ").strip() for candidate in candidates]
-        zeros = [0.0] * len(bullets)
-        # An error is usually the last thing printed; the whole tail of a long
-        # log dilutes it, so both are tried.
-        last_lines = "\n".join([line for line in situation.splitlines() if line.strip()][-3:])
-        closeness = [
-            max(whole, tail)
-            for whole, tail in zip(
-                semantic.similarities(situation, bullets) or zeros,
-                semantic.similarities(last_lines, bullets) or zeros,
-                strict=True,
-            )
-        ]
-        # Only the lessons nearly as close as the closest one: the apt error
-        # matches its own lesson at ~0.76 and an unrelated pip note at ~0.53.
-        floor = max(semantic.RELEVANT, max(closeness, default=0.0) - _MEANING_MARGIN)
-        kept: list[_Recall] = []
-        for candidate, close in zip(candidates, closeness, strict=True):
-            if candidate.supported:
-                kept.append(candidate._replace(score=candidate.score + 20 * close))
-            elif close >= floor and (candidate.shared or close >= semantic.SAME_FACT):
-                # A failure that shares no words with the fix still recalls it,
-                # but only when the embedding is confident or the failure has
-                # a word in common with the lesson.
-                kept.append(candidate._replace(score=20 * close))
-        return kept
-
-    @staticmethod
-    def _situation_text(request: ModelRequest) -> str:
-        """Tail of the most recent tool result — what the agent is looking at now."""
-        messages = getattr(request, "messages", None) or []
-        last = messages[-1] if messages else None
-        role = getattr(last, "type", None) or (last.get("role") if isinstance(last, dict) else None)
-        if role != "tool":
-            return ""
-        content = getattr(last, "content", None)
-        if content is None and isinstance(last, dict):
-            content = last.get("content")
-        if isinstance(content, list):  # provider block format
-            content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
-        return str(content or "")[-_SITUATION_TAIL_CHARS:]
-
-    async def _memory_search(self, query: str, k: int = 5) -> str:
-        """Search topic memory by what you are trying to recall.
+    async def _memory_search_tool(
+        self, query: str, runtime: ToolRuntime, k: int = 5
+    ) -> str:
+        """Search topic memory and rerank with the model selected for this run.
 
         Args:
             query: Plain words for what you need to remember — a topic, task,
                 decision, or symptom.
+            runtime: Current graph state, including the selected model route.
             k: Maximum number of topics to return.
         """
-        # Reading + tokenizing every topic file is synchronous disk I/O; off the
-        # event loop so a large memory dir cannot stall the TUI.
-        corpus = await asyncio.to_thread(self._load_memory_corpus)
-        # The built-in lessons have no file behind them to point the agent at;
-        # they are recalled automatically, so the search covers learned topics.
-        from novacode_cli.memory import builtin_lessons
+        model = None
+        if self._model_resolver is not None and isinstance(runtime.state, Mapping):
+            model = self._model_resolver(runtime.state)
+        return await self._memory_search(query, k, model=model)
 
-        corpus = {k: v for k, v in corpus.items() if k != builtin_lessons.TOPIC}
-        if not corpus:
-            return "No topic memory yet. Proceed without it."
-        q = _tokens(query)
-        scored: list[tuple[int, str, str]] = []
-        if q:
-            for topic, (title_toks, body, body_toks) in corpus.items():
-                score = 2 * len(q & title_toks) + len(q & body_toks)
-                if score >= _MIN_RELEVANCE:
-                    scored.append((score, topic, body))
-        # An exact topic name always wins, even on a weak lexical score.
-        wanted = query.strip().lower().replace(" ", "-").replace("_", "-")
-        if wanted in corpus and not any(t == wanted for _, t, _ in scored):
-            scored.append((999, wanted, corpus[wanted][1]))
-        if not scored:
-            return f"No memory matches {query!r}. Proceed without it."
-        scored.sort(key=lambda t: (-t[0], t[1]))
-        lines = []
-        for _score, topic, body in scored[: max(1, min(k, 20))]:
-            path = self._topic_path(topic)
-            source = f"`{path}`" if path else "(activated knowledge; no backing file)"
-            lines.append(f"- **{topic}** {source}: {' '.join(body.strip().split())[:240]}")
-        return "\n".join(lines)
+    async def _memory_search(
+        self, query: str, k: int = 5, *, model: BaseChatModel | None = None
+    ) -> str:
+        """Search directly; the optional model keeps local tests provider-neutral."""
+        self._memory_search_service.project_key = getattr(self, "_project_key", "")
+        return await self._memory_search_service.search(query, limit=k, model=model)
 
     def _build_learning_overview(self) -> str:
         """Build the compact learning overview for injection.
@@ -1359,44 +730,25 @@ class AgentMemoryMiddleware(AgentMiddleware):
             return ""
 
     def _build_system_prompt_parts(self, request: ModelRequest) -> tuple[str, str]:
-        """Build the system prompt as (stable, volatile) parts.
+        """Build the stable system prompt and an empty volatile prompt section.
 
-        The split is the whole point: Anthropic's cache hierarchy is
-        ``tools → system → messages`` and a change at any level invalidates that
-        level and everything after it. Nova's per-turn memory RETRIEVAL block
-        varies with the user's exact wording, so if it sits *ahead* of the base
-        system prompt every distinctly-worded turn diverges the prefix and the
-        entire base prompt is re-billed at full input price — the cache never hits.
-
-        Keeping the volatile block last lets ``_make_system_message`` place the
-        breakpoint on the stable tail, so the memory section + base prompt stay
-        cached across turns regardless of how the user phrases a request.
+        Learned topic bodies are available through ``memory_search`` and
+        explicit file reads, not injected automatically on each model call.
 
         Returns:
-            2-tuple of (stable_prompt, volatile_prompt). ``volatile_prompt`` is
-            "" when no lessons were retrieved for this turn.
+            A 2-tuple of (stable_prompt, "") for the model-call middleware.
         """
-        stable = self._build_system_prompt(request)
-        volatile = self._relevant_memories(request)
-        return stable, volatile
+        return self._build_system_prompt(request), ""
 
     async def _build_system_prompt_parts_async(self, request: ModelRequest) -> tuple[str, str]:
-        """Async twin of :meth:`_build_system_prompt_parts`.
-
-        Identical result, but the retrieval half (which reads the topic corpus
-        off disk) runs in a worker thread so it cannot stall the event loop.
-        """
-        stable = self._build_system_prompt(request)
-        volatile = await self._relevant_memories_async(request)
-        return stable, volatile
+        """Async twin of :meth:`_build_system_prompt_parts`."""
+        return self._build_system_prompt(request), ""
 
     def _build_system_prompt(self, request: ModelRequest) -> str:
         """Build the STABLE part of the system prompt (memory sections + base).
 
-        Deliberately excludes the per-turn retrieval block so the result is
-        stable across turns and therefore cacheable — see
-        :meth:`_build_system_prompt_parts`, which is what the model-call
-        wrappers use.
+        Learned topic bodies are fetched explicitly via the memory tools, not
+        included here.
         """
         import time
 
@@ -1483,12 +835,6 @@ class AgentMemoryMiddleware(AgentMiddleware):
         # memory_section is guaranteed to be set at this point
         assert memory_section is not None
         system_prompt: str = memory_section
-
-        # NOTE: the per-turn retrieval block is deliberately NOT appended here.
-        # It varies with the user's wording, so including it would put volatile
-        # content ahead of the base system prompt and defeat the prompt cache on
-        # every distinctly-worded turn. _build_system_prompt_parts adds it as a
-        # separate trailing block, after the cache breakpoint.
 
         if base_system_prompt:
             system_prompt = base_system_prompt + "\n\n" + system_prompt

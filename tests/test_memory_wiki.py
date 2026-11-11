@@ -277,7 +277,7 @@ def test_generated_maps_do_not_compete_with_factual_memories(tmp_path: Path) -> 
         "# My facts\nAn actual lesson.\n", encoding="utf-8"
     )
     maintain_wiki(tmp_path)
-    corpus = _mw(tmp_path)._load_memory_corpus()
+    corpus = _mw(tmp_path)._memory_search_service._load_memory_corpus()
     assert "nova-config" in corpus
     assert "wiki-handwritten" in corpus
     assert "wiki-nova" not in corpus

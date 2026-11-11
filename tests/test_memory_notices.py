@@ -19,16 +19,14 @@ if TYPE_CHECKING:
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
-async def test_outgoing_model_request_contains_memory_and_emits_only_source_metadata(
+async def test_outgoing_model_request_does_not_auto_include_lessons(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     *,
     asynchronous: bool,
 ) -> None:
     middleware = _bare_middleware(
         tmp_path, topics={"windows-packaging": "- Windows packaging requires DLL_SENTINEL."}
     )
-    monkeypatch.setattr("novacode_cli.memory.semantic.similarities", lambda *_args: [])
     notices = []
     request = ModelRequest(
         model=FakeListChatModel(responses=["unused"]),
@@ -39,10 +37,9 @@ async def test_outgoing_model_request_contains_memory_and_emits_only_source_meta
     )
 
     def capture(outgoing: ModelRequest) -> str:
-        assert all(
-            marker in outgoing.system_message.content
-            for marker in ("USER_SENTINEL", "INDEX_SENTINEL", "DLL_SENTINEL")
-        )
+        assert "USER_SENTINEL" in outgoing.system_message.content
+        assert "INDEX_SENTINEL" in outgoing.system_message.content
+        assert "DLL_SENTINEL" not in outgoing.system_message.content
         return "captured"
 
     if asynchronous:
@@ -51,14 +48,7 @@ async def test_outgoing_model_request_contains_memory_and_emits_only_source_meta
         )
     else:
         assert middleware.wrap_model_call(request, capture) == "captured"
-    assert notices == [
-        {
-            "type": "nova_memory_read",
-            "action": "recall",
-            "name": "windows-packaging",
-            "path": "/memories/memories/windows-packaging.md",
-        }
-    ]
+    assert notices == []
     assert "DLL_SENTINEL" not in repr(notices)
     assert len(request.messages) == 1
 
@@ -79,26 +69,17 @@ async def test_scoped_topic_search_returns_its_real_path_without_announcing_a_re
 async def test_generated_knowledge_never_invents_a_page_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from novacode_cli.memory.agent_memory import _tokens
     from novacode_cli.memory.parsed_cache import MemoryCorpus, ParsedMemoryCache
+    from novacode_cli.memory.search import _tokens
 
     middleware = _bare_middleware(tmp_path)
     corpus = MemoryCorpus(ParsedMemoryCache(), _tokens)
     corpus.add("learning-123", _tokens("packaging"), "- Windows packaging uses uv.", "digest")
-    middleware._corpus_cache = corpus
-    monkeypatch.setattr(middleware, "_load_memory_corpus", lambda: corpus)
-    monkeypatch.setattr("novacode_cli.memory.semantic.similarities", lambda *_args: [])
+    middleware._memory_search_service._corpus_cache = corpus
+    monkeypatch.setattr(middleware._memory_search_service, "_load_memory_corpus", lambda: corpus)
     found = await middleware._memory_search("Windows packaging")
     assert "no backing file" in found
     assert "/memories/memories/learning-123.md" not in found
-    notices = []
-    middleware._relevant_memories(
-        SimpleNamespace(
-            messages=[HumanMessage("Windows packaging")],
-            runtime=SimpleNamespace(stream_writer=notices.append),
-        )
-    )
-    assert notices[0]["path"] == ""
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
@@ -175,23 +156,9 @@ async def test_failed_reads_and_discovery_do_not_announce_use(
     assert not notices
 
 
-def test_absent_or_broken_notice_handler_cannot_break_recall(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    middleware = _bare_middleware(tmp_path, topics={"packaging": "- Windows packaging uses uv."})
-    monkeypatch.setattr("novacode_cli.memory.semantic.similarities", lambda *_args: [])
-
-    def broken(_event: object) -> None:
-        raise RuntimeError
-
-    for runtime in (None, SimpleNamespace(stream_writer=broken)):
-        request = SimpleNamespace(messages=[HumanMessage("Windows packaging")], runtime=runtime)
-        assert "Windows packaging" in middleware._relevant_memories(request)
-
-
 @pytest.mark.parametrize("code_mode", [False, True])
 @pytest.mark.timeout(40)
-async def test_real_graph_streams_recall_and_page_reads_in_both_tool_modes(
+async def test_real_graph_streams_page_reads_in_both_tool_modes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -219,7 +186,6 @@ async def test_real_graph_streams_recall_and_page_reads_in_both_tool_modes(
         assistant_id="audit",
     )
     monkeypatch.setattr(middleware, "_build_learning_overview", lambda: "")
-    monkeypatch.setattr("novacode_cli.memory.semantic.similarities", lambda *_args: [])
     monkeypatch.setattr(NovaConfig, "get_code_mode_enabled", lambda _self: code_mode)
 
     @tool
@@ -249,7 +215,6 @@ async def test_real_graph_streams_recall_and_page_reads_in_both_tool_modes(
     ):
         (notices if mode == "custom" else updates).append(data)
     assert {notice["action"] for notice in notices if notice.get("type") == "nova_memory_read"} == {
-        "recall",
         "read",
     }, updates
     assert "BODY_SENTINEL" not in repr(notices)

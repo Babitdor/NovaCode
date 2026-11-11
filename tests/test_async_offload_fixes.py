@@ -55,29 +55,6 @@ async def _count_loop_ticks(work: Callable[[], Awaitable[Any]]) -> int:
     return ticks
 
 
-async def test_relevant_memories_async_does_not_block_the_loop(tmp_path: Path) -> None:
-    """C1: the corpus load must run off-loop, so a slow read can't stall it."""
-    from novacode_cli.memory.agent_memory import AgentMemoryMiddleware
-
-    mw = AgentMemoryMiddleware.__new__(AgentMemoryMiddleware)
-    mw.agent_dir = tmp_path
-    mw._corpus_cache = None
-    mw._corpus_sig = None
-    mw._retrieval_cache = None
-
-    def slow_load() -> dict:
-        time.sleep(_BLOCK_SECS)  # stand-in for the glob+read of a large corpus
-        return {}
-
-    mw._load_memory_corpus = slow_load  # type: ignore[method-assign]
-    mw._retrieval_query = lambda _r: "some query about memory"  # type: ignore[method-assign]
-
-    ticks = await _count_loop_ticks(lambda: mw._relevant_memories_async(MagicMock()))
-
-    # If the sleep had run on the loop, the ticker could not have fired.
-    assert ticks >= _MIN_TICKS, f"loop was blocked: only {ticks} ticks during the load"
-
-
 async def test_apply_review_content_does_not_block_the_loop(tmp_path: Path) -> None:
     """C2: persisting a review must run off-loop."""
     from novacode_cli.hermes.review import ReviewRunner
@@ -161,7 +138,7 @@ def test_corpus_signature_scandir_is_used_and_value_is_unchanged(tmp_path: Path)
     event-loop block per turn; ``os.scandir`` returns the same value in ~40ms.
     This pins both the value contract and the cheaper mechanism.
     """
-    from novacode_cli.memory.agent_memory import AgentMemoryMiddleware
+    from novacode_cli.memory.search import MemorySearchService
 
     mem_dir = tmp_path / "memories"
     mem_dir.mkdir()
@@ -169,7 +146,7 @@ def test_corpus_signature_scandir_is_used_and_value_is_unchanged(tmp_path: Path)
     (mem_dir / "b-topic.md").write_text("B", encoding="utf-8")
     (mem_dir / "INDEX.md").write_text("index", encoding="utf-8")
 
-    sig = AgentMemoryMiddleware._corpus_signature(mem_dir)
+    sig = MemorySearchService.corpus_signature(mem_dir)
     assert sig is not None
     count = len(sig)
     # Every *.md counts, INDEX.md included — this matches the previous
@@ -180,20 +157,20 @@ def test_corpus_signature_scandir_is_used_and_value_is_unchanged(tmp_path: Path)
     assert set(dict(sig)) == set(names)
 
     # The mechanism: no Path.stat is called on the topic files during a scan.
-    import novacode_cli.memory.agent_memory as am
+    import novacode_cli.memory.search as memory_search
 
-    real_scandir = am.os.scandir
+    real_scandir = memory_search.os.scandir
     calls = {"n": 0}
 
     def counting_scandir(path: object) -> object:
         calls["n"] += 1
         return real_scandir(path)
 
-    am.os.scandir = counting_scandir  # type: ignore[assignment]
+    memory_search.os.scandir = counting_scandir  # type: ignore[assignment]
     try:
-        again = AgentMemoryMiddleware._corpus_signature(mem_dir)
+        again = MemorySearchService.corpus_signature(mem_dir)
     finally:
-        am.os.scandir = real_scandir  # type: ignore[assignment]
+        memory_search.os.scandir = real_scandir  # type: ignore[assignment]
 
     assert calls["n"] == 1, "signature must enumerate via os.scandir"
     assert again == sig

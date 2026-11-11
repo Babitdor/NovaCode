@@ -126,24 +126,21 @@ def test_streamed_hash_changes_even_when_timestamp_restored(tmp_path):
 
 
 def test_large_corpus_cache_eviction_does_not_hide_topics_or_change_order(tmp_path):
-    from novacode_cli.memory.agent_memory import AgentMemoryMiddleware
+    from novacode_cli.memory.search import MemorySearchService
 
     root = tmp_path / "memories"
     root.mkdir()
     for index in range(600):
         (root / f"topic-{index:03}.md").write_text(f"distinct migration evidence {index}")
-    middleware = AgentMemoryMiddleware.__new__(AgentMemoryMiddleware)
-    middleware.agent_dir = tmp_path
-    middleware._corpus_cache = None
-    middleware._corpus_sig = None
-    corpus = middleware._load_memory_corpus()
+    search = MemorySearchService(tmp_path)
+    corpus = search._load_memory_corpus()
     expected = [path.stem for path in root.glob("*.md")]
     assert list(corpus)[:600] == expected
     for key in expected:
         assert corpus[key][1] == (root / (key + ".md")).read_text()
-    cache = middleware._parsed_memory_cache
+    cache = search._parsed_memory_cache
     assert len(cache) == 512
     assert cache.resident_bytes <= 16 * 1024 * 1024
     assert "evidence 0" in corpus["topic-000"][1]
     assert list(corpus)[:600] == expected
-    assert list(middleware._load_memory_corpus())[:600] == expected
+    assert list(search._load_memory_corpus())[:600] == expected

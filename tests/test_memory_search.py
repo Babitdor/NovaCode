@@ -8,7 +8,10 @@ and ``memory_search`` finds the rest (and the topic bodies) on demand.
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
+from types import SimpleNamespace
+from typing import TYPE_CHECKING
+
+from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
 from novacode_cli.memory.agent_memory import AgentMemoryMiddleware
 from novacode_cli.memory.limits import (
@@ -17,14 +20,21 @@ from novacode_cli.memory.limits import (
     MAX_MEMORY_CHARS,
     memory_budget,
 )
+from novacode_cli.memory.search import MemorySearchService
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    import pytest
+    from langchain_core.language_models import BaseChatModel
 
 
 def _mw(agent_dir: Path, *, index_chars: int | None = None) -> AgentMemoryMiddleware:
     """Build a middleware bound only to agent_dir (search touches nothing else)."""
     mw = object.__new__(AgentMemoryMiddleware)
     mw.agent_dir = agent_dir
-    mw._corpus_cache = None
-    mw._corpus_sig = None
+    mw._project_key = ""
+    mw._memory_search_service = MemorySearchService(agent_dir)
     mw._index_chars = index_chars or DEFAULT_MEMORY_INDEX_CHARS
     return mw
 
@@ -69,9 +79,7 @@ def test_memory_search_finds_a_topic_by_exact_name(tmp_path: Path) -> None:
 
 def test_memory_search_reports_no_match(tmp_path: Path) -> None:
     mw = _mw(_setup(tmp_path))
-    assert "No memory matches" in asyncio.run(
-        mw._memory_search("what is the capital of France?")
-    )
+    assert "No memory matches" in asyncio.run(mw._memory_search("what is the capital of France?"))
 
 
 def test_memory_search_with_no_corpus(tmp_path: Path) -> None:
@@ -79,13 +87,55 @@ def test_memory_search_with_no_corpus(tmp_path: Path) -> None:
     assert "No topic memory" in asyncio.run(mw._memory_search("anything"))
 
 
-def test_the_tool_is_registered_as_async(tmp_path: Path) -> None:
+def test_memory_search_finds_builtin_lessons_without_a_file_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("NOVA_BUILTIN_LESSONS", "1")
+    mw = _mw(tmp_path)
+
+    result = asyncio.run(mw._memory_search("python3 command not found"))
+
+    assert "builtin-environment" in result
+    assert "apt-get install -y python3" in result
+    assert "(activated knowledge; no backing file)" in result
+    assert "/memories/memories/builtin-environment.md" not in result
+
+
+def test_memory_search_tool_passes_the_active_model_to_search(tmp_path: Path) -> None:
+    mw = _mw(_setup(tmp_path))
+    selected_model = FakeListChatModel(responses=["unused"])
+    mw._model_resolver = lambda state: (
+        selected_model if state.get("model_route") == "chosen" else None
+    )
+    captured: dict[str, object] = {}
+
+    async def search(query: str, k: int = 5, *, model: BaseChatModel | None = None) -> str:
+        captured.update(query=query, k=k, model=model)
+        return "matches"
+
+    mw._memory_search = search
+    result = asyncio.run(
+        mw._memory_search_tool(
+            "prior websocket decision", SimpleNamespace(state={"model_route": "chosen"})
+        )
+    )
+
+    assert result == "matches"
+    assert captured == {
+        "query": "prior websocket decision",
+        "k": 5,
+        "model": selected_model,
+    }
+
+
+def test_the_tool_is_registered_as_async() -> None:
     """A sync tool would read the whole corpus on the event loop."""
     from novacode_cli.config.config import settings
 
     mw = AgentMemoryMiddleware(settings=settings, assistant_id="nova-agent")
     tool = next(t for t in mw.tools if t.name == "memory_search")
     assert tool.coroutine is not None
+    assert "runtime" not in tool.args
 
 
 # ── the index slice ─────────────────────────────────────────────────────────

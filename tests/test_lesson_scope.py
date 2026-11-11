@@ -149,20 +149,18 @@ def test_project_keys_separate_sandboxes_and_same_named_folders(tmp_path: Path) 
 
 
 def test_a_project_reads_its_own_lessons_and_not_another_projects(tmp_path: Path) -> None:
-    from novacode_cli.memory.agent_memory import AgentMemoryMiddleware
+    from novacode_cli.memory.search import MemorySearchService
 
     mt.record_lesson(tmp_path, "apt", BULLET)
     mt.record_lesson(tmp_path, "layout-a", "- project A keeps code in `/app/src`", project="proj-a")
     mt.record_lesson(tmp_path, "layout-b", "- project B keeps code in `/srv/code`", project="proj-b")
 
     def corpus(project: str) -> set[str]:
-        mw = AgentMemoryMiddleware.__new__(AgentMemoryMiddleware)
-        mw.agent_dir, mw._project_key = tmp_path, project
-        mw._corpus_cache, mw._corpus_sig = None, None
-        return set(mw._load_memory_corpus())
+        search = MemorySearchService(tmp_path, project_key=project)
+        return set(search._load_memory_corpus())
 
-    assert corpus("proj-a") == {"apt", "layout-a"}
-    assert corpus("proj-b") == {"apt", "layout-b"}
+    assert corpus("proj-a") == {"apt", "projects/proj-a/layout-a"}
+    assert corpus("proj-b") == {"apt", "projects/proj-b/layout-b"}
     assert corpus("") == {"apt"}
 
 

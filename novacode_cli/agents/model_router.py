@@ -26,6 +26,15 @@ worse than no router: the cost of a wrong route is one suboptimal model, and the
 cost of a raised exception is a dead session.
 """
 
+# ruff: noqa: INP001, ANN401, ARG002, BLE001
+# ARG002: ``runtime`` is part of the LangChain hook signature (langgraph passes it
+# by name); the router's decision is driven by the request messages alone.
+# novacode_cli/agents is an implicit namespace package (same choice as
+# caveman.py), the LangChain hook signatures carry heterogeneous framework
+# objects, the decision client is injectable test doubles, and every blind
+# except below is the fail-open fallback this module promises ("never
+# raises"). The dynamic System One response has no fixed schema either.
+
 from __future__ import annotations
 
 import logging
@@ -35,10 +44,11 @@ from typing import TYPE_CHECKING, Any
 from langchain.agents.middleware.types import AgentMiddleware, AgentState
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from langchain_core.language_models import BaseChatModel
     from langchain_core.messages import AnyMessage
+    from pydantic import JsonValue
 
     from novacode_cli.config.nova_config import NovaConfig
 
@@ -195,7 +205,7 @@ class ModelRouter:
         if not routes:
             return self._fallback("no routes configured")
 
-        criteria = {
+        criteria: Mapping[str, str] = {
             str(route["id"]): str(route["criteria"])
             for route in routes
             if route.get("id") and route.get("criteria")
@@ -215,19 +225,22 @@ class ModelRouter:
                 from novacode_cli.tracking.request_metrics import dispatch
 
                 with dispatch("router"):
-                    response = client.ask_route({"messages": state}, criteria)
+                    response = client.ask_route({"messages": state}, dict(criteria))
                     return self._interpret(response, criteria)
             # Imported here rather than at module scope so a missing dependency
             # degrades to "routing unavailable" instead of breaking the import of
             # every module that touches the agent.
             from langchain_typesafe import Choice
 
+            choice_criteria: dict[str, JsonValue] = {  # noqa: C416 -- dict() would erase the widening to JsonValue
+                name: description for name, description in criteria.items()
+            }
             question = Choice(
                 instructions=(
                     "Which model should handle this request? Choose the "
                     "least costly option that can complete it safely."
                 ),
-                criteria=criteria,
+                criteria=choice_criteria,
             )
             from novacode_cli.tracking.request_metrics import dispatch
 
@@ -251,7 +264,7 @@ class ModelRouter:
                 return build_route_model(route)
         return None
 
-    def _interpret(self, response: Any, criteria: dict[str, str]) -> RouteDecision:
+    def _interpret(self, response: Any, criteria: Mapping[str, str]) -> RouteDecision:
         """Turn a System One response into a decision, or fall back.
 
         The response shape is ``{"answers": {"route": {"choice": ..., "confidence":
@@ -385,6 +398,17 @@ class ModelRouterMiddleware(AgentMiddleware):
         if decision is None or decision.route_id is None:
             return None
         return self._router.model_for(decision.route_id)
+
+    def model_for_state(
+        self,
+        state: Mapping[str, object],
+        fallback_model: BaseChatModel | None,
+    ) -> BaseChatModel | None:
+        """Resolve the model a tool call should use for this run's stored route."""
+        route_id = state.get("model_route")
+        if isinstance(route_id, str) and route_id:
+            return self._router.model_for(route_id) or fallback_model
+        return fallback_model
 
     async def abefore_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
         """Keep decision HTTP requests and credential reads off the event loop."""

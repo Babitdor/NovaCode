@@ -1,24 +1,24 @@
-"""The per-turn retrieval block must not sit inside the cached prompt prefix.
+"""Learned topic bodies are searched explicitly, not injected into each prompt.
 
-Anthropic caches a *prefix* (``tools -> system -> messages``): a change at any
-level invalidates that level and everything after it. Nova injects a
-query-dependent ``<relevant_memory>`` block every turn, so if it precedes the
-base system prompt -- or shares the block carrying the ``cache_control``
-breakpoint -- every distinctly-worded turn is a cache miss and the whole base
-prompt is re-billed at full input price.
+Anthropic caches a *prefix* (``tools -> system -> messages``). The stable
+prompt remains cacheable, and learned topic bodies are available through the
+explicit memory tools when a task needs them.
 """
 
 from __future__ import annotations
 
 import time
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from langchain_core.messages import HumanMessage
 
 from novacode_cli.memory.agent_memory import AgentMemoryMiddleware
+from novacode_cli.memory.search import MemorySearchService
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from langchain_anthropic import ChatAnthropic
 
 
@@ -42,7 +42,7 @@ def _bare_middleware(tmp_path, *, topics: dict[str, str] | None = None) -> Any:
     """A middleware instance with only the attributes the prompt path needs.
 
     Bypasses __init__ (which needs a full Settings) so the test exercises the
-    real prompt/retrieval code without a project fixture.
+    real prompt code without a project fixture.
     """
     agent_dir = tmp_path / "agent"
     mem_dir = agent_dir / "memories"
@@ -52,6 +52,7 @@ def _bare_middleware(tmp_path, *, topics: dict[str, str] | None = None) -> Any:
 
     mw = object.__new__(AgentMemoryMiddleware)
     mw.agent_dir = agent_dir
+    mw._project_key = ""
     mw.assistant_id = "nova-agent"
     mw.skip_project_memory = True
     mw.loaded_project_memory_sources = []
@@ -68,9 +69,7 @@ def _bare_middleware(tmp_path, *, topics: dict[str, str] | None = None) -> Any:
     mw._cached_memory_index = None
     mw._cached_habits_memory = None
     mw._cached_learning_overview = None
-    mw._corpus_cache = None
-    mw._corpus_sig = None
-    mw._retrieval_cache = None
+    mw._memory_search_service = MemorySearchService(agent_dir)
     return mw
 
 
@@ -123,11 +122,7 @@ def test_non_anthropic_models_get_plain_concatenation() -> None:
 
 
 def test_stable_prompt_is_identical_across_differently_worded_turns(tmp_path) -> None:
-    """The cacheable prefix must not move when the user rephrases.
-
-    This is the regression: with the retrieval block ahead of the base prompt,
-    unrelated wording produced a different prefix and the cache never hit.
-    """
+    """The cacheable prefix must not move when the user rephrases."""
     mw = _bare_middleware(tmp_path, topics={"context-budgeting": "context window budgeting"})
     mw._cached_user_memory = "UM"
     mw._cached_project_memory = "PM"
@@ -171,8 +166,7 @@ def test_memory_updates_keep_the_core_prompt_prefix_cacheable(tmp_path) -> None:
     assert "cache_control" not in second.content[-1]
 
 
-def test_volatile_part_carries_the_retrieved_lessons(tmp_path) -> None:
-    """Retrieval still works — it just lives in the volatile part now."""
+def test_matching_lessons_are_not_automatically_injected(tmp_path: Path) -> None:
     mw = _bare_middleware(
         tmp_path, topics={"context-budgeting": "context window budgeting lessons"}
     )
@@ -181,10 +175,8 @@ def test_volatile_part_carries_the_retrieved_lessons(tmp_path) -> None:
         _req(mw, "please audit context window budgeting")
     )
 
-    assert "context window budgeting lessons" in volatile
-    assert "<relevant_memory>" in volatile
+    assert volatile == ""
     assert "context window budgeting lessons" not in stable
-    assert "<relevant_memory>" not in stable
 
 
 def test_parts_builder_returns_two_strings(tmp_path) -> None:
@@ -196,37 +188,16 @@ def test_parts_builder_returns_two_strings(tmp_path) -> None:
     assert "BASE" in stable
 
 
-def test_retrieval_query_reads_only_human_roles() -> None:
-    req = SimpleNamespace(
-        messages=[
-            HumanMessage(content="find the context audit"),
-            SimpleNamespace(type="ai", content="ignored"),
-        ]
-    )
-    assert AgentMemoryMiddleware._retrieval_query(cast("Any", req)) == "find the context audit"
-
-
-def test_retrieval_cache_is_keyed_on_the_query(tmp_path) -> None:
-    """A tool-loop iteration reusing the same query must not re-scan the corpus."""
-    mw = _bare_middleware(tmp_path, topics={"context-budgeting": "context window budgeting"})
-    req = _req(mw, "context budgeting")
-
-    first = mw._relevant_memories(req)
-    # Poison the corpus to prove the second call was served from cache.
-    mw._corpus_cache, mw._corpus_sig = {}, None
-    second = mw._relevant_memories(req)
-
-    assert first == second
-
-
-def test_missing_memories_dir_degrades_to_no_retrieval(tmp_path) -> None:
+def test_missing_memories_dir_does_not_affect_prompt_building(tmp_path: Path) -> None:
     mw = _bare_middleware(tmp_path)
     mem_dir = mw.agent_dir / "memories"
     for child in mem_dir.iterdir():
         child.unlink()
     mem_dir.rmdir()
 
-    assert mw._relevant_memories(_req(mw, "context budgeting")) == ""
+    stable, volatile = mw._build_system_prompt_parts(_req(mw, "context budgeting"))
+    assert "BASE" in stable
+    assert volatile == ""
 
 
 # -- corpus cache freshness (the NTFS trap) --------------------------------
@@ -240,7 +211,7 @@ def test_corpus_cache_detects_in_place_rewrite(tmp_path) -> None:
     place — so a dir-mtime-keyed cache served stale lessons all session.
     """
     mw = _bare_middleware(tmp_path, topics={"context-budgeting": "OLD CONTENT"})
-    first = mw._load_memory_corpus()
+    first = mw._memory_search_service._load_memory_corpus()
     assert "OLD CONTENT" in first["context-budgeting"][1]
 
     time.sleep(0.02)
@@ -248,47 +219,49 @@ def test_corpus_cache_detects_in_place_rewrite(tmp_path) -> None:
         "NEW CONTENT after a review pass", encoding="utf-8"
     )
 
-    second = mw._load_memory_corpus()
+    second = mw._memory_search_service._load_memory_corpus()
     assert "NEW CONTENT" in second["context-budgeting"][1], (
         "in-place rewrite not picked up — corpus cache keyed on dir mtime"
     )
 
 
 def test_corpus_cache_invalidates_on_deleting_a_non_newest_file(tmp_path) -> None:
-    """Deleting a topic file must invalidate the corpus even if it wasn't newest.
+    """Deleting a topic file must invalidate the corpus used for search.
 
-    The key is ``(file_count, newest_file_mtime)``. Comparing only the newest
-    mtime discarded the count, so a file deleted while a *newer* file existed
-    left its lessons in the cached corpus and kept injecting them.
+    Comparing only the newest mtime left a deleted topic in the cache while a
+    *newer* file still existed.
     """
     mw = _bare_middleware(tmp_path, topics={"aaa-old": "OLD LESSON", "zzz-new": "NEW"})
-    assert "aaa-old" in mw._load_memory_corpus()
+    assert "aaa-old" in mw._memory_search_service._load_memory_corpus()
     mem_dir = mw.agent_dir / "memories"
 
     # Make zzz-new unambiguously newest, then re-warm against that signature.
     time.sleep(0.02)
     (mem_dir / "zzz-new.md").write_text("NEW lesson, touched", encoding="utf-8")
-    mw._load_memory_corpus()
-    sig_before = AgentMemoryMiddleware._corpus_signature(mem_dir)
+    mw._memory_search_service._load_memory_corpus()
+    sig_before = MemorySearchService.corpus_signature(mem_dir)
     assert sig_before is not None
     newest_before = dict(sig_before)["zzz-new.md"]
 
     (mem_dir / "aaa-old.md").unlink()
 
-    after = AgentMemoryMiddleware._corpus_signature(mem_dir)
+    after = MemorySearchService.corpus_signature(mem_dir)
     assert after is not None
     # Guard the guard: if the max mtime shifted, this test would pass for the
     # wrong reason (a max-only key would have caught it too).
     assert dict(after)["zzz-new.md"] == newest_before, "test bug: surviving content changed"
 
-    assert "aaa-old" not in mw._load_memory_corpus(), (
+    assert "aaa-old" not in mw._memory_search_service._load_memory_corpus(), (
         "a deleted topic was still served — the corpus key ignored the file count"
     )
 
 
 def test_corpus_cache_reused_when_files_unchanged(tmp_path) -> None:
     mw = _bare_middleware(tmp_path, topics={"a-topic": "body"})
-    assert mw._load_memory_corpus() is mw._load_memory_corpus()
+    assert (
+        mw._memory_search_service._load_memory_corpus()
+        is mw._memory_search_service._load_memory_corpus()
+    )
 
 
 def test_corpus_signature_uses_current_file_content(tmp_path) -> None:
@@ -296,7 +269,7 @@ def test_corpus_signature_uses_current_file_content(tmp_path) -> None:
     mw = _bare_middleware(tmp_path, topics={"a-topic": "body"})
     mem_dir = mw.agent_dir / "memories"
 
-    before = AgentMemoryMiddleware._corpus_signature(mem_dir)
+    before = MemorySearchService.corpus_signature(mem_dir)
     assert before is not None
     assert len(before) == 1
     assert before[0][0] == "a-topic.md"
