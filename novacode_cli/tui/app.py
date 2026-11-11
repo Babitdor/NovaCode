@@ -2296,6 +2296,7 @@ class NovaApp(App):
         self._reasoning_buf_parts: list[str] = []
         self._stream_msg: ChatMessage | None = None  # in-progress Nova answer widget
         self._reason_msg: ChatMessage | None = None  # in-progress reasoning widget
+        self._reasoning_started_at: float | None = None
         self._current_assistant_id: str | None = None
         # Streaming coalescing: deltas append to the buffers above, but the widget
         # is only repainted on a 100ms timer (see _schedule_stream_flush) so a fast
@@ -6297,6 +6298,7 @@ class NovaApp(App):
         self._reason_msg = None
         self._live_buf = ""
         self._reasoning_buf = ""
+        self._reasoning_started_at = None
         self._stream_flush_scheduled = False
         self._tool_components.clear()
         self._last_tool = None
@@ -7407,24 +7409,22 @@ class NovaApp(App):
         ))
 
     async def _remove_reasoning(self) -> None:
-        """Finalize the reasoning trace: collapse it and keep it in the transcript.
-
-        The trace used to be deleted at the end of the turn, so the model's
-        thinking vanished the moment the answer arrived. It is now retained as a
-        collapsed one-line card the user can expand, which keeps the transcript
-        honest about what the model did without letting a long trace dominate it.
-        """
+        """Finalize reasoning: collapse and retitle with elapsed time."""
         if self._reason_msg is not None:
             try:
-                # Commit the full trace (the live view only showed a tail) and
-                # fold it to its header.
                 self._reason_msg.update_body(Text(self._reasoning_buf, style="dim italic"))
-                if self._follow_tail:
-                    self._reason_msg.set_collapsed(collapsed=True)
+                elapsed = 0.0
+                if self._reasoning_started_at is not None:
+                    elapsed = time.monotonic() - self._reasoning_started_at
+                self._reason_msg.update_header(
+                    Text(f"Thought - {elapsed:.1f}s", style="dim italic")
+                )
+                self._reason_msg.set_collapsed(collapsed=True)
             except Exception:  # noqa: BLE001 — finalizing must never break the turn
                 pass
             self._reason_msg = None
         self._reasoning_buf = ""
+        self._reasoning_started_at = None
 
     #: Cached right-docked status counts (see _refresh_status). Class-level so a
     #: read before the first tail rebuild yields an empty Text, not AttributeError.
@@ -18464,13 +18464,15 @@ class NovaApp(App):
         if isinstance(e, ev.StatusUpdate):
             self._set_status(e.message or "ready")
         elif isinstance(e, ev.ReasoningDelta):
-            # Stream the model's reasoning into a dim, transient message widget.
+            # Stream reasoning into a collapsed message (header shows live status).
             # The repaint is coalesced to 10fps via _schedule_stream_flush.
             self._reasoning_buf_parts.append(e.text)
             if self._reason_msg is None:
+                self._reasoning_started_at = time.monotonic()
                 self._reason_msg = ChatMessage(
-                    Text("∴ musing…", style="dim italic"), "reason", collapsible=True
+                    Text("thinking...", style="dim italic"), "reason", collapsible=True
                 )
+                self._reason_msg.set_collapsed(collapsed=True)
                 await self._mount(self._reason_msg)
                 # Leading edge: show the first fragment now rather than waiting
                 # out the coalescing interval.

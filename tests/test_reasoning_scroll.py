@@ -148,7 +148,8 @@ async def test_reasoning_and_final_answer_do_not_pull_manual_scroll():
         await pilot.pause()
         assert transcript.scroll_y == before
         assert not app._follow_tail
-        assert not thought._collapsed
+        assert thought._collapsed
+        assert thought.query_one(".role", Static).render().plain.startswith("Thought - ")
         # Wheel/keyboard scrolling still works after the final answer arrives.
         _wheel_up(transcript)
         await pilot.pause(0.2)
