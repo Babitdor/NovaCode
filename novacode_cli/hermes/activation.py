@@ -72,6 +72,8 @@ class ActivationManager:
         if record.kind not in {"lesson", "habit", "skill", "skill_archive", "prompt", "user_model"}:
             message = "Unsupported generated artifact kind"
             raise ValueError(message)
+        if record.kind == "lesson" and record.target:
+            self._validate_lesson(record)
         if record.kind in {"skill", "skill_archive", "prompt"} and not re.fullmatch(
             r"[a-zA-Z0-9_-]+(?:\.jinja)?", record.target
         ):
@@ -102,6 +104,21 @@ class ActivationManager:
             self._validate_skill_source(record)
         if not record.approval_reference:
             message = "Artifact lacks revision-specific approval"
+            raise ValueError(message)
+
+    @staticmethod
+    def _validate_lesson(record: Any) -> None:
+        """Validate a scoped wiki lesson target and its reviewed source state."""
+        if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", record.target):
+            message = "Unsafe or missing lesson topic"
+            raise ValueError(message)
+        if record.scope == "project" and not re.fullmatch(r"[a-zA-Z0-9_-]+", record.project):
+            message = "Unsafe project memory scope"
+            raise ValueError(message)
+        if record.source_hash != "missing" and not re.fullmatch(
+            r"[a-f0-9]{64}", record.source_hash
+        ):
+            message = "Lesson source hash is missing; review a new proposal"
             raise ValueError(message)
 
     def _validate_skill(self, record: Any) -> None:
@@ -140,14 +157,24 @@ class ActivationManager:
         from novacode_cli.config.config import Settings
 
         settings = Settings.from_environment()
-        roots = [settings.ensure_user_skills_dir(), *settings.get_project_skills_dirs(),
-                 self.root.parent / "skills"]
+        roots = [
+            settings.ensure_user_skills_dir(),
+            *settings.get_project_skills_dirs(),
+            self.root.parent / "skills",
+        ]
         legacy = roots[-1] / record.target / "SKILL.md"
-        source = (Path(record.source_path) if record.source_path else
-                  legacy if legacy.exists() else roots[0] / record.target / "SKILL.md")
+        source = (
+            Path(record.source_path)
+            if record.source_path
+            else legacy
+            if legacy.exists()
+            else roots[0] / record.target / "SKILL.md"
+        )
         source = source.resolve()
-        if source.name != "SKILL.md" or source.parent.name != record.target or not any(
-            source.parent.parent == root.resolve() for root in roots
+        if (
+            source.name != "SKILL.md"
+            or source.parent.name != record.target
+            or not any(source.parent.parent == root.resolve() for root in roots)
         ):
             raise ValueError("Skill source is outside configured skills roots")
         return source
@@ -155,7 +182,8 @@ class ActivationManager:
     def _validate_skill_source(self, record: Any) -> None:
         source = self._skill_source(record)
         if (
-            not record.source_hash or not source.is_file()
+            not record.source_hash
+            or not source.is_file()
             or content_hash(source.read_bytes()) != record.source_hash
         ):
             raise ValueError("Skill target hash changed; review a new proposal")
@@ -172,6 +200,40 @@ class ActivationManager:
                     if current.exists() and not original.exists():
                         current.replace(original)
             raise
+
+    def _apply_wiki_lesson(self, record: Any) -> Any:
+        """Materialize a reviewed lesson and return its rollback descriptor."""
+        if record.kind != "lesson" or not record.target:
+            return None
+        from novacode_cli.hermes.memory_tiers import apply_approved_lesson
+
+        return apply_approved_lesson(
+            self.root.parent,
+            record.target,
+            record.content,
+            project=record.project if record.scope == "project" else None,
+            reference=record.reference,
+            source_hash=record.source_hash,
+        )
+
+    def _rollback_wiki_lesson(self, record: Any, prior: dict) -> None:
+        """Undo only a generated wiki block after checking its revision artifact."""
+        if record.kind != "lesson" or not record.target:
+            return
+        from novacode_cli.hermes.memory_tiers import (
+            lesson_change_descriptor,
+            rollback_approved_lesson,
+        )
+
+        change = lesson_change_descriptor(
+            self.root.parent,
+            record.target,
+            record.content,
+            project=record.project if record.scope == "project" else None,
+            reference=record.reference,
+        )
+        change.update(prior.get("wiki_change", {}))
+        rollback_approved_lesson(self.root.parent, change)
 
     def _apply_pending_impl(self) -> Any:
         """Called once between turns; writer lock serializes all manifests."""
@@ -212,12 +274,14 @@ class ActivationManager:
                                 f"Rollback conflict for {record.reference}; manual edits preserved"
                             )
                             raise ValueError(message)
+                        self._rollback_wiki_lesson(record, prior)
                         self._restore_prior(manifest, key, prior)
                     action = "finish_rollback"
                 else:
                     try:
                         self._validate(record)
-                    except (ValueError, OSError, TemplateError):
+                        wiki_change = self._apply_wiki_lesson(record)
+                    except (ValueError, OSError, RuntimeError, TemplateError):
                         transitions.append((record.reference, "fail"))
                         continue
                     if record.kind == "skill_archive":
@@ -227,9 +291,12 @@ class ActivationManager:
                         if archive_destination is None:
                             transitions.append((record.reference, "fail"))
                             continue
-                        self._moved_skills.append((
-                            archive_destination, self._skill_source(record).parent,
-                        ))
+                        self._moved_skills.append(
+                            (
+                                archive_destination,
+                                self._skill_source(record).parent,
+                            )
+                        )
                     encoded = record.content.encode()
                     digest = content_hash(encoded)
                     suffix = "SKILL.md" if record.kind == "skill" else "content"
@@ -251,6 +318,8 @@ class ActivationManager:
                         "source_hash": record.source_hash,
                         "previous": prior,
                     }
+                    if wiki_change is not None:
+                        manifest["entries"][key]["wiki_change"] = wiki_change
                     if record.kind == "skill_archive":
                         manifest["entries"][key]["archive_path"] = str(archive_destination)
                     action = "apply"
@@ -274,8 +343,12 @@ class ActivationManager:
         """Freeze applicable artifact contents for one turn."""
         captured = []
         entries = list(self.manifest()["entries"].values())
-        archived = {entry["target"] for entry in entries if entry["kind"] == "skill_archive"
-                    and (entry["scope"] == "shared" or entry["project"] == self.project)}
+        archived = {
+            entry["target"]
+            for entry in entries
+            if entry["kind"] == "skill_archive"
+            and (entry["scope"] == "shared" or entry["project"] == self.project)
+        }
         for entry in entries:
             if entry["scope"] != "shared" and entry["project"] != self.project:
                 continue

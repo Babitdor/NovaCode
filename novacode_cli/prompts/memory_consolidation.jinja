@@ -1,40 +1,33 @@
-# Dream: Memory Wiki Maintenance and Consolidation
+# Dream: Memory Wiki Review
 
-Maintain your persistent memory as a linked wiki that future sessions can explore.
+Review the linked memory wiki and propose only evidence-supported additions.
 Memory root: `{{ memory_dir }}`. Wiki home: `{{ index_file | default("/memories/memories/INDEX.md") }}`.
 {{ memory_dir_context | default("") }}
-{% if backup_dir %}An exact source backup was created before this pass at `{{ backup_dir }}`. Preserve it.{% endif %}
+{% if backup_dir %}A source snapshot was created before this pass at `{{ backup_dir }}`. Preserve it.{% endif %}
 {% if transcripts_dir %}Transcripts: `{{ transcripts_dir }}`. Search narrowly only when evidence is needed; do not read whole histories.{% endif %}
 
 ## Orient and assess
 
-- Read `agent.md`, `HABITS.md`, wiki home and relevant topic maps under the memory root. Follow relative links from the current page's directory, not the workspace root.
-- Inventory `memories/*.md` and `memories/projects/<project-key>/*.md`. Domain maps and INDEX are navigation, not factual sources. Do not create legacy USER.md or MEMORY.md.
-- Use `memory_search` to find overlapping notes, then read their full source before consolidating. Do not infer a duplicate from filenames, snippets or truncation alone. Avoid rereading the entire corpus when only a few topics changed.
-- Check instructions against explicit user corrections; verify technical claims against current source. A newer timestamp alone does not prove a claim true. Distinguish project scope, current reference, dated observations and unresolved work.
+- Read relevant source pages and maps under the memory root. Follow relative links from the current page's directory.
+- Inventory shared `memories/*.md` pages and the active project's own `memories/projects/<project-key>/*.md` pages. Other project folders are out of scope. Maps are navigation, not factual sources. Do not create legacy USER.md or MEMORY.md.
+- Find overlapping notes with `grep` and `glob`; read full source pages before proposing a consolidation. Avoid rereading the entire corpus when only a few topics changed.
+- Preserve project scope, user corrections, unique constraints, provenance, verification results and unresolved issues. A newer timestamp alone does not prove a claim true.
+- Keep `agent.md`, `HABITS.md`, project instructions, histories and backups unchanged. Preserve `<!-- nova-memory-wiki:checklist -->` and its checklist sections. Do not retire or rewrite source pages.
 
-## Consolidate without losing meaning
+## Stage proposals, never edit pages
 
-- Update existing canonical topic pages under `{{ memory_dir }}memories/`, not arbitrary files at the agent root. Keep each project's lessons scoped to that project; do not merge similar statements from different repositories as universal facts.
-- Preserve every unique constraint, decision, correction, provenance, verification result and unresolved issue. Consolidate repeated explanations into concise rules. Keep detailed incident history separately with a link from the current page.
-- Read before editing. Use `edit_file` for existing files and `write_file` only for new ones. Never overwrite a memory with a small note or treat it as scratch space. Preserve the exact originals in a backup before each additional rewrite.
-- Keep explicit user preferences intact. Resolve a conflict only from applicable user corrections and verified evidence; ask if an ambiguity changes the required behavior. Never import another user's preferences or infer consent from generated memory.
-- Keep agent.md for stable preferences and HABITS.md for a stable checklist. Put new incident reviews in topic memory, not above the checklist. Essential rules go first; the default block injection cap is 6,000 characters (smaller windows/configuration can reduce it). Aim for a checklist under 2,000 characters. Do not raise context limits to accommodate growth.
-- When creating or consolidating a stable HABITS.md checklist, retain original review history in a linked topic or backup and include `<!-- nova-memory-wiki:checklist -->` under its title. This tells background reviews to save new incident lessons in habits-lessons.md instead of displacing the checklist. Use named Work Checklist, Final Review and Completion Report sections; remove references to sections that do not exist.
-- Add concise related-page links and a topic-map/home route. Keep source claims ahead of navigation so retrieval snippets retain facts.
-- Before retiring a duplicate page, preserve its full original, compare complete sources, move all unique facts, and repair inbound links. Prefer a redirect page over deletion. Do not delete source files, histories or backups as a shortcut to savings. If unsure, retain both and record the conflict.
-- If files changed concurrently, re-read and reconcile; do not overwrite the newer version. If interrupted, leave the backups and report remaining work so the next pass can continue.
+- Use `propose_memory_lesson(topic, content, scope, evidence)` for every semantic wiki change. Its content must be substantive Markdown bullets, with evidence paths to the source pages.
+- The tool only creates a pending, version-specific proposal. It does not write or edit a page. Report its `id@revision`; the user must approve it through `/learning` before it is applied.
+- Choose `project` scope only for the active project's own notes. Choose `shared` only for facts genuinely useful across projects. Never move a project-specific fact into shared memory.
+- Include useful summary, tags and related-page links in the proposed Markdown bullets when they improve retrieval. Links must be relative to the destination topic page and point to existing pages.
+- Do not call `write_file`, `edit_file`, or `delete_file`. They are intentionally unavailable for persistent memory during a dream.
+- If no semantic addition is justified, create no proposal and say so. Do not restate existing notes as new lessons.
 
-## Rebuild and verify
+## Verify and report
 
-- Discover `memory_wiki` with `search_tools` if needed. Call `memory_wiki(action="maintain")` after edits to rebuild the home index, topic maps and related links from actual files. It preserves page bodies; you remain responsible for semantic consolidation and repairing reported unresolved links.
-- Keep INDEX below 2,000 characters and {{ index_max_lines | default(100) }} lines. It should route to maps, not duplicate every topic. Maps index all current topic pages. Never remove a unique page merely to satisfy an index budget.
-- Call `memory_wiki(action="check")` and read its result. Check root-rule consistency, named checklist sections, complete topic reachability and current project scope. Repair genuine broken wiki links; historical source-code references may need an explicit historical label rather than a fabricated target.
-- If the maintenance tool is unavailable, edit the same wiki structure through file tools and explicitly validate every added local link and orphan page; report that automatic validation was unavailable.
-
-## Report
-
-State what was consolidated, corrected and linked, where originals were backed up, and any unresolved conflicts, broken links or incomplete work. Distinguish structural checks from actual model recall quality. If no semantic change was justified, say so. Never claim consolidation merely because an index was rebuilt.
+- `memory_wiki(action="maintain")` rebuilds only deterministic navigation from actual pages. It may add indexes, maps and navigation links, but does not edit semantic page bodies.
+- Call `memory_wiki(action="check")`; report unresolved links without inventing target pages.
+- Report the source pages reviewed, each staged proposal reference and scope, and any unresolved conflict. Distinguish navigation maintenance from approved semantic edits.
 {% if additional_context %}
 {{ additional_context }}
 {% endif %}

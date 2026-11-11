@@ -326,8 +326,13 @@ class ReviewRunner:
             # recent window (history isn't reset) to detect an error-recovery.
             try:
                 import json
+
                 frozen = (getattr(request, "state", None) or {}).get("_nova_review_episodes")
-                recent = json.loads(frozen) if frozen is not None else await self._tracker.get_tool_history(limit=2 * self._review_threshold)
+                recent = (
+                    json.loads(frozen)
+                    if frozen is not None
+                    else await self._tracker.get_tool_history(limit=2 * self._review_threshold)
+                )
             except Exception:  # noqa: BLE001
                 recent = []
             recovered_from_error = _window_recovered(recent)
@@ -492,7 +497,8 @@ class ReviewRunner:
         """Keep a bounded diagnostic without changing active learning."""
         try:
             await self._store.aput(
-                self._namespace("review_skips"), str(time.time_ns()),
+                self._namespace("review_skips"),
+                str(time.time_ns()),
                 {"reason": reason, "task": self._tracker.task, "timestamp": time.time()},
             )
         except Exception:  # noqa: BLE001 - a diagnostic cannot fail the turn
@@ -557,20 +563,32 @@ class ReviewRunner:
         evidence = tuple(parsed.get("_evidence") or ())
         from novacode_cli.hermes.ledger import auto_approve_enabled
 
-        auto = auto_approve_enabled()  # lessons and skills; never prompt changes
+        auto = auto_approve_enabled()  # existing skill behavior; wiki lessons always need approval
         for lesson in parsed.get("lessons", []):
             bullets = lesson.get("bullets") or []
             content = "\n".join(bullets) if isinstance(bullets, list) else str(bullets)
             if content.strip():
+                from novacode_cli.hermes.memory_tiers import lesson_proposal_target
+
+                scope = "shared" if lesson.get("scope") == "general" else "project"
+                project = self._project or "" if scope == "project" else ""
+                topic, source_hash = lesson_proposal_target(
+                    self._agent_dir,
+                    str(lesson.get("topic") or "lessons"),
+                    project=project or None,
+                )
                 ledger.propose(
                     content=content,
-                    project=self._project or "",
+                    scope=scope,
+                    project=project,
                     session=session,
                     task=task_id or self._tracker.task,
-                    applicability=str(lesson.get("topic") or ""),
+                    target=topic,
+                    source_hash=source_hash,
+                    applicability=topic,
                     evidence=evidence
                     or (f"review:{session}:outcome:{self._outcome[0]}:heuristic",),
-                    auto_approve=auto,
+                    auto_approve=False,
                 )
         for kind, value in (
             ("user_model", parsed.get("user_model")),
@@ -587,26 +605,36 @@ class ReviewRunner:
             from novacode_cli.config.config import Settings
             from novacode_cli.hermes.activation import content_hash
             from novacode_cli.skills.schema import prepare_skill_content
+
             try:
                 content = prepare_skill_content(spec["body"], spec["name"], spec["description"])
             except ValueError:
                 logger.warning("Skipping invalid generated skill '%s'", spec["name"], exc_info=True)
             else:
                 source = (
-                    Settings.from_environment().ensure_user_skills_dir()
-                    / spec["name"] / "SKILL.md"
+                    Settings.from_environment().ensure_user_skills_dir() / spec["name"] / "SKILL.md"
                 )
                 ledger.propose(
-                    content=content, project=self._project or "", kind="skill", session=session,
-                    target=spec["name"], evidence=evidence, auto_approve=auto,
+                    content=content,
+                    project=self._project or "",
+                    kind="skill",
+                    session=session,
+                    target=spec["name"],
+                    evidence=evidence,
+                    auto_approve=auto,
                     source_hash=content_hash(source.read_bytes()) if source.is_file() else "",
                     source_path=str(source.resolve()) if source.is_file() else "",
                 )
         for block in re.findall(
             r"<prompt_improvement>(.*?)</prompt_improvement>", response_content, re.DOTALL
         ):
-            ledger.propose(content=block.strip(), scope="shared", kind="lesson", session=session,
-                           applicability="prompt improvement suggestion; requires a template proposal")
+            ledger.propose(
+                content=block.strip(),
+                scope="shared",
+                kind="lesson",
+                session=session,
+                applicability="prompt improvement suggestion; requires a template proposal",
+            )
 
     async def _apply_review_content(
         self, response_content: str, *, task_id: str = "", evidence: tuple[str, ...] = ()

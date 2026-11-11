@@ -206,3 +206,5 @@ async def test_refine_stages_reviewed_memory_without_writing_active_file(
     proposal = LearningLedger(agent_dir / "learning.sqlite3").list()[0]
     assert proposal.status == "candidate"
     assert proposal.content == "Run the focused test first"
+    assert proposal.target == "testing"
+    assert proposal.source_hash == "missing"

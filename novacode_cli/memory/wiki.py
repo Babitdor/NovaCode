@@ -104,12 +104,12 @@ def _topics(agent_dir: Path) -> dict[Path, bytes]:
 
 
 def _commit(
-    agent_dir: Path, originals: dict[Path, bytes | None], updates: dict[Path, str]
+    agent_dir: Path, originals: dict[Path, bytes | None], updates: dict[Path, str | None]
 ) -> str | None:
     changed = {
-        p: text.encode("utf-8")
+        p: text.encode("utf-8") if text is not None else None
         for p, text in updates.items()
-        if text.encode("utf-8") != originals.get(p)
+        if (text.encode("utf-8") if text is not None else None) != originals.get(p)
     }
     if not changed:
         return None
@@ -125,6 +125,9 @@ def _commit(
         if _read(path) != originals.get(path):
             msg = f"Memory changed during maintenance; backup retained, retry: {path.name}"
             raise RuntimeError(msg)
+        if content is None:
+            path.unlink(missing_ok=True)
+            continue
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, temp = tempfile.mkstemp(prefix=".wiki-", dir=path.parent)
         try:
@@ -184,7 +187,12 @@ def validate_wiki(agent_dir: Path) -> list[str]:
     return broken
 
 
-def _navigation(path: Path, topics: dict[Path, str], memories: Path) -> str:
+def _navigation(
+    path: Path,
+    topics: dict[Path, str],
+    memories: Path,
+    backlink_sources: list[Path] | None = None,
+) -> str:
     group = _group(path.relative_to(memories))
     peers = [
         p
@@ -199,9 +207,34 @@ def _navigation(path: Path, topics: dict[Path, str], memories: Path) -> str:
         _link(path, memories / f"wiki-{group}.md", "Topic map"),
     ]
     links.extend(_link(path, p, _title(topics[p], p.stem)) for p in related)
+    backlink_links = [
+        _link(path, source, _title(topics[source], source.stem))
+        for source in sorted(backlink_sources or [], key=lambda p: p.as_posix().casefold())
+    ]
     # A section heading here would attract record_lesson's prepend operation
     # inside this replaceable block, losing that lesson on the next refresh.
-    return f"{START}\n**Wiki navigation**\n\n" + " · ".join(links) + f"\n{END}\n"
+    navigation = f"{START}\n**Wiki navigation**\n\n" + " · ".join(links)
+    if backlink_links:
+        navigation += "\n\n**Backlinks**\n\n" + " · ".join(backlink_links)
+    return navigation + f"\n{END}\n"
+
+
+def _backlinks(topics: dict[Path, str]) -> dict[Path, list[Path]]:
+    """Derive inbound links from authored page bodies, excluding generated nav."""
+    known = {path.resolve(): path for path in topics}
+    incoming: dict[Path, list[Path]] = {}
+    for source, text in topics.items():
+        body = re.sub(r"(?ms)^(```|~~~).*?^\1[^\n]*$", "", _body(text))
+        body = re.sub(r"`[^`\n]*`", "", body)
+        for target in re.findall(r"\[[^\]\n]+\]\(([^)\n]+)\)", body):
+            url = urlsplit(target)
+            if url.scheme or url.netloc or not url.path or url.path.startswith("/"):
+                continue
+            destination = (source.parent / unquote(url.path)).resolve()
+            page = known.get(destination)
+            if page is not None and page != source:
+                incoming.setdefault(destination, []).append(source)
+    return incoming
 
 
 def maintain_wiki(agent_dir: Path) -> dict[str, Any]:
@@ -221,6 +254,7 @@ def maintain_wiki(agent_dir: Path) -> dict[str, Any]:
         and raw is not None
         and MANAGED not in raw.decode("utf-8")
     }
+    backlinks = _backlinks(topics)
     for group in HUBS:
         path = memories / f"wiki-{group}.md"
         _safe(agent_dir, path)
@@ -234,7 +268,8 @@ def maintain_wiki(agent_dir: Path) -> dict[str, Any]:
         # Preserve the body bytes as text, including its final newline.
         if START not in text and not body.endswith("\n"):
             body += "\n"
-        updates[path] = body + _navigation(path, topics, memories)
+        navigation = _navigation(path, topics, memories, backlinks.get(path.resolve()))
+        updates[path] = body + navigation
     home = [
         f"# Memory Wiki\n\n{MANAGED}\n",
         "Start with a relevant map or `memory_search(query)`; read the full page, "

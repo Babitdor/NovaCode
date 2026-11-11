@@ -1,11 +1,12 @@
 """Review lifecycle tests use a deterministic provider with no network transport."""
 
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
+from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.store.memory import InMemoryStore
 
 from novacode_cli.hermes.ledger import LearningLedger
@@ -54,6 +55,39 @@ async def test_reviews_prepare_candidates_without_global_changes(tmp_path):
     assert ledger.list(project="a", active=True) == []
     assert not (tmp_path / "HABITS.md").exists()
     assert not (tmp_path / "skills").exists()
+    assert not (tmp_path / "memories").exists()
+
+
+def test_review_wiki_lessons_require_explicit_approval_even_when_auto_is_enabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from novacode_cli.hermes import ledger as ledger_module
+
+    monkeypatch.setattr(ledger_module, "auto_approve_enabled", lambda: True)
+    runner = ReviewRunner(
+        InMemoryStore(),
+        ToolUsageTracker(InMemoryStore()),
+        None,
+        agent_dir=tmp_path,
+        project="project-a",
+    )
+    runner._persist_review(
+        {
+            "lessons": [
+                {"topic": "python-tests", "scope": "general", "bullets": ["- Use focused tests"]},
+                {"topic": "build", "scope": "project", "bullets": ["- Run the local build"]},
+            ],
+            "_evidence": ("verified test output",),
+        },
+        "",
+    )
+
+    records = LearningLedger(tmp_path / "learning.sqlite3").list()
+    assert {(r.scope, r.project, r.target, r.status) for r in records} == {
+        ("shared", "", "python-tests", "candidate"),
+        ("project", "project-a", "build", "candidate"),
+    }
+    assert all(r.source_hash == "missing" for r in records)
     assert not (tmp_path / "memories").exists()
 
 

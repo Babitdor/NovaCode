@@ -188,15 +188,28 @@ def register_commands(registry: CommandRegistry) -> None:
         result = await handle_dream_command(ctx.session_state, ctx.assistant_id)
         # When memory exists, the handler returns a consolidation prompt to run.
         if isinstance(result, str) and result.strip() and ctx.agent is not None:
+            from novacode_cli.agents.dream_agent import create_dream_agent
+            from novacode_cli.config.config import settings
             from novacode_cli.ui.execution import execute_task
 
+            model = getattr(ctx.session_state, "_model", None)
+            if model is None:
+                from novacode_cli.config.model_create import create_model
+
+                model = await asyncio.to_thread(create_model)
+            dream_agent = await asyncio.to_thread(
+                create_dream_agent,
+                model,
+                settings.get_agent_dir(ctx.assistant_id),
+            )
             console.print("[dim]💭 Dreaming over memories…[/dim]")
             await execute_task(
                 result,
-                ctx.agent,
-                ctx.assistant_id,
+                dream_agent,
+                "dream-agent",
                 ctx.session_state,
                 ctx.token_tracker,
+                is_subagent=True,
             )
         return True
 

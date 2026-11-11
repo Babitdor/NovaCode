@@ -70,3 +70,50 @@ async def test_topic_files_are_listed(tmp_path):
     assert isinstance(result, str)
     assert "/memories/memories/" in result
     assert "auth-design.md" in result
+
+
+async def test_dream_command_runs_with_isolated_read_only_agent(tmp_path, monkeypatch):
+    from novacode_cli.commands import CommandRegistry, dream_handler
+
+    calls = {}
+    active_model = object()
+    main_agent = object()
+
+    async def prompt(*_args, **_kwargs):
+        return "Review memory proposals."
+
+    async def execute(*args, **kwargs):
+        calls["execute"] = (args, kwargs)
+
+    def create(model, agent_dir):
+        calls["create"] = (model, agent_dir)
+        return "read-only dream agent"
+
+    from novacode_cli.agents import dream_agent
+    from novacode_cli.config.config import settings
+    from novacode_cli.ui import execution
+
+    monkeypatch.setattr(dream_handler, "handle_dream_command", prompt)
+    monkeypatch.setattr(dream_agent, "create_dream_agent", create)
+    monkeypatch.setattr(execution, "execute_task", execute)
+    monkeypatch.setattr(settings, "get_agent_dir", lambda _assistant_id: tmp_path)
+
+    registry = CommandRegistry()
+    dream_handler.register_commands(registry)
+    result = await registry.get("dream")(
+        types.SimpleNamespace(
+            session_state=types.SimpleNamespace(_model=active_model),
+            assistant_id="nova",
+            agent=main_agent,
+            token_tracker=None,
+        )
+    )
+
+    assert result is True
+    assert calls["create"] == (active_model, tmp_path)
+    args, kwargs = calls["execute"]
+    assert args[0] == "Review memory proposals."
+    assert args[1] == "read-only dream agent"
+    assert args[2] == "dream-agent"
+    assert kwargs["is_subagent"] is True
+    assert args[1] is not main_agent

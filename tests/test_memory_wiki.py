@@ -113,6 +113,22 @@ def test_broken_links_reported_and_scoped_project_pages_reachable(tmp_path: Path
     assert "../../INDEX.md" in page.read_text(encoding="utf-8")
 
 
+def test_maintenance_builds_backlinks_from_authored_page_links(tmp_path: Path) -> None:
+    memories = tmp_path / "memories"
+    memories.mkdir()
+    target = memories / "parser.md"
+    source = memories / "runtime.md"
+    target.write_text("# Parser\n\nParser requirements.\n", encoding="utf-8")
+    source.write_text("# Runtime\n\nSee [the parser](parser.md).\n", encoding="utf-8")
+
+    result = maintain_wiki(tmp_path)
+
+    assert result["broken_links"] == []
+    assert "**Backlinks**" in target.read_text(encoding="utf-8")
+    assert "[Runtime](runtime.md)" in target.read_text(encoding="utf-8")
+    assert "**Backlinks**" not in source.read_text(encoding="utf-8")
+
+
 async def test_dream_handles_habits_and_uses_wiki_index(tmp_path: Path) -> None:
     from types import SimpleNamespace
 
@@ -125,6 +141,8 @@ async def test_dream_handles_habits_and_uses_wiki_index(tmp_path: Path) -> None:
     assert "/memories/memories/INDEX.md" in result
     assert "/memories/MEMORY.md" not in result
     assert "memory_wiki" in result
+    assert "propose_memory_lesson" in result
+    assert "must approve" in result
     assert "nova-memory-wiki:checklist" in result
     assert "unique" in result
     assert "backup" in result.lower()
@@ -249,6 +267,61 @@ def test_wiki_tool_is_bound_to_its_agent(tmp_path: Path) -> None:
     from novacode_cli.config.plan_mode import BLOCKED_TOOLS
 
     assert tool.name in BLOCKED_TOOLS
+
+
+def test_dream_stages_scoped_proposal_without_changing_source_page(tmp_path: Path) -> None:
+    import json
+
+    from novacode_cli.hermes.ledger import LearningLedger
+    from novacode_cli.tools.memory_wiki_tools import create_memory_lesson_proposal_tool
+
+    page = tmp_path / "memories" / "projects" / "project-a" / "parser.md"
+    page.parent.mkdir(parents=True)
+    original = b"# Parser\n\nKeep parser mode strict.\n"
+    page.write_bytes(original)
+    other_page = tmp_path / "memories" / "projects" / "project-b" / "parser.md"
+    other_page.parent.mkdir(parents=True)
+    other_page.write_text("# Parser\nOther project's note.\n", encoding="utf-8")
+    tool = create_memory_lesson_proposal_tool(tmp_path, "project-a")
+
+    result = json.loads(
+        tool.invoke(
+            {
+                "topic": "parser",
+                "content": (
+                    "- Keep parser mode strict for project A.\n\n"
+                    "- Parse tags before generated navigation."
+                ),
+                "scope": "project",
+                "evidence": ["/memories/memories/projects/project-a/parser.md"],
+            }
+        )
+    )
+
+    assert result["requires_approval"] is True
+    assert result["status"] == "candidate"
+    assert result["scope"] == "project"
+    assert page.read_bytes() == original
+    proposal = LearningLedger(tmp_path / "learning.sqlite3").list()[0]
+    assert proposal.reference == result["reference"]
+    assert proposal.source_hash
+    assert proposal.content == (
+        "- Keep parser mode strict for project A.\n- Parse tags before generated navigation."
+    )
+    assert proposal.evidence == ("/memories/memories/projects/project-a/parser.md",)
+    rejected = json.loads(
+        tool.invoke(
+            {
+                "topic": "parser",
+                "content": "- Reuse another project's parser note.",
+                "scope": "project",
+                "evidence": ["/memories/memories/projects/project-b/parser.md"],
+            }
+        )
+    )
+    assert rejected["complete"] is False
+    assert "outside the proposed project scope" in rejected["error"]
+    assert len(LearningLedger(tmp_path / "learning.sqlite3").list()) == 1
 
 
 def test_maps_cover_research_other_projects_and_encoded_paths(tmp_path: Path) -> None:

@@ -276,7 +276,7 @@ class TestRollback:
 
 
 class TestApplyMemory:
-    async def test_records_lesson_to_topic(
+    async def test_stages_lesson_without_writing_topic_page(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         agent_dir = tmp_path / "agent"
@@ -289,9 +289,13 @@ class TestApplyMemory:
             "change": "- Prefer X over Y",
         }
         assert await refine_loop._apply_memory(item) is True
-        topic_file = agent_dir / "memories" / "lessons.md"
-        assert topic_file.exists()
-        assert "Prefer X over Y" in topic_file.read_text(encoding="utf-8")
+        from novacode_cli.hermes.ledger import LearningLedger
+
+        proposal = LearningLedger(agent_dir / "learning.sqlite3").list()[0]
+        assert proposal.status == "candidate"
+        assert proposal.content == "- Prefer X over Y"
+        assert proposal.target == "lessons"
+        assert not (agent_dir / "memories").exists()
 
     async def test_empty_change_returns_false(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -17,7 +17,7 @@ Standing memory prefixes are injected, but learned topic bodies are not added to
 | `write_memory(content, memory_type, path?, append?)` | Persists text; default `append=False` replaces the whole target. Read first; use `append=True` to add without replacement, or prefer a targeted edit near the top of capped files |
 | `remember(key, content)` / `recall(key)` | Durable keyed facts; respect the tool's session/agent scope |
 | `list_memories(query?)` / `forget(key)` | Find or remove keyed facts within the authorized scope |
-| `memory_wiki(action="maintain")` / `action="check"` | Rebuild backed-up wiki navigation or report broken links, when available and permitted |
+| `memory_wiki(action="maintain")` / `action="check"` | Rebuild backed-up deterministic wiki navigation or report broken links, when available and permitted |
 </memory_tools>
 
 <memory_triggers>
@@ -29,7 +29,7 @@ Treat search excerpts as discovery summaries. Before relying on detailed histori
 
 **Write:** remember durable preferences, verified lessons and reusable decisions when useful or requested. Skip trivia, transient task status and duplicates. Universal preferences go in agent.md; repository commands and conventions go in project memory; scoped lessons go in the appropriate topic page. Preserve unique constraints, user corrections and evidence. Read before editing; back up originals before consolidation. Keep essential rules near the start because injection and compaction retain the head.
 
-**Maintain:** `/dream` is the user's consolidation command. It prepares backups and wiki navigation, then asks the agent to consolidate notes. Discover `memory_wiki` with `search_tools` if its schema is deferred. After authorized edits, refresh maps and links with `action="maintain"`, then inspect `action="check"` results. Keep the compact home index as a router to topic maps; use the normal pointer-list format for a legacy flat index until it is organized. Preserve the stable HABITS checklist and its marker; put incident lessons in topic memory. In plan mode, use read/search tools and defer memory writes and maintenance until permitted.
+**Maintain:** `/dream` is the user's consolidation command. It snapshots sources and may rebuild deterministic wiki navigation, but semantic topic changes must be staged as exact `/learning` proposals and explicitly approved before application. The dreamer has read-only page access; never edit semantic page content during consolidation. Keep the compact home index as a router to topic maps; preserve the stable HABITS checklist and its marker; put incident lessons in topic memory. In plan mode, use read/search tools and defer memory writes and maintenance until permitted.
 </memory_triggers>
 
 {% if memory_index %}

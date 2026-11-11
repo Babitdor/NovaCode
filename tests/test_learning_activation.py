@@ -1,9 +1,15 @@
+from __future__ import annotations
+
 import json
+from typing import TYPE_CHECKING
 
 import pytest
 
 from novacode_cli.hermes.activation import ActivationManager, active_artifacts, content_hash
 from novacode_cli.hermes.ledger import LearningLedger, LearningProposal, LearningRecord
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_approval_is_pending_until_boundary_and_rollback_restores_prior(tmp_path):
@@ -23,6 +29,148 @@ def test_approval_is_pending_until_boundary_and_rollback_restores_prior(tmp_path
     assert manager.capture() == captured
     assert manager.apply_pending() == ()
     assert ledger.list()[0].status == "rolled_back"
+
+
+def test_approved_lesson_writes_scoped_markdown_only_at_boundary(tmp_path):
+    manager = ActivationManager(tmp_path, "project")
+    record = manager.ledger.propose(
+        content="- Keep the parser mode strict",
+        kind="lesson",
+        target="parser",
+        project="project",
+        source_hash="missing",
+    )
+    page = tmp_path / "memories" / "projects" / "project" / "parser.md"
+    assert not page.exists()
+
+    manager.ledger.transition(record.reference, "approve")
+    assert not page.exists()
+    manager.apply_pending()
+
+    assert "Keep the parser mode strict" in page.read_text(encoding="utf-8")
+    assert ActivationManager(tmp_path, "other").capture() == ()
+
+
+def test_stale_lesson_proposal_fails_without_overwriting_page(tmp_path):
+    manager = ActivationManager(tmp_path, "project")
+    record = manager.ledger.propose(
+        content="- Keep the parser mode strict",
+        kind="lesson",
+        target="parser",
+        project="project",
+        source_hash="missing",
+    )
+    page = tmp_path / "memories" / "projects" / "project" / "parser.md"
+    page.parent.mkdir(parents=True)
+    page.write_text("# Parser\n\nManual update.\n", encoding="utf-8")
+    manager.ledger.transition(record.reference, "approve")
+
+    manager.apply_pending()
+
+    assert manager.ledger.list()[0].status == "failed"
+    assert page.read_text(encoding="utf-8") == "# Parser\n\nManual update.\n"
+
+
+def test_wiki_lesson_recovers_after_manifest_publication_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from novacode_cli.hermes import activation
+
+    manager = ActivationManager(tmp_path, "project")
+    record = manager.ledger.propose(
+        content="- Keep the parser mode strict",
+        kind="lesson",
+        target="parser",
+        project="project",
+        source_hash="missing",
+    )
+    manager.ledger.transition(record.reference, "approve")
+    real_publish = activation.publish
+
+    def fail_manifest(path: Path, content: bytes) -> None:
+        if path == manager.path:
+            message = "manifest unavailable"
+            raise OSError(message)
+        real_publish(path, content)
+
+    monkeypatch.setattr(activation, "publish", fail_manifest)
+    with pytest.raises(OSError, match="manifest unavailable"):
+        manager.apply_pending()
+    page = tmp_path / "memories" / "projects" / "project" / "parser.md"
+    assert page.read_text(encoding="utf-8").count("Keep the parser mode strict") == 1
+
+    monkeypatch.setattr(activation, "publish", real_publish)
+    manager.apply_pending()
+    assert page.read_text(encoding="utf-8").count("Keep the parser mode strict") == 1
+    assert manager.ledger.list()[0].status == "applied"
+
+
+def test_approved_lesson_rollback_removes_its_block_and_preserves_manual_edits(tmp_path):
+    manager = ActivationManager(tmp_path, "project")
+    memories = tmp_path / "memories" / "projects" / "project"
+    memories.mkdir(parents=True)
+    page = memories / "parser.md"
+    index = memories / "INDEX.md"
+    page.write_text("# Parser\n\nExisting decision.\n", encoding="utf-8")
+    index.write_text("# Project memories\n", encoding="utf-8")
+    before_page, before_index = page.read_bytes(), index.read_bytes()
+
+    record = manager.ledger.propose(
+        content="- Keep the parser mode strict",
+        kind="lesson",
+        target="parser",
+        project="project",
+        source_hash=content_hash(before_page),
+    )
+    manager.ledger.transition(record.reference, "approve")
+    manager.apply_pending()
+    applied = manager.ledger.list()[0]
+    manager.ledger.transition(applied.reference, "rollback")
+    manager.apply_pending()
+    assert page.read_bytes() == before_page
+    assert index.read_bytes() == before_index
+
+    second = manager.ledger.propose(
+        content="- Reject the stale parser mode",
+        kind="lesson",
+        target="parser",
+        project="project",
+        source_hash=content_hash(page.read_bytes()),
+    )
+    manager.ledger.transition(second.reference, "approve")
+    manager.apply_pending()
+    page.write_text(page.read_text(encoding="utf-8") + "Manual correction.\n", encoding="utf-8")
+    manager.ledger.transition(
+        next(r for r in manager.ledger.list() if r.id == second.id).reference, "rollback"
+    )
+    manager.apply_pending()
+    content = page.read_text(encoding="utf-8")
+    assert "Manual correction." in content
+    assert "Reject the stale parser mode" not in content
+
+
+def test_rollback_conflict_preserves_edited_approved_block(tmp_path):
+    manager = ActivationManager(tmp_path, "project")
+    record = manager.ledger.propose(
+        content="- Keep the parser mode strict",
+        kind="lesson",
+        target="parser",
+        project="project",
+        source_hash="missing",
+    )
+    manager.ledger.transition(record.reference, "approve")
+    manager.apply_pending()
+    page = tmp_path / "memories" / "projects" / "project" / "parser.md"
+    page.write_text(
+        page.read_text(encoding="utf-8").replace(
+            "Keep the parser mode strict", "Manual replacement inside the approved block"
+        ),
+        encoding="utf-8",
+    )
+    manager.ledger.transition(manager.ledger.list()[0].reference, "rollback")
+    with pytest.raises(ValueError, match="conflict"):
+        manager.apply_pending()
+    assert "Manual replacement inside the approved block" in page.read_text(encoding="utf-8")
 
 
 def test_invalid_target_hash_and_template_do_not_activate(tmp_path, monkeypatch):
@@ -90,8 +238,9 @@ def test_rollback_conflict_preserves_manual_artifact(tmp_path):
 
 
 def test_turn_captures_prompt_configuration_and_candidate_never_renders(tmp_path, monkeypatch):
-    import novacode_cli.prompts as prompts
     from jinja2 import Environment, FileSystemLoader
+
+    import novacode_cli.prompts as prompts
 
     templates = tmp_path / "package"
     templates.mkdir()

@@ -1,19 +1,18 @@
-"""Semantic-tier writers — the consolidation engines' output surface.
+"""Semantic-memory writers and approval helpers.
 
-This module writes Nova's **Semantic memory tier**: durable facts distilled by
-consolidation (the review engine and ``/dream``). Crucially, it writes the
-surface ``AgentMemoryMiddleware`` actually *injects*, so learned facts re-enter
-the agent's context on the next turn:
+Standing user preferences in ``agent.md`` and a compact memory index may be
+injected; topic bodies are retrieved explicitly with ``memory_search``:
 
     ~/.nova/{assistant_id}/
     ├── agent.md            # user model + preferences (always injected)
     └── memories/
-        ├── INDEX.md        # topic pointer list (always injected)
-        └── <topic>.md      # topic facts/lessons (read on demand via INDEX)
+        ├── INDEX.md        # compact topic router
+        └── <topic>.md      # topic facts/lessons, read on demand
 
-User-model updates land in ``agent.md`` (see :func:`update_user_model`);
-cross-session lessons land in topic files with an ``INDEX.md`` pointer (see
-:func:`record_lesson`).
+New model-authored lesson proposals are staged in the learning ledger and
+materialized as marked topic sections only after explicit approval
+(:func:`apply_approved_lesson`). ``record_lesson`` remains the direct writer
+for non-model sources and compatibility paths.
 
 Legacy ``USER.md`` / ``MEMORY.md`` (a previous tier generation that was never
 read back) are retained here as **migration readers only** — see
@@ -133,7 +132,9 @@ def compact_memory_file(path: Path, max_chars: int = MAX_MEMORY_CHARS) -> bool:
     archive_name = f"{path.stem}-{hashlib.sha256(original_bytes).hexdigest()[:16]}.txt"
     archive = path.parent / ".history" / archive_name
     truncated = (
-        content[:end_pos].rstrip() + "\n" + _MEMORY_TRUNCATION_NOTICE
+        content[:end_pos].rstrip()
+        + "\n"
+        + _MEMORY_TRUNCATION_NOTICE
         + f"\nFull original: [.history/{archive_name}](.history/{archive_name})\n"
     )
 
@@ -231,29 +232,22 @@ def _slugify_topic(raw: str) -> str:
 _INDEX_HEADER_RE = re.compile(r"\A(.*?)(?=^- \[|\Z)", re.DOTALL | re.MULTILINE)
 
 
-def _upsert_index_pointer(memories_dir: Path, topic_slug: str) -> None:
-    """Ensure ``memories/INDEX.md`` has a pointer to ``<topic_slug>.md``.
-
-    PREPENDED, not appended. The index is injected into every prompt truncated
-    to the per-block budget (``memory/limits.py``), and truncation keeps the
-    head — so the head has to be the newest topics. Appending meant a long
-    index showed the model only its oldest pointers.
-    """
+def _index_pointer_updates(memories_dir: Path, topic_slug: str) -> dict[Path, str]:
+    """Return the files that need a pointer to ``<topic_slug>.md``."""
     index = memories_dir / "INDEX.md"
     line = f"- [{topic_slug}]({topic_slug}.md)"
     if index.exists():
         content = index.read_text(encoding="utf-8")
         if "<!-- nova-memory-wiki:managed -->" in content:
-            # Keep the injected home stable. /dream will classify this new
-            # page into its final map; meanwhile it remains reachable here.
+            # Keep the managed home stable; the operations map is the temporary inbox.
             inbox = memories_dir / "wiki-operations.md"
             if inbox.exists():
                 current = inbox.read_text(encoding="utf-8")
                 if f"]({topic_slug}.md)" not in current:
-                    inbox.write_text(current.rstrip() + "\n" + line + "\n", encoding="utf-8")
-                return
+                    return {inbox: current.rstrip() + "\n" + line + "\n"}
+                return {}
         if re.search(rf"\]\(\s*{re.escape(topic_slug)}\.md\s*\)", content):
-            return  # pointer already present
+            return {}
         header = _INDEX_HEADER_RE.match(content)
         cut = header.end() if header else 0
         content = content[:cut].rstrip() + "\n\n" + line + "\n" + content[cut:].lstrip("\n")
@@ -262,7 +256,13 @@ def _upsert_index_pointer(memories_dir: Path, topic_slug: str) -> None:
             "# Memory Index\n\n"
             "Topic files capturing facts and lessons learned across sessions.\n\n" + line + "\n"
         )
-    index.write_text(content, encoding="utf-8")
+    return {index: content}
+
+
+def _upsert_index_pointer(memories_dir: Path, topic_slug: str) -> None:
+    """Ensure ``memories/INDEX.md`` has a pointer to ``<topic_slug>.md``."""
+    for path, content in _index_pointer_updates(memories_dir, topic_slug).items():
+        path.write_text(content, encoding="utf-8")
     _emit_memory_event(f"Indexed memory topic: {topic_slug}")
 
 
@@ -285,6 +285,218 @@ def _worthwhile_bullets(bullets: str) -> str:
         if len(words) >= MIN_BULLET_WORDS:
             kept.append(line)
     return "\n".join(kept).strip()
+
+
+_ABSENT_MEMORY_HASH = "missing"
+
+
+def lesson_proposal_target(
+    agent_dir: Path, topic: str, *, project: str | None = None
+) -> tuple[str, str]:
+    """Resolve a lesson topic and its current page hash for explicit approval."""
+    if project and not re.fullmatch(r"[a-zA-Z0-9_-]+", project):
+        message = "Unsafe project memory scope"
+        raise ValueError(message)
+    memories_dir = lesson_dir(agent_dir, project)
+    from novacode_cli.memory.wiki import _safe
+
+    _safe(agent_dir, memories_dir)
+    slug = _same_topic(memories_dir, _slugify_topic(topic) or _DEFAULT_TOPIC)
+    path = memories_dir / f"{slug}.md"
+    _safe(agent_dir, path)
+    raw = path.read_bytes() if path.is_file() else None
+    digest = hashlib.sha256(raw).hexdigest() if raw is not None else _ABSENT_MEMORY_HASH
+    return slug, digest
+
+
+def lesson_change_descriptor(
+    agent_dir: Path,
+    topic: str,
+    bullets: str,
+    *,
+    project: str | None,
+    reference: str,
+) -> dict[str, str]:
+    """Describe the exact generated section for safe application and rollback."""
+    topic_slug = _slugify_topic(topic)
+    if (
+        not topic_slug
+        or topic_slug != topic
+        or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", topic)
+    ):
+        message = "Unsafe or missing lesson topic"
+        raise ValueError(message)
+    if project and not re.fullmatch(r"[a-zA-Z0-9_-]+", project):
+        message = "Unsafe project memory scope"
+        raise ValueError(message)
+    if not re.fullmatch(r"[a-zA-Z0-9_-]+@[0-9]+", reference):
+        message = "Unsafe learning revision reference"
+        raise ValueError(message)
+    clean_bullets = _worthwhile_bullets(bullets)
+    if not clean_bullets:
+        message = "Approved lesson has no substantive bullets"
+        raise ValueError(message)
+    block = (
+        f"<!-- nova-learning:{reference}:start -->\n"
+        f"## Approved lesson\n\n{clean_bullets}\n"
+        f"<!-- nova-learning:{reference}:end -->"
+    )
+    page = lesson_dir(agent_dir, project) / f"{topic_slug}.md"
+    return {
+        "reference": reference,
+        "path": str(page.resolve()),
+        "block_hash": hashlib.sha256(block.encode("utf-8")).hexdigest(),
+    }
+
+
+def apply_approved_lesson(
+    agent_dir: Path,
+    topic: str,
+    bullets: str,
+    *,
+    project: str | None,
+    reference: str,
+    source_hash: str,
+) -> dict[str, Any]:
+    """Materialize one approved lesson as a marked, recoverable wiki section."""
+    from novacode_cli.memory.wiki import _commit, _safe
+
+    change = lesson_change_descriptor(
+        agent_dir, topic, bullets, project=project, reference=reference
+    )
+    topic_slug = topic
+    memories_dir = lesson_dir(agent_dir, project)
+    page = memories_dir / f"{topic_slug}.md"
+    _safe(agent_dir, page)
+    _safe(agent_dir, memories_dir / "INDEX.md")
+    _safe(agent_dir, memories_dir / "wiki-operations.md")
+    if page.is_symlink():
+        message = "Lesson page is a symlink"
+        raise ValueError(message)
+    raw = page.read_bytes() if page.is_file() else None
+    actual_hash = hashlib.sha256(raw).hexdigest() if raw is not None else _ABSENT_MEMORY_HASH
+    start = f"<!-- nova-learning:{reference}:start -->"
+    end = f"<!-- nova-learning:{reference}:end -->"
+    clean_bullets = _worthwhile_bullets(bullets)
+    block = f"{start}\n## Approved lesson\n\n{clean_bullets}\n{end}"
+    content = (
+        raw.decode("utf-8")
+        if raw is not None
+        else _DEFAULT_TOPIC_HEADER.format(title=topic_slug.replace("-", " ").title())
+    )
+    if start in content or end in content:
+        if content.count(start) != 1 or content.count(end) != 1:
+            message = "Malformed approved lesson markers; manual repair required"
+            raise ValueError(message)
+        existing = content[content.index(start) : content.index(end) + len(end)]
+        if existing.replace("\r\n", "\n") != block:
+            message = "Approved lesson conflict; manual edits preserved"
+            raise ValueError(message)
+        page_update = content
+    else:
+        if actual_hash != source_hash:
+            message = "Lesson page changed since proposal; review a new revision"
+            raise ValueError(message)
+        nav_start = content.find("<!-- nova-memory-wiki:start -->")
+        section_start = content.find("\n## ")
+        insertion = min(
+            (position for position in (nav_start, section_start) if position >= 0),
+            default=len(content),
+        )
+        before, after = content[:insertion], content[insertion:]
+        page_update = before.rstrip() + "\n\n" + block + "\n"
+        if after:
+            page_update += after.lstrip("\n")
+
+    originals = {page: raw}
+    updates: dict[Path, str] = {}
+    if page_update != content:
+        updates[page] = page_update
+    for path, update in _index_pointer_updates(memories_dir, topic_slug).items():
+        originals[path] = path.read_bytes() if path.is_file() else None
+        updates[path] = update
+
+    backup = _commit(agent_dir, originals, updates) if updates else None
+    files = []
+    for path in updates:
+        before = originals[path]
+        after = path.read_bytes() if path.is_file() else None
+        files.append(
+            {
+                "path": str(path.resolve()),
+                "before_hash": hashlib.sha256(before).hexdigest() if before is not None else None,
+                "after_hash": hashlib.sha256(after).hexdigest() if after is not None else None,
+            }
+        )
+    return {**change, "backup": backup, "files": files}
+
+
+def rollback_approved_lesson(agent_dir: Path, change: dict[str, Any]) -> None:
+    """Remove only the exact approved section, retaining unrelated page edits."""
+    from novacode_cli.memory.wiki import _commit, _safe
+
+    path = Path(str(change["path"]))
+    _safe(agent_dir, path)
+    if not path.is_file():
+        message = "Approved lesson rollback conflict; page is missing"
+        raise ValueError(message)
+    raw = path.read_bytes()
+    content = raw.decode("utf-8")
+    reference = str(change["reference"])
+    start = f"<!-- nova-learning:{reference}:start -->"
+    end = f"<!-- nova-learning:{reference}:end -->"
+    if start not in content and end not in content:
+        return
+    if content.count(start) != 1 or content.count(end) != 1:
+        message = "Approved lesson rollback conflict; markers changed"
+        raise ValueError(message)
+    start_at = content.index(start)
+    end_at = content.index(end) + len(end)
+    block = content[start_at:end_at]
+    normalized_block = block.replace("\r\n", "\n")
+    if hashlib.sha256(normalized_block.encode("utf-8")).hexdigest() != change["block_hash"]:
+        message = "Approved lesson rollback conflict; manual edits preserved"
+        raise ValueError(message)
+
+    backup = change.get("backup")
+    files = change.get("files", [])
+    if backup and files:
+        originals: dict[Path, bytes | None] = {}
+        updates: dict[Path, str | None] = {}
+        unchanged = True
+        page_in_snapshot = False
+        for item in files:
+            file_path = Path(item["path"])
+            _safe(agent_dir, file_path)
+            if file_path == path:
+                page_in_snapshot = True
+            current = file_path.read_bytes() if file_path.is_file() else None
+            current_hash = hashlib.sha256(current).hexdigest() if current is not None else None
+            if current_hash != item["after_hash"]:
+                unchanged = False
+                break
+            originals[file_path] = current
+            if item["before_hash"] is None:
+                updates[file_path] = None
+            else:
+                saved = Path(str(backup)) / file_path.relative_to(agent_dir)
+                if not saved.is_file():
+                    message = "Approved lesson rollback backup is missing"
+                    raise ValueError(message)
+                previous = saved.read_bytes()
+                if hashlib.sha256(previous).hexdigest() != item["before_hash"]:
+                    message = "Approved lesson rollback backup failed validation"
+                    raise ValueError(message)
+                if file_path == path and start.encode("utf-8") in previous:
+                    unchanged = False
+                    break
+                updates[file_path] = previous.decode("utf-8")
+        if unchanged and page_in_snapshot:
+            _commit(agent_dir, originals, updates)
+            return
+
+    restored = content[:start_at] + content[end_at:]
+    _commit(agent_dir, {path: raw}, {path: restored})
 
 
 # ── Lesson scope ───────────────────────────────────────────────────────────
@@ -364,8 +576,8 @@ def record_lesson(agent_dir: Path, topic: str, bullets: str, *, project: str | N
     """Record cross-session lesson bullets to ``memories/<topic>.md`` + INDEX.
 
     Lessons are prepended (newest-first) under a timestamped section, deduped
-    against what the topic file already holds, and the topic is registered in
-    ``memories/INDEX.md`` (which ``AgentMemoryMiddleware`` injects every turn).
+    against what the topic file already holds, and registered in the memory
+    index for explicit discovery and search.
 
     Args:
         agent_dir: Path to the agent directory.
@@ -505,7 +717,9 @@ def parse_review_response(response_content: str) -> dict[str, Any]:
 
     for match in _PITFALL_BLOCK_RE.finditer(response_content):
         attrs = {k.lower(): v for k, v in _LESSON_ATTR_RE.findall(match.group(1) or "")}
-        symptom, cause, fix = (_pitfall_field(match.group(2), f) for f in ("symptom", "cause", "fix"))
+        symptom, cause, fix = (
+            _pitfall_field(match.group(2), f) for f in ("symptom", "cause", "fix")
+        )
         if not symptom:
             continue  # without a symptom there is nothing to recall it by
         bullet = f"- **Symptom:** {symptom}"
@@ -578,9 +792,7 @@ def _fact_words(line: str) -> frozenset[str]:
     return frozenset(words)
 
 
-def _same_fact(
-    a: frozenset[str], b: frozenset[str], overlap: float = _SAME_FACT_OVERLAP
-) -> bool:
+def _same_fact(a: frozenset[str], b: frozenset[str], overlap: float = _SAME_FACT_OVERLAP) -> bool:
     shared = len(a & b)
     return shared >= _SAME_FACT_MIN_SHARED and shared / min(len(a), len(b)) >= overlap
 
@@ -683,7 +895,7 @@ _SOURCES_FILE = ".shared-sources.json"  # which projects stand behind each share
 
 
 def project_outcome(agent_dir: Path, project: str) -> str:
-    """"passed", "failed", or "" when nobody outside the session has judged it."""
+    """ "passed", "failed", or "" when nobody outside the session has judged it."""
     try:
         return (lesson_dir(agent_dir, project) / _OUTCOME_FILE).read_text(encoding="utf-8").strip()
     except OSError:
@@ -779,7 +991,9 @@ def _drop_shared_bullet(agent_dir: Path, normalized: str) -> int:
         if index.exists():
             pointer = f"]({path.stem}.md)"
             index.write_text(
-                "\n".join(ln for ln in index.read_text(encoding="utf-8").splitlines() if pointer not in ln)
+                "\n".join(
+                    ln for ln in index.read_text(encoding="utf-8").splitlines() if pointer not in ln
+                )
                 + "\n",
                 encoding="utf-8",
             )
@@ -808,7 +1022,9 @@ def mark_project_outcome(agent_dir: Path, project: str, passed: bool) -> int:
     for normalized, backers in list(sources.items()):
         if project not in backers:
             continue
-        standing = [b for b in backers if b != project and project_outcome(agent_dir, b) != "failed"]
+        standing = [
+            b for b in backers if b != project and project_outcome(agent_dir, b) != "failed"
+        ]
         if len(standing) >= 2:  # noqa: PLR2004 — two projects is the bar for "general"
             sources[normalized] = standing
             continue
@@ -851,8 +1067,7 @@ def update_from_review(
     for lesson in lessons or []:
         if written >= MAX_LESSONS_PER_REVIEW:
             logger.warning(
-                "Review produced %d lessons; keeping the first %d (see "
-                "MAX_LESSONS_PER_REVIEW)",
+                "Review produced %d lessons; keeping the first %d (see MAX_LESSONS_PER_REVIEW)",
                 len(lessons),
                 MAX_LESSONS_PER_REVIEW,
             )

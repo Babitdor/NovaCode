@@ -10,8 +10,8 @@ Domains supported today:
     - ``skill``  → ``skill_discovery.refine_skill`` (snapshot + cooldown + audit)
     - ``prompt`` → ``PromptEvolutionEngine._write_candidate`` (candidate override,
                    never touches the packaged template)
-    - ``memory`` → ``memory_tiers.record_lesson`` (append-only, deduped, compacted;
-                   reviewed BEFORE applying because there is no rollback)
+    - ``memory`` → a candidate in the approval ledger; activation writes the
+                   Markdown topic page only after explicit user approval
 
 ``subagent`` (code, not user state) is deliberately out of scope — see the design
 doc's scope guard.
@@ -59,7 +59,7 @@ _REASON_RE = re.compile(r"<reason>(.*?)</reason>", re.DOTALL | re.IGNORECASE)
 _SUPPORTED_DOMAINS = frozenset({"skill", "prompt", "memory"})
 #: Actions the planner may emit. ``delete`` may omit ``change``; the rest require it.
 _VALID_ACTIONS = frozenset({"patch", "update", "create", "delete"})
-#: Domains whose edits are append-only (no rollback) — reviewed BEFORE applying.
+#: Domains that must remain proposals until the user approves the exact revision.
 _REVIEW_FIRST_DOMAINS = frozenset({"memory"})
 
 
@@ -74,7 +74,7 @@ def _emit_tui_event(event_type: str, message: str) -> None:
         from novacode_cli.events import nova_event_log
 
         nova_event_log.append((event_type, "◐", "cyan", message))
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.debug("refine event (not surfaced): %s", message)
 
 
@@ -234,11 +234,7 @@ def _memory_topics() -> list[str]:
         memories_dir = _agent_dir() / "memories"
         if not memories_dir.is_dir():
             return []
-        return sorted(
-            p.stem
-            for p in memories_dir.glob("*.md")
-            if p.stem.lower() not in ("index",)
-        )
+        return sorted(p.stem for p in memories_dir.glob("*.md") if p.stem.lower() not in ("index",))
     except OSError:
         logger.debug("refine: could not list memory topics", exc_info=True)
         return []
@@ -312,23 +308,33 @@ async def _apply_prompt(item: dict[str, str]) -> bool:
 
 
 async def _apply_memory(item: dict[str, str]) -> bool:
-    """Apply a memory refinement via the append-only lesson write path.
+    """Stage a memory refinement without changing the wiki page."""
+    from pathlib import Path
 
-    The planner's ``<change>`` is a bullet list (one per line) recorded under the
-    target topic. Memory is append-only by design — there is no rollback, so
-    ``run_refine`` reviews memory edits BEFORE applying them (see
-    ``_REVIEW_FIRST_DOMAINS``).
-    """
-    from novacode_cli.hermes.memory_tiers import record_lesson
+    from novacode_cli.hermes.ledger import LearningLedger
+    from novacode_cli.hermes.memory_tiers import lesson_proposal_target, project_memory_key
 
     topic = item["target"]
     bullets = item.get("change", "").strip()
     if not bullets:
         return False
     try:
-        record_lesson(_agent_dir(), topic, bullets)
-    except Exception:  # noqa: BLE001
-        logger.exception("Refine memory write failed for '%s'", topic)
+        agent_dir = _agent_dir()
+        project = project_memory_key(Path.cwd())
+        target, source_hash = lesson_proposal_target(agent_dir, topic, project=project)
+        proposal = LearningLedger(agent_dir / "learning.sqlite3").propose(
+            content=bullets,
+            kind="lesson",
+            origin="refine",
+            target=target,
+            source_hash=source_hash,
+            project=project,
+            applicability=target,
+            evidence=(item.get("reason", ""),),
+        )
+        _emit_tui_event("nova_memory_proposal", f"Memory proposal {proposal.reference}")
+    except Exception:
+        logger.exception("Refine memory proposal failed for '%s'", topic)
         return False
     return True
 
@@ -598,8 +604,10 @@ async def run_refine(store: BaseStore, tracker: ToolUsageTracker) -> dict[str, o
                         if not source.is_file():
                             raise ValueError("Skill target is missing")
                         reference = propose_skill(
-                            target, normalize_skill_frontmatter(after, target),
-                            source=source, origin="refine",
+                            target,
+                            normalize_skill_frontmatter(after, target),
+                            source=source,
+                            origin="refine",
                             evidence=(item.get("reason", ""),),
                         )
                     elif domain == "prompt":
@@ -607,20 +615,36 @@ async def run_refine(store: BaseStore, tracker: ToolUsageTracker) -> dict[str, o
                         if not source.is_file():
                             raise ValueError("Prompt target is missing")
                         reference = ledger.propose(
-                            content=after, kind="prompt", scope="shared", target=target,
-                            source_hash=content_hash(source.read_bytes()), origin="refine",
+                            content=after,
+                            kind="prompt",
+                            scope="shared",
+                            target=target,
+                            source_hash=content_hash(source.read_bytes()),
+                            origin="refine",
                             evidence=(item.get("reason", ""),),
                         ).reference
                     else:
+                        project = project_memory_key(Path.cwd())
+                        from novacode_cli.hermes.memory_tiers import lesson_proposal_target
+
+                        topic, source_hash = lesson_proposal_target(
+                            _agent_dir(), target, project=project
+                        )
                         reference = ledger.propose(
-                            content=after, kind="lesson", origin="refine", target=target,
-                            project=project_memory_key(Path.cwd()), applicability=target,
+                            content=after,
+                            kind="lesson",
+                            origin="refine",
+                            target=topic,
+                            source_hash=source_hash,
+                            project=project,
+                            applicability=topic,
                             evidence=(item.get("reason", ""),),
                         ).reference
                     outcome = "proposed"
                     summary["accepted"] += 1
-                    _log_event(domain, action, target, "proposed", reference,
-                               before=before, after=after)
+                    _log_event(
+                        domain, action, target, "proposed", reference, before=before, after=after
+                    )
                 except (OSError, ValueError) as exc:
                     _log_event(domain, action, target, "skipped", str(exc))
         else:
