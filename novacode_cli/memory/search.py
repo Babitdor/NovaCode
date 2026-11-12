@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
     from novacode_cli.hermes.ledger import LearningRecord
+    from novacode_cli.memory.recall import RecallPlan
     from novacode_cli.memory.rerank import MemoryReranker
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,10 @@ _MIN_STRONG_LEXICAL_RELEVANCE = 3
 _MIN_SEMANTIC_RELEVANCE = 0.45
 _MIN_CANDIDATES_TO_RERANK = 2
 _MIN_TOKEN_CHARS = 4
+_TECHNICAL_TERMS = frozenset(
+    ("ai api cli cpu css db dns git gpu io js jwt llm mcp rag sdk sql ssh ssl "
+     "tcp tls tui ui url ux vm xml").split()
+)
 _MAX_RESULTS = 20
 _EXCERPT_CHARS = 240
 _MAX_RERANK_CANDIDATES = 20
@@ -116,11 +121,11 @@ class MemoryCandidate:
 
 
 def _tokens(text: str) -> frozenset[str]:
-    """Lowercased alphanumeric words of length >= 4, minus generic stopwords."""
+    """Keep meaningful words and short technical terms, excluding generic words."""
     return frozenset(
         word
         for word in re.findall(r"[a-z0-9]+", (text or "").lower())
-        if len(word) >= _MIN_TOKEN_CHARS and word not in _STOPWORDS
+        if (len(word) >= _MIN_TOKEN_CHARS or word in _TECHNICAL_TERMS) and word not in _STOPWORDS
     )
 
 
@@ -174,22 +179,37 @@ class MemorySearchService:
         limit: int = 5,
         model: BaseChatModel | None = None,
     ) -> str:
-        """Search locally, then rerank a bounded shortlist with the active model."""
+        """Interpret intent with the active model, retrieve, then rerank evidence."""
+        from novacode_cli.memory.recall import MODEL_TIMEOUT, RecallPlan, plan_recall
+
         result_limit = max(1, min(limit, _MAX_RESULTS))
         shortlist_limit = min(result_limit * 2, _MAX_RERANK_CANDIDATES)
         corpus = await asyncio.to_thread(self._load_memory_corpus)
         if not corpus:
             return "No topic memory yet. Proceed without it."
-        candidates = await asyncio.to_thread(self._retrieve, query, shortlist_limit, corpus)
+        plan = RecallPlan()
+        planning_note = ""
+        if model is not None and query.strip():
+            try:
+                catalog = await asyncio.to_thread(self._recall_catalog, corpus)
+                async with asyncio.timeout(MODEL_TIMEOUT):
+                    plan = await plan_recall(query, catalog, model=model)
+            except Exception as exc:  # noqa: BLE001 - optional model lookup degrades locally
+                logger.warning("Memory recall planning failed: %s", type(exc).__name__)
+                planning_note = "\n\nLLM recall planning unavailable; used the original query."
+        candidates = await asyncio.to_thread(
+            self._recall_candidates, query, shortlist_limit, corpus, plan
+        )
         if not candidates:
-            return f"No memory matches {query!r}. Proceed without it."
+            return f"No memory matches {query!r}. Proceed without it." + planning_note
 
         fallback_note = ""
         if model is not None and len(candidates) >= _MIN_CANDIDATES_TO_RERANK:
             from novacode_cli.memory.rerank import InvalidMemoryRankingError
 
             try:
-                candidates = await self._reranker.rank(query, candidates, model=model)
+                async with asyncio.timeout(MODEL_TIMEOUT):
+                    candidates = await self._reranker.rank(query, candidates, model=model)
             except InvalidMemoryRankingError as exc:
                 logger.warning("Memory reranker returned an invalid ranking: %s", exc)
                 fallback_note = (
@@ -203,7 +223,47 @@ class MemorySearchService:
                 "\n\nNo active model was available for reranking; showing local relevance order."
             )
 
-        return self._format(candidates[:result_limit]) + fallback_note
+        return self._format(candidates[:result_limit]) + planning_note + fallback_note
+
+    @staticmethod
+    def _recall_catalog(
+        corpus: Mapping[str, tuple[frozenset[str], str, frozenset[str]]],
+    ) -> list[dict[str, str]]:
+        from itertools import islice
+
+        from novacode_cli.memory.recall import MAX_CATALOG
+
+        return [
+            {"id": f"t{index}", "topic": topic, "summary": corpus[topic][1][:160]}
+            for index, topic in enumerate(islice(corpus, MAX_CATALOG))
+        ]
+
+    def _recall_candidates(
+        self,
+        query: str,
+        limit: int,
+        corpus: Mapping[str, tuple[frozenset[str], str, frozenset[str]]],
+        plan: RecallPlan,
+    ) -> list[MemoryCandidate]:
+        """Direct model choices bypass lexical thresholds but stay inside the corpus."""
+        chosen: dict[str, MemoryCandidate] = {}
+        queries = list(dict.fromkeys((query, *plan.queries)))
+        terms = _tokens(" ".join(queries))
+        for topic in plan.topics:
+            body = corpus[topic][1]
+            if body:
+                chosen[topic] = MemoryCandidate(
+                    topic, search_excerpt(body, terms), self._topic_path(topic), 1.0
+                )
+        # Round-robin queries so the original wording cannot fill the entire
+        # shortlist before the model's alternate descriptions are considered.
+        batches = [self._retrieve(q, limit, corpus) for q in queries]
+        for index in range(limit):
+            for batch in batches:
+                if index < len(batch):
+                    candidate = batch[index]
+                    chosen.setdefault(candidate.topic, candidate)
+        return list(chosen.values())[:limit]
 
     def _retrieve(
         self,

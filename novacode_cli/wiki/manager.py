@@ -215,18 +215,31 @@ class WikiManager:
         index_path.write_text("".join(lines), encoding="utf-8")
 
     def search(self, query: str) -> list[tuple[str, str, str]]:
-        """Search the wiki index for pages matching *query*.
+        """Search indexed titles, summaries, and page bodies for a question.
 
         Returns ``[(topic, path, summary), ...]`` sorted by relevance.
         """
-        q = query.lower()
+        from novacode_cli.memory.search import _tokens
+
+        q = query.strip().lower()
+        terms = _tokens(q)
+        if not terms:
+            return []
         entries = self.read_index()
         results: list[tuple[str, str, str, int]] = []
 
         for topic, info in entries.items():
-            score = 0
+            try:
+                body = self.read_page(info["path"])
+            except (OSError, ValueError):
+                continue  # A stale or unsafe index entry must not hide good pages.
+            if not body:
+                continue
+            score = 4 * len(terms & _tokens(topic))
+            score += 2 * len(terms & _tokens(info.get("summary", "")))
+            score += len(terms & _tokens(body))
             if q in topic.lower():
-                score += 2
+                score += 8
             if q in info.get("summary", "").lower():
                 score += 1
             if score > 0:

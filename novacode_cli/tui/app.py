@@ -2826,6 +2826,14 @@ class NovaApp(App):
         self._refresh_code_mode_toggle()
         self.screen_change_signal.subscribe(self, self._on_interface_screen_changed, immediate=True)
         self._thread_id = threading.get_ident()
+        from novacode_cli.tui.presence import TerminalPresence
+
+        directory = getattr(self.session_manager, "sessions_dir", None)
+        self._terminal_presence = (
+            TerminalPresence(directory) if isinstance(directory, Path) else None
+        )
+        if self._terminal_presence is not None:
+            self.set_interval(1, self._publish_terminal_presence)
         # Log what the loop was running whenever the UI freezes for >1s
         # (~/.nova/logs/freeze.log). The UI and the agent share this loop, so
         # the stack is the culprit, wherever it lives.
@@ -3081,8 +3089,7 @@ class NovaApp(App):
                 pass
 
     # -- OS focus handlers ----------------------------------------------------
-    # Pause/resume the MatrixRain animation when the terminal window gains or
-    # loses OS-focus, so the TUI never spins the CPU on an invisible animation.
+    # Keep focus bookkeeping separate from visible animation and progress.
 
     def _matrix_rain(self) -> MatrixRain | None:
         """Return the MatrixRain widget if it is mounted, else None."""
@@ -3149,16 +3156,13 @@ class NovaApp(App):
             del screen.update_node_styles
 
     def on_app_blur(self) -> None:
-        """Pause MatrixRain when the terminal loses OS focus."""
+        """Keep visible progress moving when another terminal has OS focus."""
         self._os_focused = False
         self._schedule_status_tick()
         # The user just looked away: the one moment a full GC pass is invisible.
         from novacode_cli.tui import gc_tuning
 
         gc_tuning.collect_while_idle(busy=self._turn_active)
-        rain = self._matrix_rain()
-        if rain is not None:
-            rain.pause()
 
     def on_app_focus(self) -> None:
         """Resume MatrixRain when the terminal regains OS focus."""
@@ -3444,7 +3448,22 @@ class NovaApp(App):
             self._log(Text(f"{notification.title}\n{notification.message}"), transcript=True)
         self.query_one("#prompt", PromptInput).focus()
 
+    async def _publish_terminal_presence(self) -> None:
+        from novacode_cli.tui.command_center import live_sessions
+
+        presence = getattr(self, "_terminal_presence", None)
+        if presence is not None:
+            fields = ("session_id", "title", "project", "status", "model", "branch", "updated_at")
+            rows = [
+                {key: getattr(row, key) for key in fields}
+                for row in live_sessions(self) if row.session_id and row.status != "Inactive"
+            ]
+            await asyncio.to_thread(presence.publish, rows)
+
     async def on_unmount(self):
+        presence = getattr(self, "_terminal_presence", None)
+        if presence is not None:
+            await asyncio.to_thread(presence.close)
         from novacode_cli.tui.loop_commands import close_loops
 
         close_loops(self)
@@ -3950,22 +3969,14 @@ class NovaApp(App):
 
     def _refresh_tabs(self) -> None:
         """Redraw session labels and their new/close actions."""
+        from novacode_cli.tui.command_center import pane_activity
+
         self._refresh_terminal_title()
         panes = getattr(self, "_panes", [])
         rows = []
         animated = False
         for i, pane in enumerate(panes, 1):
-            status = pane.status
-            # Root operations such as compaction and remote prompts can be busy
-            # before their first stream event updates the pane status.
-            if pane.kind == "root" and status == "idle":
-                busy = (
-                    self._turn_active
-                    if pane is self._active_pane
-                    else pane.state.get("_turn_active", False)
-                )
-                if busy:
-                    status = "running"
+            status = pane_activity(self, pane)
             glyph = self._PANE_GLYPHS.get(status, "●")
             if status in ("running", "starting"):
                 animated = True
@@ -7512,7 +7523,7 @@ class NovaApp(App):
         self._schedule_status_tick()
 
     def _schedule_status_tick(self) -> None:
-        """Use the chosen animation rate while focused/busy, 2 Hz otherwise."""
+        """Use the chosen animation rate while busy, 2 Hz otherwise."""
         if self._status_timer is not None:
             self._status_timer.stop()
         if not self.is_mounted:
@@ -7520,7 +7531,7 @@ class NovaApp(App):
             return
         if self._home_style != "signal" and self._home_scene_can_animate():
             delay = 1 / min(HOME_SCENE_FPS, self._animation_fps)
-        elif self._turn_active and self._os_focused:
+        elif self._turn_active:
             delay = 0.2 if self._low_resource_mode else 1 / self._animation_fps
         else:
             delay = 0.5
@@ -8052,7 +8063,7 @@ class NovaApp(App):
         self._paint_home_scene()
         refresh = False
         tail_dirty = False
-        if self._turn_active and self._os_focused:
+        if self._turn_active:
             # Wall time keeps motion speed stable when the frame-rate setting
             # changes, and skips missed frames rather than trying to catch up.
             self._spinner_frame = int(time.monotonic() * motion.CLOCK_FPS)
@@ -9357,10 +9368,9 @@ class NovaApp(App):
                     )
                 )
         finally:
-            if self._os_focused:
-                rain = self._matrix_rain()
-                if rain is not None:
-                    rain.resume()
+            rain = self._matrix_rain()
+            if rain is not None:
+                rain.resume()
         if not spoke:
             self._set_nova_indicator("♫ tts error", style="red", auto_clear=3.0)
         elif self._voice_listening:
@@ -12895,13 +12905,12 @@ class NovaApp(App):
             rain.set_frame_rate(rain_fps)
 
     def _home_scene_can_animate(self) -> bool:
-        """Run home-only motion when visible, focused, and permitted by preferences."""
+        """Run home-only motion when visible and permitted by preferences."""
         return bool(
             self._home_visible
             and (self._home_style in ANIMATED_HOME_STYLES or self._home_style == "signal")
             and self._home_animations_enabled
             and not self._low_resource_mode
-            and self._os_focused
             and len(self.screen_stack) == 1
             and self.size.width >= HOME_MOTION_MIN_WIDTH
             and self.size.height >= HOME_MOTION_MIN_HEIGHT

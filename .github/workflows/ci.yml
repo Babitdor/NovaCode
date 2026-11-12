@@ -141,6 +141,11 @@ jobs:
           tests/test_release_version.py
           tests/test_loops.py
           tests/test_command_center.py
+          tests/test_terminal_presence.py
+          tests/test_parallel_todos.py
+          tests/test_knowledge_retrieval_improvements.py
+          tests/test_llm_memory_recall.py
+          tests/test_tui_animation_rate.py
           tests/test_keychain_startup.py
           tests/test_langsmith_migration.py
           tests/test_prime.py

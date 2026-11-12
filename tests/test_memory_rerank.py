@@ -110,7 +110,7 @@ def test_active_model_reranks_only_retrieved_candidate_ids(
         lambda _query, candidates: [0.9 if "websocket" in text else 0.7 for text in candidates],
     )
     service = _service(tmp_path)
-    model = FakeListChatModel(responses=['{"order":["m1","m0"]}'])
+    model = FakeListChatModel(responses=['{"queries":[],"topics":[]}', '{"order":["m1","m0"]}'])
 
     result = asyncio.run(service.search("websocket authentication", model=model))
 
@@ -128,7 +128,7 @@ def test_invalid_llm_ranking_uses_local_order_and_reports_fallback(
         lambda _query, candidates: [0.9 if "websocket" in text else 0.7 for text in candidates],
     )
     service = _service(tmp_path)
-    model = FakeListChatModel(responses=['{"order":["invented-topic"]}'])
+    model = FakeListChatModel(responses=['{"queries":[],"topics":[]}', '{"order":["invented-topic"]}'])
 
     result = asyncio.run(service.search("websocket authentication", model=model))
 

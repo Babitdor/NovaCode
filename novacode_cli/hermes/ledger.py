@@ -150,7 +150,7 @@ class LearningLedger:
         if scope not in {"project", "shared"}:
             msg = "Unknown learning scope"
             raise ValueError(msg)
-        record = LearningProposal(
+        record: LearningRecord = LearningProposal(
             uuid.uuid4().hex,
             1,
             origin,
@@ -168,9 +168,32 @@ class LearningLedger:
             required_variables=required_variables,
         )
         with self._connect() as db:
-            self._insert(db, record)
-        if auto_approve:
-            return self.transition(record.reference, "approve")
+            # Serialize deduplication and insertion across review workers. Only
+            # identical pending proposals are reusable; rejection, changed
+            # evidence, or a different source version creates a fresh proposal.
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                "SELECT payload FROM revisions r WHERE revision="
+                "(SELECT MAX(revision) FROM revisions WHERE id=r.id)"
+            ).fetchall()
+            identity = asdict(record)
+            for field in ("id", "revision"):
+                identity.pop(field)
+            existing = None
+            for row in rows:
+                previous = self._decode(row[0])
+                candidate = asdict(previous)
+                for field in ("id", "revision"):
+                    candidate.pop(field)
+                if candidate == identity:
+                    existing = previous
+                    break
+            if existing is not None:
+                record = existing
+            else:
+                self._insert(db, record)
+            if auto_approve:
+                record = self.transition(record.reference, "approve", _db=db)
         return record
 
     def list(self, *, project: str | None = None, active: bool = False) -> list[LearningRecord]:

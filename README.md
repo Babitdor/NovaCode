@@ -15,8 +15,8 @@ Built with Python, LangGraph, deepagents and Textual. [MIT licensed](LICENSE).
 Install the latest release from [PyPI](https://pypi.org/project/novacode-cli/)
 with **uv** on Windows CMD, macOS or Linux. Nova requires Python 3.11+; uv can
 install Python 3.11 for the tool. You also need a supported model provider or
-a running Ollama instance with a model installed. Current release: **1.2.13**
-([changelog](https://github.com/Babitdor/NovaCode/releases/tag/v1.2.13)).
+a running Ollama instance with a model installed. Current release: **1.2.14**
+([changelog](https://github.com/Babitdor/NovaCode/releases/tag/v1.2.14)).
 
 ```text
 uv tool install --python 3.11 novacode-cli
@@ -27,11 +27,12 @@ First-run setup guides provider configuration and workspace approval. Hosted
 models may charge for usage. Run `nova` from your project directory. Upgrade a
 PyPI tool install with `uv tool upgrade novacode-cli`. To replace a Git-based
 installation, use `uv tool install --python 3.11 --force novacode-cli`, adding any
-wanted extras. To pin this release, use `novacode-cli==1.2.13` in the install command.
+wanted extras. To pin this release, use `novacode-cli==1.2.14` in the install command.
 
-Version 1.2.13 keeps `/update` restarts in the current terminal and removes the
-new-console fallback. Launcher-enabled sessions resume automatically; older
-unprotected launches show a resume command in the existing terminal.
+Version 1.2.14 fixes background animation, live Command Center status and parallel
+todo updates, and improves learning review, memory recall and Wiki answers.
+`/update` stays in the current terminal: launcher-enabled sessions resume
+automatically; older unprotected launches show a resume command there.
 
 For local development of Nova itself, use Git and a source checkout:
 

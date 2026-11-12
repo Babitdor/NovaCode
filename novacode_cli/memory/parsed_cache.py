@@ -101,6 +101,13 @@ class MemoryCorpus(Mapping):
             # A file can disappear between discovery and retrieval. Do not
             # retain a negative parse; the next discovery sees the deletion.
             return title, "", frozenset()
+        # Generated navigation describes other pages, not evidence on this one.
+        from novacode_cli.memory.wiki import _body
+
+        try:
+            body = _body(body)
+        except ValueError:
+            pass  # Preserve malformed blocks or lessons inserted inside navigation.
         value = title, body, self.tokenize(body)
         self.cache[key] = value
         return value

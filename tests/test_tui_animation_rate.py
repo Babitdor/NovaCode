@@ -59,7 +59,7 @@ async def test_settings_rate_persists_and_applies_to_existing_rain_and_low_resou
         assert app._animation_fps == 60
 
 
-async def test_active_rate_honors_preference_focus_and_low_resource():
+async def test_active_rate_honors_preference_and_low_resource_even_without_focus():
     app = _app()
     async with app.run_test():
         app._turn_active = True
@@ -72,7 +72,7 @@ async def test_active_rate_honors_preference_focus_and_low_resource():
         assert app._status_timer._interval == pytest.approx(0.2)
         app._os_focused = False
         app._schedule_status_tick()
-        assert app._status_timer._interval == pytest.approx(0.5)
+        assert app._status_timer._interval == pytest.approx(0.2)
         app._turn_active = False
 
 

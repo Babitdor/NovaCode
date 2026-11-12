@@ -1821,11 +1821,11 @@ def _build_middleware_stack(
     import deepagents.graph as _deepagents_graph
 
     if not hasattr(_deepagents_graph, "TodoListMiddleware"):
-        from langchain.agents.middleware import TodoListMiddleware
+        from novacode_cli.agents.todos import NovaTodoListMiddleware
 
         agent_middleware.insert(
             agent_middleware.index(agent_middleware[-2]),  # before AgentMemoryMiddleware
-            TodoListMiddleware(
+            NovaTodoListMiddleware(
                 system_prompt="## `write_todos`\n\nRules for the todo list are in <todo_management>."
             ),
         )

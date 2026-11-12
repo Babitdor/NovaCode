@@ -53,6 +53,7 @@ class CommandSession:
     last_message: str = ""
     prompt: str = ""
     blocked_reason: str = ""
+    external: bool = False
 
 
 def _text(content: object) -> str:
@@ -90,6 +91,29 @@ def _safe_identity(identity: str) -> bool:
     )
 
 
+def pane_activity(app: Any, pane: Any) -> str:  # noqa: ANN401 - cached UI state
+    """Share one status interpretation between tabs and Command Center."""
+    if pane.status in {"crashed", "exited"}:
+        return pane.status
+    active = pane is getattr(app, "_active_pane", None)
+    values = vars(app) if active else pane.state
+    session = values.get("session_state")
+    pending = getattr(session, "pending_approval_count", lambda: 0)()
+    question = getattr(app, "_question_future", None) if active else None
+    if (
+        pane.pending_interrupt is not None
+        or pending
+        or (question is not None and not question.done())
+        or pane.status == "needs-approval"
+    ):
+        return "needs-approval"
+    # Hidden child panes retain a render snapshot until selected. Their process
+    # events, rather than that stale _turn_active value, own their activity.
+    if pane.kind == "root" and values.get("_turn_active"):
+        return "running"
+    return pane.status
+
+
 def live_sessions(app: Any) -> list[CommandSession]:  # noqa: ANN401 - UI snapshot adapter
     """Read cached pane state without filesystem, model or tool calls."""
     rows = []
@@ -100,16 +124,12 @@ def live_sessions(app: Any) -> list[CommandSession]:  # noqa: ANN401 - UI snapsh
 
         session = value("session_state")
         session_id = str(getattr(session, "session_id", "") or "")
-        pane_status = pane.status
-        pending = getattr(session, "pending_approval_count", lambda: 0)()
-        needs_input = bool(pane.pending_interrupt or pending)
-        if active and getattr(app, "_question_future", None) is not None:
-            needs_input = True
+        pane_status = pane_activity(app, pane)
         if pane_status in {"crashed", "exited"}:
             status = "Inactive"
-        elif needs_input or pane_status == "needs-approval":
+        elif pane_status == "needs-approval":
             status = "Needs you"
-        elif value("_turn_active") or pane_status in {"running", "starting"}:
+        elif pane_status in {"running", "starting"}:
             status = "Working"
         else:
             status = "Ready"
@@ -276,6 +296,7 @@ class CommandCenterScreen(ModalScreen[CommandSession | None]):
         self._manager = manager
         self._live = live
         self._saved: list[SessionMeta] = []
+        self._external: list[CommandSession] = []
         self._rows: dict[str, CommandSession] = {}
         self._filter_index = 0
         self._group_index = 0
@@ -317,7 +338,49 @@ class CommandCenterScreen(ModalScreen[CommandSession | None]):
         self._paint()
         self.query_one("#cc-list", OptionList).focus()
         self._load_saved()
+        self._load_presence()
+        self.set_interval(1, self._load_presence)
         self.set_interval(1, self._paint)
+
+    @work(exclusive=True, group="command-center-presence")
+    async def _load_presence(self) -> None:
+        from pathlib import Path
+
+        from novacode_cli.tui.presence import read_presence
+
+        directory = getattr(self._manager, "sessions_dir", None)
+        if not isinstance(directory, Path):
+            return
+        rows = await asyncio.to_thread(read_presence, directory)
+        external = []
+        for row in rows:
+            # Only public display fields cross the process boundary. Never
+            # trust another process's pane ID as a local navigation target.
+            identity = row.get("session_id")
+            if not isinstance(identity, str) or not _safe_identity(identity):
+                continue
+            status = row.get("status")
+            if status not in STATUSES[1:]:
+                continue
+            fields = {
+                key: str(row.get(key, ""))[:_DETAIL_CHARS]
+                for key in ("title", "project", "model", "branch", "updated_at")
+            }
+            external.append(
+                CommandSession(
+                    key=f"session:{identity}",
+                    session_id=identity,
+                    status=status,
+                    external=True,
+                    title=fields["title"],
+                    project=fields["project"],
+                    model=fields["model"],
+                    branch=fields["branch"],
+                    updated_at=fields["updated_at"],
+                )
+            )
+        self._external = external
+        self._paint()
 
     def on_resize(self, _event: events.Resize) -> None:
         """Keep details reachable in small terminals through the d key."""
@@ -401,7 +464,7 @@ class CommandCenterScreen(ModalScreen[CommandSession | None]):
         listing = self.query_one("#cc-list", OptionList)
         previous = self._selected()
         scroll_y = listing.scroll_y
-        rows = merge_sessions(self._saved, self._live())
+        rows = merge_sessions(self._saved, [*self._external, *self._live()])
         self._rows = {row.key: row for row in rows}
         visible = self._filtered_rows(rows)
         group = ("Project", "Status", "None")[self._group_index]
@@ -537,7 +600,10 @@ class CommandCenterScreen(ModalScreen[CommandSession | None]):
             self._limit += _PAGE_SIZE
             self._load_saved()
         elif (row := self._selected()) is not None:
-            self.dismiss(row)
+            if row.external:
+                self.notify("This session is open in another terminal. Continue there.")
+            else:
+                self.dismiss(row)
 
     def on_input_changed(self, _event: Input.Changed) -> None:
         """Apply search locally without rereading saved conversations."""

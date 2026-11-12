@@ -171,9 +171,9 @@ async def test_signal_classic_banner_motion_controls_input_and_resize(  # noqa: 
         assert rain._timer is None
         app._set_home_animations_enabled(enabled=True)
         assert rain._timer is not None
-        app._os_focused = False
+        app.on_app_blur()
         app._paint_home_scene()
-        assert rain._timer is None
+        assert rain._timer is not None
         app._os_focused = True
         app._low_resource_mode = True
         app._paint_home_scene()

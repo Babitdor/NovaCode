@@ -1174,14 +1174,14 @@ async def _drive_home_banner():
         # either -- the 200-column cap left a blank band on wide terminals.
         assert rain._col_count == 140 - 4
 
-        # Pause the rain when the terminal loses OS focus; resume on focus.
+        # Rain continues when the terminal loses OS focus.
         app._set_matrix_rain_enabled(True)
         timer = rain._timer
         assert timer is not None
         active = getattr(timer, "_active", None)  # Textual Timer's run flag
         app.on_app_blur()
         if active is not None:
-            assert not active.is_set()
+            assert active.is_set()
         app.on_app_focus()
         if active is not None:
             assert active.is_set()

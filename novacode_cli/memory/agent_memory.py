@@ -689,7 +689,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
     async def _memory_search_tool(
         self, query: str, runtime: ToolRuntime, k: int = 5
     ) -> str:
-        """Search topic memory and rerank with the model selected for this run.
+        """Interpret your recall request, search memory, and rank the results with this run's model.
 
         Args:
             query: Plain words for what you need to remember — a topic, task,

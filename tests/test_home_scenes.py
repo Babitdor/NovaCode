@@ -85,7 +85,7 @@ async def test_portrait_home_has_room_for_actions_and_composer(style: str, tmp_p
 
 
 @pytest.mark.timeout(30)
-async def test_animation_pauses_for_modal_blur_low_resource_and_saved_opt_out():
+async def test_animation_continues_on_blur_but_respects_modal_low_resource_and_opt_out():
     NovaConfig().set("home_style", "studio")
     app = _app()
     async with app.run_test(size=(120, 42)) as pilot:
@@ -98,9 +98,10 @@ async def test_animation_pauses_for_modal_blur_low_resource_and_saved_opt_out():
         before = scene._shown
         scene.advance(scene._started + 0.9, animated=True)
         assert scene._shown != before
-        app._os_focused = False
+        app.on_app_blur()
         app._paint_home_scene()
-        assert scene._shown == (False, -1)
+        assert app._home_scene_can_animate()
+        assert scene._shown != (False, -1)
         app._os_focused = True
         app._low_resource_mode = True
         app._set_animation_fps(15)
