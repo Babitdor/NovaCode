@@ -1,2 +1,3 @@
 recursive-include changelog *.md
 include tests/fixtures/update_terminal_child.py
+include docs/context-compression.md

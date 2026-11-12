@@ -236,3 +236,4 @@ tmp/
 /.claude-flow/
 !docs/plugin-compatibility-spec.md
 !docs/plugin-compatibility-evidence.md
+!docs/context-compression.md

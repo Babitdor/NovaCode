@@ -6,12 +6,14 @@ from typing import Any
 
 def effective_messages(values: Mapping[str, Any]) -> list[Any]:
     """Use the summary and retained tail instead of the checkpoint archive."""
+    from novacode_cli.context.hierarchical import project
+
     messages = list(values.get("messages", []))
     event = values.get("_summarization_event")
     if not isinstance(event, Mapping):
-        return messages
+        return project(messages, values)
     cutoff = event.get("cutoff_index")
     summary = event.get("summary_message")
     if not isinstance(cutoff, int) or cutoff < 0 or summary is None:
-        return messages
-    return [summary, *messages[cutoff:]]
+        return project(messages, values)
+    return project([summary, *messages[cutoff:]], values)

@@ -51,6 +51,7 @@ def _state_generation(state: Any) -> str:  # noqa: ANN401 - compiled graph state
         "checkpoint": getattr(state, "config", None),
         "messages": [m.model_dump(mode="json") for m in state.values.get("messages", [])],
         "summarization_event": state.values.get("_summarization_event"),
+        "context_blocks": state.values.get("_context_blocks"),
     }
     return hashlib.sha256(json.dumps(data, sort_keys=True, default=str).encode()).hexdigest()
 

@@ -65,7 +65,7 @@ class Worker(BaseChatModel):
     def _generate(self, messages: Any, stop: Any = None, run_manager: Any = None, **kwargs: Any) -> ChatResult:  # noqa: ARG002
         metadata = (run_manager.metadata if run_manager else None) or {}
         if metadata.get("lc_source") == "summarization":
-            self.summaries.append(str(messages[0].content))
+            self.summaries.append("\n".join(str(m.content) for m in messages))
             self.summary_tags.append(list(run_manager.tags or []))
             if self.fail_summaries:
                 raise RuntimeError("summary provider is down")
@@ -98,6 +98,11 @@ def _well_formed(messages: list) -> None:
             assert message.tool_call_id in issued, f"orphan result {message.tool_call_id}"
 
 
+def _first_context(messages: list):
+    """System policy can precede the preserved conversation and summary."""
+    return next(m for m in messages if not isinstance(m, SystemMessage))
+
+
 def _text(message: Any) -> str:
     return str(message.content)
 
@@ -122,10 +127,10 @@ def test_a_long_run_stays_inside_the_window_and_keeps_the_task() -> None:
         _well_formed(sent)
     # Once compacted, every request opens with the summary, and the summary
     # carries the task in the user's own words, however many times it is redone.
-    compacted = [sent for sent in model.seen if "SUMMARY-" in _text(sent[0])]
+    compacted = [sent for sent in model.seen if "SUMMARY-" in _text(_first_context(sent))]
     assert compacted and compacted[0] is not model.seen[0]
-    assert all(TASK in _text(sent[0]) for sent in compacted)
-    assert f"SUMMARY-{len(model.summaries)}" in _text(model.seen[-1][0])
+    assert all(TASK in _text(_first_context(sent)) for sent in compacted)
+    assert f"SUMMARY-{len(model.summaries)}" in _text(_first_context(model.seen[-1]))
     # The latest step is always there verbatim.
     assert all(isinstance(sent[-1], (ToolMessage, HumanMessage)) for sent in model.seen)
 
@@ -150,7 +155,7 @@ def test_the_async_path_does_the_same() -> None:
 
     assert out["messages"][-1].content == "all done"
     assert len(model.summaries) >= 2
-    assert all(TASK in _text(sent[0]) for sent in model.seen)
+    assert all(TASK in _text(_first_context(sent)) for sent in model.seen)
 
 
 def test_the_summary_never_streams_and_the_ui_is_told() -> None:
@@ -217,10 +222,10 @@ def test_a_failing_summary_model_never_fails_the_turn(monkeypatch: pytest.Monkey
     # It backs off between attempts rather than asking on every call...
     assert 3 <= len(model.summaries) < 15
     # ...and after three failures compacts without a model.
-    digests = [sent for sent in model.seen if "mechanical record" in _text(sent[0])]
+    digests = [sent for sent in model.seen if "mechanical record" in _text(_first_context(sent))]
     assert digests
-    assert TASK in _text(digests[0][0])
-    assert "-> work(" in _text(digests[0][0])
+    assert TASK in _text(_first_context(digests[0]))
+    assert "-> work(" in _text(_first_context(digests[0]))
     for sent in model.seen:
         _well_formed(sent)
 
@@ -234,7 +239,7 @@ def test_a_too_long_rejection_from_the_provider_is_recovered() -> None:
 
     assert out["messages"][-1].content == "all done"
     assert model.summaries
-    assert all(TASK in _text(sent[0]) for sent in model.seen)
+    assert all(TASK in _text(_first_context(sent)) for sent in model.seen)
     # Refused once, it works within what the provider accepts from then on.
     assert model.refusals == 1
 

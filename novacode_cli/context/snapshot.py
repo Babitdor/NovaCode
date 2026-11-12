@@ -193,6 +193,7 @@ class ContextSnapshot:
             identity = ""
         source_identity = (
             "".join(encoded) + "".join(schemas) + json.dumps(event, sort_keys=True, default=str)
+            + json.dumps((request.state or {}).get("_context_blocks"), sort_keys=True, default=str)
         )
         from novacode_cli.context.provider_accounting import prepared_request
 

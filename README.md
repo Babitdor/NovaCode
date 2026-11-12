@@ -8,6 +8,10 @@ knowledge between sessions.
 
 Built with Python, LangGraph, deepagents and Textual. [MIT licensed](LICENSE).
 
+Native context compression uses the [billion-context](https://github.com/ranxianglei/billion-context)
+and [acp-kernel](https://github.com/ranxianglei/acp-kernel) design.
+See [model-controlled context compression](docs/context-compression.md) for tools, recovery and attribution.
+
 ![NovaCode terminal in Classic style](assets/Preview-classic.png)
 
 ## Get started
@@ -15,8 +19,8 @@ Built with Python, LangGraph, deepagents and Textual. [MIT licensed](LICENSE).
 Install the latest release from [PyPI](https://pypi.org/project/novacode-cli/)
 with **uv** on Windows CMD, macOS or Linux. Nova requires Python 3.11+; uv can
 install Python 3.11 for the tool. You also need a supported model provider or
-a running Ollama instance with a model installed. Current release: **1.2.15**
-([changelog](https://github.com/Babitdor/NovaCode/releases/tag/v1.2.15)).
+a running Ollama instance with a model installed. Current release: **1.2.16**
+([changelog](https://github.com/Babitdor/NovaCode/releases/tag/v1.2.16)).
 
 ```text
 uv tool install --python 3.11 novacode-cli
@@ -27,11 +31,12 @@ First-run setup guides provider configuration and workspace approval. Hosted
 models may charge for usage. Run `nova` from your project directory. Upgrade a
 PyPI tool install with `uv tool upgrade novacode-cli`. To replace a Git-based
 installation, use `uv tool install --python 3.11 --force novacode-cli`, adding any
-wanted extras. To pin this release, use `novacode-cli==1.2.15` in the install command.
+wanted extras. To pin this release, use `novacode-cli==1.2.16` in the install command.
 
-Version 1.2.15 prevents Windows updates from changing packages while another
-Nova terminal is using the installation. Before updating from an older version,
-exit Nova in the other windows; those terminal windows can stay open.
+Version 1.2.16 adds native model-controlled context compression with reversible
+archives, layered summaries and recovery across session resume. Before updating
+from a version older than 1.2.15, exit Nova in other terminal windows; the windows
+can stay open.
 `/update` stays in the current terminal: launcher-enabled sessions resume
 automatically; older unprotected launches show a resume command there.
 

@@ -1,6 +1,10 @@
 """Nova's context compaction: one middleware for everything that shrinks a turn.
 
-A run is left as it is until it is compacted, as Claude Code and Codex do.
+The model can first fold completed ranges through the reversible context tools
+in ``context.hierarchical``. Originals remain in the thread's checkpoint archive;
+user messages remain verbatim. The stages below are the automatic fallback.
+
+A run is otherwise left as it is until it is compacted.
 Before a summary is considered, two cheap strategies shrink the history *before
 the current turn* (see :mod:`novacode_cli.context.strategies`): **snip** drops
 zombie messages and stale markers, and **collapse** restructures old completed
@@ -155,6 +159,9 @@ class CompactionState(AgentState):
 
     _collapse_event: Annotated[NotRequired[dict[str, Any] | None], PrivateStateAttr]
     """Where context collapse stops: ``boundary_id``, the first kept user message."""
+
+    _context_blocks: Annotated[NotRequired[dict[str, Any]], PrivateStateAttr]
+    _context_archive: Annotated[NotRequired[dict[str, Any]], PrivateStateAttr]
 
 
 @dataclass(frozen=True)
@@ -610,6 +617,10 @@ class ContextCompactionMiddleware(AgentMiddleware):
         from novacode_cli.config.nova_config import NovaConfig
 
         config = NovaConfig()
+        from novacode_cli.context.hierarchical import context_tools
+
+        self._hierarchical = config.get("context_hierarchical", True) is not False
+        self.tools = context_tools() if self._hierarchical else []
         self._snip = config.get("context_snip", True) is not False
         self._collapse = config.get("context_collapse", True) is not False
         # Collapsed results are saved where /cleared/ points, so read_file can
@@ -818,6 +829,9 @@ class ContextCompactionMiddleware(AgentMiddleware):
     def _plan(self, request: ModelRequest, *, force: bool = False) -> _Plan:
         state = request.state or {}
         messages, prior = effective_view(request.messages, state.get("_summarization_event"))
+        from novacode_cli.context.hierarchical import project
+
+        messages = project(messages, state)
         limits = self.limits(request.model)
         from novacode_cli.context.snapshot import ContextSnapshot
 
@@ -893,6 +907,9 @@ class ContextCompactionMiddleware(AgentMiddleware):
         cutoff = 0
         if force or transport_pressure or int(raw_tokens * self._scale) >= limits.trigger:
             cutoff = tail_start(view, limits.keep, keep_transport_chars=MAX_REQUEST_CHARS // 2)
+            from novacode_cli.context.hierarchical import safe_cutoff
+
+            cutoff = safe_cutoff(view, cutoff, state)
             body = view[1:cutoff] if prior is not None else view[:cutoff]
             # Measure the actual dispatched-view difference: removing the first
             # full read just makes a repeated read in the tail become full.
@@ -1125,7 +1142,7 @@ class ContextCompactionMiddleware(AgentMiddleware):
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]] | None = None,
     ) -> tuple[list[AnyMessage], dict[str, Any] | None]:
         """Stage 3. Returns the messages to send and the state update, if any."""
-        state = request.state or {}
+        state: Mapping[str, Any] = request.state or {}
         backoff = state.get("_compaction_backoff") or {}
         from novacode_cli.context.snapshot import ContextSnapshot
 
@@ -1187,6 +1204,17 @@ class ContextCompactionMiddleware(AgentMiddleware):
             head, summary, path, plan.limits, state.get("todos"), restored
         )
         cutoff = plan.cutoff if plan.prior_cutoff is None else plan.prior_cutoff + plan.cutoff - 1
+        if state.get("_context_blocks"):
+            from novacode_cli.context.hierarchical import ref
+
+            if tail:
+                first = ref(tail[0])
+                block = state["_context_blocks"].get(first)
+                if block:
+                    first = block["refs"][0]
+                cutoff = next(i for i, m in enumerate(request.messages) if ref(m) == first)
+            else:
+                cutoff = len(request.messages)
         logger.info(
             "Compacted %d messages into a summary (~%d tokens before)",
             len(head),
@@ -1203,12 +1231,40 @@ class ContextCompactionMiddleware(AgentMiddleware):
         }
 
     # ── the model call ──────────────────────────────────────────────────
+    def _context_request(self, request: ModelRequest) -> ModelRequest:
+        """Offer model-driven compression before the emergency summary threshold."""
+        if not self._hierarchical:
+            return request
+        from langchain_core.messages import SystemMessage
+
+        from novacode_cli.context.hierarchical import INSTRUCTIONS, visible
+
+        instructions = INSTRUCTIONS
+        view = visible(request.state or {"messages": request.messages})
+        if _request_size_tokens(view) >= self.limits(request.model).window * 0.45:
+            instructions += (
+                "\nContext pressure is elevated: inspect acp_status and compress completed work.\n"
+            )
+        system = request.system_message
+        if system is None:
+            system = SystemMessage(content=instructions)
+        else:
+            content = system.content
+            system = system.model_copy(update={
+                "content": (
+                    content + "\n\n" + instructions if isinstance(content, str)
+                    else [*content, {"type": "text", "text": instructions}]
+                ),
+            })
+        return request.override(system_message=system)
+
     async def awrap_model_call(
         self,
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse | ExtendedModelResponse:
         """Shrink the request as far as needed, then make the call."""
+        request = await asyncio.to_thread(self._context_request, request)
         # Off the loop the UI shares: the first pruning pass writes every
         # cleared result to disk (1.4 s for 600 of them), and even a warm
         # pass over a long conversation is tens of milliseconds.
@@ -1266,6 +1322,7 @@ class ContextCompactionMiddleware(AgentMiddleware):
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse | ExtendedModelResponse:
         """Synchronous twin of :meth:`awrap_model_call`."""
+        request = self._context_request(request)
         plan = self._plan(request)
         learned = None
         if not plan.cutoff:
