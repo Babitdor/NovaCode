@@ -52,9 +52,16 @@ def cli_main() -> None:
     result = supervise(sys.argv[1:])
     if result is not None:
         raise SystemExit(result)
-    from novacode_cli.main import cli_main as main
+    from novacode_cli.update_guard import UpdateBlockedError, installation_lock
 
-    main()
+    try:
+        with installation_lock(exclusive=False):
+            from novacode_cli.main import cli_main as main
+
+            main()
+    except UpdateBlockedError as error:
+        print(str(error), file=sys.stderr)
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":

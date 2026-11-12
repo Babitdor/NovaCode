@@ -24,6 +24,7 @@ from typing import NoReturn
 from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
 
+from novacode_cli.update_guard import UpdateBlockedError, check_update_blockers, installation_lock
 from novacode_cli.update_ui import Progress, installed_version, run_command, show_success
 
 REPOSITORY = "Babitdor/NovaCode"
@@ -31,6 +32,7 @@ REPO_URL = f"https://github.com/{REPOSITORY}.git"
 CHECK_INTERVAL = 3600
 #: Exit code for Ctrl+C during an update; no restart.
 EXIT_INTERRUPTED = 130
+EXIT_UPDATE_BLOCKED = 75
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -294,6 +296,13 @@ def _uv_entrypoint_is_locked(error: subprocess.CalledProcessError) -> bool:
 
 def install_update(progress: Progress | None = None) -> bool:
     """Update with the original manager; return whether anything changed."""
+    with installation_lock(exclusive=True):
+        check_update_blockers()
+        return _install_update(progress)
+
+
+def _install_update(progress: Progress | None = None) -> bool:
+    """Mutate packages only while this installer owns the environment."""
     progress = progress or Progress()
     installation = detect_installation()
     if installation.kind == "source":
@@ -319,6 +328,7 @@ def install_update(progress: Progress | None = None) -> bool:
         _run(["git", "-C", str(root), "merge", "--ff-only", upstream], progress=progress)
         progress.stage("Syncing dependencies")
         if use_uv:
+            assert uv is not None
             _run([uv, "sync", "--inexact"], cwd=root, progress=progress)
         else:
             _run([*_pip_command(), "--upgrade", "-e", str(root)], progress=progress)
@@ -444,6 +454,9 @@ def _update_with_progress(*, restarting: bool = False) -> int:
         else:
             print("\n  NovaCode is up to date.\n")
         return 0  # noqa: TRY300
+    except UpdateBlockedError as error:
+        print(f"\n{error}", file=sys.stderr)
+        return EXIT_UPDATE_BLOCKED
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         log = getattr(error, "output", None)
         if isinstance(log, str) and log.strip():
@@ -520,10 +533,17 @@ def _update_after_exit() -> int:
     """The fresh interpreter from ``_hand_off_update``: wait, update, restart."""
     session = os.environ.pop(RESTART_SESSION_ENV, "") or None
     continue_turn = os.environ.pop(CONTINUE_ENV, "") == "1"
-    _wait_for_handoff()
+    try:
+        _wait_for_handoff()
+    except (OSError, ValueError) as error:
+        print(f"Update did not start: {error}", file=sys.stderr)
+        return EXIT_UPDATE_BLOCKED
     code = _update_with_progress(restarting=True)
     if code == EXIT_INTERRUPTED:
         return code
+    if code == EXIT_UPDATE_BLOCKED:
+        print("\nThe installation is unchanged. Resuming this session…", file=sys.stderr)
+        return _relaunch(session, continue_turn=continue_turn)
     if code:
         print("\nNova was not restarted: the update did not finish.", file=sys.stderr)
         print("Run `nova update` to retry.", file=sys.stderr)
@@ -556,7 +576,10 @@ def _wait_for_handoff(timeout_ms: int = 60_000) -> None:
         if not handle:
             return
         try:
-            kernel32.WaitForSingleObject(handle, timeout_ms)
+            result = kernel32.WaitForSingleObject(handle, timeout_ms)
+            if result != 0:
+                message = "The previous Nova process has not exited. No update was started."
+                raise UpdateBlockedError(message)
         finally:
             kernel32.CloseHandle(handle)
     except (OSError, AttributeError):

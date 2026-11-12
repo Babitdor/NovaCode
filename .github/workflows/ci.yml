@@ -356,6 +356,7 @@ jobs:
           tests/test_updates.py
           tests/test_update_release.py
           tests/test_update_restart.py
+          tests/test_update_guard.py
           tests/test_windows_launcher.py
           tests/test_update_console_native.py
           tests/test_update_success_screen.py

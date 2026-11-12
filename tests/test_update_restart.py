@@ -13,6 +13,8 @@ from novacode_cli import updates
 
 @pytest.fixture(autouse=True)
 def clear_request(monkeypatch):
+    from novacode_cli import update_guard
+    monkeypatch.setattr(update_guard, "check_update_blockers", lambda **_kw: None)
     # A test runner launched by Nova must not publish fake PIDs to its real owner.
     monkeypatch.delenv("NOVA_TERMINAL_OWNER_FILE", raising=False)
     monkeypatch.delenv("NOVA_TERMINAL_RUNTIME_CHILD", raising=False)
@@ -205,6 +207,7 @@ def test_handoff_wait_waits_for_the_exited_process(monkeypatch):
 
     kernel = Mock()
     kernel.OpenProcess.return_value = 123
+    kernel.WaitForSingleObject.return_value = 0
     monkeypatch.setattr(ctypes, "WinDLL", Mock(return_value=kernel), raising=False)
     monkeypatch.setattr(updates.sys, "platform", "win32")
     monkeypatch.setenv(updates.HANDOFF_PID_ENV, "4242")

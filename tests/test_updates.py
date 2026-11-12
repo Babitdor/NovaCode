@@ -13,6 +13,13 @@ import pytest
 from novacode_cli import updates as U  # noqa: N812
 
 
+@pytest.fixture(autouse=True)
+def isolate_native_update_checks(monkeypatch):
+    from contextlib import nullcontext
+    monkeypatch.setattr(U, "installation_lock", lambda **_kw: nullcontext())
+    monkeypatch.setattr(U, "check_update_blockers", lambda: None)
+
+
 @pytest.fixture
 def update_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Mock:
     installation = U.Installation("1.0.0", "source", "a" * 40, root=tmp_path)

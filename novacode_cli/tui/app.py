@@ -15633,6 +15633,19 @@ class NovaApp(App):
         """
         from novacode_cli import updates
 
+        from novacode_cli.update_guard import check_update_blockers
+
+        supervisor = getattr(self, "_session_supervisor", None)
+        owned = {
+            child.proc.pid for child in supervisor.list()
+            if child.proc is not None and child.alive
+        } if supervisor is not None else set()
+        try:
+            await asyncio.to_thread(check_update_blockers, ignore_pids=owned)
+        except (OSError, ValueError) as error:
+            self._log(Text(f"Update not started: {error}", style="yellow"))
+            return
+
         running = self._turn_running()
         if running:
             choice = await self.push_screen_wait(
