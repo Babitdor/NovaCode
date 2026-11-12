@@ -69,8 +69,8 @@ if ROLE == "resumed":
                 "scroll": self.query_one("#history", VerticalScroll).scroll_y,
             }
             temporary = DIRECTORY / "state.tmp"
-            temporary.write_text(json.dumps(state), encoding="utf-8")
             try:
+                temporary.write_text(json.dumps(state), encoding="utf-8")
                 temporary.replace(DIRECTORY / "state.json")
             except PermissionError:
                 pass  # the next sample retries if Windows caught the reader mid-open

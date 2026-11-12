@@ -16,6 +16,13 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
+def _wait_for(predicate: Callable[[], bool], output: list[str], timeout: float = 15) -> None:
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        assert time.monotonic() < deadline, "".join(output)[-5000:]
+        time.sleep(0.05)
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows console ownership regression")
 @pytest.mark.timeout(60)  # Two five-second TUI lifetimes plus real shell/interpreter startup.
 def test_update_resume_keeps_shell_blocked_and_accepts_typing_and_scroll(tmp_path: Path) -> None:
@@ -54,34 +61,39 @@ def test_update_resume_keeps_shell_blocked_and_accepts_typing_and_scroll(tmp_pat
     reader = threading.Thread(target=drain, daemon=True)
     reader.start()
 
-    def wait_for(predicate: Callable[[], bool], timeout: float = 15) -> None:
-        deadline = time.monotonic() + timeout
-        while not predicate():
-            assert time.monotonic() < deadline, "".join(output)[-5000:]
-            time.sleep(0.05)
-
     try:
         ready = tmp_path / "ready"
-        wait_for(ready.exists)
+        _wait_for(ready.exists, output)
         assert not marker.exists(), "PowerShell resumed before the relaunched TUI exited"
         terminal.write("composer-input")
         terminal.write("\x1b[<65;10;10M" * 4)
 
         def interactive() -> bool:
-            state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+            try:
+                state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return False  # a Windows rename may briefly exclude readers
             return state["text"] == "composer-input" and state["scroll"] > 0
 
-        wait_for(interactive, timeout=4)
+        _wait_for(interactive, output, timeout=4)
         assert not marker.exists()
         second_ready = tmp_path / "ready-second"
-        wait_for(second_ready.exists)
+        _wait_for(second_ready.exists, output)
         assert not marker.exists(), "A second update lost the original terminal owner"
         terminal.write("composer-input")
         terminal.write("\x1b[<65;10;10M" * 4)
-        wait_for(interactive, timeout=4)
+        _wait_for(interactive, output, timeout=4)
         assert not marker.exists()
-        wait_for(marker.exists)
-        assert marker.read_text(encoding="utf-8-sig").strip() == "0"
+
+        def clean_shell_return() -> bool:
+            try:
+                code = marker.read_text(encoding="utf-8-sig").strip()
+            except OSError:
+                return False
+            assert code in {"", "0"}, f"Launcher exited with {code}"
+            return code == "0"
+
+        _wait_for(clean_shell_return, output)
     finally:
         terminal.close(force=True)
         reader.join(timeout=2)
