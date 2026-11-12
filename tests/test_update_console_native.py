@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows console ownership regression")
+@pytest.mark.timeout(60)  # Two five-second TUI lifetimes plus real shell/interpreter startup.
 def test_update_resume_keeps_shell_blocked_and_accepts_typing_and_scroll(tmp_path: Path) -> None:
     from winpty import PtyProcess
 
