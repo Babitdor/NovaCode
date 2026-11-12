@@ -92,15 +92,17 @@ def test_runtime_marker_is_consumed_and_prevents_recursive_launchers(
     spawn.assert_not_called()
 
 
-def test_legacy_restart_gets_an_interactive_console_without_the_resumed_shell(
+def test_legacy_restart_keeps_the_existing_terminal_and_prints_its_resume_command(
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(launcher.sys, "platform", "win32")
     monkeypatch.setenv("NOVA_UPDATE_HANDOFF_PID", "123")
     spawn = Mock(return_value=Mock(wait=Mock(return_value=0)))
     monkeypatch.setattr(launcher.subprocess, "Popen", spawn)
     assert launcher.supervise(["--continue", "saved"]) == 0
-    assert spawn.call_args.kwargs["creationflags"] == 0x10
+    assert spawn.call_count == 0
+    assert "nova --continue saved" in capsys.readouterr().out
 
 
 def test_updater_publishes_only_to_its_inherited_owner_file(

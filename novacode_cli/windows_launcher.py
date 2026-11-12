@@ -16,7 +16,6 @@ from pathlib import Path
 
 OWNER_FILE_ENV = "NOVA_TERMINAL_OWNER_FILE"
 CHILD_ENV = "NOVA_TERMINAL_RUNTIME_CHILD"
-_NEW_CONSOLE = 0x10  # CREATE_NEW_CONSOLE; used only for a legacy, already-orphaned restart.
 _WAIT_TIMEOUT = 258
 
 
@@ -36,23 +35,26 @@ def supervise(arguments: list[str]) -> int | None:
         for index, arg in enumerate(arguments)
     ):
         return None
+    if os.environ.get("NOVA_UPDATE_HANDOFF_PID") and not os.environ.get(OWNER_FILE_ENV):
+        # An older runtime has already released the shell. Starting another
+        # TUI here would compete with its input; keep recovery in this terminal.
+        command = subprocess.list2cmdline(["nova", *arguments])
+        sys.stdout.write(
+            f"The previous launcher has exited. Resume in this terminal with:\n\n  {command}\n\n"
+        )
+        sys.stdout.flush()
+        return 0
     descriptor, filename = tempfile.mkstemp(prefix="nova-terminal-", suffix=".pid")
     os.close(descriptor)
     control = Path(filename)
     env = dict(os.environ)
     env[OWNER_FILE_ENV] = filename
     env[CHILD_ENV] = "1"
-    legacy_restart = bool(os.environ.get("NOVA_UPDATE_HANDOFF_PID")) and not os.environ.get(
-        OWNER_FILE_ENV
-    )
     try:
         runtime = subprocess.Popen(  # noqa: S603 - argv only, no shell
             [sys.executable, "-P", "-m", "novacode_cli", *arguments],
             env=env,
-            # Old releases already returned their console to the shell. Give
-            # that first resumed runtime its own interactive console; later
-            # updates stay in it under this launcher's ownership.
-            creationflags=_NEW_CONSOLE if legacy_restart else 0,
+            creationflags=0,
         )
         while True:
             try:
