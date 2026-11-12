@@ -14,6 +14,8 @@
   expired or stale-session work. Expiration produces one final notification.
 - Support nested agent-driven skill invocations. Spawned-process/headless tabs
   do not host loops; switching away from a local owner tab pauses its dispatch.
+- Include pending task descriptions when a natural-language cancellation must
+  choose between multiple loops, including before their first iteration.
 
 ## Tracing compatibility
 

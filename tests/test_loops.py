@@ -161,7 +161,12 @@ async def test_wakeup_tool_cannot_create_extend_or_cross_conversations():
     assert (await tool.ainvoke({"stop": True}))["error"]
     first = state._loop_scheduler.add(LoopSpec("first"))
     second = state._loop_scheduler.add(LoopSpec("second"))
-    assert (await tool.ainvoke({"stop": True}))["loop_ids"] == [first.id, second.id]
+    ambiguous = await tool.ainvoke({"stop": True})
+    assert ambiguous["loop_ids"] == [first.id, second.id]
+    assert ambiguous.get("loops") == [
+        {"loop_id": first.id, "prompt": "first"},
+        {"loop_id": second.id, "prompt": "second"},
+    ]
     token = current_loop.set(("one", first.id))
     try:
         assert (await tool.ainvoke({"delay_seconds": 12}))["loop_id"] == first.id

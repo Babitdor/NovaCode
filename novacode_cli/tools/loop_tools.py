@@ -34,7 +34,14 @@ def build_loop_tools(session_state: SessionState) -> list:
         if not chosen and len(scheduler.jobs) == 1:
             chosen = next(iter(scheduler.jobs))
         if not chosen:
-            return {"error": "Choose a loop_id.", "loop_ids": list(scheduler.jobs)}
+            return {
+                "error": "Choose a loop_id.",
+                "loop_ids": list(scheduler.jobs),
+                "loops": [
+                    {"loop_id": job.id, "prompt": job.spec.prompt[:1600] or "loop.md instructions"}
+                    for job in scheduler.jobs.values()
+                ],
+            }
         return scheduler.wakeup(chosen, delay_seconds, stop=stop)
 
     return [schedule_wakeup]
