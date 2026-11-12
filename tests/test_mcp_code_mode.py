@@ -438,6 +438,7 @@ async def test_wall_deadline_and_oversized_intermediate(tmp_path):
     assert messages[0].status == "error"
     assert "timeout" in messages[0].content.lower()
     # A deadline can expire during startup, before any tool has begun.
+    assert "smaller" in json.loads(messages[0].content)["hint"]
     assert active is False
     messages = await execute(graph(mcp, 'return await mcp.call("db","read",{value:2});'))
     assert messages[0].status == "error"

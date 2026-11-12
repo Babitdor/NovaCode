@@ -1,5 +1,8 @@
 # Prime software factory
 
+See [the November issue review](github-issue-review.md#6--prime-factory-readiness)
+for the production-readiness verdict and outstanding live/platform validation.
+
 Enable `/prime on`, then give Nova an explicit development goal, for example
 “Fix the duplicate notification.” Questions and explanations use normal chat.
 

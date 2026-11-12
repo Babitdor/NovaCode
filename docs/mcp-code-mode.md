@@ -103,6 +103,10 @@ function body with `return` and retains its JSON response envelope: `result`,
 `truncated`, `calls` and `failed_calls`. `eval` uses the same envelope, with the
 interpreter's displayed final-expression result. Explicit console output is
 returned alongside that value. Failed bridge calls are counted even when caught.
+State-loss warnings also accompany failed snippets. Timeout errors recommend a
+smaller batch and inspecting completed calls before retrying; no side effect is
+rolled back. See [the issue review](github-issue-review.md#5--code-mode-reliability)
+for reproduced reporting defects and the remaining validation limits.
 Filesystem tools' textual `Error:` results also fail the nested call; a script
 cannot silently proceed past a failed edit and report a successful update.
 

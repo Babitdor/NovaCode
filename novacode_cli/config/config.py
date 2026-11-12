@@ -42,12 +42,14 @@ from rich.text import Text
 
 from novacode_cli._version import __version__
 from novacode_cli.brand import (
-    format_version_banner as format_version_banner,
     TAGLINE,
     art_for,
     compact_mark,
     get_accent_hex,
     wordmark,
+)
+from novacode_cli.brand import (
+    format_version_banner as format_version_banner,
 )
 
 dotenv.load_dotenv()
@@ -310,7 +312,6 @@ TOOL_ICONS = {
     "glob": "🔍",
     "grep": "🔎",
     "web_search": "🌐",
-    "fetch_url": "📡",
     "fetch_url": "🌍",
     "task": "🤖",
     "write_todos": "📋",
@@ -782,11 +783,10 @@ def get_default_coding_instructions() -> str:
     These are the immutable base instructions that cannot be modified by the agent.
     Long-term memory (agent.md) is handled separately by the middleware.
     """
-    from novacode_cli.prompts import render_template
-
     from novacode_cli.agents.default_subagents.async_subagents import (
         async_agents_usable,
     )
+    from novacode_cli.prompts import render_template
 
     return render_template(
         "System_Prompt_Nova.jinja",
@@ -880,7 +880,7 @@ class Settings:
             from novacode_cli.onboarding import SecretManager
 
             secret_manager = SecretManager()
-        except ImportError:
+        except (ImportError, TimeoutError):
             # If onboarding module not available yet, skip keyring
             secret_manager = None
 

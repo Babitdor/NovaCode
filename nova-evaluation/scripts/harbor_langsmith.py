@@ -20,8 +20,9 @@ import aiohttp
 import toml
 from dotenv import load_dotenv
 from harbor.models.dataset_item import DownloadedDatasetItem
-from harbor.registry.client import BaseRegistryClient, RegistryClientFactory
+from harbor.registry.client import RegistryClientFactory
 from langsmith import Client
+from novacode_cli.tracking.run_queries import find_trial_run_ids
 
 from deepagents_harbor.tracing import create_example_id_from_instruction
 
@@ -286,7 +287,7 @@ async def create_experiment_async(
         print(
             f"  View at: https://smith.langchain.com/o/{tenant_id}/datasets/{dataset_id}/compare?selectedSessions={session_id}"
         )
-        print(f"\nTo run Harbor with this experiment, use:")
+        print("\nTo run Harbor with this experiment, use:")
         print(f"  LANGSMITH_EXPERIMENT={experiment_name} harbor run ...")
 
         return session_id
@@ -317,7 +318,7 @@ def _extract_reward(trial_dir: Path) -> float:
         return float(rewards.get("reward") or 0.0)
 
 
-def _process_trial(
+async def _process_trial(
     client: Client,
     trial_dir: Path,
     project_name: str,
@@ -328,19 +329,7 @@ def _process_trial(
 
     # Find the trace by trial_name metadata
     try:
-        # Build filter to match trial_name in metadata
-        filter_query = (
-            f'and(eq(metadata_key, "trial_name"), eq(metadata_value, "{trial_name}"))'
-        )
-
-        # Fetch runs matching the filter
-        runs = list(
-            client.list_runs(
-                project_name=project_name,
-                filter=filter_query,
-                is_root=True,
-            )
-        )
+        runs = await find_trial_run_ids(client, project_name, trial_name)
     except Exception as e:
         return {"status": "error", "message": f"Failed to fetch trace: {e}"}
 
@@ -356,8 +345,7 @@ def _process_trial(
             "message": f"Multiple traces found for trial_name {trial_name}",
         }
 
-    run = runs[0]
-    run_id = str(run.id)
+    run_id = runs[0]
 
     # Check if feedback already exists
     try:
@@ -387,7 +375,7 @@ def _process_trial(
         }
 
 
-def add_feedback(job_folder: Path, project_name: str, dry_run: bool = False) -> None:
+async def add_feedback_async(job_folder: Path, project_name: str, dry_run: bool = False) -> None:
     """Add Harbor reward feedback to LangSmith traces.
 
     Args:
@@ -411,7 +399,7 @@ def add_feedback(job_folder: Path, project_name: str, dry_run: bool = False) -> 
     for i, trial_dir in enumerate(trial_dirs, 1):
         print(f"[{i}/{len(trial_dirs)}] Processing {trial_dir.name}...")
 
-        result = _process_trial(
+        result = await _process_trial(
             trial_dir=trial_dir,
             project_name=project_name,
             client=client,
@@ -439,6 +427,11 @@ def add_feedback(job_folder: Path, project_name: str, dry_run: bool = False) -> 
     print(f"Successfully updated: {results['success']}")
     print(f"Skipped (already has feedback): {results['skipped']}")
     print(f"Errors: {results['error']}")
+
+
+def add_feedback(job_folder: Path, project_name: str, dry_run: bool = False) -> None:
+    """Keep one event loop for the SDK's async query client across all trials."""
+    asyncio.run(add_feedback_async(job_folder, project_name, dry_run))
 
 
 def main() -> None:

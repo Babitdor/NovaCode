@@ -543,6 +543,12 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
         aliases=("connect",),
     ),
     "sessions": SlashCommand("_run_session_import", "browse Nova and external sessions"),
+    "command-center": SlashCommand(
+        "_run_command_center",
+        "sessions by project, status filters and task details",
+        wants_text=False,
+        aliases=("cc",),
+    ),
     "import": SlashCommand(
         "_run_session_import", "import Codex / Claude / Nova history as context"
     ),
@@ -739,6 +745,7 @@ _LIVE_UI_COMMANDS = frozenset(
         "remote",
         "artifacts",
         "tasks",
+        "command-center",
         "mcp",
         "skills",
         "agents",
@@ -3531,6 +3538,9 @@ class NovaApp(App):
             return
         if low in ("/tasks", "/jobs"):
             self._open_tasks_panel()
+            return
+        if low in ("/command-center", "/cc"):
+            await self._run_command_center()
             return
         if low in ("/tabs", "/session") or low.startswith(("/tabs ", "/session ")):
             await self._run_tabs_command(stripped.replace("/session", "/tabs", 1))
@@ -10315,6 +10325,7 @@ class NovaApp(App):
         # Remembered so a ContextOverflow can compact and re-send this exact
         # prompt rather than losing the user's message.
         self._last_user_prompt = text
+        self._last_user_prompt_thread = self.session_state.thread_id
         turn_pane = getattr(self, "_active_pane", None)
         lock = getattr(self.session_state, "_remote_message_lock", None)
         self._reset_streaming()
@@ -13823,6 +13834,28 @@ class NovaApp(App):
 
         await dispatch_import_command(self, text)
 
+    async def _run_command_center(self) -> None:
+        """Inspect all saved projects and live tabs without replacing a running turn."""
+        from novacode_cli.tui.command_center import CommandCenterScreen, live_sessions
+
+        selected = await self.push_screen_wait(
+            CommandCenterScreen(self.session_manager, lambda: live_sessions(self))
+        )
+        if selected is None:
+            return
+        pane = next(
+            (pane for pane in self._panes if selected.pane_id and pane.sid == selected.pane_id),
+            None,
+        )
+        if pane is None and selected.session_id:
+            pane = self._saved_session_pane(selected.session_id)
+        if pane is not None:
+            await self._switch_to(pane)
+        elif selected.session_id:
+            # Reuse capacity, workspace approval and saved-identity checks.
+            # A saved conversation opens in its own tab, preserving this turn.
+            await self._resume_tab(selected.session_id)
+
     async def _run_sessions(self) -> None:
         """Open the saved-sessions screen (list + delete)."""
         from novacode_cli.session.session_persistence import SessionManager
@@ -16232,10 +16265,10 @@ class NovaApp(App):
             cfg.set_learning_auto_approve(arg == "auto on")
             self._log(
                 Text(
-                    "● New lessons and skills will be approved automatically; prompt changes "
+                    "● New skills will be approved automatically; wiki lessons and prompt changes "
                     "still wait for /learning review."
                     if arg == "auto on"
-                    else "● New lessons and skills will wait for /learning review.",
+                    else "● New skills, wiki lessons and prompt changes will wait for /learning review.",
                     style="green",
                 )
             )
@@ -16249,7 +16282,7 @@ class NovaApp(App):
             t.append(
                 "on\n" if current else "off\n", style="bold green" if current else "bold yellow"
             )
-            t.append("Auto-approve lessons and skills: ", style="dim")
+            t.append("Auto-approve generated skills: ", style="dim")
             t.append("on\n" if auto else "off\n", style="bold green" if auto else "bold yellow")
             t.append(
                 "\nWhen on, Nova reviews completed coding tasks and extracts\n"

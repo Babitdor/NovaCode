@@ -722,6 +722,7 @@ children.join(',');
 )
 async def test_approval_suspends_live_script_without_replaying_first_write(decision, expected):
     calls = []
+    updates = []
 
     @tool
     def first(value: int) -> int:
@@ -739,7 +740,9 @@ async def test_approval_suspends_live_script_without_replaying_first_write(decis
     graph = scripted(
         [("eval", "await tools.call('first',{value:1}); await tools.call('second',{value:2});")],
         tools=[first, second],
-        middleware=[CodeModeMiddleware(cpu_timeout=0.05, wall_timeout=1)],
+        # Leave room for cold Wasmtime setup and Python coverage tracing. This
+        # test exercises human-wait exclusion, not the minimum CPU budget.
+        middleware=[CodeModeMiddleware(cpu_timeout=0.25, wall_timeout=2)],
     )
     broker = CodeApprovals()
     token = current_code_approvals.set(broker)
@@ -747,18 +750,42 @@ async def test_approval_suspends_live_script_without_replaying_first_write(decis
         async for kind, data in graph.astream(
             {"messages": [HumanMessage(content="Run writes")]}, stream_mode=["custom", "updates"]
         ):
+            if kind == "updates":
+                for update in data.values():
+                    if isinstance(update, dict):
+                        updates.extend(
+                            message.content
+                            for message in update.get("messages", [])
+                            if isinstance(message, ToolMessage)
+                        )
             if kind == "custom" and data.get("type") == "nova_code_approval":
                 assert calls == [1]
                 assert len(broker.pending) == 1
-                await asyncio.sleep(1.2)  # Human wait exceeds both execution budgets.
+                await asyncio.sleep(2.2)  # Human wait exceeds both execution budgets.
                 if decision.get("revoke"):
                     get_policy().tool_tiers["second"] = "deny"
                 broker.pending[data["id"]][1].set_result({"decisions": [decision]})
-        assert calls == expected
+        assert calls == expected, updates
         assert not broker.pending
     finally:
         broker.close()
         current_code_approvals.reset(token)
+
+
+async def test_direct_quickjs_timeout_gets_recovery_hint(monkeypatch):
+    from quickjs_rs import TimeoutError as QuickJSTimeoutError
+
+    async def interrupted(*_args: object, **_kwargs: object) -> None:
+        message = "interrupted"
+        raise QuickJSTimeoutError(message)
+
+    monkeypatch.setattr("novacode_cli.agents.code_runtime.run_script", interrupted)
+    result = await invoke(scripted([("eval", "1")], middleware=[CodeModeMiddleware()]))
+    body = json.loads(result.content)
+    assert result.status == "error"
+    assert body["error"] == "TimeoutError: interrupted"
+    assert "smaller" in body["hint"]
+    assert body["calls"] == 0
 
 
 async def test_cancel_pending_approval_rejects_late_decisions():
@@ -846,7 +873,8 @@ async def test_real_shared_loop_resumes_or_cancels_exact_pending_write(reset):
     assert calls == ([1] if reset else [1, 2])
 
 
-async def test_restore_failure_is_reported_and_state_is_cleared(monkeypatch):
+@pytest.mark.parametrize("snippet", ["typeof kept", "throw new Error('intentional')"])
+async def test_restore_failure_is_reported_and_state_is_cleared(monkeypatch, snippet):
     mode = CodeModeMiddleware()
     repl = mode._registry.get(mode._fallback_thread_id)
 
@@ -857,12 +885,15 @@ async def test_restore_failure_is_reported_and_state_is_cleared(monkeypatch):
     monkeypatch.setattr(repl, "arestore_snapshot", fail)
     update = await mode.abefore_agent({"_quickjs_snapshot_payload": b"invalid"}, None)
     assert update == {"_quickjs_snapshot_payload": None}
-    graph = scripted([("eval", "typeof kept")], middleware=[mode])
+    graph = scripted([("eval", snippet)], middleware=[mode])
     # Use the stable fallback to address the failed-restoration conversation.
     result = await graph.ainvoke({"messages": [HumanMessage(content="Check state")]})
     body = json.loads(result["messages"][-2].content)
     assert "restoration failed" in body["state_warning"]
-    assert body["result"] == "undefined"
+    if snippet == "typeof kept":
+        assert body["result"] == "undefined"
+    else:
+        assert "intentional" in body["error"]
 
 
 async def test_explicit_agent_route_selects_eval_only_while_enabled():

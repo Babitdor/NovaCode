@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
-
-from langchain_core.exceptions import LangChainException
 
 from novacode_cli.memory.parsed_cache import MemoryCorpus, ParsedMemoryCache, file_hash
 
@@ -97,13 +96,13 @@ _STOPWORDS = frozenset(
     }
 )
 _MIN_LEXICAL_RELEVANCE = 2
+_MIN_STRONG_LEXICAL_RELEVANCE = 3
 _MIN_SEMANTIC_RELEVANCE = 0.45
 _MIN_CANDIDATES_TO_RERANK = 2
 _MIN_TOKEN_CHARS = 4
 _MAX_RESULTS = 20
 _EXCERPT_CHARS = 240
 _MAX_RERANK_CANDIDATES = 20
-_RERANK_FAILURES = (LangChainException, OSError, TimeoutError, ConnectionError)
 
 
 @dataclass(frozen=True)
@@ -196,7 +195,7 @@ class MemorySearchService:
                 fallback_note = (
                     "\n\nLLM reranking returned an invalid ranking; showing local relevance order."
                 )
-            except _RERANK_FAILURES as exc:
+            except Exception as exc:  # noqa: BLE001 - optional provider reranking must degrade safely
                 logger.warning("Memory reranking failed; showing local relevance order: %s", exc)
                 fallback_note = "\n\nLLM reranking failed; showing local relevance order."
         elif model is None and len(candidates) >= _MIN_CANDIDATES_TO_RERANK:
@@ -230,16 +229,27 @@ class MemorySearchService:
             semantic_scores = semantic.similarities(query, descriptors)
 
         scored: list[tuple[float, str, str]] = []
+        has_semantics = len(semantic_scores) == len(rows)
         for index, (topic, excerpt, lexical) in enumerate(rows):
             is_exact = topic == exact_topic
-            semantic_score = semantic_scores[index] if len(semantic_scores) == len(rows) else 0.0
-            if not (
-                is_exact
-                or lexical >= _MIN_LEXICAL_RELEVANCE
-                or semantic_score >= _MIN_SEMANTIC_RELEVANCE
-            ):
-                continue
-            score = 1.0 + lexical if is_exact else semantic_score + lexical * 0.01
+            semantic_score = semantic_scores[index] if has_semantics else 0.0
+            if not math.isfinite(semantic_score):
+                semantic_score = 0.0
+            if is_exact:
+                score = 1.0 + lexical
+            elif has_semantics:
+                # One title token counts twice; it should not override negative
+                # semantic evidence by itself. Preserve strong lexical matches.
+                if (
+                    semantic_score < _MIN_SEMANTIC_RELEVANCE
+                    and lexical < _MIN_STRONG_LEXICAL_RELEVANCE
+                ):
+                    continue
+                score = semantic_score + lexical * 0.01
+            else:
+                if lexical < _MIN_LEXICAL_RELEVANCE:
+                    continue
+                score = lexical * 0.1
             scored.append((score, topic, excerpt))
 
         scored.sort(key=lambda item: (-item[0], item[1]))

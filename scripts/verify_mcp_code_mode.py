@@ -39,7 +39,9 @@ SOURCES = [
 
 
 def run(*args: str) -> None:
-    subprocess.run([sys.executable, *args], cwd=ROOT, check=True, timeout=180)
+    # The complete suite exceeds three minutes on a cold Windows installation,
+    # before coverage overhead. Keep a bounded deadline for the whole check.
+    subprocess.run([sys.executable, *args], cwd=ROOT, check=True, timeout=600)
 
 
 def main() -> None:

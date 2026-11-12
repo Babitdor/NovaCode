@@ -1,5 +1,10 @@
 # Prime software factory implementation
 
+Current review (12 November 2026): [issue review](docs/github-issue-review.md).
+The fresh Windows offline factory run passed 109 tests with extended, bounded
+180-second test deadlines (the longest repair test took 62.20 seconds).
+This does not establish Linux, live-provider, Docker or publication readiness.
+
 Existing edits to team recovery, CI, FEATURES and attachments are prerequisites/user work.
 Do not revert them. The initial implementation scope excluded release, push, merge
 and deployment. The user subsequently authorized pushing to main; the coordinator

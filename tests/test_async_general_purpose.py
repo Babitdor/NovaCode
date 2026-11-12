@@ -33,7 +33,9 @@ def test_async_general_purpose_graph_keeps_workspace_and_approval_controls(monke
     assert captured["name"] == "general-purpose-async"
     assert str(tmp_path) in str(captured["backend"].cwd)
     names = {type(m).__name__ for m in captured["middleware"]}
-    assert {"NovaModelRetryMiddleware", "DelegatedApprovalMiddleware", "ShellMiddleware"} <= names
+    # AsyncModelOverrideMiddleware owns the bounded subagent retry after routing;
+    # adding a second retry middleware here would multiply provider attempts.
+    assert {"AsyncModelOverrideMiddleware", "DelegatedApprovalMiddleware", "ShellMiddleware"} <= names
     assert "parent" in captured["system_prompt"]
 
 

@@ -42,7 +42,11 @@ def _ensure_handler() -> None:
 
 def mark(phase: str) -> None:
     """Record a startup phase boundary and how long the boot has run."""
-    _ensure_handler()
-    _logger.info(
-        "startup phase: %s (boot_elapsed=%.3fs)", phase, time.monotonic() - _START_MONOTONIC
-    )
+    try:
+        _ensure_handler()
+        _logger.info(
+            "startup phase: %s (boot_elapsed=%.3fs)", phase, time.monotonic() - _START_MONOTONIC
+        )
+    except OSError:
+        # Diagnostics must not prevent launching in a read-only or locked home.
+        pass

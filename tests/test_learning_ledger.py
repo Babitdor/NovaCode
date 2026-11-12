@@ -157,7 +157,7 @@ def test_an_auto_approved_proposal_is_an_ordinary_approval(tmp_path):
     assert ledger.list(project="a", active=True) == []
 
 
-def test_reviews_auto_approve_lessons_but_never_prompt_suggestions(tmp_path, monkeypatch):
+def test_reviews_keep_wiki_lessons_and_prompt_suggestions_pending(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
     from novacode_cli.hermes.review import ReviewRunner
@@ -173,4 +173,4 @@ def test_reviews_auto_approve_lessons_but_never_prompt_suggestions(tmp_path, mon
     ReviewRunner._persist_review(runner, parsed, response)
 
     status = {r.content: r.status for r in LearningLedger(tmp_path / "learning.sqlite3").list()}
-    assert status == {"- run tests with -q": "approved", "Always greet the user.": "candidate"}
+    assert status == {"- run tests with -q": "candidate", "Always greet the user.": "candidate"}

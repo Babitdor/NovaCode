@@ -63,6 +63,10 @@ if _sys.stderr.isatty():
     _sys.stderr.write("\x1b[2m· nova: loading…\x1b[0m\n")
     _sys.stderr.flush()
 
+from novacode_cli.startup_trace import mark
+
+mark("heavy_imports_start")
+
 # Suppress deepagents files_update deprecation warning (handled internally by deepagents)
 from langchain_core._api.deprecation import LangChainDeprecationWarning
 
@@ -156,7 +160,6 @@ _auto_configure_tracing()
 from novacode_cli.mcp.commands import execute_mcp_command
 from novacode_cli.migrate import check_migration_status, migrate_agents
 from novacode_cli.path_approval import PathApprovalManager, check_path_approval
-from novacode_cli.startup_trace import mark
 from novacode_cli.states.Session import SessionState
 from novacode_cli.tools import (
     code_search,
@@ -191,6 +194,8 @@ from novacode_cli.tools.plan_mode_tools import (
 from novacode_cli.vixie.server import start_vixie_server, stop_vixie_server
 
 from novacode_cli.process_manager import ProcessManager
+
+mark("heavy_imports_ready")
 
 
 def check_cli_dependencies() -> None:

@@ -15,8 +15,8 @@ Built with Python, LangGraph, deepagents and Textual. [MIT licensed](LICENSE).
 Install the latest release from [PyPI](https://pypi.org/project/novacode-cli/)
 with **uv** on Windows CMD, macOS or Linux. Nova requires Python 3.11+; uv can
 install Python 3.11 for the tool. You also need a supported model provider or
-a running Ollama instance with a model installed. Current release: **1.2.3**
-([changelog](https://github.com/Babitdor/NovaCode/releases/tag/v1.2.3)).
+a running Ollama instance with a model installed. Current release: **1.2.10**
+([changelog](https://github.com/Babitdor/NovaCode/releases/tag/v1.2.10)).
 
 ```text
 uv tool install --python 3.11 novacode-cli
@@ -27,12 +27,11 @@ First-run setup guides provider configuration and workspace approval. Hosted
 models may charge for usage. Run `nova` from your project directory. Upgrade a
 PyPI tool install with `uv tool upgrade novacode-cli`. To replace a Git-based
 installation, use `uv tool install --python 3.11 --force novacode-cli`, adding any
-wanted extras. To pin this release, use `novacode-cli==1.2.3` in the install command.
+wanted extras. To pin this release, use `novacode-cli==1.2.10` in the install command.
 
-Version 1.2.3 shows memory recall and successful memory-page reads inline,
-with their sources, like skill reads. Automatic recall stays selective; the
-agent can search summaries and read full pages when needed. See the changelog
-above for details.
+Version 1.2.10 adds `/command-center` (`/cc`) for project-grouped sessions, live
+status filters and task details. It also improves startup credential handling,
+memory retrieval and Code Mode diagnostics. See the changelog above for details.
 
 For local development of Nova itself, use Git and a source checkout:
 
@@ -77,6 +76,7 @@ landing-page copy.
 | `/model`, `/auth` | Models, vision and provider access |
 | `/plan`, `/council <task>` | Investigate changes and compare plans |
 | `/tabs`, `/resume` | Parallel projects and saved sessions |
+| `/command-center`, `/cc` | [Project-grouped sessions, live status filters and task details](docs/command-center.md) |
 | `/dream`, `/context` | Memory maintenance and context inspection |
 | `/settings`, `/theme` | Voice, interface styles and preferences |
 | `/mcp`, `/remote` | External tools and remote chat setup |

@@ -12,13 +12,15 @@ import sys
 import time
 from contextlib import contextmanager
 from getpass import getpass
+from pathlib import Path
 from typing import Any
 
 import requests
 from rich.console import Console
 from rich.panel import Panel
-from pathlib import Path
+
 from novacode_cli.config.config import HOME_DIR
+from novacode_cli.config.keychain import keychain_read
 from novacode_cli.config.nova_config import NovaConfig
 
 if sys.platform == "win32":
@@ -162,7 +164,7 @@ class SecretManager:
 
             self.keyring = keyring
             # Test if keyring is actually available (not null backend)
-            backend = keyring.get_keyring()
+            backend = keychain_read(keyring.get_keyring)
             # Check by module path: type(backend).__name__ returns "Keyring" (not "fail.Keyring"),
             # so we must check the full module-qualified name
             backend_fq_name = f"{type(backend).__module__}.{type(backend).__name__}"
@@ -247,14 +249,16 @@ class SecretManager:
         """
         try:
             if self.use_keyring:
-                return self.keyring.get_password(self.SERVICE_NAME, key)
+                return keychain_read(lambda: self.keyring.get_password(self.SERVICE_NAME, key))
 
             # Fallback: JSON file with lock
             if not self.FALLBACK_FILE.exists():
                 return None
 
             lock_path = self.FALLBACK_FILE.with_suffix(".lock")
-            _acquire_lock(lock_path, timeout=2.0)
+            if not _acquire_lock(lock_path, timeout=2.0):
+                logger.warning("Could not acquire lock for secrets file (read)")
+                return None
             try:
                 secrets = json.loads(self.FALLBACK_FILE.read_text(encoding="utf-8"))
                 return secrets.get(key)
@@ -317,7 +321,7 @@ class SecretManager:
             secrets: list[str] = []
             for key in API_KEY_NAMES.values():
                 try:
-                    if self.keyring.get_password(self.SERVICE_NAME, key):
+                    if keychain_read(lambda: self.keyring.get_password(self.SERVICE_NAME, key)):
                         secrets.append(key)
                 except Exception:  # noqa: BLE001
                     continue

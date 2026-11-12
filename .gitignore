@@ -18,6 +18,8 @@ docs/*
 !docs/caveman-mode.md
 !docs/browser-mode.md
 !docs/prime-factory.md
+!docs/github-issue-review.md
+!docs/command-center.md
 !docs/prompt-audit.md
 !docs/mcp-code-mode.md
 !docs/attribution.md

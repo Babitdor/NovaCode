@@ -20,6 +20,7 @@ from langchain_quickjs import CodeInterpreterMiddleware
 from langchain_quickjs.middleware import _resolve_thread_id
 from langgraph.types import Command
 from pydantic import BaseModel, ConfigDict, Field
+from quickjs_rs import TimeoutError as QuickJSTimeoutError
 
 from novacode_cli.agents.strict_tools import _validator
 from novacode_cli.agents.tool_search_variants import SEARCH_VARIANTS
@@ -460,24 +461,34 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                 return Command(update={**updates, "messages": [message]})
             return message  # noqa: TRY300 -- same error boundary covers output serialization.
         except Exception as exc:
+            timeout_hint = (
+                "Execution timed out. Use a smaller batch or fewer parallel operations. "
+                "Inspect completed calls before retrying; "
+                "external side effects are not rolled back."
+            )
             hint = (
                 "JavaScript syntax error with no host tool calls. For Markdown, prefer quoted "
                 "strings or an array of lines joined with '\\n'; escape template backticks "
                 "exactly once."
                 if calls == 0 and "SyntaxError" in str(exc)
+                else timeout_hint
+                if isinstance(exc, (TimeoutError, QuickJSTimeoutError))
+                or "timeout" in str(exc).lower()
                 else "Inspect completed calls before retrying; "
                 "external side effects are not rolled back."
             )
+            body = {
+                "error": f"{type(exc).__name__}: {exc}"[:4000],
+                "calls": calls,
+                "failed_calls": failures,
+                "hint": hint,
+            }
+            warning = self._state_warnings.pop(_resolve_thread_id(self._fallback_thread_id), None)
+            if warning is not None:
+                body["state_warning"] = warning
             message = self._message(
                 request,
-                json.dumps(
-                    {
-                        "error": f"{type(exc).__name__}: {exc}"[:4000],
-                        "calls": calls,
-                        "failed_calls": failures,
-                        "hint": hint,
-                    }
-                ),
+                json.dumps(body),
             )
             return Command(update={**updates, "messages": [message]}) if updates else message
 

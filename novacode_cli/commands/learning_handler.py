@@ -111,8 +111,8 @@ async def handle_learning_command(ctx: CommandContext) -> bool:
     elif args in {"auto on", "auto off"}:
         cfg.set_learning_auto_approve(args == "auto on")
         console.print(
-            f"Automatic approval of lessons and skills {args.split()[1]}; "
-            "prompt changes still require /learning review."
+            f"Automatic approval of generated skills {args.split()[1]}; "
+            "wiki lessons and prompt changes still require /learning review."
         )
     elif args == "status":
         console.print(

@@ -84,8 +84,14 @@ def _propose(tmp_path: Path, project: str, name: str) -> list[str]:
     return sorted(p.name for p in skills.iterdir() if p.is_dir())
 
 
-def test_one_task_renaming_a_skill_does_not_fill_the_ledger(tmp_path: Path) -> None:
+def test_one_task_renaming_a_skill_does_not_fill_the_ledger(tmp_path: Path, monkeypatch) -> None:
     """One task proposed its "raw tensor dump" skill under five names."""
+    from novacode_cli.hermes.ledger import LearningLedger
+
+    monkeypatch.setattr(
+        "novacode_cli.hermes.skill_proposals.main_agent_learning_ledger",
+        lambda: LearningLedger(tmp_path / "learning.sqlite3"),
+    )
     for name in (
         "inspect-raw-tensor-dump",
         "reverse-engineer-raw-tensor-dump",
@@ -96,8 +102,6 @@ def test_one_task_renaming_a_skill_does_not_fill_the_ledger(tmp_path: Path) -> N
     assert len(ledger) == 1, list(ledger)
     # A second task wanting it is still what creates the skill.
     assert _propose(tmp_path, "sandbox-task-b", "inspect-raw-tensor-dump") == []
-    from novacode_cli.hermes.ledger import LearningLedger
-
     records = LearningLedger(tmp_path / "learning.sqlite3").list()
     assert len(records) == 1
     assert records[0].target == "inspect-raw-tensor-dump"

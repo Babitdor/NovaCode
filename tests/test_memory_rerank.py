@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
+import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
 from novacode_cli.memory.search import MemorySearchService
@@ -12,8 +13,6 @@ from novacode_cli.memory.search import MemorySearchService
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
-
-    import pytest
 
 
 def _service(tmp_path: Path) -> MemorySearchService:
@@ -46,6 +45,60 @@ def test_semantic_retrieval_finds_a_paraphrase(
 
     assert "websocket-auth" in result
     assert "image-sizing" not in result
+
+
+@pytest.mark.parametrize("scores", [[0.1, 0.1], [float("nan"), float("nan")], [], [0.9]])
+def test_weak_lexical_overlap_requires_semantic_support(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scores: list[float]
+) -> None:
+    monkeypatch.setattr("novacode_cli.memory.semantic.similarities", lambda *_: scores)
+    service = MemorySearchService(tmp_path)
+    corpus = {
+        "docker-sizing": (frozenset({"docker", "sizing"}), "Small images", frozenset()),
+        "socket-auth": (frozenset({"socket"}), "Secure handshake", frozenset({"secure"})),
+    }
+
+    candidates = service._retrieve("docker credentials", 5, corpus)
+
+    # A single title token counts twice. Embeddings can reject that weak match;
+    # missing or incomplete embeddings must retain the lexical fallback.
+    assert [candidate.topic for candidate in candidates] == (
+        [] if len(scores) == len(corpus) else ["docker-sizing"]
+    )
+
+
+def test_strong_lexical_and_exact_matches_survive_low_semantic_scores(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("novacode_cli.memory.semantic.similarities", lambda *_: [0.0])
+    service = MemorySearchService(tmp_path)
+    corpus = {
+        "docker-sizing": (
+            frozenset({"docker", "sizing"}),
+            "Docker builds",
+            frozenset({"docker", "builds"}),
+        ),
+    }
+
+    assert service._retrieve("docker builds", 5, corpus)[0].topic == "docker-sizing"
+    assert service._retrieve("docker sizing", 5, corpus)[0].topic == "docker-sizing"
+
+
+def test_lexical_fallback_rejects_single_body_match_and_ranks_stronger_matches_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("novacode_cli.memory.semantic.similarities", lambda *_: [])
+    service = MemorySearchService(tmp_path)
+    corpus = {
+        "noise": (frozenset(), "Docker", frozenset({"docker"})),
+        "title-match": (frozenset({"docker"}), "Images", frozenset()),
+        "body-match": (frozenset(), "Docker builds", frozenset({"docker", "builds"})),
+    }
+
+    candidates = service._retrieve("docker builds", 5, corpus)
+
+    assert [candidate.topic for candidate in candidates] == ["body-match", "title-match"]
+    assert [candidate.relevance for candidate in candidates] == [0.2, 0.2]
 
 
 def test_active_model_reranks_only_retrieved_candidate_ids(
@@ -97,3 +150,25 @@ def test_reranking_is_skipped_when_no_active_model_is_available(
 
     assert result.index("websocket-auth") < result.index("image-sizing")
     assert "No active model was available" in result
+
+
+@pytest.mark.parametrize("failure", [ValueError, RuntimeError, TimeoutError])
+async def test_provider_reranking_errors_preserve_local_matches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: type[Exception]
+) -> None:
+    monkeypatch.setenv("NOVA_BUILTIN_LESSONS", "0")
+    monkeypatch.setattr(
+        "novacode_cli.memory.semantic.similarities",
+        lambda _query, candidates: [0.9 if "websocket" in text else 0.7 for text in candidates],
+    )
+    service = _service(tmp_path)
+
+    async def fail(*_args: object, **_kwargs: object) -> list:
+        message = "Provider rejected the reranking request"
+        raise failure(message)
+
+    monkeypatch.setattr(service._reranker, "rank", fail)
+    result = await service.search("websocket authentication", model=FakeListChatModel(responses=[]))
+
+    assert result.index("websocket-auth") < result.index("image-sizing")
+    assert "LLM reranking failed" in result
