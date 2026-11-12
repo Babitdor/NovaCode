@@ -495,11 +495,21 @@ def _hand_off_update(request: dict) -> bool:
     if request.get("continue"):
         env[CONTINUE_ENV] = "1"
     print("Updating Nova in this terminal…", flush=True)
+    process = None
     try:
         # ``-P`` keeps the working directory off sys.path, so a checkout named
         # novacode_cli cannot shadow the installation being updated.
-        subprocess.Popen([sys.executable, "-P", "-m", "novacode_cli", "update"], env=env)
+        process = subprocess.Popen([sys.executable, "-P", "-m", "novacode_cli", "update"], env=env)
+        from novacode_cli.windows_launcher import publish_handoff
+
+        publish_handoff(process.pid)
     except OSError as error:
+        if process is not None:
+            # A failed owner-file publication must not leave an untracked
+            # updater waiting to install after this runtime exits.
+            with suppress(OSError, subprocess.SubprocessError):
+                process.terminate()
+                process.wait(timeout=3)
         print(f"Could not start the updater: {error}", file=sys.stderr)
         print("Run `nova update` after Nova exits.", file=sys.stderr)
         return False
@@ -571,6 +581,10 @@ def _relaunch(session_id: str | None, *, continue_turn: bool) -> int:
     # alive waiting for the child. Team ownership can therefore still point at
     # this updater after a failed-but-safe coordinator shutdown.
     env[HANDOFF_PID_ENV] = str(os.getpid())
+    from novacode_cli.windows_launcher import CHILD_ENV, OWNER_FILE_ENV
+
+    if env.get(OWNER_FILE_ENV):
+        env[CHILD_ENV] = "1"
     if continue_turn:
         env[CONTINUE_ENV] = "1"
     _flush_pending_terminal_input()

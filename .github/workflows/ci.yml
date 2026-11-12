@@ -321,6 +321,8 @@ jobs:
           tests/test_provider_signin_ui.py
           tests/test_usage_tree.py
           tests/test_update_success_screen.py
+          tests/test_windows_launcher.py
+          tests/test_update_console_native.py
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -349,6 +351,8 @@ jobs:
           tests/test_updates.py
           tests/test_update_release.py
           tests/test_update_restart.py
+          tests/test_windows_launcher.py
+          tests/test_update_console_native.py
           tests/test_update_success_screen.py
           tests/test_tui_update_release.py
       - name: Build wheel and source distribution

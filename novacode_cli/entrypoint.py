@@ -47,6 +47,11 @@ def cli_main() -> None:
     arguments = add_arguments(sys.argv[1:])
     if arguments is not None:
         raise SystemExit(run_skills_cli("add", arguments))
+    from novacode_cli.windows_launcher import supervise
+
+    result = supervise(sys.argv[1:])
+    if result is not None:
+        raise SystemExit(result)
     from novacode_cli.main import cli_main as main
 
     main()

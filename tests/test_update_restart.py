@@ -13,6 +13,9 @@ from novacode_cli import updates
 
 @pytest.fixture(autouse=True)
 def clear_request(monkeypatch):
+    # A test runner launched by Nova must not publish fake PIDs to its real owner.
+    monkeypatch.delenv("NOVA_TERMINAL_OWNER_FILE", raising=False)
+    monkeypatch.delenv("NOVA_TERMINAL_RUNTIME_CHILD", raising=False)
     monkeypatch.setattr(updates, "restart_request", None)
     # App mounts must not leave a live network task in the test executor.
     # Individual update-screen tests explicitly stub the manual check.
@@ -161,6 +164,40 @@ def test_handoff_clears_a_stale_continue_marker(monkeypatch):
     env = popen.call_args.kwargs["env"]
     assert updates.CONTINUE_ENV not in env
     assert updates.RESTART_SESSION_ENV not in env
+
+
+def test_handoff_publishes_updater_before_runtime_exit(monkeypatch, tmp_path):
+    from novacode_cli.windows_launcher import OWNER_FILE_ENV
+
+    owner = tmp_path / "owner.pid"
+    monkeypatch.setenv(OWNER_FILE_ENV, str(owner))
+    monkeypatch.setattr(updates.subprocess, "Popen", Mock(return_value=Mock(pid=123)))
+    assert updates._hand_off_update({"session": "saved"})
+    assert owner.read_text(encoding="ascii") == "123"
+
+
+def test_failed_publication_stops_the_untracked_updater(monkeypatch, tmp_path):
+    from novacode_cli.windows_launcher import OWNER_FILE_ENV
+
+    monkeypatch.setenv(OWNER_FILE_ENV, str(tmp_path / "absent" / "owner.pid"))
+    process = Mock(pid=123)
+    monkeypatch.setattr(updates.subprocess, "Popen", Mock(return_value=process))
+    assert not updates._hand_off_update({})
+    process.terminate.assert_called_once()
+    process.wait.assert_called_once_with(timeout=3)
+
+
+def test_resumed_runtime_reuses_its_terminal_owner(monkeypatch):
+    from novacode_cli.windows_launcher import CHILD_ENV, OWNER_FILE_ENV
+
+    monkeypatch.setenv(OWNER_FILE_ENV, "owner.pid")
+    monkeypatch.setattr(updates.os, "name", "nt")
+    monkeypatch.setattr(updates, "_flush_pending_terminal_input", lambda: None)
+    spawn = Mock(return_value=Mock(wait=Mock(return_value=0)))
+    monkeypatch.setattr(updates.subprocess, "Popen", spawn)
+    assert updates._relaunch("saved", continue_turn=False) == 0
+    assert spawn.call_args.kwargs["env"][CHILD_ENV] == "1"
+    assert spawn.call_args.kwargs["env"][OWNER_FILE_ENV] == "owner.pid"
 
 
 def test_handoff_wait_waits_for_the_exited_process(monkeypatch):
