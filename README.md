@@ -15,8 +15,8 @@ Built with Python, LangGraph, deepagents and Textual. [MIT licensed](LICENSE).
 Install the latest release from [PyPI](https://pypi.org/project/novacode-cli/)
 with **uv** on Windows CMD, macOS or Linux. Nova requires Python 3.11+; uv can
 install Python 3.11 for the tool. You also need a supported model provider or
-a running Ollama instance with a model installed. Current release: **1.2.10**
-([changelog](https://github.com/Babitdor/NovaCode/releases/tag/v1.2.10)).
+a running Ollama instance with a model installed. Current release: **1.2.11**
+([changelog](https://github.com/Babitdor/NovaCode/releases/tag/v1.2.11)).
 
 ```text
 uv tool install --python 3.11 novacode-cli
@@ -27,11 +27,11 @@ First-run setup guides provider configuration and workspace approval. Hosted
 models may charge for usage. Run `nova` from your project directory. Upgrade a
 PyPI tool install with `uv tool upgrade novacode-cli`. To replace a Git-based
 installation, use `uv tool install --python 3.11 --force novacode-cli`, adding any
-wanted extras. To pin this release, use `novacode-cli==1.2.10` in the install command.
+wanted extras. To pin this release, use `novacode-cli==1.2.11` in the install command.
 
-Version 1.2.10 adds `/command-center` (`/cc`) for project-grouped sessions, live
-status filters and task details. It also improves startup credential handling,
-memory retrieval and Code Mode diagnostics. See the changelog above for details.
+Version 1.2.11 adds `/loop` for session-scoped recurring work and fixes LangSmith
+tracing with agent metadata. The learning and memory review checks were also
+revalidated. See the changelog above for details.
 
 For local development of Nova itself, use Git and a source checkout:
 
@@ -41,6 +41,12 @@ cd NovaCode
 uv sync
 uv run nova
 ```
+
+For recurring work within an open local session, use `/loop 5m check CI status`,
+or `/loop monitor deployment until healthy` for model-selected wakeups. Use
+`/loop list` and `/loop stop` to inspect or cancel loops. Instructions in
+`.nova/loop.md` reload on each file-driven iteration. See [session loops](docs/session-loops.md)
+for cron schedules, TTL, skill invocations and lifecycle details.
 
 ## What Nova can do
 

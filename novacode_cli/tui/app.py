@@ -619,6 +619,7 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
         "_run_notifications", "review/pending approvals (dismiss|approve <id> · clear)"
     ),
     "cron": SlashCommand("_passthrough_command", "manage scheduled (heartbeat) tasks"),
+    "loop": SlashCommand("_run_loop", "session-only recurring tasks; /loop list or stop"),
     "webhook": SlashCommand("_passthrough_command", "manage the webhook ingress server"),
     "prompt": SlashCommand("_passthrough_command", "manage evolving system-prompt templates"),
     "refine": SlashCommand(
@@ -746,6 +747,7 @@ _LIVE_UI_COMMANDS = frozenset(
         "artifacts",
         "tasks",
         "command-center",
+        "loop",
         "mcp",
         "skills",
         "agents",
@@ -3443,6 +3445,9 @@ class NovaApp(App):
         self.query_one("#prompt", PromptInput).focus()
 
     async def on_unmount(self):
+        from novacode_cli.tui.loop_commands import close_loops
+
+        close_loops(self)
         # Unmount also runs after failed/interrupted tasks and run_test exits,
         # where action_quit may never have been reached.
         self._release_output_observers()
@@ -9088,6 +9093,15 @@ class NovaApp(App):
         self._deferred_prompts.append("\n\n".join(pending))
 
     def action_cancel_turn(self) -> None:
+        active_loop = getattr(self, "_active_loop_job", None)
+        if active_loop is not None and active_loop[0] is self.session_state:
+            active_loop[0]._loop_scheduler.stop(active_loop[1].id)
+        if not getattr(self, "_turn_active", False):
+            scheduler = getattr(self.session_state, "_loop_scheduler", None)
+            if scheduler is not None and scheduler.jobs:
+                count = scheduler.stop()
+                self._log(Text(f"Stopped {count} waiting loop(s).", style="yellow"))
+                return
         communication = getattr(self, "_session_communication", None)
         if communication is not None:
             communication.cancel(getattr(getattr(self, "_active_pane", None), "sid", "root"))
@@ -13856,6 +13870,17 @@ class NovaApp(App):
             # A saved conversation opens in its own tab, preserving this turn.
             await self._resume_tab(selected.session_id)
 
+    async def _run_loop(self, text: str) -> None:
+        from novacode_cli.tui.loop_commands import run_loop_command
+
+        await run_loop_command(self, text)
+
+    @work(group="turn")
+    async def _run_loop_job(self, state, job) -> None:
+        from novacode_cli.tui.loop_commands import run_loop_iteration
+
+        await run_loop_iteration(self, state, job)
+
     async def _run_sessions(self) -> None:
         """Open the saved-sessions screen (list + delete)."""
         from novacode_cli.session.session_persistence import SessionManager
@@ -14604,16 +14629,14 @@ class NovaApp(App):
 
     async def _open_langsmith_setup(self, project_name: str | None = None) -> None:
         """Ask for the LangSmith environment and activate tracing with it."""
-        import os
-
         from novacode_cli.tracking.tracing import (
-            LANGSMITH_ENV_VARS,
             apply_langsmith_env,
+            current_langsmith_env,
             persist_langsmith_settings,
         )
         from novacode_cli.tui.screens import LangSmithSetupModal
 
-        current = {name: os.environ.get(name, "") for name in LANGSMITH_ENV_VARS}
+        current = current_langsmith_env()
         if project_name:
             current["LANGSMITH_PROJECT"] = project_name
         values = await self.push_screen_wait(LangSmithSetupModal(current=current))

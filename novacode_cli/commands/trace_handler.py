@@ -1,7 +1,5 @@
 """Handler for the /trace command for LangSmith tracing management."""
 
-import os
-
 from rich.panel import Panel
 from rich.text import Text
 
@@ -255,12 +253,12 @@ async def handle_trace_command(cmd_args: list[str]) -> bool:
 def _setup_tracing_interactively() -> None:
     """Ask for the LangSmith environment and activate tracing with it."""
     from novacode_cli.tracking.tracing import (
-        LANGSMITH_ENV_VARS,
         apply_langsmith_env,
+        current_langsmith_env,
         persist_langsmith_settings,
     )
 
-    current = {name: os.environ.get(name, "") for name in LANGSMITH_ENV_VARS}
+    current = current_langsmith_env()
     values: dict[str, str] = {}
     for name, prompt in (
         ("LANGSMITH_TRACING", "Enable tracing? (true/false)"),

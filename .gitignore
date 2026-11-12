@@ -20,6 +20,7 @@ docs/*
 !docs/prime-factory.md
 !docs/github-issue-review.md
 !docs/command-center.md
+!docs/session-loops.md
 !docs/prompt-audit.md
 !docs/mcp-code-mode.md
 !docs/attribution.md

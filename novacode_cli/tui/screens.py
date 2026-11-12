@@ -2044,7 +2044,8 @@ class LangSmithSetupModal(ModalScreen[dict[str, str] | None]):
                 ("LANGSMITH_AGENT_ID", "langsmith-agent-id"),
                 ("LANGSMITH_AGENT_ENVIRONMENT", "langsmith-agent-environment"),
             ):
-                yield Static(Text(f"{name} (optional):", style="bold"), classes="langsmith-field-label")
+                label = f"NOVA_{name}" if name.startswith("LANGSMITH_AGENT_") else name
+                yield Static(Text(f"{label} (optional):", style="bold"), classes="langsmith-field-label")
                 yield Input(value=current.get(name) or "", id=field_id)
             with Horizontal(id="modal-buttons"):
                 yield Button("Save", id="do-save", variant="primary")

@@ -145,6 +145,8 @@ class SessionState:
         self.browser_use_tasks: dict = {}  # commands/browser_use_handler.py
         self.create_server: Any = None  # commands/create_handler.py, tui/app.py
         self._cron_scheduler: Any = None  # commands/cron_handler.py, main.py
+        self._loop_scheduler: Any = None  # Session-only; never serialized.
+        self._loop_host: bool = False
         self._webhook_server: Any = None  # commands/webhook_handler.py
         self._ralph_stop_requested: bool = False  # commands/ralph_handler.py, tui/app.py
         self._ralph_checkpoint_requested: bool = False  # commands/ralph_handler.py, tui/app.py
@@ -508,6 +510,7 @@ class SessionState:
         "goal_revision",
         "browser_use_tasks", "create_server",
         "_cron_scheduler", "_webhook_server",
+        "_loop_scheduler", "_loop_host",
         "_ralph_stop_requested", "_ralph_checkpoint_requested",
         "_background_threads", "_voice_pipeline",
         "_remote_tool_notify", "_remote_todo_notify", "_remote_processor_task",
@@ -677,6 +680,9 @@ class SessionState:
         self.thread_id = str(uuid.uuid4())
         self.session_id = str(uuid.uuid4())
         self.active_goal = None
+        if self._loop_scheduler is not None:
+            self._loop_scheduler.close()
+            self._loop_scheduler = None
         self.prime_report = None
         self.prime_pending = None
         self.prime_forget_pending = None

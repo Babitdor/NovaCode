@@ -1,8 +1,8 @@
 # GitHub issue review — 12 November 2026
 
 Scope: the six open issues in `Babitdor/NovaCode`, #4 through #9, read from
-GitHub's issues API. They had no comments at review time. Work is local; no
-release, push, issue closure or publication was performed. Command Center was
+GitHub's issues API. They had no comments at review time. This initial review
+was published in release 1.2.10. Command Center was
 initially deferred, then resumed when the user supplied the reference at
 `assets/screenshot/CommandCenter.png`.
 
@@ -237,3 +237,35 @@ screen and `git diff --check` passed. Wide and narrow renders were visually
 reviewed using fixture session data; responsive tests also cover 60-column
 terminals. The full repository suite was not rerun for this follow-up, and the
 broader validation limitations above still apply. No runtime dependency was added.
+
+## Remaining issues follow-up
+
+The remaining open issues were #4, #8 and the new #10. The learning/memory
+selection was rerun across search/reranking, semantic caching, ledger/review,
+activation, dream isolation/gates, wiki maintenance, memory tiers and context
+properties/replay: **218 passed, 2 skipped**. The original relevance and approval
+findings remain addressed; this is offline contract evidence, not a live-model
+quality certification.
+
+Issue #10 adds `/loop`, a session-only scheduler with interval/cron and self-paced
+modes, per-iteration instruction loading, idle gating, coalescing, TTL, listing,
+stopping and a session-bound `schedule_wakeup` tool. See
+[session loops](session-loops.md) for supported hosts and exact lifecycle rules.
+The wakeup tool remains outside Code Mode's ordinary operations and cannot
+create recurring work or extend its TTL. No runtime dependency is added.
+
+The completed 1.2.10 CI exposed a separate reproducible tracing regression on
+Linux and Windows: the upgraded SDK reserves `LANGSMITH_AGENT_ID` and
+`LANGSMITH_AGENT_ENVIRONMENT` for destination routing. Nova's setup had used
+them as metadata alongside `LANGSMITH_PROJECT`, which caused `EnvAddressError`
+and dropped graph traces. Nova now stores these labels as
+`NOVA_LANGSMITH_AGENT_ID` and `NOVA_LANGSMITH_AGENT_ENVIRONMENT`, migrating old
+setup/environment values and preserving the saved UI configuration. Project
+routing and agent metadata are exercised by the existing real-graph regression.
+
+The combined final local selection passed **116 tests** across loops, help,
+Command Center, tab/session launch, release version, keychain startup, SDK
+migration and tracing setup/runtime. The new scheduler modules passed Ruff,
+format checks and Mypy. CI now explicitly includes the new loop, Command Center,
+startup-keychain and SDK migration regressions. The separate nested checkout
+under `Repo/` remains outside the release.

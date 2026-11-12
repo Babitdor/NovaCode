@@ -139,6 +139,10 @@ jobs:
         run: >-
           uv run --no-sync pytest -v --tb=short --junitxml=test-results/regression.xml
           tests/test_release_version.py
+          tests/test_loops.py
+          tests/test_command_center.py
+          tests/test_keychain_startup.py
+          tests/test_langsmith_migration.py
           tests/test_prime.py
           tests/test_prime_records.py
           tests/test_factory_controller.py

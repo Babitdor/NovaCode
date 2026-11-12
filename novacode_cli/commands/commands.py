@@ -309,6 +309,15 @@ async def handle_command(
             console.print(f"[red]Error running /cron command: {e}[/red]")
         return True
 
+    if cmd == "loop":
+        from novacode_cli.loops import loop_command
+
+        try:
+            console.print(loop_command(session_state, cmd_args or ""), markup=False)
+        except ValueError as exc:
+            console.print(f"/loop: {exc}", markup=False)
+        return True
+
     if cmd == "webhook":
         try:
             from novacode_cli.commands.webhook_handler import handle_webhook_command

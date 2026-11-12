@@ -134,6 +134,8 @@ def configure_tracing(
     """
     global _tracing_config
 
+    _normalize_agent_metadata()
+
     # Read from environment if not provided
     env_tracing = os.environ.get("LANGSMITH_TRACING", "").lower()
     env_api_key = os.environ.get("LANGSMITH_API_KEY")
@@ -170,7 +172,34 @@ LANGSMITH_ENV_VARS: tuple[str, ...] = (
     "LANGSMITH_WORKSPACE_ID",
     "LANGSMITH_AGENT_ID",
     "LANGSMITH_AGENT_ENVIRONMENT",
+    "NOVA_LANGSMITH_AGENT_ID",
+    "NOVA_LANGSMITH_AGENT_ENVIRONMENT",
 )
+
+_AGENT_METADATA_ALIASES = {
+    "LANGSMITH_AGENT_ID": "NOVA_LANGSMITH_AGENT_ID",
+    "LANGSMITH_AGENT_ENVIRONMENT": "NOVA_LANGSMITH_AGENT_ENVIRONMENT",
+}
+
+
+def _normalize_agent_metadata() -> None:
+    """Migrate Nova's old labels away from the SDK's agent-routing variables."""
+    changed = False
+    for legacy, metadata in _AGENT_METADATA_ALIASES.items():
+        value = os.environ.pop(legacy, None)
+        if value is not None:
+            os.environ.setdefault(metadata, value)
+            changed = True
+    if changed:
+        reset_langsmith_caches()
+
+
+def current_langsmith_env() -> dict[str, str]:
+    """Expose compatible setup fields while keeping metadata out of SDK routing."""
+    return {
+        name: os.environ.get(_AGENT_METADATA_ALIASES.get(name, name), os.environ.get(name, ""))
+        for name in LANGSMITH_ENV_VARS
+    }
 
 
 def reset_langsmith_caches() -> None:
@@ -219,9 +248,12 @@ def apply_langsmith_env(values: Mapping[str, str]) -> TracingConfig:
         if name not in values:
             continue
         raw = (values.get(name) or "").strip()
+        target = _AGENT_METADATA_ALIASES.get(name, name)
         if raw:
-            os.environ[name] = raw
+            os.environ[target] = raw
         else:
+            os.environ.pop(target, None)
+        if target != name:
             os.environ.pop(name, None)
 
     # The environment is only read once per process, so it has to be re-read
@@ -301,7 +333,9 @@ def load_persisted_langsmith_settings() -> TracingConfig:
     for field, name in env_names.items():
         value = saved.get(field)
         if value:
-            os.environ.setdefault(name, value)
+            target = _AGENT_METADATA_ALIASES.get(name, name)
+            if name not in os.environ:
+                os.environ.setdefault(target, value)
     if not os.environ.get("LANGSMITH_API_KEY"):
         apply_credential_to_env("LANGSMITH_API_KEY")
     # Startup may have imported LangSmith before the credential-store pass and
@@ -363,8 +397,8 @@ async def traced_stream(source: AsyncIterator[Any]) -> AsyncIterator[Any]:
     metadata = {
         label: os.environ[name]
         for label, name in (
-            ("agent_id", "LANGSMITH_AGENT_ID"),
-            ("agent_environment", "LANGSMITH_AGENT_ENVIRONMENT"),
+            ("agent_id", "NOVA_LANGSMITH_AGENT_ID"),
+            ("agent_environment", "NOVA_LANGSMITH_AGENT_ENVIRONMENT"),
         )
         if os.environ.get(name)
     }

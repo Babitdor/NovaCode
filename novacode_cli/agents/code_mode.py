@@ -119,6 +119,7 @@ DIRECT_ONLY_TOOLS = frozenset(
         "task",
         "write_todos",
         "handoff_save",  # Owns foreground context; keep on the direct graph tool path.
+        "schedule_wakeup",  # Session-scoped control stays on its owning graph path.
         "wait_for_task",
         "start_async_task",
         "check_async_task",

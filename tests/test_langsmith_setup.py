@@ -241,9 +241,26 @@ def test_saved_setup_is_restored_for_the_next_session():
     assert os.environ["LANGSMITH_PROJECT"] == "SavedProject"
     assert os.environ["LANGSMITH_ENDPOINT"] == "https://api.smith.langchain.com"
     assert os.environ["LANGSMITH_WORKSPACE_ID"] == "workspace-1"
-    assert os.environ["LANGSMITH_AGENT_ID"] == "novacode-cli"
-    assert os.environ["LANGSMITH_AGENT_ENVIRONMENT"] == "production"
+    assert os.environ["NOVA_LANGSMITH_AGENT_ID"] == "novacode-cli"
+    assert os.environ["NOVA_LANGSMITH_AGENT_ENVIRONMENT"] == "production"
+    assert "LANGSMITH_AGENT_ID" not in os.environ
+    assert "LANGSMITH_AGENT_ENVIRONMENT" not in os.environ
     assert "lsv2_persisted" not in NovaConfig().config_path.read_text(encoding="utf-8")
+
+
+def test_legacy_agent_metadata_migrates_without_sdk_routing_conflict(monkeypatch):
+    from novacode_cli.tracking.tracing import configure_tracing, current_langsmith_env
+
+    monkeypatch.setenv("LANGSMITH_AGENT_ID", "legacy-agent")
+    monkeypatch.setenv("LANGSMITH_AGENT_ENVIRONMENT", "production")
+    configure_tracing(api_key="fake", project_name="chosen-project", enable=True)
+    assert "LANGSMITH_AGENT_ID" not in os.environ
+    assert "LANGSMITH_AGENT_ENVIRONMENT" not in os.environ
+    assert current_langsmith_env()["LANGSMITH_AGENT_ID"] == "legacy-agent"
+    assert current_langsmith_env()["LANGSMITH_AGENT_ENVIRONMENT"] == "production"
+    apply_langsmith_env({"LANGSMITH_AGENT_ID": "", "LANGSMITH_AGENT_ENVIRONMENT": ""})
+    assert "NOVA_LANGSMITH_AGENT_ID" not in os.environ
+    assert "NOVA_LANGSMITH_AGENT_ENVIRONMENT" not in os.environ
 
 
 def test_clearing_workspace_removes_the_saved_value():
