@@ -19,6 +19,23 @@ os.environ["NOVA_HOME"] = str(_TEST_USER_HOME_DIR / ".nova")
 os.environ["HOME"] = str(_TEST_USER_HOME_DIR)
 os.environ["USERPROFILE"] = str(_TEST_USER_HOME_DIR)
 
+# Textual's Windows sleep blocks a default-executor thread for the whole wait, so
+# every armed `set_interval` pins one. Nova runs 13 timers, one of them hourly, and
+# the loop's default pool is only `min(32, cpu_count + 4)` — 6 workers on a 2-core
+# CI runner — so the pool ends up fully pinned and a 10 ms sleep takes ~0.5 s. That
+# turned TUI tests into bare 10 s "Timeout" kills. Tests want determinism, not
+# sub-16 ms timer resolution, so use the plain asyncio timer here.
+if sys.platform == "win32":
+    import asyncio as _asyncio
+
+    import textual._time as _textual_time
+
+    async def _win_sleep_without_a_thread(secs: float) -> None:
+        await _asyncio.sleep(secs)
+
+    _textual_time.win_sleep = _win_sleep_without_a_thread
+
+
 
 def pytest_unconfigure(config: pytest.Config) -> None:
     del config
