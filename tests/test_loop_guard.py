@@ -131,13 +131,45 @@ def test_heavy_interleaving_ages_streak_out_of_window():
     assert out.content.startswith("no matches")  # a repeat carries a note
 
 
-def test_command_result_is_not_guarded():
-    mw = LoopGuardMiddleware(threshold=2)
-    args = {"q": "a"}
-    cmd = Command(update={"messages": []})
-    for _ in range(4):
-        out = mw.wrap_tool_call(_request("grep", args), lambda _r: cmd)
-        assert out is cmd  # never blocked — Command results can't anchor a loop
+def test_command_result_anchors_a_loop():
+    """A state update must be counted too — `write_todos` returns a ``Command``.
+
+    Field evidence: one identical todo snapshot ran 10 times in a row while the
+    guard stopped a ``read_file`` loop at the fourth call, because Command
+    results were never recorded. The messages inside the update carry a fresh
+    ``tool_call_id`` on every call, which must not defeat the match.
+    """
+    mw = LoopGuardMiddleware(threshold=3)
+    todos = [{"content": "Capture SVGs", "status": "in_progress"}]
+    counter = iter(range(100))
+
+    def handler(_r: object) -> Command:
+        return Command(
+            update={
+                "todos": todos,
+                "messages": [ToolMessage("updated", tool_call_id=f"c{next(counter)}")],
+            }
+        )
+
+    for _ in range(3):
+        out = mw.wrap_tool_call(_request("write_todos", {"todos": todos}), handler)
+        assert isinstance(out, Command)
+    blocked = mw.wrap_tool_call(_request("write_todos", {"todos": todos}), handler)
+    assert isinstance(blocked, ToolMessage)
+    assert blocked.status == "error"
+    assert "LOOP STOPPED" in blocked.content
+
+
+def test_changing_command_result_is_not_a_loop():
+    """Same call, changing state update = progress, not a loop."""
+    mw = LoopGuardMiddleware(threshold=3)
+    args = {"todos": [{"content": "step", "status": "in_progress"}]}
+    for i in range(6):
+        update = {"todos": args["todos"], "messages": [], "progress": i}
+        out = mw.wrap_tool_call(
+            _request("write_todos", args), lambda _r, u=update: Command(update=u)
+        )
+        assert isinstance(out, Command)
 
 
 # ── escalation + hard stop (the "LOOP STOPPED" wall fix) ─────────────────────

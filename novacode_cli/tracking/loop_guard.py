@@ -142,6 +142,25 @@ def _result_text(result: ToolMessage | Command) -> str | None:
     return str(content)
 
 
+def _command_text(command: Command) -> str:
+    """Comparable text for a state update, so a repeating one still anchors a loop.
+
+    The messages inside the update carry a per-call ``tool_call_id``, so they
+    contribute their content only — the ids would never match twice.
+    """
+    payload = {}
+    for key, value in (command.update or {}).items():
+        payload[key] = (
+            [_result_text(m) if isinstance(m, ToolMessage) else str(m) for m in value]
+            if key == "messages" and isinstance(value, list)
+            else value
+        )
+    try:
+        return json.dumps(payload, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        return repr(payload)
+
+
 class LoopGuardMiddleware(AgentMiddleware):
     """Short-circuit a tool call that has stalled in an identical-repeat loop.
 
@@ -374,15 +393,18 @@ class LoopGuardMiddleware(AgentMiddleware):
     def _record(self, sig: str, result: ToolMessage | Command) -> ToolMessage | Command:
         """Append an executed result to the window, if it is guardable.
 
+        A state update (``Command``) is recorded too: ``write_todos`` returns one,
+        and skipping it left a repeating todo snapshot unguarded — it ran 10 times
+        in a row while the guard stopped a ``read_file`` loop at the fourth.
+
         From the second identical (call, result) on, the result is returned with
         a note saying so. Waiting for the block at ``threshold`` leaves the
         model several turns of unchanged context to settle into the loop.
         """
         text = _result_text(result)
         if text is None:
-            # Non-guardable result (Command) — don't record; it can't anchor a
-            # loop and shouldn't occupy a window slot.
-            return result
+            # No ToolMessage to annotate; its payload still anchors the loop.
+            text = _command_text(result)
         result_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
         self._history.append((sig, result_hash))
         tool, _, args = sig.partition("\x00")
@@ -392,8 +414,8 @@ class LoopGuardMiddleware(AgentMiddleware):
             run = self._near[2] + 1
         self._near = (tool, result_hash, run, args, long_result)
         self._repeats = max(self._repeat_count(sig), run)
-        if self._repeats < 2 or not isinstance(result.content, str):  # noqa: PLR2004
-            return result
+        if self._repeats < 2 or not isinstance(result, ToolMessage):  # noqa: PLR2004
+            return result  # a state update has no content to annotate
         note = (
             f"\n\n[note: this is the same result as the last {self._repeats - 1} time(s) — "
             f"{self._repeats} in a row. Running the same thing again, or the same thing under "

@@ -66,9 +66,10 @@ whole script after a runtime failure without checking which side effects already
 MCPCode is a compatibility async-function body using the same guarded runtime.
 Human approvals pause the live script. Never retry completed side effects after failure.
 Interaction, planning, workspace transitions and media fallbacks remain direct tools.
-Call write_todos directly once per model response with the complete intended list, never
-inside eval or Promise.all. Accidental parallel direct snapshots are merged by task text;
-the last status for the same text wins. Use one snapshot when removing tasks.
+Call write_todos directly (never inside eval or Promise.all), at most once per response and
+only when the plan actually changed — do not re-state an unchanged list. Accidental parallel
+direct snapshots are merged by task text; the last status for the same text wins. Use one
+snapshot when removing tasks.
 """
 
 
