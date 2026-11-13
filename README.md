@@ -1,229 +1,179 @@
-![NovaCode banner](assets/Nova.png)
+![NovaCode](assets/Nova.png)
 
 # NovaCode
 
-An open-source terminal coding assistant that reads your project, plans changes,
-edits files and runs checks. Choose cloud or local models and keep useful project
-knowledge between sessions.
+**An open-source coding assistant for your terminal, with persistent project knowledge and your choice of models.**
 
-Built with Python, LangGraph, deepagents and Textual. [MIT licensed](LICENSE).
+Nova reads code, investigates bugs, plans changes, edits files, runs tests, and delegates work to specialist agents. Use the interactive terminal, run scripted tasks, or connect remote conversations to your sessions.
 
-Native context compression uses the [billion-context](https://github.com/ranxianglei/billion-context)
-and [acp-kernel](https://github.com/ranxianglei/acp-kernel) design.
-See [model-controlled context compression](docs/context-compression.md) for tools, recovery and attribution.
+[Install](#installation) · [Commands](#everyday-use) · [Documentation](#documentation) · [Releases](https://github.com/Babitdor/NovaCode/releases) · [Issues](https://github.com/Babitdor/NovaCode/issues)
 
-![NovaCode terminal in Classic style](assets/Preview-classic.png)
+![NovaCode terminal interface](assets/Preview-classic.png)
 
-## Get started
+## Capabilities
 
-Install the latest release from [PyPI](https://pypi.org/project/novacode-cli/)
-with **uv** on Windows CMD, macOS or Linux. Nova requires Python 3.11+; uv can
-install Python 3.11 for the tool. You also need a supported model provider or
-a running Ollama instance with a model installed. Current release: **1.2.17**
-([changelog](https://github.com/Babitdor/NovaCode/releases/tag/v1.2.17)).
+| Area | What Nova provides |
+| --- | --- |
+| Coding | Repository search, file and notebook editing, shell commands, debugging, tests, and change review. |
+| Planning | Read-only investigation, explicit plan approval, and Council discussions for comparing approaches. |
+| Delegation | Specialist agents, background tasks, project tabs, and Git worktree tools. |
+| Knowledge | Project onboarding, persistent memory, LLM-assisted recall, and a linked Markdown memory wiki. |
+| Long sessions | Saved conversations, resumable sessions, context inspection, and recoverable context compression. |
+| Models | Hosted and local providers, role-specific models, and a separate vision model for image interpretation. |
+| Extensions | Skills, directory plugins, MCP servers, and Code Mode for composing eligible tools. |
+| Interfaces | Terminal themes, optional voice, local web workspaces, remote chats, and headless automation. |
 
-```text
+Nova is under active development; package metadata currently marks it **Alpha**. Agent teams and swarm scheduling are experimental, and the local computer feature is a preview.
+
+## Installation
+
+Requires **Python 3.11+**, a terminal on Windows, macOS, or Linux, and access to a supported model. Install with [uv](https://docs.astral.sh/uv/getting-started/installation/); uv can provision Python for the isolated tool environment.
+
+```sh
 uv tool install --python 3.11 novacode-cli
+cd your-project
 nova
 ```
 
-First-run setup guides provider configuration and workspace approval. Hosted
-models may charge for usage. Run `nova` from your project directory. Upgrade a
-PyPI tool install with `uv tool upgrade novacode-cli`. To replace a Git-based
-installation, use `uv tool install --python 3.11 --force novacode-cli`, adding any
-wanted extras. To pin this release, use `novacode-cli==1.2.17` in the install command.
+First-run setup guides provider configuration and workspace approval. Use `/auth` to manage provider access and `/model` to select a model. Hosted models use your provider account; local Ollama use requires a running Ollama instance and an installed model.
 
-Version 1.2.17 improves image handling, coding prompts, compression modes and
-update reliability, and adds Left Arrow navigation from an empty composer to
-Command Center. Before updating
-from a version older than 1.2.15, exit Nova in other terminal windows; the windows
-can stay open.
-`/update` stays in the current terminal: launcher-enabled sessions resume
-automatically; older unprotected launches show a resume command there.
+If `nova` is not found after installation, run `uv tool update-shell` and restart your shell. Check the installed version with `nova --version`.
 
-For local development of Nova itself, use Git and a source checkout:
+### Updates
 
-```text
-git clone https://github.com/Babitdor/NovaCode.git
-cd NovaCode
-uv sync
-uv run nova
+Run `/update` inside Nova or upgrade from the shell:
+
+```sh
+uv tool upgrade novacode-cli
 ```
 
-For recurring work within an open local session, use `/loop 5m check CI status`,
-or `/loop monitor deployment until healthy` for model-selected wakeups. Use
-`/loop list` and `/loop stop` to inspect or cancel loops. Instructions in
-`.nova/loop.md` reload on each file-driven iteration. See [session loops](docs/session-loops.md)
-for cron schedules, TTL, skill invocations and lifecycle details.
+The in-app updater uses the current terminal and resumes launcher-managed sessions. Before upgrading from a version older than 1.2.15, exit Nova in other terminal windows. To replace a Git-based installation with the PyPI package:
 
-## What Nova can do
+```sh
+uv tool install --python 3.11 --force novacode-cli
+```
 
-- **Code and verify:** investigate projects, edit files, run commands and checks,
-  and review changes with workspace and tool approvals.
-- **Plan and delegate:** compare Council proposals, use specialist agents and
-  coordinate project tabs with messages and Git worktrees.
-- **Remember:** inspect and maintain a linked Markdown memory wiki, resume
-  sessions and recover supported file snapshots. Inline “Recalling memory” and
-  “Reading memory” notices name the sources being used without displaying their
-  contents. Repeated recall of the same source is shown once per turn; the full
-  memory corpus is never loaded into the prompt at once.
-- **Choose and extend:** select hosted or local models, configure an independent
-  vision model, and add skills, plugins and MCP servers.
-- **Compose tools in Code Mode:** toggle it below the composer to combine
-  eligible native and MCP tools in bounded JavaScript workflows.
-- **Speak and listen:** optional speech input and short spoken reply summaries,
-  including lightweight CPU voice choices and model download progress.
-- **Make it yours:** choose from 13 interface styles, including character art
-  and optional animated home scenes.
-- **Work beyond the terminal:** use remote chats, local web workspaces, temporary
-  artifact previews and headless automation.
+### Optional dependencies
 
-See [FEATURES.md](FEATURES.md) for the full catalog, setup requirements and
-landing-page copy.
+Install only the extras you need. Keep all wanted extras in the requirement when reinstalling:
+
+```sh
+uv tool install --python 3.11 --force "novacode-cli[voice,voice-kokoro,bedrock]"
+```
+
+| Extra | Purpose / additional requirements |
+| --- | --- |
+| `voice` | Microphone input and spoken replies; speech models download on first use. |
+| `voice-kokoro`, `voice-sano`, `voice-pocket`, `voice-orpheus` | Alternative speech output engines; use with `voice`. |
+| `voice-parakeet`, `voice-whistle` | Alternative speech recognition engines; use with `voice`. |
+| `bedrock` | Amazon Bedrock integration; requires AWS credentials or a configured role/profile. |
+| `agents-server` | Local LangGraph server support for asynchronous agents. |
+| `server` | Optional FastAPI/Uvicorn server dependencies. |
+| `browser` | Legacy browser-use integrations; not required for Nova's Obscura MCP browser mode. |
+| `computer` | Preview Linux VM integration; requires QEMU, a guest image, and 4 GiB guest RAM. |
+
+Extras install Python dependencies. External runtimes, browser binaries, system audio support, and model downloads may require separate setup. Voice-engine compatibility varies by platform; installing every engine together is not a verified configuration.
 
 ## Everyday use
 
-| Command | Purpose |
+Describe the outcome you want, attach project files with `@`, and use **Shift+Enter** for multiline input. Press **Left Arrow** from an empty composer to open Command Center. `/help` lists available commands and shortcuts.
+
+| Commands | Purpose |
 | --- | --- |
-| `/help` | Commands and keyboard shortcuts |
-| `/onboard` | Interactive code map, guided tours, architecture guide, Q&A and change impact |
-| `/model`, `/auth` | Models, vision and provider access |
-| `/plan`, `/council <task>` | Investigate changes and compare plans |
-| `/tabs`, `/resume` | Parallel projects and saved sessions |
-| `/command-center`, `/cc` | [Project-grouped sessions, live status filters and task details](docs/command-center.md) |
-| `/dream`, `/context` | Memory maintenance and context inspection |
-| `/settings`, `/theme` | Voice, interface styles and preferences |
-| `/mcp`, `/remote` | External tools and remote chat setup |
-| `/restore` | Recoverable file snapshots |
+| `/onboard` | Build a local project map, architecture guide, and guided tour. |
+| `/model`, `/auth` | Select models, configure vision, and manage provider access. |
+| `/plan`, `/council <task>` | Research a plan or compare proposals before implementation. |
+| `/agents`, `/subagents`, `/agent-server` | Manage specialists and inspect background-agent setup. |
+| `/tabs`, `/resume`, `/cc` | Switch projects, reopen conversations, and inspect session status. |
+| `/context`, `/compact`, `/dream` | Inspect context, compact history, and maintain memory. |
+| `/files`, `/images`, `/tests`, `/servers` | Inspect files and attachments, run checks, and manage development servers. |
+| `/mcp`, `/plugin`, `/create` | Configure external tools, plugins, skills, and agents. |
+| `/loop`, `/remote` | Schedule recurring session work or configure remote chats. |
+| `/settings`, `/theme`, `/voice` | Adjust behavior, appearance, and speech preferences. |
+| `/restore`, `/update` | Recover supported file snapshots or update Nova. |
 
-MCP discovery runs in the background after the interface opens. Cached tool
-schemas are available immediately; the first MCP operation waits for discovery
-when needed. Connection failures appear as notifications. Open `/mcp`, select
-the failed server, and choose **Retry** to reconnect it without restarting Nova
-or the other servers. A **cached** status means schemas are loaded, not that a
-live connection has been verified.
-
-`/resume` and `nova --resume` browse saved sessions
-across projects. For another project's session, choose its saved workspace or
-your current workspace; either choice can be remembered with “Always use…”.
-Choosing the saved workspace inside Nova opens an isolated session tab, keeping
-the current chat available. Workspace trust and tool approvals still apply.
-Reset the directory preference with `nova config set resume_directory ask`.
-
-Attach files with `@`; use **Shift+Enter** for a new line. For a one-shot task:
-
-```bash
-nova -p "Summarize the changes in this repository"
-```
-
-**New to a project? Start with `/onboard`.** Inspired by
-[Understand Anything](https://github.com/Egonex-AI/Understand-Anything), it parses
-the local workspace with the already installed Graphify language parsers and
-saves a persistent graph and guide in `.nova/onboard/`. The local artifact
-dashboard provides file/symbol search, directory filters, a clickable dependency
-map, a learning tour and incoming dependency impact tracing. It needs no Node
-installation, browser credentials or external dashboard assets.
-
-Use `/onboard open` to reopen the dashboard, `/onboard tour` for a conversational
-tour, `/onboard ask <question>` for source-grounded Q&A, and
-`/onboard impact <symbol or path>` before changing code. The dashboard's **Ask
-Nova** tab prepares a command to paste into the conversation. Nova explains the
-architecture and business flows using its normal model and tool permissions;
-the initial deterministic guide contains structural facts only. Reopen the
-dashboard after Nova enriches the guide. Model calls use your configured provider.
-
-`/onboard refresh` rebuilds after changes. File-content fingerprints detect
-new, edited and deleted inputs; saved analyses display a staleness notice.
-Scans respect Git ignore rules and skip links, generated directories and common
-secret filenames. Static parsing can miss dynamic dependencies; directory
-groups are not semantic architecture layers. Limits: 5,000 source/Markdown
-files, 1 MiB per file, 64 MiB total input and 32 MiB graph. The parsing deadline
-scales with file count and input size from two to ten minutes; Escape cancels it.
-Refresh replaces generated graph/guide files, so copy edited guides
-elsewhere before rebuilding. This command currently requires a local workspace;
-Plan Mode prevents building or refreshing the saved analysis.
-
-## Optional features
-
-Install common optional features into the isolated Nova tool environment:
-
-```text
-uv tool install --python 3.11 --force "novacode-cli[browser,voice,agents-server,server,bedrock,computer]"
-```
-
-Keep every wanted extra in the quoted requirement when reinstalling. Alternative
-voice extras include `voice-orpheus`, `voice-parakeet`, `voice-pocket`,
-`voice-whistle`, `voice-kokoro` and `voice-sano`. For example, use
-`"novacode-cli[voice,voice-kokoro]"` for voice with Kokoro. Installing all voice
-engines together has not been verified on Windows; native engines may require
-platform support or build tools.
-
-For a source checkout, select extras when syncing instead:
-
-```bash
-uv sync --extra voice --extra voice-kokoro
-```
-
-Keep all desired `--extra` flags when syncing. Speech models download on first
-use. Extras install Python dependencies; browser binaries, models and external
-runtimes may need separate setup. See [setup and usage](https://babitdor.github.io/NovaCode/docs/#page-installation)
-and the [extras reference](https://babitdor.github.io/NovaCode/docs/#page-extras).
-
-**Local computer preview:** the `computer` extra lets Nova operate a
-separate Linux QEMU VM with a private live browser preview and pause/resume/stop
-controls. Requires QEMU, a guest-image download and 4 GiB RAM for the guest.
-Start with `/computer start`; see [computer setup and limits](COMPUTER.md).
-The Windows WHPX compatibility fix in this checkout has passed a real desktop boot.
-
-## Documentation and contributing
-
-[Setup and usage](https://babitdor.github.io/NovaCode/docs/#page-installation) · [Feature catalog](FEATURES.md) ·
-[Code Mode](docs/mcp-code-mode.md) · [Permissions](docs/security-guardrails.md) ·
-[Sharing](docs/temporary-sharing.md) · [Changelog](changelog/)
-
-For development, run `uv sync --group dev` and tests relevant to your change.
-See [project instructions](AGENTS.md) for build and check commands. Report bugs
-or propose changes through repository issues and pull requests.
-
-
-### Compression preferences
-
-The composer selector cycles **Off → Caveman → Ponytail → Off**. Options saves
-mode, independent intensities and Caveman feature switches together; Escape discards
-edits. Preferences persist across restarts. Existing Caveman settings migrate automatically.
-Mode changes use temporary notifications and never submit your draft.
-
-- `/caveman on|off|lite|full|ultra|wenyan-lite|wenyan-full|wenyan-ultra`
-- `/ponytail` activates Ponytail without resetting its selected intensity.
-- `/ponytail lite|full|ultra|off|settings|status`
-- `/ponytail-review [scope]`, `/ponytail-audit [scope]`, `/ponytail-debt [scope]`,
-  `/ponytail-gain`, `/ponytail-help` run the corresponding one-shot helper without
-  changing the selected mode. Review and audit request reports, not edits.
-- A standalone `stop ponytail` or `normal mode` disables Ponytail. Those phrases
-  inside an ordinary task do not change preferences.
-
-Caveman compresses prose and optionally tool views. Ponytail applies the upstream
-coding rules: solve the complete problem with the least new code, preserve necessary
-checks, and name skipped work and risks. Ponytail leaves tool results intact and
-also applies to delegated model requests. Neither mode changes tool permissions.
-Savings depend on the task and model; shorter output is not guaranteed.
-
-Ponytail's MIT-licensed skill bodies and JavaScript instruction builder are vendored
-from [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail) at
-`09c434ab73ca43761c5d8b0c5d341926c2fba710`. Nova's Python builder is checked
-against golden hashes from that JavaScript builder. Nova owns the persistent selector;
-upstream Claude-specific band, board, install hooks and default-mode files are not used.
-There is no Node runtime requirement.
-
-To validate every compression intensity against your configured LLM (20 paid/provider
-calls, concurrency two, 60-second timeout each), run:
+Resume from the shell:
 
 ```sh
-uv run python -m scripts.verify_compression_live
+nova --continue              # Latest session
+nova --continue SESSION_ID   # A specific session
+nova --resume                # Interactive session picker
 ```
 
-This opt-in check preserves exact failure facts/commands and validates generated
-Python on boundary and invalid-bound cases. It writes synthetic outputs and reported
-usage (or `unknown`) to `test-results/compression-live.json`, without changing your
-preferences. Offline tests never call an LLM. Golden parity proves prompt equivalence;
-it cannot guarantee identical stochastic model responses.
+For sessions from another project, the picker offers the saved workspace or the current workspace. Workspace trust and tool approvals still apply.
+
+## Models and configuration
+
+Provider integrations include OpenAI, Anthropic, Google, OpenRouter, CommandCode, OpenCode, NVIDIA, Azure OpenAI, Amazon Bedrock, and Ollama, alongside additional providers in the model catalog. Authentication, tool calling, reasoning, vision, and cache reporting depend on the provider and model.
+
+Use `/model` and `/auth` for configuration rather than editing credentials into project files. Nova supports independent model roles, including a vision companion for text-only models. Cache statistics reflect provider-reported usage; unavailable counts are not evidence of zero usage or guaranteed savings.
+
+User preferences live in `~/.nova/Nova.config.json`. Project instructions can be supplied through supported `AGENTS.md`, `CLAUDE.md`, and `NOVA.md` files. Use `/settings` for interactive preferences and `nova config --help` for configuration commands.
+
+## Project knowledge and long sessions
+
+**Onboarding.** `/onboard` builds a local dependency map and guide in `.nova/onboard/`. Use `/onboard ask <question>`, `/onboard impact <symbol or path>`, and `/onboard refresh` to explore and update it. Static analysis respects ignore rules but cannot identify every dynamic dependency. [Onboarding guide](docs/project-onboarding.md).
+
+**Memory and learning.** Nova retains reusable project knowledge in a linked Markdown wiki. LLM-assisted recall interprets what a request needs before searching authorized memory; bounded retrieval avoids loading the entire corpus into every prompt. Recall notices identify consulted sources. `/dream` provides memory maintenance. Memory is editable context, not proof that a remembered claim is correct.
+
+**Context compression.** Enabled by default, model-controlled compression summarizes completed work while retaining searchable originals in the session archive. The agent can inspect, search, compress, and recover archived ranges; saved sessions retain those blocks. `/compact` remains available for manual compaction. This reduces active model context, not stored conversation size. [Compression guide](docs/context-compression.md).
+
+**Response modes.** The composer cycles **Off → Caveman → Ponytail**. Caveman compresses prose and optional tool views; Ponytail emphasizes complete solutions with minimal new code. Both offer intensity controls and preserve tool permissions. They are separate from history compression. [Controls and validation](docs/response-modes.md).
+
+## Integrations and automation
+
+- **MCP:** discovery runs after the interface opens. Cached schemas are available early; MCP operations wait for discovery when needed. Failures appear as notifications. Select a server in `/mcp` and choose **Retry** to reconnect it. A cached schema does not establish a live connection.
+- **Code Mode:** the composer toggle lets the agent combine eligible native and MCP tools in bounded JavaScript workflows. Nested calls retain approval checks. [Code Mode guide](docs/mcp-code-mode.md).
+- **Skills and plugins:** reuse instructions and install namespaced skills, commands, agents, hooks, and MCP definitions through `/plugin`, `nova plugin`, or supported skill commands.
+- **Remote and web:** use `/remote` for Telegram, Discord, or Rootapp; `/cowork` for a local visual workspace; `/council web` for multi-model discussions; and `/create` to edit skills and agents.
+- **Artifacts:** create local previews and optionally share them through temporary Cloudflare URLs. Public sharing requires `cloudflared`; anyone with the link can access the preview. [Sharing guide](docs/temporary-sharing.md).
+- **Recurring work:** `/loop 5m check CI status` schedules work in an open local session. `/loop list` and `/loop stop` inspect and cancel loops. [Schedules and lifecycle](docs/session-loops.md).
+
+### Scripted tasks
+
+Run a single task and exit, with optional structured output and limits:
+
+```sh
+nova -p "Summarize this repository"
+nova -p "Review the current diff" --output-format json --max-turns 8 --timeout 180
+```
+
+`--print` supports `text`, `json`, and `stream-json` output. Persistent integrations use `nova --mode pipe` for JSONL communication; `--headless` is an alias for pipe mode, not single-prompt execution. Use `nova --help` for workspace trust, approval, model, and timeout options.
+
+## Permissions and data
+
+Nova applies workspace trust, tool policies, and approval controls. **Plan execution requires explicit user approval even when auto-approve is enabled.** Decision-model review and optional guardrails add checks; they do not make generated code correct or replace isolation for untrusted execution.
+
+Requests may send prompts, selected source content, attachments, and retrieved memory to configured providers or integrations. Local models avoid hosted inference for those calls, but enabled search, remote, and external-tool features can still use network services. Review integrations and generated changes before using them with sensitive projects. [Permission and guardrail details](docs/security-guardrails.md).
+
+## Development
+
+Nova uses **Python, LangGraph, deepagents, and Textual**. The terminal, headless interface, and remote bridges share the agent loop in `novacode_cli/core/agent_loop.py`.
+
+```sh
+git clone https://github.com/Babitdor/NovaCode.git
+cd NovaCode
+uv sync --locked --group dev
+uv run nova
+uv run pytest tests/test_release_version.py -q
+```
+
+For optional features, include the required flags when syncing, for example `uv sync --group dev --extra voice`. Read [AGENTS.md](AGENTS.md), follow nearby code patterns, and run tests relevant to your change. Submit reproducible bug reports and focused pull requests through GitHub.
+
+CI checks Linux and Windows, splits offline regressions into balanced shards, and verifies Windows wheel installation and reinstallation. PyPI publication requires successful CI for the exact release commit. [CI and release workflow](scripts/CI.md).
+
+## Documentation
+
+| Topic | Reference |
+| --- | --- |
+| Setup and usage | [Documentation site](https://babitdor.github.io/NovaCode/docs/) |
+| Project exploration and sessions | [Onboarding](docs/project-onboarding.md) · [Command Center](docs/command-center.md) |
+| Context and responses | [Context compression](docs/context-compression.md) · [Response modes](docs/response-modes.md) |
+| Tools and browser automation | [Code Mode](docs/mcp-code-mode.md) · [Essential tools](docs/essential-tools.md) · [Browser mode](docs/browser-mode.md) |
+| Advanced workflows | [Prime](docs/prime-factory.md) · [Council](docs/COUNCIL-SETTINGS.md) · [Session loops](docs/session-loops.md) |
+| Remote access and previews | [Discord](docs/discord-session-threads.md) · [Rootapp](docs/rootapp-remote.md) · [Sharing](docs/temporary-sharing.md) |
+| Releases | [Release notes](https://github.com/Babitdor/NovaCode/releases) · [Changelog](changelog/) |
+
+## License and acknowledgments
+
+NovaCode is [MIT licensed](LICENSE). Its agent infrastructure builds on LangGraph and deepagents. Native context compression adapts the **billion-context / acp-kernel** design, with attribution and license details in the [compression guide](docs/context-compression.md). Ponytail's vendored rules retain their upstream attribution in the [response-mode guide](docs/response-modes.md).
