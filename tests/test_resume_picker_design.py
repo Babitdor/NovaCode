@@ -17,7 +17,7 @@ from novacode_cli.tui.resume_picker import (
 )
 from novacode_cli.tui.widgets import PromptInput
 from tests.test_tui_app import _disable_live_update_checks  # noqa: F401
-from tests.test_tui_home_preferences import _app, no_system_sampling  # noqa: F401
+from tests.test_tui_home_preferences import _app, _resize_terminal, no_system_sampling  # noqa: F401
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -204,8 +204,7 @@ async def test_dialog_matches_design_and_keeps_draft_at_small_sizes(
         assert screen.query_one("#resume-status").has_class("resume-blocked")
         (tmp_path / f"resume-{style}.svg").write_text(app.export_screenshot(), encoding="utf-8")
         for width, height in ((80, 26), (48, 16), (140, 44)):
-            await pilot.resize_terminal(width, height)
-            await pilot.pause()
+            await _resize_terminal(pilot, width, height)
             for key in ("select", "cancel"):
                 button = screen.query_one(f"#{key}")
                 assert button.region.bottom <= height
@@ -238,8 +237,7 @@ async def test_standalone_picker_loads_saved_design_and_palette(
         await pilot.press("enter")
         await pilot.pause()
         assert app.screen.has_class("classic-ui")
-        await pilot.resize_terminal(48, 16)
-        await pilot.pause()
+        await _resize_terminal(pilot, 48, 16)
         assert app.screen.query_one("#select").region.bottom <= app.size.height
         assert app.screen.query_one(OptionList).size.height > 0
         await pilot.press("escape")

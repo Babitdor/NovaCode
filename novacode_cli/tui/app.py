@@ -2829,6 +2829,9 @@ class NovaApp(App):
                 apply_markdown_theme(console, theme)
 
     async def on_mount(self) -> None:
+        self._mcp_failure_notices = set()
+        self.set_interval(1, self._poll_mcp_connections)
+        self.call_after_refresh(self._poll_mcp_connections)
         import threading
 
         await asyncio.to_thread(self._load_ui_preferences)
@@ -9991,9 +9994,7 @@ class NovaApp(App):
             from novacode_cli.mcp import get_shared_mcp_middleware
 
             middleware = get_shared_mcp_middleware()
-            pool = getattr(middleware, "_session_pool", None)
-            if pool is not None:
-                await asyncio.wait_for(pool.aclose(), timeout=5.0)
+            await asyncio.wait_for(middleware.aclose(), timeout=5.0)
         # Guarded separately (defence in depth: each already swallows its own
         # errors) so losing the conversation can never follow a teardown fault.
         with contextlib.suppress(Exception):
@@ -14397,6 +14398,26 @@ class NovaApp(App):
             self._log,
             Text.assemble(("◆ Nova Cowork ready — ", "bold #7aa2f7"), (url, "underline #7aa2f7")),
         )
+
+    def _poll_mcp_connections(self) -> None:
+        """Start discovery after paint and surface failures as temporary notices."""
+        from novacode_cli.mcp import get_shared_mcp_middleware
+        from novacode_cli.mcp.config import MCPConfig
+
+        if not MCPConfig().list_servers():
+            return
+        middleware = get_shared_mcp_middleware()
+        task = middleware.start_background_discovery()
+        if task.done() and not task.cancelled() and task.exception() is not None:
+            middleware.connection_errors["setup"] = type(task.exception()).__name__
+        for name, error in list(middleware.connection_errors.items()):
+            key = (id(middleware), name, error)
+            if key not in self._mcp_failure_notices:
+                self._mcp_failure_notices.add(key)
+                self.notify(
+                    f"MCP {name}: connection failed ({error}). Open /mcp and select Retry.",
+                    severity="warning", timeout=10,
+                )
 
     async def _run_mcp(self) -> None:
         """Open the MCP servers screen (view + remove)."""

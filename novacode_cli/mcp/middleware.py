@@ -12,7 +12,6 @@ import contextlib
 import hashlib
 import json
 import logging
-import threading
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -29,7 +28,6 @@ from langgraph.runtime import Runtime
 from mcp.client.session import ClientSession
 from mcp.types import Tool as MCPTool
 
-from novacode_cli.config.config import console
 from novacode_cli.mcp.client import MultiServerMCPClient
 from novacode_cli.mcp.config import MCPConfig
 from novacode_cli.prompts import render_template
@@ -430,11 +428,14 @@ class MCPMiddleware(AgentMiddleware):
 
     def wrap_tool_call(self, request, handler):
         """Route generic execution through downstream middleware, synchronously."""
+        if request.tool_call["name"] == "MCPTool" and not self._tools_discovered:
+            self._discover_tools_sync()
         if (
             request.tool_call["name"] != "MCPTool"
             or (request.tool_call.get("args") or {}).get("action") != "call"
         ):
-            return handler(request)
+            target = next((t for t in self.tools if t.name == request.tool_call["name"]), None)
+            return handler(request.override(tool=target) if target else request)
         from novacode_cli.mcp.generic import bounded_result, routed_request
 
         try:
@@ -449,11 +450,14 @@ class MCPMiddleware(AgentMiddleware):
 
     async def awrap_tool_call(self, request, handler):
         """Route generic execution through downstream middleware, asynchronously."""
+        if request.tool_call["name"] == "MCPTool":
+            await asyncio.shield(self.start_background_discovery())
         if (
             request.tool_call["name"] != "MCPTool"
             or (request.tool_call.get("args") or {}).get("action") != "call"
         ):
-            return await handler(request)
+            target = next((t for t in self.tools if t.name == request.tool_call["name"]), None)
+            return await handler(request.override(tool=target) if target else request)
         from novacode_cli.mcp.generic import bounded_result, routed_request
 
         try:
@@ -488,11 +492,89 @@ class MCPMiddleware(AgentMiddleware):
         # Lazy discovery - tools are discovered on first use
         self._tools_discovered = False
         self._discovery_lock = asyncio.Lock()
+        self._discovery_task: asyncio.Task | None = None
+        self._refresh_task: asyncio.Task | None = None
+        self.server_status: dict[str, str] = {}
+        self.connection_errors: dict[str, str] = {}
+        self._retry_locks: dict[str, asyncio.Lock] = {}
         # Cache for rendered MCP section to avoid re-rendering on every request
         self._mcp_section_cache: str | None = None
         self._mcp_section_cache_time: float = 0
         self._mcp_section_code_mode: bool | None = None
         self._mcp_section_cache_ttl: float = 30.0  # 30 seconds TTL
+
+    def prepare_cached_tools(self) -> None:
+        """Load matching schemas without starting processes or making requests."""
+        if self._tools_discovered or self.server_status:
+            return
+        from novacode_cli.mcp.client import build_mcp_config_dict
+
+        cache = _load_schema_cache()
+        if not isinstance(cache, dict):
+            cache = {}
+        try:
+            connections = build_mcp_config_dict(self.mcp_config)
+        except Exception as exc:
+            self.connection_errors["setup"] = type(exc).__name__
+            return
+        for name, conn in connections.items():
+            self.server_status[name] = "pending"
+            entry = cache.get(name, {})
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("fingerprint") == _connection_fingerprint(conn):
+                try:
+                    raw = [MCPTool.model_validate(t) for t in entry["tools"]]
+                    self.tools.extend(self._convert_raw_tools(name, conn, raw))
+                    self.server_status[name] = "cached"
+                except Exception:  # Malformed cached schemas must not prevent launch.
+                    pass
+
+    def start_background_discovery(self) -> asyncio.Task:
+        """Share one discovery task across startup, the agent and /mcp."""
+        if self._discovery_task is None:
+            self._discovery_task = asyncio.create_task(self._ensure_tools_discovered())
+        return self._discovery_task
+
+    async def retry_server(self, name: str) -> bool:
+        """Reconnect one server, bypassing cached schemas; keep peers untouched."""
+        from novacode_cli.mcp.client import build_mcp_config_dict
+
+        await asyncio.shield(self.start_background_discovery())
+        async with self._retry_locks.setdefault(name, asyncio.Lock()):
+            connection = build_mcp_config_dict(self.mcp_config).get(name)
+            if connection is None:
+                return False
+            self.server_status[name] = "connecting"
+            try:
+                await self._session_pool.drop(name)
+                async with asyncio.timeout(_DISCOVERY_TIMEOUT):
+                    raw = await _fetch_raw_tools(connection)
+                self._tools_cache[:] = [t for t in self._tools_cache if t["server"] != name]
+                tools = self._convert_raw_tools(name, connection, raw)
+                self.tools[:] = [t for t in self.tools if (t.metadata or {}).get("nova_mcp_server") != name]
+                self.tools.extend(tools)
+                cache = _load_schema_cache()
+                cache[name] = {"fingerprint": _connection_fingerprint(connection),
+                               "tools": [t.model_dump(mode="json") for t in raw], "ts": time.time()}
+                _save_schema_cache(cache)
+                self.connection_errors.pop(name, None)
+                self.server_status[name] = "ready"
+                self._mcp_section_cache = None
+                return True
+            except Exception as exc:
+                self.connection_errors[name] = type(exc).__name__
+                self.server_status[name] = "failed"
+                return False
+
+    async def aclose(self) -> None:
+        """Cancel discovery before closing persistent server sessions."""
+        for task in (self._discovery_task, self._refresh_task):
+            if task is not None and not task.done():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+        await self._session_pool.aclose()
 
     async def _ensure_tools_discovered(self) -> None:
         """Ensure tools are discovered before first use.
@@ -506,7 +588,10 @@ class MCPMiddleware(AgentMiddleware):
         async with self._discovery_lock:
             if self._tools_discovered:
                 return
-            await self._discover_tools_async()
+            try:
+                await self._discover_tools_async()
+            except Exception as exc:
+                self.connection_errors["setup"] = type(exc).__name__
             self._tools_discovered = True
 
     def _discover_tools_sync(self) -> None:
@@ -638,28 +723,32 @@ class MCPMiddleware(AgentMiddleware):
         servers = self.mcp_config.list_servers()
 
         if not servers:
+            self._tools_discovered = True
             return
 
         # Build combined config for all servers
         config_dict = build_mcp_config_dict(self.mcp_config)
 
         if not config_dict:
+            self._tools_discovered = True
             return
 
         # Create the combined client
         self._client = MultiServerMCPClient(config_dict)
 
         # Reset the metadata cache so a re-run cannot accumulate duplicates.
-        self._tools_cache = []
+        self._tools_cache.clear()
 
         # Split servers into schema-cache hits (rebuilt instantly, no network)
         # and misses (live discovery).
         schema_cache = _load_schema_cache()
+        if not isinstance(schema_cache, dict):
+            schema_cache = {}
         cached_raw: dict[str, list[MCPTool]] = {}
         to_discover: dict[str, dict[str, Any]] = {}
         for name, conn in config_dict.items():
             entry = schema_cache.get(name)
-            if entry and entry.get("fingerprint") == _connection_fingerprint(conn):
+            if isinstance(entry, dict) and entry.get("fingerprint") == _connection_fingerprint(conn):
                 try:
                     cached_raw[name] = [MCPTool.model_validate(t) for t in entry["tools"]]
                     continue
@@ -670,6 +759,7 @@ class MCPMiddleware(AgentMiddleware):
         all_tools: list[BaseTool] = []
         for name, raw in cached_raw.items():
             all_tools.extend(self._convert_raw_tools(name, config_dict[name], raw))
+            self.server_status[name] = "cached"
 
         if to_discover:
             # Cap concurrent discovery to avoid overwhelming the host
@@ -680,17 +770,18 @@ class MCPMiddleware(AgentMiddleware):
             ) -> tuple[str, list[MCPTool] | None]:
                 """Fetch raw tool schemas for a single MCP server."""
                 async with _discovery_semaphore:
+                    self.server_status[server_name] = "connecting"
                     try:
-                        return server_name, await _fetch_raw_tools(connection)
+                        async with asyncio.timeout(_DISCOVERY_TIMEOUT):
+                            raw = await _fetch_raw_tools(connection)
+                        self.server_status[server_name] = "ready"
+                        self.connection_errors.pop(server_name, None)
+                        return server_name, raw
                     except Exception as e:
-                        # Log the error but continue with other servers
-                        error_msg = str(e)
-                        if "TaskGroup" in error_msg or "unhandled errors" in error_msg:
-                            error_msg = "Connection timeout or initialization error"
-                        console.print(
-                            f"[yellow]Warning: Failed to connect to "
-                            f"MCP server '{server_name}': {error_msg}[/yellow]"
-                        )
+                        # Never print from background discovery over the TUI.
+                        # Exception text may contain credentials from URLs/env.
+                        self.connection_errors[server_name] = type(e).__name__
+                        self.server_status[server_name] = "failed"
                         return server_name, None
 
             results = await asyncio.gather(
@@ -715,7 +806,8 @@ class MCPMiddleware(AgentMiddleware):
             _save_schema_cache(schema_cache)
 
         # Store all tools for the agent
-        self.tools = all_tools  # type: ignore
+        self.tools[:] = all_tools
+        self._mcp_section_cache = None
 
         # Mark discovery as complete to avoid re-discovering on every message
         self._tools_discovered = True
@@ -731,7 +823,7 @@ class MCPMiddleware(AgentMiddleware):
         }
         if stale:
             # Stamp ts NOW (optimistically), before the refresh runs. The
-            # refresh is a daemon thread — a short-lived process exits before
+            # refresh is asynchronous — a short-lived process can exit before
             # it finishes, the stamp never lands, and every subsequent process
             # re-triggers the refresh (re-spawning stdio servers, incl. slow
             # uvx git builds) in a stampede. Worst case of stamping first:
@@ -740,19 +832,13 @@ class MCPMiddleware(AgentMiddleware):
                 if name in schema_cache:
                     schema_cache[name]["ts"] = time.time()
             _save_schema_cache(schema_cache)
-            threading.Thread(
-                target=self._refresh_schema_cache,
-                args=(stale,),
-                daemon=True,
-                name="mcp-schema-refresh",
-            ).start()
+            self._refresh_task = asyncio.create_task(self._refresh_schema_cache(stale))
 
-    def _refresh_schema_cache(self, servers: dict[str, dict[str, Any]]) -> None:
+    async def _refresh_schema_cache(self, servers: dict[str, dict[str, Any]]) -> None:
         """Re-discover the given servers and rewrite their cache entries.
 
-        Runs in a daemon thread with its own event loop. Failures are silent
-        (debug log) — the existing cache entry simply stays until a refresh
-        succeeds or the connection config changes.
+        Runs on the owning loop so shutdown can cancel its connections. Failed
+        refreshes keep existing schemas and surface through connection_errors.
         """
 
         async def _refresh() -> dict[str, Any]:
@@ -761,10 +847,15 @@ class MCPMiddleware(AgentMiddleware):
             async def _one(name: str, conn: dict[str, Any]) -> tuple[str, Any]:
                 async with sem:
                     try:
-                        raw = await _fetch_raw_tools(conn)
-                    except Exception:  # noqa: BLE001
+                        async with asyncio.timeout(_DISCOVERY_TIMEOUT):
+                            raw = await _fetch_raw_tools(conn)
+                    except Exception as exc:  # noqa: BLE001
+                        self.connection_errors[name] = type(exc).__name__
+                        self.server_status[name] = "failed"
                         logger.debug("MCP schema refresh failed for %s", name, exc_info=True)
                         return name, None
+                    self.connection_errors.pop(name, None)
+                    self.server_status[name] = "ready"
                     return name, {
                         "fingerprint": _connection_fingerprint(conn),
                         "tools": [t.model_dump(mode="json") for t in raw],
@@ -775,7 +866,7 @@ class MCPMiddleware(AgentMiddleware):
             return {name: entry for name, entry in results if entry is not None}
 
         try:
-            fresh_entries = asyncio.run(_refresh())
+            fresh_entries = await _refresh()
             if fresh_entries:
                 # Single read-modify-write at the end to avoid clobbering
                 # entries written by the boot path.
@@ -796,9 +887,8 @@ class MCPMiddleware(AgentMiddleware):
         ``on_session_start`` name was NOT a recognised hook, so it never fired,
         which left ``mcp_tools`` state empty and the MCP doc section missing.
 
-        Tools are normally discovered eagerly at agent-build time so they are
-        registered with the graph; this hook defensively ensures discovery has
-        run and exposes the metadata via state for the system-prompt section.
+        Start discovery without delaying ordinary turns. Explicit MCP calls
+        await it and resolve live tools through the generic routing hook.
 
         Args:
             state: Current agent state.
@@ -807,7 +897,7 @@ class MCPMiddleware(AgentMiddleware):
         Returns:
             State update with MCP tools metadata, or None if no tools.
         """
-        await self._ensure_tools_discovered()
+        self.start_background_discovery()
 
         # Deliberately NOT written to state. The prompt section reads
         # `state.get("mcp_tools") or self._tools_cache`, so the instance copy is

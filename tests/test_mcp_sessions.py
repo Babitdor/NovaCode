@@ -288,7 +288,7 @@ def test_quit_closes_the_mcp_sessions():
     from novacode_cli.tui.app import NovaApp
 
     src = inspect.getsource(NovaApp.action_quit)
-    assert "_session_pool" in src, "action_quit does not close MCP sessions"
+    assert "middleware.aclose()" in src, "action_quit does not close MCP discovery and sessions"
     assert "aclose" in src
 
 

@@ -602,6 +602,8 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
             raise
 
     async def _call(self, request: ToolCallRequest, handler: Callable, params: MCPInput) -> Any:
+        if self._mcp is not None:
+            await asyncio.shield(self._mcp.start_background_discovery())
         target = resolve_target(self._mcp, params)
         if target is None:
             raise ValueError("Unknown or disabled MCP tool; use mcp.list().")

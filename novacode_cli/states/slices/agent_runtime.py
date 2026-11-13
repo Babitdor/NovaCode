@@ -191,7 +191,8 @@ class AgentRuntimeState:
             raise RuntimeError("Agent context not set. Cannot reload MCP servers.")
 
         # Reset the shared MCP middleware so it discovers the updated configuration
-        from novacode_cli.mcp import reset_shared_mcp_middleware
+        from novacode_cli.mcp import get_shared_mcp_middleware, reset_shared_mcp_middleware
+        await get_shared_mcp_middleware().aclose()
         reset_shared_mcp_middleware()
 
         # Recreate agent, preserving state. Off the event loop for the same

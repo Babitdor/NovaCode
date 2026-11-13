@@ -74,6 +74,9 @@ def build_mcp_tool(middleware) -> StructuredTool:
         return {"error": "MCP calls must execute through the agent's MCP middleware."}
 
     async def ainspect_tools(**kwargs):
+        import asyncio
+
+        await asyncio.shield(middleware.start_background_discovery())
         return inspect_tools(**kwargs)
 
     return StructuredTool.from_function(

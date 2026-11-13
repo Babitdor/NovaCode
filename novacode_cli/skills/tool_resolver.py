@@ -4,6 +4,22 @@ from __future__ import annotations
 
 
 def inventory_resolver(tools: list, metadata: list[dict] | None = None):
+    """Refresh aliases when background discovery or retries replace tools."""
+    signature = None
+    resolver = None
+
+    def resolve(name: str, runtime) -> list:
+        nonlocal signature, resolver
+        current = (tuple(id(tool) for tool in tools), len(metadata or []))
+        if current != signature:
+            resolver = _inventory_snapshot(tools, metadata)
+            signature = current
+        return resolver(name, runtime)
+
+    return resolve
+
+
+def _inventory_snapshot(tools: list, metadata: list[dict] | None = None):
     """Resolve actual names, server groups, and unambiguous readable aliases."""
     by_name = {tool.name: tool for tool in tools}
     groups: dict[str, list] = {}

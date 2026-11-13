@@ -267,7 +267,6 @@ from novacode_cli.agents.default_subagents.async_subagents import (
 from novacode_cli.config.config import (
     COLORS,
     agent_md as _agent_md,
-    boot_status,
     config,
     console,
     get_default_coding_instructions,
@@ -2417,28 +2416,11 @@ This file stores your preferences and context that persist across sessions.
         from novacode_cli.mcp import get_shared_mcp_middleware
 
         mcp_middleware = get_shared_mcp_middleware()
-        # Eagerly discover MCP tools BEFORE building the agent graph.
-        # create_deep_agent collects each middleware's ``.tools`` at construction
-        # time (langchain factory: ``[t for m in middleware for t in m.tools]``),
-        # so lazy discovery would leave ``mcp_middleware.tools`` empty and the
-        # MCP tools (serena, playwright, …) would never be registered or callable.
-        if not mcp_middleware._tools_discovered:
-            # Report a real completion as well as a start. Before this, only the
-            # start line was emitted, so a SUCCESSFUL discovery left the spinner
-            # sitting on "Nova is launching…" for the rest of the boot — the
-            # longest silent phase looked indistinguishable from a hang.
-            try:
-                servers = len(mcp_middleware.mcp_config.list_servers())
-                boot_status(f"mcp: linking {servers} servers…")
-                mcp_middleware._discover_tools_sync()
-                boot_status(
-                    f"mcp: {len(mcp_middleware.tools)} tools from {servers} servers",
-                    "ok",
-                )
-            except Exception as exc:  # noqa: BLE001
-                boot_status(f"mcp: some servers are still at large ({type(exc).__name__})", "warn")
+        # Disk schemas only: never wait for server startup before opening the UI.
+        # The generic MCP router resolves newly discovered tools at call time.
+        mcp_middleware.prepare_cached_tools()
         agent_middleware.insert(3, mcp_middleware)
-        mcp_tools = list(mcp_middleware.tools)
+        mcp_tools = mcp_middleware.tools
 
     # create_deep_agent supplies a default summarizer. The same-named custom
     # middleware below replaces it during graph assembly; adding a second
@@ -2463,6 +2445,18 @@ This file stores your preferences and context that persist across sessions.
         main_model_supports_images=_main_model_supports_images,
         skill_backend=composite_backend,
     )
+
+    if _has_mcp:
+        from novacode_cli.mcp.access import MCPAccessMiddleware
+
+        for spec in subagents:
+            if not isinstance(spec, dict) or "tools" not in spec:
+                continue
+            servers = MCP_TOOLS_BY_SUBAGENT.get(spec.get("name", "")) or ()
+            names = spec.get("_nova_tool_names") or ()
+            if servers or names:
+                existing = [m for m in spec.get("middleware", []) if not isinstance(m, MCPAccessMiddleware)]
+                spec["middleware"] = [MCPAccessMiddleware(mcp_middleware, servers, names), *existing]
 
     # Generic calls require this graph's routing middleware. Children receive
     # their explicitly allowed namespaced tools rather than this broad router.

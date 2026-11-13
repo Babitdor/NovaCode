@@ -96,6 +96,13 @@ landing-page copy.
 | `/mcp`, `/remote` | External tools and remote chat setup |
 | `/restore` | Recoverable file snapshots |
 
+MCP discovery runs in the background after the interface opens. Cached tool
+schemas are available immediately; the first MCP operation waits for discovery
+when needed. Connection failures appear as notifications. Open `/mcp`, select
+the failed server, and choose **Retry** to reconnect it without restarting Nova
+or the other servers. A **cached** status means schemas are loaded, not that a
+live connection has been verified.
+
 `/resume` and `nova --resume` browse saved sessions
 across projects. For another project's session, choose its saved workspace or
 your current workspace; either choice can be remembered with “Always use…”.

@@ -357,9 +357,8 @@ def test_approval_interrupt_fires_and_clears_notification():
     assert nid in ss.dismissed  # cleared once resolved
 
 
-def test_approval_notification_suppressed_when_auto_approving():
-    """A /remote turn auto-approves (auto_approve=True) — no permission is asked of
-    the user, so the approval notification must NOT fire (it would just be noise)."""
+def test_question_notification_is_shown_even_with_auto_approve():
+    """Auto-approve covers tools; unanswered questions still need the owner."""
 
     class _RecordingSS:
         thread_id = "t1"
@@ -416,9 +415,8 @@ def test_approval_notification_suppressed_when_auto_approving():
 
     asyncio.run(_run())
 
-    # The interrupt was still surfaced + resolved, but no notification was raised.
-    assert ss.added == [], ss.added
-    assert ss.registered == [], ss.registered
+    assert len(ss.added) == 1, ss.added
+    assert ss.registered == ["i1"], ss.registered
 
 
 class _PolicyRecordingSS:
@@ -696,7 +694,7 @@ def test_cancellation_emits_cancelled():
     assert any(isinstance(e, ev.Cancelled) for e in evts), [type(e).__name__ for e in evts]
 
 
-def test_plan_auto_approve_completes_turn():
+def test_plan_with_auto_approve_waits_for_user_then_completes_turn():
     class MockInterrupt:
         def __init__(self, id, value):
             self.id = id
@@ -760,12 +758,25 @@ def test_plan_auto_approve_completes_turn():
         out = []
         async for e in iterate_agent_events("test", Agent(), "nova-agent", session):
             out.append(e)
+            if isinstance(e, ev.InterruptRequest):
+                assert e.kind == "plan"
+                assert session.plan_mode_enabled
+                assert session.approved_plan_content is None
+                e.future.set_result({
+                    "response": {"approved": True, "mode": "auto"},
+                    "state_update": {"plan_mode_enabled": False},
+                })
         return out
 
-    evts = asyncio.run(_run())
+    async def bounded():
+        return await asyncio.wait_for(_run(), 3)
+
+    evts = asyncio.run(bounded())
     kinds = [type(e).__name__ for e in evts]
 
-    assert any(isinstance(e, ev.ContextMessage) and "switching to execution mode" in e.message for e in evts), kinds
+    assert sum(isinstance(e, ev.InterruptRequest) for e in evts) == 1
+    assert any(isinstance(e, ev.Done) for e in evts), kinds
+    assert not any(isinstance(e, ev.Error) for e in evts), kinds
     assert not session.plan_mode_enabled
     assert session.approved_plan_content == "Mock Plan content"
 
@@ -1440,7 +1451,7 @@ if __name__ == "__main__":
     test_happy_path_text_tool_todo()
     test_question_interrupt_resumes()
     test_cancellation_emits_cancelled()
-    test_plan_auto_approve_completes_turn()
+    test_plan_with_auto_approve_waits_for_user_then_completes_turn()
     test_policy_denied_retry_loop_is_bounded()
     test_user_rejection_does_not_trip_the_guard()
     test_quickjs_custom_events_become_panel_rows()

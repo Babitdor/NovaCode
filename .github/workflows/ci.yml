@@ -135,6 +135,12 @@ jobs:
         run: uv run --no-sync python scripts/verify_prime.py --mutations
       - name: Verify native and MCP Code Mode boundaries
         run: uv run --no-sync python scripts/verify_mcp_code_mode.py
+      - name: Verify approvals and background MCP startup
+        run: >-
+          uv run --no-sync pytest -q --tb=short --junitxml=test-results/approval-startup.xml
+          tests/test_agent_stream.py
+          tests/test_mcp_background.py
+          tests/test_provider_cache_usage.py
       - name: Run offline regression tests
         run: >-
           uv run --no-sync pytest -v --tb=short --junitxml=test-results/regression.xml
@@ -318,7 +324,6 @@ jobs:
           tests/test_langsmith_setup.py
           tests/test_langsmith_setup_modal.py
           tests/test_tui_trace_command.py
-          tests/test_agent_stream.py
           tests/test_reasoning_visibility.py
           tests/test_reasoning_scroll.py
           tests/test_reasoning_content.py

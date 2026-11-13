@@ -1300,6 +1300,7 @@ class McpScreen(ModalScreen[None]):
                     "Sign in", id="authenticate", tooltip="Sign in to a remote server (browser)"
                 )
                 yield Button("Tools", id="select-tools")
+                yield Button("Retry", id="retry")
                 yield Button("Toggle", id="toggle-enable")
                 yield Button("Remove", id="remove", variant="error")
                 yield Button("Close", id="close")
@@ -1316,19 +1317,50 @@ class McpScreen(ModalScreen[None]):
         except Exception:  # noqa: BLE001
             pass
 
-    @work(thread=True, exclusive=True)
-    def _discover_then_refresh(self) -> None:
-        """Run MCP discovery in a worker thread, then repaint on the UI thread."""
-        try:
-            from novacode_cli.mcp import get_shared_mcp_middleware
+    @work
+    async def _discover_then_refresh(self) -> None:
+        """Join the startup discovery without starting duplicate connections."""
+        import asyncio
+        from novacode_cli.mcp import get_shared_mcp_middleware
 
-            get_shared_mcp_middleware()._discover_tools_sync()
-        except Exception:  # noqa: BLE001
-            pass
         try:
-            self.app.call_from_thread(self._reload)
-        except Exception:  # noqa: BLE001
-            pass
+            await asyncio.shield(get_shared_mcp_middleware().start_background_discovery())
+        except Exception as exc:
+            self.notify(f"MCP setup failed ({type(exc).__name__}).", severity="warning")
+        if self.is_mounted:
+            self._reload()
+
+    @work
+    async def _retry_highlighted(self) -> None:
+        index = self.query_one("#mcp-configured", OptionList).highlighted
+        if index is None or not 0 <= index < len(self._config_names):
+            return
+        name = self._config_names[index]
+        from novacode_cli.mcp import get_shared_mcp_middleware
+        from novacode_cli.mcp.config import MCPConfig
+
+        config = MCPConfig().get_server(name)
+        if config is None or config.disabled:
+            self.notify("Activate the server before retrying.", severity="warning")
+            return
+        button = self.query_one("#retry", Button)
+        if button.disabled:
+            return
+        button.disabled = True
+        app = self.app
+        app.notify(f"Connecting to MCP {name}…")
+        try:
+            success = await get_shared_mcp_middleware().retry_server(name)
+            app.notify(
+                f"MCP {name}: connected." if success else f"MCP {name}: connection failed. You can retry again.",
+                severity="information" if success else "warning",
+            )
+        except Exception as exc:
+            app.notify(f"MCP {name}: retry failed ({type(exc).__name__}).", severity="warning")
+        finally:
+            if self.is_mounted:
+                button.disabled = False
+                self._reload()
 
     def _reload(self) -> None:
         """Refresh both configured servers and presets lists (non-blocking)."""
@@ -1346,13 +1378,16 @@ class McpScreen(ModalScreen[None]):
         # Active servers from whatever has ALREADY been discovered (no blocking
         # discovery here — _discover_then_refresh fills this in asynchronously).
         active_servers: set[str] = set()
+        connection_status = {}
         try:
             from novacode_cli.mcp import get_shared_mcp_middleware
 
             middleware = get_shared_mcp_middleware()
+            connection_status = getattr(middleware, "server_status", {})
+            active_servers.update(name for name, status in connection_status.items() if status == "ready")
             for tool_meta in middleware._tools_cache:
                 sn = tool_meta.get("server")
-                if sn:
+                if sn and connection_status.get(sn) not in {"failed", "connecting"}:
                     active_servers.add(sn)
         except Exception:  # noqa: BLE001
             pass
@@ -1378,6 +1413,8 @@ class McpScreen(ModalScreen[None]):
                         (f"{status_mark}  {name}  \u00b7  ", status_style),
                         (f"{transport}  \u00b7  {loc}", "dim"),
                     )
+                if not is_disabled and name in connection_status:
+                    label.append(f"  · {connection_status[name]}", style="yellow")
                 if sc.oauth:
                     label.append("  · OAuth", style="cyan")
                 if sc.tools is not None:
@@ -1468,6 +1505,8 @@ class McpScreen(ModalScreen[None]):
             self._authenticate_highlighted()
         elif event.button.id == "select-tools":
             self._select_tools_highlighted()
+        elif event.button.id == "retry":
+            self._retry_highlighted()
         elif event.button.id == "toggle-enable":
             self._toggle_highlighted()
 
