@@ -12,6 +12,7 @@ Hard gates: do not implement, edit project source or delete files while planning
 1. **Investigate** — read relevant files; understand structure, conventions, call chains and what could break. For useful independent scans, use available `plan-scout-agent` async subagents (see the scout guidance below).
 2. **Clarify** — ask with `ask_user_question` only when investigation leaves material ambiguity that changes the plan.
 3. **Design** — choose the minimal approach that achieves the goal; explain material tradeoffs.
+   State any unresolved behavior choice, the observable outcome of each step and how to check it. Include new infrastructure only when current requirements justify it; preserve existing contracts and user edits.
 4. **Self-check** — verify against the checklists below and collect required scout findings.
 5. **Present** — call `exit_plan_mode(plan=<markdown>)`. Refine or proceed based on the response.
 </workflow>

@@ -9,7 +9,21 @@ UI configuration or remote bridges.
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 from typing import Any
+
+
+def _build_agent_for_switch(**kwargs: Any) -> tuple[Any, Any]:
+    """Capture startup output in the rebuild thread while a TUI is active."""
+    from textual._context import active_app
+
+    from novacode_cli.agents.core_agent import create_agent_with_config
+    from novacode_cli.config.config import console
+
+    # Rich capture is thread-local; capture around to_thread in the UI cannot
+    # intercept MCP and role-model startup prints from this worker thread.
+    with console.capture() if active_app.get(None) is not None else nullcontext():
+        return create_agent_with_config(**kwargs)
 
 
 class AgentRuntimeState:
@@ -96,8 +110,6 @@ class AgentRuntimeState:
         if not all([self._agent, self._checkpointer, self._store, self._assistant_id]):
             raise RuntimeError("Agent context not set. Cannot switch model.")
 
-        from novacode_cli.agents.core_agent import create_agent_with_config
-
         # Recreate agent with new model, preserving state.
         #
         # Off the event loop: this rebuild recompiles every subagent graph and
@@ -109,7 +121,7 @@ class AgentRuntimeState:
         # objects, so running it in a worker thread is safe.
         definition_options = getattr(self._agent, "agent_definition_options", {})
         new_agent, new_backend = await asyncio.to_thread(
-            create_agent_with_config,
+            _build_agent_for_switch,
             model=new_model,
             assistant_id=self._assistant_id,
             tools=self._tools,
@@ -182,13 +194,11 @@ class AgentRuntimeState:
         from novacode_cli.mcp import reset_shared_mcp_middleware
         reset_shared_mcp_middleware()
 
-        from novacode_cli.agents.core_agent import create_agent_with_config
-
         # Recreate agent, preserving state. Off the event loop for the same
         # reason as switch_model: the rebuild recompiles every subagent graph and
         # re-scans plugin skills/agents/MCP, which would otherwise freeze the TUI.
         new_agent, new_backend = await asyncio.to_thread(
-            create_agent_with_config,
+            _build_agent_for_switch,
             model=self._model,
             assistant_id=self._assistant_id,
             tools=self._tools,

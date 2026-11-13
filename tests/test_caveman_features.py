@@ -211,8 +211,9 @@ def test_scripts_are_checkpointed_exactly_and_cannot_execute_via_recovery():
     )
     _, state = prepare([message])
     saved = state["caveman_blocks"]
-    assert saved[0]["reference"] == reference(command)
-    result = inspect_session([], "recover", ref=reference(command), saved_blocks=saved)
+    assert saved[0]["reference"] != reference(command)
+    saved_ref = saved[0]["reference"]
+    result = inspect_session([], "recover", ref=saved_ref, saved_blocks=saved)
     assert result["args"] == {"command": command, "timeout": 10}
     assert result["requires_current_approval"] is True
     assert inspect_session([], "blocks", saved_blocks=saved)["blocks"]

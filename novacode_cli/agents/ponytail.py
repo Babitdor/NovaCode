@@ -41,9 +41,25 @@ def ponytail_instructions(level: str = "full") -> str:
     return f"PONYTAIL MODE ACTIVE — level: {mode}\n\n" + "\n".join(lines)
 
 
-def is_deactivation_command(text: str) -> bool:
+def nova_ponytail_instructions(level: str = "full") -> str:
+    """Preserve upstream instructions with Nova's execution and evidence boundaries."""
+    return ponytail_instructions(level) + (
+        "\n\nNova host boundaries: Ponytail changes implementation economy and prose, "
+        "not task scope, permissions, correctness or verification. Complete all explicitly "
+        "requested behavior, including error paths and compatibility. Lite suggestions and "
+        "ultra pushback must not become repeated approval gates for authorized work. "
+        "Do not remove validation, tests or required functionality to minimize a diff. "
+        "Choose readable code over compressed code. Report only observed test results; "
+        "state unverified behavior and material risks without inventing either. "
+        "Existing coding workflow and security rules still apply."
+    )
+
+
+def is_deactivation_command(text: str, mode: str = "ponytail") -> bool:
     """Only standalone commands disable the mode, matching upstream hooks."""
-    return re.sub(r"[.!?\s]+$", "", text.strip().lower()) in {"stop ponytail", "normal mode"}
+    return mode in {"ponytail", "caveman"} and re.sub(
+        r"[.!?\s]+$", "", text.strip().lower()
+    ) in {f"stop {mode}", "normal mode"}
 
 
 def helper_prompt(text: str) -> str:

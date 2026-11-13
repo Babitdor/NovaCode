@@ -1405,6 +1405,9 @@ class PromptInput(TextArea):
             self.value = value
             super().__init__()
 
+    class CommandCenterRequested(Message):
+        """Open the session overview from an empty composer."""
+
     @property
     def value(self) -> str:
         """Alias of ``text`` so callers written against ``Input`` still work."""
@@ -1500,6 +1503,11 @@ class PromptInput(TextArea):
             return False
 
     async def _on_key(self, event: events.Key) -> None:
+        if event.key == "left" and not self.text and not self._palette_open() and not self._paste_active:
+            event.prevent_default()
+            event.stop()
+            self.post_message(self.CommandCenterRequested())
+            return
         # Up on the first line / Down on the last: input history (and queued
         # messages). Inside multi-line text the arrows still move the cursor,
         # and the command palette keeps them while it is open.

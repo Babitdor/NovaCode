@@ -821,6 +821,16 @@ def _capture(fn, *args, **kwargs) -> Text:
     return Text.from_ansi(cap.get())
 
 
+def _quiet_call(fn, *args, **kwargs):
+    """Return a setup result while capturing Rich chatter in its executing thread.
+
+    Pass this callable *inside* to_thread; an outer capture cannot intercept
+    worker output. Requested command reports should continue using _capture.
+    """
+    with _rich_console.capture():
+        return fn(*args, **kwargs)
+
+
 def _approval_details(action_requests: list[dict]) -> Text:
     """Detailed, multi-line view of the actions awaiting approval."""
     from novacode_cli.ui.ui_elements import format_tool_display
@@ -8773,7 +8783,7 @@ class NovaApp(App):
         self._hide_palette()
         from novacode_cli.agents.ponytail import is_deactivation_command
 
-        if self._compression_mode == "ponytail" and is_deactivation_command(text):
+        if is_deactivation_command(text, self._compression_mode):
             self.run_worker(self._set_compression_mode("off"), group="compression_mode")
             return
         # Submitting is an explicit act: resume following the tail so the user
@@ -13093,12 +13103,8 @@ class NovaApp(App):
         """
         self._set_status(status_phrases.status_line("working"))
         try:
-            # The agent-rebuild path prints build/skill/MCP chatter to the global
-            # Rich console, which bypasses Textual and corrupts the TUI screen.
-            # Capture it (like the other TUI handlers) — our own summary is logged
-            # below via self._log.
-            with _rich_console.capture():
-                new_agent, new_backend = await self.session_state.reload_mcp_servers()
+            # AgentRuntimeState captures startup chatter inside its build thread.
+            new_agent, new_backend = await self.session_state.reload_mcp_servers()
             self.agent = new_agent
             self.backend = new_backend
         except Exception as e:  # noqa: BLE001
@@ -13534,7 +13540,8 @@ class NovaApp(App):
         try:
             from novacode_cli.config.model_create import create_model
 
-            new_model = create_model()
+            with _rich_console.capture():
+                new_model = create_model()
             new_agent, new_backend = await self.session_state.switch_model(new_model)
             self.agent = new_agent
             self.backend = new_backend
@@ -13800,7 +13807,7 @@ class NovaApp(App):
             try:
                 if live_provider in changed:
                     model = await asyncio.to_thread(
-                        create_model_from_config, live_provider, self.model_name
+                        _quiet_call, create_model_from_config, live_provider, self.model_name
                     )
                     if model is None:
                         self._log(
@@ -13856,6 +13863,10 @@ class NovaApp(App):
         from novacode_cli.tui.session_import import dispatch_import_command
 
         await dispatch_import_command(self, text)
+
+    def on_prompt_input_command_center_requested(self, event: Any) -> None:
+        event.stop()
+        self.run_worker(self._run_command_center(), group="command-center", exclusive=True)
 
     async def _run_command_center(self) -> None:
         """Inspect all saved projects and live tabs without replacing a running turn."""
@@ -14108,7 +14119,8 @@ class NovaApp(App):
             try:
                 from novacode_cli.config.model_create import create_model_for_session
 
-                resumed_model, model_warning = create_model_for_session(
+                resumed_model, model_warning = _quiet_call(
+                    create_model_for_session,
                     resumed_provider,
                     getattr(session_data.meta, "model_name", None),
                 )
@@ -14419,7 +14431,8 @@ class NovaApp(App):
         model = getattr(ss, "_model", None)
         if model is None:
             raise RuntimeError("no model configured")
-        return create_agent_with_config(
+        return _quiet_call(
+            create_agent_with_config,
             model=model,
             assistant_id=getattr(ss, "_assistant_id", None) or self.assistant_id,
             tools=getattr(ss, "_tools", None) or [],
@@ -15623,6 +15636,26 @@ class NovaApp(App):
             restore_input_mode(getattr(self, "_driver", None))
 
     async def _update_and_restart(self) -> None:
+        """Start one update preparation and keep failures visible without exiting."""
+        if getattr(self, "_update_preparing", False):
+            self.notify("Update preparation is already running.", title="Nova update")
+            return
+        self._update_preparing = True
+        try:
+            self._set_status("checking whether Nova can update…")
+            self.notify("Checking running sessions before updating…", title="Nova update")
+            await self._prepare_update_restart()
+        except Exception as error:  # noqa: BLE001 — keep the current installation/session usable
+            logger.exception("Update preparation failed")
+            self._log(Text(f"Update not started: {error}", style="red"))
+        finally:
+            self._update_preparing = False
+            from novacode_cli import updates
+
+            if updates.restart_request is None:
+                self._set_status("working" if self._turn_running() else "ready")
+
+    async def _prepare_update_restart(self) -> None:
         """/update's "Update now": save, close the TUI, then update and come back.
 
         The install itself runs after Nova exits (``updates.restart_after_update``,
@@ -15662,8 +15695,13 @@ class NovaApp(App):
                 if not self._turn_running():
                     break
                 await asyncio.sleep(0.05)
+            if self._turn_running():
+                self._log(Text("Update not started: the turn is still stopping. Retry /update once it stops.", style="yellow"))
+                return
         self._set_status("saving the session before the update…")
-        await self._save_session(pane=getattr(self, "_root_pane", None))
+        if not await self._save_session(pane=getattr(self, "_root_pane", None)):
+            self._log(Text("Update not started: could not save the session. Retry /save, then /update.", style="red"))
+            return
         session_id = getattr(self.session_state, "session_id", None)
         manager = self.session_manager
         saved = bool(session_id and manager and manager.load_session_meta(session_id))
@@ -15683,7 +15721,7 @@ class NovaApp(App):
         try:
             # Summarize with the SESSION's live model (honors an in-session /model
             # switch), falling back to config only if none is set.
-            model = getattr(self.session_state, "_model", None) or create_model()
+            model = getattr(self.session_state, "_model", None) or _quiet_call(create_model)
             # Resolve the agent dir so durable learnings can be persisted to memory.
             agent_dir = None
             try:
@@ -16361,7 +16399,7 @@ class NovaApp(App):
         applied = False
         if self.session_state is not None:
             try:
-                new_agent, new_backend = await self.session_state.switch_model(create_model())
+                new_agent, new_backend = await self.session_state.switch_model(_quiet_call(create_model))
                 self.agent = new_agent
                 self.backend = new_backend
                 applied = True
@@ -16532,7 +16570,7 @@ class NovaApp(App):
                     or self.model_name
                 )
                 new_model = await asyncio.to_thread(
-                    build_chat_model, self._model_provider, model_name
+                    _quiet_call, build_chat_model, self._model_provider, model_name
                 )
                 new_agent, new_backend = await self.session_state.switch_model(new_model)
                 self.agent = new_agent
@@ -17056,7 +17094,7 @@ class NovaApp(App):
             return None
         if agent_dir is None:
             agent_dir, _ = self._dream_dirs()
-        dream_agent = await asyncio.to_thread(create_dream_agent, model, agent_dir)
+        dream_agent = await asyncio.to_thread(_quiet_call, create_dream_agent, model, agent_dir)
 
         class _DreamSession:
             thread_id = f"dream-{uuid.uuid4().hex[:12]}"
@@ -17152,8 +17190,8 @@ class NovaApp(App):
         )
         if not isinstance(prompt, str) or not prompt.strip():
             return "nothing to do", None
-        model = await asyncio.to_thread(create_model)
-        agent = await asyncio.to_thread(create_dream_agent, model, agent_dir)
+        model = await asyncio.to_thread(_quiet_call, create_model)
+        agent = await asyncio.to_thread(_quiet_call, create_dream_agent, model, agent_dir)
         self._close_tool_group()
         await self._transcript().mount(line)
         report: list[str] = []
@@ -18471,9 +18509,9 @@ class NovaApp(App):
         try:
             model = getattr(getattr(self, "session_state", None), "_model", None)
             if model is None:
-                model = await asyncio.to_thread(get_council_model)
+                model = await asyncio.to_thread(_quiet_call, get_council_model)
             settings = await asyncio.to_thread(load_settings)
-            models = await asyncio.to_thread(resolve_models, settings, model)
+            models = await asyncio.to_thread(_quiet_call, resolve_models, settings, model)
         except Exception as exc:  # noqa: BLE001 — no provider configured
             self._log(Text(f"Council unavailable: {exc}", style="red"))
             return

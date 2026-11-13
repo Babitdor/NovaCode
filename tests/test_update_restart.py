@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -286,6 +286,7 @@ async def test_update_now_saves_stops_and_exits_with_a_restart_request(monkeypat
 
     async def save_session(**_kw):
         order.append("save")
+        return True
 
     async def stop():
         order.append("stop")
@@ -355,8 +356,14 @@ async def test_update_screen_offers_update_now_when_one_is_available(monkeypatch
     monkeypatch.setattr(updates, "check_for_update", lambda **_kw: updates.UpdateStatus(True, "a" * 12, "b" * 12))
     monkeypatch.setattr(updates, "release_details", lambda status: status)
     app = _app()
-    restart = Mock()
+    restart = AsyncMock(wraps=app._update_and_restart)
+    exited = Mock()
     async with app.run_test(size=(120, 40)) as pilot:
+        app.session_state.session_id = "clicked-session"
+        app.session_manager = Mock(load_session_meta=Mock(return_value=object()))
+        monkeypatch.setattr(app, "_save_session", AsyncMock(return_value=True))
+        monkeypatch.setattr(app, "_turn_running", lambda: False)
+        monkeypatch.setattr(app, "exit", exited)
         monkeypatch.setattr(app, "_update_and_restart", restart)
         screen = UpdateScreen()
         app.push_screen(screen)
@@ -364,7 +371,81 @@ async def test_update_screen_offers_update_now_when_one_is_available(monkeypatch
         await screen.check_update().wait()
         button = screen.query_one("#update-install", Button)
         assert not button.disabled
-        monkeypatch.setattr(app, "run_worker", lambda coro, **_kw: None)
-        screen.on_button_pressed(Button.Pressed(button))
+        await pilot.pause(0.4)
+        assert await pilot.click("#update-install", offset=(2, 1)), (
+            button.region, screen.query_one("#modal-buttons").region,
+            app.get_widget_at(button.region.x + 1, button.region.y + 1),
+        )
         await pilot.pause()
-    restart.assert_called_once()
+    restart.assert_awaited_once()
+    exited.assert_called_once()
+    assert updates.restart_request == {"session": "clicked-session", "continue": False}
+
+
+@pytest.mark.asyncio
+async def test_update_screen_disables_install_when_recheck_fails(monkeypatch):
+    from novacode_cli.tui.screens import UpdateScreen
+    from tests.test_tui_compaction_row import _app
+    from textual.widgets import Button
+
+    status = updates.UpdateStatus(True, "old", "new")
+    monkeypatch.setattr(updates, "check_for_update", lambda **_kw: status)
+    monkeypatch.setattr(updates, "release_details", lambda value: value)
+    app = _app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = UpdateScreen()
+        app.push_screen(screen)
+        await pilot.pause()
+        await screen.check_update().wait()
+        assert not screen.query_one("#update-install", Button).disabled
+        status = updates.UpdateStatus(False, "old", "", error="offline")
+        await screen.check_update().wait()
+        assert screen.query_one("#update-install", Button).disabled
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("save_error", [None, OSError("disk unavailable")])
+async def test_update_save_failure_keeps_nova_open(monkeypatch, save_error):
+    from tests.test_tui_compaction_row import _app
+
+    app = _app()
+    notices = []
+    async with app.run_test(size=(120, 40)):
+        monkeypatch.setattr(app, "_turn_running", lambda: False)
+        monkeypatch.setattr(app, "_save_session", AsyncMock(return_value=False, side_effect=save_error))
+        monkeypatch.setattr(app, "_log", lambda text: notices.append(text.plain))
+        exited = Mock()
+        monkeypatch.setattr(app, "exit", exited)
+        await app._update_and_restart()
+        assert not app._update_preparing
+        exited.assert_not_called()
+    assert updates.restart_request is None
+    assert any("Update not started" in notice for notice in notices)
+
+
+@pytest.mark.asyncio
+async def test_duplicate_update_does_not_cancel_preparation(monkeypatch):
+    import asyncio
+
+    from tests.test_tui_compaction_row import _app
+
+    app = _app()
+    started, finish = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    async def prepare():
+        calls.append("prepare")
+        started.set()
+        await finish.wait()
+
+    async with app.run_test(size=(120, 40)):
+        monkeypatch.setattr(app, "_prepare_update_restart", prepare)
+        task = asyncio.create_task(app._update_and_restart())
+        await started.wait()
+        try:
+            await app._update_and_restart()
+            assert not task.done()
+            assert calls == ["prepare"]
+        finally:
+            finish.set()
+            await task

@@ -351,10 +351,7 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
         or bool(guardrails.blocked_keywords)
     )
 
-    if (
-        compression_config.get_compression_mode() == "ponytail"
-        and is_deactivation_command(user_input)
-    ):
+    if is_deactivation_command(user_input, compression_config.get_compression_mode()):
         try:
             await asyncio.to_thread(compression_config.set_compression_mode, "off")
         except OSError:

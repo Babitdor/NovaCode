@@ -3186,6 +3186,8 @@ class UpdateScreen(ModalScreen[None]):
 
         retry = self.query_one("#update-retry", Button)
         retry.disabled = True
+        self.query_one("#update-install", Button).disabled = True
+        self._update_status = None
         self.query_one("#update-changelog", Button).disabled = True
         self.query_one("#update-status", Static).update("Checking for updates…")
         self.query_one("#update-detail", Static).update("Contacting the update source")
@@ -3225,8 +3227,16 @@ class UpdateScreen(ModalScreen[None]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "update-install":
+            event.stop()
+            status = getattr(self, "_update_status", None)
+            if event.button.disabled or status is None or status.error or not status.available:
+                return
+            event.button.disabled = True
+            app = self.app
             self.dismiss(None)
-            self.app.run_worker(self.app._update_and_restart(), group="update-restart", exclusive=True)
+            app.call_after_refresh(
+                lambda: app.run_worker(app._update_and_restart(), group="update-restart")
+            )
         elif event.button.id == "update-retry":
             self.check_update()
         elif event.button.id == "update-changelog":

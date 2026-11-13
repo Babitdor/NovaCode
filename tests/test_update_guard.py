@@ -61,6 +61,10 @@ async def test_tui_blocker_keeps_session_and_turn_running(monkeypatch: pytest.Mo
     from tests.test_tui_compaction_row import _app
 
     app = _app()
+    # This focused preflight test does not mount a screen; status rendering is
+    # covered by the update-button tests running a real Textual pilot.
+    monkeypatch.setattr(app, "_set_status", Mock())
+    monkeypatch.setattr(app, "notify", Mock())
     monkeypatch.setattr(
         guard, "check_update_blockers", Mock(side_effect=guard.UpdateBlockedError("PID 42"))
     )

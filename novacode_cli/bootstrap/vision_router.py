@@ -44,7 +44,7 @@ from langchain.agents.middleware.types import (
     ModelResponse,
 )
 from langchain.tools import ToolRuntime, tool
-from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AnyMessage, HumanMessage, ToolMessage
 
 logger = logging.getLogger("nova.vision_router")
 
@@ -121,7 +121,7 @@ def get_vision_model() -> BaseChatModel | None:
     failure starts a short cooldown (see :data:`_VISION_FAILURE_COOLDOWN`) rather
     than disabling vision permanently, so a transient problem self-heals.
     """
-    global _vision_model_instance, _vision_model_errored  # noqa: PLW0603
+    global _vision_model_instance  # noqa: PLW0603
     if _vision_model_errored:
         return None
     if _vision_model_instance is not None:
@@ -134,11 +134,11 @@ def get_vision_model() -> BaseChatModel | None:
         model = create_model_from_config(cfg["provider"], cfg["model"])
     except Exception:
         logger.exception("Failed to create vision model")
-        _vision_model_errored = True
+        _mark_vision_errored()
         return None
     if model is None:
         logger.warning("Vision model unavailable (missing provider/API key?)")
-        _vision_model_errored = True
+        _mark_vision_errored()
         return None
     _vision_model_instance = model
     logger.info("Vision captioning model ready")
@@ -219,7 +219,13 @@ async def caption_images(image_urls: list[str], task_hint: str = "") -> str:
                 },
             )
         raw = getattr(resp, "content", "")
-        text = (raw if isinstance(raw, str) else str(raw)).strip()
+        if isinstance(raw, list):
+            raw = "\n".join(
+                block["text"] for block in raw
+                if isinstance(block, dict) and block.get("type") == "text"
+                and isinstance(block.get("text"), str)
+            )
+        text = raw.strip() if isinstance(raw, str) else ""
     except TimeoutError:
         _vision_failure_reason = f"request timed out after {VISION_TOOL_TIMEOUT_SECONDS} seconds"
         _mark_vision_errored()
@@ -258,6 +264,9 @@ def _extract_image_urls(msg: AnyMessage) -> list[str]:
     content_blocks = getattr(msg, "content_blocks", None) or []
     for block in content_blocks:
         if isinstance(block, dict) and block.get("type") == "image":
+            if isinstance(block.get("url"), str):
+                urls.append(block["url"])
+                continue
             b64 = block.get("base64", "")
             mime = block.get("mime_type", None)
             if not mime:
@@ -371,22 +380,7 @@ def _strip_image_content(msg: AnyMessage) -> AnyMessage:
         notice = "[Image content omitted; call VISION to inspect it if needed.]"
         new_content = f"{text_content}\n{notice}".strip()
 
-    kwargs: dict[str, Any] = {
-        "content": new_content,
-        "additional_kwargs": getattr(msg, "additional_kwargs", {}),
-    }
-    if isinstance(msg, HumanMessage):
-        return HumanMessage(**kwargs)
-    if isinstance(msg, AIMessage):
-        return AIMessage(**kwargs)
-    if isinstance(msg, ToolMessage):
-        return ToolMessage(
-            **kwargs,
-            name=getattr(msg, "name", None),
-            tool_call_id=getattr(msg, "tool_call_id", ""),
-            artifact=getattr(msg, "artifact", None),
-        )
-    return msg
+    return msg.model_copy(update={"content": new_content})
 
 
 def _strip_all_images(messages: list[AnyMessage]) -> list[AnyMessage]:

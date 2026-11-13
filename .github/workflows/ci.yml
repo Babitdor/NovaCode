@@ -219,6 +219,7 @@ jobs:
           tests/test_refreshing_skills.py
           tests/test_skill_libraries_and_resolvers.py
           tests/test_compression_modes.py
+          tests/test_compression_robustness.py
           tests/test_lite_mode.py
           tests/test_caveman.py
           tests/test_caveman_features.py
@@ -290,6 +291,8 @@ jobs:
           tests/test_security_paths_audit.py
           tests/test_user_config_guard.py
           tests/test_vision_router.py
+          tests/test_vision_agent_regressions.py
+          tests/test_tui_model_navigation.py
           tests/test_image_utils.py
           tests/test_portable_paths_stdlib.py
           tests/test_security_remediation.py

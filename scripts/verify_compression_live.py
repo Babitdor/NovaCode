@@ -1,7 +1,8 @@
 """Opt-in real-provider checks: uv run python scripts/verify_compression_live.py.
 
-Makes 20 bounded calls using Nova's configured model. Saves synthetic outputs and
-provider usage in test-results/compression-live.json; never changes preferences.
+Probes availability, then makes 20 bounded calls using Nova's configured model.
+Saves synthetic outputs and provider usage in test-results/compression-live.json;
+never changes preferences.
 """
 
 # ruff: noqa: T201 -- opt-in command prints test progress.
@@ -19,7 +20,7 @@ from langchain.agents.middleware.types import ModelRequest
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from novacode_cli.config.model_create import create_model_from_config
-from novacode_cli.prompts import TEMPLATES_DIR
+from novacode_cli.prompts import render_template
 from novacode_cli.utils.model_info import get_model_info
 
 if TYPE_CHECKING:
@@ -105,7 +106,18 @@ def check_code(text: str) -> bool:  # noqa: PLR0911 -- independent fail-closed A
 async def main(provider: str, model_name: str, model: BaseChatModel) -> bool:
     """Exercise every mode through production request preparation."""
     from novacode_cli.agents.caveman import CAVEMAN_STYLES, CavemanMiddleware
-    from novacode_cli.agents.ponytail import PONYTAIL_LEVELS, ponytail_instructions
+    from novacode_cli.agents.ponytail import PONYTAIL_LEVELS, nova_ponytail_instructions
+
+    try:
+        await asyncio.wait_for(
+            model.ainvoke([HumanMessage("Reply with OK.")], max_tokens=32), timeout=20
+        )
+    except Exception as error:  # noqa: BLE001 - availability is distinct from mode quality
+        print(
+            f"Provider unavailable ({type(error).__name__}); mode quality not evaluated.",
+            flush=True,
+        )
+        return False
 
     modes = [
         ("off", "full"),
@@ -113,7 +125,7 @@ async def main(provider: str, model_name: str, model: BaseChatModel) -> bool:
         *(("ponytail", n) for n in PONYTAIL_LEVELS),
     ]
     semaphore = asyncio.Semaphore(2)
-    base = (TEMPLATES_DIR / "response_style.jinja").read_text(encoding="utf-8")
+    base = render_template("core_agent_system.jinja")
 
     async def run(mode: str, level: str, case: str, prompt: str) -> dict:
         request = ModelRequest(
@@ -122,7 +134,9 @@ async def main(provider: str, model_name: str, model: BaseChatModel) -> bool:
         if mode == "caveman":
             request = CavemanMiddleware.prepare(request, enabled=True, level=level)
         elif mode == "ponytail":
-            request = CavemanMiddleware.prepare_instructions(request, ponytail_instructions(level))
+            request = CavemanMiddleware.prepare_instructions(
+                request, nova_ponytail_instructions(level)
+            )
         async with semaphore:
             started = time.monotonic()
             try:
@@ -174,7 +188,11 @@ async def main(provider: str, model_name: str, model: BaseChatModel) -> bool:
                 }
 
             result["seconds"] = round(time.monotonic() - started, 2)
-            print(f"{mode}/{level}/{case}: {'PASS' if result['passed'] else 'FAIL'}", flush=True)
+            reason = f" ({result['error']})" if "error" in result else ""
+            print(
+                f"{mode}/{level}/{case}: {'PASS' if result['passed'] else 'FAIL'}{reason}",
+                flush=True,
+            )
             return result
 
     results = await asyncio.gather(

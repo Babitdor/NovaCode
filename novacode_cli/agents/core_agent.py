@@ -818,6 +818,8 @@ def _harden_subagent_specs(
     from novacode_cli.security.guardrails import build_pii_middleware
     from novacode_cli.sessions.gateway import SESSION_TOOLS
     from novacode_cli.bootstrap import VisionCaptionMiddleware
+    from novacode_cli.bootstrap.vision_router import build_vision_tool
+    from novacode_cli.config.model_capabilities import declare_multimodal_profile, model_supports_images
     from novacode_cli.errors import is_retryable_model_error
     from novacode_cli.security.middleware import SecurityMiddleware
     from novacode_cli.tracking.loop_guard import LoopGuardMiddleware
@@ -858,6 +860,18 @@ def _harden_subagent_specs(
             continue
         existing = list(spec.get("middleware") or [])
         new_spec = dict(spec)  # copy — never mutate the (possibly cached) original
+        # Explicit subagent models can have different capabilities from the
+        # orchestrator. Only agents inheriting its model inherit its override.
+        child_model = new_spec.get("model")
+        child_images = main_model_supports_images
+        if child_model is not None:
+            child_name = child_model if isinstance(child_model, str) else (
+                getattr(child_model, "model_name", None) or getattr(child_model, "model", "")
+            )
+            child_images = model_supports_images(
+                "", child_name, profile=getattr(child_model, "profile", None),
+            )
+            declare_multimodal_profile(child_model, images=child_images)
         new_spec["interrupt_on"] = {}
         spec_tools = new_spec.get("tools")
         if spec_tools:
@@ -871,6 +885,8 @@ def _harden_subagent_specs(
         _sa_name = new_spec.get("name") or "subagent"
         _cur_tools = list(new_spec.get("tools") or [])
         _have = {getattr(t, "name", None) for t in _cur_tools}
+        if not child_images and "VISION" not in _have:
+            _cur_tools.append(build_vision_tool())
         for _mb in (send_agent_message, read_agent_messages, *SESSION_TOOLS):
             if _mb.name not in _have:
                 _cur_tools.append(_mb)
@@ -936,7 +952,7 @@ def _harden_subagent_specs(
         if not has_vision:
             mw_to_add.append(
                 VisionCaptionMiddleware(
-                    main_model_supports_images=main_model_supports_images
+                    main_model_supports_images=child_images
                 )
             )
         if not has_security:

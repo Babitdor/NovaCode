@@ -81,8 +81,13 @@ before failing, and ignore any that are legitimate.
    deleted failing test cases, or added trivial always-green tests. Fail only if
    this is *clearly* present. When in doubt, pass.
 
-Be lenient: fail a check only when it is *clearly* unmet. A plausible, on-topic
-answer with no contradicting evidence passes. When in doubt, pass.
+Evaluate the requested behavior, not the confidence of the response. Use
+`responsive` to flag an implemented interpretation that contradicts the request
+or scope expansion that changes required behavior. Passing unrelated tests does
+not establish `tests_pass`; the evidence must exercise the affected path.
+Missing required evidence is not a pass. Do not invent defects, demand unrelated
+refactors, or penalize an honest limitation as a false success claim. Explain
+the specific unmet condition using the existing checks below.
 
 ### Respond with EXACTLY this block and nothing else
 <verdict>

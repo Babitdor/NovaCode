@@ -32,7 +32,7 @@ Before designing, make sure you understand:
 - Test coverage and integration points
 - Edge cases and error handling patterns
 
-Ask clarifying questions if requirements are ambiguous.
+Investigate ambiguity first. Ask only about unresolved choices that change the intended behavior; state reasonable assumptions for routine details. Prefer an approach using the current architecture before proposing extra layers or configuration.
 </investigation_checklist>
 
 
@@ -52,7 +52,7 @@ Numbered, actionable steps. For each: what to change, where (exact file/section)
 and why. Before/after snippets only where they earn their space.
 
 ## Verification
-How to confirm it works: name the tests or commands.
+For each outcome, name its test or command and expected result. For a defect, identify the reproducer; for a refactor, identify the behavior that must remain unchanged.
 
 ## Risks
 Potential issues and how to mitigate them.

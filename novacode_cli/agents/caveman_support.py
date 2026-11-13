@@ -9,6 +9,7 @@ import io
 import json
 import re
 from collections import Counter
+from copy import deepcopy
 from html.parser import HTMLParser
 from pathlib import PurePosixPath
 from typing import Any, Literal
@@ -136,12 +137,20 @@ def _browse_compact(text: str) -> str:
         return "".join(parser.parts).strip()
     # Markdown from fetch_url: remove surplus blank rows, keeping fenced code exact.
     parts = []
-    fenced = False
+    fence = ""
     blanks = 0
     for line in text.splitlines(keepends=True):
-        if line.lstrip().startswith(("```", "~~~")):
-            fenced = not fenced
-        if not fenced and not line.strip():
+        marker = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line.rstrip("\r\n"))
+        if marker:
+            if not fence:
+                fence = marker[1]
+            elif (
+                marker[1][0] == fence[0]
+                and len(marker[1]) >= len(fence)
+                and not marker[2].strip()
+            ):
+                fence = ""
+        if not fence and not line.strip():
             blanks += 1
             if blanks > 1:
                 continue
@@ -232,14 +241,14 @@ def script_blocks(messages: list) -> list[dict[str, Any]]:
             script = args.get("command") or args.get("code")
             if not isinstance(script, str) or not script.strip():
                 continue
-            ref = reference(script)
+            ref = reference(json.dumps({"tool": call["name"], "args": args}, sort_keys=True))
             if ref in blocks:
                 blocks[ref]["uses"] += 1
             else:
                 blocks[ref] = {
                     "reference": ref,
                     "tool": call["name"],
-                    "args": args,
+                    "args": deepcopy(args),
                     "uses": 1,
                     "chars": len(script),
                 }

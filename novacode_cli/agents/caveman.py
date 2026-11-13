@@ -98,6 +98,18 @@ MAX_BLOCK_CHARS = 50_000
 MAX_BLOCKS = 100
 
 
+def _has_multimodal(messages: list) -> bool:
+    """Check the live payload too: tools can add images after initial routing."""
+    return any(
+        isinstance(m.content, list)
+        and any(
+            isinstance(block, dict) and block.get("type") not in {"text", "input_text"}
+            for block in m.content
+        )
+        for m in messages
+    )
+
+
 class CavemanState(AgentState):
     """Thread-local originals and scripts, checkpointed but never sent wholesale."""
 
@@ -125,14 +137,7 @@ class CavemanMiddleware(AgentMiddleware):
             or config.get_router_enabled()
         ):
             return {"caveman_route": None}
-        multimodal = any(
-            isinstance(m.content, list)
-            and any(
-                isinstance(block, dict) and block.get("type") not in {"text", "input_text"}
-                for block in m.content
-            )
-            for m in state.get("messages", [])
-        )
+        multimodal = _has_multimodal(state.get("messages", []))
         if (
             config.get_caveman_features()["auto"]
             and not config.get_router_enabled()
@@ -218,10 +223,10 @@ class CavemanMiddleware(AgentMiddleware):
 
         config = NovaConfig()
         if config.get_compression_mode() == "ponytail":
-            from novacode_cli.agents.ponytail import ponytail_instructions
+            from novacode_cli.agents.ponytail import nova_ponytail_instructions
 
             return self.prepare_instructions(
-                request, ponytail_instructions(config.get_ponytail_level())
+                request, nova_ponytail_instructions(config.get_ponytail_level())
             )
         features = config.get_caveman_features()
         if self._style_only:
@@ -232,7 +237,12 @@ class CavemanMiddleware(AgentMiddleware):
         route = state.get("caveman_route")
         sources = state.get("caveman_sources")
         sources = sources if isinstance(sources, dict) else {}
-        if features["auto"] and isinstance(route, dict):
+        if (
+            features["auto"]
+            and isinstance(route, dict)
+            and not config.get_router_enabled()
+            and not _has_multimodal(request.messages)
+        ):
             from novacode_cli.agents.model_router import build_route_model
 
             model = build_route_model(route)

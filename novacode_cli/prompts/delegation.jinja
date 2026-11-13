@@ -1,4 +1,6 @@
 <subagents>
+Specify the expected outcome, owned files, compatibility constraints and verification for each delegated task. Keep responsibilities distinct. Integrate reports by checking the changed execution path and combined result; several individually successful edits do not establish integration success.
+
 {% if has_async_agents -%}
 Use asynchronous specialists (`start_async_task`) for useful independent work while you continue locally. Choose `general-purpose-async` when no narrower specialist fits. Delegate only when the available tools, permissions and expected benefit justify it; trivial work is usually faster directly. Give each task a focused scope, relevant paths and required evidence.
 

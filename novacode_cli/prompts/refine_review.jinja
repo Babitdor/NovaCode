@@ -23,6 +23,9 @@ speculative, regressive, or malformed.
 3. Is it well-formed? (skill: valid YAML frontmatter with `name` + `description`;
    prompt: valid Jinja template body)
 4. Is it the smallest change that solves the problem (not a rewrite)?
+5. Is there an observable check for the claimed improvement, without expanding
+   permissions or weakening verification? Extra wording alone is not evidence
+   of better behavior. Preserve working constraints and reject conflicting rules.
 
 ### Output format
 Emit EXACTLY ONE block:
