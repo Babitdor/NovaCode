@@ -162,6 +162,17 @@ For optional features, include the required flags when syncing, for example `uv 
 
 CI checks Linux and Windows, splits offline regressions into balanced shards, and verifies Windows wheel installation and reinstallation. PyPI publication requires successful CI for the exact release commit. [CI and release workflow](scripts/CI.md).
 
+## Contributing / Community
+
+- **Contribute:** see [CONTRIBUTING.md](CONTRIBUTING.md) for setup, focused checks, and PR expectations.
+- **Issues and proposals:** search [existing issues](https://github.com/Babitdor/NovaCode/issues) first; use issue templates for bug reports and feature requests. Discuss large changes before implementation.
+- **Starter issues:** maintainers will label/triage well-scoped tasks as `good first issue` or `help wanted` once the process is in place.
+- **Code of Conduct:** community participation is governed by [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+- **Security:** report vulnerabilities privately per [SECURITY.md](SECURITY.md) (**do not open public issues**). Product guardrails are documented in [docs/security-guardrails.md](docs/security-guardrails.md).
+- **Repo hygiene (maintainer-led checks):** scan tracked files/history for secrets or sensitive data before opening the repo broadly, rotate any exposed credentials, and ensure `.gitignore`/docs do not leak internal-only data. History rewrites/credential rotation are high-risk and must be handled deliberately by maintainers (not by automated edits).
+
+For development, run `uv sync --group dev` and tests relevant to your change. See [project instructions](AGENTS.md) for build and check commands.
+
 ## Documentation
 
 | Topic | Reference |
