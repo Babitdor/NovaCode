@@ -15,6 +15,11 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
     from pathlib import Path
 
+# The two TUI tests below boot a real app and wait on `_wait_for_screen`, whose
+# own budget is 20 s — longer than the suite-wide 10 s cap, which killed this
+# file mid-hang on a loaded Windows runner instead of letting it fail or pass.
+pytestmark = pytest.mark.timeout(30)
+
 _PLAN = "# Approved change\n\n## Steps\n1. Update the parser\n2. Run the tests\n"
 
 
