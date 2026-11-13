@@ -257,10 +257,10 @@ def exit_plan_mode(plan: str = "") -> str:
 
     Pass your full implementation plan as Markdown in ``plan`` — it is shown to
     the user inline for review (Claude Code plan-mode style), so you do not need
-    to write it to a file first. Execution pauses while the user reviews.
+    to write it to a file first. Execution pauses while the user reviews,
+    including when tool auto-approval is enabled.
     On approval the plan is saved automatically, named after its title: to
-    the project's ``.nova/plans/`` when the user approved it, to the global
-    ``~/.nova/plans/`` when it was auto-approved.
+    the project's ``.nova/plans/`` and mirrored to the global archive.
 
     Args:
         plan: The implementation plan as Markdown to present for approval.

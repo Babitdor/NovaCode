@@ -18,6 +18,34 @@ if TYPE_CHECKING:
 _PLAN = "# Approved change\n\n## Steps\n1. Update the parser\n2. Run the tests\n"
 
 
+@pytest.mark.parametrize("key,approved", [("escape", False), ("a", True)])
+async def test_tui_requires_explicit_plan_choice_with_auto_approve(key, approved):
+    import asyncio
+
+    from novacode_cli import ui_events
+    from novacode_cli.tui.screens import PlanApprovalModal
+    from tests.test_tui_app import _wait_for_screen
+    from tests.test_tui_home_preferences import _app
+
+    app = _app()
+    app.session_state.auto_approve = True
+    app.session_state.plan_mode_enabled = True
+    async with app.run_test(size=(110, 34)) as pilot:
+        future = asyncio.get_running_loop().create_future()
+        request = ui_events.InterruptRequest(
+            kind="plan", payload={"plan": _PLAN}, future=future,
+        )
+        app.run_worker(app._handle_interrupt(request))
+        await _wait_for_screen(app, pilot, PlanApprovalModal)
+        assert isinstance(app.screen, PlanApprovalModal)
+        assert not future.done()
+        assert app.session_state.plan_mode_enabled
+        await pilot.press(key)
+        result = await asyncio.wait_for(future, 5)
+        assert result["response"]["approved"] is approved
+        assert app.session_state.plan_mode_enabled is not approved
+
+
 @pytest.fixture(autouse=True)
 def plan_folders(isolated_plan_storage: tuple[Path, Path]) -> tuple[Path, Path]:
     return isolated_plan_storage
@@ -41,16 +69,18 @@ async def test_command_approval_saves_to_the_correct_scope(
         clear_plan_agent=Mock(),
         set_approved_plan=Mock(),
     )
+    approval = Mock(return_value={"approved": True, "action": "proceed_auto"})
     monkeypatch.setattr(
         "novacode_cli.ui.question_prompt.prompt_for_plan_approval",
-        lambda **_kwargs: {"approved": True, "action": "proceed_auto"},
+        approval,
     )
     if command == "approval":
         assert await plan_handler.handle_plan_approval(None, state, _PLAN)
     else:
         assert await plan_handler._disable_plan_mode(None, state)
     local_files = list((project / ".nova" / "plans").glob("*.md"))
-    assert bool(local_files) is not automatic
+    approval.assert_called_once()
+    assert local_files
     global_files = list(global_plans.rglob("*.md"))
     assert len(global_files) == 1
     assert global_files[0].read_text(encoding="utf-8") == _PLAN
@@ -128,13 +158,16 @@ async def test_cached_plan_handoff_is_persisted_even_without_inline_text(
         set_approved_plan=Mock(),
         clear_plan_agent=Mock(),
     )
+    approvals = 0
     async for event in iterate_agent_events("Implement the plan", Agent(), "nova", state):
         if isinstance(event, ui_events.InterruptRequest):
+            approvals += 1
             # The user can approve the plan and then auto-accept its edits.
             state.auto_approve = True
             event.future.set_result({"response": {"approved": True, "mode": "auto"}})
     project, global_plans = plan_folders
-    assert bool(list((project / ".nova" / "plans").glob("*.md"))) is not automatic
+    assert approvals == 1
+    assert list((project / ".nova" / "plans").glob("*.md"))
     assert len(list(global_plans.rglob("*.md"))) == 1
     state.set_approved_plan.assert_called_once_with(_PLAN)
 
@@ -166,13 +199,15 @@ def test_resumed_exit_tool_saves_file_based_plan_to_correct_scope(
 
 
 @pytest.mark.parametrize("command", ["approval", "off"])
+@pytest.mark.parametrize("automatic", [False, True])
 async def test_rejected_plans_are_not_persisted(
     plan_folders: tuple[Path, Path],
     monkeypatch: pytest.MonkeyPatch,
     command: str,
+    automatic: bool,
 ) -> None:
     state = SimpleNamespace(
-        auto_approve=False,
+        auto_approve=automatic,
         plan_mode_enabled=True,
         plan_content=_PLAN,
         todos=[],
@@ -190,6 +225,9 @@ async def test_rejected_plans_are_not_persisted(
     project, global_plans = plan_folders
     assert not (project / ".nova").exists()
     assert not global_plans.exists()
+    assert state.plan_mode_enabled
+    state.set_approved_plan.assert_not_called()
+    state.clear_plan_agent.assert_not_called()
 
 
 @pytest.mark.parametrize(

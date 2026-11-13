@@ -1270,12 +1270,7 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                 plan_handoff_required = False
                 # (plan text, approved by Nova itself?) for the approved plan.
                 approved_plan: tuple[str, bool] | None = None
-                # When the turn auto-approves (e.g. a /remote turn sets
-                # auto_approve=True), no permission is actually being asked of the
-                # user — the interrupt is resolved automatically — so a badge /
-                # desktop notification would just be noise. Skip it there; local,
-                # interactive turns (auto_approve off) still notify.
-                _auto_approve = bool(getattr(session_state, "auto_approve", False))
+                # Plans always require the owner; auto-approve applies to tool actions.
                 from novacode_cli.ui.hitl_approval import evaluate_tool_actions
 
                 for interrupt_id, kind, payload in pending_interrupts:
@@ -1285,40 +1280,6 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
                     # and hard-denies block without asking. Only a genuine "ask"
                     # falls through to surface an InterruptRequest + notification.
                     _policy_resolutions: list[dict | None] | None = None
-                    if kind == "plan" and _auto_approve:
-                        # Auto-approve plan without prompting
-                        # auto_approved, not mode: the TUI's "approve + auto-accept
-                        # edits" choice is ALSO mode "auto", and that one is the
-                        # user approving. This flag means nobody was asked.
-                        hitl_response[interrupt_id] = {
-                            "approved": True,
-                            "mode": "auto",
-                            "auto_approved": True,
-                        }
-                        command_state_update.update({"plan_mode_enabled": False})
-                        plan_approved = True
-                        approved_plan = ((payload or {}).get("plan") or "", True)
-
-                        # Set plan_mode_enabled=False on session_state and clear plan agent
-                        session_state.plan_mode_enabled = False
-                        using_separate_plan_agent = (
-                            hasattr(session_state, "plan_agent")
-                            and session_state.plan_agent is not None
-                        )
-                        plan_handoff_required = using_separate_plan_agent or bool(
-                            getattr(session_state, "plan_execution_handoff", False)
-                        )
-                        # Keep the planner/backend alive until the shared handoff
-                        # resolves plans that were written to .nova/plans/.
-                        session_state.plan_content = None
-
-                        yield ev.ContextMessage(
-                            "Plan Approved - switching to execution mode (auto-approved)",
-                            icon="✓",
-                            color="green",
-                        )
-                        continue
-
                     if kind == "tool":
                         try:
                             _policy_resolutions = await asyncio.to_thread(
@@ -1381,13 +1342,11 @@ async def _iterate_agent_events(  # noqa: C901, PLR0912, PLR0915
 
                     # Raise the notification BEFORE surfacing the interrupt, so the
                     # badge/notification hook fire the moment approval is needed —
-                    # not after the modal is answered (the old order ran this only
-                    # once the generator resumed past the yield). Skipped entirely
-                    # when auto-approving (see above).
+                    # not after the modal is answered. Automatically resolved
+                    # tool actions already continued above; every remaining ask
+                    # needs an owner response, including plans in auto mode.
                     _notif_id: str | None = None
-                    if kind in ("tool", "plan", "question") and (
-                        not _auto_approve or kind == "tool"
-                    ):
+                    if kind in ("tool", "plan", "question"):
                         _notif_msg = (
                             "Plan requires approval"
                             if kind == "plan"

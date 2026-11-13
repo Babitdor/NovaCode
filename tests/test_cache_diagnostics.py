@@ -44,6 +44,41 @@ def test_partial_normalized_usage_merges_deepseek_raw_cache_fields():
     }
 
 
+def test_openrouter_write_tokens_are_not_lost():
+    usage = ut._extract_usage(response(
+        {"input_tokens": 1000, "input_token_details": {"cache_read": 0}},
+        {"prompt_tokens": 1000, "prompt_tokens_details": {
+            "cached_tokens": 0, "cache_write_tokens": 900,
+        }},
+    ))
+    assert usage["cache_creation_tokens"] == 900
+    assert usage["uncached_tokens"] == 100
+
+
+def test_anthropic_normalized_cache_write_tiers_are_combined():
+    usage = ut._extract_usage(response({
+        "input_tokens": 1000,
+        "input_token_details": {
+            "cache_read": 100, "cache_creation": 0,
+            "ephemeral_5m_input_tokens": 400, "ephemeral_1h_input_tokens": 300,
+        },
+    }))
+    assert usage["cache_creation_tokens"] == 700
+    assert usage["uncached_tokens"] == 200
+
+
+def test_missing_cache_writes_and_request_reads_are_not_zero():
+    tree = ut.UsageTree("partial")
+    tree.record(("main",), "custom", {"input_tokens": 100, "cache_read_tokens": 0})
+    tree.requests.append({"provider": "custom", "usage": {"input_tokens": 100}})
+    rendered = tree.render()
+    assert "writes unavailable" in rendered
+    assert "cache read unavailable" in rendered
+    assert "0 written" not in rendered
+    restored = ut.UsageTree.from_dict(tree.to_dict())
+    assert restored.render() == rendered
+
+
 def test_reported_zero_wins_and_absent_usage_stays_absent():
     assert ut._extract_usage(response()) == {}
     assert ut._extract_usage(response({"input_tokens": 0}, {"prompt_tokens": 20})) == {

@@ -108,7 +108,7 @@ def create_plan_agent_with_config(
         sandbox: Optional sandbox backend for remote execution.
         sandbox_type: Type of sandbox provider ("modal", "runloop", "daytona")
         system_prompt: Optional custom system prompt
-        auto_approve: If True, skip human-in-the-loop approvals
+        auto_approve: Compatibility setting for tools; plan approval always requires the user.
         checkpointer: Conversation checkpointer to share with the core agent so
             plan mode SEES the prior conversation (and persists across restarts).
             When None, a private in-memory checkpointer is used (no continuity).

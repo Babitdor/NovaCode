@@ -84,6 +84,7 @@ class UsageNode:
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
+    cache_write_observed_calls: int = 0
     calls: int = 0
     unavailable_calls: int = 0
     cache_observed_input_tokens: int = 0
@@ -105,6 +106,7 @@ class UsageNode:
         self.output_tokens += int(usage.get("output_tokens", 0))
         self.cache_read_tokens += int(usage.get("cache_read_tokens", 0))
         self.cache_creation_tokens += int(usage.get("cache_creation_tokens", 0))
+        self.cache_write_observed_calls += int("cache_creation_tokens" in usage)
         if "cache_read_tokens" in usage and "input_tokens" in usage:
             self.cache_observed_input_tokens += int(usage.get("input_tokens", 0))
             self.cache_observed_read_tokens += int(usage["cache_read_tokens"])
@@ -151,6 +153,7 @@ class UsageNode:
             "cache_read_tokens": self.cache_read_tokens,
             "cache_creation_tokens": self.cache_creation_tokens,
             "calls": self.calls,
+            "cache_write_observed_calls": self.cache_write_observed_calls,
             "cache_observed_input_tokens": self.cache_observed_input_tokens,
             "cache_observed_read_tokens": self.cache_observed_read_tokens,
         }
@@ -170,6 +173,7 @@ class UsageNode:
             "cache_read_tokens": self.cache_read_tokens,
             "cache_creation_tokens": self.cache_creation_tokens,
             "calls": self.calls,
+            "cache_write_observed_calls": self.cache_write_observed_calls,
             "children": [c.to_dict() for c in self.children],
             "unavailable_calls": self.unavailable_calls,
             "cache_observed_input_tokens": self.cache_observed_input_tokens,
@@ -187,6 +191,9 @@ class UsageNode:
             output_tokens=data.get("output_tokens", 0),
             cache_read_tokens=data.get("cache_read_tokens", 0),
             cache_creation_tokens=data.get("cache_creation_tokens", 0),
+            cache_write_observed_calls=data.get(
+                "cache_write_observed_calls", int(data.get("cache_creation_tokens", 0) > 0),
+            ),
             calls=data.get("calls", 0),
             unavailable_calls=data.get("unavailable_calls", 0),
             cache_observed_input_tokens=data.get("cache_observed_input_tokens", 0),
@@ -297,6 +304,12 @@ class UsageTree:
             f"{total['input_tokens']:>9,} in  {total['output_tokens']:>7,} out  "
             f"{total['calls']:>3} calls  {cost_text}"
         )
+        writes = (
+            f"{total['cache_creation_tokens']:,} written"
+            if total["cache_write_observed_calls"] else "writes unavailable"
+        )
+        if 0 < total["cache_write_observed_calls"] < total["calls"]:
+            writes += " (partial reporting)"
         if total["cache_observed_input_tokens"]:
             reuse = total["cache_observed_read_tokens"] / total["cache_observed_input_tokens"] * 100
             lines.insert(
@@ -304,28 +317,35 @@ class UsageTree:
                 f"Cache reuse: {reuse:.1f}% of observed input tokens "
                 f"({total['cache_observed_input_tokens']:,}/{total['input_tokens']:,} observed); "
                 f"{total['cache_read_tokens']:,} read, "
-                f"{total['cache_creation_tokens']:,} written. "
+                f"{writes}. "
                 "Missing cache usage is unavailable. Costs are uncached estimates.",
             )
         elif total["input_tokens"]:
-            lines.insert(-1, "Cache reuse: unavailable. Costs are uncached estimates.")
+            lines.insert(-1, f"Cache reuse: unavailable; {writes}. Costs are uncached estimates.")
         attributed: dict[tuple[str, ...], dict[str, int]] = {}
         for record in self.requests:
             key = tuple(
                 str(record.get(k) or "unknown") for k in ("provider", "model", "purpose", "task_id")
             )
             subtotal = attributed.setdefault(
-                key, {"calls": 0, "input_tokens": 0, "cache_read_tokens": 0}
+                key, {"calls": 0, "input_tokens": 0, "cache_read_tokens": 0, "cache_read_calls": 0}
             )
             subtotal["calls"] += 1
+            subtotal["cache_read_calls"] += int("cache_read_tokens" in record.get("usage", {}))
             for name in ("input_tokens", "cache_read_tokens"):
                 subtotal[name] += int(record.get("usage", {}).get(name, 0))
         for (provider, model, purpose, task), subtotal in attributed.items():
+            cache_read = (
+                f"{subtotal['cache_read_tokens']:,} cache read"
+                if subtotal["cache_read_calls"] else "cache read unavailable"
+            )
+            if 0 < subtotal["cache_read_calls"] < subtotal["calls"]:
+                cache_read += " (partial reporting)"
             lines.insert(
                 -1,
                 f"  {provider}/{model} · {purpose} · task {task}: "
                 f"{subtotal['calls']} calls, {subtotal['input_tokens']:,} in, "
-                f"{subtotal['cache_read_tokens']:,} cache read",
+                f"{cache_read}",
             )
         if self.requests_aggregated:
             lines.insert(
@@ -440,15 +460,36 @@ def _extract_usage(response: Any) -> dict[str, int]:
         raw_details.get("cached_tokens"),
         raw.get("cache_read_input_tokens"),
         raw.get("prompt_cache_hit_tokens"),
+        raw.get("cachedContentTokenCount"),
+        raw.get("cached_content_token_count"),
+        raw.get("cacheReadInputTokens"),
     )
     write = first(
         details.get("cache_creation"),
+        details.get("priority_cache_creation"),
+        details.get("flex_cache_creation"),
         meta.get("cache_creation_input_tokens"),
+        raw_details.get("cache_write_tokens"),
         raw.get("cache_creation_input_tokens"),
+        raw.get("cacheWriteInputTokens"),
     )
+    # LangChain Anthropic sets the generic total to zero when TTL-specific
+    # counts are present, to keep its own aggregator from counting them twice.
+    tier_writes = sum(
+        first(details.get(key)) or 0
+        for key in ("ephemeral_5m_input_tokens", "ephemeral_1h_input_tokens")
+    )
+    if tier_writes:
+        write = tier_writes
     input_tokens = first(meta.get("input_tokens"))
     if input_tokens is None:
-        input_tokens = first(raw.get("prompt_tokens"), raw.get("input_tokens"))
+        input_tokens = first(
+            raw.get("prompt_tokens"), raw.get("input_tokens"),
+            raw.get("promptTokenCount"), raw.get("prompt_token_count"),
+            raw.get("inputTokens"), raw.get("prompt_eval_count"),
+        )
+        if "inputTokens" in raw and input_tokens is not None:
+            input_tokens += (read or 0) + (write or 0)
         # Anthropic raw input excludes cached tokens; normalized input and OpenAI
         # prompt_tokens already include them.
         if (
@@ -470,7 +511,9 @@ def _extract_usage(response: Any) -> dict[str, int]:
     result = {
         "input_tokens": input_tokens,
         "output_tokens": first(
-            meta.get("output_tokens"), raw.get("output_tokens"), raw.get("completion_tokens")
+            meta.get("output_tokens"), raw.get("output_tokens"), raw.get("completion_tokens"),
+            raw.get("candidatesTokenCount"), raw.get("candidates_token_count"),
+            raw.get("outputTokens"), raw.get("eval_count"),
         ),
         "cache_read_tokens": read,
         "cache_creation_tokens": write,

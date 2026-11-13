@@ -351,6 +351,12 @@ def build_chat_model(
     # Lossless model identity for new worker processes; never infer a gateway
     # provider from its OpenAI-compatible model class or change its defaults.
     model.metadata = {**(model.metadata or {}), "nova_provider": provider, "nova_model": model_name}
+    from langchain_openai.chat_models.base import BaseChatOpenAI
+
+    if isinstance(model, BaseChatOpenAI):
+        from novacode_cli.utils.backend_patches import apply_openai_cache_usage_patch
+
+        apply_openai_cache_usage_patch()
     from novacode_cli.tracking.usage_tree import attach_usage_callback
 
     attach_usage_callback(model)

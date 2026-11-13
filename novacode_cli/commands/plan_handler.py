@@ -253,18 +253,6 @@ async def _disable_plan_mode(
                 except Exception:
                     pass
 
-    if getattr(session_state, "auto_approve", False):
-        await _save_plan_approval(plan_content, auto_approved=True)
-        session_state.plan_mode_enabled = False
-        console.print("[green]Plan Approved - switching to execution mode (auto-approved)[/green]")
-        console.print()
-        if plan_content:
-            session_state.set_approved_plan(plan_content)
-        session_state.clear_plan_agent()
-        console.print("[cyan]Nova Agent ready for execution[/cyan]")
-        console.print()
-        return True
-
     # Show approval dialog
     result = prompt_for_plan_approval(
         todos=session_state.todos,
@@ -331,14 +319,6 @@ async def handle_plan_approval(
     Returns:
         True if approved, False if rejected.
     """
-    if getattr(session_state, "auto_approve", False):
-        await _save_plan_approval(plan_content, auto_approved=True)
-        session_state.plan_mode_enabled = False
-        session_state.clear_plan_agent()
-        console.print("[green]Plan Auto-Approved![/green]")
-        console.print("[cyan]Switching to Nova Agent for execution[/cyan]")
-        return True
-
     from novacode_cli.ui.question_prompt import prompt_for_plan_approval
 
     console.print()

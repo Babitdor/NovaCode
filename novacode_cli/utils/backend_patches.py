@@ -24,6 +24,43 @@ _write_file_content_patched = False
 _reasoning_content_patched = False
 
 
+def apply_openai_cache_usage_patch() -> None:
+    """Keep gateway cache counters when LangChain converts streaming usage.
+
+    ChatOpenAI discards the raw usage object on streamed replies. Extend its
+    normalization for provider fields it does not yet recognize; never invent
+    zero counters or overwrite fields already supported by the SDK.
+    """
+    import langchain_openai.chat_models.base as base
+
+    def extend(original):
+        @functools.wraps(original)
+        def normalize(usage: dict, *args: Any, **kwargs: Any):
+            result = original(usage, *args, **kwargs)
+            details = dict(result.get("input_token_details") or {})
+            raw_details = usage.get("prompt_tokens_details") or usage.get("input_tokens_details") or {}
+            aliases = {
+                "cache_read": (usage.get("prompt_cache_hit_tokens"), usage.get("cache_read_input_tokens")),
+                "cache_creation": (raw_details.get("cache_write_tokens"), usage.get("cache_creation_input_tokens")),
+            }
+            for key, values in aliases.items():
+                if any(details.get(prefix + key) is not None for prefix in ("", "priority_", "flex_")):
+                    continue
+                for value in values:
+                    if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
+                        details[key] = int(value)
+                        break
+            return {**result, "input_token_details": details}
+
+        normalize._nova_cache_usage = True
+        return normalize
+
+    for name in ("_create_usage_metadata", "_create_usage_metadata_responses"):
+        original = getattr(base, name, None)
+        if original is not None and not getattr(original, "_nova_cache_usage", False):
+            setattr(base, name, extend(original))
+
+
 def apply_write_file_dict_content_patch() -> None:
     """Tolerate a dict/list ``content`` passed to the ``write_file`` tool.
 

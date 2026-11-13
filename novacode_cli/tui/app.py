@@ -19724,10 +19724,9 @@ class NovaApp(App):
                     isinstance(e.payload, dict) and e.payload.get("factory") is True
                 ):
                     # "Auto-approve edits" is scoped to THIS plan's execution
-                    # run. auto_approve is session-global and agent_loop
-                    # auto-approves FUTURE plan interrupts when it's set — so
-                    # without restoring it afterwards, approving one plan with
-                    # "auto" silently self-approved every later plan.
+                    # run. Future plans always require their own user approval;
+                    # restoring this flag also keeps later tool actions from
+                    # inheriting the current plan's edit permissions.
                     # _maybe_run_approved_plan restores the flag when the run
                     # ends (unless the user had auto-approve on globally).
                     if not getattr(state, "auto_approve", False):
