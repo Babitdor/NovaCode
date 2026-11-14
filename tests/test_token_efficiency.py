@@ -1,11 +1,127 @@
 """Offline contracts for lossless request observations and usage reporting."""
 
+import json
 from types import SimpleNamespace
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from novacode_cli.tracking import usage_tree as ut
+
+
+def code_result():
+    return {
+        "result": {"stdout": "exact output\n", "value": None},
+        "truncated": False,
+        "calls": 2,
+        "failed_calls": 0,
+        "outcomes": [
+            {
+                "step": i,
+                "status": "completed",
+                "namespace": "tools",
+                "action": "call",
+                "tool_name": name,
+            }
+            for i, name in enumerate(("write_file", "execute"), 1)
+        ],
+        "outcomes_omitted": 0,
+        "recovery": "Do not replay completed calls. Failed/cancelled calls may have side effects.",
+    }
+
+
+@pytest.mark.parametrize("name", ["eval", "MCPCode"])
+async def test_code_success_compacts_only_model_dispatch(name: str):
+    from langchain.agents.middleware.types import ModelRequest, ModelResponse
+    from langchain_core.language_models.fake_chat_models import FakeListChatModel
+
+    from novacode_cli.context.observations import compact_observations
+    from novacode_cli.context.snapshot import ContextSnapshotMiddleware
+
+    body = code_result()
+    message = ToolMessage(json.dumps(body), name=name, tool_call_id="code", artifact={"audit": 1})
+    history = [
+        HumanMessage("Run the workflow"),
+        AIMessage("", tool_calls=[{"id": "code", "name": name, "args": {"code": "workflow"}}]),
+        message,
+    ]
+    original = [m.model_dump() for m in history]
+    request = ModelRequest(model=FakeListChatModel(responses=["ok"]), messages=history, tools=[])
+
+    def check(actual: ModelRequest) -> ModelResponse:
+        projected = actual.messages[-1]
+        compact = json.loads(projected.content)
+        assert compact["result"] == body["result"]
+        assert compact["completed"] == [
+            {"namespace": "tools", "action": "call", "tool_name": name}
+            for name in ("write_file", "execute")
+        ]
+        assert len(projected.content) < len(message.content) * 0.6
+        assert projected.artifact == message.artifact
+        assert projected.tool_call_id == "code"
+        assert compact_observations(actual.messages) == actual.messages
+        return ModelResponse(result=[AIMessage("done")])
+
+    middleware = ContextSnapshotMiddleware()
+    middleware.wrap_model_call(request, check)
+
+    async def async_check(actual: ModelRequest) -> ModelResponse:
+        return check(actual)
+
+    await middleware.awrap_model_call(request, async_check)
+    assert [m.model_dump() for m in history] == original
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"truncated": True},
+        {"failed_calls": 1},
+        {"outcomes_omitted": 1},
+        {"state_warning": "variables cleared"},
+        {"notice": "new diagnostic"},
+        {"calls": 3},
+        {"outcomes": None},
+        {"outcomes": [None, None]},
+        {"recovery": "a new recovery instruction"},
+        {
+            "outcomes": [
+                {"step": 1, "status": "completed", "error": "serialization failed"},
+                {"step": 2, "status": "failed"},
+            ]
+        },
+    ],
+)
+def test_code_diagnostics_and_unrecognized_envelopes_stay_intact(change: dict):
+    from novacode_cli.context.observations import compact_observations
+
+    message = ToolMessage(json.dumps({**code_result(), **change}), name="eval", tool_call_id="c")
+    assert compact_observations([message])[0] is message
+
+
+@pytest.mark.parametrize(
+    ("name", "status", "content"),
+    [
+        ("execute", "success", None),
+        ("eval", "error", None),
+        ("eval", "success", "not JSON"),
+        ("eval", "success", ["multimodal"]),
+    ],
+)
+def test_code_compaction_does_not_rewrite_other_results(
+    name: str,
+    status: str,
+    content: str | list[str] | None,
+):
+    from novacode_cli.context.observations import compact_observations
+
+    message = ToolMessage(
+        json.dumps(code_result()) if content is None else content,
+        name=name,
+        status=status,
+        tool_call_id="c",
+    )
+    assert compact_observations([message])[0] is message
 
 
 def read_pair(call_id: str, text: str, path: str = "a.py", name: str = "read_file"):

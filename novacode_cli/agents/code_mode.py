@@ -64,11 +64,18 @@ Use tools.list/describe/call and mcp.list/describe/call; inspect schemas before 
 tools.list accepts offset and limit, not query; filter its tools array in JavaScript.
 JavaScript runs in QuickJS: Node.js Buffer, process and require are unavailable.
 On Windows, invoke PowerShell explicitly when using its cmdlets through execute.
+Tool calls return native data, often plain text; do not assume an execute result has .stdout.
 Use task({description, subagentType, responseSchema?}) for configured subagents,
 including explicit @agent requests. tools.describe('task') lists the current roster.
 eval accepts statements and top-level await; its final expression is the selected result.
 Variables persist within this conversation. Keep intermediate data in JavaScript;
 return a compact synthesis or explicitly print selected output with console.log.
+Batch independent reads/searches in one eval with Promise.all; return only relevant
+passages, matches or changed-file summaries. Do not print a whole file just to locate a symbol.
+Use an async IIFE for temporary locals: await (async () => { ... })(); this avoids
+top-level const/let redeclaration errors. Save reusable data explicitly on globalThis.
+After continuation, use the current scratchpad host path from the system context;
+never reuse an old temporary host path from a previous process.
 Read text with tools.call('read_file', {file_path:'/exact/discovered/path', offset:0, limit:60}).
 Nova filesystem text pages return source text, preserving newlines, without display headers
 or loop-warning notes. Use that string directly for edit_file.old_string; do not add headers.
@@ -83,7 +90,9 @@ whole script after a runtime failure without checking which side effects already
 Every response includes ordered outcomes for dispatched calls. Inspect their tool names,
 statuses and concise errors before retrying. Only dispatched calls have records; check
 outcomes_omitted before assuming all records are visible. Failed or cancelled operations
-may still have side effects. Arguments and tool outputs are
+may still have side effects. In model context, complete successful responses may use
+`completed` instead: an ordered list of operation identities, all completed successfully.
+The full outcomes remain in the session audit trail. Arguments and tool outputs are
 not copied into these records; select the data you need in your JavaScript result.
 MCPCode is a compatibility async-function body using the same guarded runtime.
 Human approvals pause the live script. Never retry completed side effects after failure.

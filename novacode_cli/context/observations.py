@@ -1,6 +1,6 @@
-"""Request-local references for byte-identical successful file observations.
+"""Request-local compaction of redundant successful tool observations.
 
-Tools always execute. Only duplicate text in the final dispatch view changes;
+Tools always execute. Only redundant text in the final dispatch view changes;
 checkpoint messages, call arguments, ordering and full recovery stay intact.
 """
 
@@ -17,8 +17,57 @@ if TYPE_CHECKING:
 MIN_OBSERVATION_CHARS = 2_048
 
 
+def _compact_code_result(message: ToolMessage) -> ToolMessage:
+    """Keep selected data and ordered operation identities, with success implicit."""
+    if message.name not in {"eval", "MCPCode"} or message.status == "error":
+        return message
+    if not isinstance(message.content, str):
+        return message
+    try:
+        body = json.loads(message.content)
+    except ValueError:
+        return message
+    # Only the complete, known success envelope qualifies; future fields stay visible.
+    if not isinstance(body, dict) or set(body) != {
+        "result",
+        "truncated",
+        "calls",
+        "failed_calls",
+        "outcomes",
+        "outcomes_omitted",
+        "recovery",
+    }:
+        return message
+    outcomes = body["outcomes"]
+    if (
+        body["truncated"] is not False
+        or body["failed_calls"] != 0
+        or body["outcomes_omitted"] != 0
+        or not isinstance(outcomes, list)
+        or body["calls"] != len(outcomes)
+        or body["recovery"]
+        != ("Do not replay completed calls. Failed/cancelled calls may have side effects.")
+        or any(
+            not isinstance(step, dict)
+            or step.get("step") != index
+            or step.get("status") != "completed"
+            or "error" in step
+            for index, step in enumerate(outcomes, 1)
+        )
+    ):
+        return message
+    compact = {
+        "result": body["result"],
+        "completed": [
+            {key: value for key, value in step.items() if key not in {"step", "status"}}
+            for step in outcomes
+        ],
+    }
+    return message.model_copy(update={"content": json.dumps(compact, ensure_ascii=False)})
+
+
 def compact_observations(messages: list[AnyMessage]) -> list[AnyMessage]:
-    """Reference an earlier identical read in this view, never a cached read.
+    """Compact success bookkeeping and reference identical reads in this view.
 
     Keys include the exact arguments and text, rather than just the file path.
     A read after an edit must have actually returned the same bytes to qualify.
@@ -38,6 +87,7 @@ def compact_observations(messages: list[AnyMessage]) -> list[AnyMessage]:
                     if call["name"] == "read_file":
                         pending[call_id] = json.dumps(call["args"], sort_keys=True)
         elif isinstance(message, ToolMessage):
+            result[index] = _compact_code_result(message)
             arguments = pending.pop(message.tool_call_id, None)
             if (
                 arguments is None
