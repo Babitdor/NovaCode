@@ -11,7 +11,7 @@ Two mechanisms from how the leading coding agents run long tasks:
 
 * **A done gate** (Codex: "do not end with in_progress/pending items"). When the
   model ends its turn while todos are still open, it is sent back once to finish
-  them, or to drop a blocked one and say why. Once per user turn, so a real
+  them, record verified completions, or explain a blocked one. Once per user turn, so a real
   blocker still ends it.
 
 * **A truncation gate.** A turn that ends with no tool call and either no text
@@ -211,7 +211,9 @@ class TaskDisciplineMiddleware(AgentMiddleware):
             "type": "text",
             "text": (
                 "\n\n<current_todos>\nYour task list (it is no longer in recent "
-                "context). Continue from the item marked [>], or the first [ ].\n"
+                "context). Reconcile statuses against observed results first: record "
+                "already verified work with write_todos without repeating it. Then "
+                "continue from the first unfinished item.\n"
                 f"{_render(todos)}\n</current_todos>"
             ),
         }
@@ -291,9 +293,14 @@ class TaskDisciplineMiddleware(AgentMiddleware):
             return None  # already sent back once this turn; a real blocker may end it
         nudge = (
             f"{DONE_GATE_MARKER} You ended your turn with {len(open_items)} todo(s) "
-            f"still open:\n{_render(open_items)}\n\nFinish them now. If one is "
-            "blocked, or the user no longer wants it, remove it with "
-            "`write_todos` and tell the user why, then end your turn."
+            f"still open:\n{_render(open_items)}\n\nReconcile the list against work "
+            "and verification already performed. If an item is finished and verified, "
+            "call `write_todos` to mark it completed before your final reply; a prose "
+            "summary does not update the list. Do not repeat completed work just to "
+            "check a box. Continue any remaining authorized work. Keep blocked or "
+            "unverified required items open and explain the blocker; do not mark them "
+            "complete or delete them to clear the list. Remove an item only if the "
+            "user cancelled it. Preserve the other tasks and their current statuses."
         )
         return {"messages": [HumanMessage(content=nudge)], "jump_to": "model"}
 

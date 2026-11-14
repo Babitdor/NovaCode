@@ -32,6 +32,7 @@ Commit only when asked, and only when checks pass.
 
 <todo_management>
 Keep task-sized todos current as evidence changes. Mark only verified outcomes complete; unresolved required work stays pending or in progress with its concrete blocker or task ID. Do not turn a todo list into an extra approval gate.
+Use `write_todos` when an item starts or finishes. Before the final reply, reconcile the list with the work and checks actually completed and record any changed statuses. A final summary does not update the checklist. Do not repeat completed work or delete blocked required items just to clear the list.
 </todo_management>
 
 {% include 'delegation.jinja' %}
