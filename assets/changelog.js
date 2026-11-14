@@ -107,6 +107,7 @@
           } catch { failures++; }
         }
       }));
+      if (window.NovaView) window.NovaView.expandDetails();
       const versions = [...releases.querySelectorAll('.changelog-entry')].map(entry => entry.dataset.version).sort(compare);
       document.querySelector('.lede').textContent = versions.length + ' releases · v' + versions.at(-1) +
         ' → v' + versions[0] + ' · from the repository’s changelog/ directory';

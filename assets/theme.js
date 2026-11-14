@@ -5,8 +5,8 @@
    Buttons marked [data-theme-toggle] ship hidden and are revealed here, because
    without script they could not do anything.
 
-   A manual switch uses native View Transitions: the new palette is revealed as a
-   circle growing from the toggle, after the next image set has decoded. The
+   A manual switch uses native View Transitions: a drafting rule prints the new
+   palette down the sheet, reversing for light, after the next images decode. The
    unselected image set is decoded during idle time so that first switch does not
    open with a stall. Browsers without View Transitions fade the palette in place;
    reduced motion switches immediately. A newer choice supersedes an in-flight
@@ -19,12 +19,11 @@
   var saved = null;
   var transition = null;
   var fadeTimer = 0;
-  var artAnimation = null;
   try { saved = localStorage.getItem(KEY); } catch (e) { /* storage blocked: follow the system */ }
   if (saved !== "light" && saved !== "dark") saved = null;
 
   var isDark = function () { return saved ? saved === "dark" : sys.matches; };
-  var calm = function () { return motion.matches; };
+  var calm = function () { return motion.matches || root.getAttribute("data-view") === "agent"; };
 
   function apply() {
     if (saved) root.setAttribute("data-theme", saved);
@@ -96,41 +95,28 @@
     return Promise.all(pending);
   }
 
-  function revealOrigin(button) {
-    var r = button && button.getBoundingClientRect ? button.getBoundingClientRect() : null;
-    var x = r ? r.left + r.width / 2 : window.innerWidth - 48;
-    var y = r ? r.top + r.height / 2 : 48;
-    var dx = Math.max(x, window.innerWidth - x);
-    var dy = Math.max(y, window.innerHeight - y);
-    return { x: x, y: y, r: Math.ceil(Math.sqrt(dx * dx + dy * dy)) + 40 };
-  }
-
   function fallback(images) {
-    var art = document.querySelector(".art");
     root.classList.add("theme-fade");
     void root.offsetWidth; /* take the transition properties before the palette changes */
     changed();
     window.clearTimeout(fadeTimer);
-    fadeTimer = window.setTimeout(function () { root.classList.remove("theme-fade"); }, 520);
-    decodeImages(images).then(function () {
-      if (!art || !art.animate || calm()) return;
-      if (artAnimation) artAnimation.cancel();
-      artAnimation = art.animate(
-        [{ opacity: 0.72, filter: "blur(3px)" }, { opacity: 1, filter: "blur(0px)" }],
-        { duration: 600, easing: "cubic-bezier(.16, 1, .3, 1)" }
-      );
-    });
+    fadeTimer = window.setTimeout(function () { root.classList.remove("theme-fade"); }, 280);
+    decodeImages(images);
   }
 
-  function switchTheme(button) {
+  function switchTheme() {
+    if (transition) transition.skipTransition();
+    window.clearTimeout(fadeTimer);
+    root.classList.remove("theme-fade");
     if (calm()) { changed(); return; }
-    var origin = revealOrigin(button);
-    root.style.setProperty("--theme-x", origin.x + "px");
-    root.style.setProperty("--theme-y", origin.y + "px");
-    root.style.setProperty("--theme-r", origin.r + "px");
     var images = themedImages();
+    var rule = null;
     var render = function () {
       changed();
+      rule = document.createElement("div");
+      rule.className = "theme-scan";
+      rule.setAttribute("aria-hidden", "true");
+      document.body.appendChild(rule);
       /* Let source selection run, then decode the new bitmaps before the new
          snapshot is taken. A timer, not requestAnimationFrame: frames can be
          suspended while a transition waits for this promise. */
@@ -138,17 +124,19 @@
         .then(function () { return decodeImages(images); });
     };
     if (!document.startViewTransition) { fallback(images); return; }
-    if (transition) transition.skipTransition();
     try {
       var t = document.startViewTransition(render);
       transition = t;
       t.ready.catch(function () { /* skipping also rejects the ready promise */ });
       t.finished.then(function () {
+        if (rule) rule.remove();
         if (transition === t) transition = null;
       }, function () {
+        if (rule) rule.remove();
         if (transition === t) transition = null;
       });
     } catch (e) {
+      if (rule) rule.remove();
       fallback(images);
     }
   }
@@ -164,7 +152,7 @@
       b.addEventListener("click", function () {
         saved = isDark() ? "light" : "dark";
         try { localStorage.setItem(KEY, saved); } catch (e) { /* the choice lasts for this page only */ }
-        switchTheme(b);
+        switchTheme();
       });
     });
   }

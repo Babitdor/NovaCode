@@ -17,14 +17,18 @@
   try { saved = localStorage.getItem(KEY); } catch (e) {}
   if (saved !== "human" && saved !== "agent") saved = null;
   var mode = param || saved || "human";
+  var detailStates = new Map();
 
   function expandDetails(on) {
-    if (!on) return;
-    try {
-      Array.prototype.forEach.call(document.querySelectorAll("details.changelog-entry, details[data-agent-expand]"), function (d) {
+    if (on) {
+      Array.prototype.forEach.call(document.querySelectorAll("main details, details[data-agent-expand]"), function (d) {
+        if (!detailStates.has(d)) detailStates.set(d, d.open);
         d.open = true;
       });
-    } catch (e) {}
+    } else {
+      detailStates.forEach(function (open, d) { if (d.isConnected) d.open = open; });
+      detailStates.clear();
+    }
   }
 
   function apply() {
@@ -49,6 +53,11 @@
   function set(next, persist) {
     mode = next === "agent" ? "agent" : "human";
     if (persist) try { localStorage.setItem(KEY, mode); } catch (e) {}
+    if (persist && param) try {
+      var url = new URL(location.href);
+      url.searchParams.set("view", mode);
+      history.replaceState(history.state, "", url);
+    } catch (e) {}
     apply();
     try { document.dispatchEvent(new CustomEvent("viewchange", { detail: { view: mode } })); } catch (e) {}
   }
@@ -66,5 +75,5 @@
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", wire);
   else wire();
   window.addEventListener("load", function(){ if (mode === "agent") expandDetails(true); });
-  window.NovaView = { get: function(){return mode;}, set: function(v){ set(v, true); }, expandDetails: function(){ expandDetails(true); } };
+  window.NovaView = { get: function(){return mode;}, set: function(v){ set(v, true); }, expandDetails: function(){ expandDetails(mode === "agent"); } };
 })();

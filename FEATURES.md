@@ -1,10 +1,10 @@
 # NovaCode feature inventory
 
-<!-- product: novacode-cli; version: 1.0.99; scope: release; reviewed: 2026-10-25 -->
+<!-- product: novacode-cli; version: 1.2.20; scope: release; reviewed: 2026-11-08 -->
 
-Landing-page and documentation reference for **v1.0.99**, including the explicitly marked
+Landing-page and documentation reference for **v1.2.20**, including the explicitly marked
 local computer preview. Reviewed against source, command registrations
-and release notes on **25 October 2026**. An implemented capability is not a
+and release notes for v1.0.99 through v1.2.20. An implemented capability is not a
 benchmark or proof that every provider and platform has been exercised.
 
 Use the short copy for feature cards and the detailed catalog for product pages,
@@ -14,50 +14,56 @@ publish the landing page.
 
 ## Product positioning
 
-**Headline:** Your terminal. Your models. A coding workspace that remembers.
+**Headline:** A coding agent with readable memory.
 
-**Description:** NovaCode is an open-source terminal coding assistant that reads
-your project, plans changes, edits files and runs checks. Work with specialist
-agents, compare ideas in Council, continue through remote chats, and turn useful
-outputs into temporary web previews.
+**Description:** NovaCode is an open-source terminal coding agent that delegates to specialist
+agents, runs Claude Code or Codex alongside itself in project rooms, keeps project knowledge in
+a Markdown wiki you can read, and reports verification evidence instead of a completion claim.
 
-**Supporting line:** Choose hosted or local models. Keep project context between
-sessions. Control tool approvals, workspaces and optional integrations.
+**Supporting line:** Choose hosted or local models. Control tool approvals, workspaces, context
+and optional integrations.
 
-**Primary actions:** Get started · Explore features · Read the docs
+**Primary actions:** Install · See what is different · Read the docs
 
-## Suggested feature cards
+## What only Nova does
+
+The site's landing page and documentation lead with these. Standard agent tooling (file edits,
+shell execution, search) is documented but not advertised as a differentiator.
 
 | Feature | Landing-page copy | Suggested visual |
 | --- | --- | --- |
-| Specialist agents | Delegate coding, research, reviews and testing to specialists while you keep working. | Inline agent statuses and background tasks |
-| Council | Gather independent perspectives, debate options and get a chairman's consolidated recommendation. | Advisor sidebar, ballots and consensus view |
-| Persistent memory | Keep useful project knowledge in a linked memory wiki you can inspect and maintain. | Memory index and `/dream` controls |
-| Model choice and vision | Choose cloud or local models, with independent roles and an on-demand vision companion for text-only models. | Model picker and Vision settings |
-| Code Mode | Combine eligible native and MCP tools in bounded JavaScript workflows, with a toggle below the composer. | Composer toggle, a short script and its selected result |
-| Voice conversation | Dictate requests and hear short spoken reply summaries, with lightweight CPU voice options. | Voice model picker and real download progress |
-| Your terminal style | Choose from 13 interface styles, including Nova character art and optional animated homes. | Workbench character art and a Blueprint animation |
-| Caveman mode | Choose terse answers, recoverable compact tool output and other independent token-efficiency features. | Composer toggle and intensity picker |
-| Remote sessions | Continue through Telegram topics, Discord threads or an optional Rootapp companion. | Matching terminal session and remote conversation |
-| Artifacts | Turn results into web previews and share the session's collection through a temporary Cloudflare URL. | Responsive artifact cards and a phone preview |
-| Parallel workspaces | Run project tabs, exchange explicit messages and isolate changes in Git worktrees. | Session tabs and a worktree transition |
-| Permissions and guardrails | Keep tool policy, workspace boundaries and prompt-injection handling in the agent workflow. | An approval request and scoped folder controls |
+| Project rooms | Project channels, agent DMs and a shared task board, with Claude Code or Codex in their own channel through their installed CLIs. | Room channel, activity board and attributed replies |
+| Prime deep work | Six checkpoints with acceptance checks bound to real tool-call output; unverified work is labelled. | Checkpoint strip and evidence report |
+| Council | Advisors clarify, vote on real options and disagree in public; a chairman reconciles and keeps minority concerns. | Advisor sidebar, ballots and consensus view |
+| Persistent memory | A linked Markdown wiki with visible recall notices, `/dream` consolidation with backups, and a source-validated `/cache`. | Memory index and recall notice |
+| Project onboarding | A persistent code graph with explorer, dependency map, symbol inspector, tours, Q&A and change impact. | Onboarding dashboard |
+| Code Mode | Bounded JavaScript over eligible native and MCP tools; only the selected result reaches the model. | Composer toggle and a short script |
+| Context compression | The model folds completed ranges into summaries; exact originals stay searchable. | Tiered summary blocks |
+| Command Center | Sessions by project with status filters, details and live tab state. | Command Center list |
+| Session loops | Recurring session work on an interval, cron schedule or model-selected wake-up. | Loop list and status |
+| Model roles and vision | 18 provider IDs, independent roles, per-turn routing, and a `VISION` side-call for text-only models. | Model picker and Vision settings |
+| Lite Mode and styles | Off / Caveman / Ponytail inside 14 interface styles with optional animated homes. | Composer selector and a home style |
+| Permissions and guardrails | Plan-mode enforcement, scoped grants, explicit denies, fail-closed reviews and secret redaction. | Approval request and folder controls |
 
-The local computer is a **preview in v1.0.99**. Use “Preview: a separate Linux
-computer with a private live view” in a preview area. A real guest boot still
-needs verification before advertising tested end-to-end VM operation.
+The local computer is a **preview**. Use “Preview: a separate Linux computer with a private live
+view” in a preview area. A real guest boot still needs verification before advertising tested
+end-to-end VM operation.
 Do not use the Classic screenshot as evidence of new styles or VM operation.
 
 ## Recent additions for landing pages and docs
 
 | Capability | Status | Setup / documentation | Claim boundary |
 | --- | --- | --- | --- |
-| Native + MCP Code Mode | Released in v1.0.97 | Composer toggle; [Code Mode](docs/mcp-code-mode.md) | Eligible tools only; interactive and graph-control calls remain direct. |
-| Whistle STT | Released in v1.0.97 | `voice` + `voice-whistle`; [voice setup](SETUP.md#optional-capabilities) | Local Cactus runtime; microphone quality and transcription accuracy are not benchmarked. |
-| Kokoro and sanoTTS | Released in v1.0.98 | `voice` + the selected provider extra; [voice setup](SETUP.md#optional-capabilities) | CPU options; download size is not peak RAM or a speed guarantee. |
-| Download progress and earlier speech playback | Released in v1.0.98 | `/voice download`, `/voice test`, `/settings` | Percentages need a backend-reported total; no universal latency claim. |
-| Eight additional interface styles and creative homes | Included in v1.0.99 | `/theme`; [interface guide](SETUP.md#interface-and-vision) | Animations are optional; new screenshots still needed. |
-| Local Linux computer and live preview | Preview in v1.0.99 | `computer` extra + QEMU; [computer guide](COMPUTER.md) | Offline tests and SDK preflight verified; real VM boot unverified here. |
+| Workspace knowledge cache | Released in v1.1.0 | `/cache status\|clear\|on\|off` | Source-validated cache; assistant namespaces stay isolated. |
+| Project rooms | Released in v1.1.1 | `/rooms`, `ctrl+shift+r` | Two project workers, six initial task turns; integration needs an owner decision. |
+| Prime deep work | Released in v1.1.2, verified evidence in v1.1.4 | `/prime`, `--prime` | Opt-in; findings stay drafts until passing checks follow an observed failure. |
+| Ponytail and Lite Mode | Released in v1.1.3, consolidated in v1.1.5 | Composer selector, `/lite-mode` | No promised savings; Ponytail used more tokens on small validation tasks. |
+| Project onboarding and `eval` Code Mode | Released in v1.2.0 | `/onboard`, composer toggle | Static analysis misses dynamic dependencies; eligible tools only. |
+| Visible memory recall | Released in v1.2.3&ndash;v1.2.7 | Automatic | Notices carry source metadata, not memory bodies. |
+| Command Center | Released in v1.2.10 | `/cc`, Left Arrow | Interactive TUI; missing metadata is labelled. |
+| Session loops | Released in v1.2.11 | `/loop 5m <task>` | Needs a local owner tab; 72-hour default TTL. |
+| Model-controlled compression | Released in v1.2.16 | `compress`, `decompress`, `search_context`, `acp_status` | Reduces active context, not stored size; live-provider summary quality not established. |
+| Local Linux computer and live preview | Preview | `computer` extra + QEMU; [computer guide](COMPUTER.md) | Offline tests and SDK preflight verified; real VM boot unverified here. |
 
 ## 1. Everyday coding tools
 
@@ -304,9 +310,14 @@ Bedrock is an optional installation extra. Do not promise every account or model
 supports vision, strict tool sampling, OAuth or identical effort settings.
 [Reasoning support](docs/reasoning-support.md), [vision routing](novacode_cli/bootstrap/vision_router.py).
 
-## 10. Caveman mode and token visibility
+## 10. Lite Mode: Caveman, Ponytail and token visibility
 
 **Benefit:** Choose how to reduce verbosity and unnecessary model context.
+
+An exclusive Off / Caveman / Ponytail selector sits in the composer; `/lite-mode` opens the same
+choice with its settings. Ponytail adds lite, full and ultra levels with review, audit, debt, gain
+and help commands, and applies to main and delegated model requests without rewriting stored
+conversations or tool results. `/caveman` and `/ponytail` remain available for skills.
 
 The composer toggle, Options panel and `/caveman` expose six independent features.
 The master switch remains opt-in; the individual switches start selected.
@@ -572,8 +583,9 @@ access or redaction as permission to publish private data.
 
 **Benefit:** Adapt the workspace without leaving the terminal.
 
-- Choose **13 interface styles**: Dashboard, Classic, Centered, Banner, Minimal,
-  Terminal, Workbench, Notebook, Outline, Focus, Studio, Ledger and Blueprint.
+- Choose **14 interface styles**: Dashboard, Classic, Centered, Banner, Terminal, Workbench,
+  Notebook, Outline, Focus, Studio, Ledger, Blueprint, Signal and Minimal. An opt-in side-by-side
+  diff preview adds line numbers, syntax highlighting and change shading.
 - Use distinct home compositions with keyboard-accessible Explain / Refactor /
   Build / Debug starters that fill an editable prompt before sending.
 - See Nova character art in Workbench and Studio, with optional animated home
@@ -831,7 +843,13 @@ agent results, confidence meters, hardware counters or token-saving figures.
 | Native Code Mode, composer toggle, Whistle and voice filtering | v1.0.97 |
 | Voice download progress, earlier speech, Kokoro and sanoTTS | v1.0.98 |
 | Additional interface styles, character art and animated homes | v1.0.99 |
-| Local QEMU computer and private live preview | Preview in v1.0.99; [computer guide](COMPUTER.md) |
+| `eval` Code Mode, project onboarding, Prime factory and Windows path hardening | v1.2.0 |
+| Visible memory recall and project-scoped topic paths | v1.2.3–v1.2.7 |
+| Command Center and semantic-search fallbacks | v1.2.10 |
+| Session loops, tracing labels and nested skill invocation | v1.2.11 |
+| Model-controlled context compression with recoverable archives | v1.2.16 |
+| Updates, images, Ponytail/Caveman hardening and coding guidance | v1.2.17 |
+| Local QEMU computer and private live preview | Preview; [computer guide](COMPUTER.md) |
 
 Full historical records are in [changelog/](changelog/). When an older note
 conflicts with the current implementation or a later release, use the later

@@ -19,7 +19,7 @@
 <link rel="preload" as="font" type="font/woff2" href="assets/fonts/geist-mono-var.woff2" crossorigin>
 <link rel="preload" as="image" href="assets/mascots/nova-reactions.webp">
 <script type="application/ld+json">
-{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Nova","alternateName":"NovaCode","applicationCategory":"DeveloperApplication","softwareVersion":"1.2.1","operatingSystem":"macOS, Linux, Windows","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"license":"https://opensource.org/licenses/MIT","codeRepository":"https://github.com/Babitdor/NovaCode","description":"An open-source terminal coding agent with readable Markdown memory and approval controls."}
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Nova","alternateName":"NovaCode","applicationCategory":"DeveloperApplication","softwareVersion":"1.2.20","operatingSystem":"macOS, Linux, Windows","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"license":"https://opensource.org/licenses/MIT","codeRepository":"https://github.com/Babitdor/NovaCode","description":"An open-source terminal coding agent with delegating specialist agents, project rooms, readable Markdown memory, observed verification and approval controls."}
 </script>
 <script>
   document.documentElement.classList.add("js");
@@ -29,8 +29,13 @@
   } catch (e) { /* storage blocked: the plot strip shows */ }
   if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
     document.documentElement.classList.add("plot-skip");
+  } else {
+    /* Hides the hero copy before the first paint so the entrance can play. motion.js removes it,
+       and so do the no-GSAP path and the script's onerror, so nothing can stay hidden. */
+    document.documentElement.classList.add("enter");
   }
 </script>
+<link rel="stylesheet" href="assets/theme.css">
 <script src="assets/theme.js"></script>
 <script src="assets/view.js"></script>
 <link rel="help" href="llms.txt" type="text/plain" title="LLM/agent entry point">
@@ -78,17 +83,33 @@
   color-scheme:dark;
 }
 
-/* A manual theme switch opens the new palette as a circle from the toggle. The
-   page is snapshotted whole, so the reveal moves one hard edge instead of
-   cross-fading every glyph. */
-::view-transition{pointer-events:none}
-::view-transition-group(root){animation:none}
-::view-transition-old(root){animation:none;mix-blend-mode:normal}
-::view-transition-new(root){animation:theme-reveal .7s cubic-bezier(.76,0,.24,1) both;mix-blend-mode:normal}
-@keyframes theme-reveal{from{clip-path:circle(0 at var(--theme-x,50%) var(--theme-y,0))}to{clip-path:circle(var(--theme-r,150vmax) at var(--theme-x,50%) var(--theme-y,0))}}
-/* Older browsers fade the palette in place. */
-html.theme-fade,html.theme-fade *,html.theme-fade *::before,html.theme-fade *::after{transition:background-color .45s var(--ease-out),border-color .45s var(--ease-out),color .45s var(--ease-out),fill .45s var(--ease-out),stroke .45s var(--ease-out),box-shadow .45s var(--ease-out),outline-color .45s var(--ease-out) !important}
-
+/* Screenshot walkthrough: a static reading sequence until the motion layer opts in. */
+.tutorial{padding-block:clamp(48px,7vw,100px);border-top:1px solid var(--line)}
+.tutorial-head{max-width:42rem;margin-bottom:36px}
+.tutorial-head p{margin-top:16px;color:var(--muted)}
+.tutorial-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(230px,.42fr);gap:clamp(24px,4vw,64px);align-items:start}
+.tutorial-figure{margin:0;min-width:0}
+.tutorial-screen{position:relative;overflow:hidden;border:1px solid var(--line);background:#171725}
+.tutorial-screen img{width:100%;height:auto}
+.tutorial-focus{position:absolute;left:var(--focus-left,3%);width:var(--focus-width,94%);border:1px solid #ffad78;box-shadow:0 0 0 1500px rgb(10 10 20 / .68);opacity:0;pointer-events:none}
+.tutorial-focus:nth-of-type(1){top:var(--focus-top,12.5%);height:var(--focus-height,14%)}
+.tutorial-focus:nth-of-type(2){top:var(--focus-top,29%);height:var(--focus-height,27%)}
+.tutorial-focus:nth-of-type(3){top:var(--focus-top,61%);height:var(--focus-height,12%)}
+.tutorial-figure figcaption{display:flex;justify-content:space-between;gap:12px;margin-top:12px;font-size:.875rem;color:var(--muted)}
+.tutorial-figure a{text-decoration:underline;text-underline-offset:3px}
+.tutorial-steps li{padding:24px 0;border-top:1px solid var(--line)}
+.tutorial-steps h3{font-size:var(--t-m);margin:10px 0 14px}
+.tutorial-steps p{color:var(--muted)}
+.tutorial-step-number{font:400 .875rem/1 var(--f-mono);color:var(--accent)}
+.tutorial-live .tutorial-figure{position:sticky;top:116px;width:min(100%,calc((100svh - 180px) * var(--tutorial-ratio,1.67286)))}
+.tutorial-live .tutorial-steps li{min-height:60vh;padding-block:32px}
+.tutorial-live .tutorial-steps li:last-child{min-height:calc(100svh - 116px)}
+.tutorial-live .tutorial-steps li[aria-current="step"]{border-color:var(--accent)}
+.tutorial-live[data-step="0"] .tutorial-focus:nth-of-type(1),
+.tutorial-live[data-step="1"] .tutorial-focus:nth-of-type(2),
+.tutorial-live[data-step="2"] .tutorial-focus:nth-of-type(3){opacity:1}
+@media(max-width:899px){.tutorial-layout{grid-template-columns:1fr}.tutorial-steps li{padding-block:22px}}
+html[data-view="agent"] .tutorial-layout{display:block}
 /* ---------------------------------------------- base */
 *,*::before,*::after{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%;scrollbar-color:var(--line) var(--ground)}
@@ -303,15 +324,14 @@ code,.path{
 .tree b{color:var(--ink);font-weight:500}
 .tree i{color:var(--accent);font-style:normal}
 
-/* ---------------------------------------------- chapter divider */
-.divider{
+/* ---------------------------------------------- chapter divider */.divider{
   background:var(--neg-ground);color:var(--neg-ink);border-top:1px solid var(--neg-line);
   padding-block:clamp(3rem,6vw,6rem);
 }
-.divider .wrap{display:grid;grid-template-columns:auto minmax(0,1fr);gap:clamp(18px,4vw,56px);align-items:start}
+.divider .wrap{display:grid;grid-template-columns:clamp(88px,11vw,168px) minmax(0,1fr);gap:clamp(18px,4vw,56px);align-items:start}
 .divider .num{font-size:clamp(3.4rem,1rem + 12vw,11rem);font-weight:700;font-stretch:62%;line-height:.78;letter-spacing:-.04em;color:transparent;-webkit-text-stroke:1px var(--neg-ink)}
-.divider .chap{font-size:clamp(1.4rem,1rem + 2vw,2.6rem);font-weight:600;letter-spacing:-.025em;line-height:1.02}
-.divider .sub{color:var(--neg-muted);margin-top:10px;max-width:44ch}
+.divider .chap{font-size:clamp(1.4rem,1rem + 2vw,2.6rem);font-weight:600;letter-spacing:-.025em;line-height:1.02;text-wrap:balance}
+.divider .sub{color:var(--neg-muted);margin-top:10px;max-width:46ch;text-wrap:pretty}
 .divider .idx-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:0 24px;margin-top:clamp(20px,3vw,32px);border-top:1px solid var(--neg-line)}
 .divider .idx-list a{
   display:flex;gap:12px;align-items:baseline;padding:9px 0;border-bottom:1px solid var(--neg-line);
@@ -320,7 +340,11 @@ code,.path{
 }
 .divider .idx-list a span{font:500 10px/1 var(--f-mono);color:var(--neg-muted)}
 .divider .idx-list a:hover{padding-left:10px;color:var(--neg-accent)}
-@media (max-width:700px){.divider .wrap{grid-template-columns:1fr;gap:12px}}
+/* On a phone the numeral becomes a plate label beside the chapter title, not a block above it. */
+@media (max-width:700px){
+  .divider .wrap{grid-template-columns:auto minmax(0,1fr);gap:14px;align-items:baseline}
+  .divider .num{font-size:clamp(2rem,7vw,2.6rem);line-height:1}
+}
 
 /* ---------------------------------------------- split / columns */
 .split{display:grid;grid-template-columns:minmax(0,.92fr) minmax(0,1.08fr);gap:clamp(20px,4vw,54px);align-items:start}
@@ -342,10 +366,34 @@ code,.path{
 .feature-art figcaption{position:absolute;inset:auto 14px 12px;color:#D6D4CE;background:#17181A;padding:3px 6px;font:500 11px/1.4 var(--f-mono);letter-spacing:.03em}
 .text-link{gap:6px;color:var(--accent);font-weight:600}
 .text-link:hover{color:var(--ink)}
+.text-link:active{opacity:.8}
+.text-link span[aria-hidden]{display:inline-block;transition:transform .24s var(--ease-out)}
+.text-link:hover span[aria-hidden],.text-link:focus-visible span[aria-hidden]{transform:translate(2px,-2px)}
+@media (prefers-reduced-motion:reduce){.text-link span[aria-hidden]{transition:none}}
+/* Unequal columns: the lead capability carries the foundation and the other two stack
+   beside it; the last row of a sequence takes the full measure. Paper draws its
+   columns unevenly, and three equal cells are the one layout a generic page defaults to. */
+.workflow.lead-wide{grid-template-columns:minmax(0,1.5fr) minmax(0,1fr)}
+.workflow.lead-wide article:first-child{grid-row:span 2;border-right:1px solid var(--line);padding-right:clamp(18px,2.6vw,34px)}
+.workflow.lead-wide article:nth-child(2){border-bottom:1px solid var(--line);padding-bottom:18px}
+.workflow.lead-wide article:nth-child(3){padding-top:18px}
+.workflow.trail-full{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+.workflow.trail-full article:nth-child(3){grid-column:1 / -1;border-left:0;border-top:1px solid var(--line);padding:18px 0 0}
+/* The checkpoint strip: the six phases as ruled rows, so the column carries the sequence itself. */
+.checks{margin:12px 0 0;padding:0;list-style:none;border-top:1px solid var(--line)}
+.checks li{display:flex;gap:14px;align-items:baseline;padding:7px 0;border-bottom:1px solid var(--line);font:500 12px/1.3 var(--f-mono);letter-spacing:.06em;text-transform:uppercase}
+.checks li span{font-size:10px;color:var(--accent);letter-spacing:.08em}
 @media (max-width:760px){
   .workflow{grid-template-columns:1fr}
   .workflow article{padding:14px 0}
   .workflow article+article{border-left:0;border-top:1px solid var(--line);padding-left:0}
+  .workflow.lead-wide,.workflow.trail-full{grid-template-columns:1fr}
+  .workflow.lead-wide article:first-child,.workflow.trail-full article:nth-child(3){
+    grid-row:auto;grid-column:auto;border-right:0;border-left:0;
+    border-top:1px solid var(--line);padding:14px 0 0;
+  }
+  .workflow.lead-wide article:nth-child(2){border-bottom:0;padding-bottom:0}
+  .workflow.lead-wide article:nth-child(3){padding-top:14px}
 }
 @media (max-width:900px){.split,.split.wide-left,.two,.three{grid-template-columns:minmax(0,1fr)}}
 .body code{overflow-wrap:anywhere}
@@ -360,6 +408,59 @@ code,.path{
 .spec tr:hover td{color:var(--ink)}
 .spec .needs{font:400 12px/1.5 var(--f-mono);color:var(--muted);white-space:nowrap}
 .spec-scroll{overflow-x:auto}
+/* The row tick: an annotation mark in the margin, the same gesture as the index rows. */
+.spec tbody th{position:relative}
+.spec tbody th::before{
+  content:"";position:absolute;left:-13px;top:.15em;bottom:.15em;width:1px;background:var(--accent);
+  opacity:0;transform:scaleY(.5);transform-origin:top;transition:opacity .2s var(--ease-state),transform .24s var(--ease-out);
+}
+.spec tbody tr:hover th::before,.spec tbody tr:focus-within th::before{opacity:.9;transform:none}
+@media (prefers-reduced-motion:reduce){.spec tbody th::before{transition:none}}
+
+/* ---------------------------------------------- the strip (horizontal record) */
+/* A filmstrip of plates: one hairline-bordered column per release, snapped. It is a real
+   scroll container, so touch, trackpad, shift+wheel and the arrow keys all work without a
+   second clock on the page. */
+.rail{display:flex;overflow-x:auto;overscroll-behavior-x:contain;scroll-snap-type:x proximity;scrollbar-width:none;border-top:1px solid var(--line)}
+.rail-wrap{position:relative}
+/* The strip is wider than the sheet: fade the cut edge until the end is reached. */
+.rail-wrap::after{content:"";position:absolute;z-index:2;top:0;bottom:2px;right:0;width:clamp(28px,4vw,56px);background:linear-gradient(90deg,transparent,var(--ground));pointer-events:none;opacity:1;transition:opacity .2s var(--ease-state)}
+.rail-wrap.at-end::after{opacity:0}
+.rail-wrap::before{content:"";position:absolute;z-index:2;top:0;bottom:2px;left:0;width:clamp(28px,4vw,56px);background:linear-gradient(270deg,transparent,var(--ground));pointer-events:none;opacity:0;transition:opacity .2s var(--ease-state)}
+.rail-wrap.scrolled::before{opacity:1}
+.rail::-webkit-scrollbar{display:none}
+.rail li{flex:0 0 clamp(252px,30vw,368px);scroll-snap-align:start;min-width:0}
+.rail li+li{border-left:1px solid var(--line)}
+.rail a{display:grid;grid-template-rows:auto auto 1fr auto;gap:12px;height:100%;min-height:238px;padding:22px clamp(16px,2vw,26px) 20px;text-decoration:none;color:inherit}
+.rail li:first-child a{padding-left:0}
+.rail a:active{background:var(--panel)}
+.rail-ver{font:500 11px/1 var(--f-mono);letter-spacing:.06em;color:var(--accent)}
+.rail h3{font-size:var(--t-m)}
+.rail p{font-size:.9375rem;line-height:1.5;color:var(--muted);max-width:32ch}
+.rail-go{align-self:end;padding-top:6px;font:500 11px/1.4 var(--f-mono);letter-spacing:.04em;color:var(--muted);display:inline-flex;gap:6px;align-items:center;transition:color .2s var(--ease-state)}
+.rail-go span{display:inline-block;transition:transform .24s var(--ease-out)}
+.rail li a:hover .rail-go,.rail li a:focus-visible .rail-go{color:var(--ink)}
+.rail li a:hover .rail-go span,.rail li a:focus-visible .rail-go span{transform:translate(2px,-2px)}
+.rail a:hover h3,.rail a:focus-visible h3{color:var(--accent)}
+.rail a:hover .rail-go,.rail a:focus-visible .rail-go{color:var(--ink)}
+.rail a:hover .rail-go span,.rail a:focus-visible .rail-go span{transform:translate(2px,-2px)}
+.rail-progress{height:2px;margin-top:0;background:var(--line);overflow:hidden}
+/* The record strip on a wide screen: the sheet pins, the strip runs sideways on the scroll.
+   Phones, touch, reduced motion and the agent view keep the native scroller below. */
+html.has-motion .rail-pinned{min-height:100svh;display:flex;flex-direction:column;justify-content:center;gap:clamp(20px,3.5vh,44px);padding-block:clamp(72px,11vh,120px)}
+html.has-motion .rail-pinned .rail{overflow:visible;width:max-content;scroll-snap-type:none}
+html.has-motion .rail-pinned .rail li{flex-basis:clamp(300px,30vw,412px)}
+html.has-motion .rail-pinned .rail a{min-height:clamp(238px,32vh,340px)}
+/* clip, not hidden: a hidden box is still a scroll container, and the browser would scroll
+   it to reveal a focused card instead of letting the pin carry that card into view. */
+html.has-motion .rail-pinned .rail-wrap{overflow:clip}
+html.has-motion .rail-pinned .rail-wrap::before,html.has-motion .rail-pinned .rail-wrap::after{width:clamp(48px,8vw,124px)}
+.rail-progress i{display:block;height:100%;background:var(--accent);transform:scaleX(calc(.06 + var(--p,0) * .94));transform-origin:left;transition:transform .12s linear}
+@media (prefers-reduced-motion:reduce){.rail-go,.rail-go span,.rail-progress i{transition:none}}
+@media (max-width:760px){
+  .rail li{flex-basis:min(78vw,320px)}
+  .rail a{min-height:0;padding-block:18px}
+}
 
 /* ---------------------------------------------- evidence / tolerance rows */
 .tol-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;padding:12px 0;border-bottom:1px solid var(--line);align-items:baseline}
@@ -681,8 +782,9 @@ html.js .art.art-ready{opacity:1}
 .nova-sprite{position:absolute;inset:0;background:url('assets/mascots/nova-directions.webp') 50% 50% / 300% 300% no-repeat}
 .nova-mascot[data-reaction] .nova-sprite{background-image:url('assets/mascots/nova-reactions.webp')}
 .nova-mascot:hover,.nova-mascot:focus-visible{background:var(--panel)}
-.index-cols{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 clamp(16px,2.4vw,34px)}
-@media (max-width:1000px){.index-cols{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.index-cols{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:0 clamp(16px,2.4vw,34px)}
+@media (max-width:1180px){.index-cols{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:760px){.index-cols{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:560px){.index-cols{grid-template-columns:1fr}}
 .index-col h3{font:500 11px/1.3 var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--accent);padding:10px 0 8px;border-bottom:1px solid var(--line);margin-bottom:2px}
 .index-col a{
@@ -693,6 +795,7 @@ html.js .art.art-ready{opacity:1}
 }
 .index-col a em{font:400 11px/1 var(--f-mono);font-style:normal;color:var(--muted)}
 .index-col a:hover,.index-col a:focus-visible{color:var(--ink);padding-left:12px}
+.index-col a:active{padding-left:12px;color:var(--accent)}
 .index-col a:hover::before,.index-col a:focus-visible::before{content:"";position:absolute;left:0;top:50%;width:6px;height:1px;background:var(--accent)}
 
 /* ---------------------------------------------- mobile menu */
@@ -724,14 +827,21 @@ html.js .art.art-ready{opacity:1}
 }
 
 /* ---------------------------------------------- motion */
+/* GSAP owns the state below; every hidden form is applied from assets/motion.js after its
+   gate, so nothing here can hide the sheet when script, GSAP or motion is unavailable. */
+html.enter .hero [data-enter]{opacity:0}
+html[data-view="agent"] .hero [data-enter]{opacity:1 !important}
+@media (prefers-reduced-motion:reduce){html.enter .hero [data-enter]{opacity:1}}
+.mo-word-mask{display:inline-block;overflow:hidden;vertical-align:top;padding-bottom:.14em;margin-bottom:-.14em}
+.mo-word{display:inline-block;will-change:transform,opacity}
+[data-cursor]{display:none}
+html.has-motion [data-cursor]{position:fixed;left:0;top:0;z-index:9999;display:block;width:14px;height:14px;margin:-7px 0 0 -7px;border:1px solid #fff;border-radius:50%;pointer-events:none;mix-blend-mode:difference;will-change:transform}
+html[data-view="agent"] [data-cursor]{display:none}
+@media (prefers-reduced-motion:reduce),(pointer:coarse){[data-cursor]{display:none}}
 @media (prefers-reduced-motion:no-preference){
   html{scroll-behavior:smooth}
-  html.js [data-fade]{opacity:0;transform:translateY(10px);transition:opacity .52s var(--ease-out),transform .52s var(--ease-out)}
-  html.js [data-fade][data-in]{opacity:1;transform:none}
-  html.js [data-fade="2"]{transition-delay:.06s}
-  html.js [data-fade="3"]{transition-delay:.12s}
-  html.js [data-draw]{transform:scaleX(0);transform-origin:left center;transition:transform .7s var(--ease-out)}
-  html.js [data-draw][data-in]{transform:none}
+  [data-draw]{transform-origin:left center}
+  html.has-motion [data-fade],html.has-motion [data-draw],html.has-motion [data-image-reveal]{will-change:transform,opacity}
 }
 /* Lenis drives the scroll position itself, so the CSS smooth behaviour has to stand down. */
 html.lenis,html.lenis body{height:auto}
@@ -754,11 +864,12 @@ html[data-view="agent"] .scene-layers,
 html[data-view="agent"] .nova-companion,
 html[data-view="agent"] .plate,
 html[data-view="agent"] .coin-band,
-html[data-view="agent"] .index .index-cols,
 html[data-view="agent"] .divider .num,
 html[data-view="agent"] .zones,
 html[data-view="agent"] [data-par]{display:none !important}
 html[data-view="agent"] .hero{min-height:0;display:block;padding-top:18px}
+html[data-view="agent"] .hero > .wrap{width:100%;max-width:1400px;margin-inline:auto;padding-inline:var(--pad);border:0}
+html[data-view="agent"] .hero::after{display:none}
 html[data-view="agent"] .hero-grid{display:block}
 html[data-view="agent"] .hero .measure,
 html[data-view="agent"] .hero .lead,
@@ -766,6 +877,13 @@ html[data-view="agent"] .hero-actions,
 html[data-view="agent"] .hero .meta-line,
 html[data-view="agent"] .hero .tb{display:none !important}
 html[data-view="agent"] [data-fade],html[data-view="agent"] [data-draw]{opacity:1 !important;transform:none !important;transition:none !important;animation:none !important}
+html[data-view="agent"] .mo-word{opacity:1 !important;visibility:visible !important;transform:none !important}
+html[data-view="agent"] [data-image-reveal]{clip-path:none !important}
+html[data-view="agent"] .tutorial-screen{display:none}
+html[data-view="agent"] .tutorial{padding-block:24px}
+html[data-view="agent"] .tutorial-head{max-width:none;margin-bottom:16px}
+html[data-view="agent"] .tutorial-figure{position:static;width:auto;margin:0 0 16px}
+html[data-view="agent"] .tutorial-steps li{min-height:0;padding-block:16px}
 html[data-view="agent"] .measure-rule .measure-num,
 html[data-view="agent"] .measure-rule .measure-line{display:none}
 html[data-view="agent"] .feature-art picture,html[data-view="agent"] .feature-art img,html[data-view="agent"] .product-shot img{display:none !important}
@@ -789,7 +907,7 @@ html[data-view="agent"] details[data-agent-expand] p{padding:0 12px 12px}
 html[data-view="agent"] .agent-only{display:block !important}
 .agent-only{display:none}
 .agent-block,.agent-doc{border:1px solid var(--line);background:var(--panel);padding:16px 18px;margin:0 0 18px;max-width:none}
-.agent-block h2,.agent-doc h2{font:600 13px/1.3 var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin:0 0 10px}
+.agent-block h2,.agent-doc h1,.agent-doc h2{font:600 13px/1.3 var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin:0 0 10px}
 .agent-doc h3{font:600 1rem/1.35 var(--f-display);margin:18px 0 8px;color:var(--ink)}
 .agent-doc p,.agent-doc li,.agent-doc dd{color:var(--muted);font-size:.98rem;line-height:1.6}
 .agent-doc ul,.agent-doc ol{margin:8px 0 0;padding-left:20px;display:grid;gap:6px}
@@ -801,6 +919,7 @@ html[data-view="agent"] .agent-only{display:block !important}
 html[data-view="agent"] .hero .agent-doc{margin:0 0 6px}
 html[data-view="agent"] .index{padding:14px 0;border-top:1px solid var(--line)}
 html[data-view="agent"] .index-head{display:block;margin:0 0 10px}
+html[data-view="agent"] .index-cols{display:block}
 html[data-view="agent"] .index-col{border:0;padding:0;margin:0 0 10px}
 html[data-view="agent"] .index-col a{display:block;padding:4px 0}
 html[data-view="agent"] .spec,html[data-view="agent"] .spec tbody,html[data-view="agent"] .spec tr,html[data-view="agent"] .spec th,html[data-view="agent"] .spec td{display:block;width:auto;white-space:normal}
@@ -808,6 +927,9 @@ html[data-view="agent"] .spec thead{display:none}
 html[data-view="agent"] .spec tr{padding:10px 0;border-top:1px solid var(--line)}
 html[data-view="agent"] .spec th{padding:0 0 4px}
 html[data-view="agent"] .spec td{padding:0}
+html[data-view="agent"] .rail,html[data-view="agent"] .rail a{display:block;overflow:visible;min-height:0;padding:0 0 14px}
+html[data-view="agent"] .rail li{border-left:0;border-top:1px solid var(--line);padding-top:14px}
+html[data-view="agent"] .rail-progress,html[data-view="agent"] .rail-wrap::before,html[data-view="agent"] .rail-wrap::after{display:none}
 html[data-view="agent"] .cmd{border:1px solid var(--line);background:var(--panel);padding:10px 12px}
 html[data-view="agent"] .btn::before,html[data-view="agent"] .hero-actions .btn{transform:none}
 html[data-view="agent"] .mobile-menu{display:none !important}
@@ -875,7 +997,7 @@ html[data-view="agent"] .page-progress{display:none !important}
     <div class="bar-end">
       <nav class="bar-side bar-side-end" aria-label="Sections">
         <a href="changelog/">Changelog</a>
-        <a class="bar-cta" href="#install">Install</a>
+        <a class="bar-cta" data-magnetic="0.12" href="#install">Install</a>
       </nav>
       <div class="bar-mini">
         <button class="view-toggle" data-view-toggle hidden aria-pressed="false" aria-label="Switch to agent view" title="Human view (click for agent)"><span class="dot" aria-hidden="true"></span><span data-view-label>Human</span></button>
@@ -908,12 +1030,18 @@ html[data-view="agent"] .page-progress{display:none !important}
     <h2>Sheet 00 &middot; cover</h2>
     <a href="#what">Start here</a>
     <a href="#install">Install</a>
-    <h2>Sheet 01 &middot; workflow</h2>
-    <a href="#workflow">From task to review</a>
+    <h2>Sheet 01 &middot; delegation</h2>
+    <a href="#rooms">Several agents, one terminal</a>
     <h2>Sheet 02 &middot; memory</h2>
     <a href="#memory">Memory you can inspect</a>
-    <h2>Sheet 03 &middot; control</h2>
-    <a href="#control">Plans and approvals</a>
+    <h2>Sheet 03 &middot; verification</h2>
+    <a href="#verify">Proof, not a claim</a>
+    <h2>Sheet 04 &middot; control</h2>
+    <a href="#control">You set the boundaries</a>
+    <h2>Sheet 05 &middot; the record</h2>
+    <a href="#record">Release by release</a>
+    <h2>Spec</h2>
+    <a href="#spec">Only in Nova</a>
     <h2>Elsewhere</h2>
     <a href="docs/">Documentation</a>
     <a href="changelog/">Changelog</a>
@@ -925,17 +1053,17 @@ html[data-view="agent"] .page-progress{display:none !important}
 
   <section class="hero" aria-labelledby="what">
     <div class="wrap">
-    <div class="zones" aria-hidden="true" data-par="zones"><span>cover sheet</span><span>novacode &middot; rev 1.2.1</span><span>scale 1:1</span></div>
+    <div class="zones" aria-hidden="true" data-par="zones"><span>cover sheet</span><span>novacode &middot; rev 1.2.20</span><span>scale 1:1</span></div>
     <div class="hero-grid">
       <div>
         <section class="agent-only agent-doc" aria-label="Agent-readable hero and page summary">
-          <h2>Agent view — NovaCode landing (linear)</h2>
+          <h1>Agent view — NovaCode landing (linear)</h1>
           <p>This is the full landing page transformed for AI agent readability. Toggle to Human for the visual presentation. Verify current behavior, versions, and limits against the docs, changelog, and source repository.</p>
           <h3>Product</h3>
           <ul>
             <li><strong>Name:</strong> NovaCode / Nova — open-source terminal coding assistant/agent (MIT). <a href="https://github.com/Babitdor/NovaCode">Source</a>.</li>
             <li><strong>Headline:</strong> A coding agent with readable memory. Open source. Runs in your repository.</li>
-            <li><strong>What it does:</strong> Give Nova a task in your repository. It explores code, edits files, and runs commands in your terminal. You can review plans before implementation and configure which tool actions need approval.</li>
+            <li><strong>What it does:</strong> Give Nova a task in your repository. It investigates, plans, edits files and runs your checks. Beyond that it delegates to specialist agents, runs Claude Code and Codex alongside itself in project rooms, compares options in a Council, and reports verification evidence instead of a completion claim.</li>
             <li><strong>Requirements (as stated):</strong> Python 3.11+, MIT licensed, hosted or local models (macOS/Linux/Windows; some providers require credentials).</li>
             <li><strong>Canonical pages:</strong> <a href="./">Home</a> · <a href="docs/">Documentation</a> · <a href="docs/#page-features">Feature guide</a> · <a href="changelog/">Changelog</a> · <a href="llms.txt">llms.txt</a> · <a href="sitemap.xml">sitemap.xml</a></li>
           </ul>
@@ -946,40 +1074,46 @@ html[data-view="agent"] .page-progress{display:none !important}
             <li><strong>Upgrade:</strong> <code>uv tool upgrade novacode-cli</code>. To replace a Git-based installation, use <code>uv tool install --python 3.11 --force novacode-cli</code>.</li>
             <li><strong>Run:</strong> <code>nova</code>. Note: an installed copy is not a development checkout; to work on Nova itself use the source checkout (<code>uv run nova</code> as documented).</li>
           </ul>
-          <h3>Workflow</h3>
-          <ol>
-            <li><strong>Describe the change:</strong> point Nova at a repository and explain the bug, feature, or question.</li>
-            <li><strong>Work with the code:</strong> Nova explores relevant files, proposes plans when useful, and makes changes using its coding tools.</li>
-            <li><strong>Inspect the result:</strong> review conversation/file changes; ask Nova to run the checks your project needs.</li>
-          </ol>
+          <h3>What is different here</h3>
+          <ul>
+            <li><strong>Delegation:</strong> specialist agents in-process and in the background, <code>/rooms</code> project channels with agent DMs and a shared task board, an embedded Claude Code or Codex conversation per channel, and <code>/council</code> / <code>/council web</code> for proposals, ballots and a chairman's synthesis.</li>
+            <li><strong>Memory:</strong> a linked Markdown wiki with visible recall notices, <code>/dream</code> consolidation and backups, plus a source-validated workspace knowledge cache (<code>/cache</code>).</li>
+            <li><strong>Verification:</strong> <code>/prime</code> Deep Work tracks define, investigate, implement, verify, challenge and deliver, and evaluates acceptance checks against real tool-call output.</li>
+            <li><strong>Context:</strong> model-controlled compression folds completed ranges into summaries while exact originals stay searchable (<code>compress</code>, <code>decompress</code>, <code>search_context</code>, <code>acp_status</code>).</li>
+            <li><strong>Tooling:</strong> <code>/onboard</code> builds a local code graph with tours and change impact; Code Mode (<code>eval</code>) runs bounded JavaScript over eligible tools; <code>/cc</code> Command Center lists sessions by project and status; <code>/loop</code> schedules recurring work.</li>
+            <li><strong>Interfaces:</strong> 14 interface styles, Lite Mode (Off / Caveman / Ponytail), artifacts with temporary Cloudflare previews, Telegram/Discord/Rootapp bridges, voice in and out, and a <code>VISION</code> side-call for text-only models.</li>
+            <li><strong>Preview and experimental:</strong> the local QEMU Linux desktop is a preview; agent teams and swarm scheduling are experimental and off by default.</li>
+          </ul>
           <h3>Readable memory</h3>
           <ul>
-            <li>Preferences/topic notes are kept in readable Markdown on your machine (example: <code>~/.nova/agents/&lt;agent&gt;/memories/</code>).</li>
+            <li>Preferences, topic notes and habits are kept in readable Markdown on your machine (example: <code>~/.nova/agents/&lt;agent&gt;/memories/</code>).</li>
+            <li>Automatic recall is visible: the transcript says when memory was recalled or a page was read, and names the source path.</li>
             <li>Memory is <strong>context, not verification</strong>. You can read, edit, search, or remove notes.</li>
             <li><a href="docs/#page-memory">Memory documentation</a></li>
           </ul>
           <h3>Plans and approvals</h3>
           <ul>
-            <li>Plan mode lets Nova investigate before changing code; review the approach before implementation.</li>
-            <li>Tool approvals follow a configurable policy; <strong>hard-coded denials are still enforced</strong>.</li>
+            <li>Plan mode keeps investigation read-only and blocks edits, memory writes, command execution and MCP or Code Mode calls; auto-approval cannot override it.</li>
+            <li>Tool approvals follow a configurable policy; <strong>hard-coded denials are still enforced</strong>, and uncertain auto-approval reviews fail closed.</li>
             <li>Approved plans are saved with the project and in Nova's archive (as stated on page).</li>
             <li><a href="docs/#page-security">Security/permissions documentation</a></li>
           </ul>
           <h3>FAQ highlights</h3>
           <ul>
-            <li><strong>What does Nova do?</strong> Open-source terminal coding agent; explores repos, edits files, runs commands, helps understand code.</li>
+            <li><strong>What does Nova do?</strong> Open-source terminal coding agent; investigates the repository, plans, edits files, runs commands, and verifies the result.</li>
             <li><strong>Where is memory kept?</strong> Markdown under <code>~/.nova/agents/&lt;agent&gt;/memories/</code>; user-readable/editable.</li>
             <li><strong>Do I approve every action?</strong> Configurable by operation; plan mode for review; hard-coded denials cannot be disabled by policy.</li>
-            <li><strong>Models/OS?</strong> Hosted providers and local Ollama; Python 3.11+; macOS/Linux/Windows.</li>
+            <li><strong>Can other agents join?</strong> Yes — specialists, an embedded Claude Code or Codex channel in <code>/rooms</code>, and Council advisors.</li>
+            <li><strong>Models/OS?</strong> 18 hosted provider IDs and local Ollama; Python 3.11+; macOS/Linux/Windows.</li>
           </ul>
           <h3>Navigation</h3>
           <ul>
-            <li><a href="#install">Install section</a> · <a href="#workflow">Workflow</a> · <a href="#memory">Memory</a> · <a href="#control">Plans & approvals</a> · <a href="#faq">FAQ</a></li>
+            <li><a href="#install">Install section</a> · <a href="#rooms">Delegation</a> · <a href="#memory">Memory</a> · <a href="#verify">Verification</a> · <a href="#control">Control</a> · <a href="#spec">Spec list</a> · <a href="#record">Release record</a> · <a href="#faq">FAQ</a></li>
             <li><a href="https://github.com/Babitdor/NovaCode/issues">Issues</a> · <a href="https://github.com/Babitdor/NovaCode/releases">Releases</a></li>
           </ul>
           <p class="agent-note"><strong>Limits/caveats:</strong> Feature availability depends on install extras, provider, platform, and configuration. Not a benchmark. Prefer docs/changelog/source for current behavior.</p>
         </section>
-        <div class="measure" data-measure data-par="claim">
+        <div class="measure" data-measure data-par="claim" data-enter>
           <h1 class="mega measure-claim" id="what">A coding agent with readable memory.</h1>
           <div class="measure-rule">
             <span class="measure-num" aria-hidden="true"></span>
@@ -987,23 +1121,23 @@ html[data-view="agent"] .page-progress{display:none !important}
             <span class="measure-tol">&plusmn; Open source. Runs in your repository.</span>
           </div>
         </div>
-        <p class="lead" style="margin-top:clamp(22px,3vw,32px)">Give Nova a task in your repository. It explores the code, edits files and runs commands in your terminal. Review plans before implementation and configure which tool actions need approval.</p>
-        <div class="hero-actions">
-          <a class="btn solid" href="#install"><span class="tick" aria-hidden="true"></span>Install Nova
+        <p class="lead" data-enter style="margin-top:clamp(22px,3vw,32px)">Give Nova a task in your repository. It investigates, plans, edits files and runs your checks — then reports what it observed, not what it intended. Memory lands in Markdown you can read, and other agents can join in their own channels.</p>
+        <div class="hero-actions" data-enter>
+          <a class="btn solid" data-magnetic="0.16" href="#install"><span class="tick" aria-hidden="true"></span>Install Nova
             <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 2v11M3.6 8.6 8 13l4.4-4.4" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
           </a>
-          <a class="btn" href="#workflow">See how it works<span class="tick" aria-hidden="true"></span></a>
+          <a class="btn" href="#rooms">See what is different<span class="tick" aria-hidden="true"></span></a>
         </div>
-        <div class="meta-line">
+        <div class="meta-line" data-enter>
           <span><i aria-hidden="true"></i>Python 3.11 or newer</span>
           <span><i aria-hidden="true"></i>MIT licensed</span>
           <span><i aria-hidden="true"></i>Hosted or local models</span>
         </div>
       </div>
-      <dl class="tb" data-par="tb">
+      <dl class="tb" data-par="tb" data-enter>
         <dt>project</dt><dd>NovaCode</dd>
-        <dt>sheet</dt><dd>00 / 03</dd>
-        <dt>revision</dt><dd>1.2.1</dd>
+        <dt>sheet</dt><dd>00 / 05</dd>
+        <dt>revision</dt><dd>1.2.20</dd>
         <dt>licence</dt><dd>MIT</dd>
         <dt>runtime</dt><dd>Python 3.11+</dd>
         <dt>drawn</dt><dd>in the terminal</dd>
@@ -1039,6 +1173,76 @@ html[data-view="agent"] .page-progress{display:none !important}
     </figure>
   </section>
 
+  <section class="tutorial wrap" id="walkthrough-start" aria-labelledby="tutorial-start-title" style="--tutorial-ratio:1.43734">
+    <div class="tutorial-head">
+      <h2 class="l" id="tutorial-start-title">Find your starting point.</h2>
+      <p class="lead">Take a quick tour of the workspace before your first conversation.</p>
+    </div>
+    <div class="tutorial-layout">
+      <figure class="tutorial-figure">
+        <div class="tutorial-screen">
+          <img src="assets/tutorial-home.webp" width="1640" height="1141" loading="lazy" decoding="async" alt="Nova home screen with workspace navigation on the left, Explain, Refactor, Build and Debug starting points in the center, and a message input at the bottom.">
+          <span class="tutorial-focus" style="--focus-left:.8%;--focus-width:13%;--focus-top:24%;--focus-height:37%" aria-hidden="true"></span>
+          <span class="tutorial-focus" style="--focus-left:15%;--focus-width:66%;--focus-top:36.5%;--focus-height:13.5%" aria-hidden="true"></span>
+          <span class="tutorial-focus" style="--focus-left:.5%;--focus-width:99%;--focus-top:88.5%;--focus-height:6%" aria-hidden="true"></span>
+        </div>
+        <figcaption><span>Workspace example</span><a href="assets/tutorial-home.webp" target="_blank" rel="noopener">View full screenshot</a></figcaption>
+      </figure>
+      <ol class="tutorial-steps" aria-label="Starting a conversation">
+        <li>
+          <span class="tutorial-step-number">01 / 03</span>
+          <h3>Get your bearings.</h3>
+          <p>The sidebar brings together your codebase, tests, tools and agents. The project and branch sit underneath, so you can see where you are working.</p>
+        </li>
+        <li>
+          <span class="tutorial-step-number">02 / 03</span>
+          <h3>Choose a starting point.</h3>
+          <p>Explain, Refactor, Build or Debug: pick the kind of work you have in mind, or describe your task directly.</p>
+        </li>
+        <li>
+          <span class="tutorial-step-number">03 / 03</span>
+          <h3>Make the request yours.</h3>
+          <p>Use the message input to describe the change, question or failure. Include the details Nova needs to begin.</p>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="tutorial wrap" id="walkthrough" aria-labelledby="tutorial-title">
+    <div class="tutorial-head">
+      <h2 class="l" id="tutorial-title">Follow one conversation.</h2>
+      <p class="lead">A question, a tool call, an answer grounded in the output. Scroll through a real Nova session.</p>
+    </div>
+    <div class="tutorial-layout">
+      <figure class="tutorial-figure">
+        <div class="tutorial-screen">
+          <img src="Screen.png" width="1350" height="807" loading="lazy" decoding="async" alt="Nova session: You ask ‘what changed on main this week?’ The git log --oneline -5 output lists five commits. Nova summarizes the largest change: async agents now start on demand in your project, without Docker.">
+          <span class="tutorial-focus" aria-hidden="true"></span>
+          <span class="tutorial-focus" aria-hidden="true"></span>
+          <span class="tutorial-focus" aria-hidden="true"></span>
+        </div>
+        <figcaption><span>A real terminal session</span><a href="Screen.png" target="_blank" rel="noopener">View full screenshot</a></figcaption>
+      </figure>
+      <ol class="tutorial-steps" aria-label="How to read the session">
+        <li>
+          <span class="tutorial-step-number">01 / 03</span>
+          <h3>Ask in plain language.</h3>
+          <p>“What changed on main this week?” Start with what you want to understand, right in your terminal.</p>
+        </li>
+        <li>
+          <span class="tutorial-step-number">02 / 03</span>
+          <h3>See the evidence.</h3>
+          <p>Nova runs <code>git log --oneline -5</code>. The command and its five commits appear in the conversation, so you can inspect the source of the answer.</p>
+        </li>
+        <li>
+          <span class="tutorial-step-number">03 / 03</span>
+          <h3>Read what matters.</h3>
+          <p>Nova explains the biggest change: async agents now start on demand in your project, without Docker. This example reads the latest five commits; it does not filter by week.</p>
+        </li>
+      </ol>
+    </div>
+  </section>
+
   <section class="wrap" aria-label="Landing page contents">
     <div class="index" id="index">
       <div class="index-head">
@@ -1052,66 +1256,108 @@ html[data-view="agent"] .page-progress{display:none !important}
       </div>
       <div class="index-cols">
         <div class="index-col">
-          <h3>01 &middot; the workflow</h3>
-          <a href="#workflow">From task to review<em>01</em></a>
+          <h3>01 &middot; delegation</h3>
+          <a href="#rooms">Several agents<em>01</em></a>
         </div>
         <div class="index-col">
           <h3>02 &middot; memory</h3>
           <a href="#memory">Notes in Markdown<em>02</em></a>
         </div>
         <div class="index-col">
-          <h3>03 &middot; control</h3>
-          <a href="#control">Plans and approvals<em>03</em></a>
+          <h3>03 &middot; verification</h3>
+          <a href="#verify">Proof, not a claim<em>03</em></a>
+        </div>
+        <div class="index-col">
+          <h3>04 &middot; control</h3>
+          <a href="#control">Plans and approvals<em>04</em></a>
+        </div>
+        <div class="index-col">
+          <h3>05 &middot; the record</h3>
+          <a href="#record">Release by release<em>05</em></a>
         </div>
       </div>
     </div>
   </section>
 
-  <section class="divider" aria-labelledby="workflow-chapter">
+  <section class="divider" aria-labelledby="rooms-chapter">
     <div class="wrap">
       <div class="num" aria-hidden="true">01</div>
       <div>
-        <h2 class="chap" id="workflow-chapter">From task to review</h2>
-        <p class="sub">Nova works in the repository you give it, using the tools and commands available in your terminal.</p>
+        <h2 class="chap" data-motion-text="words" id="rooms-chapter">Several agents, one terminal</h2>
+        <p class="sub">Specialists, an embedded Claude Code or Codex channel, and a Council that argues before it recommends.</p>
       </div>
     </div>
   </section>
 
-  <section class="band wrap" id="workflow" aria-labelledby="workflow-title">
+  <section class="band wrap" id="rooms" aria-labelledby="rooms-title">
     <div class="sec-head">
-      <div data-fade>
-        <h2 class="l" id="workflow-title">Give it a task. Stay in the loop.</h2>
+      <div>
+        <h2 class="l" data-motion-text="words" id="rooms-title">Work is delegated, not flattened.</h2>
       </div>
-      <p class="lead" data-fade="2">Nova reads project context, works across files, and runs commands through the terminal. You can steer it as it goes and inspect the result.</p>
+      <p class="lead" data-fade>Independent work goes to specialists, background runs keep their own lane, and a project gets channels instead of one growing conversation.</p>
     </div>
-    <div class="workflow" role="list" aria-label="Coding task workflow">
+    <div class="workflow lead-wide" role="list" aria-label="Delegation and collaboration">
       <article role="listitem">
-        <span class="idx">01</span>
-        <h3 class="m">Describe the change</h3>
-        <p class="body">Point Nova at a repository and explain the bug, feature, or question in your own words.</p>
+        <h3 class="m">Specialist agents</h3>
+        <p class="body">Fourteen definitions cover exploration, bugs, refactors, review, security, dependencies, performance, docs, tests and browser work. In-process calls answer inside your task; background agents keep running while you read.</p>
       </article>
       <article role="listitem">
-        <span class="idx">02</span>
-        <h3 class="m">Work with the code</h3>
-        <p class="body">Nova explores relevant files, proposes plans when useful, and makes changes using its coding tools.</p>
+        <h3 class="m">Project rooms</h3>
+        <p class="body"><code>/rooms</code> opens project channels, agent DMs and one shared task board. Nova can also run Claude Code or Codex from their installed CLIs in a channel: separate resumable conversations, attributed replies, approved handoffs.</p>
       </article>
       <article role="listitem">
-        <span class="idx">03</span>
-        <h3 class="m">Inspect the result</h3>
-        <p class="body">Review the conversation and file changes. Ask Nova to run the checks your project needs.</p>
+        <h3 class="m">Council</h3>
+        <p class="body"><code>/council web</code> sends a decision brief to advisors who ask questions, vote on real options and disagree in public. A chairman reconciles the result and keeps minority concerns. Votes are advisory; you approve the outcome.</p>
       </article>
     </div>
-    <figure class="product-shot" data-fade>
-      <img src="assets/shot-shell.webp" alt="Nova terminal showing a user question, repository history, and Nova's summary" width="1600" height="1100" loading="lazy" decoding="async">
-      <figcaption class="tol">Nova working from repository context in the terminal.</figcaption>
+    <p class="tol" style="margin-top:clamp(18px,2.6vw,26px);max-width:70ch">&plusmn; Background agents need the <code>agents-server</code> extra. Rooms limit a project to two workers and six initial task turns; extensions need a separate owner decision. Teams and swarm scheduling stay experimental and off by default.</p>
+    <a class="text-link" href="docs/#page-rooms" style="display:inline-flex;margin-top:18px">Read about rooms and delegation <span aria-hidden="true">&nearr;</span></a>
+    <figure class="product-shot" data-image-reveal>
+      <img src="assets/tutorial-delegation.webp" alt="Demonstration in the current Nova TUI: a parser review request with two running tasks, reviewer and test-engineer." width="1360" height="734" loading="lazy" decoding="async">
+      <figcaption class="tol">Current Nova interface, with demonstration tasks for a reviewer and a test engineer.</figcaption>
     </figure>
+  </section>
+
+  <section class="tutorial wrap" id="walkthrough-agent" aria-labelledby="tutorial-agent-title" style="--tutorial-ratio:1.85286">
+    <div class="tutorial-head">
+      <h2 class="l" id="tutorial-agent-title">Look inside a specialist’s task.</h2>
+      <p class="lead">Open a running task to inspect its activity. This capture uses the current Nova interface with demonstration content.</p>
+    </div>
+    <div class="tutorial-layout">
+      <figure class="tutorial-figure">
+        <div class="tutorial-screen">
+          <img src="assets/tutorial-agent-preview.webp" width="1360" height="734" loading="lazy" decoding="async" alt="Nova specialist preview: reviewer is running a parser edge-case review. Its task, investigation notes, file-read call and result appear above an Escape hint for returning to the session.">
+          <span class="tutorial-focus" style="--focus-left:2%;--focus-width:96%;--focus-top:15.5%;--focus-height:14%" aria-hidden="true"></span>
+          <span class="tutorial-focus" style="--focus-top:32%;--focus-height:28%" aria-hidden="true"></span>
+          <span class="tutorial-focus" style="--focus-left:2%;--focus-width:40%;--focus-top:95.5%;--focus-height:3%" aria-hidden="true"></span>
+        </div>
+        <figcaption><span>Current TUI · demonstration</span><a href="assets/tutorial-agent-preview.webp" target="_blank" rel="noopener">View full screenshot</a></figcaption>
+      </figure>
+      <ol class="tutorial-steps" aria-label="Inspecting a specialist task">
+        <li>
+          <span class="tutorial-step-number">01 / 03</span>
+          <h3>Check the brief.</h3>
+          <p>The task names the work assigned to this specialist: reviewing parser edge cases. Its role and running status appear at the top of the view.</p>
+        </li>
+        <li>
+          <span class="tutorial-step-number">02 / 03</span>
+          <h3>Follow its activity.</h3>
+          <p>The preview brings together the specialist’s notes, tool calls and results. Here, a file read sits beside a note about checking nested-list validation.</p>
+        </li>
+        <li>
+          <span class="tutorial-step-number">03 / 03</span>
+          <h3>Return to the conversation.</h3>
+          <p>Press <kbd>Esc</kbd> in Nova to return to the main session. Opening the preview lets you inspect the task without replacing the main conversation.</p>
+        </li>
+      </ol>
+    </div>
   </section>
 
   <section class="divider" aria-labelledby="memory-chapter">
     <div class="wrap">
       <div class="num" aria-hidden="true">02</div>
       <div>
-        <h2 class="chap" id="memory-chapter">Memory you can inspect</h2>
+        <h2 class="chap" data-motion-text="words" id="memory-chapter">Memory you can inspect</h2>
         <p class="sub">Useful notes live in files you can open, search, edit, or remove.</p>
       </div>
     </div>
@@ -1119,55 +1365,136 @@ html[data-view="agent"] .page-progress{display:none !important}
 
   <section class="band wrap" id="memory" aria-labelledby="memory-title">
     <div class="sec-head">
-      <div data-fade>
-        <h2 class="l" id="memory-title">A Markdown wiki, on your machine.</h2>
+      <div>
+        <h2 class="l" data-motion-text="words" id="memory-title">A Markdown wiki, on your machine.</h2>
       </div>
-      <p class="lead" data-fade="2">Nova keeps preferences and topic notes in readable Markdown. It can search the notes and open the source page, so you can see what it is using as context.</p>
+      <p class="lead" data-fade>Preferences, topic notes and habits live in readable Markdown: an index, topic maps, project-scoped pages. Recall is visible — when notes enter a turn, the transcript names the source file.</p>
     </div>
     <div class="split">
-      <figure class="feature-art" data-fade>
+      <figure class="feature-art" data-image-reveal>
         <picture>
           <source srcset="assets/memory-archive.webp" type="image/webp">
           <img src="assets/memory-archive.png" alt="An archive of connected file cards, with one card pulled forward" width="1536" height="1024" loading="lazy" decoding="async">
         </picture>
         <figcaption>Memory, kept in files you can open.</figcaption>
       </figure>
-      <div data-fade="2">
+      <div data-fade>
         <h3 class="m">You stay the source of truth</h3>
-        <p class="body" style="margin-top:10px">Memory is ordinary text, not a hidden profile. Read it directly, correct it when a detail changes, or delete notes you no longer want Nova to use.</p>
+        <p class="body" style="margin-top:10px">Memory is ordinary text, not a hidden profile. Read it directly, correct a detail that changed, delete notes you no longer want Nova to use.</p>
+        <p class="body" style="margin-top:14px"><code>/dream</code> consolidates the wiki with backups and reports broken links. <code>/cache status</code> shows the source-validated workspace cache behind repeated questions about this project.</p>
         <p class="body" style="margin-top:14px">Find the wiki in <code>~/.nova/agents/&lt;agent&gt;/memories/</code>.</p>
-        <p class="tol" style="margin-top:18px">Memory can provide context; it does not prove that a remembered claim is still true.</p>
+        <p class="tol" style="margin-top:18px">&plusmn; Memory provides context; it does not prove a remembered claim is still true.</p>
         <a class="text-link" href="docs/#page-memory" style="display:inline-flex;margin-top:18px">Read about memory <span aria-hidden="true">&nearr;</span></a>
       </div>
     </div>
   </section>
 
-  <section class="divider" aria-labelledby="control-chapter">
+  <section class="divider" aria-labelledby="verify-chapter">
     <div class="wrap">
       <div class="num" aria-hidden="true">03</div>
       <div>
-        <h2 class="chap" id="control-chapter">You set the boundaries</h2>
-        <p class="sub">Review a plan before implementation, and choose how tool approvals work for your project.</p>
+        <h2 class="chap" data-motion-text="words" id="verify-chapter">Proof, not a completion claim</h2>
+        <p class="sub">Nova records what it ran, what it saw, and what it could not check.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="band wrap" id="verify" aria-labelledby="verify-title">
+    <div class="sec-head">
+      <div>
+        <h2 class="l" data-motion-text="words" id="verify-title">It reports what it observed.</h2>
+      </div>
+      <p class="lead" data-fade>Deep Work (<code>/prime</code>) keeps a task inside six checkpoints and separates the agent's own assessment from evidence produced by your tools.</p>
+    </div>
+    <div class="workflow trail-full" role="list" aria-label="Verification and deep work">
+      <article role="listitem">
+        <h3 class="m">Checks before claims</h3>
+        <p class="body">Acceptance checks are written before normal tool work and bound to the real tool-call IDs of that run. Exit codes and literal output are evaluated mechanically, so a fabricated, missing or truncated result cannot pass.</p>
+      </article>
+      <article role="listitem">
+        <h3 class="m">Six checkpoints</h3>
+        <ol class="checks" aria-label="The six Deep Work checkpoints">
+          <li><span aria-hidden="true">01</span>Define</li>
+          <li><span aria-hidden="true">02</span>Investigate</li>
+          <li><span aria-hidden="true">03</span>Implement</li>
+          <li><span aria-hidden="true">04</span>Verify</li>
+          <li><span aria-hidden="true">05</span>Challenge</li>
+          <li><span aria-hidden="true">06</span>Deliver</li>
+        </ol>
+        <p class="body" style="margin-top:16px">Interrupted work stays paused, late results cannot repopulate a cleared request, and an unmet criterion is reported even when every phase finished.</p>
+      </article>
+      <article role="listitem">
+        <h3 class="m">Kept with the session</h3>
+        <p class="body">The report, task history and check evidence persist with the session. <code>/prime tasks</code>, <code>/prime checks</code> and <code>/prime resume &lt;id&gt;</code> reopen them; project-scoped findings are shared across linked worktrees.</p>
+      </article>
+    </div>
+    <p class="tol" style="margin-top:clamp(18px,2.6vw,26px);max-width:70ch">&plusmn; Deep Work is opt-in: <code>/prime on</code> or <code>--prime</code>. Verification is only as good as the checks you define; an unverified result is labelled, not hidden.</p>
+    <a class="text-link" href="docs/#page-prime" style="display:inline-flex;margin-top:18px">Read about Prime and verification <span aria-hidden="true">&nearr;</span></a>
+  </section>
+
+  <section class="tutorial wrap" id="walkthrough-debug" aria-labelledby="tutorial-debug-title" style="--tutorial-ratio:1.43734">
+    <div class="tutorial-head">
+      <h2 class="l" id="tutorial-debug-title">Follow a fix through the checks.</h2>
+      <p class="lead">This debugging example moves from reading the code to explaining a change and reporting the test output.</p>
+    </div>
+    <div class="tutorial-layout">
+      <figure class="tutorial-figure">
+        <div class="tutorial-screen">
+          <img src="assets/tutorial-debug.webp" width="1640" height="1141" loading="lazy" decoding="async" alt="Example debugging conversation: Nova reads parser code and tests, explains a nested-block parsing problem, shows a recursive change, and reports 41 passing tests above a task checklist.">
+          <span class="tutorial-focus" style="--focus-top:18%;--focus-height:11%" aria-hidden="true"></span>
+          <span class="tutorial-focus" style="--focus-top:31%;--focus-height:18%" aria-hidden="true"></span>
+          <span class="tutorial-focus" style="--focus-top:60%;--focus-height:26%" aria-hidden="true"></span>
+        </div>
+        <figcaption><span>Debugging example</span><a href="assets/tutorial-debug.webp" target="_blank" rel="noopener">View full screenshot</a></figcaption>
+      </figure>
+      <ol class="tutorial-steps" aria-label="Following a debugging task">
+        <li>
+          <span class="tutorial-step-number">01 / 03</span>
+          <h3>Trace the investigation.</h3>
+          <p>The tool-call group lists the parser, its tests and a search for <code>parse_block</code>. You can follow which files informed the diagnosis.</p>
+        </li>
+        <li>
+          <span class="tutorial-step-number">02 / 03</span>
+          <h3>Understand the change.</h3>
+          <p>The explanation identifies a parser that only walked one level. The code excerpt illustrates recursive descent for nested blocks.</p>
+        </li>
+        <li>
+          <span class="tutorial-step-number">03 / 03</span>
+          <h3>Read the result and what remains.</h3>
+          <p>The example reports 14 parser tests and 27 block tests passing. The checklist still leaves the changelog note open: passing tests and finishing every task are separate things.</p>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="divider" aria-labelledby="control-chapter">
+    <div class="wrap">
+      <div class="num" aria-hidden="true">04</div>
+      <div>
+        <h2 class="chap" data-motion-text="words" id="control-chapter">You set the boundaries</h2>
+        <p class="sub">Read-only planning, approvals that fail closed, and isolation when you need it.</p>
       </div>
     </div>
   </section>
 
   <section class="band wrap" id="control" aria-labelledby="control-title">
     <div class="sec-head">
-      <div data-fade>
-        <h2 class="l" id="control-title">Review plans. Set tool approvals.</h2>
+      <div>
+        <h2 class="l" data-motion-text="words" id="control-title">Review plans. Set tool approvals.</h2>
       </div>
-      <p class="lead" data-fade="2">Nova can investigate in plan mode before it changes code. Tool approvals follow a policy you can configure, with hard-coded denials still enforced.</p>
+      <p class="lead" data-fade>Plan mode keeps investigation read-only, approvals fail closed rather than open, and a risky change moves into its own Git worktree before anyone touches the original checkout.</p>
     </div>
     <div class="split">
       <div>
-        <h3 class="m">Review before implementation</h3>
-        <p class="body" style="margin-top:10px">Use a plan to inspect the proposed approach and decide whether to proceed. Approved plans are saved with the project and in Nova's archive.</p>
-        <h3 class="m" style="margin-top:28px">Set tool approval rules</h3>
-        <p class="body" style="margin-top:10px">Choose when Nova asks before using tools. Approval behavior is configurable, so review the policy that fits your workflow.</p>
+        <h3 class="m">Plan mode is enforced</h3>
+        <p class="body" style="margin-top:10px">Planning blocks edits, memory writes, command execution and calls routed through MCP or Code Mode — including when auto-approval is on. Executing a plan still needs your approval, and approved plans are saved with the project and in Nova's archive.</p>
+        <h3 class="m" style="margin-top:28px">Approvals that fail closed</h3>
+        <p class="body" style="margin-top:10px">Tool policy, scoped path grants and explicit denies. A decision model can review routine calls, but uncertain or unavailable verdicts come back to you, and traversal, drive, UNC and device escapes are rejected.</p>
+        <h3 class="m" style="margin-top:28px">Isolation when it matters</h3>
+        <p class="body" style="margin-top:10px"><code>EnterWorktreeTool</code> moves the session into a fresh Git worktree and back without losing work; <code>/worktree</code> pairs one with a session. Code Mode runs bounded JavaScript over eligible tools, and its nested calls keep the same approval path.</p>
         <a class="text-link" href="docs/#page-security" style="display:inline-flex;margin-top:18px">Read about permissions <span aria-hidden="true">&nearr;</span></a>
       </div>
-      <figure class="feature-art" data-fade="2">
+      <figure class="feature-art" data-image-reveal>
         <picture>
           <source srcset="assets/approval-plan.webp" type="image/webp">
           <img src="assets/approval-plan.png" alt="A technical plan with a drafting compass and review seal" width="1536" height="1024" loading="lazy" decoding="async">
@@ -1176,12 +1503,148 @@ html[data-view="agent"] .page-progress{display:none !important}
       </figure>
     </div>
   </section>
+
+  <section class="tutorial wrap" id="walkthrough-approval" aria-labelledby="tutorial-approval-title" style="--tutorial-ratio:1.85286">
+    <div class="tutorial-head">
+      <h2 class="l" id="tutorial-approval-title">Review the action before it runs.</h2>
+      <p class="lead">When a tool call needs your decision, Nova shows the proposed action and the available choices. This is a demonstration of the current approval dialog.</p>
+    </div>
+    <div class="tutorial-layout">
+      <figure class="tutorial-figure">
+        <div class="tutorial-screen">
+          <img src="assets/tutorial-approval.webp" width="1360" height="734" loading="lazy" decoding="async" alt="Nova tool approval dialog for a shell command: python -m pytest tests/test_parser.py -q. Choices include Approve, Allow for session, Always allow, Auto-approve for this thread, and Reject.">
+          <span class="tutorial-focus" style="--focus-left:14%;--focus-width:72%;--focus-top:22%;--focus-height:6%" aria-hidden="true"></span>
+          <span class="tutorial-focus" style="--focus-left:14%;--focus-width:72%;--focus-top:29.5%;--focus-height:15%" aria-hidden="true"></span>
+          <span class="tutorial-focus" style="--focus-left:15%;--focus-width:68%;--focus-top:57%;--focus-height:26%" aria-hidden="true"></span>
+        </div>
+        <figcaption><span>Current TUI · demonstration</span><a href="assets/tutorial-approval.webp" target="_blank" rel="noopener">View full screenshot</a></figcaption>
+      </figure>
+      <ol class="tutorial-steps" aria-label="Reviewing a tool approval">
+        <li>
+          <span class="tutorial-step-number">01 / 03</span>
+          <h3>Notice the decision point.</h3>
+          <p>The approval dialog interrupts the conversation for a tool call that needs your input. Its title identifies this as a tool approval.</p>
+        </li>
+        <li>
+          <span class="tutorial-step-number">02 / 03</span>
+          <h3>Read the exact command.</h3>
+          <p>This example proposes <code>python -m pytest tests/test_parser.py -q</code>. Check the tool and its arguments before deciding whether it should run.</p>
+        </li>
+        <li>
+          <span class="tutorial-step-number">03 / 03</span>
+          <h3>Choose how to proceed.</h3>
+          <p>Use the arrow keys and <kbd>Enter</kbd> to select an option. <kbd>y</kbd> approves this call; <kbd>n</kbd> or <kbd>Esc</kbd> rejects it. Broader permission choices are listed separately in the dialog.</p>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="band wrap" id="spec" aria-labelledby="spec-title">
+    <div class="sec-head">
+      <div>
+        <h2 class="l" data-motion-text="words" id="spec-title">Only in Nova.</h2>
+      </div>
+      <p class="lead" data-fade>What a generic coding-agent checklist does not have. Every row prints its own limit, and optional or preview work says so.</p>
+    </div>
+    <div class="spec-scroll" data-fade>
+      <table class="spec">
+        <caption>Parts list &middot; 11 entries &middot; limits in the right column</caption>
+        <thead><tr><th scope="col">Capability</th><th scope="col">What it does</th><th scope="col">Needs / limits</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Project onboarding &middot; <code>/onboard</code></th><td>A persistent local code graph: searchable file and symbol explorer, dependency map, symbol inspector, guided tours, Q&amp;A, and change-impact tracing for a symbol or path.</td><td class="needs">Static analysis; misses dynamic dependencies</td></tr>
+          <tr><th scope="row">Code Mode &middot; <code>eval</code></th><td>Bounded JavaScript over eligible native and MCP tools, with variables reused across snippets in one conversation. Only the selected result reaches the model.</td><td class="needs">Composer toggle; no host imports or network</td></tr>
+          <tr><th scope="row">Command Center &middot; <code>/cc</code></th><td>Sessions grouped by project, with status filters, search, details, measured token usage and live tab state. Left Arrow opens it from an empty composer.</td><td class="needs">Interactive TUI</td></tr>
+          <tr><th scope="row">Session loops &middot; <code>/loop</code></th><td>Recurring work on an interval, a quoted cron schedule or a model-chosen wake-up, with instructions reloaded from <code>loop.md</code> each iteration.</td><td class="needs">A local owner tab; 72-hour default TTL</td></tr>
+          <tr><th scope="row">Lite Mode</th><td>Off, Caveman or Ponytail from the composer: terser prose, compact tool and web views, exact source recovery, or the smallest complete change instead of extra scaffolding.</td><td class="needs">Opt-in; no promised savings</td></tr>
+          <tr><th scope="row">Context compression</th><td>The active model folds completed ranges into summaries while exact originals stay searchable in the archive; <code>/compact</code> remains for manual use.</td><td class="needs">On by default; <code>context_hierarchical</code></td></tr>
+          <tr><th scope="row">14 interface styles</th><td>Home compositions from Dashboard to Minimal, Nova character art in Workbench and Studio, optional animated scenes, an opt-in side-by-side diff preview.</td><td class="needs">Animations can be paused</td></tr>
+          <tr><th scope="row">Artifacts and sharing</th><td>HTML, Markdown and dashboard results, updated in place with versions in a searchable collection, shared through a temporary Cloudflare URL.</td><td class="needs"><code>cloudflared</code>; public to link holders</td></tr>
+          <tr><th scope="row">Remote sessions</th><td>A Telegram topic or Discord thread per session, with phone-sized diffs, approvals answered in chat, and an optional Rootapp companion.</td><td class="needs">Bot, permissions, authorized senders</td></tr>
+          <tr><th scope="row">Voice and vision</th><td>Dictate requests, hear short spoken summaries of the final reply; a separate <code>VISION</code> side-call reads images for a text-only main model.</td><td class="needs">Voice extras; a vision-capable model</td></tr>
+          <tr><th scope="row">Local computer &middot; preview</th><td>A session-owned QEMU Linux guest with a private local live view; the agent observes a screenshot and clicks, types or scrolls against the latest one.</td><td class="needs"><code>computer</code> extra + QEMU; real boot unverified</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="divider" aria-labelledby="record-chapter">
+    <div class="wrap">
+      <div class="num" aria-hidden="true">05</div>
+      <div>
+        <h2 class="chap" data-motion-text="words" id="record-chapter">The record</h2>
+        <p class="sub">Six releases that changed what the agent can do. Read it left to right.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="band wrap" id="record" data-horizontal-gallery aria-labelledby="record-title">
+    <div class="sec-head">
+      <div>
+        <h2 class="l" data-motion-text="words" id="record-title">What shipped, in order.</h2>
+      </div>
+      <p class="lead" data-fade>Each plate is a real release, oldest first. Scroll to run the strip sideways; on a phone, swipe it. Every card is a link you can tab to.</p>
+    </div>
+    <div class="rail-wrap" data-fade>
+      <ol class="rail" id="rail" data-horizontal-track aria-label="Releases from v1.1.1 to v1.2.16">
+      <li>
+        <a href="changelog/#v1-1-1">
+          <span class="rail-ver">v1.1.1</span>
+          <h3 class="m">Project rooms</h3>
+          <p>Project channels, agent DMs and one shared task board; Claude Code and Codex run beside Nova in their own channel.</p>
+          <span class="rail-go">Release notes <span aria-hidden="true">&nearr;</span></span>
+        </a>
+      </li>
+      <li>
+        <a href="changelog/#v1-1-2">
+          <span class="rail-ver">v1.1.2</span>
+          <h3 class="m">Prime deep work</h3>
+          <p>Six checkpoints from define to deliver, with acceptance checks bound to real tool-call output.</p>
+          <span class="rail-go">Release notes <span aria-hidden="true">&nearr;</span></span>
+        </a>
+      </li>
+      <li>
+        <a href="changelog/#v1-2-0">
+          <span class="rail-ver">v1.2.0</span>
+          <h3 class="m">Onboarding and <code>eval</code></h3>
+          <p>A local code graph with tours, Q&amp;A and change impact, and one interpreter for eligible tools.</p>
+          <span class="rail-go">Release notes <span aria-hidden="true">&nearr;</span></span>
+        </a>
+      </li>
+      <li>
+        <a href="changelog/">
+          <span class="rail-ver">v1.2.10</span>
+          <h3 class="m">Command Center</h3>
+          <p>Sessions grouped by project, with status filters, details and live tab state.</p>
+          <span class="rail-go">Release notes <span aria-hidden="true">&nearr;</span></span>
+        </a>
+      </li>
+      <li>
+        <a href="changelog/">
+          <span class="rail-ver">v1.2.11</span>
+          <h3 class="m">Session loops</h3>
+          <p>Recurring session work on an interval, a cron schedule or a model-chosen wake-up.</p>
+          <span class="rail-go">Release notes <span aria-hidden="true">&nearr;</span></span>
+        </a>
+      </li>
+      <li>
+        <a href="changelog/">
+          <span class="rail-ver">v1.2.16</span>
+          <h3 class="m">Context compression</h3>
+          <p>The model folds completed ranges into summaries; exact originals stay searchable in the archive.</p>
+          <span class="rail-go">Release notes <span aria-hidden="true">&nearr;</span></span>
+        </a>
+      </li>
+    </ol>
+    <div class="rail-progress" aria-hidden="true"><i></i></div>
+    </div>
+  </section>
+
   <section class="band wrap" id="install" aria-labelledby="install-title">
     <div class="sec-head">
-      <div data-fade>
-        <h2 class="l" id="install-title">Install Nova and start in your repository.</h2>
+      <div>
+        <h2 class="l" data-motion-text="words" id="install-title">Install Nova and start in your repository.</h2>
       </div>
-      <p class="lead" data-fade="2">Nova requires Python 3.11 or newer and <code>uv</code>. Install the command-line app, then run <code>nova</code> from your project. To work on Nova itself, use the source checkout instructions.</p>
+      <p class="lead" data-fade>Nova requires Python 3.11 or newer and <code>uv</code>. Install the command-line app, then run <code>nova</code> from your project. To work on Nova itself, use the source checkout instructions.</p>
     </div>
     <div class="stack" data-fade>
       <div>
@@ -1198,33 +1661,37 @@ html[data-view="agent"] .page-progress{display:none !important}
       </div>
     </div>
     <div class="split" style="margin-top:clamp(24px,4vw,34px)">
-      <p class="body">Release <a href="https://pypi.org/project/novacode-cli/1.2.1/">1.2.1 is on PyPI</a>. Upgrade with <code>uv tool upgrade novacode-cli</code>. Choose a hosted model provider or configure a local Ollama model.</p>
+      <p class="body">Release <a href="https://pypi.org/project/novacode-cli/1.2.20/">1.2.20 is on PyPI</a>. Upgrade with <code>uv tool upgrade novacode-cli</code>. Choose one of 18 hosted provider IDs or configure a local Ollama model.</p>
       <p class="tol">&plusmn; Extras install Python dependencies; voice models, browser binaries and computer runtimes may need separate setup. Keep all wanted extras when reinstalling. For changes to Nova itself, follow the <a href="docs/#page-installation">source checkout instructions</a> and use <code>uv run nova</code>.</p>
     </div>
   </section>
 
   <section class="band wrap" id="faq" aria-labelledby="faq-title">
     <div class="sec-head">
-      <div data-fade>
-        <h2 class="l" id="faq-title">Before you install.</h2>
+      <div>
+        <h2 class="l" data-motion-text="words" id="faq-title">Before you install.</h2>
       </div>
-      <p class="lead" data-fade="2">The practical details for getting started.</p>
+      <p class="lead" data-fade>The practical details for getting started.</p>
     </div>
     <div>
       <details><summary>What does Nova do?<span class="plus" aria-hidden="true"></span></summary>
-        <p>Nova is an open-source coding agent for the terminal. It can explore a repository, edit files, run commands, and help you understand the code. <a href="docs/">Read the documentation</a>.</p></details>
+        <p>Nova is an open-source coding agent for the terminal. Beyond reading a repository, planning, editing files and running your checks, it delegates work to specialists, keeps project channels alongside Claude Code and Codex, and reports verification evidence instead of a completion claim. <a href="docs/">Read the documentation</a>.</p></details>
       <details><summary>Where does Nova keep memory?<span class="plus" aria-hidden="true"></span></summary>
         <p>In Markdown files under <code>~/.nova/agents/&lt;agent&gt;/memories/</code>. You can read and edit these files yourself. Memory is context, not verification.</p></details>
       <details><summary>Do I approve every action?<span class="plus" aria-hidden="true"></span></summary>
         <p>Tool approvals are configurable by operation. Plan mode lets you review an approach before implementation, and hard-coded denials cannot be disabled through the approval policy. <a href="docs/#page-security">See permission details</a>.</p></details>
       <details><summary>Which models and operating systems are supported?<span class="plus" aria-hidden="true"></span></summary>
-        <p>Nova supports hosted providers and local Ollama models. It requires Python 3.11 or newer and runs on macOS, Linux, and Windows. Some providers need their own account or API credentials.</p></details>
+        <p>18 hosted provider IDs plus local Ollama models, with independent roles for the main agent, subagents, async agents and a vision companion. Nova requires Python 3.11 or newer and runs on macOS, Linux, and Windows. Some providers need their own account or API credentials.</p></details>
+      <details><summary>Can other agents work alongside Nova?<span class="plus" aria-hidden="true"></span></summary>
+        <p>Yes. Specialist agents cover exploration, fixes, review, security, tests and more; <code>/rooms</code> adds project channels where Nova can also run Claude Code or Codex from their installed CLIs, and <code>/council web</code> gathers advisor proposals and ballots. Background agents need the <code>agents-server</code> extra, and agent teams stay experimental.</p></details>
+      <details><summary>How does Nova show its work?<span class="plus" aria-hidden="true"></span></summary>
+        <p>Deep Work (<code>/prime</code>) defines acceptance checks before implementation and evaluates them against real tool-call output, then reports unmet criteria and unverified work rather than a completion claim. <a href="docs/#page-prime">See verification details</a>.</p></details>
     </div>
   </section>
   <section class="closer" id="start" aria-labelledby="start-title">
     <div class="wrap">
-      <h2 class="xl" id="start-title" style="max-width:20ch">Point it at a repository.</h2>
-      <p class="lead" style="color:var(--neg-muted);margin-top:18px;max-width:52ch">Approval still applies. Memory still lands in files you can read. The first thing it does is look around before it touches anything.</p>
+      <h2 class="xl" data-motion-text="words" id="start-title" style="max-width:20ch">Point it at a repository.</h2>
+      <p class="lead" style="color:var(--neg-muted);margin-top:18px;max-width:52ch">Approval still applies. Memory still lands in files you can read. Delegated work keeps its own channel, and the first thing Nova does is look around before touching anything.</p>
       <div class="closer-links">
         <a href="#install">Install<span aria-hidden="true">&uarr;</span></a>
         <a href="docs/">Read the documentation<span aria-hidden="true">&nearr;</span></a>
@@ -1258,13 +1725,15 @@ html[data-view="agent"] .page-progress{display:none !important}
       <div class="foot-grid">
         <div>
           <a class="mark" href="./" aria-label="Nova, home"><img class="iso" src="assets/emblem-128.webp" alt="" width="128" height="128" decoding="async"> nova</a>
-          <p class="body" style="margin-top:12px;font-size:.9375rem;max-width:34ch">Nova, 2026. An open-source terminal coding agent with readable memory and configurable approvals.</p>
+          <p class="body" style="margin-top:12px;font-size:.9375rem;max-width:34ch">Nova, 2026. An open-source terminal coding agent with delegating agents, readable memory, observed verification and configurable approvals.</p>
         </div>
         <div>
           <h2>This sheet</h2>
           <ul>
             <li><a href="#what">Start here</a></li>
             <li><a href="#index">Contents</a></li>
+            <li><a href="#spec">Only in Nova</a></li>
+            <li><a href="#record">The record</a></li>
             <li><a href="#install">Install</a></li>
             <li><a href="#faq">Questions</a></li>
           </ul>
@@ -1273,8 +1742,9 @@ html[data-view="agent"] .page-progress{display:none !important}
           <h2>Documentation</h2>
           <ul>
             <li><a href="docs/">All topics</a></li>
+            <li><a href="docs/#page-rooms">Rooms and delegation</a></li>
+            <li><a href="docs/#page-prime">Verification</a></li>
             <li><a href="docs/#page-memory">Memory</a></li>
-            <li><a href="docs/#page-slash">Slash commands</a></li>
             <li><a href="changelog/">Changelog</a></li>
           </ul>
         </div>
@@ -1289,8 +1759,8 @@ html[data-view="agent"] .page-progress{display:none !important}
       </div>
       <div class="title-block">
         <div>project<b>NovaCode</b></div>
-        <div>sheet<b>00 of 03</b></div>
-        <div>revision<b>1.2.1</b></div>
+        <div>sheet<b>00 of 05</b></div>
+        <div>revision<b>1.2.20</b></div>
         <div>scale<b>1:1</b></div>
         <div>drawn<b>in the terminal</b></div>
         <div>memory<b>index ready</b></div>
@@ -1613,20 +2083,10 @@ html[data-view="agent"] .page-progress{display:none !important}
     }
   }
 
-  /* ---- one clock: reveal on enter ---- */
-  var items = $$("[data-fade],[data-draw]");
-  if ("IntersectionObserver" in window) {
-    var io = new IntersectionObserver(function (entries) {
-      entries.forEach(function (e) {
-        if (e.isIntersecting) { e.target.setAttribute("data-in", ""); io.unobserve(e.target); }
-      });
-    }, { rootMargin: "0px 0px -6% 0px" });
-    items.forEach(function (el) { io.observe(el); });
-  } else {
-    items.forEach(function (el) { el.setAttribute("data-in", ""); });
-  }
+/* The one clock above still owns the hero depth and the measure; assets/motion.js owns the
+   scroll reveals, so the old IntersectionObserver pass is gone. */
 
-  /* ---- sheet menu ---- */
+/* ---- sheet menu ---- */
   var menu = $("#sheet-menu"), open = $("#menu-btn"), close = $("#menu-close");
   function setMenu(on) {
     if (!menu) return;
@@ -1640,6 +2100,9 @@ html[data-view="agent"] .page-progress{display:none !important}
   if (open) open.addEventListener("click", function () { setMenu(true); });
   if (close) close.addEventListener("click", function () { setMenu(false); });
   if (menu) $$("a", menu).forEach(function (a) { a.addEventListener("click", function () { setMenu(false); }); });
+  document.addEventListener("viewchange", function () {
+    if (menu && !menu.hidden) setMenu(false);
+  });
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape" && menu && !menu.hidden) setMenu(false);
   });
@@ -1778,13 +2241,45 @@ html[data-view="agent"] .page-progress{display:none !important}
   }
 })();
 </script>
-<script src="assets/lenis.min.js"></script>
 <script>
-  /* Lenis smooths wheel and touch scrolling on the real scroll position, so anchors, sticky
-     chrome and the parallax offsets keep working. Reduced motion keeps native scrolling. */
-  if (window.Lenis && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    new Lenis({ autoRaf: true, lerp: 0.11 });
-  }
+/* The strip: native horizontal scrolling, plus a progress hairline. A vertical wheel over the
+   strip pans it; at either end the page keeps the gesture, so nothing gets trapped. No second
+   animation loop and no layout reads on scroll. */
+(() => {
+  const rail = document.getElementById('rail');
+  if (!rail) return;
+  const bar = document.querySelector('.rail-progress i');
+  const wrap = rail.closest('.rail-wrap');
+  const paint = () => {
+    /* Pinned, the strip is translated by the motion layer and this scroller is inert. */
+    if (wrap && wrap.closest('.rail-pinned')) return;
+    const max = rail.scrollWidth - rail.clientWidth;
+    if (bar) bar.style.setProperty('--p', max > 0 ? (rail.scrollLeft / max).toFixed(3) : '1');
+    if (wrap) {
+      wrap.classList.toggle('at-end', max <= 0 || rail.scrollLeft >= max - 2);
+      wrap.classList.toggle('scrolled', rail.scrollLeft > 2);
+    }
+  };
+  rail.addEventListener('scroll', paint, { passive: true });
+  rail.addEventListener('wheel', (e) => {
+    if (e.ctrlKey || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    const max = rail.scrollWidth - rail.clientWidth;
+    if (max <= 0) return;
+    const atStart = rail.scrollLeft <= 0 && e.deltaY < 0;
+    const atEnd = rail.scrollLeft >= max - 1 && e.deltaY > 0;
+    if (atStart || atEnd) return;
+    e.preventDefault();
+    e.stopPropagation();
+    rail.scrollLeft += e.deltaY;
+  }, { passive: false });
+  window.addEventListener('resize', paint);
+  paint();
+})();
 </script>
+<div data-cursor aria-hidden="true"></div>
+<script src="assets/gsap.min.js"></script>
+<script src="assets/ScrollTrigger.min.js"></script>
+<script src="assets/lenis.min.js"></script>
+<script src="assets/motion.js" onerror="document.documentElement.classList.remove('enter')"></script>
 </body>
 </html>

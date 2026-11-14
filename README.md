@@ -8,6 +8,24 @@ All site navigation and asset paths are relative, including under `/NovaCode/`.
 
 Preview with `python -m http.server 4400`, then visit `http://localhost:4400/`.
 
+The landing page includes five scroll walkthroughs. The specialist and approval
+captures render the actual Nova TUI with seeded demonstration content; they do
+not represent live agent work. Regenerate their SVG sources and WebP assets with
+a Python environment containing Nova's development dependencies, Pillow,
+Playwright and installed Microsoft Edge:
+
+```powershell
+python tools/capture_tutorial_tui.py --repo ../../NovaCode
+python tools/verify_walkthrough.py
+python tools/verify_agent_view.py
+python tools/verify_theme.py
+```
+
+The capture uses a temporary profile, disables normal startup hooks, and blocks
+external socket connections. It also checks Escape from a specialist preview and
+Reject in the approval dialog. Website checks cover every walkthrough in both
+scroll directions, viewport resizing, agent view, mobile, reduced motion and no JS.
+
 The changelog embeds the complete saved archive and checks GitHub's main branch for
 new and edited releases on each visit. It downloads only changed entries, at most four
 at a time. GitHub API limits or network failures leave the saved archive available.

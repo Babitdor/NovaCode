@@ -15,6 +15,7 @@
 <link rel="preload" as="font" type="font/woff2" href="../assets/fonts/geist-var.woff2" crossorigin>
 <link rel="preload" as="font" type="font/woff2" href="../assets/fonts/geist-mono-var.woff2" crossorigin>
 <script>document.documentElement.classList.add("js")</script>
+<link rel="stylesheet" href="../assets/theme.css">
 <script src="../assets/theme.js"></script>
 <script src="../assets/view.js"></script>
 <link rel="help" href="../llms.txt" type="text/plain" title="LLM/agent entry point">
@@ -66,19 +67,18 @@
     --shadow:none;--glow:none;--grid:transparent;
   }
 
-/* A manual theme switch opens the new palette as a circle from the toggle. */
-::view-transition{pointer-events:none}
-::view-transition-group(root){animation:none}
-::view-transition-old(root){animation:none;mix-blend-mode:normal}
-::view-transition-new(root){animation:theme-reveal .7s cubic-bezier(.76,0,.24,1) both;mix-blend-mode:normal}
-@keyframes theme-reveal{from{clip-path:circle(0 at var(--theme-x,50%) var(--theme-y,0))}to{clip-path:circle(var(--theme-r,150vmax) at var(--theme-x,50%) var(--theme-y,0))}}
-html.theme-fade,html.theme-fade *,html.theme-fade *::before,html.theme-fade *::after{transition:background-color .45s var(--ease),border-color .45s var(--ease),color .45s var(--ease),fill .45s var(--ease),stroke .45s var(--ease),box-shadow .45s var(--ease),outline-color .45s var(--ease) !important}
 
 *,*::before,*::after{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%;background:var(--bg);scroll-behavior:smooth;scroll-padding-top:88px}
 /* Lenis drives the scroll position itself, so the CSS smooth behaviour has to stand down. */
 html.lenis,html.lenis body{height:auto}
 html.lenis{scroll-behavior:auto}
+/* Cursor atmosphere, shared with the landing through assets/motion.js. Hidden on touch and
+   under reduced motion, where it would be decoration with nothing to name. */
+[data-cursor]{display:none}
+html.has-motion [data-cursor]{position:fixed;left:0;top:0;z-index:9999;display:block;width:14px;height:14px;margin:-7px 0 0 -7px;border:1px solid #fff;border-radius:50%;pointer-events:none;mix-blend-mode:difference;will-change:transform}
+html[data-view="agent"] [data-cursor]{display:none}
+@media (prefers-reduced-motion:reduce),(pointer:coarse){[data-cursor]{display:none}}
 body{
   margin:0;background:var(--bg);color:var(--text);
   font:400 1.0625rem/1.6 var(--sans);
@@ -231,7 +231,10 @@ html[data-view="agent"] .sidebar{display:none !important}
 html[data-view="agent"] .sidebar-overlay{display:none !important}
 html[data-view="agent"] .docs-layout{grid-template-columns:1fr !important}
 html[data-view="agent"] .menu-btn{display:none !important}
-html[data-view="agent"] .js .page-section{display:block !important}
+html.js[data-view="agent"] .page-section{display:block !important}
+html[data-view="agent"] .pane{display:block !important}
+html[data-view="agent"] .pane::before{content:attr(aria-label);display:block;font-weight:600;margin:8px 0;color:var(--text)}
+html[data-view="agent"] [role="tablist"]{display:none}
 html[data-view="agent"] .rv{opacity:1 !important;transform:none !important}
 html[data-view="agent"] .caret,html[data-view="agent"] .typed{animation:none !important;width:auto !important}
 .agent-docs-note{display:none}
@@ -421,7 +424,7 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
         <button class="sidebar-group-title" aria-expanded="true">Orientation</button>
         <div class="sidebar-links">
           <a href="#page-overview" data-page="overview" class="active">What NovaCode is</a>
-          <a href="#page-features" data-page="features">Feature guide</a>
+          <a href="#page-features" data-page="features">Unique features</a>
           <a href="#page-installation" data-page="installation">Installation &amp; setup</a>
         </div>
       </div>
@@ -440,11 +443,14 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
         <div class="sidebar-links">
           <a href="#page-tools" data-page="tools">Tools</a>
           <a href="#page-subagents" data-page="subagents">Subagents</a>
+          <a href="#page-rooms" data-page="rooms">Project rooms</a>
           <a href="#page-memory" data-page="memory">Memory system</a>
+          <a href="#page-onboard" data-page="onboard">Project onboarding</a>
           <a href="#page-skills" data-page="skills">Skills system</a>
           <a href="#page-mcp" data-page="mcp">MCP integration</a>
           <a href="#page-plugins" data-page="plugins">Plugin system</a>
           <a href="#page-hermes" data-page="hermes">Autonomous learning</a>
+          <a href="#page-prime" data-page="prime">Prime deep work</a>
           <a href="#page-verification" data-page="verification">Verification loop</a>
           <a href="#page-remote" data-page="remote">Remote bridges</a>
           <a href="#page-voice" data-page="voice">Voice I/O</a>
@@ -494,14 +500,14 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
     </nav>
 
     <main id="main" class="docs-content">
-      <div class="zones" aria-hidden="true"><span>documentation sheet</span><span>novacode &middot; rev 1.2.1</span><span>scale 1:1</span></div>
+      <div class="zones" aria-hidden="true"><span>documentation sheet</span><span>novacode &middot; rev 1.2.20</span><span>scale 1:1</span></div>
       <h1 class="sr-only">NovaCode documentation</h1>
       <section class="agent-docs-note agent-only" aria-label="Agent-readable documentation index">
         <h2>Agent view — documentation (all topics, linear)</h2>
         <p>This is a client-side documentation SPA presented linearly for agent readability. The sidebar is hidden in agent mode to avoid fixed/overlay UI; all sidebar links are listed here. Original in-browser anchors use <code>#page-&lt;topic&gt;</code> (e.g. <code>#page-features</code>). Verify details against repository/docs; capability depends on install/config/provider/platform.</p>
-        <p><strong>Orientation:</strong> <a href="#page-overview">What NovaCode is</a> · <a href="#page-features">Feature guide</a> · <a href="#page-installation">Installation &amp; setup</a></p>
+        <p><strong>Orientation:</strong> <a href="#page-overview">What NovaCode is</a> · <a href="#page-features">Unique features</a> · <a href="#page-installation">Installation &amp; setup</a></p>
         <p><strong>Operating NovaCode:</strong> <a href="#page-cli">CLI reference</a> · <a href="#page-config">Configuration</a> · <a href="#page-tui">The TUI</a> · <a href="#page-slash">Slash commands</a> · <a href="#page-headless">Headless mode</a></p>
-        <p><strong>Capabilities:</strong> <a href="#page-tools">Tools</a> · <a href="#page-subagents">Subagents</a> · <a href="#page-memory">Memory system</a> · <a href="#page-skills">Skills system</a> · <a href="#page-mcp">MCP integration</a> · <a href="#page-plugins">Plugin system</a> · <a href="#page-hermes">Autonomous learning</a> · <a href="#page-verification">Verification loop</a> · <a href="#page-remote">Remote bridges</a> · <a href="#page-voice">Voice I/O</a></p>
+        <p><strong>Capabilities:</strong> <a href="#page-tools">Tools</a> · <a href="#page-subagents">Subagents</a> · <a href="#page-memory">Memory system</a> · <a href="#page-skills">Skills system</a> · <a href="#page-mcp">MCP integration</a> · <a href="#page-plugins">Plugin system</a> · <a href="#page-hermes">Autonomous learning</a> · <a href="#page-verification">Verification loop</a> · <a href="#page-remote">Remote bridges</a> · <a href="#page-voice">Voice I/O</a> · <a href="#page-rooms">Project rooms</a> · <a href="#page-onboard">Project onboarding</a> · <a href="#page-prime">Prime deep work</a></p>
         <p><strong>Under the hood:</strong> <a href="#page-middleware">Middleware stack</a> · <a href="#page-sessions">Session management</a> · <a href="#page-context">Context management</a> · <a href="#page-security">Security &amp; safety</a> · <a href="#page-sandbox">Sandbox execution</a> · <a href="#page-infrastructure">Infrastructure</a></p>
         <p><strong>Reference:</strong> <a href="#page-directory">Directory structure</a> · <a href="#page-extras">Optional dependencies</a> · <a href="#page-troubleshooting">Troubleshooting</a> · <a href="../changelog/index.html">Changelog</a></p>
         <p><strong>Links:</strong> <a href="../llms.txt">llms.txt</a> · <a href="../index.html">Landing</a> · <a href="https://github.com/Babitdor/NovaCode">Source</a></p>
@@ -514,23 +520,25 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:10">man nova</span></p>
             <h2 class="page-title">A coding agent that <b>verifies</b> its own work.</h2>
             <p class="lede">NovaCode is an open-source, terminal-based AI coding assistant built on
-              LangGraph and the <code>deepagents</code> framework. It runs entirely in your terminal
-              with a Textual TUI, a headless non-interactive mode for scripting and CI, and remote
-              bridges for Telegram, Discord and Rootapp. The <a href="#page-features" data-page="features">feature guide</a> lists every capability in this release.</p>
+              LangGraph and the <code>deepagents</code> framework. It runs in your terminal with a Textual TUI,
+              a headless mode for scripting and CI, and remote bridges for Telegram, Discord and Rootapp. What sets it
+              apart: it delegates to specialist agents and other coding CLIs in project rooms, keeps memory in a
+              Markdown wiki you can read, and reports verification evidence instead of a completion claim. The
+              <a href="#page-features" data-page="features">unique features</a> page lists what only Nova does.</p>
           </div>
           <div class="callout rv">
             <svg class="icon" viewBox="0 0 256 256" fill="currentColor"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm-8-80V80a8,8,0,0,1,16,0v48a8,8,0,0,1-16,0Zm20,36a12,12,0,1,1-12-12A12,12,0,0,1,140,172Z"/></svg>
-            <p><b>PyPI release 1.2.1 &middot; MIT licensed &middot; Python 3.11+.</b> Runs locally, brings your
+            <p><b>PyPI release 1.2.20 &middot; MIT licensed &middot; Python 3.11+.</b> Runs locally, brings your
               own model. NovaCode does not retrain your model. What changes are prompts, skills, and
               thresholds on disk, readable and deletable.</p>
           </div>
           <ul class="proof rv">
             <li>~30 core tools &middot; ~85 total</li>
-            <li>12 async background agents</li>
+            <li>14 built-in agent definitions</li>
             <li>18 model provider IDs</li>
+            <li>14 interface styles</li>
             <li>20 MCP presets</li>
-            <li>7 sandbox providers</li>
-            <li>50+ built-in skills</li>
+            <li>100+ slash commands</li>
           </ul>
         </section>
 
@@ -593,25 +601,27 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
                 <tr><td>MCP presets</td><td class="desc">20</td><td class="desc">Playwright, Serena, Context7, Apify, CUA Driver, and more</td></tr>
                 <tr><td>Sandbox providers</td><td class="desc">7</td><td class="desc">os, docker, modal, runloop, daytona, langsmith, none</td></tr>
                 <tr><td>Built-in skills</td><td class="desc">50+</td><td class="desc">Progressive disclosure, loaded on demand</td></tr>
-                <tr><td>Slash commands</td><td class="desc">80+</td><td class="desc">In-TUI commands for every feature</td></tr>
+                <tr><td>Interface styles</td><td class="desc">14</td><td class="desc">Dashboard, Classic, Centered, Banner, Terminal, Workbench, Notebook, Outline, Focus, Studio, Ledger, Blueprint, Signal, Minimal</td></tr>
+                <tr><td>Slash commands</td><td class="desc">100+</td><td class="desc">In-TUI commands for every feature, plus plugin commands</td></tr>
               </tbody>
             </table>
           </div>
         </section>
       </div>
 
-      <!-- 1b. FEATURE GUIDE -->
+      <!-- 1b. UNIQUE FEATURES -->
       <div class="page-section" id="page-features">
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:9">/help all</span></p>
-            <h2 class="page-title">Feature <b>guide</b>.</h2>
-            <p class="lede">Every capability in v1.1.6, with the command that opens it, what it needs and where it stops.
-              Optional, experimental and preview features are labelled as such.</p>
+            <h2 class="page-title">Unique <b>features</b>.</h2>
+            <p class="lede">What Nova does that a plain terminal agent does not, with the command that opens it, what it
+              needs and where it stops. Standard tooling follows in the catalog. Optional, experimental and preview
+              features are labelled as such.</p>
           </div>
           <div class="callout rv">
             <svg class="icon" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm-8-80V80a8,8,0,0,1,16,0v48a8,8,0,0,1-16,0Zm20,36a12,12,0,1,1-12-12A12,12,0,0,1,140,172Z"/></svg>
-            <p><b>Reviewed against v1.1.6 on 3 November 2026.</b> An implemented capability is not a benchmark,
+            <p><b>Reviewed against v1.2.20.</b> An implemented capability is not a benchmark,
               and not proof that every provider and platform has been exercised. When an older page in these docs
               disagrees with this one, this page describes the current behaviour.</p>
           </div>
@@ -623,43 +633,51 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
             <table>
               <thead><tr><th>Capability</th><th>Status</th><th>How to use it</th><th>Limit</th></tr></thead>
               <tbody>
-                <tr><td>Native + MCP Code Mode</td><td class="desc">v1.0.97</td><td class="desc">Composer toggle</td><td class="desc">Eligible tools only; interactive and graph-control calls stay direct</td></tr>
-                <tr><td>Whistle STT</td><td class="desc">v1.0.97</td><td class="desc"><code>voice</code> + <code>voice-whistle</code></td><td class="desc">Local Cactus runtime; accuracy not benchmarked</td></tr>
-                <tr><td>Kokoro and sanoTTS</td><td class="desc">v1.0.98</td><td class="desc"><code>voice</code> + the provider extra</td><td class="desc">CPU voices; download size is not peak RAM</td></tr>
-                <tr><td>Voice download progress</td><td class="desc">v1.0.98</td><td class="desc"><code>/voice download</code>, <code>/voice test</code></td><td class="desc">Percentages need a reported total</td></tr>
-                <tr><td>Eight more interface styles</td><td class="desc">v1.0.99</td><td class="desc"><code>/theme</code></td><td class="desc">Animations are optional</td></tr>
-                <tr><td>Local Linux computer</td><td class="desc">Preview, v1.0.99</td><td class="desc"><code>computer</code> extra + QEMU, <code>/computer start</code></td><td class="desc">Real guest boot not yet verified</td></tr>
+                <tr><td>Project rooms</td><td class="desc">v1.1.1</td><td class="desc"><code>/rooms</code>, <code>ctrl+shift+r</code></td><td class="desc">Two project workers, six initial task turns; integration needs an owner decision</td></tr>
+                <tr><td>Prime deep work</td><td class="desc">v1.1.2, v1.1.4</td><td class="desc"><code>/prime on</code>, <code>--prime</code></td><td class="desc">Opt-in; verification is only as good as the checks you define</td></tr>
+                <tr><td>Ponytail and Lite Mode</td><td class="desc">v1.1.3, v1.1.5</td><td class="desc">Composer selector, <code>/lite-mode</code></td><td class="desc">No guaranteed savings or identical answers</td></tr>
+                <tr><td>Workspace knowledge cache</td><td class="desc">v1.1.0</td><td class="desc"><code>/cache status|clear|on|off</code></td><td class="desc">Source-validated; assistant namespaces stay separate</td></tr>
+                <tr><td>Project onboarding</td><td class="desc">v1.2.0</td><td class="desc"><code>/onboard</code>, <code>/onboard impact &lt;symbol&gt;</code></td><td class="desc">Static analysis misses dynamic dependencies</td></tr>
+                <tr><td>Code Mode via <code>eval</code></td><td class="desc">v1.2.0</td><td class="desc">Composer toggle</td><td class="desc">Eligible tools only; interactive and graph-control calls stay direct</td></tr>
+                <tr><td>Visible memory recall</td><td class="desc">v1.2.3&ndash;v1.2.7</td><td class="desc">Automatic, shown in the transcript</td><td class="desc">Notices carry source metadata, not memory bodies</td></tr>
+                <tr><td>Command Center</td><td class="desc">v1.2.10</td><td class="desc"><code>/cc</code>, Left Arrow in an empty composer</td><td class="desc">Interactive TUI; live tabs in this instance</td></tr>
+                <tr><td>Session loops</td><td class="desc">v1.2.11</td><td class="desc"><code>/loop 5m check CI status</code></td><td class="desc">Needs a local owner tab; 72-hour default TTL</td></tr>
+                <tr><td>Model-controlled compression</td><td class="desc">v1.2.16</td><td class="desc">On by default; <code>compress</code>, <code>decompress</code>, <code>search_context</code></td><td class="desc">Reduces active context, not stored conversation size</td></tr>
+                <tr><td>Local Linux computer</td><td class="desc">Preview</td><td class="desc"><code>computer</code> extra + QEMU, <code>/computer start</code></td><td class="desc">Real guest boot not yet verified</td></tr>
               </tbody>
             </table>
           </div>
         </section>
 
         <section id="features-headline">
-          <h2 class="rv">Headline features</h2>
+          <h2 class="rv">What only Nova does</h2>
           <div class="feature-grid">
-            <div class="feature-card rv"><h3>Specialist agents</h3><p>Delegate exploration, fixes, refactors, reviews, security, dependency and performance checks, docs, tests and browser automation. <code>@name</code> calls a known agent; <code>/agents</code> manages file-defined ones. Background agents need the <code>agents-server</code> install.</p></div>
+            <div class="feature-card rv"><h3>Project rooms</h3><p><code>/rooms</code> adds project channels, agent DMs and a shared task board. Nova can run Claude Code or Codex in a channel through their installed CLIs, with separate resumable conversations, attributed replies and approved handoffs. <a href="#page-rooms" data-page="rooms">Details</a>.</p></div>
+            <div class="feature-card rv"><h3>Prime deep work</h3><p><code>/prime</code> tracks define, investigate, implement, verify, challenge and deliver, binds acceptance checks to real tool-call IDs, and reports unverified work instead of a completion claim. <a href="#page-prime" data-page="prime">Details</a>.</p></div>
             <div class="feature-card rv"><h3>Council</h3><p><code>/council &lt;task&gt;</code> runs independent proposals, critique and ranked voting. <code>/council web</code> adds advisors who clarify, vote on real options and a chairman who keeps minority concerns. Votes are advisory.</p></div>
-            <div class="feature-card rv"><h3>Persistent memory</h3><p>A linked Markdown wiki with an index, topic maps and project-scoped notes. <code>/dream</code> consolidates it with backups. Memory is evidence, never permission.</p></div>
-            <div class="feature-card rv"><h3>Model choice and vision</h3><p>18 provider IDs, independent main, in-process, async and dynamic-agent roles, per-turn <code>/router</code>, <code>/effort</code>, and a <code>VISION</code> side-call for text-only models.</p></div>
-            <div class="feature-card rv"><h3>Code Mode</h3><p><code>MCPCode</code> runs bounded JavaScript over eligible native and MCP tools with <code>tools.list</code>, <code>tools.describe</code> and <code>tools.call</code>. Only the returned result reaches the model.</p></div>
-            <div class="feature-card rv"><h3>Voice conversation</h3><p>Dictate requests and hear short spoken summaries of the final reply. Faster-Whisper and Piper by default; Whistle, Parakeet, Kokoro, sanoTTS, Pocket, Orpheus and ElevenLabs are options.</p></div>
-            <div class="feature-card rv"><h3>Interface styles</h3><p>13 styles with their own home screens, Nova character art in Workbench and Studio, and optional animated homes in Terminal, Studio and Blueprint.</p></div>
-            <div class="feature-card rv"><h3>Caveman mode</h3><p>Six independent switches for terser prose, compact tool and web output, script reuse, routing and token accounting. Opt-in; compacted sources stay recoverable.</p></div>
-            <div class="feature-card rv"><h3>Remote sessions</h3><p>A Telegram topic or Discord thread per session, plus an optional Rootapp companion. Set up and authorize senders with <code>/remote</code>.</p></div>
-            <div class="feature-card rv"><h3>Artifacts</h3><p>HTML, Markdown or dashboard results, versioned in place and searchable, shared through a temporary Cloudflare Quick Tunnel when <code>cloudflared</code> is installed.</p></div>
-            <div class="feature-card rv"><h3>Parallel workspaces</h3><p>Project tabs with <code>/tabs</code>, explicit <code>SendMessage</code> between live tabs, and <code>EnterWorktreeTool</code> / <code>ExitWorktreeTool</code> for isolated Git worktrees.</p></div>
-            <div class="feature-card rv"><h3>Permissions and guardrails</h3><p>Workspace approval, scoped path grants, explicit denies, fail-closed auto-approval reviews, credential redaction and lower-trust handling of tool and web content.</p></div>
+            <div class="feature-card rv"><h3>Persistent memory</h3><p>A linked Markdown wiki with an index, topic maps and project-scoped notes. Recall is visible and names its source; <code>/dream</code> consolidates with backups; <code>/cache</code> keeps source-validated workspace knowledge. Memory is evidence, never permission.</p></div>
+            <div class="feature-card rv"><h3>Project onboarding</h3><p><code>/onboard</code> builds a persistent code graph with a searchable explorer, dependency map, symbol inspector, tours, Q&amp;A and change-impact tracing. <a href="#page-onboard" data-page="onboard">Details</a>.</p></div>
+            <div class="feature-card rv"><h3>Code Mode</h3><p><code>eval</code> runs bounded JavaScript over eligible native and MCP tools, reusing variables across snippets in a conversation. Only the selected result reaches the model, and nested calls keep their approvals.</p></div>
+            <div class="feature-card rv"><h3>Context compression</h3><p>The active model folds completed ranges into summaries with <code>compress</code>, keeps exact originals recoverable with <code>decompress</code>, and searches history, summaries and originals with <code>search_context</code>.</p></div>
+            <div class="feature-card rv"><h3>Command Center</h3><p><code>/cc</code> — or Left Arrow in an empty composer — groups sessions by project with status filters, details, measured token usage and live tab state, and reopens saved conversations through the existing resume flow.</p></div>
+            <div class="feature-card rv"><h3>Session loops</h3><p><code>/loop 5m check CI status</code> repeats work on an interval, a quoted cron schedule or a model-selected wake-up, reloading instructions from <code>loop.md</code> each iteration. <code>/loop list</code> and <code>/loop stop</code> manage them.</p></div>
+            <div class="feature-card rv"><h3>Model roles and vision</h3><p>18 provider IDs, independent main, in-process, async and dynamic-agent roles, per-turn <code>/router</code>, <code>/effort</code>, and a <code>VISION</code> side-call for text-only models.</p></div>
+            <div class="feature-card rv"><h3>Lite Mode and styles</h3><p>Off, Caveman or Ponytail from the composer for terser prose and recoverable compact output, inside 14 interface styles with their own homes, Nova character art and optional animated scenes.</p></div>
+            <div class="feature-card rv"><h3>Permissions and guardrails</h3><p>Plan mode that blocks writes, memory and MCP or Code Mode calls; workspace approval, scoped path grants, explicit denies, fail-closed auto-approval reviews, credential redaction and lower-trust handling of tool and web content.</p></div>
           </div>
         </section>
 
         <section id="features-catalog">
           <h2 class="rv">Full catalog</h2>
-          <p class="body rv">Grouped as in the product's own feature inventory. The right-hand column is what to install or
-            configure first, and what the feature does not promise.</p>
+          <p class="body rv">The differentiated rows come first, then the standard tooling every agent needs. The
+            right-hand column is what to install or configure first, and what the feature does not promise.</p>
           <div class="table-wrap rv">
             <table>
               <thead><tr><th>Feature</th><th>What it does</th><th>Needs / limits</th></tr></thead>
               <tbody>
+                <tr><td>Project rooms</td><td class="desc"><code>/rooms</code> and <code>ctrl+shift+r</code>: project channels, agent DMs and a shared task board; embedded Claude Code and Codex conversations through their installed CLIs; participant-bound local MCP bridge for published context, artifacts and handoffs; Markdown export of channel notes</td><td class="desc">Two project workers and six initial task turns; integration needs a separate owner decision</td></tr>
+                <tr><td>Prime deep work</td><td class="desc"><code>/prime on</code> or <code>--prime</code>: six checkpoints, acceptance checks bound to real tool-call IDs, project-scoped task and evidence records, <code>/prime tasks</code>, <code>/prime checks</code>, <code>/prime resume &lt;id&gt;</code></td><td class="desc">Opt-in; findings stay drafts until a failure is followed by passing checks</td></tr>
+                <tr><td>Project onboarding</td><td class="desc"><code>/onboard</code> builds a persistent code graph, guide, dashboard, tours, Q&amp;A and change-impact tracing; <code>/cache</code> keeps source-validated workspace knowledge</td><td class="desc">Static analysis misses dynamic dependencies; parsing deadlines scale 2&ndash;10 minutes</td></tr>
                 <tr><td>Everyday tools</td><td class="desc">Read, edit and search files, run commands and checks; <code>NotebookEditTool</code> edits notebook cells without a kernel; bfs/ugrep search with ripgrep and Python fallbacks; <code>/files</code>, <code>/images</code>, <code>/tests</code>, <code>/servers</code></td><td class="desc">Notebook edits are blocked in plan mode; native search engines are optional executables</td></tr>
                 <tr><td>Specialist agents</td><td class="desc">In-process delegation and async background agents; project and global definitions; selective skill libraries; inline running/completed/failed lines; bounded retries within a four-minute model-call budget</td><td class="desc">Async needs <code>agents-server</code>; <code>@names</code> must resolve to known definitions</td></tr>
                 <tr><td>Agent teams</td><td class="desc"><code>spawn_agent</code> teammates with scoped inboxes and task claims; approvals forwarded through the parent policy; optional swarm scheduler</td><td class="desc">Experimental, off by default in <code>/settings</code> &rarr; Experimental</td></tr>
@@ -669,18 +687,20 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
                 <tr><td>Artifacts</td><td class="desc">HTML, Markdown and dashboard artifacts updated in place with versions; searchable collection; temporary Cloudflare hosting; restored on resume; <code>/share artifacts</code>, <code>/share list</code>, <code>/share stop</code></td><td class="desc">Needs <code>cloudflared</code> for a URL; public to anyone with the link; no permanent hosting and no ngrok fallback</td></tr>
                 <tr><td>Remote sessions</td><td class="desc">Telegram topics with photos, phone-friendly tables and diffs and numbered controls; Discord threads restored on reconnect and archived on close; optional Rootapp companion</td><td class="desc">Each service needs its own bot, permissions and authorized senders; bridges never widen workspace permissions</td></tr>
                 <tr><td>Models and routing</td><td class="desc"><code>/auth</code>, <code>/model</code> (alias <code>/models</code>), independent role models, <code>/router</code> with natural-language criteria and a fallback, <code>/effort</code>, ChatGPT and Google sign-in, <code>VISION</code> side-calls</td><td class="desc">Provider access, region and billing apply; Bedrock is an extra; not every model supports vision or strict tools</td></tr>
-                <tr><td>Caveman mode</td><td class="desc">Say less, Read less, Auto, Blocks, Waste fixes and Browse; six intensities including Wenyan; <code>/caveman audit</code> and <code>/caveman blocks</code></td><td class="desc">Master switch is opt-in; no promised savings; reasoning models can still use more total tokens</td></tr>
-                <tr><td>MCP and tool search</td><td class="desc"><code>/mcp</code>; <code>MCPTool</code> for discovery, schemas and calls; <code>MCPCode</code> scripts; hybrid, regex and BM25 schema search; less-used schemas load on demand</td><td class="desc">Code Mode needs the async agent loop; scripts have no host imports, filesystem or network</td></tr>
+                <tr><td>Lite Mode</td><td class="desc">Say less, Read less, Auto, Blocks, Waste fixes and Browse; six intensities including Wenyan; <code>/caveman audit</code> and <code>/caveman blocks</code></td><td class="desc">Master switch is opt-in; no promised savings; reasoning models can still use more total tokens</td></tr>
+                <tr><td>MCP and tool search</td><td class="desc"><code>/mcp</code>; <code>MCPTool</code> for discovery, schemas and calls; <code>eval</code> scripts with <code>MCPCode</code> compatibility; hybrid, regex and BM25 schema search; less-used schemas load on demand</td><td class="desc">Code Mode needs the async agent loop; scripts have no host imports, filesystem or network</td></tr>
                 <tr><td>Strict tool arguments</td><td class="desc"><code>strict_tools="auto"</code> by default; raw arguments validated without coercion; <code>on</code> or <code>off</code></td><td class="desc">Native constrained sampling depends on provider, model and schema</td></tr>
                 <tr><td>Sessions and branches</td><td class="desc"><code>/tabs</code>, searchable resume, <code>/tree</code> branches and bookmarks, <code>/import</code> from Nova, Claude Code and Codex, <code>/compare</code>, <code>/rewind</code>, <code>/restore</code>, <code>/export [file]</code>, bare <code>/share</code> to a secret gist</td><td class="desc">A secret gist is unlisted, not private; redaction is a protection, not a guarantee</td></tr>
                 <tr><td>Messages between tabs</td><td class="desc"><code>SendMessage(recipient, content)</code> to a session ID or unique tab title; <code>list_sessions</code>; queued while busy, replies linked</td><td class="desc">Live tabs in one TUI instance only</td></tr>
+                <tr><td>Command Center and loops</td><td class="desc"><code>/cc</code> groups sessions by project with filters, details and live tab state; <code>/loop</code> repeats work on an interval, a five-field cron schedule or a model-selected wake-up, with <code>loop.md</code> reloaded per iteration</td><td class="desc">Loops need a local owner tab and end at their TTL (72 hours by default, up to seven days)</td></tr>
+                <tr><td>Context compression</td><td class="desc">Enabled by default: <code>compress</code>, <code>decompress</code>, <code>search_context</code> and <code>acp_status</code>; blocks persist with the graph thread across checkpoint reopen and resume</td><td class="desc">Reduces active context, not stored size; <code>context_hierarchical: false</code> disables new folds</td></tr>
                 <tr><td>Git worktrees</td><td class="desc"><code>EnterWorktreeTool(name)</code> branches from <code>HEAD</code> and moves file and shell tools; <code>ExitWorktreeTool()</code> returns and keeps everything; <code>/worktree</code> for the session workflow</td><td class="desc">Needs Git and a commit; resuming a conversation does not restore the live switch</td></tr>
                 <tr><td>Memory and skills</td><td class="desc">Linked memory wiki, <code>/dream</code>, <code>/learning</code>, <code>/evolution</code>; skills by <code>$skill-name</code>, <code>/skill-name</code> or Pin to prompt; resources read on demand; plugins, marketplaces and hooks</td><td class="desc">Memory is contextual evidence, not authorization; proposals keep their approval lifecycle</td></tr>
                 <tr><td>Planning and goals</td><td class="desc"><code>/plan</code>, <code>/claude-plan</code>, <code>/codex-plan</code>, <code>/claude-review</code>, <code>/codex-review</code>, <code>recent_plans</code>, <code>/research</code>, <code>/goal</code>, <code>/btw</code>, <code>/trello</code></td><td class="desc">External workflows need those CLIs and their accounts</td></tr>
                 <tr><td>Background work</td><td class="desc">Ctrl+B, <code>/tasks</code>, bounded <code>wait_for_task</code>, the <code>daemon</code> tool, <code>/cron</code> with <code>CronCreateTool</code>, <code>CronDeleteTool</code>, <code>CronListTool</code>; gated <code>TerminalCaptureTool</code> and <code>CtxInspectTool</code></td><td class="desc">Daemons are not reboot-persistent; cron needs a running interactive Nova</td></tr>
                 <tr><td>Tracing and usage</td><td class="desc"><code>/trace setup</code> for LangSmith, saved across restarts; <code>/context</code>, <code>/compact</code>, <code>/usage</code>, <code>/tokens</code>, <code>/cost</code>; reported prompt-cache reads and writes</td><td class="desc">Needs a LangSmith account; estimates and provider reports are different evidence</td></tr>
                 <tr><td>Guardrails</td><td class="desc">Workspace approval, path grants, tool policies, explicit denies, <code>/auto-approve</code> with optional fail-closed reviews, path-escape rejection, secret redaction</td><td class="desc">Not an OS sandbox or a guarantee against every prompt injection</td></tr>
-                <tr><td>Terminal experience</td><td class="desc">13 interface styles, themes, <code>/statusline</code> preview, growing composer, queued messages and <code>/redirect</code>, title spinner, <code>/nova</code> avatar, searchable <code>/help</code></td><td class="desc">Animations optional; low-resource mode pauses them</td></tr>
+                <tr><td>Terminal experience</td><td class="desc">14 interface styles, themes, <code>/statusline</code> preview, growing composer, queued messages and <code>/redirect</code>, title spinner, <code>/nova</code> avatar, searchable <code>/help</code>, live reasoning summaries and an opt-in side-by-side diff preview</td><td class="desc">Animations optional; low-resource mode pauses them</td></tr>
                 <tr><td>Integrations and headless</td><td class="desc">MCP presets for Figma, Figma Desktop, Vercel and Higgsfield; voice in and out; <code>nova -p</code>; <code>--mode pipe</code> / <code>--headless</code> JSONL sessions</td><td class="desc">Extras, accounts and subscriptions may apply; headless approval stays explicit</td></tr>
                 <tr><td>Attribution</td><td class="desc">NovaCode <code>Co-Authored-By</code> trailer and a PR logo footer, on by default; <code>attribution.commits</code> and <code>attribution.pullRequests</code></td><td class="desc">Credits a commit, not specific lines</td></tr>
                 <tr><td>Updates</td><td class="desc"><code>nova update</code> and <code>/update</code> with stages, release notes and resume of the interrupted turn; Windows launcher-safe</td><td class="desc">CI covers a maintained Windows and Linux matrix, not every configuration</td></tr>
@@ -696,6 +716,11 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
             <table>
               <thead><tr><th>Command</th><th>What you will see</th></tr></thead>
               <tbody>
+                <tr><td>/rooms</td><td class="desc">Project channels, agent DMs and the shared task board</td></tr>
+                <tr><td>/onboard</td><td class="desc">The project map, tours and change impact</td></tr>
+                <tr><td>/prime on, /prime report</td><td class="desc">Deep Work checkpoints and the observed-evidence report</td></tr>
+                <tr><td>/cc</td><td class="desc">Command Center: sessions by project and status</td></tr>
+                <tr><td>/loop 5m check CI status</td><td class="desc">A recurring session task, then <code>/loop list</code> or <code>/loop stop</code></td></tr>
                 <tr><td>/model &rarr; Vision</td><td class="desc">Separate main-model and vision choices</td></tr>
                 <tr><td>/router</td><td class="desc">Task criteria and per-route reasoning effort</td></tr>
                 <tr><td>/council web</td><td class="desc">Parallel discussion, ballots and chairman synthesis</td></tr>
@@ -703,11 +728,12 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
                 <tr><td>/create</td><td class="desc">Local skill and agent editing</td></tr>
                 <tr><td>/artifacts</td><td class="desc">Searchable artifact collection</td></tr>
                 <tr><td>/share artifacts</td><td class="desc">A temporary Cloudflare URL for the collection</td></tr>
-                <tr><td>/caveman settings</td><td class="desc">Six switches and the saved intensity</td></tr>
+                <tr><td>/lite-mode</td><td class="desc">Off, Caveman or Ponytail with their own settings</td></tr>
                 <tr><td>/caveman audit</td><td class="desc">Estimates against reported token usage</td></tr>
+                <tr><td>/cache status</td><td class="desc">The workspace knowledge cache</td></tr>
                 <tr><td>/tabs, /resume, /tree</td><td class="desc">Parallel work, saved sessions and branches</td></tr>
                 <tr><td>/voice download</td><td class="desc">Real STT and TTS download progress</td></tr>
-                <tr><td>/theme</td><td class="desc">Home screens, character art and animated homes</td></tr>
+                <tr><td>/theme</td><td class="desc">14 home compositions, character art and animated homes</td></tr>
                 <tr><td>/trace setup</td><td class="desc">Persistent tracing configuration</td></tr>
                 <tr><td>/dream, /learning</td><td class="desc">Memory maintenance and reviewed learning</td></tr>
                 <tr><td>/tasks, /cron</td><td class="desc">Background work and scheduled tasks</td></tr>
@@ -730,6 +756,9 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
                 <tr><td>NotebookEditTool</td><td class="desc">Insert, replace and delete notebook cells without executing them</td></tr>
                 <tr><td>GlobTool, GrepTool</td><td class="desc">Imported-definition aliases for <code>glob</code> and <code>grep</code></td></tr>
                 <tr><td>MCPTool</td><td class="desc">Server-scoped discovery, schema inspection and execution</td></tr>
+                <tr><td>eval, MCPCode</td><td class="desc">Bounded JavaScript workflows over eligible native and MCP tools; <code>eval</code> is primary and reuses variables across snippets</td></tr>
+                <tr><td>compress, decompress, search_context, acp_status</td><td class="desc">Model-authored context folding, exact archive recovery and bounded history search</td></tr>
+                <tr><td>schedule_wakeup</td><td class="desc">A model-selected wake-up for a running <code>/loop</code></td></tr>
                 <tr><td>MCPCode</td><td class="desc">Bounded JavaScript workflows over eligible native and MCP tools</td></tr>
                 <tr><td>computer_status, computer_screenshot, computer_action</td><td class="desc">Preview desktop observation and input; the user starts the guest</td></tr>
                 <tr><td>tool_search_tool_regex_20251119</td><td class="desc">Local regex schema discovery</td></tr>
@@ -761,7 +790,7 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:13">cat README.md</span></p>
             <h2 class="page-title">Install from PyPI and start <b>coding</b>.</h2>
-            <p class="lede">Install the latest release from <a href="https://pypi.org/project/novacode-cli/">PyPI</a> with <code>uv</code>, then run <code>nova</code> from your project directory. Release <b>1.2.1</b> is published. These commands work in Windows CMD, macOS and Linux; uv can install Python 3.11 for the tool. Install <a href="https://docs.astral.sh/uv/getting-started/installation/">uv</a> first if needed. Use the source tab only when developing Nova itself.</p>
+            <p class="lede">Install the latest release from <a href="https://pypi.org/project/novacode-cli/">PyPI</a> with <code>uv</code>, then run <code>nova</code> from your project directory. Release <b>1.2.20</b> is published. These commands work in Windows CMD, macOS and Linux; uv can install Python 3.11 for the tool. Install <a href="https://docs.astral.sh/uv/getting-started/installation/">uv</a> first if needed. Use the source tab only when developing Nova itself.</p>
           </div>
           <div class="install-box win rv">
             <div class="tabs" role="tablist" aria-label="Install method">
@@ -769,15 +798,15 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
               <button class="tab" role="tab" aria-selected="false" id="t-win" aria-controls="p-win" tabindex="-1">Windows CMD</button>
               <button class="tab" role="tab" aria-selected="false" id="t-tool" aria-controls="p-tool" tabindex="-1">From source</button>
             </div>
-            <div class="pane on" id="p-unix" role="tabpanel" aria-labelledby="t-unix">
+            <div class="pane on" id="p-unix" role="tabpanel" aria-labelledby="t-unix" aria-label="macOS and Linux">
               <div class="cmd"><code>uv tool install --python 3.11 novacode-cli</code><button class="copy" type="button" data-copy="uv tool install --python 3.11 novacode-cli"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
               <div class="cmd"><code>nova</code><button class="copy" type="button" data-copy="nova"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
             </div>
-            <div class="pane" id="p-win" role="tabpanel" aria-labelledby="t-win">
+            <div class="pane" id="p-win" role="tabpanel" aria-labelledby="t-win" aria-label="Windows CMD">
               <div class="cmd"><code>uv tool install --python 3.11 novacode-cli</code><button class="copy" type="button" data-copy="uv tool install --python 3.11 novacode-cli"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
               <div class="cmd"><code>nova</code><button class="copy" type="button" data-copy="nova"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
             </div>
-            <div class="pane" id="p-tool" role="tabpanel" aria-labelledby="t-tool">
+            <div class="pane" id="p-tool" role="tabpanel" aria-labelledby="t-tool" aria-label="From source">
               <div class="cmd"><code>git clone https://github.com/Babitdor/NovaCode.git</code><button class="copy" type="button" data-copy="git clone https://github.com/Babitdor/NovaCode.git"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
               <div class="cmd"><code>cd NovaCode</code><button class="copy" type="button" data-copy="cd NovaCode"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
               <div class="cmd"><code>uv sync</code><button class="copy" type="button" data-copy="uv sync"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
@@ -793,7 +822,7 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
               <div class="cmd"><code>uv tool install --python 3.11 --force "novacode-cli[browser,voice,agents-server,server,bedrock,computer]"</code><button class="copy" type="button" data-copy="uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice,agents-server,server,bedrock,computer]&quot;"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
               <div class="cmd"><code>uv tool upgrade novacode-cli</code><button class="copy" type="button" data-copy="uv tool upgrade novacode-cli"><svg class="i-copy" viewBox="0 0 256 256" fill="currentColor"><path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z"/></svg><svg class="i-check" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z"/></svg><span>Copy</span></button></div>
           </div>
-          <p class="body rv">Upgrade an existing PyPI tool install with <code>uv tool upgrade novacode-cli</code>. To switch from a Git installation, run <code>uv tool install --python 3.11 --force novacode-cli</code>, adding any wanted extras. To pin this release, use <code>novacode-cli==1.2.1</code> or <code>"novacode-cli[voice,agents-server]==1.2.1"</code> in the install command.</p>
+          <p class="body rv">Upgrade an existing PyPI tool install with <code>uv tool upgrade novacode-cli</code>. To switch from a Git installation, run <code>uv tool install --python 3.11 --force novacode-cli</code>, adding any wanted extras. To pin this release, use <code>novacode-cli==1.2.20</code> or <code>"novacode-cli[voice,agents-server]==1.2.20"</code> in the install command.</p>
           <p class="body rv">Voice models, browser binaries and external computer runtimes may need separate setup. The <a href="#page-extras" data-page="extras">extras reference</a> lists each option; installing every voice engine together is not verified on Windows.</p>
         </section>
 
@@ -1103,6 +1132,10 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
               <thead><tr><th>Screen</th><th>Purpose</th></tr></thead>
               <tbody>
                 <tr><td>Chat</td><td class="desc">Main conversation view</td></tr>
+                <tr><td>Command Center</td><td class="desc"><code>/cc</code> or Left Arrow in an empty composer: sessions by project, status filters, details and live tabs</td></tr>
+                <tr><td>Project rooms</td><td class="desc"><code>/rooms</code> or <code>ctrl+shift+r</code>: channels, agent DMs and the shared task board</td></tr>
+                <tr><td>Prime drawer</td><td class="desc">Checkpoint strip and an expandable report with task history and evidence</td></tr>
+                <tr><td>Onboarding dashboard</td><td class="desc">Local file and symbol explorer, dependency map, tours and impact tracing</td></tr>
                 <tr><td>Model picker</td><td class="desc">Switch models for main agent, subagents, async agents, dynamic agents</td></tr>
                 <tr><td>Auth</td><td class="desc">Manage API keys and provider credentials</td></tr>
                 <tr><td>Wiki</td><td class="desc">Browse the project wiki vault</td></tr>
@@ -1123,6 +1156,8 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
               <thead><tr><th>Key</th><th>Action</th></tr></thead>
               <tbody>
                 <tr><td>shift+enter</td><td class="desc">Insert a newline in the input</td></tr>
+                <tr><td>&larr; / Left Arrow</td><td class="desc">Open Command Center from an empty composer; otherwise move the cursor</td></tr>
+                <tr><td>ctrl+shift+r</td><td class="desc">Open project rooms</td></tr>
                 <tr><td>ctrl+n</td><td class="desc">New parallel session</td></tr>
                 <tr><td>alt+&lt;n&gt;</td><td class="desc">Switch to session n</td></tr>
                 <tr><td>ctrl+g</td><td class="desc">Push-to-talk (voice)</td></tr>
@@ -1136,6 +1171,22 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
         </section>
 
         <section>
+          <h2 class="rv">Interface styles and Lite Mode</h2>
+          <p class="body rv">14 styles change the home composition, not just colours; the choice carries into
+            conversation, tool and dialog presentation independently of the colour theme. The composer also cycles
+            <b>Off &rarr; Caveman &rarr; Ponytail</b> (or open <code>/lite-mode</code>), remembering the chosen style when it
+            is disabled and preserving drafts.</p>
+          <ul class="proof rv">
+            <li>Dashboard</li><li>Classic</li><li>Centered</li><li>Banner</li><li>Terminal</li><li>Workbench</li>
+            <li>Notebook</li><li>Outline</li><li>Focus</li><li>Studio</li><li>Ledger</li><li>Blueprint</li>
+            <li>Signal</li><li>Minimal</li>
+          </ul>
+          <p class="body rv">Workbench and Studio show Nova character art; Terminal, Studio and Blueprint offer optional
+            animated homes, and low-resource mode pauses them. An opt-in side-by-side diff preview in <code>/theme</code>
+            adds line numbers, syntax highlighting and change shading, with a narrow-screen fallback.</p>
+        </section>
+
+<section>
           <h2 class="rv">Performance features</h2>
           <ul class="proof rv">
             <li>status ticks repaint in place</li>
@@ -1171,6 +1222,16 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
               <thead><tr><th>Command</th><th>Description</th></tr></thead>
               <tbody>
                 <tr><td>/help</td><td class="desc">Show interactive help</td></tr>
+                <tr><td>/rooms</td><td class="desc">Project channels, agent DMs and the shared task board (<code>ctrl+shift+r</code>)</td></tr>
+                <tr><td>/onboard</td><td class="desc">Project map, tours, Q&amp;A and change impact (<code>open</code>, <code>refresh</code>, <code>tour</code>, <code>ask</code>, <code>impact</code>)</td></tr>
+                <tr><td>/prime</td><td class="desc">Deep Work: <code>on</code>, <code>off</code>, <code>status</code>, <code>report</code>, <code>tasks</code>, <code>checks</code>, <code>resume &lt;id&gt;</code>, <code>forget &lt;id&gt;</code></td></tr>
+                <tr><td>/command-center / /cc</td><td class="desc">Sessions by project, status filters and task details</td></tr>
+                <tr><td>/loop</td><td class="desc">Session-only recurring tasks: <code>list</code>, <code>status</code>, <code>stop [id|all]</code></td></tr>
+                <tr><td>/lite-mode</td><td class="desc">Off, Caveman or Ponytail response style and its settings</td></tr>
+                <tr><td>/cache</td><td class="desc">Workspace knowledge cache: <code>status</code>, <code>clear</code>, <code>on</code>, <code>off</code></td></tr>
+                <tr><td>/passing</td><td class="desc">Automatic project handoff between sessions (<code>/handoff</code> remains a skill)</td></tr>
+                <tr><td>/worktree</td><td class="desc">An isolated Git worktree plus session for feature work</td></tr>
+                <tr><td>/teammates</td><td class="desc">Persistent local assistants and their input approvals</td></tr>
                 <tr><td>/exit / /quit / /q</td><td class="desc">Exit the CLI</td></tr>
                 <tr><td>/clear</td><td class="desc">Clear conversation history and reset session</td></tr>
                 <tr><td>/tokens</td><td class="desc">Display token usage for the session</td></tr>
@@ -1184,7 +1245,7 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
                 <tr><td>/compact</td><td class="desc">Compact conversation history with optional focus</td></tr>
                 <tr><td>/sessions</td><td class="desc">List, select, or delete saved sessions</td></tr>
                 <tr><td>/ui</td><td class="desc">Inspect UI panels (<code>patch</code>, <code>preview</code>, <code>commit</code>, <code>rollback</code>, <code>reset</code>)</td></tr>
-                <tr><td>/session</td><td class="desc">Parallel sessions: <code>new</code> / <code>list</code> / <code>close</code></td></tr>
+                <tr><td>/tabs (alias /session)</td><td class="desc">Parallel sessions: <code>launch</code> / <code>resume</code> / <code>list</code> / <code>close</code></td></tr>
                 <tr><td>/resume</td><td class="desc">Resume a saved session (<code>/resume &lt;id&gt;</code>)</td></tr>
                 <tr><td>/restore</td><td class="desc">Restore a previous file version from snapshots</td></tr>
                 <tr><td>/files</td><td class="desc">Show file operation summary</td></tr>
@@ -1206,7 +1267,7 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
                 <tr><td>/hooks</td><td class="desc">Manage lifecycle hooks (list, add, remove, enable, disable)</td></tr>
                 <tr><td>/skills</td><td class="desc">Interactive skills manager</td></tr>
                 <tr><td>/agents</td><td class="desc">Custom agent management (view, create, delete)</td></tr>
-                <tr><td>/plugins / /plugin</td><td class="desc">Plugin management (list, enable, disable)</td></tr>
+                <tr><td>/plugin</td><td class="desc">Plugin and marketplace management (list, enable, disable; singular form)</td></tr>
                 <tr><td>/middleware</td><td class="desc">List active middleware (<code>/reload-plugins</code> to reload)</td></tr>
                 <tr><td>/reload-plugins</td><td class="desc">Reload plugin registrations</td></tr>
                 <tr><td>/plan</td><td class="desc">Invoke the plan-mode agent for investigation and approval</td></tr>
@@ -1214,8 +1275,7 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
                 <tr><td>/trace</td><td class="desc">LangSmith tracing management</td></tr>
                 <tr><td>/ralph</td><td class="desc">Autonomous looping mode (background task execution)</td></tr>
                 <tr><td>/council</td><td class="desc">Plan a task with the council (propose, critique, vote, judge)</td></tr>
-                <tr><td>/chat</td><td class="desc">Launch the local browser-based chat UI</td></tr>
-                <tr><td>/cowork / /desktop</td><td class="desc">Launch the Nova Cowork desktop app</td></tr>
+                <tr><td>/cowork (alias /desktop)</td><td class="desc">Launch the Nova Cowork desktop app</td></tr>
                 <tr><td>/trello</td><td class="desc">Browser-based task board server</td></tr>
                 <tr><td>/research</td><td class="desc">Multi-agent research swarm</td></tr>
                 <tr><td>/dream</td><td class="desc">Run memory consolidation</td></tr>
@@ -1249,12 +1309,14 @@ html:not(.js) .sidebar-links{display:flex;flex-direction:column}
             <table>
               <thead><tr><th>Category</th><th>Commands</th></tr></thead>
               <tbody>
-                <tr><td>Session</td><td class="desc"><code>/save</code>, <code>/sessions</code>, <code>/session</code>, <code>/resume</code>, <code>/clear</code>, <code>/compact</code></td></tr>
-                <tr><td>Model &amp; reasoning</td><td class="desc"><code>/model</code>, <code>/effort</code>, <code>/learning</code>, <code>/verbose</code>, <code>/vision</code></td></tr>
-                <tr><td>Planning &amp; research</td><td class="desc"><code>/plan</code>, <code>/council</code>, <code>/research</code>, <code>/goal</code>, <code>/steer</code></td></tr>
-                <tr><td>Extensibility</td><td class="desc"><code>/skills</code>, <code>/agents</code>, <code>/plugins</code>, <code>/mcp</code>, <code>/hooks</code>, <code>/middleware</code></td></tr>
-                <tr><td>Integrations</td><td class="desc"><code>/webhook</code>, <code>/cron</code>, <code>/chat</code>, <code>/cowork</code>, <code>/trello</code>, <code>/browser-use</code></td></tr>
-                <tr><td>Knowledge</td><td class="desc"><code>/wiki</code>, <code>/ingest</code>, <code>/ask</code>, <code>/file</code>, <code>/dream</code></td></tr>
+                <tr><td>Session</td><td class="desc"><code>/save</code>, <code>/sessions</code>, <code>/tabs</code>, <code>/resume</code>, <code>/cc</code>, <code>/clear</code>, <code>/compact</code></td></tr>
+                <tr><td>Model &amp; reasoning</td><td class="desc"><code>/model</code>, <code>/router</code>, <code>/effort</code>, <code>/learning</code>, <code>/verbose</code>, <code>/vision</code>, <code>/lite-mode</code></td></tr>
+                <tr><td>Planning &amp; verification</td><td class="desc"><code>/plan</code>, <code>/prime</code>, <code>/council</code>, <code>/research</code>, <code>/goal</code>, <code>/steer</code></td></tr>
+                <tr><td>Delegation</td><td class="desc"><code>/rooms</code>, <code>/agents</code>, <code>/subagents</code>, <code>/teammates</code>, <code>/agent-server</code>, <code>/worktree</code></td></tr>
+                <tr><td>Knowledge</td><td class="desc"><code>/onboard</code>, <code>/cache</code>, <code>/wiki</code>, <code>/ingest</code>, <code>/ask</code>, <code>/file</code>, <code>/dream</code></td></tr>
+                <tr><td>Extensibility</td><td class="desc"><code>/skills</code>, <code>/plugin</code>, <code>/mcp</code>, <code>/hooks</code>, <code>/middleware</code></td></tr>
+                <tr><td>Automation</td><td class="desc"><code>/loop</code>, <code>/cron</code>, <code>/webhook</code>, <code>/tasks</code>, <code>/share</code></td></tr>
+                <tr><td>Integrations</td><td class="desc"><code>/remote</code>, <code>/cowork</code>, <code>/create</code>, <code>/trello</code>, <code>/browser-use</code>, <code>/computer</code></td></tr>
               </tbody>
             </table>
           </div>
@@ -1637,17 +1699,91 @@ search_tools("*")            <span class="c"># browse the catalog</span></pre>
         </section>
       </div>
 
+      <!-- 9b. PROJECT ROOMS -->
+      <div class="page-section" id="page-rooms">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:6">/rooms</span></p>
+            <h2 class="page-title">Project <b>rooms</b>.</h2>
+            <p class="lede">Channels, agent DMs and one shared task board per project, with Nova's own session tabs left
+              where they were. Open it with <code>/rooms</code> or <code>ctrl+shift+r</code>.</p>
+          </div>
+          <div class="callout rv">
+            <svg class="icon" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm-8-80V80a8,8,0,0,1,16,0v48a8,8,0,0,1-16,0Zm20,36a12,12,0,1,1-12-12A12,12,0,0,1,140,172Z"/></svg>
+            <p><b>Rooms are released, agent teams are experimental.</b> Rooms persist their state in the
+              canonical project's ignored <code>.nova/workspace/</code> directory. They are not a channel for
+              arbitrary terminals, and they do not widen workspace permissions.</p>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">What lives in a room</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Part</th><th>What it does</th></tr></thead>
+              <tbody>
+                <tr><td>Project channel</td><td class="desc">The conversation for one project, with drafts, unread indicators and independent transcript scrolling</td></tr>
+                <tr><td>Agent DMs</td><td class="desc">A direct thread with a participant, including Nova itself</td></tr>
+                <tr><td>Activity board</td><td class="desc">Shared tasks and notes: what was asked, who owns it, and what state it reached</td></tr>
+                <tr><td>Mentions</td><td class="desc">Agent and file suggestions; stale suggestions are rejected after you keep typing or switch rooms</td></tr>
+                <tr><td>Export</td><td class="desc">Explicit Markdown export of selected channel notes, with reported usage and unknown usage marked unknown</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">Other agents in the same room</h2>
+          <p class="body rv">Nova can run <b>Claude Code</b> and <b>Codex</b> through their installed CLIs and your
+            existing logins. Each keeps a separate resumable conversation, and replies are attributed to the agent that
+            produced them. Nova's own participant uses the shared agent loop with private checkpoints and room-scoped
+            tools.</p>
+          <p class="body rv">A participant-bound local MCP bridge publishes context, verified artifacts and structured
+            handoffs between participants, so work moves across as a task rather than as pasted text.</p>
+        </section>
+
+        <section>
+          <h2 class="rv">Approval and isolation</h2>
+          <ul class="proof rv">
+            <li>explicit task approval before implementation</li>
+            <li>isolated Git worktrees per task</li>
+            <li>two project workers, six initial task turns</li>
+            <li>separate owner decision for extensions</li>
+            <li>native CLI permission controls kept</li>
+            <li>pause without replaying completed steps</li>
+            <li>work preserved on cancellation</li>
+            <li>integration refused into a dirty or changed base</li>
+          </ul>
+          <p class="body rv">Room state is stored per project, so reopening a room restores its channels, tasks, notes and
+            read positions. Clearing or deleting the project workspace removes it.</p>
+        </section>
+      </div>
+
       <!-- 10. MEMORY -->
       <div class="page-section" id="page-memory">
         <section>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:14">memory_search</span></p>
             <h2 class="page-title">Memory <b>system</b>.</h2>
-            <p class="lede">A three-tier model: Episodic, Semantic, and Procedural.</p>
+            <p class="lede">A three-tier model — Episodic, Semantic and Procedural — with recall you can watch and
+              sources you can open.</p>
           </div>
         </section>
 
         <section>
+          <h2 class="rv">Visible recall</h2>
+          <p class="body rv">Standing preferences and the compact index are always available. When relevant topic
+            excerpts are supplied automatically, the transcript shows <b>Recalling memory</b> with the source path;
+            after a successful explicit page read it shows <b>Reading memory</b>, including reads made through Code
+            Mode. Failed reads and search results never claim a page was read, and duplicate notices for the same source
+            are suppressed within a turn. Notices carry source metadata, not memory bodies, and add nothing to model
+            history.</p>
+          <p class="body rv">Search returns the real project-scoped topic path, so a general and a project topic with
+            the same name stay distinct. <code>/cache</code> keeps the source-validated workspace knowledge cache
+            separate from memory.</p>
+        </section>
+
+<section>
           <h2 class="rv">The three tiers</h2>
           <div class="feature-grid">
             <div class="feature-card rv">
@@ -1701,6 +1837,68 @@ search_tools("*")            <span class="c"># browse the catalog</span></pre>
               </tbody>
             </table>
           </div>
+        </section>
+      </div>
+
+      <!-- 10b. PROJECT ONBOARDING -->
+      <div class="page-section" id="page-onboard">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:8">/onboard</span></p>
+            <h2 class="page-title">Project <b>onboarding</b>.</h2>
+            <p class="lede">A persistent local code graph and guide for the workspace: what the files are, how they
+              point at each other, and what a change would touch.</p>
+          </div>
+          <div class="codeblock win rv">
+            <pre>/onboard                       <span class="c"># build or open the map and guide</span>
+/onboard open                  <span class="c"># the local dashboard</span>
+/onboard refresh               <span class="c"># re-analyse changed, new and deleted inputs</span>
+/onboard tour                  <span class="c"># guided tours of the project</span>
+/onboard ask &lt;question&gt;        <span class="c"># answered in the current conversation</span>
+/onboard impact &lt;symbol|path&gt;  <span class="c"># what depends on what</span></pre>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="rv">The dashboard</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Panel</th><th>What it shows</th></tr></thead>
+              <tbody>
+                <tr><td>File and symbol explorer</td><td class="desc">Searchable project tree with symbols per file</td></tr>
+                <tr><td>Dependency map</td><td class="desc">Zoomable graph of nodes and edges</td></tr>
+                <tr><td>Symbol inspector</td><td class="desc">Definition, references and the paths around one symbol</td></tr>
+                <tr><td>Tours</td><td class="desc">Guided Markdown walkthroughs of the architecture</td></tr>
+                <tr><td>Impact tracing</td><td class="desc">Reverse dependencies for a symbol or path before you edit it</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="body rv">The dashboard is served locally with keyboard navigation, visible focus and reduced-motion
+            support, and adapts to narrow screens. Analysis is stored under <code>.nova/onboard/</code>; the Markdown
+            guide renders with raw HTML disabled.</p>
+        </section>
+
+        <section>
+          <h2 class="rv">Refresh behaviour and limits</h2>
+          <ul class="proof rv">
+            <li>content fingerprints detect changed, new and deleted inputs</li>
+            <li>parsing deadlines scale from two to ten minutes with input size</li>
+            <li>Git ignore rules are respected</li>
+            <li>linked storage paths are rejected</li>
+            <li>filesystem-watch hooks are disabled during discovery</li>
+            <li>workspace, input-size, graph-size and plan-mode checks apply</li>
+            <li>a failed, timed-out or cancelled run keeps the saved analysis</li>
+          </ul>
+          <p class="body rv">Static analysis cannot identify every dynamic dependency; treat the graph as a map, not a
+            proof. <code>/onboard ask</code> runs through the normal conversation and its tool permissions.</p>
+        </section>
+
+        <section>
+          <h2 class="rv">Workspace knowledge cache</h2>
+          <p class="body rv"><code>/cache</code> keeps a default-enabled, source-validated cache of workspace knowledge
+            so repeated questions about the same project do not re-read everything. <code>/cache status</code>,
+            <code>/cache clear</code>, <code>/cache on</code> and <code>/cache off</code> control it, and assistant
+            namespaces stay isolated from one another.</p>
         </section>
       </div>
 
@@ -2021,6 +2219,68 @@ search_tools("*")            <span class="c"># browse the catalog</span></pre>
         </section>
       </div>
 
+      <!-- 14b. PRIME -->
+      <div class="page-section" id="page-prime">
+        <section>
+          <div class="head rv">
+            <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:9">/prime on</span></p>
+            <h2 class="page-title">Prime <b>deep work</b>.</h2>
+            <p class="lede">An opt-in mode that holds one task inside six ordered checkpoints and reports evidence
+              separately from the agent's own assessment.</p>
+          </div>
+          <div class="codeblock win rv">
+            <pre><span class="c"># opt in per session, or at launch</span>
+/prime on
+nova --prime
+
+<span class="c"># inspect it</span>
+/prime status
+/prime report
+/prime tasks
+/prime checks
+/prime resume &lt;id&gt;
+/prime forget &lt;id&gt;   <span class="c"># locally confirmed</span></pre>
+          </div>
+          <ul class="proof rv">
+            <li>define</li>
+            <li>investigate</li>
+            <li>implement</li>
+            <li>verify</li>
+            <li>challenge</li>
+            <li>deliver</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2 class="rv">Observed evidence</h2>
+          <p class="body rv">Acceptance checks are written before normal tool execution and bound to the real tool-call
+            IDs of the run that produced them. Exit codes and literal output assertions are evaluated mechanically, so a
+            fabricated, missing, truncated or unsupported result cannot establish a pass. Execution artifacts are redacted
+            and bounded before they are persisted.</p>
+          <p class="body rv">Delivery records keep the agent's assessment apart from observed tool results and name work
+            that was not verified. Unmet criteria are reported even when all six phases completed.</p>
+        </section>
+
+        <section>
+          <h2 class="rv">Continuation and storage</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Behaviour</th><th>Detail</th></tr></thead>
+              <tbody>
+                <tr><td>Persistence</td><td class="desc">Preferences and the last report are saved with session metadata</td></tr>
+                <tr><td>Interrupted work</td><td class="desc">Stays paused; late results cannot repopulate a cleared or superseded request</td></tr>
+                <tr><td>Project records</td><td class="desc">Task, check and evidence records use the durable store and are shared across linked Git worktrees, keeping each run's checkout path, revision and input fingerprints</td></tr>
+                <tr><td>Recall</td><td class="desc">Up to five relevant check summaries within a 2,000-character allowance</td></tr>
+                <tr><td>Staleness</td><td class="desc">Changed or missing inputs mark a finding stale or unavailable</td></tr>
+                <tr><td>Continuation</td><td class="desc">Uses the current workspace, model, permissions and limits as a separate child run</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="body rv">Findings stay drafts until an observed failure is followed by passing checks against the
+            changed code. Prime does not make generated code correct, and it never grants permissions.</p>
+        </section>
+      </div>
+
       <!-- 15. VERIFICATION -->
       <div class="page-section" id="page-verification">
         <section>
@@ -2077,8 +2337,15 @@ search_tools("*")            <span class="c"># browse the catalog</span></pre>
 /learning on
 
 <span class="c"># Hold a specific piece of work to your own criteria</span>
-/goal rubric &lt;what counts as done&gt;</pre>
+/goal rubric &lt;what counts as done&gt;
+
+<span class="c"># Or run the task inside Prime's six checkpoints with observed evidence</span>
+/prime on</pre>
           </div>
+
+          <p class="body rv">This loop grades a finished run. <a href="#page-prime" data-page="prime">Prime deep work</a>
+            is the stricter path: acceptance checks are defined first and evaluated against the run's real tool-call
+            output, and unmet criteria are reported even when every phase completed.</p>
           <p class="body rv">Off by default. The inline verifier lives in
             <code>core/verification_loop.py</code> and <code>hermes/verifier.py</code>. It is
             fail-open by design: a verification failure never breaks the run.</p>
@@ -2286,11 +2553,32 @@ search_tools("*")            <span class="c"># browse the catalog</span></pre>
           <div class="head rv">
             <p class="cmdline rv"><span class="ps">nova &#10095;</span><span class="typed" style="--n:14">/sessions</span></p>
             <h2 class="page-title">Session <b>management</b>.</h2>
-            <p class="lede">A composite state object, durable storage, and parallel sessions across git worktrees.</p>
+            <p class="lede">A composite state object, durable storage, parallel sessions across git worktrees, and
+              session-only loops for recurring work.</p>
           </div>
         </section>
 
         <section>
+          <h2 class="rv">Loops and Command Center</h2>
+          <div class="codeblock win rv">
+            <pre>/loop 5m check CI status        <span class="c"># interval</span>
+/loop "0 9 * * 1-5" standup      <span class="c"># five-field cron, quoted</span>
+/loop list
+/loop status
+/loop stop [id|all]</pre>
+          </div>
+          <p class="body rv">Loops run through the normal session agent and approval paths, wait while the session is
+            busy, and coalesce missed ticks instead of overlapping turns. Instructions are reloaded from a project or
+            user <code>loop.md</code> on every file-driven iteration, with <code>.nova</code> taking precedence and
+            <code>.agent</code> accepted as a compatibility alias. Loops live in memory, end on conversation reset or
+            exit, and expire at a 72-hour TTL that can be configured up to seven days. A spawned-process or headless tab
+            cannot host one.</p>
+          <p class="body rv"><code>/command-center</code> (alias <code>/cc</code>, or Left Arrow in an empty composer)
+            groups sessions by project with status filters, search, session details, measured token usage where it is
+            reported, and live tab state. Missing metadata is labelled rather than guessed.</p>
+        </section>
+
+<section>
           <h2 class="rv">SessionState composite</h2>
           <p class="body rv"><code>states/Session.py</code> (741 lines) holds six focused state slices
             plus cross-cutting identity fields, using <code>__getattr__</code>/<code>__setattr__</code>
@@ -2420,6 +2708,28 @@ search_tools("*")            <span class="c"># browse the catalog</span></pre>
             compatible local/custom decision model whether each old tool result is still needed, and
             clears only results scored stale. Off by default. Configure through <code>/model</code>
             &rarr; <strong>Decisions</strong> to select Jev, Tev1, or Custom System One.</p>
+        </section>
+
+        <section>
+          <h2 class="rv">Model-controlled compression</h2>
+          <p class="body rv">Enabled by default. The active model chooses which completed range to fold and writes the
+            summary through its ordinary tool loop; no proxy or extra runtime is involved. Four tools carry it:</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Tool</th><th>Purpose</th></tr></thead>
+              <tbody>
+                <tr><td>acp_status</td><td class="desc">Estimated working-history tokens, stable message and block references, summary tiers and the protected recent tail</td></tr>
+                <tr><td>compress</td><td class="desc">Fold an inclusive range into a summary; up to three tiers can be merged later</td></tr>
+                <tr><td>decompress</td><td class="desc">Recover exact original message JSON in bounded pages</td></tr>
+                <tr><td>search_context</td><td class="desc">Search visible history, summaries and archived originals</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="body rv">Blocks and archives persist with the owning graph thread, including across SQLite checkpoint
+            reopen and session resume. User messages and complete tool exchanges stay verbatim, partial overlaps and
+            parallel compression are rejected, and the existing automatic compaction and <code>/compact</code> paths
+            remain. Set <code>context_hierarchical</code> to <code>false</code> in Nova configuration to disable new
+            model-authored folds. Compression reduces active model context, not the stored size of the conversation.</p>
         </section>
 
         <section>
@@ -2791,8 +3101,8 @@ uv sync --extra voice --extra voice-kokoro</pre>
   const pageNames = {
     overview: '~/docs', features: '~/docs/features', installation: '~/docs/install', cli: '~/docs/cli', config: '~/docs/config',
     tui: '~/docs/tui', slash: '~/docs/slash', headless: '~/docs/headless', tools: '~/docs/tools',
-    subagents: '~/docs/agents', memory: '~/docs/memory', skills: '~/docs/skills', mcp: '~/docs/mcp',
-    plugins: '~/docs/plugins', hermes: '~/docs/hermes', verification: '~/docs/verify',
+    subagents: '~/docs/agents', rooms: '~/docs/rooms', memory: '~/docs/memory', onboard: '~/docs/onboard', skills: '~/docs/skills', mcp: '~/docs/mcp',
+    plugins: '~/docs/plugins', hermes: '~/docs/hermes', prime: '~/docs/prime', verification: '~/docs/verify',
     remote: '~/docs/remote', voice: '~/docs/voice', middleware: '~/docs/middleware',
     sessions: '~/docs/sessions', context: '~/docs/context', security: '~/docs/security',
     sandbox: '~/docs/sandbox', infrastructure: '~/docs/infra', directory: '~/docs/tree',
@@ -2839,7 +3149,8 @@ uv sync --extra voice --extra voice-kokoro</pre>
       if (title) title.setAttribute('aria-expanded', hasActive ? 'true' : 'false');
     });
     setDrawer(false, false);
-    window.scrollTo(0, 0);
+    if (document.documentElement.dataset.view === 'agent' && (focus || location.hash)) section.scrollIntoView({behavior:'instant', block:'start'});
+    else window.scrollTo(0, 0);
     markScrollables();
 
   }
@@ -2863,6 +3174,11 @@ uv sync --extra voice --extra voice-kokoro</pre>
   }
   window.addEventListener('hashchange', initFromHash);
   initFromHash();
+  document.addEventListener('viewchange', () => {
+    setDrawer(false, false);
+    initFromHash();
+    if (window.ScrollTrigger) window.ScrollTrigger.refresh();
+  });
 
   document.querySelectorAll('.sidebar-group-title').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -2947,13 +3263,10 @@ uv sync --extra voice --extra voice-kokoro</pre>
   window.addEventListener('resize', markScrollables);
 })();
 </script>
+<div data-cursor aria-hidden="true"></div>
+<script src="../assets/gsap.min.js"></script>
+<script src="../assets/ScrollTrigger.min.js"></script>
 <script src="../assets/lenis.min.js"></script>
-<script>
-  /* Smooths wheel and touch scrolling on the real scroll position, so the hash router, sticky
-     top bar and scroll-padding keep working. Reduced motion keeps native scrolling. */
-  if (window.Lenis && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    new Lenis({ autoRaf: true, lerp: 0.11 });
-  }
-</script>
+<script src="../assets/motion.js"></script>
 </body>
 </html>

@@ -1,0 +1,17 @@
+/* The palette prints behind a travelling rule; returning to paper reverses the pass. */
+::view-transition{pointer-events:none}
+::view-transition-group(root){animation:none}
+::view-transition-old(root){animation:none;mix-blend-mode:normal}
+::view-transition-new(root){animation:theme-sheet-down 620ms cubic-bezier(.65,0,.25,1) both;mix-blend-mode:normal}
+html[data-theme="light"]::view-transition-new(root){animation-name:theme-sheet-up}
+@keyframes theme-sheet-down{from{clip-path:inset(0 0 100% 0)}to{clip-path:inset(0)}}
+@keyframes theme-sheet-up{from{clip-path:inset(100% 0 0 0)}to{clip-path:inset(0)}}
+.theme-scan{position:fixed;top:0;left:0;width:100%;height:1px;background:var(--accent);pointer-events:none;z-index:10000;view-transition-name:theme-scan}
+::view-transition-group(theme-scan){z-index:1;animation:theme-rule-down 620ms cubic-bezier(.65,0,.25,1) both}
+html[data-theme="light"]::view-transition-group(theme-scan){animation-name:theme-rule-up}
+::view-transition-new(theme-scan){animation:none;mix-blend-mode:normal}
+::view-transition-old(theme-scan){display:none}
+@keyframes theme-rule-down{from{transform:translateY(0)}to{transform:translateY(100vh)}}
+@keyframes theme-rule-up{from{transform:translateY(100vh)}to{transform:translateY(0)}}
+html.theme-fade,html.theme-fade *,html.theme-fade *::before,html.theme-fade *::after{transition:background-color .24s ease-out,border-color .24s ease-out,color .24s ease-out,fill .24s ease-out,stroke .24s ease-out !important}
+@media(prefers-reduced-motion:reduce){::view-transition-group(*),::view-transition-new(*){animation:none !important}}

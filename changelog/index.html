@@ -16,6 +16,7 @@
 <link rel="preload" as="font" type="font/woff2" href="../assets/fonts/geist-mono-var.woff2" crossorigin>
 <link rel="preload" as="font" type="font/woff2" href="../assets/fonts/archivo-400_700-normal.woff2" crossorigin>
 <script>document.documentElement.classList.add("js")</script>
+<link rel="stylesheet" href="../assets/theme.css">
 <script src="../assets/theme.js"></script>
 <script src="../assets/view.js"></script>
 <link rel="help" href="../llms.txt" type="text/plain" title="LLM/agent entry point">
@@ -91,13 +92,6 @@
     --grid:transparent;
   }
 
-/* A manual theme switch opens the new palette as a circle from the toggle. */
-::view-transition{pointer-events:none}
-::view-transition-group(root){animation:none}
-::view-transition-old(root){animation:none;mix-blend-mode:normal}
-::view-transition-new(root){animation:theme-reveal .7s cubic-bezier(.76,0,.24,1) both;mix-blend-mode:normal}
-@keyframes theme-reveal{from{clip-path:circle(0 at var(--theme-x,50%) var(--theme-y,0))}to{clip-path:circle(var(--theme-r,150vmax) at var(--theme-x,50%) var(--theme-y,0))}}
-html.theme-fade,html.theme-fade *,html.theme-fade *::before,html.theme-fade *::after{transition:background-color .45s var(--ease),border-color .45s var(--ease),color .45s var(--ease),fill .45s var(--ease),stroke .45s var(--ease),box-shadow .45s var(--ease),outline-color .45s var(--ease) !important}
 
 *,*::before,*::after{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%;scroll-padding-top:var(--anchor-lead);background:var(--bg)}
@@ -290,7 +284,6 @@ footer{border-top:1px solid var(--line);padding-block:28px 72px}
 .view-toggle .dot{width:6px;height:6px;background:currentColor}
 html[data-view="agent"] .sheet-frame{display:none !important}
 html[data-view="agent"] .changelog-entry{display:block !important}
-html[data-view="agent"] .changelog-entry[open], html[data-view="agent"] .changelog-entry{open:true}
 .agent-cl-note{display:none}
 html[data-view="agent"] .agent-cl-note{display:block;border:1px solid var(--line);background:var(--surface);padding:14px 16px;margin:0 0 18px}
 html[data-view="agent"] .agent-cl-note h2{font:600 12px/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin:0 0 8px}

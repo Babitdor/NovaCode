@@ -1,24 +1,24 @@
 # NovaCode
 
-> NovaCode is an open-source terminal coding assistant/agent (Babitdor/NovaCode). It reads a project, plans changes, edits files, and runs checks in the terminal. Users can choose hosted or local models, keep readable Markdown memory, and configure tool approvals.
+> NovaCode is an open-source terminal coding assistant/agent (Babitdor/NovaCode). It reads a project, plans changes, edits files, runs checks and reports verification evidence in the terminal. It delegates to specialist agents and can run Claude Code or Codex in project rooms, keeps readable Markdown memory, and configures tool approvals.
 
 This site is the NovaCode marketing and documentation site (GitHub Pages, served under /NovaCode/). It is not the product's API reference for a hosted service; NovaCode runs as a CLI/terminal workspace.
 
 ## Key pages
 
-- [Home](https://babitdor.github.io/NovaCode/): Product overview (workflow, readable memory, plans/approvals), install command, and links.
-- [Documentation](https://babitdor.github.io/NovaCode/docs/): Feature guide and operating reference (CLI, config, TUI, tools, memory, skills, MCP, agents, verification, remote, voice, security/sandbox). Uses a client-side page switcher; section anchors like docs/#page-features work in-browser.
+- [Home](https://babitdor.github.io/NovaCode/): Product overview built around what only Nova does (delegation and rooms, readable memory, observed verification, control), a capability spec list, install command, and links.
+- [Documentation](https://babitdor.github.io/NovaCode/docs/): Unique-feature guide and operating reference (CLI, config, TUI, tools, rooms, memory, onboarding, Prime, skills, MCP, agents, verification, remote, voice, security/sandbox). Uses a client-side page switcher; section anchors like docs/#page-features work in-browser.
 - [Changelog](https://babitdor.github.io/NovaCode/changelog/): Release notes archive (embedded) with progressive enhancement from main-branch changelog sources.
 
 ## Quick facts (verify against docs/changelog for current details)
 
-- Install on Windows CMD, macOS or Linux: `uv tool install --python 3.11 novacode-cli`, then run `nova` from your project. Published release: 1.2.1, https://pypi.org/project/novacode-cli/1.2.1/ .
+- Install on Windows CMD, macOS or Linux: `uv tool install --python 3.11 novacode-cli`, then run `nova` from your project. Published release: 1.2.20, https://pypi.org/project/novacode-cli/1.2.20/ .
 - Upgrade: `uv tool upgrade novacode-cli`. Replace a Git-based tool install with `uv tool install --python 3.11 --force novacode-cli`.
 - Common extras: `uv tool install --python 3.11 --force "novacode-cli[browser,voice,agents-server,server,bedrock,computer]"`. Keep every wanted extra when reinstalling. Other voice extras: voice-orpheus, voice-parakeet, voice-pocket, voice-whistle, voice-kokoro, voice-sano. Models, browser binaries and external runtimes may require separate setup; the all-extras combination is not verified on Windows.
 - Source development: clone https://github.com/Babitdor/NovaCode , enter the checkout, run `uv sync`, then `uv run nova`. Git tags matching the package version publish releases through GitHub Actions and PyPI Trusted Publishing.
 - License: MIT. Source: https://github.com/Babitdor/NovaCode
-- Capabilities highlighted by the project include: specialist/background agents, council/advisory workflows, persistent readable memory/wiki, model choice (cloud/local) and vision companion patterns, Code Mode (bounded JS over eligible tools), voice I/O options, interface themes, remote sessions, artifacts/previews, parallel workspaces/worktrees, and permission/guardrail controls.
-- Limits: Feature availability can depend on install extras, providers, platform, and configuration. An implemented capability is not a benchmark and not proof every provider/platform has been exercised. Treat release notes and the feature guide as the source of truth for current behavior.
+- Differentiation (not a generic agent checklist): `/rooms` project channels, agent DMs, shared task board and embedded Claude Code/Codex conversations; `/prime` deep work with acceptance checks bound to real tool-call IDs; a visible-recall Markdown memory wiki with `/dream` and `/cache`; `/onboard` code graph, tours and change impact; Code Mode (`eval`) over eligible native and MCP tools; model-controlled context compression with recoverable originals; `/cc` Command Center; `/loop` session schedules; Lite Mode (Off/Caveman/Ponytail); 14 interface styles; artifacts with temporary Cloudflare previews; Telegram/Discord/Rootapp bridges; voice I/O and a `VISION` side-call; permission and guardrail layers.
+- Limits: Feature availability can depend on install extras, providers, platform, and configuration. Agent teams and swarm scheduling are experimental; the local QEMU Linux computer is a preview whose real guest boot is unverified. An implemented capability is not a benchmark and not proof every provider/platform has been exercised. Treat release notes and the feature guide as the source of truth for current behavior.
 
 ## Agent view
 

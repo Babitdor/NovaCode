@@ -226,7 +226,7 @@ def main():
             theme_page.wait_for_function("document.documentElement.dataset.theme === 'dark'")
             theme_page.wait_for_timeout(900)
             assert theme_page.evaluate("localStorage.getItem('nova-theme')") == 'dark'
-            assert theme_page.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--theme-r')") != ''
+            assert theme_page.evaluate("[...document.styleSheets].some(s => s.href && s.href.endsWith('/assets/theme.css'))")
             if theme_page.evaluate('window.__vtSupported'):
                 assert theme_page.evaluate('window.__vt') >= 1
             theme_page.reload(wait_until='commit')
@@ -246,6 +246,49 @@ def main():
             assert not theme_errors, theme_errors
             theme_context.close()
             results['checks'].append('Boot screen appears once, theme choice persists, docs and landing reveal the new palette')
+
+            # The motion layer must settle, not strand content behind a reveal that never ran.
+            motion_context = browser.new_context(
+                viewport={'width': 1440, 'height': 1000},
+                color_scheme='light',
+                reduced_motion='no-preference',
+            )
+            motion_page = motion_context.new_page()
+            motion_errors = []
+            motion_page.on('pageerror', lambda error: motion_errors.append(str(error)))
+            motion_page.goto(base + 'docs/#page-installation')
+            motion_page.wait_for_function("document.documentElement.classList.contains('has-motion')", timeout=6000)
+            assert motion_page.evaluate("!!window.gsap && !!window.ScrollTrigger")
+            assert motion_page.evaluate("document.documentElement.classList.contains('lenis')")
+            assert motion_page.evaluate("getComputedStyle(document.querySelector('[data-cursor]')).display === 'block'")
+            motion_page.goto(base)
+            motion_page.wait_for_function("() => !document.querySelector('#boot')", timeout=6000)
+            motion_page.wait_for_function("document.documentElement.classList.contains('has-motion')", timeout=6000)
+            motion_page.wait_for_function("() => !document.documentElement.classList.contains('enter')", timeout=6000)
+            assert motion_page.evaluate("[...document.querySelectorAll('[data-enter]')].every(e => getComputedStyle(e).opacity === '1')")
+            assert motion_page.evaluate("document.querySelectorAll('.mo-word').length > 40")
+            # The record strip pins and runs sideways on a wide screen.
+            assert motion_page.evaluate("document.querySelector('[data-horizontal-gallery]').classList.contains('rail-pinned')")
+            last = -1
+            for _ in range(40):
+                seen = motion_page.evaluate("Math.round(scrollY)")
+                if seen == last:
+                    break
+                last = seen
+                motion_page.mouse.wheel(0, 800)
+                motion_page.wait_for_timeout(220)
+            motion_page.wait_for_timeout(1200)
+            assert motion_page.evaluate(
+                "(() => { const t = document.querySelector('[data-horizontal-track]');"
+                " const x = new DOMMatrixReadOnly(getComputedStyle(t).transform).m41;"
+                " return x < -200; })()"
+            )
+            assert motion_page.evaluate("[...document.querySelectorAll('[data-fade]')].every(e => getComputedStyle(e).opacity > 0.9)")
+            assert motion_page.evaluate("[...document.querySelectorAll('.mo-word')].every(e => getComputedStyle(e).opacity > 0.9)")
+            assert motion_page.evaluate("[...document.querySelectorAll('[data-image-reveal]')].every(e => /inset\\(0px(\\)| 0px 0%)/.test(getComputedStyle(e).clipPath) || getComputedStyle(e).clipPath === 'none')")
+            assert not motion_errors, motion_errors
+            motion_context.close()
+            results['checks'].append('Motion layer settles every reveal, clip and word; record strip pins and runs sideways; Lenis and cursor live')
 
             nojs = browser.new_context(java_script_enabled=False)
             off = nojs.new_page()

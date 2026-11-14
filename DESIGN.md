@@ -23,14 +23,16 @@ Screenshot:  A sheet where an 84px expanded claim is dimensioned by a hairline t
              a small orange "not verified" tolerance.
 ```
 
-**Why this and not a terminal theme.** Nova's useful distinction is how it keeps work
-understandable: memory lives in files you can inspect, plans can be reviewed, and tool approvals
-follow a policy you control. The drawing-sheet form makes those claims and their limits easy to
-scan without turning the landing page into a catalog of every capability.
+**Why this and not a terminal theme.** Nova's useful distinction is how it keeps work understandable:
+other agents join in their own rooms rather than one flattened conversation, memory lives in files you
+can inspect, results are reported as observed evidence rather than completion claims, and tool
+approvals follow a policy you control. The drawing-sheet form makes those claims and their limits easy
+to scan without turning the landing page into a catalog of every capability.
 
-**Anchor fact:** the product's memory is readable Markdown, plans are saved for later review, and
-tool approvals follow configurable policy with hard-coded denials still enforced. `FEATURES.md`
-remains the detailed reference for secondary capabilities and setup requirements.
+**Anchor fact:** the product delegates to specialist agents and other CLIs (`/rooms`), keeps memory in
+readable Markdown with visible recall, verifies against real tool output (`/prime`), and enforces
+approvals with hard-coded denials still active. `FEATURES.md` remains the detailed reference for
+secondary capabilities and setup requirements.
 
 ## Three concepts, scored 1 to 5
 
@@ -92,17 +94,59 @@ are no soft shadows anywhere; depth is expressed by hairline weight (1px frame, 
 **Phones wrap, never clip.** Below 620px the workflow becomes a vertical sequence, text and
 commands wrap, and the page does not hide content behind horizontal scrolling.
 
-**Section rhythm.** Three focused chapters—workflow, memory, and control—each open with an
-inverted divider and a large sheet number. Installation and a short FAQ follow. A real terminal
-capture shows the product; monochrome engravings illustrate memory and review without inventing
-interface results. Detailed feature inventories remain in the documentation.
+**Section rhythm.** Five chapters — delegation, memory, verification, control, the record — each open
+with an inverted divider and a large sheet number. A parts list ("Only in Nova"), installation and a
+short FAQ follow. Three chapters carry a figure (terminal capture, memory engraving, plan engraving);
+verification is text-only and the record is a horizontal strip, so the page does not read as a
+repeating template. Detailed feature inventories remain in the documentation.
+
+**Chapter plates.** The sheet number sits in a fixed-width column (`clamp(88px, 11vw, 168px)`, not
+`auto`), so every chapter title starts on the same datum and the outline numeral holds the sheet's
+left edge instead of drifting with its glyph widths. The numeral drifts 12% of its own height
+against the band as it crosses the viewport (scrub 1.2, transform only, `aria-hidden`): the one
+scroll-linked scene besides the hero's depth. Verification's six checkpoints print as a ruled mono
+strip, so the column carries the sequence rather than a sentence about it.
+
+**The strip.** The record is one horizontal filmstrip of releases, oldest first: a hairline-bordered
+column per release, a mono version in the accent pen, a sentence, and a release-notes link pinned to
+the column's foot. On a wide screen with motion the sheet pins for one viewport and the strip runs
+sideways on the scroll (`ScrollTrigger` pin, scrub 1, `anticipatePin`, travel = track − window), with
+the progress hairline reporting the pin's progress and edge fades on both sides while cards are cut.
+Beneath that it is still a real scroll container: phones, touch, reduced motion, the agent view and
+no-JS all get the native scroller with snap, and the pinned build keeps the strip out of reach of
+nothing — a card reached by Tab scrolls the pin to it, and the box clips with `overflow: clip` so the
+browser cannot scroll the track behind the pin. A vertical wheel over the unpinned strip pans it and
+hands the gesture back at either end.
+
+**The parts list.** The spec table is the one place the page enumerates capabilities: a mono caption
+with its real entry count, one row per capability, the command in mono beside the name, and the limit
+printed in the right column as a tolerance. Hovering or focusing a row draws a 1px accent tick in the
+left margin — the same gesture as the index rows — and lifts the row's text to full ink. Numbers 01–04
+belong to chapters only; capability columns inside a chapter carry no ordinal, because they are parallel
+capabilities, not steps.
+
+**Unequal columns.** A chapter never divides into three equal cells. Delegation puts the foundation
+(specialist agents) in a 1.5fr column spanning both rows with rooms and Council stacked beside it;
+verification runs two across, and the record-keeping statement takes the full measure underneath. Below
+760px every variant collapses to one column with top rules, so nothing is clipped or doubled up.
 
 **Motion language.** One easing family, `cubic-bezier(.16, 1, .3, 1)` for things arriving and
 `cubic-bezier(.4, 0, .2, 1)` for state changes. Micro 240ms, enter 520ms, drawn line 700ms.
-Stagger 40ms. One clock: a single requestAnimationFrame loop reads scroll and time and writes
-CSS custom properties; there is no second loop and no scroll listener doing layout work.
-Under `prefers-reduced-motion` nothing moves, the plot overlay never appears, and the sheet is
-complete and readable.
+Stagger 40ms. The hero entrance runs once on load: the cover plate develops first (its own
+`art-ready`), then the headline, the claim rule, the copy, the actions and finally the title
+block's rows rise 22px over 1.05s at `power4.out`, 90ms apart. The head script marks the document
+`enter` before the first paint to hide that copy; `assets/motion.js` removes it, and so do its
+no-GSAP path and the script's `onerror`, so nothing can stay hidden. The hero depth, the measure
+and the coin still run on one requestAnimationFrame clock; the scroll-reveal layer above them is
+GSAP with ScrollTrigger (`assets/gsap.min.js`, `assets/ScrollTrigger.min.js`, self-hosted) driven
+by one shared Lenis ticker, so a reveal can never lag the scroll position. Reveals run once, at
+`top 84%`: section heads rise word by word out of their own mask, `[data-fade]` blocks settle 26px,
+`[data-draw]` rules draw left to right, and the three product plates open by `clip-path` with the
+picture inside easing back from 1.07. Two controls are magnetic (`data-magnetic`), and a 14px
+difference-blend ring follows a fine pointer, widening over anything actionable. Under
+`prefers-reduced-motion` the module returns before doing anything: no smooth scroll, no split
+type, no clip, no ring. Every hidden state is applied from `assets/motion.js` after its own
+gate, so with script blocked, GSAP missing or reduced motion, the sheet is complete and readable.
 
 **Hero depth.** The cover sheet prints on a paper panel down the right of the hero; the drawing
 takes the whole left of the sheet, undimmed, because it is the cover art. The real terminal
@@ -133,29 +177,34 @@ before reading the claim. The measure states one number and stops.
 ## Composition plan
 
 ```
-HERO                                    01 WORKFLOW
+HERO                                    01 DELEGATION / 02 MEMORY
 +-------------------------------+----+   +------------------------------+
 | A                             | TB |   | [chapter divider, inverted]  |
-|  coding agent, terminal       | v  |   | 01  From task to review      |
-|  _______________________|± lim|  e  |   | three steps + real capture   |
+|  coding agent, terminal       | v  |   | 01  Several agents           |
+|  _______________________|± lim|  e  |   | specialists | rooms |council|
 |  install     MIT / Python     | r  |   +------------------------------+
-|  contents: workflow, memory,  | t  |   | task → code → review         |
-|  control                      |   |   |                              |
-+-------------------------------+----+   02 MEMORY / 03 CONTROL
-                                         | files / configurable policy |
+|  contents: delegation, memory,| t  |   | 02 memory: wiki + recall     |
+|  verification, control        |   |   | 03 verification: checkpoints |
++-------------------------------+----+   | 04 control: plans, approvals |
+                                         +------------------------------+
+                                         | parts list: 11 capabilities  |
+                                         | install / FAQ / closer       |
 ```
 
-Each main section answers one question: how Nova works, where its memory lives, or how you
-control plans and tool use. Deeper feature and integration details remain in the documentation.
+Each main section answers one question: who does the work, where its memory lives, what it observed,
+or how you control plans and tool use. Deeper feature and integration details remain in the
+documentation.
 
 ## Genericness test
 
 *Would a generic model given "a site for a terminal coding agent" land here?* No: it lands on a
 black terminal window with a green prompt and three equal feature cards, or a centered hero
-over a gradient. Checked and changed: no dark-window mockups, no equal card grid, no eyebrow
-labels, no mono for every small label, no 01/02/03 where the content is not a sequence. The
-radii are 2px rather than the current 999px pills because paper does not have pill corners, and
-orange survives the redesign because an annotation pen is the concept's own colour.
+over a gradient. Checked and changed: no dark-window mockups, no eyebrow labels above headings, no
+mono for every small label, no 01/02/03 where the content is not a sequence, and no card boxes — the
+capability columns are separated by hairlines inside one band, and a page-level parts list replaces the
+usual feature-card grid. The radii are 2px rather than the current 999px pills because paper does not
+have pill corners, and orange survives the redesign because an annotation pen is the concept's own
+colour.
 
 ## What this file also governs (unchanged by the redesign)
 
@@ -163,8 +212,9 @@ orange survives the redesign because an annotation pen is the concept's own colo
   `main/changelog/`. This checkout holds only the generated `changelog/index.html`.
 - **Theme.** `assets/theme.js` follows the system until the visitor picks, then stores
   `nova-theme` and applies it before first paint on every page. Manual switches open the new
-  palette as a circle from the toggle over 700ms through native View Transitions; the circle
-  radius arrives in `--theme-r`, which `index.html` consumes. Reduced motion switches at once.
+  palette behind a travelling drafting rule over 620ms through native View Transitions.
+  Dark prints downward; light reverses upward. Shared rules live in `assets/theme.css`.
+  Reduced motion and Agent view switch at once; older browsers use a short color fade.
   Both palettes are designed; neither is a filter over the other.
 - **The hero drawing.** `assets/hero-layers/` holds the cover art as four planes (sky, room,
   subject, plants) in light and dark, plus a matching flat composite. The active `*-ink`
@@ -205,8 +255,11 @@ orange survives the redesign because an annotation pen is the concept's own colo
 - **The coin.** A monochrome Nova seal with real SVG rim lettering turns on the existing CSS 3D
   disc. The dark field carries fine orbital guides; dragging and the arrow keys turn the coin.
 - **Scrolling.** `assets/lenis.min.js` (Lenis 1.3.27, self-hosted) smooths wheel and touch on the
-  real scroll position, so anchors, sticky chrome and the parallax offsets still work. `html.lenis`
-  turns off the CSS smooth behaviour, and reduced motion never instantiates it.
+  real scroll position, so anchors, sticky chrome and the parallax offsets still work. On the
+  landing and docs pages `assets/motion.js` owns the instance and rafs it from the GSAP ticker
+  that also drives ScrollTrigger; `html.lenis` turns off the CSS smooth behaviour, and reduced
+  motion never instantiates it. The release strip keeps a native scroller: pinning it would
+  fight touch, keyboard and the agent view.
 - **Docs and changelog** keep their own layouts. Both take the same role values, Archivo display
   face and emblem chip, so the three pages print on the same paper.
 
@@ -228,7 +281,8 @@ repeating stripes form the coin's machined rim rather than a page background.
 `python tools/verify_site.py` covers internal links, all documentation topics, disclosure
 controls, both permalink formats, live refresh and failure recovery, desktop and phone,
 reduced motion, the designed 404, and axe when `axe-core` is installed. It asserts no console
-errors, no horizontal overflow, and that `#boot` leaves the DOM. `tools/verify_hero.py`
+errors, no horizontal overflow, that `#boot` leaves the DOM, and that the motion layer settles
+every reveal, word and clip while Lenis and the cursor are live. `tools/verify_hero.py`
 recomputes the claim's widest rendered line and asserts the rule and the printed number match
 it, in both themes, on a phone and under reduced motion; it also checks that a saved theme
 repaints the browser chrome.
