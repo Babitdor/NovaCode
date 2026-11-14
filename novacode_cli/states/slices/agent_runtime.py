@@ -120,6 +120,12 @@ class AgentRuntimeState:
         # on /model switches). create_agent_with_config is sync and only builds
         # objects, so running it in a worker thread is safe.
         definition_options = getattr(self._agent, "agent_definition_options", {})
+        workspace_root = getattr(self._agent, "agent_definitions_workspace", None)
+        if self._sandbox is None:
+            # Worktree transitions update the file backend without rebuilding the graph.
+            current_root = getattr(getattr(self._backend, "default", self._backend), "cwd", None)
+            if current_root is not None:
+                workspace_root = str(current_root)
         new_agent, new_backend = await asyncio.to_thread(
             _build_agent_for_switch,
             model=new_model,
@@ -138,7 +144,7 @@ class AgentRuntimeState:
                 steering_instructions if steering_instructions is not None else []
             ),
             session_id=session_id or getattr(self, "session_id", None),
-            workspace_root=getattr(self._agent, "agent_definitions_workspace", None),
+            workspace_root=workspace_root,
             system_prompt=definition_options.get("system_prompt"),
             extra_middleware=definition_options.get("extra_middleware"),
             auto_approve=definition_options.get("auto_approve", False),
@@ -154,7 +160,7 @@ class AgentRuntimeState:
 
         # Fire model.switch hook
         try:
-            from novacode_cli.hooks import dispatch_hook_fire_and_forget, HookEvent
+            from novacode_cli.hooks import HookEvent, dispatch_hook_fire_and_forget
 
             model_name = (
                 getattr(new_model, "model_name", None)
@@ -175,11 +181,13 @@ class AgentRuntimeState:
     async def reload_mcp_servers(
         self,
         steering_instructions: list | None = None,
+        session_id: str | None = None,
     ) -> tuple[Any, Any]:
         """Reload MCP servers dynamically by resetting the middleware and recreating the agent.
 
         Args:
             steering_instructions: Persistent user guidance (from SessionState)
+            session_id: Owning conversation identifier, retained across reloads
 
         Returns:
             Tuple of (new_agent, new_backend)
@@ -195,32 +203,13 @@ class AgentRuntimeState:
         await get_shared_mcp_middleware().aclose()
         reset_shared_mcp_middleware()
 
-        # Recreate agent, preserving state. Off the event loop for the same
-        # reason as switch_model: the rebuild recompiles every subagent graph and
-        # re-scans plugin skills/agents/MCP, which would otherwise freeze the TUI.
-        new_agent, new_backend = await asyncio.to_thread(
-            _build_agent_for_switch,
-            model=self._model,
-            assistant_id=self._assistant_id,
-            tools=self._tools,
-            sandbox=self._sandbox,
-            sandbox_type=self._sandbox_type,
-            # Same rule as the first build in main.py: Pattern A confines the
-            # local shell. Omitting it dropped confinement on every rebuild.
-            exec_sandbox=self._sandbox is None and self._sandbox_type == "os",
-            store=self._store,
-            checkpointer=self._checkpointer,
-            steering_instructions=(
-                steering_instructions if steering_instructions is not None else []
-            ),
-            session_id=getattr(self, "session_id", None),
+        # Reloads retain the same ownership, workspace and confinement as model switches.
+        return await self.switch_model(
+            self._model,
+            steering_instructions=steering_instructions,
+            session_id=session_id,
+            notify_model_switch=False,
         )
-
-        # Update stored references
-        self._agent = new_agent
-        self._backend = new_backend
-
-        return new_agent, new_backend
 
     # -- agent access ----------------------------------------------------------
 

@@ -314,16 +314,17 @@ async def _drive_passthrough_sync() -> None:
 
 async def _drive_save_on_quit():
     """/quit should persist the session via the session manager."""
+    from langchain_core.messages import AIMessage, HumanMessage
+
     from novacode_cli.tui.app import NovaApp, NovaStatusBar
     from novacode_cli.ui.ui_elements import TokenTracker
 
-    class _Msg:
-        def __init__(self, i):
-            self.id = i
-
     class _StateWithMsgs:
         def __init__(self):
-            self.values = {"messages": [_Msg("a"), _Msg("b")], "todos": []}
+            self.values = {
+                "messages": [HumanMessage("hello", id="a"), AIMessage("hi", id="b")],
+                "todos": [],
+            }
 
     class _AgentWithState(_FakeAgent):
         async def aget_state(self, config):

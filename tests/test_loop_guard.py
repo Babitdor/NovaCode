@@ -26,14 +26,32 @@ def _msg(text: str, call_id: str = "c1") -> ToolMessage:
     return ToolMessage(content=text, tool_call_id=call_id)
 
 
-def _run(
-    mw: LoopGuardMiddleware, name: str, args: dict, result_text: str
-) -> ToolMessage | Command:
+def _run(mw: LoopGuardMiddleware, name: str, args: dict, result_text: str) -> ToolMessage | Command:
     """Drive one sync tool call through the guard, returning what it produced."""
     return mw.wrap_tool_call(_request(name, args), lambda _r: _msg(result_text))
 
 
 # ── the core loop break ──────────────────────────────────────────────────────
+
+
+def test_reworded_todos_block_until_actual_work_or_status_progress():
+    mw = LoopGuardMiddleware(threshold=3)
+
+    def update(wording: str, status: str = "in_progress") -> ToolMessage | Command:
+        todos = [{"content": wording, "status": status}]
+        return mw.wrap_tool_call(
+            _request("write_todos", {"todos": todos}),
+            lambda _: Command(update={"todos": todos, "messages": [_msg(str(todos))]}),
+        )
+
+    for wording in ("Inspect renders", "Fix render output", "Review images"):
+        assert isinstance(update(wording), Command)
+    blocked = update("Look at screenshots")
+    assert blocked.status == "error"
+    assert "Rewording" in blocked.content
+    assert isinstance(update("Render reviewed", "completed"), Command)
+    _run(mw, "read_file", {"file_path": "/source.py"}, "new evidence")
+    assert isinstance(update("Inspect next render"), Command)
 
 
 def test_blocks_after_threshold_identical_calls():

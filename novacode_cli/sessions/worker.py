@@ -597,6 +597,9 @@ class SessionWorker:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await pump
             await self._save()
+            from novacode_cli.sessions.scratchpad import cleanup as cleanup_scratchpad
+
+            cleanup_scratchpad(getattr(self.session_state, "session_id", None))
 
         return exit_code
 
@@ -667,4 +670,10 @@ async def run_session_worker(
                 session_state.compact_on_resume = False
         return await worker.run()
     finally:
+        try:
+            from novacode_cli.sessions.scratchpad import cleanup as cleanup_scratchpad
+
+            cleanup_scratchpad(getattr(session_state, "session_id", None))
+        except Exception:  # noqa: BLE001 - never fail shutdown on cleanup
+            logger.debug("Scratchpad cleanup skipped", exc_info=True)
         worker._emit.close()

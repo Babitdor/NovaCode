@@ -41,6 +41,78 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.timeout(30)
 
 
+async def test_partial_failure_reports_completed_failed_and_unattempted_calls():
+    called = []
+
+    @tool
+    def step(value: int) -> str:
+        """Run one synthetic operation."""
+        called.append(value)
+        if value == 2:
+            missing = "missing-output.png"
+            raise FileNotFoundError(missing)
+        return "private unreturned output"
+
+    get_policy().tool_tiers["step"] = "allow"
+    messages = await execute(
+        native_graph(
+            "await tools.call('step', {value:1}); await tools.call('step', {value:2}); "
+            "await tools.call('step', {value:3});",
+            [step],
+        )
+    )
+    body = json.loads(messages[0].content)
+    assert messages[0].status == "error"
+    assert called == [1, 2]
+    assert [(s["tool_name"], s["status"]) for s in body["outcomes"]] == [
+        ("step", "completed"),
+        ("step", "failed"),
+    ]
+    assert body["outcomes"][1]["error"] == {
+        "kind": "not_found",
+        "type": "FileNotFoundError",
+        "message": "missing-output.png",
+    }
+    assert "private unreturned output" not in messages[0].content
+    assert body["outcomes_omitted"] == 0
+
+
+async def test_caught_nested_failure_keeps_structured_outcomes():
+    messages = await execute(
+        native_graph("try { await tools.call('does_not_exist'); } catch(e) {} return 'recovered';")
+    )
+    body = data(messages)
+    assert body["result"] == "recovered"
+    assert body["failed_calls"] == 1
+    assert body["outcomes"][0]["status"] == "failed"
+    assert body["outcomes"][0]["tool_name"] == "does_not_exist"
+
+
+async def test_wall_timeout_distinguishes_running_and_queued_calls():
+    started = []
+
+    @tool
+    async def slow(value: int) -> int:
+        """Wait until cancelled by the execution deadline."""
+        started.append(value)
+        await asyncio.sleep(20)
+        return value
+
+    get_policy().tool_tiers["slow"] = "allow"
+    messages = await execute(
+        native_graph(
+            "return await Promise.all([1,2].map(value => tools.call('slow', {value})));",
+            [slow],
+            concurrency=1,
+            wall_timeout=1,
+            call_timeout=10,
+        )
+    )
+    body = json.loads(messages[0].content)
+    assert started == [1]
+    assert [step["status"] for step in body["outcomes"]] == ["cancelled", "not_started"]
+
+
 def native_graph(
     code: str,
     tools: Sequence[BaseTool] = (),

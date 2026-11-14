@@ -129,6 +129,13 @@ def virtual_to_real_path(
             return None
 
     # Manual fallback: resolve based on known route prefixes.
+    if virtual_path == "/scratchpad" or virtual_path.startswith("/scratchpad/"):
+        from novacode_cli.config.plan_mode import active_plan_session
+        from novacode_cli.sessions.scratchpad import get
+
+        info = get(getattr(active_plan_session.get(), "session_id", None))
+        return confined(info.host_path, virtual_path.removeprefix("/scratchpad")) if info else None
+
     if virtual_path.startswith("/memories/"):
         if not agent_id:
             return None
@@ -147,7 +154,7 @@ def virtual_to_real_path(
         if virtual_path.startswith(prefix):
             from novacode_cli.config.config import settings
 
-            return confined(getattr(settings, getter)(), virtual_path[len(prefix):])
+            return confined(getattr(settings, getter)(), virtual_path[len(prefix) :])
 
     if virtual_path.startswith("/project-memory/"):
         if not workspace_root:

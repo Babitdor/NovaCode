@@ -324,6 +324,10 @@ return "finished";
     assert calls == [0, 1]
     assert data["failed_calls"] == 3
     assert data["calls"] == 5
+    assert len(data["outcomes"]) == 3
+    assert data["outcomes_omitted"] == 2
+    assert [step["status"] for step in data["outcomes"]] == ["completed", "completed", "failed"]
+    assert data["outcomes"][-1]["error"]["kind"] == "budget"
 
 
 @pytest.mark.parametrize(
@@ -386,6 +390,11 @@ async def test_nested_timeout_cancels_pending_tool(tmp_path):
     assert messages[0].status == "error"
     assert "timeout" in messages[0].content.lower()
     assert cancelled.is_set()
+    outcome = json.loads(messages[0].content)["outcomes"][0]
+    assert outcome["server_name"] == "db"
+    assert outcome["tool_name"] == "read"
+    assert outcome["status"] == "failed"
+    assert outcome["error"]["kind"] == "timeout"
 
 
 async def test_outer_cancellation_stops_pending_calls_and_worker(tmp_path):

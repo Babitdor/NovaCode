@@ -38,6 +38,23 @@ if TYPE_CHECKING:
 MAX_ARGUMENT_CHARS = 100000
 MAX_OUTPUT_CHARS = 12000
 
+
+def _failure_kind(exc: Exception) -> str:
+    """Give recovery a stable category across Python and adapter error wrappers."""
+    detail = str(exc).lower()
+    if isinstance(exc, (TimeoutError, QuickJSTimeoutError)) or "timeout" in detail:
+        return "timeout"
+    if isinstance(exc, FileNotFoundError) or "not found" in detail:
+        return "not_found"
+    if "denied" in detail or "approval" in detail:
+        return "authorization"
+    if "budget" in detail or "size limit" in detail:
+        return "budget"
+    if "validation" in detail or "invalid tool arguments" in detail:
+        return "validation"
+    return "tool_error"
+
+
 CODE_MODE_GUIDANCE = """
 ## Code Mode
 Use eval as your primary control surface for ordinary operations. Compose discovery,
@@ -63,6 +80,11 @@ evidence. Inspect smaller slices from those variables before claiming you review
 For Markdown edits, use quoted strings with newline escapes or arrays joined with '\\n';
 backticks inside JavaScript template literals must be escaped exactly once. Never replay a
 whole script after a runtime failure without checking which side effects already completed.
+Every response includes ordered outcomes for dispatched calls. Inspect their tool names,
+statuses and concise errors before retrying. Only dispatched calls have records; check
+outcomes_omitted before assuming all records are visible. Failed or cancelled operations
+may still have side effects. Arguments and tool outputs are
+not copied into these records; select the data you need in your JavaScript result.
 MCPCode is a compatibility async-function body using the same guarded runtime.
 Human approvals pause the live script. Never retry completed side effects after failure.
 Interaction, planning, workspace transitions and media fallbacks remain direct tools.
@@ -398,19 +420,32 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         from novacode_cli.agents.code_runtime import run_script
 
         calls = failures = 0
+        outcomes: list[dict[str, Any]] = []
         semaphore = asyncio.Semaphore(self._concurrency)
         updates: dict[str, Any] = {}
 
-        async def dispatch(raw: str) -> str:
+        async def dispatch(raw: str) -> str:  # noqa: PLR0912 -- Dispatch and record guarded calls.
             nonlocal calls, failures
             calls += 1
+            step: dict[str, Any] = {"step": calls, "status": "not_started"}
+            if len(outcomes) <= self._max_calls:
+                outcomes.append(step)
             try:
                 if calls > self._max_calls:
                     raise ValueError("MCPCode call budget exceeded.")
                 if not isinstance(raw, str) or len(raw) > MAX_ARGUMENT_CHARS:
                     raise ValueError("MCPCode arguments exceed the size limit.")
                 payload = json.loads(raw)
+                if isinstance(payload, dict):
+                    step.update(
+                        {
+                            key: payload[key][:160]
+                            for key in ("namespace", "action", "server_name", "tool_name")
+                            if isinstance(payload.get(key), str)
+                        }
+                    )
                 async with semaphore:
+                    step["status"] = "running"
                     if isinstance(payload, dict) and payload.get("namespace") == "task":
                         value = await self._task(request, handler, payload, updates)
                     elif isinstance(payload, dict) and payload.get("namespace") == "tools":
@@ -426,14 +461,27 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                             value = self._catalog.invoke(params.model_dump())
                         else:
                             value = await self._call(request, handler, params)
+                    # The operation completed even if serialization subsequently fails.
+                    step["status"] = "completed"
                     encoded = json.dumps(value, ensure_ascii=False, allow_nan=False)
                     if len(encoded) > MAX_INTERMEDIATE_CHARS:
                         raise ValueError(
                             "Tool result exceeds 1000000 characters; request fewer records."
                         )
                     return encoded
-            except Exception:
+            except asyncio.CancelledError:
+                if step["status"] == "running":
+                    step["status"] = "cancelled"
+                raise
+            except Exception as exc:
                 failures += 1
+                if step["status"] != "completed":
+                    step["status"] = "failed"
+                step["error"] = {
+                    "kind": _failure_kind(exc),
+                    "type": type(exc).__name__,
+                    "message": str(exc).strip().splitlines()[-1][:300] if str(exc).strip() else "",
+                }
                 raise
 
         try:
@@ -456,6 +504,11 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                 "truncated": truncated,
                 "calls": calls,
                 "failed_calls": failures,
+                "outcomes": outcomes,
+                "outcomes_omitted": calls - len(outcomes),
+                "recovery": (
+                    "Do not replay completed calls. Failed/cancelled calls may have side effects."
+                ),
             }
             if truncated:
                 body["notice"] = (
@@ -490,6 +543,8 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                 "error": f"{type(exc).__name__}: {exc}"[:4000],
                 "calls": calls,
                 "failed_calls": failures,
+                "outcomes": outcomes,
+                "outcomes_omitted": calls - len(outcomes),
                 "hint": hint,
             }
             warning = self._state_warnings.pop(_resolve_thread_id(self._fallback_thread_id), None)

@@ -3511,6 +3511,9 @@ class NovaApp(App):
         if supervisor is not None:
             with contextlib.suppress(Exception):
                 await supervisor.close_all(timeout=1.0)
+        from novacode_cli.sessions.scratchpad import cleanup as cleanup_scratchpad
+
+        cleanup_scratchpad(getattr(self.session_state, "session_id", None))
         watcher = getattr(self, "_async_watcher", None)
         if watcher is not None:
             with contextlib.suppress(Exception):

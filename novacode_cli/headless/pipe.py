@@ -507,6 +507,9 @@ async def run_pipe_bootstrap(awaitable, state):
     finally:
         timer.cancel()
         state.headless_exit_code = code
+        from novacode_cli.sessions.scratchpad import cleanup
+
+        cleanup(getattr(state, "session_id", None))
     if not getattr(state, "pipe_stopped", False):
         output = HeadlessOutput("stream-json", state.session_id, None, fd=state.headless_out_fd)
         with contextlib.suppress(OSError, ValueError):

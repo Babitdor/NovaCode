@@ -196,9 +196,27 @@ class WorktreeToolsMiddleware(AgentMiddleware):
                 raise
 
     def _model_request(self, request: ModelRequest) -> ModelRequest:
+        default = self._backend.default
+        root = getattr(default, "_workdir", self.session.root)
+        mapping = (
+            "File-tool virtual / maps to this directory. "
+            if getattr(default, "_virtual_root", True)
+            else "File tools use real paths in this sandbox. "
+        )
+        scratch = (
+            "Use /scratchpad/ for temporary file-tool work and its supplied host path "
+            "in shell commands. "
+            if "/scratchpad/" in dict(self._backend.sorted_routes)
+            else ""
+        )
         note = (
-            f"\n<active_workspace>Current file and shell workspace: {self.session.root}. "
+            f"\n<active_workspace>Current file and shell workspace: {root}. "
             "This supersedes workspace paths in earlier messages and shell descriptions. "
+            f"{mapping}execute/shell commands start here and use host paths, not virtual "
+            f"mount paths. {scratch}A shell cd "
+            "does not move the file-tool root. On missing files, list the active project "
+            "or scratchpad first; do not probe unrelated parent/sibling projects unless "
+            "the user requested them. "
             "Call EnterWorktreeTool and ExitWorktreeTool alone.</active_workspace>"
         )
         content = list(request.system_message.content_blocks) if request.system_message else []

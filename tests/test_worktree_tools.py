@@ -204,6 +204,12 @@ def test_workspace_tools_are_always_bound(repo: Path) -> None:
     search._frequent = set()
     assert {tool.name for tool in search._apply(request).tools} == {tool.name for tool in tools}
     assert str(repo) in middleware._model_request(request).system_message.content_blocks[-1]["text"]
+    middleware._backend.default._workdir = "/remote/project"
+    middleware._backend.default._virtual_root = False
+    remote_note = middleware._model_request(request).system_message.content_blocks[-1]["text"]
+    assert "/remote/project" in remote_note
+    assert "File tools use real paths" in remote_note
+    assert "/scratchpad/" not in remote_note
 
 
 async def test_async_guard_releases_after_handler_error(repo: Path) -> None:

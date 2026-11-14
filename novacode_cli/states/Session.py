@@ -616,10 +616,11 @@ class SessionState:
         """Reload MCP servers dynamically.
 
         Delegates to AgentRuntimeState.reload_mcp_servers() and passes
-        steering_instructions.
+        steering_instructions and the owning conversation ID.
         """
         return await self._agent_runtime.reload_mcp_servers(
             steering_instructions=self.steering_instructions,
+            session_id=self.session_id,
         )
 
     def toggle_auto_approve(self) -> bool:
@@ -677,6 +678,9 @@ class SessionState:
             if not future.done():
                 future.cancel()
         self._pending_approvals.clear()
+        from novacode_cli.sessions.scratchpad import cleanup as cleanup_scratchpad
+
+        cleanup_scratchpad(self.session_id)
         self.thread_id = str(uuid.uuid4())
         self.session_id = str(uuid.uuid4())
         self.active_goal = None

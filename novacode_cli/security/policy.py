@@ -309,6 +309,8 @@ class ApprovalPolicy:
         return ApprovalDecision(self.tool_default(tool_name), rule="tool-default")
 
     def _eval_path(self, tool_name: str, args: dict[str, Any]) -> ApprovalDecision:
+        from novacode_cli.sessions.scratchpad import is_under_scratchpad
+
         raw = str(args.get("file_path") or (args.get("path") if tool_name == "write_memory" else "") or "")
         if not raw and tool_name == "write_memory":
             from novacode_cli.tools.memory_tools import _resolve_memory_path
@@ -325,13 +327,14 @@ class ApprovalPolicy:
             return ApprovalDecision("deny", "Invalid or device namespace path", "path-syntax")
         candidates = {norm, posixpath.normpath(norm)}
         try:
-            candidates.add(Path(raw).resolve().as_posix())
+            target = Path(raw).resolve()
+            candidates.add(target.as_posix())
             if tool_name == "write_memory":
                 from novacode_cli.tools.memory_tools import _resolve_memory_path
 
                 target, _ = _resolve_memory_path(args.get("memory_type", "user"), raw)
                 candidates.add(target.resolve().as_posix())
-            elif norm.startswith("/"):
+            elif norm.startswith("/") and not is_under_scratchpad(target):
                 from novacode_cli.config.config import MAIN_AGENT_ID, settings
                 from novacode_cli.utils.backend_paths import virtual_to_real_path
 
@@ -356,6 +359,14 @@ class ApprovalPolicy:
         for glob in self.path_deny:
             if any(_glob_match(candidate, glob) for candidate in candidates):
                 return ApprovalDecision("deny", f"Path matches a denied glob: {glob}", glob)
+        # Session scratchpads are per-session temp workspaces: file operations
+        # inside them are pre-approved (issue #18). Explicit path denies above
+        # still win, and we only allow targets that resolve inside an active
+        # scratchpad root.
+        if tool_name in {"write_file", "edit_file"} and is_under_scratchpad(target):
+            return ApprovalDecision(
+                "allow", "Path is inside the session scratchpad", "scratchpad"
+            )
         for glob in self.path_allow:
             if _glob_match(norm, glob):
                 return ApprovalDecision("allow", "Path matches an allowed glob", glob)

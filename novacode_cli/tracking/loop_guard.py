@@ -65,6 +65,16 @@ def _canonical_args(tool_call: dict) -> str:
     """Stable string key for a tool call's name + arguments."""
     name = tool_call.get("name", "")
     args = tool_call.get("args", {})
+    if name == "write_todos" and isinstance(args, dict):
+        todos = args.get("todos")
+        if isinstance(todos, list) and all(
+            isinstance(todo, dict)
+            and isinstance(todo.get("content"), str)
+            and todo.get("status") in {"pending", "in_progress", "completed"}
+            for todo in todos
+        ):
+            # Rewording a plan without doing work is not progress.
+            args = {"statuses": [todo["status"] for todo in todos]}
     try:
         args_str = json.dumps(args, sort_keys=True, default=str)
     except (TypeError, ValueError):
@@ -119,7 +129,9 @@ def _alike(a: str, b: str, needed: float) -> bool:
         same += sum(block.size for block in blocks)
     else:
         lines = _LINE_ENDS.split(a)
-        for block in difflib.SequenceMatcher(None, lines, _LINE_ENDS.split(b)).get_matching_blocks():
+        for block in difflib.SequenceMatcher(
+            None, lines, _LINE_ENDS.split(b)
+        ).get_matching_blocks():
             same += sum(map(len, lines[block.a : block.a + block.size]))
     return 2 * same >= needed * total
 
@@ -194,9 +206,7 @@ class LoopGuardMiddleware(AgentMiddleware):
             turn. A real call executing in between resets this.
     """
 
-    def __init__(
-        self, threshold: int = 3, window: int = 12, escalate_after: int = 3
-    ) -> None:
+    def __init__(self, threshold: int = 3, window: int = 12, escalate_after: int = 3) -> None:
         """Initialise the guard with the repeat ``threshold`` and ``window``."""
         super().__init__()
         self.threshold = threshold
@@ -294,9 +304,7 @@ class LoopGuardMiddleware(AgentMiddleware):
             count += 1
         return count
 
-    def _on_blocked(
-        self, sig: str, request: ToolCallRequest, count: int
-    ) -> ToolMessage:
+    def _on_blocked(self, sig: str, request: ToolCallRequest, count: int) -> ToolMessage:
         """Handle a blocked call: escalate the message, then hard-stop the turn.
 
         Tracks how many times *this same signature* has been blocked in a row.
@@ -314,9 +322,7 @@ class LoopGuardMiddleware(AgentMiddleware):
             return self._terminate(request, count)
         return self._blocked_message(request, count, self._block_streak)
 
-    def _blocked_message(
-        self, request: ToolCallRequest, count: int, streak: int
-    ) -> ToolMessage:
+    def _blocked_message(self, request: ToolCallRequest, count: int, streak: int) -> ToolMessage:
         tool_call = request.tool_call
         name = tool_call.get("name", "this tool")
         if streak == 1:
@@ -353,6 +359,12 @@ class LoopGuardMiddleware(AgentMiddleware):
                 "warning. Stop testing the same artifact. On your next step, "
                 "inspect and edit the source or data, or explain why you cannot "
                 "proceed. Switching tools or wrapping the command is not progress."
+            )
+        if name == "write_todos":
+            guidance = (
+                "The plan has made no status progress. Rewording tasks is not progress. "
+                "Do the current task or report the blocker; update todos only after "
+                "meaningful work or a status change."
             )
         return ToolMessage(
             content=(
@@ -401,16 +413,50 @@ class LoopGuardMiddleware(AgentMiddleware):
         a note saying so. Waiting for the block at ``threshold`` leaves the
         model several turns of unchanged context to settle into the loop.
         """
+        tool, _, args = sig.partition("\x00")
         text = _result_text(result)
+        if (
+            tool == "write_todos"
+            and isinstance(result, Command)
+            and isinstance(result.update, dict)
+            and "todos" in result.update
+        ):
+            text = json.dumps(
+                {
+                    **{
+                        key: value
+                        for key, value in result.update.items()
+                        if key not in {"todos", "messages"}
+                    },
+                    "plan": args,
+                },
+                sort_keys=True,
+                default=str,
+            )
+        elif tool not in {"write_todos", "think", "think_tool"} and (
+            isinstance(result, ToolMessage) and result.status != "error"
+        ):
+            # A legitimate update after actual work starts a fresh todo streak.
+            self._history = deque(
+                (
+                    (key, value)
+                    for key, value in self._history
+                    if not key.startswith("write_todos\x00")
+                ),
+                maxlen=self._history.maxlen,
+            )
         if text is None:
             # No ToolMessage to annotate; its payload still anchors the loop.
             text = _command_text(result)
         result_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
         self._history.append((sig, result_hash))
-        tool, _, args = sig.partition("\x00")
         long_result = len(text) >= _NEAR_MIN_RESULT_CHARS
         run = 1
-        if self._near and self._near[:2] == (tool, result_hash) and _restates(self._near[3], args, long_result):
+        if (
+            self._near
+            and self._near[:2] == (tool, result_hash)
+            and _restates(self._near[3], args, long_result)
+        ):
             run = self._near[2] + 1
         self._near = (tool, result_hash, run, args, long_result)
         self._repeats = max(self._repeat_count(sig), run)
@@ -477,9 +523,7 @@ class TextRepetitionGuard:
     Feed it every streamed text/reasoning delta; it buffers partial lines.
     """
 
-    def __init__(
-        self, *, threshold: int = 4, window: int = 3, min_line_chars: int = 40
-    ) -> None:
+    def __init__(self, *, threshold: int = 4, window: int = 3, min_line_chars: int = 40) -> None:
         self.threshold = threshold
         self.window = window
         self.min_line_chars = min_line_chars

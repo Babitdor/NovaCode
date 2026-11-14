@@ -1400,6 +1400,26 @@ def _build_composite_backend(
         virtual_mode=True,
     )
 
+    # /scratchpad/ → session-scoped temp workspace (issue #18). Auto-provisioned
+    # per session so the agent can create intermediate scripts/data without
+    # prompting or polluting the project. Mapped to an OS temp directory and
+    # pre-approved by the path policy; cleaned up on session end (and swept if a
+    # prior session crashed).
+    if session_id and sandbox is None:
+        try:
+            from novacode_cli.sessions import scratchpad as _scratchpad
+
+            _scratchpad.sweep_stale()
+            _scratch = _scratchpad.provision(session_id)
+            if _scratch is not None:
+                _routes[_scratchpad.SCRATCHPAD_VIRTUAL_PREFIX] = FilesystemBackend(
+                    root_dir=str(_scratch.host_path),
+                    virtual_mode=True,
+                )
+        except Exception:  # noqa: BLE001 - scratchpad is best-effort
+            _log = __import__("logging").getLogger("nova.core_agent")
+            _log.debug("Scratchpad provisioning skipped", exc_info=True)
+
     # Real absolute host paths (local mode only). The model constantly passes a
     # path it can see — a sibling project, a file the user named, something from
     # an error trace — and deepagents refused every one of them outright:
@@ -2522,6 +2542,12 @@ This file stores your preferences and context that persist across sessions.
             assistant_id=assistant_id, sandbox_type=sandbox_type, exec_sandbox=exec_sandbox
         )
     system_prompt += computer_instructions + knowledge_instructions
+    if session_id and sandbox is None:
+        from novacode_cli.agents.scratchpad import ScratchpadMiddleware
+
+        scratch_backend = dict(composite_backend.sorted_routes).get("/scratchpad/")
+        if scratch_backend is not None:
+            agent_middleware.insert(0, ScratchpadMiddleware(scratch_backend, session_id))
     if team_binding is not None:
         system_prompt += (
             f"\n\n<team_workspace>\nYour assigned project directory is {workspace_root.resolve()}. "

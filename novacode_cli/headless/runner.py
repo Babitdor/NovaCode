@@ -304,6 +304,9 @@ async def run_headless(  # noqa: PLR0912, PLR0915 — single linear event loop
     finally:
         with contextlib.suppress(Exception):
             await asyncio.wait_for(source.aclose(), timeout=2)
+        from novacode_cli.sessions.scratchpad import cleanup as cleanup_scratchpad
+
+        cleanup_scratchpad(getattr(session_state, "session_id", None))
 
     duration_ms = int((time.monotonic() - started) * 1000)
     result_text = "\n".join(p for p in text_parts if p).strip()
@@ -390,6 +393,9 @@ async def run_bootstrap(awaitable, session_state):
     finally:
         session_state.headless_bootstrap_active = False
         session_state.headless_bootstrap_budget = None
+        from novacode_cli.sessions.scratchpad import cleanup as cleanup_scratchpad
+
+        cleanup_scratchpad(getattr(session_state, "session_id", None))
     if getattr(session_state, "headless_result_emitted", False):
         # Once the terminal result is flushed, teardown cannot replace it with
         # another result or an inconsistent process exit code.
