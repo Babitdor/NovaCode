@@ -27,6 +27,16 @@
   rather than reading the old planning thread. Subsequent messages continue
   through the existing bridge queue and session topic/thread.
 
+## Long-running graph turns
+
+- Raise the default per-turn LangGraph step limit from 1,000 to 9,999 so longer
+  Code Mode tasks are not stopped by the former fixed ceiling.
+- Add the startup environment override `NOVA_RECURSION_LIMIT`. Invalid values
+  fall back to the default; nonpositive values are clamped to one. Restart Nova
+  after changing it. This controls graph steps, not JavaScript recursion.
+- Keep the existing repeated-tool and policy-rejection loop guards. A higher
+  ceiling does not repair a repeating task or roll back completed side effects.
+
 ## Validation
 
 The related remote approval, routing, planning, external-planner and Code Mode

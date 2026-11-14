@@ -6,6 +6,21 @@ MCP schemas stay in the host registry; the model composes operations in JavaScri
 Tool searches, including provider-native search and its fallback, do not restore
 ordinary schemas to the model inventory.
 
+Long turns use a default LangGraph limit of 9,999 graph steps. A message about
+`GRAPH_RECURSION_LIMIT` refers to that per-turn ceiling, not JavaScript recursion.
+For a task that legitimately needs more steps, set `NOVA_RECURSION_LIMIT` before
+starting Nova. For example, in PowerShell:
+
+```powershell
+$env:NOVA_RECURSION_LIMIT = "18000"
+nova
+```
+
+Restart Nova after changing the value. Invalid values use the default;
+nonpositive values are clamped to one. Check for repeated calls before raising
+the ceiling: this setting permits longer runs but does not fix a loop. Existing
+repetition guards and approval checks remain active.
+
 Separate `eval` and `MCPCode` calls in one conversation queue for the same
 interpreter instead of colliding. Use `Promise.all` inside one snippet for bounded
 parallel host operations. Waiting for the interpreter does not consume a snippet's

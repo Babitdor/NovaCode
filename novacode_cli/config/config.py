@@ -325,8 +325,15 @@ TOOL_ICONS = {
     "default": "🔧",
 }
 
-# Agent configuration
-config = {"recursion_limit": 1000}
+# Agent configuration. LangGraph raises RecursionError when a turn exceeds this
+# many graph steps (model/tool transitions) without reaching END — usually a sign
+# the agent is looping, not that it needs more room. Override only when a
+# legitimately long task hits the ceiling.
+try:
+    _recursion_limit = int(os.environ.get("NOVA_RECURSION_LIMIT", "9999"))
+except (TypeError, ValueError):
+    _recursion_limit = 9999
+config = {"recursion_limit": max(1, _recursion_limit)}
 
 
 

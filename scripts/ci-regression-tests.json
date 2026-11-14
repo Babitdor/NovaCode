@@ -1,5 +1,6 @@
 {
   "tests/test_release_version.py": 1,
+  "tests/test_recursion_limit.py": 3,
   "tests/test_loops.py": 1.6,
   "tests/test_command_center.py": 3.52,
   "tests/test_terminal_presence.py": 3.46,
