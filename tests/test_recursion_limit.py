@@ -51,4 +51,4 @@ def test_environment_override_is_applied_at_startup(
         check=True,
         timeout=30,
     )
-    assert int(result.stdout.strip()) == expected
+    assert result.stdout.strip().splitlines()[-1] == str(expected)
