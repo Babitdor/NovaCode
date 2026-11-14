@@ -44,6 +44,10 @@ changes, keyboard access, cache error recovery and namespace isolation. A
 Windows symlink test was skipped because this account cannot create symlinks.
 New command-report regressions are included in platform CI. No new runtime
 dependency is required.
+The updater interaction test waits for restart preparation to finish before
+closing the test app, avoiding a race with its thread-based blocker check.
+Cache interaction tests disable the button's visual click debounce for rapid
+synthetic presses; production button behavior is unchanged.
 
 ## Install or upgrade
 

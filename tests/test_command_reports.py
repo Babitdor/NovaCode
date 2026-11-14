@@ -91,18 +91,21 @@ async def test_cache_metrics_and_buttons_use_authoritative_state(
             assert button.region.x >= 0
             assert button.region.right <= size[0]
             assert button.region.bottom <= size[1]
-        panel.query_one("#cache-toggle", Button).focus()
+        toggle = panel.query_one("#cache-toggle", Button)
+        # Back-to-back synthetic presses must not hit the visual click debounce.
+        toggle.active_effect_duration = 0
+        toggle.focus()
         await pilot.press("enter")
         await panel.workers.wait_for_complete()
         await pilot.pause()
         assert str(panel.query_one("#cache-status", Static).content) == "Disabled"
         assert not (await control("status"))["semantic_cache_enabled"]
-        await pilot.click("#cache-toggle")
+        assert await pilot.click("#cache-toggle", offset=(2, 1))
         await panel.workers.wait_for_complete()
         await pilot.pause()
         assert (await control("status"))["semantic_cache_enabled"]
         epoch = (await control("status"))["epoch"]
-        await pilot.click("#cache-clear")
+        assert await pilot.click("#cache-clear", offset=(2, 1))
         await panel.workers.wait_for_complete()
         assert (await control("status"))["epoch"] == epoch + 1
         await pilot.press("escape")

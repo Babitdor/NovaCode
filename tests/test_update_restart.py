@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 from unittest.mock import AsyncMock, Mock
@@ -357,7 +358,8 @@ async def test_update_screen_offers_update_now_when_one_is_available(monkeypatch
     monkeypatch.setattr(updates, "release_details", lambda status: status)
     app = _app()
     restart = AsyncMock(wraps=app._update_and_restart)
-    exited = Mock()
+    exit_requested = asyncio.Event()
+    exited = Mock(side_effect=exit_requested.set)
     async with app.run_test(size=(120, 40)) as pilot:
         app.session_state.session_id = "clicked-session"
         app.session_manager = Mock(load_session_meta=Mock(return_value=object()))
@@ -377,6 +379,8 @@ async def test_update_screen_offers_update_now_when_one_is_available(monkeypatch
             app.get_widget_at(button.region.x + 1, button.region.y + 1),
         )
         await pilot.pause()
+        # The worker is scheduled after screen dismissal; await its actual result.
+        await asyncio.wait_for(exit_requested.wait(), timeout=5)
     restart.assert_awaited_once()
     exited.assert_called_once()
     assert updates.restart_request == {"session": "clicked-session", "continue": False}
