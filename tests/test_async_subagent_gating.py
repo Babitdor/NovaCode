@@ -8,6 +8,7 @@ withheld and the agent uses its ordinary in-process subagents instead.
 from __future__ import annotations
 
 import socket
+from types import SimpleNamespace
 
 import pytest
 
@@ -80,7 +81,8 @@ def test_the_probe_is_cached(monkeypatch):
         return real(*args, **kwargs)
 
     monkeypatch.setenv("ASYNC_AGENT_BASE_URL", f"http://127.0.0.1:{_closed_port()}")
-    monkeypatch.setattr(socket, "create_connection", counting)
+    # Scope the spy to this probe; other background clients share the socket module.
+    monkeypatch.setattr(mod, "socket", SimpleNamespace(create_connection=counting))
     for _ in range(3):
         mod.async_agents_available()
     assert len(calls) == 1, "one probe per process, not one per agent build"
