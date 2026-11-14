@@ -126,6 +126,9 @@ async def test_remote_plan_shows_content_and_approves_in_manual_mode(
     )
     msg, shown, prompts, _retract = origin()
     app = app_for(msg)
+    async def leave_terminal_pending(_screen):
+        await asyncio.Future()
+    app.push_screen_wait = AsyncMock(side_effect=leave_terminal_pending)
     app.session_state.plan_mode_enabled = True
     event = ev.InterruptRequest("plan", {}, asyncio.get_running_loop().create_future())
     task = asyncio.create_task(NovaApp._handle_interrupt(app, event))

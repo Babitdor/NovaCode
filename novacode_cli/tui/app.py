@@ -123,6 +123,7 @@ from novacode_cli.tui.animations import (
     animate_entrance,
 )
 from novacode_cli.tui import motion
+from novacode_cli.tui.code_mode_panel import CODE_MODE_TOOLS, CodeModePanel
 from novacode_cli.tui.output_buffer import MAX_PENDING_CALLS, OutputTail
 
 # Widgets and modal screens were extracted verbatim into widgets.py /
@@ -1551,6 +1552,7 @@ class NovaApp(App):
         margin: 1 0; background: $surface;
     }
     #transcript > .tool { color: $warning; padding: 0 2; margin: 1 0; background: $background; }
+    #transcript > CodeModePanel.tool { margin: 0; border: none; }
     .toolbody { color: $text-muted; margin: 0; height: auto; }
     .terminal-log {
         /* Scale with terminal height; floor at the old fixed 5 rows so small
@@ -7417,6 +7419,9 @@ class NovaApp(App):
         out = full_output or "(no output)"
         if len(out) > _TOOL_ERROR_MAX_CHARS:
             out = out[:_TOOL_ERROR_MAX_CHARS] + "\n… (truncated)"
+        if isinstance(comp, CodeModePanel):
+            comp.finish(out, is_error=is_error, preview=preview)
+            return
         body_style = pal.tool_fail if is_error else ""
         if isinstance(body, OutputLog):
             body.clear()
@@ -11030,7 +11035,12 @@ class NovaApp(App):
                                 if answer and answer.cancelled
                                 else "done"
                             )
-                        post = await self.agent.aget_state(config)
+                        post_config = {
+                            "configurable": {"thread_id": self._remote_owner_state().thread_id}
+                        }
+                        if post_config != config:
+                            pre_count = 0
+                        post = await self.agent.aget_state(post_config)
                         reply = _extract_response(post, pre_count) or "✅ Task completed."
                         if self._remote_label(None):
                             reply = f"**[main]** {reply}"
@@ -14926,7 +14936,11 @@ class NovaApp(App):
 
                 # Clear conversation context so the agent starts fresh with
                 # only the plan execution instruction — no planning history.
+                # This is the same UI/remote session with a fresh model thread.
+                session_id = getattr(self.session_state, "session_id", None)
                 self.session_state.reset_conversation()
+                if session_id is not None:
+                    self.session_state.session_id = session_id
                 await self._transcript().remove_children()
                 self._show_home_banner()
                 self._log(Text("● Plan approved — starting fresh execution…", style="cyan"))
@@ -15333,8 +15347,8 @@ class NovaApp(App):
                     return
                 prompt = answers
                 continue
-            choice = await self.push_screen_wait(
-                PlanApprovalModal(f"{name}'s plan requires approval", Markdown(turn.plan))
+            choice = await NovaApp._ask_plan_approval(
+                self, turn.plan, f"{name}'s plan requires approval"
             )
             if choice in ("auto", "manual"):
                 planner_usage.forget_session(planner.COMMAND, root)
@@ -18964,11 +18978,16 @@ class NovaApp(App):
         elif isinstance(e, ev.ToolCall):
             self._set_status(f"running {e.name}…")
             base = f"{text_icon(e.icon)} {_esc(e.display_str)}"
-            if e.name in _DETAILED_TOOL_NAMES:
+            if e.name in _DETAILED_TOOL_NAMES or e.name in CODE_MODE_TOOLS:
                 # Write/edit and execution tools keep a DEDICATED Collapsible.
                 # Mounting it (via _mount) closes any open tool group, keeping
                 # transcript order correct.
-                if e.name in {
+                if e.name in CODE_MODE_TOOLS:
+                    code = e.args.get("code", "")
+                    comp = CodeModePanel(code if isinstance(code, str) else "")
+                    body = comp.output
+                    base = "Code Mode"
+                elif e.name in {
                     "shell",
                     "bash",
                     "execute",
@@ -19007,7 +19026,11 @@ class NovaApp(App):
                 await self._ensure_tool_group()
                 self._add_tool_group_call(e.call_id, f"{text_icon(e.icon)} {e.display_str}", e.name)
         elif isinstance(e, ev.ToolResult):
-            if e.call_id and e.call_id in self._tool_components:
+            if (e.call_id and e.call_id in self._tool_components) or (
+                not e.call_id
+                and self._last_tool is not None
+                and isinstance(self._last_tool[0], CodeModePanel)
+            ):
                 # Dedicated panel (write/edit) — finalize with full output body.
                 self._finalize_tool(e.call_id, e.preview, e.full_output, is_error=e.is_error)
             else:
@@ -19463,6 +19486,56 @@ class NovaApp(App):
             origin, kind, payload, label=NovaApp._remote_approval_label(pane)
         )
 
+    async def _ask_plan_approval(
+        self,
+        content: str | None,
+        title: str,
+        *,
+        origin: RemoteMessage | None = None,
+        pane: SessionPane | None = None,
+        payload: dict | None = None,
+    ) -> str:
+        """The terminal and originating chat share one single-use plan decision."""
+        origin = origin or NovaApp._remote_approval_origin(self, pane)
+        modal = PlanApprovalModal(
+            title, Markdown(content) if content else "Review the plan before proceeding."
+        )
+        if origin is None:
+            return await self.push_screen_wait(modal)
+        request = payload if payload is not None else {}
+        request["plan"] = content
+        if not content:
+            # Never offer terminal approval for an unavailable remote plan.
+            await NovaApp._ask_remote_approval(self, "plan", request, origin, pane)
+            return "refine"
+
+        async def local_choice() -> str:
+            try:
+                return await self.push_screen_wait(modal)
+            finally:
+                if modal.is_mounted:
+                    with contextlib.suppress(Exception):
+                        await modal.dismiss("refine")
+
+        remote = asyncio.create_task(
+            NovaApp._ask_remote_approval(self, "plan", request, origin, pane)
+        )
+        local = asyncio.create_task(local_choice())
+        try:
+            done, _ = await asyncio.wait({remote, local}, return_when=asyncio.FIRST_COMPLETED)
+            if remote in done:
+                result = remote.result()
+                choice = "manual" if result.get("response", {}).get("approved") else "refine"
+            else:
+                choice = local.result()
+        finally:
+            for task in (remote, local):
+                if not task.done():
+                    task.cancel()
+            # Retract remote buttons and the owned modal before implementation starts.
+            await asyncio.gather(remote, local, return_exceptions=True)
+        return choice
+
     async def _ask_remote_question(self, question_request: dict) -> dict:
         """Route an agent question to the remote user via Discord/Telegram."""
         prompt = (
@@ -19707,7 +19780,6 @@ class NovaApp(App):
                 result = await self._show_question_dock(e.payload)
             e.future.set_result(result)
         elif e.kind == "plan":
-            body: Any = "Review the plan and approve to proceed."
             content = None
             try:
                 from novacode_cli.ui.interrupt_handlers import resolve_plan_content
@@ -19723,23 +19795,16 @@ class NovaApp(App):
                         backend=backend,
                         inline_plan=inline,
                     )
-                if content:
-                    body = Markdown(content)
             except Exception:  # noqa: BLE001
                 pass
-            if origin is not None:
-                # The canonical loop resumes from this same payload. Bind it to
-                # what the owner sees, rather than a later version of a plan file.
-                plan_payload = e.payload if isinstance(e.payload, dict) else {}
-                plan_payload["plan"] = content if isinstance(e.payload, dict) else None
-                result = await NovaApp._ask_remote_approval(
-                    self, "plan", plan_payload, origin, pane
-                )
-                choice = "manual" if result.get("response", {}).get("approved") else "refine"
-            else:
-                choice = await self.push_screen_wait(
-                    PlanApprovalModal("Plan requires approval", body)
-                )
+            choice = await NovaApp._ask_plan_approval(
+                self,
+                content,
+                "Plan requires approval",
+                origin=origin,
+                pane=pane,
+                payload=e.payload if isinstance(e.payload, dict) else None,
+            )
             if choice in ("auto", "manual"):
                 state.plan_mode_enabled = False
                 if pane is None or pane is getattr(self, "_active_pane", None):
