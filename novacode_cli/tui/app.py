@@ -509,7 +509,7 @@ class SlashCommand:
 # _passthrough_command (print-or-toggle-only commands; never read stdin or use
 # a Live spinner — those would hang or garble inside Textual).
 TUI_COMMANDS: dict[str, SlashCommand] = {
-    "cache": SlashCommand("_passthrough_command", "knowledge cache: /cache status|clear|on|off"),
+    "cache": SlashCommand("_run_cache", "knowledge cache: /cache status|clear|on|off"),
     "computer": SlashCommand(
         "_run_computer", "separate Linux VM: /computer start|preview|pause|resume|stop|status"
     ),
@@ -1552,7 +1552,11 @@ class NovaApp(App):
         margin: 1 0; background: $surface;
     }
     #transcript > .tool { color: $warning; padding: 0 2; margin: 1 0; background: $background; }
-    #transcript > CodeModePanel.tool { margin: 0; border: none; }
+    #transcript > CodeModePanel.tool { margin: 0; padding: 0 1; }
+    #transcript > CodeModePanel.tool > CollapsibleTitle { color: $text; }
+    #transcript > CodeModePanel.tool > CollapsibleTitle:hover,
+    #transcript > CodeModePanel.tool > CollapsibleTitle:focus { color: $accent; }
+    #transcript > CodeModePanel.tool.failed > CollapsibleTitle { color: $error; }
     .toolbody { color: $text-muted; margin: 0; height: auto; }
     .terminal-log {
         /* Scale with terminal height; floor at the old fixed 5 rows so small
@@ -12299,7 +12303,18 @@ class NovaApp(App):
                 self._log(Text("UI patches must be JSON objects.", style="yellow"))
                 return
             result = await self._ui_harness.execute(operation, payload)
-            self._log(Text(json.dumps(result, indent=2), style="dim"), transcript=True)
+            if operation == "inspect":
+                from novacode_cli.tui.command_reports import StructuredReportScreen
+
+                self.push_screen(StructuredReportScreen("UI configuration", result))
+            else:
+                self.notify({
+                    "patch": "UI patch staged. Use /ui preview to view it.",
+                    "preview": "UI preview applied.",
+                    "rollback": "UI restored to the saved layout.",
+                    "commit": "UI layout saved.",
+                    "reset": "UI restored to the default layout.",
+                }[operation])
         except (ValueError, OSError) as error:
             self._log(Text(f"UI change failed: {error}", style="yellow"))
 
@@ -12851,9 +12866,9 @@ class NovaApp(App):
                     sources=values.get("caveman_sources"),
                     saved_blocks=values.get("caveman_blocks"),
                 )
-                import json
+                from novacode_cli.tui.command_reports import StructuredReportScreen
 
-                self._log(Text(json.dumps(result, indent=2)), transcript=True)
+                self.push_screen(StructuredReportScreen(f"Lite Mode · {arg}", result))
             except (OSError, ValueError, TimeoutError) as exc:
                 self.notify(f"Could not read Lite Mode report: {exc}", severity="error")
             return
@@ -13365,6 +13380,22 @@ class NovaApp(App):
             with contextlib.suppress(Exception):  # The session may be closing or cleared.
                 await row.remove()
             self._set_status("ready")
+
+    async def _run_cache(self, text: str) -> None:
+        from novacode_cli.commands.cache_handler import control_cache
+        from novacode_cli.tui.command_reports import CacheScreen
+
+        parts = text.split(maxsplit=1)
+        action = parts[1].strip().lower() if len(parts) > 1 else "status"
+        if action not in {"status", "clear", "on", "off"}:
+            self.notify("Usage: /cache status|clear|on|off", severity="warning")
+            return
+        state, assistant, sandbox = self.session_state, self.assistant_id, self._sandbox_type
+
+        async def control(operation: str) -> dict:
+            return await control_cache(state, assistant, operation, sandbox)
+
+        self.push_screen(CacheScreen(control, initial_action=action))
 
     async def _passthrough_command(self, text: str) -> None:
         """Run a print/toggle-only legacy slash command and show its output.
@@ -18984,7 +19015,7 @@ class NovaApp(App):
                 # transcript order correct.
                 if e.name in CODE_MODE_TOOLS:
                     code = e.args.get("code", "")
-                    comp = CodeModePanel(code if isinstance(code, str) else "")
+                    comp = CodeModePanel(code if isinstance(code, str) else "", tool_name=e.name)
                     body = comp.output
                     base = "Code Mode"
                 elif e.name in {

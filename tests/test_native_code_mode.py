@@ -157,6 +157,61 @@ def data(messages: list[ToolMessage]):
     return json.loads(messages[0].content)
 
 
+async def test_knowledge_generation_and_reuse_reach_command_cache_counters(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from types import SimpleNamespace
+
+    from deepagents.backends import FilesystemBackend
+    from langchain_core.language_models.fake_chat_models import FakeListChatModel
+
+    from novacode_cli.commands.cache_handler import control_cache
+    from novacode_cli.tools.knowledge_tools import KnowledgeLookup, build_knowledge_tool
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    source = root / "code.py"
+    source.write_text("def hello():\n    return 'world'\n" * 100, encoding="utf-8")
+    files = FilesystemBackend(root_dir=root, virtual_mode=True)
+    backend = SimpleNamespace(default=files, adownload_files=files.adownload_files)
+    state = SimpleNamespace(_backend=backend)
+    monkeypatch.setattr(KnowledgeLookup, "_embedding", lambda _self, _text: (None, "test"))
+
+    @tool
+    def read_file() -> str:
+        """Read exact source without generating an overview."""
+        return source.read_text(encoding="utf-8")
+
+    get_policy().tool_tiers["read_file"] = "allow"
+    get_policy().tool_tiers["knowledge_lookup"] = "allow"
+    await execute(native_graph("return await tools.call('read_file');", [read_file]))
+    assert (await control_cache(state, "nova", "status"))["lookups"] == 0
+    summary = FakeListChatModel(responses=["The code defines hello(), which returns world."])
+    knowledge = build_knowledge_tool(lambda: backend.default.cwd, "nova", backend, summary)
+    result = data(
+        await execute(
+            native_graph(
+                """
+const schema = await tools.describe('knowledge_lookup');
+const cold = await tools.call('knowledge_lookup', {query:'Explain this workspace'});
+const built = await tools.call('knowledge_lookup', {query:'Explain hello', paths:['code.py']});
+const reused = await tools.call('knowledge_lookup', {query:'Describe hello', paths:['code.py']});
+return [cold.kind, built.kind, reused.kind];
+""",
+                [knowledge],
+            )
+        )
+    )
+    assert result["result"] == ["miss", "generated", "exact_hit"]
+    stats = await control_cache(state, "nova", "status")
+    assert stats["lookups"] == 3
+    assert stats["misses"] == 1
+    assert stats["generation_calls"] == stats["exact_hit"] == 1
+    assert stats["retained_bytes"] > 0
+    assert stats["avoided_tokens_estimate"] > 0
+
+
 async def test_discovery_schema_calls_and_private_intermediates_without_mcp():
     calls = []
 

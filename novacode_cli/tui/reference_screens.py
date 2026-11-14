@@ -26,7 +26,7 @@ _GROUPS = {
         "model router auth settings lite-mode theme effort voice update ui verbose"
     ),
     "Agents & automation": "subagents agents agent-server tasks cowork plan goal remote notifications cron webhook research ralph council servers kill tests browser-use trello",
-    "Skills & knowledge": "init mcp skills plugins middleware reload-plugins prompt refine dream evolution reindex restore hooks create ingest ask file wiki learning",
+    "Skills & knowledge": "init mcp skills plugins middleware reload-plugins prompt refine dream evolution reindex restore hooks create ingest ask file wiki learning cache",
     "Observability": "trace log",
 }
 

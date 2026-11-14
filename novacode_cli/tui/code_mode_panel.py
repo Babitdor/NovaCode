@@ -25,13 +25,15 @@ def _operation_name(item: dict) -> str:
     return f"{namespace}.{action}" if isinstance(namespace, str) and isinstance(action, str) else ""
 
 
-def summarize_run(output: str, *, is_error: bool, preview: str) -> tuple[str, str, bool]:
+def summarize_run(
+    output: str, *, is_error: bool, preview: str, fallback: str = "eval"
+) -> tuple[str, str, bool]:
     """Summarize reported operations, never infer executed calls from JavaScript."""
     try:
         data = json.loads(output)
     except (ValueError, TypeError):
         data = None
-    title = "Code Mode"
+    title = fallback
     failed = is_error
     note = ""
     if isinstance(data, dict):
@@ -43,15 +45,12 @@ def summarize_run(output: str, *, is_error: bool, preview: str) -> tuple[str, st
         )
         names = Counter(_operation_name(item) for item in outcomes)
         names.pop("", None)
-        calls = data.get("calls")
-        if type(calls) is int and calls >= 0:
-            title += f" · {calls} call" + ("" if calls == 1 else "s")
         if names:
             shown = [
                 f"{_line(name, 40)} x{count}" if count > 1 else _line(name, 40)
                 for name, count in list(names.items())[:_MAX_TOOL_NAMES]
             ]
-            title += " · " + ", ".join(shown)
+            title = ", ".join(shown)
             if len(names) > _MAX_TOOL_NAMES:
                 title += f" +{len(names) - _MAX_TOOL_NAMES} more"
         failures = data.get("failed_calls")
@@ -74,9 +73,9 @@ def summarize_run(output: str, *, is_error: bool, preview: str) -> tuple[str, st
                     note = _line(error["message"])
                     break
         omitted = data.get("outcomes_omitted")
-        if type(omitted) is int and omitted > 0:
-            title += f" · {omitted} records omitted"
         notes = [note] if note else []
+        if type(omitted) is int and omitted > 0:
+            notes.append(f"{omitted} operation records omitted; inspect Full output for details.")
         notes.extend(
             _line(data[key], 400)
             for key in ("hint", "recovery", "notice", "state_warning")
@@ -89,7 +88,6 @@ def summarize_run(output: str, *, is_error: bool, preview: str) -> tuple[str, st
         note = "\n".join(notes)
     if failed and not note:
         note = _line(preview or "The script failed. Expand Full output for details.")
-    title += " · failed" if failed else " · complete"
     return title, note, failed
 
 
@@ -97,7 +95,10 @@ class CodeModePanel(Collapsible):
     """One quiet row per script; source and output stay independently inspectable."""
 
     DEFAULT_CSS = """
-    CodeModePanel { height: auto; }
+    CodeModePanel { height: auto; border: round $accent 55%; padding: 0 1; }
+    CodeModePanel.tool-active, CodeModePanel:focus-within { border: round $accent; }
+    CodeModePanel.failed { border: round $error 70%; }
+    CodeModePanel > CollapsibleTitle { color: $text; }
     CodeModePanel .code-mode-note { height: auto; margin-bottom: 1; }
     CodeModePanel .code-mode-source, CodeModePanel .code-mode-output { height: auto; }
     CodeModePanel.failed > CollapsibleTitle { color: $error; }
@@ -105,22 +106,25 @@ class CodeModePanel(Collapsible):
     CodeModePanel.failed .code-mode-note { color: $error; }
     """
 
-    def __init__(self, code: str) -> None:
+    def __init__(self, code: str, *, tool_name: str = "eval") -> None:
         """Keep the exact script and result behind separate disclosure controls."""
         self.note = Static("Script is running.", classes="code-mode-note", markup=False)
+        self.tool_name = tool_name
         self.source = Static(Text(code or "(script unavailable)"), classes="code-mode-source")
         self.output = Static("Waiting for output.", classes="code-mode-output", markup=False)
         super().__init__(
             self.note,
             Collapsible(self.source, title="JavaScript", collapsed=True),
             Collapsible(self.output, title="Full output", collapsed=True),
-            title="Code Mode · running",
+            title=tool_name,
             collapsed=True,
         )
 
     def finish(self, output: str, *, is_error: bool, preview: str) -> None:
         """Update this run alone and surface failures without opening raw output."""
-        title, note, failed = summarize_run(output, is_error=is_error, preview=preview)
+        title, note, failed = summarize_run(
+            output, is_error=is_error, preview=preview, fallback=self.tool_name
+        )
         # Rich Text keeps tool-provided brackets literal in a disclosure title.
         self.title = Text(title)
         self.note.update(

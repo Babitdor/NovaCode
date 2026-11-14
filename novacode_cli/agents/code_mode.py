@@ -70,6 +70,14 @@ including explicit @agent requests. tools.describe('task') lists the current ros
 eval accepts statements and top-level await; its final expression is the selected result.
 Variables persist within this conversation. Keep intermediate data in JavaScript;
 return a compact synthesis or explicitly print selected output with console.log.
+When knowledge_lookup is available, prefer it for code/documentation orientation:
+use tools.describe('knowledge_lookup'), then
+await tools.call('knowledge_lookup', {query:'what you need to understand'}).
+This checks reusable summaries only. On a miss, discover relevant files and supply
+up to four workspace-relative paths to reuse or generate an overview. Generation
+uses a model call; use it for useful reusable orientation, not as a mandatory step.
+The /cache counters track these lookups, not read_file, shell or provider prompt caching.
+Read exact source for edits, quotations and verification even after a cache hit.
 Batch independent reads/searches in one eval with Promise.all; return only relevant
 passages, matches or changed-file summaries. Do not print a whole file just to locate a symbol.
 Use an async IIFE for temporary locals: await (async () => { ... })(); this avoids
