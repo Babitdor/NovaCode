@@ -59,7 +59,7 @@ def test_prompt_matches_upstream_javascript_builder(level: str) -> None:
 
 @pytest.mark.parametrize("style_only", [False, True])
 def test_ponytail_replaces_style_without_caveman_tool_compression(*, style_only: bool) -> None:
-    from novacode_cli.agents.ponytail import ponytail_instructions
+    from novacode_cli.agents.ponytail import nova_ponytail_instructions
 
     config = NovaConfig()
     config.set_compression_mode("ponytail")
@@ -75,7 +75,8 @@ def test_ponytail_replaces_style_without_caveman_tool_compression(*, style_only:
     assert middleware.before_agent(original.state, None) == {"caveman_route": None}
     assert middleware.before_model(original.state, None) is None
     prepared = middleware._prepare_live(original)
-    assert ponytail_instructions("ultra") in prepared.system_message.text
+    assert nova_ponytail_instructions("ultra") in prepared.system_message.text
+    assert "For code-only, JSON-only or other exact output formats" in prepared.system_message.text
     assert "nova_caveman_style" not in prepared.system_message.text
     assert prepared.messages == messages
     assert original.system_message.text == "Keep existing permissions."
