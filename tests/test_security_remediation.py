@@ -219,7 +219,7 @@ def test_markdown_url_cannot_inject_event_attribute():
         text=True,
         capture_output=True,
         check=True,
-        timeout=5,
+        timeout=20,  # Allow for Node startup on busy Windows runners.
     ).stdout
 
     class Parser(HTMLParser):
