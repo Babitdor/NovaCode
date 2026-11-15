@@ -4,18 +4,19 @@ The pixels are in ``novacode_cli/assets/nova-avatar.png``: one row of
 FRAME_SIZE frames per state, in the order of COUNTS.
 """
 
-FRAME_SIZE = (64, 64)
+FRAME_SIZE = (32, 32)
+NATIVE_CELL = 256
 COUNTS = {
-    "idle": 7,
-    "walking": 26,
-    "running": 5,
-    "sitting": 4,
-    "sleeping": 5,
-    "cursor": 9,
-    "thinking": 4,
-    "talking": 6,
-    "happy": 5,
-    "confused": 5,
-    "window": 7,
-    "playful": 8,
+    "idle": 2,
+    "walking": 2,
+    "running": 2,
+    "sitting": 2,
+    "sleeping": 2,
+    "cursor": 2,
+    "thinking": 2,
+    "talking": 2,
+    "happy": 2,
+    "confused": 2,
+    "window": 2,
+    "playful": 2,
 }

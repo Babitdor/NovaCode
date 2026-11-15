@@ -1,16 +1,19 @@
 """Nova's transparent avatar, summoned with ``/nova``.
 
-Frames live in ``assets/nova-avatar.png`` (built by ``scripts/build_avatar.py``;
-layout in ``avatar_frames.py``). Each terminal cell covers 2x4 of their pixels.
+Graphics-capable terminals draw the source-resolution ``assets/nova-avatar-hq.png``
+inline at the same compact size. Other terminals use ``assets/nova-avatar.png``
+(built by ``scripts/build_avatar.py``; layout in ``avatar_frames.py``).
+Each fallback terminal cell covers 2x4 of its pixels.
 Where the terminal has octant glyphs (Unicode 16 "BLOCK OCTANT"), a cell shows all eight pixels as a
-two-colour octant; elsewhere it falls back to half-blocks, one representative 2x2
-pixel per half. Animation follows what the agent is doing.
+two-colour octant; elsewhere standard quadrant glyphs preserve left/right detail
+with two vertical samples per cell. Animation follows what the agent is doing.
 """
 
 from __future__ import annotations
 
 import os
 import re
+import sys
 import time
 from functools import cache
 from pathlib import Path
@@ -21,7 +24,7 @@ from rich.text import Text
 from textual.geometry import Region
 from textual.widgets import Static
 
-from novacode_cli.tui.avatar_frames import COUNTS, FRAME_SIZE
+from novacode_cli.tui.avatar_frames import COUNTS, FRAME_SIZE, NATIVE_CELL
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
@@ -31,17 +34,17 @@ __all__ = ["OCTANTS", "NovaAvatar", "render"]
 #: Animation frames per second for each state.
 FPS = {
     "idle": 2.0,
-    "walking": 5.0,
-    "running": 6.0,
+    "walking": 3.0,
+    "running": 4.0,
     "sitting": 2.0,
-    "sleeping": 1.2,
-    "cursor": 5.0,
-    "happy": 5.0,
-    "confused": 4.0,
-    "thinking": 3.0,
-    "talking": 6.0,
-    "window": 3.0,
-    "playful": 3.5,
+    "sleeping": 0.5,
+    "cursor": 2.0,
+    "happy": 2.0,
+    "confused": 1.5,
+    "thinking": 1.5,
+    "talking": 3.0,
+    "window": 2.0,
+    "playful": 2.0,
 }
 #: Fixed overlay bounds shared by every animation.
 WIDTH = FRAME_SIZE[0] // 2
@@ -103,6 +106,37 @@ RGB = tuple[int, int, int]
 
 
 ATLAS = Path(__file__).resolve().parents[1] / "assets" / "nova-avatar.png"
+NATIVE_SHEET = ATLAS.with_name("nova-avatar-hq.png")
+
+
+@cache
+def native_image_type() -> Any:  # noqa: ANN401 - Optional image widget class.
+    """Probe graphics before Textual owns stdin; never probe redirected/headless input."""
+    if not NATIVE_CELL or not all(
+        stream is not None and stream.isatty() for stream in (sys.__stdin__, sys.__stdout__)
+    ):
+        return None
+    try:
+        from textual_image.widget import Image, SixelImage, TGPImage
+
+        if Image is SixelImage:
+            from novacode_cli.tui.avatar_images import SixelAvatarImage
+
+            return SixelAvatarImage
+        return Image if Image is TGPImage else None
+    except (ImportError, OSError, ValueError, TimeoutError):
+        return None
+
+
+@cache
+def native_frame(state: str, index: int) -> Any:  # noqa: ANN401 - Lazily imported PIL image.
+    """Keep source-resolution artwork for inline graphics, independent of cell rendering."""
+    from PIL import Image
+
+    position = list(COUNTS).index(state) * 2 + index
+    x, y = position % 4 * NATIVE_CELL, position // 4 * NATIVE_CELL
+    with Image.open(NATIVE_SHEET) as sheet:
+        return sheet.crop((x, y, x + NATIVE_CELL, y + NATIVE_CELL)).convert("RGBA")
 
 
 @cache
@@ -163,23 +197,19 @@ def _octant_cell(px: list[RGB | None]) -> tuple[str, Style | None]:
     return OCTANTS[mask], Style(color=fg, bgcolor=bg)
 
 
-def _half_cell(px: list[RGB | None]) -> tuple[str, Style | None]:
-    """Eight pixels -> ``▀`` with each half the representative color of its 2x2 block."""
-    halves = []
-    for block in (px[:4], px[4:]):
-        solid = [p for p in block if p is not None]
-        halves.append(_representative(solid) if len(solid) >= 2 else None)  # noqa: PLR2004
-    top, bottom = halves
-    return _half_block(top, bottom)
-
-
-def _half_block(top: str | None, bottom: str | None) -> tuple[str, Style | None]:
-    """Preserve each half-cell's color, with transparent empty halves."""
-    if top is None and bottom is None:
-        return " ", None
-    if top is None:
-        return "▄", Style(color=bottom)
-    return "▀", Style(color=top, bgcolor=bottom)
+def _quadrant_cell(px: list[RGB | None]) -> tuple[str, Style | None]:
+    """Keep both pixel columns using the widely supported 2x2 quadrant glyphs."""
+    samples: list[RGB | None] = []
+    for top in (0, 4):
+        pair = []
+        for column in (0, 1):
+            solid = [p for p in (px[top + column], px[top + column + 2]) if p is not None]
+            pair.append(
+                tuple(sum(p[c] for p in solid) // len(solid) for c in range(3)) if solid else None
+            )
+        # Duplicate each sample vertically so the octant mask uses only quadrants.
+        samples.extend(pair * 2)
+    return _octant_cell(samples)
 
 
 def octants_supported() -> bool:
@@ -194,7 +224,7 @@ def render(state: str, index: int, *, octants: bool = True) -> Text:
     rows = frame_pixels(state, index)
     cols = len(rows[0]) // 2
     left = (WIDTH - cols) // 2
-    cell = _octant_cell if octants else _half_cell
+    cell = _octant_cell if octants else _quadrant_cell
     text = Text(no_wrap=True)
     for _ in range(HEIGHT - len(rows) // 4):
         text.append(" " * WIDTH + "\n")
@@ -226,6 +256,10 @@ class NovaAvatar(Static):
         overlay: screen; position: absolute; visibility: visible;
         height: 1; padding: 0; background: transparent;
     }
+    NovaAvatar > .avatar-image {
+        overlay: screen; position: absolute; visibility: visible;
+        padding: 0; border: none; background: transparent;
+    }
     """
 
     def __init__(self, **kwargs: Any) -> None:  # noqa: D107
@@ -238,10 +272,19 @@ class NovaAvatar(Static):
         self._octants = octants_supported()
         self._shown: tuple[str, int] | None = None
         self._rows = [Static("", classes="avatar-row") for _ in range(HEIGHT * RUNS_PER_ROW)]
+        image_type = native_image_type()
+        self._native = image_type(classes="avatar-image") if image_type else None
+        if self._native is not None:
+            self._native.styles.width = WIDTH
+            self._native.styles.height = HEIGHT
+            for row in self._rows:
+                row.display = False
 
     def compose(self) -> ComposeResult:
         """Draw occupied glyph runs; the rectangular host never paints."""
         yield from self._rows
+        if self._native is not None:
+            yield self._native
 
     @property
     def sprite_region(self) -> Region:
@@ -281,6 +324,16 @@ class NovaAvatar(Static):
         frame = (state, int(now * FPS[state]) % COUNTS[state])
         if frame != self._shown:
             self._shown = frame
+            if self._native is not None:
+                try:
+                    self._native.image = native_frame(*frame)
+                    return
+                except (OSError, ValueError):
+                    self._native.display = False
+                    self._native = None
+                    self.notify(
+                        "Inline avatar unavailable; using character rendering", severity="warning"
+                    )
             lines = render(*frame, octants=self._octants).split("\n")
             for y, line in enumerate(lines):
                 runs = list(re.finditer(r"[^ ]+", line.plain))

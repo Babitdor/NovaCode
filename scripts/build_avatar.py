@@ -1,13 +1,15 @@
 """Cut the Nova avatar frames out of a sprite sheet into the TUI's sprite sheet.
 
     python scripts/build_avatar.py assets/nova/NovaGirl-HD.png [--height 64]
+    python scripts/build_avatar.py assets/nova/NovaGirl-simple-loops.png --simple-grid --height 32
 
 The sheet must have a transparent background. Each state is a band of the sheet
 (pixel box below); frames inside a band are found by their transparent gaps and
 then downscaled so a standing frame is ``--height`` pixels tall. The frames go
 to ``novacode_cli/assets/nova-avatar.png`` (full colour, one row per state) and
 their layout to ``avatar_frames.py``. The TUI draws 2x4 pixels per terminal
-cell (octants), or 2x2 per half cell where octants are missing (half-blocks).
+cell (octants), or 2x2 samples where octants are missing (quadrant glyphs).
+The simple sheet has four columns and six rows, with two frames per state.
 """
 
 from __future__ import annotations
@@ -49,10 +51,43 @@ SOURCE_STATURE = {"walking": 112, "walking-back": 112, "running": 140}
 PACKAGE = Path(__file__).resolve().parents[1] / "novacode_cli"
 OUT = PACKAGE / "tui" / "avatar_frames.py"
 ATLAS = PACKAGE / "assets" / "nova-avatar.png"
+NATIVE_SHEET = PACKAGE / "assets" / "nova-avatar-hq.png"
 SOLID = 100  # alpha above which a sheet pixel belongs to a sprite
 OPAQUE = 128  # alpha at which a downscaled pixel is drawn
 MIN_COLUMN = 2  # opaque pixels a column needs to count as part of a frame
 CELL_W, CELL_H = 2, 4  # pixels per terminal cell (octants)
+SIMPLE_STATES = (
+    "idle",
+    "walking",
+    "running",
+    "sitting",
+    "sleeping",
+    "cursor",
+    "thinking",
+    "talking",
+    "happy",
+    "confused",
+    "window",
+    "playful",
+)
+
+
+def _cut_grid(sheet: Image.Image, height: int) -> dict[str, list[Image.Image]]:
+    """Read two-frame animations from the simple four-column, six-row sheet."""
+    if sheet.width % 4 or sheet.height % 6 or sheet.width // 4 != sheet.height // 6:
+        raise ValueError("Simple sheet must have four columns and six rows of square cells")
+    cell = sheet.width // 4
+    frames = {}
+    for index, state in enumerate(SIMPLE_STATES):
+        row, pair = divmod(index, 2)
+        frames[state] = []
+        for step in range(2):
+            x, y = (pair * 2 + step) * cell, row * cell
+            frame = sheet.crop((x, y, x + cell, y + cell))
+            if not frame.getchannel("A").point(lambda a: 255 if a >= OPAQUE else 0).getbbox():
+                raise ValueError(f"Empty sprite: {state} frame {step}")
+            frames[state].append(frame.resize((height, height), Image.Resampling.LANCZOS))
+    return frames
 
 
 def _frames(
@@ -128,13 +163,20 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("sheet")
     ap.add_argument("--height", type=int, default=64)
+    ap.add_argument("--simple-grid", action="store_true", help="Read a 4-column, 6-row sheet")
     args = ap.parse_args()
+    if args.height <= 0 or args.height % CELL_H:
+        ap.error("--height must be a positive multiple of four pixels")
 
     sheet = Image.open(args.sheet).convert("RGBA")
-    source_scale = sheet.width / REFERENCE_SIZE[0]
-    for box in LABELS:
-        sheet.paste((0, 0, 0, 0), tuple(round(v * source_scale) for v in box))
-    frames = _cut(sheet, args.height / STANDING_PX)
+    if args.simple_grid:
+        frames = _cut_grid(sheet, args.height)
+        sheet.save(NATIVE_SHEET, optimize=True)
+    else:
+        source_scale = sheet.width / REFERENCE_SIZE[0]
+        for box in LABELS:
+            sheet.paste((0, 0, 0, 0), tuple(round(v * source_scale) for v in box))
+        frames = _cut(sheet, args.height / STANDING_PX)
 
     # One row of frames per state, in the order of COUNTS.
     width, height = next(iter(frames.values()))[0].size
@@ -153,6 +195,7 @@ def main() -> None:
         "The pixels are in ``novacode_cli/assets/nova-avatar.png``: one row of\n"
         'FRAME_SIZE frames per state, in the order of COUNTS.\n"""\n\n'
         f"FRAME_SIZE = {(width, height)!r}\n"
+        f"NATIVE_CELL = {sheet.width // 4 if args.simple_grid else 0}\n"
         "COUNTS = {\n" + "".join(f'    "{k}": {v},\n' for k, v in counts.items()) + "}\n",
         encoding="utf-8",
     )

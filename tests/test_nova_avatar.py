@@ -15,7 +15,10 @@ from novacode_cli.tui.avatar import (
     NovaAvatar,
     _dist,
     _octant_cell,
+    _quadrant_cell,
     frame_pixels,
+    native_frame,
+    native_image_type,
     render,
 )
 from novacode_cli.tui.avatar_frames import COUNTS, FRAME_SIZE
@@ -28,11 +31,13 @@ if TYPE_CHECKING:
 @pytest.fixture(autouse=True)
 def isolated_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from novacode_cli.config import config
+    from novacode_cli.tui import avatar as avatar_module
     from novacode_cli.tui.app import NovaApp
 
     monkeypatch.setattr(config, "HOME_DIR", tmp_path / ".nova")
     monkeypatch.setenv("NOVA_DISABLE_UPDATE_CHECK", "1")
     monkeypatch.setattr(NovaApp, "_eager_voice_warmup", AsyncMock())
+    monkeypatch.setattr(avatar_module, "native_image_type", lambda: None)
 
 
 def test_octant_table_covers_every_mask_once():
@@ -45,7 +50,7 @@ def test_octant_table_covers_every_mask_once():
     assert OCTANTS[0b00001111] == "▀"
 
 
-@pytest.mark.parametrize("glyphs", ["octants", "half-blocks"])
+@pytest.mark.parametrize("glyphs", ["octants", "quadrants"])
 def test_every_frame_renders_to_a_fixed_width(glyphs: str):
     assert set(COUNTS) == set(FPS)
     for state, count in COUNTS.items():
@@ -64,6 +69,25 @@ def test_two_colour_cell_keeps_the_split():
     glyph, style = _octant_cell(px)
     assert glyph in {"▀", "▄"}
     assert style.bgcolor is not None
+
+
+def test_fallback_preserves_left_right_detail_and_transparency():
+    ink = (80, 40, 20)
+    glyph, style = _quadrant_cell([ink, None] * 4)
+    assert glyph == "▌"
+    assert style.bgcolor is None
+    assert style.color.get_truecolor() == ink
+    assert _quadrant_cell([None] * 8) == (" ", None)
+    for mask in range(256):
+        glyph, _ = _quadrant_cell([ink if mask & (1 << i) else None for i in range(8)])
+        assert glyph in " ▀▄█▌▐▘▝▖▗▚▞▙▛▜▟"
+
+
+def test_fallback_retains_two_color_vertical_edges():
+    dark, light = (20, 10, 5), (240, 180, 130)
+    glyph, style = _quadrant_cell([dark, light] * 4)
+    assert glyph in "▌▐"
+    assert {style.color.get_truecolor(), style.bgcolor.get_truecolor()} == {dark, light}
 
 
 @pytest.mark.parametrize("design", ["classic", "dashboard", "minimal"])
@@ -132,10 +156,10 @@ def test_all_sheet_animations_fit_the_smaller_overlay():
         "window",
         "playful",
     }
-    assert sum(COUNTS.values()) == 91
+    assert set(COUNTS.values()) == {2}
     assert (WIDTH * 2, HEIGHT * 4) == FRAME_SIZE
-    assert WIDTH <= 32
-    assert HEIGHT <= 16
+    assert WIDTH == 16
+    assert HEIGHT == 8
 
 
 def test_color_reduction_preserves_crisp_original_colors():
@@ -243,3 +267,137 @@ async def test_overlay_yields_to_menus_and_modals():
         await pilot.pause()
         app._paint_avatar()
         assert avatar.display
+
+
+def test_native_frames_keep_source_detail_and_all_animation_pairs():
+    for state, count in COUNTS.items():
+        for index in range(count):
+            image = native_frame(state, index)
+            assert image.size == (256, 256)
+            assert image.getchannel("A").getextrema()[0] == 0
+            assert image.getchannel("A").getbbox()
+    assert native_frame("idle", 0).size[0] > FRAME_SIZE[0] * 6
+
+
+def test_graphics_probe_skips_redirected_input(monkeypatch):
+    from types import SimpleNamespace
+
+    from novacode_cli.tui import avatar as avatar_module
+
+    native_image_type.cache_clear()
+    stream = SimpleNamespace(isatty=lambda: False)
+    monkeypatch.setattr(avatar_module, "sys", SimpleNamespace(__stdin__=stream, __stdout__=stream))
+    assert native_image_type() is None
+    native_image_type.cache_clear()
+
+
+@pytest.mark.parametrize("backend", ["SixelImage", "TGPImage", "HalfcellImage"])
+def test_graphics_probe_selects_only_native_backends(monkeypatch, backend):
+    from types import SimpleNamespace
+
+    import textual_image.widget as images
+
+    from novacode_cli.tui import avatar as avatar_module
+    from novacode_cli.tui.avatar_images import SixelAvatarImage
+
+    stream = SimpleNamespace(isatty=lambda: True)
+    monkeypatch.setattr(avatar_module, "sys", SimpleNamespace(__stdin__=stream, __stdout__=stream))
+    monkeypatch.setattr(images, "Image", getattr(images, backend))
+    native_image_type.cache_clear()
+    try:
+        expected = {
+            "SixelImage": SixelAvatarImage,
+            "TGPImage": images.TGPImage,
+            "HalfcellImage": None,
+        }
+        assert native_image_type() is expected[backend]
+    finally:
+        native_image_type.cache_clear()
+
+
+async def test_inline_sixel_avatar_animates_resizes_and_yields_to_dialogs(monkeypatch):
+    from novacode_cli.tui import avatar as avatar_module
+    from novacode_cli.tui.avatar_images import SixelAvatarImage
+    from novacode_cli.tui.screens import ConfirmModal
+
+    monkeypatch.setattr(avatar_module, "native_image_type", lambda: SixelAvatarImage)
+    app = _app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        app._set_home_visible(visible=False)
+        app._avatar_on = True
+        await pilot.pause()
+        app._paint_avatar()
+        await pilot.pause()
+        avatar = app.query_one("#nova-avatar", NovaAvatar)
+        assert isinstance(avatar._native, SixelAvatarImage)
+        assert avatar._native.image.size == (256, 256)
+        assert avatar._native.region == avatar.sprite_region
+        prompt = app.query_one("#prompt-dock").region
+        assert avatar.sprite_region.right == min(prompt.right - 1, app.size.width - 1)
+        assert avatar.sprite_region.bottom == prompt.y - 1
+        assert not any(row.display for row in avatar._rows)
+        from rich.control import Control
+        from textual.geometry import Region
+
+        from novacode_cli.tui.avatar_images import _AvatarSixelData
+
+        data = avatar._native.query_one(_AvatarSixelData)
+        strips = data.render_lines(Region(0, 0, WIDTH, HEIGHT))
+        assert len(strips) == HEIGHT
+        assert all(next(iter(strip)).text == " " * WIDTH for strip in strips)
+        segments = list(strips[-1])
+        assert any(segment.text.startswith("\x1bP") for segment in segments)
+        assert (
+            segments[-1].text
+            == Control.move_to(data.region.right, data.region.bottom - 1).segment.text
+        )
+        app._turn_active = True
+        app._paint_avatar()
+        await pilot.pause()
+        assert avatar._shown[0] == "thinking"
+        assert avatar._native.image is native_frame(*avatar._shown)
+        await pilot.resize_terminal(100, 32)
+        await pilot.pause()
+        app._paint_avatar()
+        await pilot.pause()
+        assert avatar._native.region == avatar.sprite_region
+        assert app.screen.region.contains_region(avatar.sprite_region)
+        prompt = app.query_one("#prompt-dock").region
+        assert avatar.sprite_region.right == min(prompt.right - 1, app.size.width - 1)
+        assert avatar.sprite_region.bottom == prompt.y - 1
+        await app.push_screen(ConfirmModal("Preview", "Dialog covers the avatar"))
+        app._paint_avatar()
+        await pilot.pause()
+        assert not avatar.display
+        app.pop_screen()
+        await pilot.pause()
+        app._paint_avatar()
+        await pilot.pause()
+        assert avatar.display
+        app._avatar_on = False
+        app._paint_avatar()
+        await pilot.pause()
+        assert not avatar.display
+
+
+async def test_inline_image_failure_returns_to_character_renderer(monkeypatch):
+    from textual_image.widget import SixelImage
+
+    from novacode_cli.tui import avatar as avatar_module
+
+    monkeypatch.setattr(avatar_module, "native_image_type", lambda: SixelImage)
+
+    def missing_frame(*args):
+        raise OSError("Missing packaged image")
+
+    monkeypatch.setattr(avatar_module, "native_frame", missing_frame)
+    app = _app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        app._set_home_visible(visible=False)
+        app._avatar_on = True
+        await pilot.pause()
+        app._paint_avatar()
+        await pilot.pause()
+        avatar = app.query_one("#nova-avatar", NovaAvatar)
+        assert avatar._native is None
+        assert any(row.display for row in avatar._rows)

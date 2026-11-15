@@ -221,5 +221,7 @@
   "tests/test_tui_app.py::test_remote_child_keeps_approval_preference": 3,
   "tests/test_tui_app.py::test_tui_todo_dock_scrolls_long_lists": 6,
   "tests/test_room_management.py": 25,
-  "tests/test_tui_layout_compatibility.py": 180
+  "tests/test_tui_layout_compatibility.py": 180,
+  "tests/test_build_avatar.py": 1,
+  "tests/test_nova_avatar.py": 32
 }

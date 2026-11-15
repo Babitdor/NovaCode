@@ -19903,6 +19903,9 @@ async def run_tui(
     sandbox_meta: dict | None = None,
 ) -> None:
     """Launch the Textual chat app and run until the user exits."""
+    from novacode_cli.tui.avatar import native_image_type
+
+    native_image_type()
     app = NovaApp(
         agent=agent,
         assistant_id=assistant_id,
