@@ -632,8 +632,10 @@ async def test_task_card_start_and_review_are_wired_to_real_runtime(
         while screen.refreshing:
             await pilot.pause()
         await screen.poll()
+        # Lay out the new card before scrolling; its restored board scroll is deferred.
+        await pilot.pause()
         button = screen.query_one("#start-" + task["id"])
-        button.scroll_visible(animate=False)
+        button.scroll_visible(animate=False, top=True, immediate=True)
         await pilot.pause()
         assert await pilot.click("#start-" + task["id"], offset=(2, 1))
         await app.workers.wait_for_complete()
