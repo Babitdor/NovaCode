@@ -224,8 +224,14 @@ async def test_channel_menu_rename_clear_cancel_and_delete(tmp_path: Path):
         assert isinstance(app.screen, RoomSettingsModal)
         app.screen.query_one("#channel-name", Input).value = "quality"
         app.screen.query_one("#channel-topic", TextArea).text = "Checks and findings"
-        await pilot.click("#channel-save")
+        await pilot.pause()
+        assert await pilot.click("#channel-save")
         await app.workers.wait_for_complete()
+        # A timer refresh can overlap the save; assert against the next completed poll.
+        while screen.refreshing:
+            await pilot.pause()
+        await screen.poll()
+        await pilot.pause()
         assert screen.runtime.store.room(room)["name"] == "#quality"
         assert str(screen.query_one("#room-heading", Static).content) == "#quality"
         assert composer.value == "Unsent draft"
