@@ -345,11 +345,10 @@ async def test_inline_sixel_avatar_animates_resizes_and_yields_to_dialogs(monkey
         strips = data.render_lines(Region(0, 0, WIDTH, HEIGHT))
         assert len(strips) == HEIGHT
         assert all(next(iter(strip)).text == " " * WIDTH for strip in strips)
-        segments = list(strips[-1])
-        assert any(segment.text.startswith("\x1bP") for segment in segments)
-        assert (
-            segments[-1].text
-            == Control.move_to(data.region.right, data.region.bottom - 1).segment.text
+        output = strips[-1].render(app.console)
+        assert "\x1bP" in output
+        assert output.endswith(
+            Control.move_to(data.region.right, data.region.bottom - 1).segment.text
         )
         app._turn_active = True
         app._paint_avatar()
@@ -365,10 +364,14 @@ async def test_inline_sixel_avatar_animates_resizes_and_yields_to_dialogs(monkey
         prompt = app.query_one("#prompt-dock").region
         assert avatar.sprite_region.right == min(prompt.right - 1, app.size.width - 1)
         assert avatar.sprite_region.bottom == prompt.y - 1
+        data = avatar._native.query_one(_AvatarSixelData)
+        output = data.render_lines(Region(0, 0, WIDTH, HEIGHT))[0].render(app.console)
+        assert Control.move_to(data.region.x, data.region.y).segment.text in output
         await app.push_screen(ConfirmModal("Preview", "Dialog covers the avatar"))
         app._paint_avatar()
         await pilot.pause()
         assert not avatar.display
+        assert "\x1bP" not in app.screen._compositor.render_full_update().render_segments(app.console)
         app.pop_screen()
         await pilot.pause()
         app._paint_avatar()
@@ -401,3 +404,55 @@ async def test_inline_image_failure_returns_to_character_renderer(monkeypatch):
         avatar = app.query_one("#nova-avatar", NovaAvatar)
         assert avatar._native is None
         assert any(row.display for row in avatar._rows)
+
+
+async def test_inline_avatar_survives_populated_chat_composition(monkeypatch):
+    from textual.geometry import Region
+    from textual.widgets import Static
+
+    from novacode_cli.tui import avatar as avatar_module
+    from novacode_cli.tui.avatar_images import SixelAvatarImage
+
+    monkeypatch.setattr(avatar_module, "native_image_type", lambda: SixelAvatarImage)
+    app = _app()
+    async with app.run_test(size=(110, 36)) as pilot:
+        app._set_home_visible(visible=False)
+        await app._transcript().mount(Static("Chat message with content " * 600))
+        app._transcript().scroll_end(animate=False)
+        app._avatar_on = True
+        await pilot.pause()
+        app._paint_avatar()
+        await pilot.pause()
+        compositor = app.screen._compositor
+        output = compositor.render_full_update().render_segments(app.console)
+        assert "\x1bP" in output, "Chat layout must not discard the inline image"
+        bounds = app.query_one("#nova-avatar", NovaAvatar).sprite_region
+        for row in range(bounds.y, bounds.bottom):
+            compositor._dirty_regions.add(Region(bounds.x + 5, row, 1, 1))
+            update = compositor.render_partial_update()
+            assert update is not None
+            assert "\x1bP" in update.render_segments(app.console), row
+
+
+def test_sixel_strips_preserve_images_and_cursor_through_cuts_and_crops():
+    from rich.console import Console
+    from rich.control import Control
+    from rich.segment import Segment
+    from textual.strip import Strip
+
+    from novacode_cli.tui.avatar_images import _SixelStrip
+
+    console = Console()
+    sixel = "\x1bPqencoded-band\x1b\\"
+    strip = _SixelStrip(Strip([Segment(" " * 16)], 16), sixel, (20, 10), 20)
+    start = 20
+    for part in strip.divide([3, 9, 16]):
+        start += part.cell_length
+        output = part.render(console)
+        assert sixel in output
+        assert output.endswith(Control.move_to(start, 10).segment.text)
+    part = strip.crop(3, 8)
+    assert part.cell_length == 5
+    assert sixel in part.render(console)
+    assert part.render(console).endswith(Control.move_to(28, 10).segment.text)
+    assert strip.crop(3, 3).render(console) == ""

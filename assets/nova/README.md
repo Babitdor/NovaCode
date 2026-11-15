@@ -24,6 +24,11 @@ frame clearing and cursor restoration. Its compatibility tests must pass when
 changing the dependency pin. Sixel occupies a small rectangular region over the
 conversation; hiding or moving the avatar redraws that region.
 
+Sixel rows carry their graphics through Textual's strip splitting and cropping.
+Each row draws a cached image band, so chat layout boundaries cannot discard the
+image and partial chat repaints restore the affected pixels. The cache includes
+screen position so resizing and a growing composer keep the image anchored.
+
 The character fallback's 24 frames use one shared 32 × 32 canvas. It draws octants where
 the terminal supports them and standard quadrant glyphs elsewhere. Quadrants
 retain both horizontal samples in each cell, keeping more facial and outline
