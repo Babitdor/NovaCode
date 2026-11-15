@@ -681,6 +681,7 @@ class MCPMiddleware(AgentMiddleware):
             tool.metadata = {
                 **(tool.metadata or {}), "nova_mcp_server": server_name,
                 "nova_mcp_tool": raw.name,
+                "nova_mcp_output_schema": raw.outputSchema,
             }
 
         # Build metadata cache with correct server attribution

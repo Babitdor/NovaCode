@@ -13,3 +13,5 @@
 *.html text eol=lf
 # Keep pinned upstream assets byte-identical on Windows checkouts, including LICENSE.
 novacode_cli/prompts/ponytail/** text eol=lf
+# Preserve the recorded hashes of benchmark runtime snapshots on every platform.
+scripts/fixtures/code_mode_baseline/*.txt text eol=lf

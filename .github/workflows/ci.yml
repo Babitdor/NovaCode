@@ -59,6 +59,8 @@ jobs:
           novacode_cli/memory/parsed_cache.py
           novacode_cli/skills/retrieval.py
           novacode_cli/shell/processes.py
+          novacode_cli/shell/tool_surface.py
+          tests/test_execution_surface.py
           novacode_cli/shell/output.py
           novacode_cli/tui/shell_output.py
           novacode_cli/remote/async_task_clients.py
@@ -68,6 +70,10 @@ jobs:
           novacode_cli/tui/resume_picker.py
           novacode_cli/tools/waiter_tools.py
           scripts/benchmark_background_tasks.py
+          scripts/benchmark_code_mode.py
+          novacode_cli/agents/tool_contracts.py
+          tests/test_code_mode_reliability.py
+          tests/test_code_mode_benchmark.py
           tests/test_background_responsiveness.py
           novacode_cli/tui/icons.py
           tests/test_tui_icons.py

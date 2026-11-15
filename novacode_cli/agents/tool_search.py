@@ -69,8 +69,7 @@ logger = logging.getLogger("nova.tool_search")
 #: use (2026-10 audit: 5,089 calls over 40 threads, 93% of them shell,
 #: read_file, edit_file and grep); a tool called a few times a month is cheaper
 #: as one search_tools round-trip than as a schema resent on every call.
-#: `think`, `code_search`, `web_search`, `eval`, `execute` (locally the same
-#: shell as `shell`), `skills_read_resource`, the rarer async and artifact
+#: `think`, `code_search`, `web_search`, `eval`, `skills_read_resource`, the rarer async and artifact
 #: tools and `list_waiters` are found by search.
 CORE_TOOLS = frozenset(
     {
@@ -80,7 +79,8 @@ CORE_TOOLS = frozenset(
         "edit_file",
         "glob",
         "grep",
-        "shell",
+        "execute",
+        "shell",  # Compatibility fallback for agents without the canonical backend tool.
         "bash",
         "write_todos",
         "compress",
@@ -114,9 +114,8 @@ CORE_TOOLS = frozenset(
         "knowledge_lookup",
     }
 )
-#: Never bound by use alone: `execute` duplicates `shell` locally (both run
-#: through Nova's shell), so a model that used it is better steered to `shell`.
-NEVER_FREQUENT = frozenset({"execute"})
+#: Compatibility aliases do not gain visibility through usage ranking.
+NEVER_FREQUENT = frozenset({"shell", "bash"})
 #: Also bound: up to this many of the user's most-used other tools...
 FREQUENT_TOOLS = 10
 #: ...called at least this often in the last FREQUENT_DAYS days. All-time counts
@@ -344,6 +343,9 @@ class ToolSearchMiddleware(AgentMiddleware):
 
     def _catalog_for(self, tools: Sequence[Any]) -> list[dict]:
         """Discovery metadata belongs to this invocation's current inventory."""
+        from novacode_cli.shell.tool_surface import execution_tools
+
+        tools = execution_tools(list(tools))
         browsing = browser_mode_enabled()
         trusted = trusted_browser_servers() if browsing else frozenset()
         return [
@@ -419,7 +421,8 @@ class ToolSearchMiddleware(AgentMiddleware):
             _mode=mode,
         )
 
-    def _search_matches(self, query: str, catalog: list[dict]) -> list[dict]:
+    @staticmethod
+    def _search_matches(query: str, catalog: list[dict]) -> list[dict]:
         """Rank the full catalog, retaining exact names ahead of semantic hits."""
         tokens = re.findall(r"[\w.:-]+", query.casefold())
         names = {item["name"].casefold() for item in catalog}
@@ -646,6 +649,9 @@ class ToolSearchMiddleware(AgentMiddleware):
 
     def _apply(self, request: ModelRequest) -> ModelRequest:
         from novacode_cli.config.nova_config import NovaConfig
+        from novacode_cli.shell.tool_surface import execution_tools
+
+        request = request.override(tools=execution_tools(request.tools))
 
         if NovaConfig().get_code_mode_enabled() and any(_name(t) == "eval" for t in request.tools):
             from novacode_cli.agents.code_mode import code_mode_surface

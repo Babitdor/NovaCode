@@ -136,25 +136,28 @@ async def test_eval_events_create_keyboard_accessible_panels_and_keep_ids(  # no
         await app._render(ev.ToolResult(preview="done", full_output=good, call_id="a"))
         await pilot.pause()
         assert panels[0].collapsed
-        assert not panels[1].collapsed
-        assert "read_file" in str(panels[0].title)
-        assert str(panels[1].title) == "MCPCode"
+        assert panels[1].collapsed
+        assert panels[0].heading.render().plain == "Ran read_file"
+        assert panels[1].heading.render().plain == "Failed MCPCode"
         assert panels[1].has_class("failed")
         assert source in panels[0].source.render().plain
-        assert "limit must be <= 50" in str(panels[1].note.render())
+        assert "limit must be <= 50" in panels[1].preview.render().plain
+        assert "Inspect completed" in str(panels[1].note.render())
         assert "[bold]" in panels[0].output.render().plain
-        assert panels[0].styles.border_top[0] == "round"
-        assert panels[1].styles.border_top[0] == "round"
+        assert panels[0].styles.border_top[0] in {"", "none"}
+        assert panels[1].styles.border_top[0] in {"", "none"}
+        assert panels[0].preview.display
+        assert not panels[0].note.display
         from novacode_cli.tui.themes import NOVA_EXTRA_THEMES
 
         for theme in NOVA_EXTRA_THEMES[:3]:
             app.register_theme(theme)
         app.theme = "nova-classic"
         await pilot.pause()
-        first_border = panels[0].styles.border_top[1]
+        first_status = panels[0].status.styles.color
         app.theme = "nova-synthwave"
         await pilot.pause()
-        assert panels[0].styles.border_top[1] != first_border
+        assert panels[0].status.styles.color != first_status
         assert all(c.collapsed for c in panels[1].query(Collapsible))
         assert not app._tool_components
         # A keyboard user can open the run and then its source disclosure.
@@ -167,12 +170,69 @@ async def test_eval_events_create_keyboard_accessible_panels_and_keep_ids(  # no
         await pilot.press("enter")
         await pilot.pause()
         assert not nested[0].collapsed
+        # Code Mode envelopes bypass the generic 6,000-character error preview cap.
+        await app._render(
+            ev.ToolCall(name="eval", display_str="eval()", icon="*", args={}, call_id="large")
+        )
+        large = json.dumps(
+            {
+                "result": "x" * 9000 + "exact-tail",
+                "truncated": True,
+                "outcomes": [{"tool_name": "execute", "status": "completed"}],
+                "output_file": {"path": "/cleared/selected.json"},
+            }
+        )
+        await app._render(ev.ToolResult(preview="done", full_output=large, call_id="large"))
+        large_panel = list(app.query(CodeModePanel))[-1]
+        assert large_panel.heading.render().plain == "Ran execute"
+        assert "exact-tail" in large_panel.output.render().plain
+        assert "/cleared/selected.json" in large_panel.note.render().plain
         # ID-less legacy events use the most recent Code Mode component.
         await app._render(ev.ToolCall(name="eval", display_str="eval()", icon="*", args={}))
         await app._render(ev.ToolResult(preview="done", full_output='{"result":42,"calls":0}'))
-        assert str(list(app.query(CodeModePanel))[-1].title) == "eval"
+        assert list(app.query(CodeModePanel))[-1].heading.render().plain == "Ran eval"
         # Other tools keep their existing condensed group.
         await app._render(
             ev.ToolCall(name="read_file", display_str="read_file(a.py)", icon="*", call_id="read")
         )
         assert app._tool_group_entries[-1]["category"] == "Explored"
+
+
+@pytest.mark.asyncio
+async def test_compact_result_preview_keeps_full_output_source_and_recovery():
+    from textual.app import App, ComposeResult
+
+    class Preview(App):
+        def compose(self) -> ComposeResult:
+            yield CodeModePanel("// exact [source]\nreturn result;")
+
+    app = Preview()
+    async with app.run_test(size=(64, 24)) as pilot:
+        panel = app.query_one(CodeModePanel)
+        result = "one\ntwo\n[bold]three[/bold]\nfour\nfive"
+        output = json.dumps(
+            {"result": result, "outcomes": [{"tool_name": "execute", "status": "completed"}]}
+        )
+        panel.finish(output, is_error=False, preview="done")
+        await pilot.pause()
+        assert panel.heading.render().plain == "Ran execute"
+        assert panel.preview.render().plain == "└ one\n  two\n  [bold]three[/bold]"
+        assert "+ 2 lines" in str(panel.title)
+        assert panel.collapsed
+        assert "five" not in panel.preview.render().plain
+        assert "five" in panel.output.render().plain
+        panel.query_one("CollapsibleTitle").focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert not panel.collapsed
+        assert panel.source.render().plain == "// exact [source]\nreturn result;"
+        saved = "/cleared/selected.json"
+        panel.finish(
+            json.dumps({"result": "prefix", "truncated": True, "output_file": {"path": saved}}),
+            is_error=False,
+            preview="done",
+        )
+        await pilot.pause()
+        assert panel.note.display
+        assert saved in panel.note.render().plain
+        assert not panel.collapsed  # A finishing event retains the user's disclosure state.

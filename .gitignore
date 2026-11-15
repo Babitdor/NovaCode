@@ -23,6 +23,8 @@ docs/*
 !docs/session-loops.md
 !docs/prompt-audit.md
 !docs/mcp-code-mode.md
+!docs/code-mode-benchmark.md
+!docs/benchmarks/
 !docs/attribution.md
 !docs/context-learning/
 !docs/reasoning-support.md

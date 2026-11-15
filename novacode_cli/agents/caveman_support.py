@@ -17,7 +17,9 @@ from typing import Any, Literal
 from langchain.tools import ToolRuntime, tool
 from langchain_core.messages import AIMessage, ToolMessage
 
-EXECUTION_TOOLS = frozenset({"execute", "shell", "bash", "python_kernel", "run_tests"})
+EXECUTION_TOOLS = frozenset(
+    {"execute", "shell", "bash", "python_kernel", "run_tests", "eval", "MCPCode"}
+)
 BROWSE_TOOLS = frozenset({"fetch_url", "web_search", "browser_automate"})
 MAX_SOURCE = 2_000_000
 MIN_SOURCE = 2000

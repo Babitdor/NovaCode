@@ -2707,6 +2707,7 @@ This file stores your preferences and context that persist across sessions.
         CodeModeMiddleware(
             mcp_middleware if _has_mcp else None,
             auto_approve=auto_approve,
+            offload_dir=cleared_dir(agent_dir) if agent_dir else None,
         ),
     )
 

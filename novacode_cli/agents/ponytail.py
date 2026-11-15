@@ -42,8 +42,16 @@ def ponytail_instructions(level: str = "full") -> str:
 
 
 def nova_ponytail_instructions(level: str = "full") -> str:
-    """Preserve upstream instructions with Nova's execution and evidence boundaries."""
-    return ponytail_instructions(level) + (
+    """Apply Nova's task and format boundaries to the pinned upstream behavior."""
+    instructions = ponytail_instructions(level).replace(
+        "End your reply with one or two lines: what you skipped or did not check, "
+        "and any risk the user must know.",
+        "When prose is allowed, end with one or two lines describing skipped checks "
+        "and material risks. For code-only, JSON-only or other exact output formats, "
+        "return only the requested output and omit this closing prose.",
+        1,
+    )
+    return instructions + (
         "\n\nNova host boundaries: Ponytail changes implementation economy and prose, "
         "not task scope, permissions, correctness or verification. Complete all explicitly "
         "requested behavior, including error paths and compatibility. Lite suggestions and "
@@ -51,6 +59,8 @@ def nova_ponytail_instructions(level: str = "full") -> str:
         "Do not remove validation, tests or required functionality to minimize a diff. "
         "Choose readable code over compressed code. Report only observed test results; "
         "state unverified behavior and material risks without inventing either. "
+        "Respect explicit output formats. For code-only or JSON-only requests, omit "
+        "the optional closing prose; never add a footer outside the requested format. "
         "Existing coding workflow and security rules still apply."
     )
 

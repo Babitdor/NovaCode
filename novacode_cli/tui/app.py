@@ -1552,11 +1552,12 @@ class NovaApp(App):
         margin: 1 0; background: $surface;
     }
     #transcript > .tool { color: $warning; padding: 0 2; margin: 1 0; background: $background; }
-    #transcript > CodeModePanel.tool { margin: 0; padding: 0 1; }
-    #transcript > CodeModePanel.tool > CollapsibleTitle { color: $text; }
+    #transcript > CodeModePanel.tool {
+        margin: 0 0 1 0; padding: 0; background: transparent;
+    }
+    #transcript > CodeModePanel.tool > CollapsibleTitle { color: $text-muted; }
     #transcript > CodeModePanel.tool > CollapsibleTitle:hover,
     #transcript > CodeModePanel.tool > CollapsibleTitle:focus { color: $accent; }
-    #transcript > CodeModePanel.tool.failed > CollapsibleTitle { color: $error; }
     .toolbody { color: $text-muted; margin: 0; height: auto; }
     .terminal-log {
         /* Scale with terminal height; floor at the old fixed 5 rows so small
@@ -7418,14 +7419,14 @@ class NovaApp(App):
         for hint in comp.query(".background-shell-hint"):
             hint.display = False
         pal = self._palette
+        if isinstance(comp, CodeModePanel):
+            comp.finish(full_output or "", is_error=is_error, preview=preview)
+            return
         mark = "•"
         comp.title = f"{base}  {mark} {_esc(preview)}"
         out = full_output or "(no output)"
         if len(out) > _TOOL_ERROR_MAX_CHARS:
             out = out[:_TOOL_ERROR_MAX_CHARS] + "\n… (truncated)"
-        if isinstance(comp, CodeModePanel):
-            comp.finish(out, is_error=is_error, preview=preview)
-            return
         body_style = pal.tool_fail if is_error else ""
         if isinstance(body, OutputLog):
             body.clear()

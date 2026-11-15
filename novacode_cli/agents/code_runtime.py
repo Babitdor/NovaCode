@@ -19,6 +19,9 @@ BOOTSTRAP = """
 // The library reuses its bridge when the registered tool names haven't changed.
 globalThis.__nova_mcp = tools.novaDispatch ?? globalThis.__nova_mcp;
 globalThis.tools = Object.freeze({
+  search: (options = {}) => __nova_mcp({raw:JSON.stringify({
+    limit:5, ...options, namespace:'tools', action:'search'
+  })}).then(JSON.parse),
   list: (options = {}) => __nova_mcp({raw:JSON.stringify({
     ...options, namespace:'tools', action:'list'
   })}).then(JSON.parse),

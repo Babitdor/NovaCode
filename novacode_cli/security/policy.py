@@ -236,6 +236,18 @@ class ApprovalPolicy:
         args = args or {}
         if self.tool_default(tool_name) == "deny":
             return ApprovalDecision("deny", rule="tool-default")
+        if tool_name == "execute" and "shell" in args:
+            shell = args["shell"]
+            if shell not in ("native", "bash"):
+                return ApprovalDecision("deny", "Unsupported shell selection", "execution-shell")
+            legacy = {key: value for key, value in args.items() if key != "shell"}
+            decisions = (
+                self.evaluate("execute", legacy),
+                self.evaluate("bash" if shell == "bash" else "shell", legacy),
+            )
+            return max(
+                decisions, key=lambda decision: {"allow": 0, "ask": 1, "deny": 2}[decision.tier]
+            )
         if tool_name == "MCPTool":
             if args.get("action", "list") in ("list", "describe"):
                 return ApprovalDecision("allow", rule="mcp-discovery")

@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from typing import TYPE_CHECKING
 
 from rich.text import Text
+from textual.containers import Horizontal
 from textual.widgets import Collapsible, Static
+
+if TYPE_CHECKING:
+    from textual.app import ComposeResult
 
 CODE_MODE_TOOLS = frozenset({"eval", "MCPCode"})
 _MAX_TOOL_NAMES = 3
+_PREVIEW_LINES = 3
+_PREVIEW_WIDTH = 160
 
 
 def _line(value: str, limit: int = 120) -> str:
@@ -82,8 +89,11 @@ def summarize_run(
             if isinstance(data.get(key), str) and data[key]
         )
         if data.get("truncated") is True:
+            saved = data.get("output_file")
             notes.append(
-                "Selected output is truncated; inspect smaller slices before relying on it."
+                f"Complete selected result: {_line(saved['path'], 240)}"
+                if isinstance(saved, dict) and isinstance(saved.get("path"), str)
+                else "Selected output is truncated; inspect smaller slices before relying on it."
             )
         note = "\n".join(notes)
     if failed and not note:
@@ -92,50 +102,106 @@ def summarize_run(
 
 
 class CodeModePanel(Collapsible):
-    """One quiet row per script; source and output stay independently inspectable."""
+    """A status row and short result preview, with exact details behind disclosure."""
 
     DEFAULT_CSS = """
-    CodeModePanel { height: auto; border: round $accent 55%; padding: 0 1; }
-    CodeModePanel.tool-active, CodeModePanel:focus-within { border: round $accent; }
-    CodeModePanel.failed { border: round $error 70%; }
-    CodeModePanel > CollapsibleTitle { color: $text; }
-    CodeModePanel .code-mode-note { height: auto; margin-bottom: 1; }
+    CodeModePanel {
+        height: auto; border: none; padding: 0; margin-bottom: 1;
+        background: transparent;
+    }
+    CodeModePanel:focus-within { background-tint: transparent; }
+    CodeModePanel .code-mode-heading { height: 1; }
+    CodeModePanel .code-mode-status { width: 2; color: $success; }
+    CodeModePanel.tool-active .code-mode-status { color: $warning; }
+    CodeModePanel.failed .code-mode-status { color: $error; }
+    CodeModePanel .code-mode-label {
+        width: 1fr; color: $text; text-wrap: nowrap; text-overflow: ellipsis;
+    }
+    CodeModePanel > CollapsibleTitle {
+        color: $text-muted; padding: 0 0 0 2; text-style: none;
+    }
+    CodeModePanel > Contents { padding-left: 2; }
+    CodeModePanel .code-mode-note { height: auto; padding-left: 2; color: $text-muted; }
+    CodeModePanel .code-mode-preview {
+        height: auto; color: $text-muted; text-wrap: nowrap; text-overflow: ellipsis;
+    }
     CodeModePanel .code-mode-source, CodeModePanel .code-mode-output { height: auto; }
-    CodeModePanel.failed > CollapsibleTitle { color: $error; }
-    CodeModePanel .code-mode-note { color: $text-muted; }
+    CodeModePanel Collapsible {
+        border: none; background: transparent; padding: 0;
+    }
     CodeModePanel.failed .code-mode-note { color: $error; }
     """
 
     def __init__(self, code: str, *, tool_name: str = "eval") -> None:
         """Keep the exact script and result behind separate disclosure controls."""
-        self.note = Static("Script is running.", classes="code-mode-note", markup=False)
+        self.status = Static("•", classes="code-mode-status")
+        self.heading = Static(Text(f"Running {tool_name}"), classes="code-mode-label")
+        self.preview = Static("", classes="code-mode-preview", markup=False)
+        self.preview.display = False
+        self.note = Static("", classes="code-mode-note", markup=False)
+        self.note.display = False
         self.tool_name = tool_name
         self.source = Static(Text(code or "(script unavailable)"), classes="code-mode-source")
         self.output = Static("Waiting for output.", classes="code-mode-output", markup=False)
         super().__init__(
-            self.note,
             Collapsible(self.source, title="JavaScript", collapsed=True),
-            Collapsible(self.output, title="Full output", collapsed=True),
-            title=tool_name,
+            self.output,
+            title="JavaScript & full output (Enter to expand)",
             collapsed=True,
+            collapsed_symbol="",
+            expanded_symbol="",
+            classes="tool-active",
         )
+
+    def compose(self) -> ComposeResult:
+        """Keep the summary visible while the disclosure hides only full details."""
+        yield Horizontal(self.status, self.heading, classes="code-mode-heading")
+        yield self.preview
+        yield self.note
+        yield from super().compose()
 
     def finish(self, output: str, *, is_error: bool, preview: str) -> None:
         """Update this run alone and surface failures without opening raw output."""
         title, note, failed = summarize_run(
             output, is_error=is_error, preview=preview, fallback=self.tool_name
         )
-        # Rich Text keeps tool-provided brackets literal in a disclosure title.
-        self.title = Text(title)
-        self.note.update(
-            note or "The script completed. Expand Full output to inspect its selected result."
-        )
+        # Rich Text keeps tool-provided brackets literal in the summary and result.
+        self.heading.update(Text.assemble(("Failed " if failed else "Ran ", "bold"), title))
         try:
-            pretty = json.dumps(json.loads(output), indent=2, ensure_ascii=False)
+            data = json.loads(output)
+            pretty = json.dumps(data, indent=2, ensure_ascii=False)
         except (ValueError, TypeError):
+            data = None
             pretty = output or "(no output)"
+        selected = (
+            data.get("error") or data.get("result", preview)
+            if isinstance(data, dict)
+            else output or preview
+        )
+        text = (
+            selected
+            if isinstance(selected, str)
+            else json.dumps(selected, ensure_ascii=False, indent=2)
+        )
+        lines = text.splitlines() or ["(no output)"]
+        shown = [
+            ("└ " if index == 0 else "  ")
+            + line[:_PREVIEW_WIDTH]
+            + ("…" if len(line) > _PREVIEW_WIDTH else "")
+            for index, line in enumerate(lines[:_PREVIEW_LINES])
+        ]
+        self.preview.update(Text("\n".join(shown)))
+        self.preview.display = True
+        omitted = max(0, len(lines) - _PREVIEW_LINES)
+        more = f"+ {omitted} lines · " if omitted else ""
+        self.title = f"{more}Full output (Enter to expand)"
+        if isinstance(selected, str) and note.splitlines()[:1] == [_line(selected)]:
+            note = "\n".join(note.splitlines()[1:])
+        self.note.update(note)
+        self.note.display = bool(note) and (
+            failed
+            or (isinstance(data, dict) and bool(data.get("truncated") or data.get("state_warning")))
+        )
         self.output.update(Text(pretty))
         self.set_class(failed, "failed")
         self.remove_class("tool-active")
-        if failed:
-            self.collapsed = False

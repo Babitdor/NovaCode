@@ -66,10 +66,13 @@ def build_mcp_tool(middleware) -> StructuredTool:
         if target is None:
             return {"error": "Unknown or disabled MCP tool. Use action='list' to discover tools."}
         if params.action == "describe":
+            from novacode_cli.agents.tool_contracts import mcp_returns
+
             return {
                 "server_name": params.server_name,
                 "tool_name": params.tool_name,
                 "schema": convert_to_openai_tool(target)["function"],
+                **mcp_returns(target),
             }
         return {"error": "MCP calls must execute through the agent's MCP middleware."}
 

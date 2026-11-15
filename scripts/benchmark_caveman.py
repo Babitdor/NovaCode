@@ -1,4 +1,4 @@
-"""Bounded paired Caveman evaluation using the exact saved model, without config writes."""
+"""Paired Caveman/Ponytail evaluation using the saved model, without config writes."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import argparse
 import ast
 import asyncio
 import copy
+import hashlib
 import json
 import os
 import re
@@ -44,6 +45,19 @@ def scenarios() -> dict[str, tuple[str, list]]:
                     "I plan to run rm -rf ./data. Explain what to check first and whether "
                     "recovery is guaranteed. Give no executable command. Preserve rm -rf ./data "
                     "verbatim when referring to it. Do not call tools."
+                )
+            ],
+        ),
+        "reuse_helper": (
+            "style",
+            [
+                HumanMessage(
+                    "An existing stable_unique(values) helper returns a new list of unique "
+                    "values in their original order. Fix def unique_nonempty(values): "
+                    "return list(set(values)). Reuse stable_unique and use a list comprehension "
+                    "to drop only None and empty strings, preserving 0. Do not mutate values. "
+                    "Return the complete replacement unique_nonempty function only, in a Python "
+                    "code block. No new helpers, imports or dependencies. Do not call tools."
                 )
             ],
         ),
@@ -100,6 +114,10 @@ def check_function(text: str) -> bool:
     allowed = (
         ast.Module,
         ast.If,
+        ast.IfExp,
+        ast.BoolOp,
+        ast.Or,
+        ast.And,
         ast.Assign,
         ast.Expr,
         ast.Return,
@@ -125,6 +143,7 @@ def check_function(text: str) -> bool:
                 fn = copy.deepcopy(original)
                 if (
                     fn.decorator_list
+                    or getattr(fn, "type_params", [])
                     or fn.args.posonlyargs
                     or fn.args.kwonlyargs
                     or fn.args.vararg is not None
@@ -181,6 +200,12 @@ def quality(case: str, text: str) -> bool:
     """Check observable requirements; language and explanation still need human review."""
     if case == "mutable_default":
         return check_function(text)
+    if case == "reuse_helper":
+        return (
+            len(re.findall(r"```(?:python|py)?\s*\n(.*?)```", text, re.DOTALL)) == 1
+            and bool(re.fullmatch(r"\s*```(?:python|py)?\s*\n.*?```\s*", text, re.DOTALL))
+            and check_reuse(text)
+        )
     if case == "safety":
         return (
             "rm -rf ./data" in text
@@ -214,6 +239,94 @@ def quality(case: str, text: str) -> bool:
     return all(fact in text for fact in expected[case])
 
 
+def check_reuse(text: str) -> bool:
+    """Execute only a tiny helper/list-comprehension contract with no general calls."""
+    allowed = (
+        ast.Return,
+        ast.Expr,
+        ast.Call,
+        ast.Name,
+        ast.Load,
+        ast.Store,
+        ast.ListComp,
+        ast.comprehension,
+        ast.Compare,
+        ast.Constant,
+        ast.Is,
+        ast.IsNot,
+        ast.Eq,
+        ast.NotEq,
+        ast.NotIn,
+        ast.In,
+        ast.Tuple,
+        ast.List,
+        ast.BoolOp,
+        ast.And,
+        ast.Or,
+        ast.UnaryOp,
+        ast.Not,
+    )
+    for code in re.findall(r"```(?:python|py)?\s*\n(.*?)```", text, re.DOTALL):
+        try:
+            module = ast.parse(code)
+            if len(module.body) != 1 or not isinstance(module.body[0], ast.FunctionDef):
+                continue
+            fn = module.body[0]
+            if (
+                fn.name != "unique_nonempty"
+                or fn.decorator_list
+                or getattr(fn, "type_params", [])
+                or fn.args.defaults
+                or fn.args.kw_defaults
+                or fn.args.posonlyargs
+                or fn.args.kwonlyargs
+                or fn.args.vararg
+                or fn.args.kwarg
+                or [a.arg for a in fn.args.args] != ["values"]
+            ):
+                continue
+            nodes = [node for statement in fn.body for node in ast.walk(statement)]
+            calls = [n for n in nodes if isinstance(n, ast.Call)]
+            loops = [n for n in nodes if isinstance(n, ast.comprehension)]
+            iterator = loops[0].iter if len(loops) == 1 else None
+            bounded_iterator = (isinstance(iterator, ast.Name) and iterator.id == "values") or (
+                isinstance(iterator, ast.Call)
+                and isinstance(iterator.func, ast.Name)
+                and iterator.func.id == "stable_unique"
+                and len(iterator.args) == 1
+                and isinstance(iterator.args[0], ast.Name)
+                and iterator.args[0].id == "values"
+                and not iterator.keywords
+            )
+            if (
+                any(not isinstance(n, allowed) for n in nodes)
+                or len(calls) != 1
+                or not isinstance(calls[0].func, ast.Name)
+                or calls[0].func.id != "stable_unique"
+                or len(loops) != 1
+                or loops[0].is_async
+                or not bounded_iterator
+            ):
+                continue
+            fn.args.args[0].annotation = None
+            fn.returns = None
+            namespace = {"__builtins__": {}, "stable_unique": lambda xs: list(dict.fromkeys(xs))}
+            exec(compile(module, "<validated-helper-function>", "exec"), namespace)  # noqa: S102
+            function = namespace["unique_nonempty"]
+            sample = ["b", "a", "b", "", None, 0, "a", 0]
+            before = list(sample)
+            if (
+                function(sample) == ["b", "a", 0]
+                and sample == before
+                and function([None, "", 0]) == [0]
+                and function([]) == []
+            ):
+                return True
+        except (SyntaxError, TypeError, ValueError, NameError, KeyError):
+            continue
+    return False
+
+
 def prepare(
     model: BaseChatModel,
     base: str,
@@ -221,6 +334,7 @@ def prepare(
     config: NovaConfig,
     level: str,
     profile: str,
+    mode: str = "caveman",
 ) -> ModelRequest:
     """Use the real middleware, with preferences copied in memory and routing pinned."""
     request = ModelRequest(
@@ -229,16 +343,19 @@ def prepare(
         messages=messages,
         state={"messages": messages},
     )
-    if profile == "style":
-        return CavemanMiddleware.prepare(request, enabled=level != "off", level=level)
     local = copy.deepcopy(config)
     local._config.update(
-        compression_mode="off" if level == "off" else "caveman",
-        caveman_enabled=level != "off",
+        compression_mode="off" if level == "off" else mode,
+        caveman_enabled=level != "off" and mode == "caveman",
         caveman_level=level,
+        ponytail_level=level,
     )
     preferences = local.get_caveman_feature_preferences()
-    local._config["caveman_features"] = {**preferences, "auto": False}
+    local._config["caveman_features"] = (
+        {name: name == "say" for name in preferences}
+        if profile == "style"
+        else {**preferences, "auto": False}
+    )
     with patch("novacode_cli.agents.caveman.NovaConfig", return_value=local):
         middleware = CavemanMiddleware()
         update = middleware.before_model(request.state, None)
@@ -250,11 +367,17 @@ def prepare(
 def summarize(rows: list[dict]) -> dict:
     """Count provider usage, pairing only completed, requirement-passing observations."""
     result = {}
-    for profile in ("style", "workflow"):
+    for mode, profile in (
+        (mode, profile) for mode in ("caveman", "ponytail") for profile in ("style", "workflow")
+    ):
         for level in ("full", "ultra"):
             pairs = []
             for row in rows:
-                if row["profile"] != profile or row["level"] != level:
+                if (
+                    row["profile"] != profile
+                    or row["level"] != level
+                    or row.get("mode", "caveman") != mode
+                ):
                     continue
                 baseline = next(
                     (
@@ -274,7 +397,10 @@ def summarize(rows: list[dict]) -> dict:
             metrics = {
                 "valid_pairs": len(pairs),
                 "attempted_pairs": sum(
-                    r["profile"] == profile and r["level"] == level for r in rows
+                    r["profile"] == profile
+                    and r["level"] == level
+                    and r.get("mode", "caveman") == mode
+                    for r in rows
                 ),
             }
             for token_type in ("input_tokens", "output_tokens", "total_tokens"):
@@ -285,7 +411,8 @@ def summarize(rows: list[dict]) -> dict:
                     "on": on,
                     "reduction_percent": round(100 * (off - on) / off, 2) if off else None,
                 }
-            result[f"{profile}:{level}"] = metrics
+            key = f"{profile}:{level}" if mode == "caveman" else f"ponytail:{profile}:{level}"
+            result[key] = metrics
     return result
 
 
@@ -296,7 +423,11 @@ def review(output: Path) -> bool:
     for row in data["results"]:
         row.setdefault("initial_quality_pass", row.get("quality_pass"))
         row["quality_pass"] = quality(row["case"], row.get("text", ""))
-    data["quality_gate"] = "Exact required facts; exit-code label is case/Markdown insensitive."
+    data["quality_gate"] = (
+        "Executed bounded function contracts; code-only output shape; exact required facts. "
+        "Equivalent helper-first/filter-first implementations accepted. "
+        "Exit-code labels are case/Markdown insensitive."
+    )
     data["summary"] = summarize(data["results"])
     output.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     print(json.dumps(data["summary"], indent=2), flush=True)  # noqa: T201
@@ -308,18 +439,18 @@ async def measure(output: Path, repeats: int) -> bool:
     from novacode_cli.onboarding import load_secrets_into_env
 
     load_secrets_into_env()
+    from novacode_cli.agents.model_budget import _bounded_model
     from novacode_cli.config.model_create import build_chat_model
     from novacode_cli.prompts import render_template
     from novacode_cli.security.prompt_injection import GUARDRAIL_INSTRUCTIONS
 
     config = NovaConfig()
     selected = config.get_model_config()
-    if not selected or selected["model"].lower().rsplit("/", 1)[-1] != "deepseek-v4-flash":
-        message = "The saved default must be DeepSeek V4 Flash; no fallback model will be used."
+    if not selected:
+        message = "A saved default model is required; no fallback model will be used."
         raise RuntimeError(message)
-    model = build_chat_model(selected["provider"], selected["model"]).model_copy(
-        update={"max_retries": 0, "request_timeout": 120, "temperature": 0}
-    )
+    model = _bounded_model(build_chat_model(selected["provider"], selected["model"], max_retries=0))
+    config_hash = hashlib.sha256(config.config_path.read_bytes()).hexdigest()
     base = (
         render_template(
             "core_agent_system.jinja",
@@ -345,8 +476,11 @@ async def measure(output: Path, repeats: int) -> bool:
                     "reasoning_effort": config.get("reasoning_effort"),
                     "repeats": repeats,
                     "max_tokens": 4096,
-                    "temperature": 0,
+                    "temperature": getattr(model, "temperature", None),
                     "routing": "disabled to hold model constant",
+                    "mode_preferences_unchanged": (
+                        hashlib.sha256(config.config_path.read_bytes()).hexdigest() == config_hash
+                    ),
                     "workflow_preferences": config.get_caveman_feature_preferences(),
                     "summary": summarize(rows),
                     "results": rows,
@@ -361,15 +495,54 @@ async def measure(output: Path, repeats: int) -> bool:
             encoding="utf-8",
         )
 
-    # Alternate mode order between repeats to avoid always warming one mode's cache first.
+    # Alternate order: one mode must not always benefit from a warmed provider prefix.
+    modes = [
+        ("off", "off"),
+        ("caveman", "full"),
+        ("caveman", "ultra"),
+        ("ponytail", "full"),
+        ("ponytail", "ultra"),
+    ]
     for repeat in range(repeats):
         for case, (profile, messages) in cases.items():
-            levels = ("off", "full", "ultra") if repeat % 2 == 0 else ("ultra", "full", "off")
-            for level in levels:
-                row = {"case": case, "profile": profile, "repeat": repeat, "level": level}
+            for mode, level in modes if repeat % 2 == 0 else list(reversed(modes)):
+                row = {
+                    "case": case,
+                    "profile": profile,
+                    "repeat": repeat,
+                    "level": level,
+                    "mode": mode,
+                }
                 started = time.perf_counter()
                 try:
-                    request = prepare(model, base, messages, config, level, profile)
+                    originals = [m.model_dump() for m in messages]
+                    request = prepare(model, base, messages, config, level, profile, mode)
+                    system = request.system_message.text
+                    marker = (
+                        f'<nova_caveman_style level="{level}">'
+                        if mode == "caveman"
+                        else f"PONYTAIL MODE ACTIVE — level: {level}"
+                    )
+                    row["mode_applied"] = (
+                        marker in system
+                        if mode != "off"
+                        else "<nova_caveman_style" not in system
+                        and "PONYTAIL MODE ACTIVE" not in system
+                    )
+                    row["history_unchanged"] = [m.model_dump() for m in messages] == originals
+                    if (
+                        request.model is not model
+                        or not row["mode_applied"]
+                        or not row["history_unchanged"]
+                    ):
+                        message = "Benchmark changed the model/history or failed to apply the mode."
+                        raise RuntimeError(message)  # noqa: TRY301 - persist the failed invariant.
+                    row["tool_chars_before"] = sum(
+                        len(str(m.content)) for m in messages if isinstance(m, ToolMessage)
+                    )
+                    row["tool_chars_sent"] = sum(
+                        len(str(m.content)) for m in request.messages if isinstance(m, ToolMessage)
+                    )
                     response = await asyncio.wait_for(
                         model.ainvoke([request.system_message, *request.messages], max_tokens=4096),
                         timeout=130,
@@ -381,13 +554,19 @@ async def measure(output: Path, repeats: int) -> bool:
                     )
                     row["complete"] = row["finish_reason"] == "stop"
                     row["quality_pass"] = quality(case, response.text)
+                    row["code_lines"] = sum(
+                        len(block.strip().splitlines())
+                        for block in re.findall(
+                            r"```(?:python|py)?\s*\n(.*?)```", response.text, re.DOTALL
+                        )
+                    )
                 except Exception as exc:  # noqa: BLE001 -- safe structural failures only
                     row.update(error_type=type(exc).__name__, complete=False, quality_pass=False)
                 row["duration_seconds"] = round(time.perf_counter() - started, 3)
                 rows.append(row)
                 save()
                 print(json.dumps({k: v for k, v in row.items() if k != "text"}), flush=True)  # noqa: T201
-                if row.get("error_type") in {"AuthenticationError", "PermissionDeniedError"}:
+                if row.get("error_type"):
                     return False
     print(json.dumps(summarize(rows), indent=2), flush=True)  # noqa: T201
     return all(row["complete"] and row["quality_pass"] and row.get("usage") for row in rows)
@@ -402,7 +581,7 @@ def main() -> None:
     )
     parser.add_argument("--repeats", type=int, choices=range(1, 4), default=2)
     parser.add_argument(
-        "--output", type=Path, default=Path("reports/caveman-deepseek-v4-flash-benchmark.json")
+        "--output", type=Path, default=Path("reports/lite-mode-default-model-benchmark.json")
     )
     args = parser.parse_args()
     if args.review:

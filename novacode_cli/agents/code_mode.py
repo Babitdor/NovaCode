@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from quickjs_rs import TimeoutError as QuickJSTimeoutError
 
 from novacode_cli.agents.strict_tools import _validator
+from novacode_cli.agents.tool_offload import save_tool_result
 from novacode_cli.agents.tool_search_variants import SEARCH_VARIANTS
 from novacode_cli.config.nova_config import NovaConfig
 from novacode_cli.core.tool_results import MAX_INTERMEDIATE_CHARS, capture_file_read, data_text
@@ -31,6 +32,7 @@ from novacode_cli.security.policy import get_policy
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
+    from pathlib import Path
 
     from langchain.agents.middleware.types import ModelRequest, ToolCallRequest
     from langchain_core.messages.tool import ToolCall
@@ -59,15 +61,22 @@ CODE_MODE_GUIDANCE = """
 ## Code Mode
 Use eval as your primary control surface for ordinary operations. Compose discovery,
 native calls, MCP calls, filtering and bounded Promise.all fan-out in JavaScript.
-Prefer one eval call per step; compose parallel work inside it with Promise.all.
-Use tools.list/describe/call and mcp.list/describe/call; inspect schemas before calls.
-tools.list accepts offset and limit, not query; filter its tools array in JavaScript.
+Prefer one eval call per step. Use Promise.all only for independent operations.
+Start discovery with await tools.search({query:'focused capability', limit:5}); it
+searches callable native and MCP tools and returns exact invocation targets.
+Use tools.describe or mcp.describe only when you need arguments or return contracts.
+Keep tools.list/describe/call and mcp.list/describe/call for browsing and execution.
+tools.list accepts offset and limit, not query.
 JavaScript runs in QuickJS: Node.js Buffer, process and require are unavailable.
-On Windows, invoke PowerShell explicitly when using its cmdlets through execute.
+Use execute with shell:'native' by default (PowerShell on Windows, platform shell
+elsewhere), or shell:'bash' for Bash syntax. Always include the shell selector in
+new calls. shell/bash names and execute calls without a selector are legacy paths.
+Explicit shell selection never retries a command in another dialect automatically.
 Tool calls return native data, often plain text; do not assume an execute result has .stdout.
 Use task({description, subagentType, responseSchema?}) for configured subagents,
 including explicit @agent requests. tools.describe('task') lists the current roster.
 eval accepts statements and top-level await; its final expression is the selected result.
+Prefer temporary locals inside await (async () => { ...; return smallResult; })().
 Variables persist within this conversation. Keep intermediate data in JavaScript;
 return a compact synthesis or explicitly print selected output with console.log.
 When knowledge_lookup is available, prefer it for code/documentation orientation:
@@ -91,7 +100,9 @@ If a raw page exceeds display limits, request a smaller offset/limit instead of 
 Use exact workspace virtual paths from discovery; do not reconstruct Windows host paths.
 On file-not-found, use glob/ls to discover the correct path before retrying.
 Keep large read batches in variables and return small passages; truncated output is incomplete
-evidence. Inspect smaller slices from those variables before claiming you reviewed the source.
+evidence. Oversized selected results include output_file when successfully saved: read that
+virtual path (UTF-8 JSON) in small pages, even after interpreter state loss. If saving failed,
+inspect smaller slices of surviving variables; do not replay side effects to recover output.
 For Markdown edits, use quoted strings with newline escapes or arrays joined with '\\n';
 backticks inside JavaScript template literals must be escaped exactly once. Never replay a
 whole script after a runtime failure without checking which side effects already completed.
@@ -186,7 +197,8 @@ class NativeInput(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True)
     namespace: Literal["tools"]
-    action: Literal["list", "describe", "call"]
+    action: Literal["list", "describe", "call", "search"]
+    query: str = Field(default="", max_length=500)
     tool_name: str = ""
     arguments: dict[str, Any] = Field(default_factory=dict)
     offset: int = Field(default=0, ge=0)
@@ -248,6 +260,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         wall_timeout: float = 60,
         call_timeout: float = 30,
         memory_limit: int = 64 * 1024 * 1024,
+        offload_dir: Path | None = None,
     ) -> None:
         """Use the owning graph's tools, optional MCP inventory and approval setting."""
         super().__init__(
@@ -269,6 +282,7 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         self._wall_timeout = wall_timeout
         self._call_timeout = call_timeout
         self._memory_limit = memory_limit
+        self._offload_dir = offload_dir
         self._state_warnings: dict[str, str] = {}
         self._execution_locks: dict[str, asyncio.Lock] = {}
 
@@ -283,14 +297,16 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                 description=(
                     "Run JavaScript to discover, call and process Nova tools. "
                     "code is an async function body: return the final small result. "
+                    "await tools.search({query, limit?}) finds native and MCP invocation targets; "
                     "await tools.list({offset?, limit?}); await tools.describe(tool_name); "
-                    "await tools.call(tool_name, arguments) returns structured data. "
+                    "await tools.call(tool_name, arguments) returns native data; "
+                    "describe reports verified or unknown return contracts. "
                     "task({description, subagentType, responseSchema?}) delegates "
                     "to a configured agent. "
                     "await mcp.list({server_name?, offset?, limit?}); "
                     "await mcp.describe(server_name, tool_name) returns the original schema; "
-                    "await mcp.call(server_name, tool_name, arguments) returns structured data. "
-                    "Use exact names/schema from discovery. Supports loops and Promise.all. "
+                    "await mcp.call(server_name, tool_name, arguments) returns native data. "
+                    "Use exact names/schema from discovery. Parallelize independent calls only. "
                     "No direct filesystem, network or imports. "
                     "State persists in this conversation. "
                     "Nested calls retain permissions and pause for human approval. "
@@ -528,9 +544,22 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                 ),
             }
             if truncated:
+                saved = await asyncio.to_thread(
+                    save_tool_result,
+                    self._offload_dir,
+                    request.tool_call["id"] or "selected-result",
+                    request.tool_call["name"],
+                    json.dumps(result, ensure_ascii=True, allow_nan=False),
+                )
+                if saved is not None:
+                    body["output_file"] = {"path": saved, "encoding": "utf-8", "format": "json"}
                 body["notice"] = (
-                    "Output is incomplete. Inspect smaller slices of your saved interpreter "
-                    "variables; do not claim truncated source was reviewed or replay side effects."
+                    "Preview is incomplete. Read output_file.path for the complete selected "
+                    "result, encoded as UTF-8 JSON. Do not replay completed side effects."
+                    if saved is not None
+                    else "Preview is incomplete. Saving failed or offload storage "
+                    "is unavailable; no recoverable file was saved. Inspect smaller slices of "
+                    "surviving interpreter variables. Do not replay completed side effects."
                 )
             warning = self._state_warnings.pop(_resolve_thread_id(self._fallback_thread_id), None)
             if warning is not None:
@@ -577,9 +606,14 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
         self, request: ToolCallRequest, handler: Callable, params: NativeInput
     ) -> Any:
         available = _native_tools(request)
+        from novacode_cli.shell.tool_surface import execution_tools
+
+        public = {t.name: t for t in execution_tools(list(available.values()))}
+        if params.action == "search":
+            return await self._search(request, public, params.query, params.limit)
         if params.action == "list":
             entries = [
-                {"name": t.name, "description": t.description[:300]} for t in available.values()
+                {"name": t.name, "description": t.description[:300]} for t in public.values()
             ]
             return {
                 "tools": entries[params.offset : params.offset + params.limit],
@@ -587,6 +621,8 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                 "offset": params.offset,
             }
         target = available.get(params.tool_name)
+        if params.action == "describe" or "shell" in params.arguments:
+            target = public.get(params.tool_name, target)
         if params.action == "describe" and params.tool_name == "task":
             target = next((t for t in request.runtime.tools if t.name == "task"), None)
         if target is None:
@@ -594,8 +630,71 @@ class CodeModeMiddleware(CodeInterpreterMiddleware):
                 "Unknown or unsupported tool; use tools.list() or call the tool directly."
             )
         if params.action == "describe":
-            return {"name": target.name, "schema": convert_to_openai_tool(target)["function"]}
+            from novacode_cli.agents.tool_contracts import native_returns
+
+            return {
+                "name": target.name,
+                "schema": convert_to_openai_tool(target)["function"],
+                "returns": native_returns(target),
+            }
         return await self._invoke(request, handler, target, params.arguments)
+
+    async def _search(
+        self, request: ToolCallRequest, available: dict, query: str, limit: int
+    ) -> dict:
+        """Rank only callable capabilities in this invocation, keeping routing identities."""
+        from novacode_cli.agents.tool_search import ToolSearchMiddleware
+        from novacode_cli.agents.tool_search_variants import parameter_text
+
+        targets = [
+            (target, {"namespace": "tools", "tool_name": name})
+            for name, target in available.items()
+        ]
+        if self._mcp is not None and get_policy().tool_default("MCPTool") != "deny":
+            await asyncio.shield(self._mcp.start_background_discovery())
+            for entry in self._mcp._tools_cache:
+                target = resolve_target(
+                    self._mcp,
+                    MCPInput(
+                        server_name=entry["server"],
+                        tool_name=entry["skill_alias"],
+                    ),
+                )
+                if target is not None and any(t is target for t in request.runtime.tools):
+                    targets.append(
+                        (
+                            target,
+                            {
+                                "namespace": "mcp",
+                                "server_name": entry["server"],
+                                "tool_name": entry["skill_alias"],
+                            },
+                        )
+                    )
+        search = ToolSearchMiddleware()
+        catalog = [
+            {
+                "name": target.name,
+                "description": target.description,
+                "kind": route["namespace"] + ":" + route.get("server_name", ""),
+                "parameters": parameter_text(target),
+                "target": route,
+            }
+            for target, route in targets
+            if search._catalog_for([target])
+        ]
+        matches = search._search_matches(query.strip(), catalog) if query.strip() else []
+        return {
+            "tools": [
+                {
+                    "name": hit["name"],
+                    "description": hit["description"][:300],
+                    "target": hit["target"],
+                }
+                for hit in matches[:limit]
+            ],
+            "total": len(matches),
+        }
 
     async def _task(
         self, request: ToolCallRequest, handler: Callable, payload: dict, updates: dict

@@ -23,7 +23,7 @@ repetition guards and approval checks remain active.
 
 Separate `eval` and `MCPCode` calls in one conversation queue for the same
 interpreter instead of colliding. Use `Promise.all` inside one snippet for bounded
-parallel host operations. Waiting for the interpreter does not consume a snippet's
+independent parallel host operations. Waiting for the interpreter does not consume a snippet's
 execution deadline. Other conversations keep their own interpreter.
 
 Successful skill reads show an inline “Reading skill: …” notice, including reads
@@ -77,21 +77,55 @@ tool values and child transcripts stay outside parent model history; normal
 execution traces and subagent progress remain available separately.
 
 ```javascript
-var native = await tools.list({offset: 0, limit: 20});
-var schema = await tools.describe("grep");
-var servers = await mcp.list({limit: 20});
-var remoteSchema = await mcp.describe("database", "read");
-({native, schema, servers, remoteSchema});
+await (async () => {
+  const matches = await tools.search({query: "find matching source text", limit: 5});
+  return matches.tools;
+})();
 ```
+
+`tools.search` uses Nova's existing ranking over the current invocation's callable
+native and MCP inventory. Each hit includes a concise description and a `target`:
+native targets name `namespace: "tools"` and `tool_name`; MCP targets name
+`namespace: "mcp"`, `server_name` and the raw `tool_name`. Discovery restrictions
+still apply. The default limit is five, with a maximum of 50.
+
+Use `tools.describe` or `mcp.describe` when arguments or return contracts are needed.
+Native descriptions identify verified core filesystem/shell contracts; other contracts
+are explicitly unknown. MCP descriptions retain the server's `outputSchema` when
+supplied and identify it as a declaration. Missing schemas remain unknown.
 
 Use exact names and arguments from discovery. Native calls use
 `tools.call(tool_name, arguments)`; MCP calls use
-`mcp.call(server_name, tool_name, arguments)`. Results retain structured values.
-Loops, filtering and `Promise.all` can combine calls before selecting a small result.
+`mcp.call(server_name, tool_name, arguments)`. Results retain their existing values:
+text, decoded JSON, structured MCP content or content blocks. Never assume `.stdout`.
+Loops and filtering can combine calls before selecting a small result. Use
+`Promise.all` only for operations that are independent.
 `tools.list` accepts `offset` and `limit`; filter its `tools` array in JavaScript
 instead of passing `query`. QuickJS provides no Node.js `Buffer`, `process` or
 `require`. Use the file tools for text writes. On Windows, invoke PowerShell
-explicitly when using its cmdlets through `execute`.
+with `shell: "native"` when using its cmdlets through `execute`.
+
+Nova advertises one command tool, `execute`. New calls explicitly choose
+`shell: "native"` (the default choice: PowerShell on Windows, platform shell
+elsewhere) or `shell: "bash"`. For example:
+
+```javascript
+await tools.call("execute", {command: "git status --short", shell: "native"});
+```
+
+The registered `shell` and `bash` compatibility tools still accept existing calls.
+Old `execute` calls without a selector retain platform-default semantics, including
+`cmd.exe` on Windows. Selected calls never automatically retry another dialect.
+The selected alias's permission rules and `execute` rules both apply; the stricter
+decision wins. Permission preferences are not migrated or relaxed.
+
+Local execution retains interactive prompts, background tasks and cancellation.
+An optional `timeout` can shorten the configured local foreground deadline, without
+changing parallel calls. Sandbox foreground commands retain backend execution and
+timeout validation; Bash selection runs Bash inside that backend. Background or
+interactive backend calls retain Nova's existing shell path and reject timeout
+overrides they cannot enforce. Subagents without Nova's shell middleware retain
+their existing backend executor.
 
 ```javascript
 var batches = await Promise.all([1, 2, 3].map(id =>
@@ -126,8 +160,17 @@ Filesystem tools' textual `Error:` results also fail the nested call; a script
 cannot silently proceed past a failed edit and report a successful update.
 
 Keep large source batches in variables and select small passages to return.
-Truncated results include a recovery notice: inspect smaller slices of those
-variables before making source claims, without replaying completed operations.
+Before truncating an oversized selected result, Nova saves the complete JSON value
+in the existing `/cleared/` store when available. `output_file` names its virtual
+`path`, `encoding: "utf-8"` and `format: "json"`; `truncated` describes the preview.
+Read that path through the file tools to recover after interpreter state loss.
+The store uses existing agent boundaries and seven-day retention. File writes are
+atomic. A failed save or unavailable store produces an explicit notice and no
+`output_file`. In that case, inspect smaller slices of surviving variables.
+Normal read and intermediate-result limits still apply to recovery; console output
+retains its separate runtime cap. Hidden intermediate tool values are not archived.
+Inspect ordered `outcomes` (and `outcomes_omitted`) before retrying any failed script;
+never replay completed operations to recover their results.
 For Markdown writes, arrays of quoted lines joined with `"\n"` avoid nesting
 Markdown backticks inside JavaScript template literals. Syntax failures include
 quoting guidance; Nova does not rewrite or automatically retry the script.
@@ -135,7 +178,9 @@ quoting guidance; Nova does not rewrite or automatically retry the script.
 ## State and permissions
 
 Variables persist between snippets and user turns in the same conversation and
-owning agent. Start a new conversation or reset to get fresh state. Nova uses the
+owning agent. Start a new conversation or reset to get fresh state. Prefer
+async-function scope for temporary locals (`await (async () => { ... })()`), avoiding
+top-level `const`/`let` redeclaration. Save reusable values on `globalThis`. Nova uses the
 installed `langchain-quickjs` thread snapshots and existing checkpoints. Snapshots
 do not promise recovery of every JavaScript value after a restart. A failed or
 oversized snapshot or failed restore is reported in the next successful result's
@@ -179,3 +224,6 @@ coverage, lint, types, regressions and assertion-killed negative controls:
 
 The existing CI runs this verifier on Windows and Linux. No new dependencies,
 Python execution runtime or orchestration service are required.
+
+See the [reliability benchmark](code-mode-benchmark.md) for the saved-model
+comparison, per-task token changes and raw measurements.

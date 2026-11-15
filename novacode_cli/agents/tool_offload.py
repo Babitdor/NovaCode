@@ -22,9 +22,11 @@ import hashlib
 import logging
 import re
 import time
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from langchain.agents.middleware import ClearToolUsesEdit
 from langchain_core.messages import AnyMessage, ToolMessage
@@ -91,6 +93,36 @@ def _prune(directory: Path) -> None:
         logger.debug("Could not prune %s", directory, exc_info=True)
 
 
+def save_tool_result(
+    directory: Path | None,
+    call_id: str,
+    name: str | None,
+    payload: object,
+) -> str | None:
+    """Save in the mounted offload store; return a virtual path only after success."""
+    text = payload if isinstance(payload, str) else str(payload or "")
+    if not text.strip() or directory is None:
+        return None
+    path = directory / f"{_offload_stem(name, call_id, text)}.txt"
+    key = str(path)
+    if key in _written:
+        return f"{VIRTUAL_PREFIX}{path.name}"
+    temporary = path.with_suffix(f".{uuid4().hex}.tmp")
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        _prune(directory)
+        temporary.write_text(text, encoding="utf-8", errors="replace", newline="")
+        temporary.replace(path)
+        _written.add(key)
+    except OSError:
+        logger.debug("Could not offload tool result %s", call_id, exc_info=True)
+        return None
+    finally:
+        with suppress(OSError):
+            temporary.unlink(missing_ok=True)
+    return f"{VIRTUAL_PREFIX}{path.name}"
+
+
 # No slots=True: it rebuilds the class, which breaks the zero-arg `super()`
 # below (the __class__ cell still points at the pre-slots class).
 @dataclass
@@ -134,27 +166,12 @@ class OffloadingToolUsesEdit(ClearToolUsesEdit):
         back, so the name has to be unique per payload -- see
         :func:`_offload_stem`.
         """
-        text = payload if isinstance(payload, str) else str(payload or "")
-        if not text.strip() or self.offload_dir is None:
+        saved = save_tool_result(self.offload_dir, call_id, name, payload)
+        if saved is None:
             return None
-        stem = _offload_stem(name, call_id, text)
-        path = self.offload_dir / f"{stem}.txt"
-        key = str(path)
-        if key not in _written:
-            try:
-                self.offload_dir.mkdir(parents=True, exist_ok=True)
-                _prune(self.offload_dir)
-                # The name is a digest of the payload, so an existing file
-                # already holds exactly these bytes.
-                if not path.exists():
-                    path.write_text(text, encoding="utf-8", errors="replace")
-            except OSError:
-                logger.debug("Could not offload tool result %s", call_id, exc_info=True)
-                return None
-            _written.add(key)
         return (
             f"[Old {name or 'tool'} result moved out of context to save space. "
-            f"The full output is saved at {VIRTUAL_PREFIX}{path.name} — "
+            f"The full output is saved at {saved} — "
             f"read_file it if you need it again.]"
         )
 
@@ -197,11 +214,7 @@ class VerdictToolUsesEdit(OffloadingToolUsesEdit):
         # position, because tool_call_id is not unique across a resumed session
         # and an id-keyed map would restore the same payload for every result
         # sharing that id.
-        before = {
-            idx: msg
-            for idx, msg in enumerate(messages)
-            if isinstance(msg, ToolMessage)
-        }
+        before = {idx: msg for idx, msg in enumerate(messages) if isinstance(msg, ToolMessage)}
         judged = self._judged_stale_ids(messages)
         super().apply(messages, count_tokens=count_tokens)
         self._restore_unjudged(messages, before, judged)
@@ -243,9 +256,7 @@ class VerdictToolUsesEdit(OffloadingToolUsesEdit):
             if (message.name or "") in excluded:
                 continue
             try:
-                stale = self.verdicts.stale(
-                    message, keep_threshold=self.keep_threshold
-                )
+                stale = self.verdicts.stale(message, keep_threshold=self.keep_threshold)
             except Exception:  # noqa: BLE001 — an unreadable cache must never clear
                 logger.debug("Could not read a verdict", exc_info=True)
                 stale = None

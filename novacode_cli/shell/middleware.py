@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import asyncio
 import codecs
-import contextlib
+import copy
 import os
 import re
-import subprocess
+import shlex
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -29,6 +29,7 @@ from langchain_core.tools.base import ToolException
 from novacode_cli.shell.os_sandbox import OSSandboxPolicy, detect_backend, wrap_command
 from novacode_cli.shell.output import OutputWindow, exit_status
 from novacode_cli.shell.patterns import _NPX_YES_RE
+from novacode_cli.shell.tool_surface import ALIAS_MARKER, execution_tool, execution_tools
 from novacode_cli.shell.utils import (
     _convert_unix_command_to_windows,
     _sanitize_env,
@@ -317,6 +318,16 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
         if self._tool_name != "bash":
             self._bash_alias = _make_tool("bash", bash_description, self._bash_prog, is_bash=True)
             self.tools.append(self._bash_alias)
+        for alias in self.tools:
+            alias.metadata = {**(alias.metadata or {}), ALIAS_MARKER: True}
+
+    def wrap_model_call(self, request: Any, handler: Callable) -> Any:
+        """Advertise one executor; leave aliases registered for existing calls."""
+        return handler(request.override(tools=execution_tools(request.tools)))
+
+    async def awrap_model_call(self, request: Any, handler: Callable) -> Any:
+        """Apply the same execution surface to asynchronous model requests."""
+        return await handler(request.override(tools=execution_tools(request.tools)))
 
     def _alternate_prog(self, prog: "list[str] | None") -> "list[str] | None":
         """The interpreter to retry with when *prog* rejected the syntax.
@@ -444,19 +455,20 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
         return self._run_foreground_with_fallback(command, tool_call_id=tool_call_id, prog=prog)
 
     def _intercept_execute(self, request: Any) -> str | None:
-        """Return the command string when ``request`` is a local ``execute`` call
-        we should handle ourselves (to add background + Ctrl+B support), else None.
+        """Intercept local execution and explicit selections on either backend.
 
-        Only intercepts in local mode — a real sandbox backend keeps its own
-        ``execute`` so commands still run inside the sandbox.
+        Legacy sandbox calls retain their original executor. Selected sandbox
+        foreground calls delegate back to that executor after option validation.
         """
         try:
             tc = request.tool_call
             if tc.get("name") != "execute":
                 return None
-            if self._supports_sandbox_execution():
+            if self._supports_sandbox_execution() and "shell" not in (tc.get("args") or {}):
                 return None  # sandbox owns execute
             cmd = (tc.get("args") or {}).get("command")
+            if "shell" in (tc.get("args") or {}):
+                return cmd if isinstance(cmd, str) else ""
             return cmd if isinstance(cmd, str) and cmd.strip() else None
         except Exception:  # noqa: BLE001
             return None
@@ -464,9 +476,7 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
     def wrap_tool_call(
         self, request: Any, handler: Callable[[Any], ToolMessage | Any]
     ) -> ToolMessage | Any:
-        """Intercept local ``execute`` and run it through Nova's shell path so it
-        gets background/Ctrl+B parity with ``shell``. Uses ``prog=None`` (the
-        platform default shell) to match deepagents' ``execute`` semantics."""
+        """Route selected execution; legacy local calls retain platform-default semantics."""
         if self._intercept_execute(request) is None:
             return handler(request)
         return handler(request.override(tool=self._local_execute_tool(request)))
@@ -487,6 +497,9 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
             raise ToolException(message)
         call_id = request.tool_call.get("id")
 
+        if "shell" in (request.tool_call.get("args") or {}):
+            return self._selected_execute_tool(request)
+
         def run(command: str, **kwargs: Any) -> str | ToolMessage:
             return self._dispatch_local(
                 command, tool_call_id=call_id, prog=None,
@@ -503,6 +516,110 @@ class ShellMiddleware(AgentMiddleware[AgentState, Any]):
 
         return request.tool.model_copy(
             update={"func": run, "coroutine": arun},
+        )
+
+    def _selected_execute_tool(self, request: ToolCallRequest) -> StructuredTool:
+        """Run explicit calls through existing guards and execution lifecycles once."""
+        target = request.tool
+        if not isinstance(target, StructuredTool):
+            raise ToolException("Selected execution requires a structured backend tool")
+        call_id = request.tool_call.get("id")
+
+        def local(shell: str, timeout: int | None) -> tuple[ShellMiddleware, list[str] | None]:
+            engine = copy.copy(self)
+            engine._tool_name = "execute"
+            engine._native_is_pwsh = False  # Explicit dialects never replay commands.
+            if timeout is not None:
+                if timeout > self._timeout:
+                    raise ToolException(
+                        f"timeout exceeds the configured {self._timeout:g}s local limit"
+                    )
+                engine._timeout = timeout
+            prog = self._bash_prog if shell == "bash" else self._native_prog
+            if prog is None and (shell == "bash" or sys.platform == "win32"):
+                raise ToolException(f"{shell} shell is unavailable on this host")
+            return engine, prog
+
+        def remote(
+            command: str, shell: str, timeout: int | None, interactive: bool, background: bool
+        ) -> tuple[ShellMiddleware | None, str]:
+            command = f"bash -c {shlex.quote(command)}" if shell == "bash" else command
+            if not interactive and not background:
+                return None, command
+            if timeout is not None:
+                raise ToolException(
+                    "Backend interactive/background execution does not accept a timeout override"
+                )
+            engine = copy.copy(self)
+            engine._tool_name = "execute"
+            return engine, command
+
+        def run(
+            command: str,
+            shell: str,
+            timeout: int | None = None,
+            interactive: bool = False,
+            background: bool = False,
+            **kwargs: Any,
+        ) -> ToolMessage | str:
+            if self._supports_sandbox_execution():
+                engine, command = remote(command, shell, timeout, interactive, background)
+                if engine is not None:
+                    return engine._dispatch_local(
+                        command,
+                        tool_call_id=call_id,
+                        prog=None,
+                        interactive=interactive,
+                        background=background,
+                    )
+                if target.func is None:
+                    raise ToolException("Backend execution requires its asynchronous entry point")
+                return target.func(command=command, timeout=timeout, runtime=request.runtime)
+            engine, prog = local(shell, timeout)
+            return engine._dispatch_local(
+                command,
+                tool_call_id=call_id,
+                prog=prog,
+                interactive=interactive,
+                background=background,
+            )
+
+        async def arun(
+            command: str,
+            shell: str,
+            timeout: int | None = None,
+            interactive: bool = False,
+            background: bool = False,
+            **kwargs: Any,
+        ) -> ToolMessage | str:
+            if self._supports_sandbox_execution():
+                engine, command = remote(command, shell, timeout, interactive, background)
+                if engine is not None:
+                    return await engine._adispatch_local(
+                        command,
+                        tool_call_id=call_id,
+                        prog=None,
+                        interactive=interactive,
+                        background=background,
+                    )
+                if target.coroutine is None:
+                    return await asyncio.to_thread(
+                        run, command, shell, timeout, interactive, background
+                    )
+                return await target.coroutine(
+                    command=command, timeout=timeout, runtime=request.runtime
+                )
+            engine, prog = local(shell, timeout)
+            return await engine._adispatch_local(
+                command,
+                tool_call_id=call_id,
+                prog=prog,
+                interactive=interactive,
+                background=background,
+            )
+
+        return cast("StructuredTool", execution_tool(target)).model_copy(
+            update={"func": run, "coroutine": arun, "handle_tool_error": True}
         )
 
     def _run_async(

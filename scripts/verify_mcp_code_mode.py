@@ -11,7 +11,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TEST = "tests/test_mcp_code_mode.py"
 NATIVE_TEST = "tests/test_native_code_mode.py"
-TESTS = [TEST, NATIVE_TEST, "tests/test_code_mode_toggle.py", "tests/test_unified_code_mode.py"]
+TESTS = [
+    TEST,
+    NATIVE_TEST,
+    "tests/test_code_mode_toggle.py",
+    "tests/test_unified_code_mode.py",
+    "tests/test_code_mode_reliability.py",
+    "tests/test_code_mode_benchmark.py",
+]
 REGRESSION_TESTS = [
     "tests/test_quickjs_compat.py",
     "tests/test_deepagents_compat.py",

@@ -97,8 +97,12 @@ INTERRUPT_SPECS: dict[str, InterruptSpec] = {
     "execute": InterruptSpec(
         fields=[
             ("command", FieldSpec("Execute Command")),
+            ("shell", FieldSpec("Shell", default_display="platform default (legacy)")),
+            ("timeout", FieldSpec("Timeout", default_display="configured default")),
+            ("background", FieldSpec("Background", default_display="False")),
+            ("interactive", FieldSpec("Interactive", default_display="False")),
         ],
-        static_lines=["Location: Remote Sandbox"],
+        static_lines=["Location: Configured workspace/backend"],
     ),
     "write_file": InterruptSpec(
         fields=[
@@ -266,12 +270,17 @@ _INTERRUPT_ARG_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {
             "command": {
                 "type": "string",
-                "description": "Command to execute in sandbox",
+                "description": "Command to execute in the configured workspace/backend",
             },
+            "shell": {"type": "string", "enum": ["native", "bash"]},
+            "interactive": {"type": "boolean", "default": False},
+            "background": {"type": "boolean", "default": False},
             "timeout": {
-                "type": "integer",
+                "type": ["integer", "null"],
                 "description": "Timeout in seconds",
-                "default": 120,
+                "default": None,
+                "minimum": 0,
+                "maximum": 3600,
             },
         },
         "required": ["command"],
@@ -403,16 +412,20 @@ def _format_interrupt_description(
     parts: list[str] = []
 
     # Render each field: "Label: value"
-    for arg_key, field in spec.fields:
+    for arg_key, field_spec in spec.fields:
         value = args.get(arg_key)
         # Treat None and empty-string as "not provided" for default_display
         if value is None or (isinstance(value, str) and value == ""):
-            value = field.default_display
-        elif field.transform:
-            value = field.transform(value)
-        elif field.truncate is not None and isinstance(value, str) and len(value) > field.truncate:
-            value = value[: field.truncate] + "..."
-        parts.append(f"{field.label}: {value}")
+            value = field_spec.default_display
+        elif field_spec.transform:
+            value = field_spec.transform(value)
+        elif (
+            field_spec.truncate is not None
+            and isinstance(value, str)
+            and len(value) > field_spec.truncate
+        ):
+            value = value[: field_spec.truncate] + "..."
+        parts.append(f"{field_spec.label}: {value}")
 
     # Static lines
     parts.extend(spec.static_lines)

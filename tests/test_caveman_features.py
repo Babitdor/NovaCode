@@ -170,11 +170,20 @@ def test_waste_fix_deduplicates_only_repeats_with_recovery():
 
 
 def test_audit_separates_provider_input_output_total_from_text_estimates():
-    report = audit_messages([AIMessage(content="Short response", usage_metadata={
-        "input_tokens": 120, "output_tokens": 20, "total_tokens": 140,
-        "input_token_details": {"cache_read": 100},
-        "output_token_details": {"reasoning": 12},
-    })])
+    report = audit_messages(
+        [
+            AIMessage(
+                content="Short response",
+                usage_metadata={
+                    "input_tokens": 120,
+                    "output_tokens": 20,
+                    "total_tokens": 140,
+                    "input_token_details": {"cache_read": 100},
+                    "output_token_details": {"reasoning": 12},
+                },
+            )
+        ]
+    )
     assert report["reported_input_tokens"] == 120
     assert report["reported_output_tokens"] == 20
     assert report["reported_total_tokens"] == 140
@@ -196,15 +205,29 @@ def test_source_storage_failure_or_capacity_never_causes_lossy_compression():
     assert reference(text) not in result["caveman_sources"]
 
 
-def test_scripts_are_checkpointed_exactly_and_cannot_execute_via_recovery():
+@pytest.mark.parametrize(
+    ("tool_name", "argument", "command"),
+    [
+        ("execute", "command", 'python -c "print(42)"'),
+        ("eval", "code", "await tools.call('read_file', {file_path:'/code.py'})"),
+        ("MCPCode", "code", "return await tools.call('read_file', {file_path:'/code.py'});"),
+    ],
+)
+def test_scripts_are_checkpointed_exactly_and_cannot_execute_via_recovery(
+    tool_name: str,
+    argument: str,
+    command: str,
+):
     enable("blocks")
-    command = 'python -c "print(42)"'
+    arguments = {argument: command}
+    if tool_name == "execute":
+        arguments["timeout"] = 10
     message = AIMessage(
         content="",
         tool_calls=[
             {
-                "name": "execute",
-                "args": {"command": command, "timeout": 10},
+                "name": tool_name,
+                "args": arguments,
                 "id": "one",
             }
         ],
@@ -214,7 +237,8 @@ def test_scripts_are_checkpointed_exactly_and_cannot_execute_via_recovery():
     assert saved[0]["reference"] != reference(command)
     saved_ref = saved[0]["reference"]
     result = inspect_session([], "recover", ref=saved_ref, saved_blocks=saved)
-    assert result["args"] == {"command": command, "timeout": 10}
+    assert result["args"] == arguments
+    assert result["tool"] == tool_name
     assert result["requires_current_approval"] is True
     assert inspect_session([], "blocks", saved_blocks=saved)["blocks"]
     assert not script_blocks([HumanMessage(content=command)])
