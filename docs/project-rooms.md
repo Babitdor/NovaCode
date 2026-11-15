@@ -19,11 +19,35 @@ workspace for you, Nova, Claude and Codex.
 - Toggle the four reaction buttons to add or remove your own reactions.
   **Pin** / **Unpin** and the toolbar's **Pins** filter keep useful messages handy.
 - **Edit** changes your own message without invoking an agent. **Cancel** restores
-  your draft. **Delete** asks for confirmation and removes the message's text and
+  your draft. **Copy** copies the original message text, including Markdown.
+  As room owner, you can **Delete** your own or an agent's message. It asks for
+  confirmation and removes the message's text and
   reactions while preserving replies and threads. Deletion does not undo agent
   work or remove text from previously created provider sessions.
 - Press **Ctrl+F** to search the current conversation. Search and pinned filters
   work together. **Ctrl+End** jumps to the latest message.
+
+## Channel and message management
+
+Open **⋯** in the conversation toolbar for settings and management controls.
+
+- Change a channel's name and topic while retaining its history, drafts and tasks.
+  Agent DMs keep their fixed identities.
+- **Mark all read** clears your unread badges without deleting messages or drafts.
+- **Clear messages** removes the current channel/DM's messages, threads, pins and
+  reactions and starts fresh agent discussion sessions. Notes, task history and
+  files remain. Within a thread, **Clear thread** removes replies and keeps its
+  starter in the channel.
+- **Delete channel** removes a custom channel and its messages, threads, notes,
+  drafts and task/job history. Project files, published artifact files and Git
+  worktrees remain on disk. The default channel and agent DMs are protected.
+
+Clear and delete require confirmation. Queued, running or still-cancelling jobs
+block those actions, including jobs owned by another Nova session. Cancel or
+pause the affected jobs in Tasks and wait for cancellation to finish first.
+These operations cannot be undone. Clearing a transcript does not erase provider
+history, saved job prompts or completed agent work. Other open Rooms screens
+refresh after a clear and return to the default channel after a deletion.
 
 ## Collaboration
 

@@ -32,7 +32,12 @@ class RoomMessage(Vertical):
         yield Static("", classes="room-message-body")
         with Horizontal(classes="room-message-actions"):
             key = self.record["id"]
-            for action, label in (("reply", "Reply"), ("thread", "Thread"), ("pin", "Pin")):
+            for action, label in (
+                ("reply", "Reply"),
+                ("thread", "Thread"),
+                ("pin", "Pin"),
+                ("copy", "Copy"),
+            ):
                 yield Button(label, id=f"{action}-{key}", compact=True, tooltip=label)
             for index, emoji in enumerate(REACTIONS):
                 yield Button(
@@ -40,7 +45,7 @@ class RoomMessage(Vertical):
                 )
             if self.record["author"] == "owner":
                 yield Button("Edit", id=f"edit-{key}", compact=True)
-                yield Button("Delete", id=f"delete-{key}", compact=True)
+            yield Button("Delete", id=f"delete-{key}", compact=True)
 
     def on_mount(self) -> None:
         self.update_record(self.record)

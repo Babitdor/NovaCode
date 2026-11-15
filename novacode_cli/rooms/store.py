@@ -100,6 +100,9 @@ class RoomStore:
                 PRIMARY KEY(message,author,emoji));
         """)
         with self.transaction():
+            room_columns = {r["name"] for r in self.rows("PRAGMA table_info(rooms)")}
+            if "topic" not in room_columns:
+                self.db.execute("ALTER TABLE rooms ADD COLUMN topic TEXT NOT NULL DEFAULT ''")
             columns = {r["name"] for r in self.rows("PRAGMA table_info(jobs)")}
             if "readonly" not in columns:
                 self.db.execute("ALTER TABLE jobs ADD COLUMN readonly INTEGER NOT NULL DEFAULT 0")
@@ -117,7 +120,7 @@ class RoomStore:
                 if name not in columns:
                     self.db.execute(f"ALTER TABLE messages ADD COLUMN {name} {definition}")
             for room, name in [("general", "#general"), *((f"dm:{a}", a.title()) for a in AGENTS)]:
-                self.db.execute("INSERT OR IGNORE INTO rooms VALUES(?,?)", (room, name))
+                self.db.execute("INSERT OR IGNORE INTO rooms(id,name) VALUES(?,?)", (room, name))
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
@@ -155,11 +158,103 @@ class RoomStore:
             msg = "Use 1-40 lowercase letters, numbers, hyphens or underscores"
             raise ValueError(msg)
         with self.transaction():
-            if self.rows("SELECT id FROM rooms WHERE id=?", (name,)):
+            if self.rows("SELECT id FROM rooms WHERE name=?", ("#" + name,)):
                 msg = "Channel already exists"
                 raise ValueError(msg)
-            self.db.execute("INSERT INTO rooms VALUES(?,?)", (name, "#" + name))
-        return name
+            key = (
+                uuid.uuid4().hex if self.rows("SELECT id FROM rooms WHERE id=?", (name,)) else name
+            )
+            self.db.execute("INSERT INTO rooms(id,name) VALUES(?,?)", (key, "#" + name))
+        return key
+
+    def update_channel(self, room: str, name: str, topic: str = "") -> None:
+        """Rename the display name without invalidating messages, drafts or task identities."""
+        name = name.removeprefix("#")
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,39}", name):
+            raise ValueError("Use 1-40 lowercase letters, numbers, hyphens or underscores")
+        if not isinstance(topic, str) or len(topic) > 1024:
+            raise ValueError("Channel topic must be at most 1024 characters")
+        with self.transaction():
+            self.room(room)
+            if room.startswith("dm:"):
+                raise ValueError("Agent DMs cannot be renamed")
+            if self.rows("SELECT id FROM rooms WHERE name=? AND id!=?", ("#" + name, room)):
+                raise ValueError("Channel already exists")
+            self.db.execute("UPDATE rooms SET name=?,topic=? WHERE id=?", ("#" + name, topic, room))
+
+    def _require_idle(self, room: str, thread_id: int | None = None) -> None:
+        """Fence destructive operations against workers in every connected Nova session."""
+        scope = "room=?" + (" AND thread_id=?" if thread_id is not None else "")
+        args = (room, thread_id) if thread_id is not None else (room,)
+        if self.rows(
+            f"SELECT id FROM jobs WHERE {scope} AND status IN ('queued','working','cancelling')",
+            args,
+        ):
+            raise ValueError(
+                "Cancel or pause queued/running jobs in Tasks before clearing or deleting"
+            )
+
+    def clear_messages(self, room: str, thread_id: int | None = None) -> int:
+        """Clear the chosen transcript and discussion sessions; preserve tasks, notes and files."""
+        with self.transaction():
+            self.room(room)
+            if thread_id is not None:
+                self.message_record(room, thread_id, include_deleted=True)
+            self._require_idle(room, thread_id)
+            scope = "room=?" + (" AND thread_id=?" if thread_id is not None else "")
+            args = (room, thread_id) if thread_id is not None else (room,)
+            selection = f"SELECT id FROM messages WHERE {scope}"
+            self.db.execute(f"DELETE FROM reactions WHERE message IN ({selection})", args)
+            self.db.execute(
+                f"UPDATE messages SET reply_to=NULL WHERE reply_to IN ({selection})", args
+            )
+            removed = self.db.execute(f"DELETE FROM messages WHERE {scope}", args).rowcount
+            conversation_scope = (
+                "task LIKE ?"
+                if thread_id is not None
+                else "(task='' OR task=':review' OR task LIKE ':thread:%' OR task LIKE ':review:thread:%')"
+            )
+            conversation_args = (
+                (room, f"%:thread:{thread_id}") if thread_id is not None else (room,)
+            )
+            self.db.execute(
+                f"DELETE FROM conversations WHERE room=? AND {conversation_scope}",
+                conversation_args,
+            )
+            self.db.execute(
+                f"UPDATE jobs SET status='cancelled' WHERE {scope} AND task='' "
+                "AND status IN ('paused','blocked')",
+                args,
+            )
+            return removed
+
+    def delete_channel(self, room: str) -> None:
+        """Remove custom-channel records atomically, without touching project or worktree files."""
+        with self.transaction():
+            self.room(room)
+            if room == "general" or room.startswith("dm:"):
+                raise ValueError("The default channel and agent DMs cannot be deleted")
+            self._require_idle(room)
+            self.db.execute(
+                "DELETE FROM reactions WHERE message IN (SELECT id FROM messages WHERE room=?)",
+                (room,),
+            )
+            for table in ("messages", "jobs", "tasks", "notes", "views", "conversations"):
+                self.db.execute(f"DELETE FROM {table} WHERE room=?", (room,))
+            self.db.execute("DELETE FROM rooms WHERE id=?", (room,))
+
+    def mark_read(self, viewer: str) -> None:
+        """Mark every current channel/DM read without replacing unsent drafts."""
+        with self.transaction():
+            self.db.execute(
+                "INSERT OR IGNORE INTO views(viewer,room) SELECT ?,id FROM rooms",
+                (viewer,),
+            )
+            self.db.execute(
+                "UPDATE views SET seen=COALESCE((SELECT MAX(id) FROM messages WHERE room=views.room),0) "
+                "WHERE viewer=?",
+                (viewer,),
+            )
 
     def history(self, room: str, agent: str = "owner") -> list[Record]:
         """Read only this room's public transcript, never CLI private history."""
@@ -202,9 +297,9 @@ class RoomStore:
         thread_id: int | None = None,
     ) -> int:
         """Append attributed content; only the coordinator chooses authors."""
-        self.room(room, author if author != "system" else "owner")
         checked_text(text)
         with self.transaction():
+            self.room(room, author if author != "system" else "owner")
             if job:
                 jobs = self.rows("SELECT thread_id FROM jobs WHERE id=? AND room=?", (job, room))
                 if jobs:
@@ -239,7 +334,7 @@ class RoomStore:
             message = self.message_record(room, key)
             if action == "pin":
                 self.db.execute("UPDATE messages SET pinned=1-pinned WHERE id=?", (key,))
-            elif action in {"edit", "delete"} and message["author"] == "owner":
+            elif action == "delete" or (action == "edit" and message["author"] == "owner"):
                 if action == "edit":
                     checked_text(text)
                     self.db.execute(
@@ -253,7 +348,7 @@ class RoomStore:
                     )
                     self.db.execute("DELETE FROM reactions WHERE message=?", (key,))
             else:
-                raise ValueError("Only your own messages can be edited or deleted")
+                raise ValueError("Only your own messages can be edited")
 
     def react(self, room: str, key: int, author: str, emoji: str) -> None:
         """Toggle one participant's reaction without crossing room/DM boundaries."""
@@ -362,6 +457,7 @@ class RoomStore:
             "error": "",
         }
         with self.transaction():
+            self.room(room)
             self.put_task(task)
         return task
 
@@ -381,6 +477,7 @@ class RoomStore:
         checked_text(prompt)
         key = uuid.uuid4().hex
         with self.transaction():
+            self.room(room, agent)
             if thread_id is not None:
                 root = self.message_record(room, thread_id, agent, include_deleted=True)
                 if root["thread_id"] is not None:
@@ -406,8 +503,11 @@ class RoomStore:
     def claim(self, job: str) -> Record | None:
         """Enforce two workers, one per conversation/task, and task turn limits."""
         with self.transaction():
-            row = self.rows("SELECT * FROM jobs WHERE id=?", (job,))[0]
-            active = self.rows("SELECT * FROM jobs WHERE status='working'")
+            rows = self.rows("SELECT * FROM jobs WHERE id=?", (job,))
+            if not rows:
+                return None
+            row = rows[0]
+            active = self.rows("SELECT * FROM jobs WHERE status IN ('working','cancelling')")
             if (
                 row["status"] != "queued"
                 or len(active) >= MAX_WORKERS
@@ -436,7 +536,10 @@ class RoomStore:
     def finish(self, job: str, status: str, detail: str = "", usage: Record | None = None) -> None:
         """Finish a turn while preserving work and pending handoffs."""
         with self.transaction():
-            row = self.rows("SELECT * FROM jobs WHERE id=?", (job,))[0]
+            rows = self.rows("SELECT * FROM jobs WHERE id=?", (job,))
+            if not rows:
+                return
+            row = rows[0]
             self.db.execute(
                 "UPDATE jobs SET status=?,detail=?,usage=? WHERE id=?",
                 (status, detail, json.dumps(usage) if usage else None, job),
@@ -464,6 +567,7 @@ class RoomStore:
         key = (row["room"], row["agent"], scope)
         if value:
             with self.transaction():
+                self.room(row["room"], row["agent"])
                 self.db.execute(
                     "INSERT OR REPLACE INTO conversations VALUES(?,?,?,?)", (*key, value)
                 )
@@ -489,7 +593,7 @@ class RoomStore:
                     alive = True
                 if not alive:
                     for job in self.rows(
-                        "SELECT id FROM jobs WHERE runtime=? AND status IN ('working','queued')",
+                        "SELECT id FROM jobs WHERE runtime=? AND status IN ('working','queued','cancelling')",
                         (row["id"],),
                     ):
                         self.finish_nested(job["id"])
@@ -521,6 +625,7 @@ class RoomStore:
         checked_text(json.dumps(body, ensure_ascii=False))
         key = uuid.uuid4().hex
         with self.transaction():
+            self.room(room, author)
             self.db.execute(
                 "INSERT INTO notes VALUES(?,?,?,?,?)",
                 (key, room, author, kind, json.dumps(body, ensure_ascii=False)),
@@ -634,8 +739,8 @@ class RoomStore:
         self, viewer: str, room: str, draft: str | None = None, *, seen: bool = False
     ) -> Record:
         """Persist drafts and read positions per Nova session."""
-        self.room(room)
         with self.transaction():
+            self.room(room)
             self.db.execute("INSERT OR IGNORE INTO views(viewer,room) VALUES(?,?)", (viewer, room))
             if draft is not None:
                 self.db.execute(

@@ -43,6 +43,15 @@ NARROW_WIDTH = 80
 COLLAPSE_WIDTH = 65
 
 
+class RoomMain(Vertical):
+    """Reflow controls from the space left after navigation/member panes resize."""
+
+    def on_resize(self, event: Resize) -> None:
+        self.set_class(event.size.width < 75, "toolbar-stacked")
+        self.set_class(event.size.width < 50, "toolbar-tiny")
+        self.set_class(event.size.width < 30, "toolbar-narrowest")
+
+
 class RoomsScreen(Screen):
     """Opening/switching rooms never starts a turn; only Send and Start do."""
 
@@ -56,15 +65,39 @@ class RoomsScreen(Screen):
     RoomsScreen { background: $background; }
     RoomsScreen #rooms-bar { height: 3; background: $surface; }
     RoomsScreen #rooms-title { width: 1fr; padding: 1 1 0 1; text-style: bold; }
+    RoomsScreen #rooms-title { text-wrap: nowrap; text-overflow: ellipsis; }
+    RoomsScreen #rooms-bar Button { height: 3; min-height: 1; }
     RoomsScreen Button { min-width: 9; margin-right: 1; }
     RoomsScreen #rooms-layout { height: 1fr; }
     RoomsScreen #room-sidebar { width: 24; padding: 0 1; background: $surface; }
     RoomsScreen #room-list { height: 1fr; border: none; }
     RoomsScreen #room-channel { height: 3; }
-    RoomsScreen #room-main { width: 1fr; }
-    RoomsScreen #room-heading { height: 2; padding: 0 1; text-style: bold; }
-    RoomsScreen #room-toolbar { height: 3; padding: 0 1; border-bottom: solid $surface; }
+    RoomsScreen #room-main { width: 1fr; min-width: 0; }
+    RoomsScreen #room-heading {
+        height: 2; padding: 0 1; text-style: bold; text-wrap: nowrap; text-overflow: ellipsis;
+    }
+    RoomsScreen #room-toolbar { height: 4; padding: 0 1; border-bottom: solid $surface; }
     RoomsScreen #room-search { width: 1fr; }
+    RoomsScreen #room-menu { width: 5; min-width: 5; }
+    RoomsScreen #room-toolbar Button { height: 3; min-height: 1; }
+    RoomsScreen #room-main.toolbar-stacked #room-toolbar {
+        layout: grid; grid-size: 5; grid-columns: 1fr 1fr 1fr 1fr 1fr;
+        grid-rows: 3 1; height: 5;
+    }
+    RoomsScreen #room-main.toolbar-stacked #room-search { column-span: 5; }
+    RoomsScreen #room-main.toolbar-stacked #room-toolbar Button {
+        width: 1fr; min-width: 0; height: 1; margin: 0; padding: 0;
+        text-wrap: nowrap; text-overflow: ellipsis;
+    }
+    RoomsScreen #room-main.toolbar-tiny #room-toolbar {
+        grid-size: 3; grid-columns: 1fr 1fr 1fr; grid-rows: 3 1 1; height: 6;
+    }
+    RoomsScreen #room-main.toolbar-tiny #room-search { column-span: 3; }
+    RoomsScreen #room-main.toolbar-narrowest #room-toolbar {
+        grid-size: 2; grid-columns: 1fr 1fr; grid-rows: 3 1 1 1; height: 7;
+    }
+    RoomsScreen #room-main.toolbar-narrowest #room-search { column-span: 2; }
+    RoomsScreen #room-topic { height: auto; max-height: 2; padding: 0 1; color: $text-muted; }
     RoomsScreen #room-project { height: 3; padding: 1 0; text-style: bold; }
     RoomsScreen #room-profile { height: 3; padding: 1 0; color: $text-muted; }
     RoomsScreen #room-members { width: 22; padding: 1; background: $surface; }
@@ -80,16 +113,15 @@ class RoomsScreen(Screen):
     RoomsScreen #room-context { width: 1fr; padding-left: 1; }
     RoomsScreen #room-context-cancel { height: 1; min-height: 1; border: none; }
     RoomsScreen #room-result-count { height: 1; padding-left: 2; color: $text-muted; }
-    RoomsScreen #room-transcript, RoomsScreen #room-board { height: 1fr; padding: 0 2; }
+    RoomsScreen #room-transcript, RoomsScreen #room-board { height: 1fr; min-height: 1; padding: 0 2; }
     RoomsScreen #room-board { overflow-x: hidden; }
     RoomsScreen .room-message { height: auto; padding: 1; }
-    RoomsScreen .room-message:hover { background: $surface; }
     RoomsScreen .room-message-author { height: 1; color: $accent; text-style: bold; }
     RoomsScreen .room-message-reply { height: auto; color: $text-muted; }
     RoomsScreen .room-message-body { height: auto; padding: 0; }
     RoomsScreen .room-message-actions {
-        height: auto; layout: grid; grid-size: 9;
-        grid-columns: 9 12 8 6 6 6 6 8 10; grid-rows: 1;
+        height: auto; layout: grid; grid-size: 10;
+        grid-columns: 9 12 7 7 6 6 6 6 8 9; grid-rows: 1;
     }
     RoomsScreen .room-message-actions Button {
         height: 1; min-height: 1; min-width: 3; width: auto;
@@ -97,7 +129,6 @@ class RoomsScreen(Screen):
         text-wrap: nowrap; text-overflow: ellipsis;
         background: transparent; color: $text-muted;
     }
-    RoomsScreen .room-message-actions Button:hover,
     RoomsScreen .room-message-actions Button:focus,
     RoomsScreen .room-message-actions Button.reacted { background: $accent 15%; color: $accent; }
     RoomsScreen .task { height: auto; padding: 1 0; border-top: solid $primary-muted; }
@@ -116,6 +147,29 @@ class RoomsScreen(Screen):
     RoomsScreen.compact-messages .room-message-actions {
         grid-size: 5; grid-columns: 1fr 1fr 1fr 1fr 1fr;
     }
+    RoomsScreen.rooms-short #rooms-bar { height: 1; }
+    RoomsScreen.rooms-short #rooms-bar Button { height: 1; }
+    RoomsScreen.rooms-short #rooms-title { padding: 0 1; }
+    RoomsScreen.rooms-short #room-heading { height: 1; }
+    RoomsScreen.rooms-short #room-topic, RoomsScreen.rooms-short #room-hint { display: none; }
+    RoomsScreen.rooms-short #room-context-row { height: 1; }
+    RoomsScreen.rooms-short #room-status { max-height: 1; }
+    RoomsScreen.rooms-short #room-compose-row, RoomsScreen.rooms-short #room-composer {
+        max-height: 3;
+    }
+    RoomsScreen.rooms-short #room-result-count { height: 0; }
+    RoomsScreen.rooms-short #room-main.toolbar-stacked #room-search {
+        height: 1; min-height: 1; border: none; padding: 0 1;
+    }
+    RoomsScreen.rooms-short #room-main.toolbar-stacked #room-toolbar {
+        grid-rows: 1 1; height: 3;
+    }
+    RoomsScreen.rooms-short #room-main.toolbar-tiny #room-toolbar {
+        grid-rows: 1 1 1; height: 4;
+    }
+    RoomsScreen.rooms-short #room-main.toolbar-narrowest #room-toolbar {
+        grid-rows: 1 1 1 1; height: 5;
+    }
     """
 
     def __init__(self, project: Path, viewer: str = "owner") -> None:
@@ -125,6 +179,7 @@ class RoomsScreen(Screen):
         self.viewer = viewer
         self.runtime: RoomRuntime | None = None
         self.room = "general"
+        self.channel_label = "#general"
         self.board = False
         self.last_message = 0
         self.snapshot = ""
@@ -149,25 +204,32 @@ class RoomsScreen(Screen):
     def compose(self) -> ComposeResult:
         """Keep navigation, transcript and composer as separate focus/scroll regions."""
         with Horizontal(id="rooms-bar"):
-            yield Button("Channels", id="rooms-toggle")
+            yield Button("Channels", id="rooms-toggle", compact=True)
             yield Static(Text(f"{self.project.name} / Rooms"), id="rooms-title")
-            yield Button("Sessions", id="rooms-sessions")
+            yield Button("Sessions", id="rooms-sessions", compact=True)
         with Horizontal(id="rooms-layout"):
             with Vertical(id="room-sidebar"):
                 yield Static("PROJECT CHANNELS", id="room-project")
                 yield OptionList(id="room-list")
                 yield Input(placeholder="+ Create channel", id="room-channel")
                 yield Static("● You · Project owner", id="room-profile")
-            with Vertical(id="room-main"):
+            with RoomMain(id="room-main"):
                 yield Static("#general", id="room-heading", markup=False)
+                yield Static("", id="room-topic", markup=False)
                 with Horizontal(id="room-toolbar"):
                     yield Input(
                         placeholder="Search messages in this conversation", id="room-search"
                     )
-                    yield Button("Pins", id="room-pins")
-                    yield Button("Members", id="room-members-toggle")
-                    yield Button("Tasks", id="room-tasks")
-                    yield Button("Channel", id="room-thread-back")
+                    yield Button("Pins", id="room-pins", compact=True)
+                    yield Button("Members", id="room-members-toggle", compact=True)
+                    yield Button("Tasks", id="room-tasks", compact=True)
+                    yield Button(
+                        "⋯",
+                        id="room-menu",
+                        tooltip="Channel settings and message controls",
+                        compact=True,
+                    )
+                    yield Button("Channel", id="room-thread-back", compact=True)
                 yield Static("", id="room-result-count", markup=False)
                 yield VerticalScroll(id="room-transcript")
                 yield VerticalScroll(id="room-board")
@@ -197,6 +259,7 @@ class RoomsScreen(Screen):
     async def on_mount(self) -> None:
         """Start an idle foreground runtime, with no model calls."""
         self.layout_width(self.size.width)
+        self.set_class(self.size.height < 24, "rooms-short")
         self.query_one("#room-board").display = False
         self.query_one("#room-context-row").display = False
         self.query_one("#room-result-count").display = False
@@ -212,11 +275,14 @@ class RoomsScreen(Screen):
     def on_resize(self, event: Resize) -> None:
         """Collapse navigation initially on narrow terminals; keep a toggle available."""
         self.layout_width(event.size.width)
+        self.set_class(event.size.height < 24, "rooms-short")
+        topic = self.query_one("#room-topic", Static)
+        topic.display = event.size.height >= 24 and not self.board and bool(topic.content)
 
     def layout_width(self, width: int) -> None:
         """Apply responsive rules before the first messages mount as well as on resize."""
         self.set_class(width < NARROW_WIDTH, "narrow")
-        self.set_class(width < 130, "compact-messages")
+        self.set_class(width < 140, "compact-messages")
         self.query_one("#room-sidebar").display = width >= COLLAPSE_WIDTH
         self.query_one("#room-members").display = width >= 110
 
@@ -265,7 +331,8 @@ class RoomsScreen(Screen):
             self.updating = True
             composer.value = view["draft"]
             self.updating = False
-            composer.placeholder = f"Message {room if room.startswith('dm:') else '#' + room}…"
+            channel = await self.runtime.db("room", room)
+            composer.placeholder = f"Message {channel['name']}…"
             self.loaded = True
             self.last_message = 0
             await self.query_one("#room-transcript").remove_children()
@@ -275,6 +342,7 @@ class RoomsScreen(Screen):
         self.query_one("#room-compose-row").display = not self.board
         self.query_one("#room-toolbar").display = not self.board
         self.query_one("#room-thread-back").display = thread_id is not None
+        self.query_one("#room-topic").display = not self.board
         self.query_one("#room-heading", Static).update(
             "Shared board"
             if self.board
@@ -299,6 +367,26 @@ class RoomsScreen(Screen):
                     self.runtime_error = self.runtime.error
                     self.status(self.runtime_error)
                 rooms = await self.runtime.db("rows", "SELECT * FROM rooms ORDER BY rowid")
+                if self.room not in {room["id"] for room in rooms}:
+                    self.loaded = False
+                    await self._switch("general", None)
+                    self.status("The channel was deleted. Switched to the default channel.")
+                current = next(room for room in rooms if room["id"] == self.room)
+                self.channel_label = current["name"]
+                if not self.board:
+                    self.query_one("#room-heading", Static).update(
+                        Text(
+                            current["name"]
+                            + (f" / Thread #{self.thread_id}" if self.thread_id else "")
+                        )
+                    )
+                    self.query_one("#room-topic", Static).update(Text(current["topic"]))
+                    self.query_one("#room-topic").display = (
+                        bool(current["topic"]) and self.size.height >= 24
+                    )
+                    self.query_one(
+                        "#room-composer", PromptInput
+                    ).placeholder = f"Message {current['name']}…"
                 options = []
                 for room in rooms:
                     view = await self.runtime.db("view", self.viewer, room["id"])
@@ -345,6 +433,11 @@ class RoomsScreen(Screen):
                     scroll = self.query_one("#room-transcript", VerticalScroll)
                     follow = scroll.is_vertical_scroll_end
                     by_id = {message["id"]: message for message in messages}
+                    if self.thread_id is not None and self.thread_id not in by_id:
+                        self.loaded = False
+                        await self._switch(self.room, None)
+                    for key in set(self.message_widgets) - by_id.keys():
+                        await self.message_widgets.pop(key).remove()
                     thread_counts = Counter(message.get("thread_id") for message in messages)
                     for message in messages:
                         message["thread_count"] = thread_counts[message["id"]]
@@ -372,7 +465,7 @@ class RoomsScreen(Screen):
                         await self.runtime.db("view", self.draft_viewer, self.room, seen=True)
                 jobs = await self.runtime.db(
                     "rows",
-                    "SELECT * FROM jobs WHERE status IN ('working','queued','blocked','paused') "
+                    "SELECT * FROM jobs WHERE status IN ('working','queued','cancelling','blocked','paused') "
                     "ORDER BY CASE status WHEN 'working' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END, rowid DESC",
                 )
                 self.update_members(jobs)
@@ -469,12 +562,15 @@ class RoomsScreen(Screen):
             composer.focus()
         elif action == "pin":
             await self.runtime.db("change_message", self.room, message_id, "pin")
+        elif action == "copy":
+            self.app.copy_to_clipboard(message["text"])
+            self.notify("Message copied")
         elif action == "delete":
             from novacode_cli.tui.screens import ConfirmModal
 
             approved = await self.app.push_screen_wait(
                 ConfirmModal(
-                    "Delete your message?",
+                    "Delete message?",
                     Text("This removes its text and reactions. Replies are preserved."),
                 )
             )
@@ -514,7 +610,7 @@ class RoomsScreen(Screen):
         selection = focused.selection if isinstance(focused, TextArea) else None
         await board.remove_children()
         await board.mount(
-            Label(f"New task in {self.room} · Goal"),
+            Label(f"New task in {self.channel_label} · Goal"),
             TextArea(goal, id="room-goal"),
             Label("Participants (comma-separated)"),
             Input(participants, placeholder="nova,claude,codex", id="room-participants"),
@@ -757,6 +853,10 @@ class RoomsScreen(Screen):
             elif key == "room-members-toggle":
                 panel = self.query_one("#room-members")
                 panel.display = not panel.display
+                if panel.display and self.size.width < 100:
+                    self.query_one("#room-sidebar").display = False
+            elif key == "room-menu":
+                await self.manage_channel()
             elif key == "room-tasks":
                 await self.switch("__board")
             elif key == "room-thread-back":
@@ -769,7 +869,9 @@ class RoomsScreen(Screen):
                 await self.cancel_context()
             elif key.startswith("member-"):
                 await self.switch("dm:" + key[7:])
-            elif key.startswith(("reply-", "thread-", "pin-", "edit-", "delete-", "react")):
+            elif key.startswith(
+                ("reply-", "thread-", "pin-", "copy-", "edit-", "delete-", "react")
+            ):
                 await self.message_action(key)
             elif self.runtime:
                 await self.owner_action(key)
@@ -778,6 +880,60 @@ class RoomsScreen(Screen):
         finally:
             if event.button.is_mounted:
                 event.button.disabled = False
+
+    async def manage_channel(self) -> None:
+        """Apply settings to the conversation displayed when the menu opened."""
+        if not self.runtime:
+            return
+        from novacode_cli.tui.room_settings import RoomSettingsModal
+        from novacode_cli.tui.screens import ConfirmModal
+
+        room, thread_id = self.room, self.thread_id
+        channel = await self.runtime.db("room", room)
+        choice = await self.app.push_screen_wait(RoomSettingsModal(channel, thread_id=thread_id))
+        if not choice:
+            return
+        action = choice["action"]
+        if action == "save":
+            await self.runtime.db("update_channel", room, choice["name"], choice["topic"])
+            self.notify("Channel settings saved")
+        elif action == "mark-read":
+            await self.runtime.db("mark_read", self.viewer)
+            self.notify("All channels and DMs marked read")
+        elif action in {"clear", "delete"}:
+            target = f"thread #{thread_id} in {channel['name']}" if thread_id else channel["name"]
+            deleting = action == "delete"
+            approved = await self.app.push_screen_wait(
+                ConfirmModal(
+                    f"{'Delete channel' if deleting else 'Clear messages'} · {target}?",
+                    Text(
+                        "Deletes this channel, all messages/threads, notes, drafts and task/job history. "
+                        "Project files and Git worktrees are preserved. This cannot be undone."
+                        if deleting
+                        else "Removes all messages, pins and reactions in this conversation and resets its "
+                        "agent discussion sessions. Clearing a channel also removes its threads. "
+                        "Tasks, notes and files are preserved. This cannot be undone."
+                    ),
+                )
+            )
+            if not approved:
+                return
+            async with self.navigation_lock:
+                if deleting:
+                    await self.runtime.db("delete_channel", room)
+                    if self.room == room:
+                        self.loaded = False
+                        await self._switch("general", None)
+                    self.notify("Channel deleted; project files and worktrees preserved")
+                else:
+                    removed = await self.runtime.db("clear_messages", room, thread_id)
+                    if self.room == room and self.thread_id == thread_id:
+                        await self.cancel_context()
+                        await self._switch(room, thread_id)
+                    self.notify(f"Cleared {removed} messages")
+        self.navigation = ""
+        self.snapshot = ""
+        await self.poll()
 
     async def owner_action(self, key: str) -> None:
         """Apply an explicit owner decision from a task card or note selection."""
@@ -863,6 +1019,8 @@ class RoomsScreen(Screen):
         """Toggle navigation independently of the transcript."""
         sidebar = self.query_one("#room-sidebar")
         sidebar.display = not sidebar.display
+        if sidebar.display and self.size.width < 100:
+            self.query_one("#room-members").display = False
 
     def action_latest(self) -> None:
         """Jump to the latest message only on request."""

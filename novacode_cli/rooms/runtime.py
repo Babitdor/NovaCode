@@ -119,12 +119,14 @@ class RoomRuntime:
         if not rows or rows[0]["runtime"] != self.id:
             msg = "Cancel this job from its running Nova session"
             raise ValueError(msg)
-        if rows[0]["status"] in {"queued", "working"}:
-            await self.db("finish", job, "paused", "Cancelled by owner")
+        if rows[0]["status"] not in {"queued", "working", "cancelling"}:
+            return
+        await self.db("finish", job, "cancelling", "Cancellation in progress")
         active = self.running.get(job)
         if active:
             active.cancel()
             await asyncio.gather(active, return_exceptions=True)
+        await self.db("finish", job, "paused", "Cancelled by owner")
 
     async def _schedule(self) -> None:
         while not self.closed:
@@ -291,7 +293,7 @@ class RoomRuntime:
         await asyncio.gather(*tasks, return_exceptions=True)
         rows = await self.db(
             "rows",
-            "SELECT id FROM jobs WHERE runtime=? AND status IN ('queued','working')",
+            "SELECT id FROM jobs WHERE runtime=? AND status IN ('queued','working','cancelling')",
             (self.id,),
         )
         for row in rows:

@@ -248,15 +248,20 @@ class CommandCenterScreen(ModalScreen[CommandSession | None]):
         Binding("d", "details", "Details"),
         Binding("down", "focus_list", "Sessions"),
     ]
-    DEFAULT_CSS = """
+    CSS = """
     CommandCenterScreen { background: $background; }
     CommandCenterScreen #cc-shell { height: 100%; padding: 1 2 0 2; }
     CommandCenterScreen #cc-header { height: 1; }
-    CommandCenterScreen #cc-title { width: 24; text-style: bold; }
-    CommandCenterScreen #cc-group { width: 1fr; color: $text-muted; }
-    CommandCenterScreen #cc-filters { height: 2; border-bottom: solid $border; }
+    CommandCenterScreen #cc-title { width: 24; text-style: bold; text-wrap: nowrap; }
+    CommandCenterScreen #cc-group {
+        width: 1fr; color: $text-muted; text-wrap: nowrap; text-overflow: ellipsis;
+    }
+    CommandCenterScreen #cc-filters {
+        height: 2; border-bottom: solid $border; layout: grid; grid-size: 5;
+        grid-columns: 1fr 1fr 1fr 1fr 1fr; grid-rows: 1; grid-gutter: 0 1;
+    }
     CommandCenterScreen #cc-filters Button {
-        width: auto; min-width: 8; height: 1; padding: 0 1; margin: 0 1 0 0;
+        width: 1fr; min-width: 0; height: 1; min-height: 1; padding: 0; margin: 0;
         border: none; background: transparent; color: $text-muted;
     }
     CommandCenterScreen #cc-filters Button.selected { background: $accent 30%; color: $text; }
@@ -278,11 +283,15 @@ class CommandCenterScreen(ModalScreen[CommandSession | None]):
     CommandCenterScreen #cc-detail-text { height: auto; }
     CommandCenterScreen #cc-footer { height: 2; padding-top: 1; color: $text-muted; }
     CommandCenterScreen.cc-narrow #cc-details { display: none; }
-    CommandCenterScreen.cc-narrow #cc-filters Button { min-width: 0; margin: 0; }
+    CommandCenterScreen.cc-wrap #cc-filters {
+        height: 3; grid-size: 3; grid-columns: 1fr 1fr 1fr;
+    }
+    CommandCenterScreen.cc-tiny #cc-filters {
+        height: 4; grid-size: 2; grid-columns: 1fr 1fr;
+    }
     CommandCenterScreen.cc-details-only #cc-list-column { display: none; }
     CommandCenterScreen.cc-details-only #cc-details { display: block; width: 1fr; border: none; }
     CommandCenterScreen.cc-short #cc-shell { padding: 0 1; }
-    CommandCenterScreen.cc-short #cc-filters { height: 2; }
     CommandCenterScreen.cc-short #cc-footer { height: 1; padding: 0; }
     """
 
@@ -390,6 +399,8 @@ class CommandCenterScreen(ModalScreen[CommandSession | None]):
 
     def _resize(self) -> None:
         self.set_class(self.size.width < _NARROW_WIDTH, "cc-narrow")
+        self.set_class(self.size.width < 65, "cc-wrap")
+        self.set_class(self.size.width < 48, "cc-tiny")
         self.set_class(self.size.height < 24, "cc-short")  # noqa: PLR2004 - compact layout boundary
         self.query_one("#cc-footer", Static).update(
             "Enter open · Tab filter · d details · Esc close"
