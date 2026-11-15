@@ -20,6 +20,7 @@ from novacode_cli.rooms import cli, workspace
 from novacode_cli.rooms.runtime import RoomRuntime
 from novacode_cli.rooms.store import RoomStore, canonical_project, recipients
 from novacode_cli.tui.rooms import RoomsScreen
+from novacode_cli.tui.widgets import PromptInput
 
 
 @pytest.fixture
@@ -300,7 +301,7 @@ async def test_sidebar_drafts_board_narrow_and_no_automatic_work(
         screen = RoomsScreen(tmp_path, "test-viewer")
         await app.push_screen(screen)
         await pilot.pause()
-        composer = screen.query_one("#room-composer", Input)
+        composer = screen.query_one("#room-composer", PromptInput)
         composer.value = "unfinished draft"
         await pilot.pause()
         await screen.switch("dm:claude")
@@ -474,9 +475,9 @@ async def test_reopen_draft_unread_file_completion_and_free_scrolling(tmp_path: 
         screen = RoomsScreen(tmp_path, "viewer")
         await app.push_screen(screen)
         await pilot.pause()
-        assert screen.query_one("#room-composer", Input).value == "saved draft"
+        assert screen.query_one("#room-composer", PromptInput).value == "saved draft"
         assert "Codex (1)" in screen.navigation
-        composer = screen.query_one("#room-composer", Input)
+        composer = screen.query_one("#room-composer", PromptInput)
         composer.value = "@c"
         for _ in range(20):
             await pilot.pause()
@@ -507,7 +508,7 @@ async def test_stale_mention_selection_cannot_replace_new_input(tmp_path: Path):
         screen = RoomsScreen(tmp_path, "viewer")
         await app.push_screen(screen)
         await pilot.pause()
-        composer = screen.query_one("#room-composer", Input)
+        composer = screen.query_one("#room-composer", PromptInput)
         composer.value = "@c"
         for _ in range(20):
             await pilot.pause()
@@ -634,7 +635,7 @@ async def test_task_card_start_and_review_are_wired_to_real_runtime(
         button = screen.query_one("#start-" + task["id"])
         button.scroll_visible(animate=False)
         await pilot.pause()
-        await pilot.click("#start-" + task["id"])
+        assert await pilot.click("#start-" + task["id"], offset=(2, 1))
         await app.workers.wait_for_complete()
         for _ in range(25):
             if screen.runtime.store.task(task["id"])["status"] == "finished":

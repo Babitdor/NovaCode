@@ -191,11 +191,66 @@ async def test_eval_events_create_keyboard_accessible_panels_and_keep_ids(  # no
         await app._render(ev.ToolCall(name="eval", display_str="eval()", icon="*", args={}))
         await app._render(ev.ToolResult(preview="done", full_output='{"result":42,"calls":0}'))
         assert list(app.query(CodeModePanel))[-1].heading.render().plain == "Ran eval"
-        # Other tools keep their existing condensed group.
+        # Normal tools share the compact presentation.
         await app._render(
             ev.ToolCall(name="read_file", display_str="read_file(a.py)", icon="*", call_id="read")
         )
-        assert app._tool_group_entries[-1]["category"] == "Explored"
+        normal = list(app.query(CodeModePanel))[-1]
+        assert normal.heading.render().plain == "Running read_file(a.py)"
+        assert normal.collapsed
+        assert normal.styles.border_top[0] in {"", "none"}
+        await app._render(
+            ev.ToolResult(
+                preview="done",
+                full_output='{"error":"ordinary data","result":42}',
+                call_id="read",
+            )
+        )
+        assert normal.heading.render().plain == "Ran read_file(a.py)"
+        assert not normal.has_class("failed")
+        assert '"error":"ordinary data"' in normal.output.render().plain
+        assert normal.query_one(Collapsible).title == "Arguments"
+        await app._render(
+            ev.ToolCall(
+                name="execute",
+                display_str="execute(echo hello)",
+                icon="*",
+                args={"command": "echo hello", "shell": "native"},
+                call_id="shell",
+            )
+        )
+        shell = list(app.query(CodeModePanel))[-1]
+        assert not shell.collapsed
+        app._write_tool_output("shell", "hello [bold]live[/bold]")
+        await pilot.pause()
+        assert "hello [bold]live[/bold]" in "\n".join(line.text for line in shell.output.lines)
+        await app._render(
+            ev.ToolResult(
+                preview="Exited 1",
+                full_output="failed [literal]\nline2\nline3\nline4",
+                is_error=True,
+                call_id="shell",
+            )
+        )
+        await pilot.pause()
+        assert shell.has_class("failed")
+        assert not shell.has_class("tool-active")
+        assert "line4" not in shell.preview.render().plain
+        assert "line4" in "\n".join(line.text for line in shell.output.lines)
+        assert not shell.query_one(".background-shell-hint").display
+        assert not app._tool_components
+        await app._render(
+            ev.ToolCall(
+                name="read_file",
+                display_str="read_file(legacy.py)",
+                icon="*",
+            )
+        )
+        legacy = list(app.query(CodeModePanel))[-1]
+        await app._render(ev.FileOp(record=None, full_output="legacy content"))
+        assert legacy.heading.render().plain == "Ran read_file(legacy.py)"
+        assert "legacy content" in legacy.output.render().plain
+        assert app._last_tool is None
 
 
 @pytest.mark.asyncio

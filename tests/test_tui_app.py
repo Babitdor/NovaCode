@@ -923,16 +923,13 @@ async def _drive_live_render():
         assert len(app.query("ChatMessage.reason")) == 1
         await app._render(ev.ToolCall(name="web_search", display_str="web_search(ls)", icon="+"))
         assert app._activity == "running web_search…", app._activity
-        # Condensed view: the call goes into a single grouped Collapsible.
-        assert app._tool_group is not None
-        assert len(app._tool_group_entries) == 1
-        # tool result marks the group line; the group Collapsible persists
+        panel = app._last_tool[0]
+        assert panel.collapsed
         await app._render(
             ev.ToolResult(preview="1 result", is_error=False, full_output="line1\nline2")
         )
-        # The mark is a state name, not a glyph — the glyph is picked at render
-        # time from the theme (see _render_tool_line).
-        assert app._tool_group_entries[0]["mark"] == "done"
+        assert panel.heading.render().plain == "Ran web_search(ls)"
+        assert panel.preview.render().plain == "└ line1\n  line2"
         assert len(app.query("Collapsible.tool")) == 1
         await app._render(ev.TextDelta("hi"))
         # prose starts → the tool group is closed so ordering stays correct
@@ -2527,7 +2524,7 @@ def test_tui_live_render():
 
 
 async def _drive_parallel_fileops():
-    """Parallel read_file calls condense into ONE group; each line finalizes by call_id."""
+    """Parallel read_file rows finalize independently by call_id."""
     import novacode_cli.ui_events as ev
 
     from novacode_cli.tui.app import NovaApp, NovaStatusBar
@@ -2549,19 +2546,18 @@ async def _drive_parallel_fileops():
         await app._render(
             ev.ToolCall(name="read_file", display_str="read_file(b.py)", icon="+", call_id="c2")
         )
-        # Both calls condense into ONE grouped panel with two lines.
-        assert app._tool_group is not None
-        assert len(app._tool_group_entries) == 2
-        # results arrive as FileOp events (file-op tools) — finalize each by id
-        await app._render(ev.FileOp(record=None, full_output="content-A", call_id="c1"))
+        assert len(app._tool_components) == 2
         await app._render(ev.FileOp(record=None, full_output="content-B", call_id="c2"))
+        await app._render(ev.FileOp(record=None, full_output="content-A", call_id="c1"))
         comps = list(app.query("Collapsible.tool"))
-        assert len(comps) == 1, len(comps)
-        # both lines finalized, tracked individually by call_id. The mark is a
-        # state name ("done"/"failed"/"running"), not a glyph: the glyph is
-        # chosen at render time from the theme (see _render_tool_line).
-        assert [e["mark"] for e in app._tool_group_entries] == ["done", "done"]
-        assert "running" not in str(comps[0].title)
+        assert len(comps) == 2
+        assert [c.heading.render().plain for c in comps] == [
+            "Ran read_file(a.py)", "Ran read_file(b.py)",
+        ]
+        assert "content-A" in comps[0].output.render().plain
+        assert "content-B" in comps[1].output.render().plain
+        assert not any(c.has_class("tool-active") for c in comps)
+        assert not app._tool_components
 
 
 def test_tui_approval_modal():
@@ -2608,8 +2604,8 @@ async def _drive_diff_component():
         await app._render(ev.FileOp(record=rec, full_output="", call_id="c1"))
         comps = list(app.query("Collapsible.tool"))
         assert len(comps) == 1
-        title = str(comps[0].title)
-        assert "+96 / -0" in title and "•" in title and "running" not in title, title
+        assert "+96 / -0" in comps[0].preview.render().plain
+        assert not comps[0].has_class("tool-active")
         assert len(app._tool_components) == 0
 
 
@@ -3260,6 +3256,7 @@ def test_responsive_breakpoints_follow_width_and_height_changes():
         _short=False,
         _tiny=False,
         _refresh_status=lambda: None,
+        _apply_interface_style=lambda: None,
         _set_nova_indicator=lambda *args, **kwargs: None,
     )
     NovaApp._apply_responsive_layout(app)
@@ -3279,7 +3276,6 @@ async def _drive_tool_group_line_cache():
     re-rendered all ~100 lines each time. The lines are now cached per entry,
     so the risk is the opposite failure: a stale line that never updates.
     """
-    import novacode_cli.ui_events as ev
     from textual.widgets import Static as _Static
 
     from novacode_cli.tui.app import NovaApp
@@ -3298,16 +3294,8 @@ async def _drive_tool_group_line_cache():
         for _ in range(3):
             await pilot.pause()
 
-        await app._render(
-            ev.ToolCall(
-                name="read_file",
-                display_str="read a.py",
-                icon="*",
-                is_main_agent=True,
-                args={},
-                call_id="c1",
-            )
-        )
+        await app._ensure_tool_group()
+        app._add_tool_group_call("c1", "read a.py", "read_file")
         for _ in range(2):
             await pilot.pause()
         # The running-line paint is coalesced on the same ~100 ms
@@ -3325,9 +3313,7 @@ async def _drive_tool_group_line_cache():
         running_txt = str(lst.render())
         assert "•" in running_txt, "running line should show a bullet"
         assert "⏳" not in running_txt, "the hourglass emoji should be gone"
-        await app._render(
-            ev.ToolResult(preview="42 lines", is_error=False, full_output="x", call_id="c1")
-        )
+        app._mark_tool_group_result("c1", is_error=False, detail="42 lines")
         # The successful-result paint is coalesced on a ~100 ms timer
         # (_schedule_tool_group_refresh), so wait past it before asserting.
         for _ in range(4):
@@ -3339,19 +3325,9 @@ async def _drive_tool_group_line_cache():
         assert "•" in txt, "result did not replace the running mark"
         assert "✓" not in txt, "the check emoji should be gone"
         assert "42 lines" in txt, "result detail missing"
-        await app._render(
-            ev.ToolCall(
-                name="shell",
-                display_str="bad cmd",
-                icon="*",
-                is_main_agent=True,
-                args={},
-                call_id="c2",
-            )
-        )
-        await app._render(
-            ev.ToolResult(preview="boom", is_error=True, full_output="x", call_id="c2")
-        )
+        await app._ensure_tool_group()
+        app._add_tool_group_call("c2", "bad cmd", "shell")
+        app._mark_tool_group_result("c2", is_error=True, detail="boom")
         for _ in range(2):
             await pilot.pause()
         err_txt = str(lst.render())
@@ -3368,7 +3344,6 @@ async def _drive_tool_group_coalescing():
     that could go wrong: dropped content, a delayed error, and a pending paint
     lost when the group closes.
     """
-    import novacode_cli.ui_events as ev
     from rich.text import Text as RText
     from textual.widgets import Static as _Static
 
@@ -3397,19 +3372,9 @@ async def _drive_tool_group_coalescing():
             await pilot.pause()
 
         for i in range(10):
-            await app._render(
-                ev.ToolCall(
-                    name="read_file",
-                    display_str=f"read f{i}.py",
-                    icon="*",
-                    is_main_agent=True,
-                    args={},
-                    call_id=f"b{i}",
-                )
-            )
-            await app._render(
-                ev.ToolResult(preview=f"ok{i}", is_error=False, full_output="x", call_id=f"b{i}")
-            )
+            await app._ensure_tool_group()
+            app._add_tool_group_call(f"b{i}", f"read f{i}.py", "read_file")
+            app._mark_tool_group_result(f"b{i}", is_error=False, detail=f"ok{i}")
         await settle(pilot)
         lst = app._tool_group_body.query_one("#tool-group-list", _Static)
         txt = str(lst.render())
@@ -3419,32 +3384,17 @@ async def _drive_tool_group_coalescing():
 
         # An error must NOT wait for the timer: the group pops open, so stale
         # content would be visible for up to 100 ms.
-        await app._render(
-            ev.ToolCall(
-                name="shell", display_str="bad", icon="*", is_main_agent=True, args={}, call_id="e1"
-            )
-        )
-        await app._render(
-            ev.ToolResult(preview="boom", is_error=True, full_output="x", call_id="e1")
-        )
+        await app._ensure_tool_group()
+        app._add_tool_group_call("e1", "bad", "shell")
+        app._mark_tool_group_result("e1", is_error=True, detail="boom")
         await pilot.pause()  # ONE pause — deliberately no timer window
         assert "boom" in str(lst.render()), "error did not paint immediately"
 
         # Closing the group must flush a pending paint, or the last result is
         # lost (the timer would fire after _tool_group is None).
-        await app._render(
-            ev.ToolCall(
-                name="read_file",
-                display_str="last one",
-                icon="*",
-                is_main_agent=True,
-                args={},
-                call_id="z1",
-            )
-        )
-        await app._render(
-            ev.ToolResult(preview="finaldetail", is_error=False, full_output="x", call_id="z1")
-        )
+        await app._ensure_tool_group()
+        app._add_tool_group_call("z1", "last one", "read_file")
+        app._mark_tool_group_result("z1", is_error=False, detail="finaldetail")
         app._log(RText("something else"), transcript=True)  # closes the tool group
         await settle(pilot)
         assert "finaldetail" in str(lst.render()), "pending paint was lost when the group closed"
@@ -3463,7 +3413,6 @@ async def _drive_tool_error_detail_is_shown():
     actually needs to diagnose a failure, and it used to be truncated away.
     """
     import novacode_cli.ui_events as ev
-    from textual.widgets import Static as _Static
 
     from novacode_cli.tui.app import NovaApp
     from novacode_cli.ui.ui_elements import TokenTracker
@@ -3501,11 +3450,12 @@ async def _drive_tool_error_detail_is_shown():
         await asyncio.sleep(0.15)
         for _ in range(3):
             await pilot.pause()
-        lst = app._tool_group_body.query_one("#tool-group-list", _Static)
-        txt = str(lst.render())
-        assert "boom" in txt, "the one-line summary should still render"
-        assert "ValueError: nope" in txt, "the full error output should be shown"
-        assert "Traceback" in txt, "the traceback head should be shown"
+        failed_panel = app.query("CodeModePanel").first()
+        assert failed_panel.heading.render().plain == "Failed bad cmd"
+        assert failed_panel.note.render().plain == "boom"
+        txt = "\n".join(line.text for line in failed_panel.output.lines)
+        assert "ValueError: nope" in txt
+        assert "Traceback" in txt
 
         # A successful call must NOT carry an error block.
         await app._render(
@@ -3524,12 +3474,12 @@ async def _drive_tool_error_detail_is_shown():
         await asyncio.sleep(0.15)
         for _ in range(3):
             await pilot.pause()
-        ok_txt = str(lst.render())
-        assert "42 lines" in ok_txt
-        # The earlier failure's block is still in the group (correct — the group
-        # is a log). What must NOT happen is the successful call growing a block
-        # of its own, so assert the error text appears exactly once.
-        assert ok_txt.count("Traceback") == 1, "a success must not inherit the error block"
+        success = app.query("CodeModePanel").last()
+        assert success.heading.render().plain == "Ran read a.py"
+        assert not success.has_class("failed")
+        assert "Traceback" not in success.output.render().plain
+        assert "Traceback" in "\n".join(line.text for line in failed_panel.output.lines)
+
 
 
 def test_tui_tool_error_detail_is_shown():
@@ -3632,7 +3582,7 @@ async def _drive_native_diff_body():
         comp = app.query("Collapsible.tool").first()
         body = str(comp.query_one(".toolbody", Static).render())
         assert "+# Joji" in body and "-old line" in body, body
-        assert "+2 / -1" in str(comp.title)
+        assert "+2 / -1" in comp.preview.render().plain
 
 
 async def _drive_native_bash():
@@ -4069,6 +4019,7 @@ async def _drive_notifications_native():
     """Notifications show a status badge and /notifications lists/dismisses them."""
     from textual.widgets import Input, Static
     from novacode_cli.tui.widgets import PromptInput
+    from novacode_cli.tui.icons import text_icon
 
     from novacode_cli.states.Session import SessionState
     from novacode_cli.tui.app import NovaApp, NovaStatusBar
@@ -4095,12 +4046,13 @@ async def _drive_notifications_native():
         await pilot.pause()
 
     async with app.run_test() as pilot:
-        # Raising a notification surfaces a 🔔 badge in the status bar.
+        # Raising a notification surfaces the current icon and unread count.
         ss.add_notification("success", "Build done", "ok", "tests")
         app._refresh_status()
         await pilot.pause()
-        status_txt = await _wait_for_status(app, pilot, "🔔")
-        assert "🔔" in status_txt, status_txt
+        badge = f"{text_icon('🔔')} 1"
+        status_txt = await _wait_for_status(app, pilot, badge)
+        assert badge in status_txt, status_txt
 
         # /notifications lists it natively.
         await submit(pilot, "/notifications")
@@ -4114,8 +4066,8 @@ async def _drive_notifications_native():
         assert ss.unread_notification_count() == 0
         app._refresh_status()
         await pilot.pause()
-        cleared = await _wait_for_status(app, pilot, "🔔", present=False)
-        assert "🔔" not in cleared, cleared
+        cleared = await _wait_for_status(app, pilot, badge, present=False)
+        assert badge not in cleared, cleared
 
 
 def test_tui_notifications_native():
@@ -4970,7 +4922,7 @@ async def _drive_bg_agent_card_sizes_to_content() -> None:
                 # number of lines. A fixed number of pauses races the layout under
                 # a full-suite run (pilot.pause() alone was measured at 46-69 ms
                 # under load), which made this flaky.
-                expected = n_tools * 2
+                expected = n_tools  # Calls and results share one progress line.
                 deadline = asyncio.get_running_loop().time() + 20.0
                 card = None
                 log_widget = None
@@ -5608,6 +5560,7 @@ async def test_remote_child_keeps_approval_preference(monkeypatch, auto_approve)
 
     app = NovaApp(agent=_FakeAgent(), assistant_id="nova-agent", session_state=_SS(),
                   backend=None, token_tracker=TokenTracker(), image_tracker=None, model_name="m")
+    app._active_pane = None
     proxy = SimpleNamespace(auto_approve=auto_approve)
     from novacode_cli.tui.session_pane import SessionPane
     pane = SessionPane(sid="child", title="child", scroll=None, kind="child", child=object(),
@@ -5686,6 +5639,7 @@ async def _drive_todo_dock_scrolls_long_lists() -> None:
 
         scroll.focus()
         await pilot.press("end")
+        await pilot.wait_for_scheduled_animations()
         await pilot.pause()
         assert scroll.scroll_y == scroll.max_scroll_y
         assert scroll.scroll_y > 0

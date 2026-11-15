@@ -7,6 +7,7 @@ import re
 import sqlite3
 import threading
 import uuid
+from collections import defaultdict
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -95,11 +96,26 @@ class RoomStore:
             CREATE TABLE IF NOT EXISTS views(viewer TEXT, room TEXT, draft TEXT DEFAULT '',
                 seen INTEGER DEFAULT 0, PRIMARY KEY(viewer,room));
             CREATE TABLE IF NOT EXISTS runtimes(id TEXT PRIMARY KEY, pid INTEGER, born REAL);
+            CREATE TABLE IF NOT EXISTS reactions(message INTEGER, author TEXT, emoji TEXT,
+                PRIMARY KEY(message,author,emoji));
         """)
         with self.transaction():
             columns = {r["name"] for r in self.rows("PRAGMA table_info(jobs)")}
             if "readonly" not in columns:
                 self.db.execute("ALTER TABLE jobs ADD COLUMN readonly INTEGER NOT NULL DEFAULT 0")
+            if "thread_id" not in columns:
+                self.db.execute("ALTER TABLE jobs ADD COLUMN thread_id INTEGER")
+            columns = {r["name"] for r in self.rows("PRAGMA table_info(messages)")}
+            for name, definition in {
+                "reply_to": "INTEGER",
+                "thread_id": "INTEGER",
+                "created_at": "TEXT",
+                "edited_at": "TEXT",
+                "deleted": "INTEGER NOT NULL DEFAULT 0",
+                "pinned": "INTEGER NOT NULL DEFAULT 0",
+            }.items():
+                if name not in columns:
+                    self.db.execute(f"ALTER TABLE messages ADD COLUMN {name} {definition}")
             for room, name in [("general", "#general"), *((f"dm:{a}", a.title()) for a in AGENTS)]:
                 self.db.execute("INSERT OR IGNORE INTO rooms VALUES(?,?)", (room, name))
 
@@ -148,21 +164,112 @@ class RoomStore:
     def history(self, room: str, agent: str = "owner") -> list[Record]:
         """Read only this room's public transcript, never CLI private history."""
         self.room(room, agent)
-        return self.rows("SELECT * FROM messages WHERE room=? ORDER BY id", (room,))
+        messages = self.rows("SELECT * FROM messages WHERE room=? ORDER BY id", (room,))
+        reactions = self.rows(
+            "SELECT r.* FROM reactions r JOIN messages m ON m.id=r.message WHERE m.room=?",
+            (room,),
+        )
+        grouped: dict[int, list[Record]] = defaultdict(list)
+        for reaction in reactions:
+            grouped[reaction["message"]].append(reaction)
+        for message in messages:
+            message["reactions"] = grouped[message["id"]]
+        return messages
 
-    def message(self, room: str, author: str, text: str, job: str | None = None) -> int:
+    def message_record(
+        self,
+        room: str,
+        key: int,
+        agent: str = "owner",
+        *,
+        include_deleted: bool = False,
+    ) -> Record:
+        """Resolve message references within the caller's authorized room."""
+        self.room(room, agent)
+        rows = self.rows("SELECT * FROM messages WHERE room=? AND id=?", (room, key))
+        if not rows or (rows[0]["deleted"] and not include_deleted):
+            raise ValueError("Message is unavailable in this room")
+        return rows[0]
+
+    def message(
+        self,
+        room: str,
+        author: str,
+        text: str,
+        job: str | None = None,
+        *,
+        reply_to: int | None = None,
+        thread_id: int | None = None,
+    ) -> int:
         """Append attributed content; only the coordinator chooses authors."""
         self.room(room, author if author != "system" else "owner")
         checked_text(text)
         with self.transaction():
+            if job:
+                jobs = self.rows("SELECT thread_id FROM jobs WHERE id=? AND room=?", (job, room))
+                if jobs:
+                    thread_id = jobs[0]["thread_id"]
+            for reference in (reply_to, thread_id):
+                if reference is not None:
+                    target = self.message_record(
+                        room, reference, include_deleted=reference == thread_id
+                    )
+                    if thread_id is not None and target["thread_id"] not in (None, thread_id):
+                        raise ValueError("Reply belongs to another thread")
+            if (
+                thread_id is not None
+                and self.message_record(
+                    room,
+                    thread_id,
+                    include_deleted=True,
+                )["thread_id"]
+            ):
+                raise ValueError("Start threads from a channel message")
             cursor = self.db.execute(
-                "INSERT INTO messages(room,author,text,job) VALUES(?,?,?,?)",
-                (room, author, text, job),
+                "INSERT INTO messages(room,author,text,job,reply_to,thread_id,created_at) "
+                "VALUES(?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+                (room, author, text, job, reply_to, thread_id),
             )
             assert cursor.lastrowid is not None  # noqa: S101 - Successful INSERT always has an ID.
             return cursor.lastrowid
 
-    def context(self, room: str, agent: str) -> Record:
+    def change_message(self, room: str, key: int, action: str, text: str = "") -> None:
+        """Owner controls retain attribution; deleting removes content and reactions."""
+        with self.transaction():
+            message = self.message_record(room, key)
+            if action == "pin":
+                self.db.execute("UPDATE messages SET pinned=1-pinned WHERE id=?", (key,))
+            elif action in {"edit", "delete"} and message["author"] == "owner":
+                if action == "edit":
+                    checked_text(text)
+                    self.db.execute(
+                        "UPDATE messages SET text=?,edited_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+                        "WHERE id=?",
+                        (text, key),
+                    )
+                else:
+                    self.db.execute(
+                        "UPDATE messages SET text='',deleted=1,pinned=0 WHERE id=?", (key,)
+                    )
+                    self.db.execute("DELETE FROM reactions WHERE message=?", (key,))
+            else:
+                raise ValueError("Only your own messages can be edited or deleted")
+
+    def react(self, room: str, key: int, author: str, emoji: str) -> None:
+        """Toggle one participant's reaction without crossing room/DM boundaries."""
+        if emoji not in {"👍", "❤️", "🎉", "👀"}:
+            raise ValueError("Choose a supported reaction")
+        with self.transaction():
+            self.message_record(room, key, author)
+            args = (key, author, emoji)
+            if self.rows("SELECT 1 FROM reactions WHERE message=? AND author=? AND emoji=?", args):
+                self.db.execute(
+                    "DELETE FROM reactions WHERE message=? AND author=? AND emoji=?", args
+                )
+            else:
+                self.db.execute("INSERT INTO reactions VALUES(?,?,?)", args)
+
+    def context(self, room: str, agent: str, thread_id: int | None = None) -> Record:
         """Return a bounded valid shared snapshot, never another room's history."""
         self.room(room, agent)
 
@@ -178,7 +285,9 @@ class RoomStore:
             return list(reversed(result))
 
         messages = self.rows(
-            "SELECT * FROM messages WHERE room=? ORDER BY id DESC LIMIT 50", (room,)
+            "SELECT * FROM messages WHERE room=? AND deleted=0 AND (thread_id IS ? OR id=?) "
+            "ORDER BY id DESC LIMIT 50",
+            (room, thread_id, thread_id),
         )
         notes = self.rows("SELECT * FROM notes WHERE room=? ORDER BY rowid DESC LIMIT 30", (room,))
         return {
@@ -265,12 +374,17 @@ class RoomStore:
         task: str = "",
         *,
         readonly: bool = False,
+        thread_id: int | None = None,
     ) -> str:
         """Queue a single bounded turn. Does not itself grant execution."""
         self.room(room, agent)
         checked_text(prompt)
         key = uuid.uuid4().hex
         with self.transaction():
+            if thread_id is not None:
+                root = self.message_record(room, thread_id, agent, include_deleted=True)
+                if root["thread_id"] is not None:
+                    raise ValueError("Start threads from a channel message")
             if task:
                 scope = self.task(task)
                 if scope["room"] != room or agent not in scope["participants"]:
@@ -283,9 +397,9 @@ class RoomStore:
                     msg = "Task turn allowance exhausted; owner must extend it"
                     raise ValueError(msg)
             self.db.execute(
-                "INSERT INTO jobs(id,room,agent,task,prompt,status,runtime,readonly) "
-                "VALUES(?,?,?,?,?,'queued',?,?)",
-                (key, room, agent, task, prompt, runtime, int(readonly)),
+                "INSERT INTO jobs(id,room,agent,task,prompt,status,runtime,readonly,thread_id) "
+                "VALUES(?,?,?,?,?,'queued',?,?,?)",
+                (key, room, agent, task, prompt, runtime, int(readonly), thread_id),
             )
         return key
 
@@ -344,7 +458,10 @@ class RoomStore:
 
     def session(self, row: Record, value: str | None = None) -> str | None:
         """Separate resumable conversations by room, participant and task."""
-        key = (row["room"], row["agent"], row["task"] + (":review" if row.get("readonly") else ""))
+        scope = row["task"] + (":review" if row.get("readonly") else "")
+        if row.get("thread_id") is not None:
+            scope += f":thread:{row['thread_id']}"
+        key = (row["room"], row["agent"], scope)
         if value:
             with self.transaction():
                 self.db.execute(
@@ -536,3 +653,12 @@ class RoomStore:
         """Close the connection after its runtime stops."""
         with self.lock:
             self.db.close()
+
+    def clear_draft(self, viewer: str, room: str, expected: str) -> None:
+        """A completed send must never erase text typed while delivery was pending."""
+        self.room(room)
+        with self.transaction():
+            self.db.execute(
+                "UPDATE views SET draft='' WHERE viewer=? AND room=? AND draft=?",
+                (viewer, room, expected),
+            )

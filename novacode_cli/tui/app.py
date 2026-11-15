@@ -1693,7 +1693,8 @@ class NovaApp(App):
     #plan-toggle:focus, #plan-toggle:hover, #browser-toggle:focus, #browser-toggle:hover,
     #caveman-toggle:focus, #caveman-toggle:hover,
     #code-mode-toggle:focus, #code-mode-toggle:hover {
-        background: $panel;
+        background: $accent 15%;
+        color: $accent;
         text-style: bold;
     }
     #prompt {
@@ -7421,6 +7422,13 @@ class NovaApp(App):
         pal = self._palette
         if isinstance(comp, CodeModePanel):
             comp.finish(full_output or "", is_error=is_error, preview=preview)
+            if isinstance(body, OutputLog):
+                body.clear()
+                body.write(Text(
+                    full_output or preview or "(no output)",
+                    style=pal.tool_fail if is_error else "",
+                ))
+                body.scroll_end(animate=False)
             return
         mark = "•"
         comp.title = f"{base}  {mark} {_esc(preview)}"
@@ -19009,61 +19017,48 @@ class NovaApp(App):
             self._schedule_prune()
         elif isinstance(e, ev.ToolCall):
             self._set_status(f"running {e.name}…")
-            base = f"{text_icon(e.icon)} {_esc(e.display_str)}"
-            if e.name in _DETAILED_TOOL_NAMES or e.name in CODE_MODE_TOOLS:
-                # Write/edit and execution tools keep a DEDICATED Collapsible.
-                # Mounting it (via _mount) closes any open tool group, keeping
-                # transcript order correct.
-                if e.name in CODE_MODE_TOOLS:
-                    code = e.args.get("code", "")
-                    comp = CodeModePanel(code if isinstance(code, str) else "", tool_name=e.name)
-                    body = comp.output
-                    base = "Code Mode"
-                elif e.name in {
-                    "shell",
-                    "bash",
-                    "execute",
-                    "execute_bash",
-                    "run_command",
-                    "run_tests",
-                    "start_dev_server",
+            base = e.display_str
+            if e.name in CODE_MODE_TOOLS:
+                code = e.args.get("code", "")
+                comp = CodeModePanel(code if isinstance(code, str) else "", tool_name=e.name)
+                body = comp.output
+            else:
+                if e.name in {
+                    "shell", "bash", "execute", "execute_bash", "run_command",
+                    "run_tests", "start_dev_server",
                 }:
                     body = OutputLog(
-                        classes="terminal-log",
-                        highlight=True,
-                        markup=True,
+                        classes="terminal-log", highlight=True, markup=False,
                         max_lines=_LOG_MAX_LINES,
                     )
-                    # Starts expanded (collapsed=False) to show live output!
-                    hint = Static(
-                        Text("Ctrl+B · run in background", style="dim"),
-                        classes="background-shell-hint",
-                    )
-                    comp = Collapsible(body, hint, title=f"{base}  · running…", collapsed=False)
-                else:
+                elif e.name in _DETAILED_TOOL_NAMES:
                     body = DiffPreview(classes="toolbody")
-                    # Starts collapsed for file diffs
-                    comp = Collapsible(body, title=f"{base}  · running…", collapsed=True)
-                comp.add_class("tool")
-                comp.add_class("tool-active")
-                animate_entrance(comp, "zoom")
-                await self._mount(comp)
-                entry = (comp, body, base)
-                if e.call_id:
-                    self._tool_components[e.call_id] = entry
-                self._last_tool = entry
-            else:
-                # Everything else (reads, search, exec, MCP, …) condenses into
-                # the shared tool group — one compact line per call.
-                await self._ensure_tool_group()
-                self._add_tool_group_call(e.call_id, f"{text_icon(e.icon)} {e.display_str}", e.name)
+                else:
+                    body = Static("Waiting for output.", classes="code-mode-output", markup=False)
+                comp = CodeModePanel(
+                    json.dumps(e.args, indent=2, ensure_ascii=False), tool_name=e.name,
+                    display_str=e.display_str, output_widget=body,
+                )
+                if isinstance(body, OutputLog):
+                    comp.collapsed = False
+            comp.add_class("tool", "tool-active")
+            await self._mount(comp)
+            if isinstance(body, OutputLog):
+                await comp.mount(Static(
+                    Text("Ctrl+B · run in background", style="dim"),
+                    classes="background-shell-hint",
+                ))
+            entry = (comp, body, base)
+            if e.call_id:
+                self._tool_components[e.call_id] = entry
+            self._last_tool = entry
         elif isinstance(e, ev.ToolResult):
             if (e.call_id and e.call_id in self._tool_components) or (
                 not e.call_id
                 and self._last_tool is not None
                 and isinstance(self._last_tool[0], CodeModePanel)
             ):
-                # Dedicated panel (write/edit) — finalize with full output body.
+                # Finalize the matching row, including out-of-order results.
                 self._finalize_tool(e.call_id, e.preview, e.full_output, is_error=e.is_error)
             else:
                 self._mark_tool_group_result(e.call_id, is_error=e.is_error, detail=e.preview)
@@ -19078,20 +19073,24 @@ class NovaApp(App):
             self._scroll_end()
             self._schedule_prune()
         elif isinstance(e, ev.FileOp):
-            # File ops are the result of their tool call. Write/edit (a dedicated
-            # panel was opened at ToolCall) render the full colored diff body so
-            # the user can see exactly what changed; reads condense into the
-            # group with a concise "Read N lines" summary.
+            # File operations retain their colored diff inside the compact row.
             rec = e.record
             errored = bool(getattr(rec, "error", None)) or (getattr(rec, "status", "") == "error")
-            if e.call_id and e.call_id in self._tool_components:
-                comp, body, base = self._tool_components.pop(e.call_id)
-                if self._last_tool is not None and self._last_tool[0] is comp:
-                    self._last_tool = None
+            entry = self._pop_tool(e.call_id) if (
+                (e.call_id and e.call_id in self._tool_components)
+                or (not e.call_id and self._last_tool is not None)
+            ) else None
+            if entry is not None:
+                comp, body, base = entry
                 # A bullet, not ✓/✗: the emoji are painted by the terminal's own
                 # font, so /theme could not move them (see _render_tool_line).
                 mark = "•"
-                comp.title = f"{base}  {mark} {_esc(self._fileop_summary(rec))}".rstrip()
+                if isinstance(comp, CodeModePanel):
+                    comp.finish(
+                        e.full_output or "", is_error=errored, preview=self._fileop_summary(rec)
+                    )
+                else:
+                    comp.title = f"{base}  {mark} {_esc(self._fileop_summary(rec))}".rstrip()
                 # Expand on failure (surface the error) AND on a successful change
                 # with a diff — these dedicated write/edit panels exist precisely
                 # to show what changed, so a collapsed diff defeats the purpose.

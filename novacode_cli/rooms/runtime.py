@@ -40,11 +40,18 @@ class RoomRuntime:
         self.server = await asyncio.start_server(self._connection, "127.0.0.1", 0, limit=1_000_000)
         self.pump = asyncio.create_task(self._schedule())
 
-    async def send(self, room: str, text: str) -> None:
+    async def send(
+        self,
+        room: str,
+        text: str,
+        *,
+        reply_to: int | None = None,
+        thread_id: int | None = None,
+    ) -> None:
         """Only an owner composer dispatches discussion mentions."""
-        await self.db("message", room, "owner", text)
+        await self.db("message", room, "owner", text, reply_to=reply_to, thread_id=thread_id)
         for agent in recipients(text, room):
-            await self.db("enqueue", room, agent, text, self.id)
+            await self.db("enqueue", room, agent, text, self.id, thread_id=thread_id)
 
     async def start(self, key: str) -> None:
         """Start the exact task card already reviewed by the owner."""
@@ -158,7 +165,7 @@ class RoomRuntime:
                 return
             task = await self.db("task", row["task"]) if row["task"] else None
             cwd = Path(task["worktree"]) if task else self.store.project
-            context = await self.db("context", row["room"], row["agent"])
+            context = await self.db("context", row["room"], row["agent"], row.get("thread_id"))
             review_diff = None
             if task and row.get("readonly"):
                 review_diff = await asyncio.to_thread(workspace.diff, self.store, task["id"])
@@ -227,7 +234,7 @@ class RoomRuntime:
             raise ValueError(msg)
         room, agent = row["room"], row["agent"]
         if operation == "read":
-            return await self.db("context", room, agent)
+            return await self.db("context", room, agent, row.get("thread_id"))
         if operation == "board":
             return await self.db("board", room, agent)
         if operation == "artifact":

@@ -206,5 +206,18 @@
   "tests/test_usage_tree.py": 1,
   "tests/test_update_success_screen.py": 1,
   "tests/test_windows_launcher.py": 1,
-  "tests/test_update_console_native.py": 12.18
+  "tests/test_update_console_native.py": 12.18,
+  "tests/test_project_rooms.py": 40,
+  "tests/test_room_chat.py": 15,
+  "tests/test_tui_mode_toggles.py": 15,
+  "tests/test_tui_app.py::test_tui_live_render": 3,
+  "tests/test_tui_app.py::test_tui_parallel_fileops": 3,
+  "tests/test_tui_app.py::test_tui_diff_component": 3,
+  "tests/test_tui_app.py::test_tui_native_diff_body": 3,
+  "tests/test_tui_app.py::test_tui_tool_error_detail_is_shown": 3,
+  "tests/test_tui_app.py::test_responsive_breakpoints_follow_width_and_height_changes": 1,
+  "tests/test_tui_app.py::test_tui_notifications_native": 5,
+  "tests/test_tui_app.py::test_tui_bg_agent_card_sizes_to_content": 5,
+  "tests/test_tui_app.py::test_remote_child_keeps_approval_preference": 3,
+  "tests/test_tui_app.py::test_tui_todo_dock_scrolls_long_lists": 6
 }

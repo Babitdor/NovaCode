@@ -1,4 +1,4 @@
-"""Compact, inspectable Code Mode runs using the runtime's recorded outcomes."""
+"""Compact tool rows, with recorded operation summaries for Code Mode runs."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from textual.widgets import Collapsible, Static
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
+    from textual.widget import Widget
 
 CODE_MODE_TOOLS = frozenset({"eval", "MCPCode"})
 _MAX_TOOL_NAMES = 3
@@ -132,7 +133,14 @@ class CodeModePanel(Collapsible):
     CodeModePanel.failed .code-mode-note { color: $error; }
     """
 
-    def __init__(self, code: str, *, tool_name: str = "eval") -> None:
+    def __init__(
+        self,
+        code: str,
+        *,
+        tool_name: str = "eval",
+        display_str: str | None = None,
+        output_widget: Widget | None = None,
+    ) -> None:
         """Keep the exact script and result behind separate disclosure controls."""
         self.status = Static("•", classes="code-mode-status")
         self.heading = Static(Text(f"Running {tool_name}"), classes="code-mode-label")
@@ -141,17 +149,25 @@ class CodeModePanel(Collapsible):
         self.note = Static("", classes="code-mode-note", markup=False)
         self.note.display = False
         self.tool_name = tool_name
+        self.display_str = display_str
         self.source = Static(Text(code or "(script unavailable)"), classes="code-mode-source")
-        self.output = Static("Waiting for output.", classes="code-mode-output", markup=False)
+        self.output = (
+            output_widget
+            if output_widget is not None
+            else Static("Waiting for output.", classes="code-mode-output", markup=False)
+        )
+        source_title = "JavaScript" if display_str is None else "Arguments"
         super().__init__(
-            Collapsible(self.source, title="JavaScript", collapsed=True),
+            Collapsible(self.source, title=source_title, collapsed=True),
             self.output,
-            title="JavaScript & full output (Enter to expand)",
+            title=f"{source_title} & full output (Enter to expand)",
             collapsed=True,
             collapsed_symbol="",
             expanded_symbol="",
             classes="tool-active",
         )
+        if display_str is not None:
+            self.heading.update(Text(f"Running {display_str}"))
 
     def compose(self) -> ComposeResult:
         """Keep the summary visible while the disclosure hides only full details."""
@@ -162,13 +178,15 @@ class CodeModePanel(Collapsible):
 
     def finish(self, output: str, *, is_error: bool, preview: str) -> None:
         """Update this run alone and surface failures without opening raw output."""
-        title, note, failed = summarize_run(
-            output, is_error=is_error, preview=preview, fallback=self.tool_name
+        title, note, failed = (
+            summarize_run(output, is_error=is_error, preview=preview, fallback=self.tool_name)
+            if self.display_str is None
+            else (self.display_str, preview if is_error and preview not in output else "", is_error)
         )
         # Rich Text keeps tool-provided brackets literal in the summary and result.
         self.heading.update(Text.assemble(("Failed " if failed else "Ran ", "bold"), title))
         try:
-            data = json.loads(output)
+            data = json.loads(output) if self.display_str is None else None
             pretty = json.dumps(data, indent=2, ensure_ascii=False)
         except (ValueError, TypeError):
             data = None
@@ -202,6 +220,7 @@ class CodeModePanel(Collapsible):
             failed
             or (isinstance(data, dict) and bool(data.get("truncated") or data.get("state_warning")))
         )
-        self.output.update(Text(pretty))
+        if isinstance(self.output, Static):
+            self.output.update(Text(pretty if self.display_str is None else output or preview))
         self.set_class(failed, "failed")
         self.remove_class("tool-active")
