@@ -213,6 +213,14 @@ async def test_channel_menu_rename_clear_cancel_and_delete(tmp_path: Path):
     store.close()
     app = App()
     async with app.run_test(size=(140, 42)) as pilot:
+        async def click_settings(selector):
+            await pilot.pause()
+            button = app.screen.query_one(selector, Button)
+            button.scroll_visible(animate=False, top=True, immediate=True)
+            await pilot.pause()
+            assert app.screen.region.contains_region(button.region)
+            assert await pilot.click(button)
+
         screen = RoomsScreen(tmp_path)
         await app.push_screen(screen)
         await screen.switch(room)
@@ -224,8 +232,7 @@ async def test_channel_menu_rename_clear_cancel_and_delete(tmp_path: Path):
         assert isinstance(app.screen, RoomSettingsModal)
         app.screen.query_one("#channel-name", Input).value = "quality"
         app.screen.query_one("#channel-topic", TextArea).text = "Checks and findings"
-        await pilot.pause()
-        assert await pilot.click("#channel-save")
+        await click_settings("#channel-save")
         await app.workers.wait_for_complete()
         # A timer refresh can overlap the save; assert against the next completed poll.
         while screen.refreshing:
@@ -250,7 +257,7 @@ async def test_channel_menu_rename_clear_cancel_and_delete(tmp_path: Path):
         for approved in (False, True):
             await pilot.click("#room-menu")
             await pilot.pause()
-            await pilot.click("#channel-clear")
+            await click_settings("#channel-clear")
             await pilot.pause()
             await pilot.press("y" if approved else "n")
             await app.workers.wait_for_complete()
@@ -259,7 +266,7 @@ async def test_channel_menu_rename_clear_cancel_and_delete(tmp_path: Path):
         assert composer.value == "Unsent draft"
         await pilot.click("#room-menu")
         await pilot.pause()
-        await pilot.click("#channel-delete")
+        await click_settings("#channel-delete")
         await pilot.pause()
         await pilot.press("y")
         await app.workers.wait_for_complete()
