@@ -234,9 +234,6 @@ async def test_channel_menu_rename_clear_cancel_and_delete(tmp_path: Path):
         app.screen.query_one("#channel-topic", TextArea).text = "Checks and findings"
         await click_settings("#channel-save")
         await app.workers.wait_for_complete()
-        # A timer refresh can overlap the save; assert against the next completed poll.
-        while screen.refreshing:
-            await pilot.pause()
         await screen.poll()
         await pilot.pause()
         assert screen.runtime.store.room(room)["name"] == "#quality"
@@ -318,3 +315,38 @@ async def test_protected_room_menu_is_keyboard_accessible_on_narrow_terminals(tm
         await pilot.press("enter")
         await pilot.pause()
         assert choices[0]["action"] == "clear"
+
+
+@pytest.mark.asyncio
+async def test_explicit_poll_waits_for_an_inflight_refresh(tmp_path, monkeypatch):
+    store = RoomStore(tmp_path)
+    store.message("general", "owner", "Clear during refresh")
+    app = App()
+    async with app.run_test(size=(100, 35)) as pilot:
+        screen = RoomsScreen(tmp_path)
+        await app.push_screen(screen)
+        await pilot.pause()
+        entered, release = asyncio.Event(), asyncio.Event()
+        original = screen.runtime.db
+
+        async def gate(method, *args, **kwargs):
+            result = await original(method, *args, **kwargs)
+            if method == "history" and not entered.is_set():
+                entered.set()
+                await release.wait()
+            return result
+
+        monkeypatch.setattr(screen.runtime, "db", gate)
+        first = asyncio.create_task(screen.poll())
+        await asyncio.wait_for(entered.wait(), 3)
+        await asyncio.to_thread(store.clear_messages, "general")
+        second = asyncio.create_task(screen.poll())
+        try:
+            await asyncio.sleep(0)
+            assert not second.done(), "An explicit refresh must wait for the older refresh"
+        finally:
+            release.set()
+            await asyncio.gather(first, second)
+        assert not screen.message_widgets
+        await screen.action_sessions()
+    store.close()

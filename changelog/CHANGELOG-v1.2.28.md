@@ -22,6 +22,13 @@ The new runtime dependency is `textual-image==0.12.0`, pinned for Python 3.11
 compatibility and the tested Sixel adapter. Inline image support depends on the
 terminal's capability response. Unsupported terminals remain visibly pixelated.
 
+## Rooms refresh synchronization
+
+- Make explicit conversation refreshes wait behind an in-progress refresh instead
+  of returning early with stale messages, channel names or task controls.
+- Stabilize settings interactions by scrolling actions into view before simulated
+  clicks. Add a regression for clearing messages during an in-progress refresh.
+
 ## Validation
 
 Avatar regressions cover both character rendering paths, native Sixel output,

@@ -356,7 +356,7 @@ class RoomsScreen(Screen):
 
     async def poll(self) -> None:
         """Append messages without pulling a reader away from their scroll position."""
-        if not self.runtime or self.refreshing or self.leaving:
+        if not self.runtime or self.leaving:
             return
         async with self.navigation_lock:
             if not self.runtime or self.leaving:
