@@ -80,7 +80,8 @@ Example JavaScript for eval's code argument:
 ```javascript
 await task({
   subagentType: 'general-purpose',
-  description: 'Inspect the workspace for unhandled exceptions. Return file paths, line numbers and explanations; do not edit files.'
+  description: 'Inspect the workspace for unhandled exceptions. ' +
+    'Return file paths, line numbers and explanations; do not edit files.'
 });
 ```
 Give each agent a self-contained goal, relevant verified file paths, constraints and
