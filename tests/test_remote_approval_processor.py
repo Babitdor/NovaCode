@@ -46,10 +46,6 @@ def message(text: str, sender: str = "owner") -> SimpleNamespace:
 
 @pytest.fixture
 async def running_processor(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[SimpleNamespace]:
-    from novacode_cli.vixie import server
-
-    for name in ("set_idle", "set_thinking", "set_working"):
-        monkeypatch.setattr(server, name, AsyncMock())
     console = Console(file=io.StringIO())
     monkeypatch.setattr(execution, "console", console)
     monkeypatch.setattr(processor, "_debug_log", AsyncMock())

@@ -44,3 +44,8 @@ The original detailed source and its `generation-prompt.txt` are retained. The
 builder still supports that source's reference layout without `--simple-grid`.
 
 A native Windows overlay that drew 128-pixel RGBA frames in a separate window was removed: it crashed Windows Terminal.
+
+The legacy Vixie desktop-pet WebSocket server and hook adapter have also been
+removed. The `/nova` terminal avatar renders directly and needs no desktop-pet
+server. If previously configured, remove `python -m novacode_cli.vixie.hook_adapter`
+entries from `~/.nova/hooks.json`; keep unrelated hooks.

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock
 
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -132,10 +131,6 @@ async def test_remote_goal_usage_sums_turns_and_uses_latest_context(
     from rich.console import Console
 
     from novacode_cli.ui import execution
-    from novacode_cli.vixie import server
-
-    for name in ("set_idle", "set_thinking", "set_working"):
-        monkeypatch.setattr(server, name, AsyncMock())
     monkeypatch.setattr(execution, "console", Console(file=io.StringIO()))
 
     async def source(*_args: object, **_kwargs: object) -> AsyncIterator[object]:

@@ -143,11 +143,43 @@ def test_failure_notification_is_deduplicated(middleware, monkeypatch):
     monkeypatch.setattr(
         middleware, "start_background_discovery", lambda: SimpleNamespace(done=lambda: False)
     )
+    scan = Mock(side_effect=AssertionError("status polling must not scan configuration"))
+    monkeypatch.setattr(middleware.mcp_config, "list_servers", scan)
     app = SimpleNamespace(_mcp_failure_notices=set(), notify=Mock())
-    NovaApp._poll_mcp_connections(app)
-    NovaApp._poll_mcp_connections(app)
+    for _ in range(100):
+        NovaApp._poll_mcp_connections(app)
+    scan.assert_not_called()
     app.notify.assert_called_once()
     assert "/mcp" in app.notify.call_args.args[0]
+
+
+async def test_discovery_config_scan_leaves_event_loop_responsive(middleware, monkeypatch):
+    import threading
+
+    loop = asyncio.get_running_loop()
+    entered = asyncio.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    scans = []
+
+    def slow_scan():
+        scans.append(threading.get_ident())
+        loop.call_soon_threadsafe(entered.set)
+        release.wait(2)
+        finished.set()
+        return {}
+
+    monkeypatch.setattr(middleware.mcp_config, "list_servers", slow_scan)
+    task = middleware.start_background_discovery()
+    try:
+        await asyncio.wait_for(entered.wait(), 3)
+        assert not finished.is_set(), "configuration scan blocked input processing"
+        assert scans[0] != threading.get_ident()
+    finally:
+        release.set()
+        await asyncio.wait_for(task, 3)
+        await middleware.aclose()
+    assert len(scans) == 1
 
 
 async def test_close_cancels_discovery_and_closes_sessions(middleware, monkeypatch):

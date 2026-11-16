@@ -190,8 +190,6 @@ from novacode_cli.tools.plan_mode_tools import (
     exit_plan_mode,
     recent_plans,
 )
-# Vixie desktop pet integration
-from novacode_cli.vixie.server import start_vixie_server, stop_vixie_server
 
 from novacode_cli.process_manager import ProcessManager
 
@@ -298,7 +296,7 @@ async def _shutdown_background_services(
     """Best-effort teardown of background services on exit. Never raises.
 
     The TUI does its own session save on exit; this teardown makes sure the
-    Vixie server, managed processes, remote bridges and
+    managed processes, remote bridges and
     background tasks don't dangle and throw during event-loop teardown (which
     can leave the terminal in a broken state).
     """
@@ -317,8 +315,6 @@ async def _shutdown_background_services(
 
     if agent is not None and hasattr(agent, "close_session"):
         steps.append(_guard(agent.close_session(session_state.thread_id)))
-
-    steps.append(_guard(stop_vixie_server()))
 
     steps.append(_guard(asyncio.to_thread(_stop_agent_server)))
 
@@ -1038,7 +1034,7 @@ async def main(
     mark("session_start")
 
     # Check path approval before creating any resources (model, sandbox, store,
-    # checkpointer, Vixie server, etc.). If the user denies access, nothing
+    # checkpointer, etc.). If the user denies access, nothing
     # expensive has been allocated — no cleanup needed.
     #
     # Unattended runs cannot silently grant persistent directory trust.
@@ -1084,13 +1080,6 @@ async def main(
         logging.getLogger(__name__).info(
             "Moved the %s key from the config into the credential store", moved
         )
-
-    # Initialize Vixie WebSocket server for desktop pet integration (non-blocking)
-    # Server runs in background; if port is in use, it gracefully skips.
-    # Skipped in headless mode — it's an interactive desktop-pet feature.
-    if not getattr(session_state, "headless", False):
-        await start_vixie_server()
-    mark("vixie")
 
     # Dynamic (remote) subagents talk Agent Protocol to a LangGraph server, which
     # Nova launches itself from agents/async_agents/ when the optional
@@ -2105,7 +2094,7 @@ def cli_main() -> None:
 
             # Parallel-session child. `headless` is reused as the umbrella
             # "non-interactive process" flag — it already suppresses the splash,
-            # the voice preload, the Vixie server and the cron scheduler, all of
+            # the voice preload and the cron scheduler, all of
             # which would fight the parent over the terminal, devices and ports.
             # auto_approve is deliberately NOT set: a human IS watching, in the
             # parent, and interrupts are forwarded there for a real decision.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gc
+import logging
 import os
 import sys
 import tempfile
@@ -43,6 +44,14 @@ def pytest_unconfigure(config: pytest.Config) -> None:
     if store_module is not None:
         store_module._store = None
         gc.collect()
+    # Windows cannot delete the isolated profile while its log files are open.
+    for logger in (logging.getLogger(), logging.getLogger("novacode_cli.startup")):
+        for handler in list(logger.handlers):
+            if isinstance(handler, logging.FileHandler) and Path(handler.baseFilename).is_relative_to(
+                _TEST_USER_HOME_DIR
+            ):
+                logger.removeHandler(handler)
+                handler.close()
     _TEST_USER_HOME.cleanup()
 
 

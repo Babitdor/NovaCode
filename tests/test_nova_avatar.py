@@ -218,6 +218,54 @@ async def test_avatar_stays_hidden_on_a_small_terminal():
         assert not app.query_one("#nova-avatar", NovaAvatar).display
 
 
+@pytest.mark.parametrize("native", [False, True])
+async def test_click_reacts_immediately_during_work_then_resumes(
+    monkeypatch: pytest.MonkeyPatch, native: bool
+):
+    from types import SimpleNamespace
+
+    from novacode_cli.tui import avatar as avatar_module
+
+    if native:
+        from novacode_cli.tui.avatar_images import SixelAvatarImage
+
+        monkeypatch.setattr(avatar_module, "native_image_type", lambda: SixelAvatarImage)
+    clock = [100.0]
+    monkeypatch.setattr(avatar_module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    app = _app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        app._set_home_visible(visible=False)
+        app._avatar_on = True
+        app._turn_active = True
+        app._paint_avatar()
+        await pilot.pause()
+        avatar = app.query_one("#nova-avatar", NovaAvatar)
+        target = avatar._native if native else next(row for row in avatar._rows if row.display)
+        position = avatar.sprite_region
+        assert avatar._shown[0] == "thinking"
+        await pilot.click(target, button=3)
+        assert avatar._shown[0] == "thinking"
+        await pilot.click(target)
+        assert avatar._shown[0] == "happy"
+        app._paint_avatar()
+        assert avatar._shown[0] == "happy"
+        clock[0] += 1
+        avatar.on_mouse_move()
+        app._paint_avatar()
+        assert avatar._shown[0] == "happy"
+        # Repeated clicks restart the reaction without moving the overlay.
+        target = avatar._native if native else next(row for row in avatar._rows if row.display)
+        await pilot.click(target)
+        clock[0] += avatar_module.REACTION_SECONDS - 0.1
+        app._paint_avatar()
+        assert avatar._shown[0] == "happy"
+        clock[0] += 0.2
+        app._paint_avatar()
+        assert avatar._shown[0] == "thinking"
+        assert avatar.sprite_region == position
+        app._turn_active = False
+
+
 async def test_overlay_reanchors_after_resize_and_growing_composer():
     app = _app()
     async with app.run_test(size=(120, 40)) as pilot:

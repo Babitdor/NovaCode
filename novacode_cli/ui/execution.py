@@ -244,23 +244,8 @@ async def execute_task(  # type: ignore
 
     """
 
-    from novacode_cli.vixie.server import (
 
-        set_idle as vixie_set_idle,
 
-    )
-
-    from novacode_cli.vixie.server import (
-
-        set_thinking as vixie_set_thinking,
-
-    )
-
-    from novacode_cli.vixie.server import (
-
-        set_working as vixie_set_working,
-
-    )
 
 
 
@@ -484,11 +469,6 @@ async def execute_task(  # type: ignore
 
     preview = ConsoleStreamPreview(console)
     try:
-        # Feedback is already visible before ancillary status I/O begins.
-        try:
-            await asyncio.wait_for(vixie_set_thinking(), timeout=1.0)
-        except Exception:
-            pass
 
         async for event in _event_source:
             if not isinstance(event, (ev.TextDelta, ev.StatusUpdate)):
@@ -654,13 +634,6 @@ async def execute_task(  # type: ignore
 
 
 
-                try:
-
-                    await vixie_set_working()
-
-                except Exception:
-
-                    pass
 
 
 
@@ -1096,13 +1069,6 @@ async def execute_task(  # type: ignore
 
                 console.print("\n[yellow]Interrupted by user[/yellow]")
 
-                try:
-
-                    await asyncio.shield(vixie_set_idle())
-
-                except Exception:
-
-                    pass
 
                 return
 
@@ -1189,13 +1155,6 @@ async def execute_task(  # type: ignore
 
 
 
-        try:
-
-            await asyncio.shield(vixie_set_idle())
-
-        except Exception:
-
-            pass
 
 
 
@@ -1253,13 +1212,6 @@ async def execute_task(  # type: ignore
 
         console.print("\n[yellow]Interrupted by user[/yellow]")
 
-        try:
-
-            await asyncio.shield(vixie_set_idle())
-
-        except Exception:
-
-            pass
 
         return
 
@@ -1384,13 +1336,3 @@ async def execute_task(  # type: ignore
             except Exception:
 
                 pass
-
-
-
-        try:
-
-            await vixie_set_idle()
-
-        except Exception:
-
-            pass

@@ -27,6 +27,7 @@ from textual.widgets import Static
 from novacode_cli.tui.avatar_frames import COUNTS, FRAME_SIZE, NATIVE_CELL
 
 if TYPE_CHECKING:
+    from textual import events
     from textual.app import ComposeResult
 
 __all__ = ["OCTANTS", "NovaAvatar", "render"]
@@ -268,6 +269,7 @@ class NovaAvatar(Static):
         self.styles.height = HEIGHT
         self._mood = "idle"
         self._mood_until = 0.0
+        self._click_until = 0.0
         self._idle_since = time.monotonic()
         self._octants = octants_supported()
         self._shown: tuple[str, int] | None = None
@@ -303,14 +305,21 @@ class NovaAvatar(Static):
         """React when the cursor moves over the visible sprite."""
         self.react("cursor")
 
-    def on_click(self) -> None:
-        """A click wakes Nova and plays her cursor interaction."""
-        self.react("cursor")
+    def on_click(self, event: events.Click) -> None:
+        """A left click gets an immediate reaction, even during an active turn."""
+        if event.button != 1:
+            return
+        event.stop()
+        self.react("happy")
+        self._click_until = self._mood_until
+        self.animate_to(busy=False, talking=False)
 
     def animate_to(self, *, busy: bool, talking: bool, working: bool = False) -> None:
         """Advance the animation; repaints only when the frame changes."""
         now = time.monotonic()
-        if busy:
+        if now < self._click_until:
+            state = "happy"
+        elif busy:
             self._idle_since = now
             state = "talking" if talking else ("running" if working else "thinking")
         else:

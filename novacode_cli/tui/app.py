@@ -14455,10 +14455,7 @@ class NovaApp(App):
     def _poll_mcp_connections(self) -> None:
         """Start discovery after paint and surface failures as temporary notices."""
         from novacode_cli.mcp import get_shared_mcp_middleware
-        from novacode_cli.mcp.config import MCPConfig
 
-        if not MCPConfig().list_servers():
-            return
         middleware = get_shared_mcp_middleware()
         task = middleware.start_background_discovery()
         if task.done() and not task.cancelled() and task.exception() is not None:

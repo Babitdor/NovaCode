@@ -1,7 +1,7 @@
 """Quit/teardown must stay bounded even if a background service hangs.
 
-The real ``stop_vixie_server`` / ``ProcessManager`` singletons are monkeypatched
-to no-ops so the test stays hermetic (they touch global fds that would otherwise
+The real ``ProcessManager`` singleton is monkeypatched
+to a no-op so the test stays hermetic (it touches global fds that would otherwise
 corrupt pytest's output capture) and only the timeout-bounding logic is exercised.
 """
 
@@ -12,11 +12,6 @@ import novacode_cli.main as m
 
 
 def _patch_globals(monkeypatch):
-    async def _noop_async():
-        return None
-
-    monkeypatch.setattr(m, "stop_vixie_server", lambda: _noop_async())
-
     class _Inst:
         async def stop_all(self):
             return 0

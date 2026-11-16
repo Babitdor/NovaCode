@@ -721,14 +721,8 @@ class MCPMiddleware(AgentMiddleware):
         """
         from novacode_cli.mcp.client import build_mcp_config_dict
 
-        servers = self.mcp_config.list_servers()
-
-        if not servers:
-            self._tools_discovered = True
-            return
-
-        # Build combined config for all servers
-        config_dict = build_mcp_config_dict(self.mcp_config)
+        # Config validation scans plugins and PATH; keep filesystem work off the UI loop.
+        config_dict = await asyncio.to_thread(build_mcp_config_dict, self.mcp_config)
 
         if not config_dict:
             self._tools_discovered = True

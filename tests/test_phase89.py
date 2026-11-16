@@ -171,22 +171,15 @@ def test_loop_closing_race_closes_unsubmitted_coroutine(monkeypatch):
 async def test_console_error_closes_stream_and_preview(monkeypatch, error):
     monkeypatch.setenv("TERM", "xterm")
     from novacode_cli.ui import execution
-    from novacode_cli.vixie import server
 
     output = io.StringIO()
     console = Console(file=output, force_terminal=True, force_interactive=True)
     monkeypatch.setattr(execution, "console", console)
-    for name in ("set_idle", "set_thinking", "set_working"):
-        monkeypatch.setattr(server, name, AsyncMock())
-
-    async def thinking():
-        assert console._live_stack, "request feedback must precede ancillary I/O"
-
-    monkeypatch.setattr(server, "set_thinking", thinking)
     closed = []
 
     async def source(*_args, **_kwargs):
         try:
+            assert console._live_stack, "request feedback must precede stream consumption"
             yield ev.TextDelta(text="live before error")
             raise error
         finally:

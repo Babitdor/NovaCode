@@ -74,7 +74,22 @@ new calls. shell/bash names and execute calls without a selector are legacy path
 Explicit shell selection never retries a command in another dialect automatically.
 Tool calls return native data, often plain text; do not assume an execute result has .stdout.
 Use task({description, subagentType, responseSchema?}) for configured subagents,
-including explicit @agent requests. tools.describe('task') lists the current roster.
+including explicit @agent requests. Call task(...) inside eval, never tools.call('task', ...).
+Before choosing an unfamiliar agent, inspect await tools.describe('task') for valid names.
+Example JavaScript for eval's code argument:
+```javascript
+await task({
+  subagentType: 'general-purpose',
+  description: 'Inspect the workspace for unhandled exceptions. Return file paths, line numbers and explanations; do not edit files.'
+});
+```
+Give each agent a self-contained goal, relevant verified file paths, constraints and
+expected output. Child agents cannot access eval's JavaScript variables; include
+needed findings in description. Parallelize independent task calls with Promise.all;
+await their results before dependent work. task returns the completed result.
+For background delegation, call start_async_task directly outside eval. Its task ID
+is not a result; obtain required results with the direct wait_for_task tool before
+claiming completion or starting dependent work.
 eval accepts statements and top-level await; its final expression is the selected result.
 Prefer temporary locals inside await (async () => { ...; return smallResult; })().
 Variables persist within this conversation. Keep intermediate data in JavaScript;
