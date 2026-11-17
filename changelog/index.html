@@ -320,7 +320,7 @@ html[data-view="agent"] .agent-cl-note p{color:var(--muted);font-size:.95rem;lin
       <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="c">cat changelog/CHANGELOG-v*.md</span></p>
       <h1>Changelog</h1>
       <!-- generated:changelog-summary -->
-<p class="lede">142 releases &middot; v1.0.0 &rarr; v1.2.34 &middot; from the repository's <code>changelog/</code> directory</p>
+<p class="lede">143 releases &middot; v1.0.0 &rarr; v1.2.35 &middot; from the repository's <code>changelog/</code> directory</p>
 <!-- /generated:changelog-summary -->
       <p class="body"><a class="gh" href="https://github.com/Babitdor/NovaCode/tree/main/changelog" rel="noopener">changelog/ on GitHub &#8599;</a></p>
     </div>
@@ -332,6 +332,23 @@ html[data-view="agent"] .agent-cl-note p{color:var(--muted);font-size:.95rem;lin
     </div>
     <div id="releases">
     <!-- generated:changelog-releases -->
+<details class="changelog-entry" id="v1-2-35" data-version="1.2.35" data-sha="03dcabee4139cfacc92d2528d1aea554ed247f33">
+<summary class="entry-toggle"><h2 class="version">v1.2.35</h2><span class="release-summary">Split long file lists across Git commands to prevent Windows error 206. Preserve literal filenames, including spaces, brackets and Unicode.</span></summary>
+<div class="release-content"><h3>Oracle reliability on large changes</h3>
+<ul>
+<li>Split long file lists across Git commands to prevent Windows error 206. Preserve literal filenames, including spaces, brackets and Unicode.</li>
+<li>Bound Git output and file-body collection against the Oracle evidence limit. Oversized evidence pauses review before reviewers receive a partial diff.</li>
+<li>Preserve the original binary classification in workspace snapshots. Deleting an untracked binary or replacing it with text now requires manual review.</li>
+</ul>
+<h3>Validation</h3>
+<ul>
+<li>Windows tests cover command length, filename handling, process cleanup, evidence limits and binary deletions. A real Git comparison checked the output for 400 changed files. The review evidence limit is 64,000 characters. See [Oracle mode](https://github.com/Babitdor/NovaCode/blob/v1.2.35/docs/oracle-mode.md) for review behavior and controls.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.35 uv tool upgrade novacode-cli <code>`</code> Restart NovaCode after upgrading. Include any optional extras you use: <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.35&quot; <code>`</code></li>
+</ul></div>
+</details>
 <details class="changelog-entry" id="v1-2-34" data-version="1.2.34" data-sha="cc681e5ecf11795b413baf4e4a560da7b139853f">
 <summary class="entry-toggle"><h2 class="version">v1.2.34</h2><span class="release-summary">Allow code review when pre-existing binary edits remain unchanged during the task. Reviewer evidence explicitly lists those assets as unreviewed.</span></summary>
 <div class="release-content"><h3>Oracle binary-change checks and blocked-review controls</h3>
