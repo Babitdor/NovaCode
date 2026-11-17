@@ -1,3 +1,3 @@
 """Version information for NOVA CLI."""
 
-__version__ = "1.2.32"
+__version__ = "1.2.33"

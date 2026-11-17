@@ -12,6 +12,13 @@ score; expand it for findings or choose **Open reviewer thread** to read that
 reviewer's inputs and results across rounds. Review threads are read-only and
 remain available for the current conversation while Nova is running.
 
+The reviewer panel opens when a new round starts. It refreshes once per second
+with each reviewer's status and elapsed time, a finished count and the
+two-minute timeout per reviewer. Results appear as individual calls finish;
+completed timers stop. Reviewer threads also update while a call is running.
+Running means Oracle is waiting for the model response; it does not expose the
+model's private reasoning. You can collapse the panel while reviews continue.
+
 ## Review and fix rounds
 
 After the lead finishes, Oracle sends fresh, independent reviewer contexts the
@@ -35,7 +42,7 @@ never count as passing scores.
 
 ## Settings and decisions
 
-Choose **Settings** beside the strip, or run `/oracle-mode settings`, to set:
+Choose **Settings** beside the Oracle toggle, or run `/oracle-mode settings`, to set:
 
 - Target score: greater than 0 and at most 10; default **8**.
 - Automatic round limit: **1–20**; default **3**.

@@ -1,10 +1,11 @@
 """Oracle composer controls preserve drafts and expose owner decisions and threads."""
 
 import asyncio
+import time
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Button, Input, Switch
+from textual.widgets import Button, Input, Static, Switch
 
 from novacode_cli import ui_events as ev
 from novacode_cli.core.oracle import OracleRun, OracleSettings, Review, Reviewer
@@ -26,7 +27,7 @@ def minimal_mount(monkeypatch):
     monkeypatch.setattr(NovaApp, "on_mount", mount)
 
 
-@pytest.mark.parametrize("size", [(120, 42), (100, 40), (90, 36), (75, 32)])
+@pytest.mark.parametrize("size", [(120, 42), (100, 40), (90, 36), (75, 32), (45, 28)])
 @pytest.mark.parametrize("design", ["classic", "dashboard", "minimal"])
 async def test_toggle_strip_settings_and_threads_preserve_draft(size, design):
     app = _app()
@@ -35,9 +36,14 @@ async def test_toggle_strip_settings_and_threads_preserve_draft(size, design):
         await pilot.pause()
         code_toggle = app.query_one("#code-mode-toggle", Button)
         oracle_toggle = app.query_one("#oracle-toggle", Button)
+        settings_button = app.query_one("#oracle-settings", Button)
         assert code_toggle.parent is oracle_toggle.parent
+        assert settings_button.parent is oracle_toggle.parent
         assert code_toggle.region.y == oracle_toggle.region.y
+        assert settings_button.region.y == oracle_toggle.region.y
         assert code_toggle.region.right == oracle_toggle.region.x
+        assert settings_button.region.x == oracle_toggle.region.right
+        assert app.screen.region.contains_region(settings_button.region)
         assert app.screen.region.contains_region(oracle_toggle.region), (
             app.query_one("#composer-actions").classes,
             app.query_one("#composer-actions").region,
@@ -54,7 +60,7 @@ async def test_toggle_strip_settings_and_threads_preserve_draft(size, design):
         strip = panel.query_one("#oracle-strip", Button)
         assert strip.display
         assert strip.content_region.height == 1
-        assert panel.query_one("#oracle-settings", Button).content_region.height == 1
+        assert settings_button.content_region.height == 1
         assert app.screen.region.contains_region(strip.region)
         run = OracleRun(OracleSettings(), ".", "thread", round=2, status="waiting")
         run.reviewers = [
@@ -209,6 +215,85 @@ async def test_expanded_oracle_keeps_tabs_and_composer_visible_on_short_home():
         assert app.query_one("#session-tab-bar").region.width == app.size.width
         assert app.screen.region.contains_region(app.query_one("#prompt").region)
         assert app.screen.virtual_size.height <= app.size.height
+
+
+@pytest.mark.parametrize("size", [(120, 42), (48, 28)])
+async def test_reviewers_refresh_independently_with_live_and_frozen_timers(size):
+    from novacode_cli.core.oracle import review_round
+
+    started = asyncio.Event()
+    release = [asyncio.Event(), asyncio.Event()]
+    finished = [asyncio.Event(), asyncio.Event()]
+
+    class DelayedModel:
+        calls = 0
+
+        def with_structured_output(self, schema):
+            return self
+
+        async def ainvoke(self, messages):
+            slot = self.calls
+            self.calls += 1
+            if self.calls == 2:
+                started.set()
+            await release[slot].wait()
+            finished[slot].set()
+            return Review(score=9.0, summary=f"Result {slot + 1}", findings=[])
+
+    app = _app()
+    async with app.run_test(size=size) as pilot:
+        await app._run_oracle_mode("/oracle-mode on")
+        run = OracleRun(OracleSettings(), ".", "thread", round=1, status="reviewing")
+        app.session_state.oracle_run = run
+        panel = app.query_one(OraclePanel)
+        app._refresh_oracle()
+        task = asyncio.create_task(review_round(run, DelayedModel(), "evidence"))
+        try:
+            await asyncio.wait_for(started.wait(), 2)
+            for row in run.latest:
+                row.started_at = time.monotonic() - 65
+            await pilot.pause(1.1)
+            assert panel.query_one("#oracle-drawer").display
+            progress = panel.query_one("#oracle-progress", Static)
+            assert "0/2 finished" in str(progress.content)
+            assert "1m " in str(progress.content)
+            assert "running" in str(panel.query_one("#oracle-row-2").title)
+            assert "stale" not in str(panel.query_one("#oracle-row-2").title)
+            assert panel.query_one("#oracle-drawer").region.height <= 4
+            assert app.screen.region.contains_region(app.query_one("#prompt").region)
+            assert app.screen.region.contains_region(progress.region)
+
+            # A completed review appears while the other call is still blocked.
+            release[0].set()
+            await asyncio.wait_for(finished[0].wait(), 2)
+            await pilot.pause(1.1)
+            assert not task.done()
+            assert "1/2 finished" in str(progress.content)
+            assert "complete" in str(panel.query_one("#oracle-row-1").title)
+            assert "Result 1" in str(panel.query_one("#oracle-result-1", Static).content)
+            frozen = run.latest[0].elapsed
+
+            # A reviewer thread opened mid-call also receives the eventual result.
+            app.push_screen(OracleThreadScreen(run, 2))
+            await pilot.pause()
+            release[1].set()
+            await asyncio.wait_for(task, 2)
+            await pilot.pause(1.1)
+            result = app.screen.query_one(
+                f"#oracle-thread-result-{run.latest[1].identity}", Static
+            )
+            assert "complete" in str(result.content)
+            assert "Result 2" in str(result.content)
+            assert "2/2 finished" in str(progress.content)
+            assert run.latest[0].elapsed == frozen
+            await pilot.press("escape")
+            run.status = "passed"
+            app._refresh_oracle()
+            assert not panel._timer._active.is_set()
+        finally:
+            for gate in release:
+                gate.set()
+            await task
 
 
 @pytest.mark.timeout(60)

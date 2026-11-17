@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 from rich.text import Text
 from textual import on
@@ -11,7 +12,13 @@ from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, Collapsible, Input, Static, Switch
 
-from novacode_cli.core.oracle import MAX_ROUNDS, OracleRun, OracleSettings
+from novacode_cli.core.oracle import MAX_ROUNDS, REVIEW_TIMEOUT, OracleRun, OracleSettings
+from novacode_cli.core.subagent_tasks import format_elapsed
+
+
+def _reviewer_status(row) -> str:
+    icon = {"complete": "✓", "running": "◌", "queued": "○"}.get(row.status, "!")
+    return f"{icon} {row.status} · {format_elapsed(row.elapsed)}"
 
 
 class OracleSettingsScreen(ModalScreen[OracleSettings | None]):
@@ -95,18 +102,36 @@ class OracleThreadScreen(ModalScreen[None]):
             with VerticalScroll():
                 for row in self.run.reviewers:
                     if row.slot == self.slot:
-                        result = (
-                            json.dumps(row.review.model_dump(), indent=2, ensure_ascii=False)
-                            if row.review
-                            else row.error or "Review running"
-                        )
                         yield Static(
                             Text(
                                 f"Round {row.round} · independent review\n\n"
-                                f"Review input\n{row.prompt}\n\nReview result\n{result}"
+                                f"Review input\n{row.prompt}"
                             )
                         )
+                        yield Static("", id=f"oracle-thread-result-{row.identity}", markup=False)
             yield Button("Back", id="oracle-thread-back")
+
+    def on_mount(self):
+        self._timer = self.set_interval(1, self._refresh_results)
+        self._refresh_results()
+
+    def _refresh_results(self):
+        rows = [row for row in self.run.reviewers if row.slot == self.slot]
+        for row in rows:
+            widgets = self.query(f"#oracle-thread-result-{row.identity}")
+            if not widgets:
+                continue
+            result = (
+                json.dumps(row.review.model_dump(), indent=2, ensure_ascii=False)
+                if row.review
+                else row.error or "Waiting for model response"
+            )
+            widget = widgets.first(Static)
+            text = f"{_reviewer_status(row)}\n\nReview result\n{result}"
+            if str(widget.content) != text:
+                widget.update(text)
+        if all(row.finished_at is not None or row.review or row.error for row in rows):
+            self._timer.pause()
 
     def action_close(self):
         self.dismiss(None)
@@ -120,7 +145,7 @@ class OraclePanel(Vertical):
     """A one-line receipt; details expand without changing the composer's draft."""
 
     DEFAULT_CSS = """
-    OraclePanel { height: auto; }
+    OraclePanel { height: auto; display: none; }
     OraclePanel #oracle-header { height: 1; }
     OraclePanel Button {
         height: 1; min-height: 1; border: none; padding: 0 1;
@@ -130,9 +155,13 @@ class OraclePanel(Vertical):
     OraclePanel #oracle-strip {
         width: 1fr; content-align: left middle; text-align: left; color: $accent;
     }
-    OraclePanel #oracle-settings { width: 12; }
-    OraclePanel #oracle-drawer { height: 10; display: none; border: solid $accent; }
+    OraclePanel #oracle-drawer {
+        height: auto; max-height: 10; display: none; border: solid $accent;
+    }
     OraclePanel Collapsible { height: auto; padding: 0; border: none; }
+    OraclePanel Collapsible.review-running > CollapsibleTitle { color: $accent; }
+    OraclePanel Collapsible.review-complete > CollapsibleTitle { color: $success; }
+    OraclePanel Collapsible.review-failed > CollapsibleTitle { color: $warning; }
     OraclePanel Static { height: auto; }
     OraclePanel #oracle-error { color: $warning; }
     OraclePanel #oracle-actions {
@@ -153,12 +182,22 @@ class OraclePanel(Vertical):
         super().__init__(**kwargs)
         self.run = None
         self._shown = {}
+        self._session = None
+        self._timer = None
+        self._opened_round = None
+
+    def on_mount(self):
+        self._timer = self.set_interval(1, self._tick, pause=True)
+
+    def _tick(self):
+        if self._session is not None:
+            self.update_report(self._session)
 
     def compose(self):
         with Horizontal(id="oracle-header"):
             yield Button("Oracle · ready", id="oracle-strip", compact=True)
-            yield Button("Settings", id="oracle-settings", compact=True)
         yield Static("", id="oracle-error", markup=False)
+        yield Static("", id="oracle-progress", markup=False)
         with VerticalScroll(id="oracle-drawer"):
             for slot in range(1, 6):
                 with Collapsible(title=f"Reviewer {slot}", id=f"oracle-row-{slot}"):
@@ -173,12 +212,19 @@ class OraclePanel(Vertical):
             yield Button("Pause", id="oracle-pause", compact=True)
 
     def update_report(self, session):
+        self._session = session
         enabled = getattr(session, "oracle_enabled", False)
-        self.display = True
+        self.display = enabled
         if not self.is_mounted:
             return
         run = getattr(session, "oracle_run", None)
         self.run = run
+        reviewing = enabled and run is not None and run.status == "reviewing"
+        if self._timer is not None:
+            self._timer.resume() if reviewing else self._timer.pause()
+        if reviewing and self._opened_round != (run.identity, run.round):
+            self._opened_round = (run.identity, run.round)
+            self.query_one("#oracle-drawer").display = True
         settings = getattr(session, "oracle_settings", None) or OracleSettings()
         text = f"Oracle · ready · target {settings.target:g}"
         if run is not None:
@@ -193,6 +239,26 @@ class OraclePanel(Vertical):
         strip.display = enabled
         if str(strip.label) != text:
             strip.label = Text(text)
+        rows = run.latest if run else []
+        progress = ""
+        if rows:
+            finished = sum(row.review is not None or bool(row.error) for row in rows)
+            started = [row.started_at for row in rows if row.started_at is not None]
+            end = (
+                time.monotonic() if finished < len(rows)
+                else max((row.finished_at or 0 for row in rows), default=0)
+            )
+            elapsed = format_elapsed(max(0, end - min(started))) if started else "—"
+            progress = f"{finished}/{len(rows)} finished · {elapsed}"
+            if reviewing:
+                progress += f" · timeout {format_elapsed(REVIEW_TIMEOUT)} per reviewer"
+        elif reviewing:
+            progress = "Preparing review evidence…"
+        indicator = self.query_one("#oracle-progress", Static)
+        indicator.display = enabled and bool(progress)
+        if self._shown.get("progress") != progress:
+            self._shown["progress"] = progress
+            indicator.update(progress)
         error = run.error if run else ""
         self.query_one("#oracle-error", Static).display = enabled and bool(error)
         if self._shown.get("error") != error:
@@ -218,15 +284,23 @@ class OraclePanel(Vertical):
                 continue
             first, final = rows[0], rows[-1]
             score = lambda row: f"{row.review.score:g}" if row.review else "—"
-            title = f"Reviewer {slot} · first {score(first)} → latest {score(final)}"
-            if run.stale:
+            title = (
+                f"Reviewer {slot} · {_reviewer_status(final)}"
+                f" · first {score(first)} → latest {score(final)}"
+            )
+            if run.stale and run.status != "reviewing":
                 title += " · stale"
-            row_widget.title = title
-            details = (
+            if str(row_widget.title) != title:
+                row_widget.title = title
+            row_widget.set_class(final.status == "running", "review-running")
+            row_widget.set_class(final.review is not None, "review-complete")
+            row_widget.set_class(bool(final.error), "review-failed")
+            result = (
                 final.review.summary + "\n" + "\n".join(final.review.findings)
                 if final.review
-                else final.error or "Review running"
+                else final.error or "Waiting for model response"
             )
+            details = f"{_reviewer_status(final)}\n{result}"
             if self._shown.get(slot) != (final.identity, details):
                 self._shown[slot] = (final.identity, details)
                 self.query_one(f"#oracle-result-{slot}", Static).update(details)

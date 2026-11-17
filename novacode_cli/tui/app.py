@@ -1667,7 +1667,7 @@ class NovaApp(App):
     #composer-actions {
         layout: grid;
         grid-size: 6 1;
-        grid-columns: 14 16 12 14 16 32;
+        grid-columns: 14 16 12 14 16 42;
         grid-rows: 1;
         height: 1;
         padding: 0 1;
@@ -1679,7 +1679,7 @@ class NovaApp(App):
     #composer-actions.wrapped > Button { width: 1fr; min-width: 0; }
     #composer-actions-spacer { display: none; height: 1; }
     #composer-actions.wrapped #composer-actions-spacer { display: block; }
-    #code-oracle-actions { width: 32; height: 1; }
+    #code-oracle-actions { width: 42; height: 1; }
     #composer-actions.wrapped #code-oracle-actions { column-span: 3; }
     #oracle-toggle {
         width: 14; min-width: 14; height: 1; min-height: 1; border: none;
@@ -1687,6 +1687,11 @@ class NovaApp(App):
     }
     #oracle-toggle.enabled { color: $accent; text-style: bold; }
     #oracle-toggle:focus, #oracle-toggle:hover { background: $accent 15%; color: $accent; }
+    #oracle-settings {
+        width: 10; min-width: 10; height: 1; min-height: 1; padding: 0;
+        border: none; background: $surface; color: $text-muted;
+    }
+    #oracle-settings:focus, #oracle-settings:hover { background: $accent 15%; color: $accent; }
     #prime-toggle, #passing-toggle, #plan-toggle, #browser-toggle, #caveman-toggle, #code-mode-toggle {
         width: 16;
         min-width: 16;
@@ -2710,6 +2715,10 @@ class NovaApp(App):
                     yield Button(
                         "Oracle: off", id="oracle-toggle",
                         tooltip="Independent scored reviews for subsequent requests",
+                    )
+                    yield Button(
+                        "Settings", id="oracle-settings", compact=True,
+                        tooltip="Configure Oracle target, rounds, reviewers and new-thread default",
                     )
             yield Static("", id="home-composer-meta")
             yield Static(
@@ -12700,12 +12709,14 @@ class NovaApp(App):
         event.stop()
         await self._run_oracle_mode()
 
+    @on(Button.Pressed, "#oracle-settings")
+    async def _oracle_settings_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self._run_oracle_mode("/oracle-mode settings")
+
     @on(OraclePanel.Control)
     async def _oracle_control(self, event: OraclePanel.Control) -> None:
         event.stop()
-        if event.action == "settings":
-            await self._run_oracle_mode("/oracle-mode settings")
-            return
         run = getattr(self.session_state, "oracle_run", None)
         if run and run.decision and not run.decision.done():
             run.decision.set_result({"action": event.action, "target": event.value})

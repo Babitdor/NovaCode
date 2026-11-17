@@ -202,6 +202,23 @@ async def test_cancelled_reviews_cancel_all_children(workspace, monkeypatch):
     assert len(cancelled) == 2
     assert session.oracle_run.status == "cancelled"
     assert session.oracle_run.decision is None
+    assert all(row.status == "cancelled" for row in session.oracle_run.latest)
+    assert all(row.finished_at >= row.started_at for row in session.oracle_run.latest)
+
+
+@pytest.mark.parametrize(
+    "error,expected",
+    [(None, "complete"), (TimeoutError(), "timed out"), (RuntimeError(), "failed")],
+)
+async def test_reviewer_lifecycle_records_elapsed_and_terminal_status(error, expected):
+    run = oracle.OracleRun(oracle.OracleSettings(reviewers=1), ".", "thread", round=1)
+    model = Model([error if error is not None else 9.0])
+    await oracle.review_round(run, model, "evidence")
+    row = run.latest[0]
+    assert row.status == expected
+    assert row.finished_at >= row.started_at
+    assert row.elapsed == row.finished_at - row.started_at
+    assert (run.lowest is not None) == (error is None)
 
 
 async def test_disabled_oracle_adds_no_review_calls(workspace, monkeypatch):

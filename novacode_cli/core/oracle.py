@@ -7,6 +7,7 @@ import hashlib
 import json
 import math
 import subprocess
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,6 +32,7 @@ from novacode_cli.tracking.usage_tree import (
 
 MAX_ROUNDS = 20
 MAX_REVIEW_CHARS = 64_000
+REVIEW_TIMEOUT = 120
 
 
 class OracleSettings(BaseModel):
@@ -164,6 +166,25 @@ class Reviewer:
     prompt: str
     review: Review | None = None
     error: str = ""
+    started_at: float | None = None
+    finished_at: float | None = None
+
+    @property
+    def status(self) -> str:
+        if self.review is not None:
+            return "complete"
+        if self.error:
+            return {"TimeoutError": "timed out", "CancelledError": "cancelled"}.get(
+                self.error, "failed"
+            )
+        return "running" if self.started_at is not None else "queued"
+
+    @property
+    def elapsed(self) -> float:
+        if self.started_at is None:
+            return 0.0
+        end = self.finished_at if self.finished_at is not None else time.monotonic()
+        return max(0.0, end - self.started_at)
 
 
 @dataclass
@@ -213,6 +234,7 @@ async def review_round(run: OracleRun, model: Any, evidence: str) -> None:
     )
 
     async def review(row: Reviewer) -> None:
+        row.started_at = time.monotonic()
         try:
             with usage_scope(f"oracle/reviewer-{row.slot}"):
                 response = await asyncio.wait_for(
@@ -232,11 +254,16 @@ async def review_round(run: OracleRun, model: Any, evidence: str) -> None:
                             HumanMessage(content=evidence),
                         ]
                     ),
-                    timeout=120,
+                    timeout=REVIEW_TIMEOUT,
                 )
             row.review = Review.model_validate(response)
+        except asyncio.CancelledError:
+            row.error = "CancelledError"
+            raise
         except Exception as exc:  # noqa: BLE001 - Failed reviewers never grant a grade.
             row.error = type(exc).__name__
+        finally:
+            row.finished_at = time.monotonic()
 
     previous = get_current_tree()
     tree = previous if previous is not None else UsageTree(run.thread)
