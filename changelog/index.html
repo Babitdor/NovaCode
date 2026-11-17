@@ -320,7 +320,7 @@ html[data-view="agent"] .agent-cl-note p{color:var(--muted);font-size:.95rem;lin
       <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="c">cat changelog/CHANGELOG-v*.md</span></p>
       <h1>Changelog</h1>
       <!-- generated:changelog-summary -->
-<p class="lede">141 releases &middot; v1.0.0 &rarr; v1.2.33 &middot; from the repository's <code>changelog/</code> directory</p>
+<p class="lede">142 releases &middot; v1.0.0 &rarr; v1.2.34 &middot; from the repository's <code>changelog/</code> directory</p>
 <!-- /generated:changelog-summary -->
       <p class="body"><a class="gh" href="https://github.com/Babitdor/NovaCode/tree/main/changelog" rel="noopener">changelog/ on GitHub &#8599;</a></p>
     </div>
@@ -332,6 +332,26 @@ html[data-view="agent"] .agent-cl-note p{color:var(--muted);font-size:.95rem;lin
     </div>
     <div id="releases">
     <!-- generated:changelog-releases -->
+<details class="changelog-entry" id="v1-2-34" data-version="1.2.34" data-sha="98751b58e896e00e6d5d6e13abb99ff5dbd9c334">
+<summary class="entry-toggle"><h2 class="version">v1.2.34</h2><span class="release-summary">Allow code review when pre-existing binary edits remain unchanged during the task. Reviewer evidence explicitly lists those assets as unreviewed.</span></summary>
+<div class="release-content"><h3>Oracle binary-change checks and blocked-review controls</h3>
+<ul>
+<li>Allow code review when pre-existing binary edits remain unchanged during the task. Reviewer evidence explicitly lists those assets as unreviewed.</li>
+<li>Continue to block automatic approval for binary files added, modified or deleted during the task, and identify the affected paths. Non-UTF-8 files now produce a readable filename instead of a decoder error.</li>
+<li>Anchor review diffs to the task's starting commit, so commits made during a task cannot hide its changes. Preserve text diffs for requests to review existing workspace edits.</li>
+<li>Show blocked status and reviewer failure summaries in the Oracle panel. Blocked reviews offer <strong>Retry review</strong>, <strong>Accept and finish</strong> and <strong>Pause</strong>; accepting explicitly finishes without a passing review.</li>
+<li>Wrap controls in narrow terminals and scroll long errors within a bounded area, keeping the prompt accessible and preserving its draft.</li>
+<li>Make the Code Mode integration test fail promptly on an unexpected Oracle decision instead of waiting indefinitely for a manual response.</li>
+</ul>
+<h3>Validation and limits</h3>
+<ul>
+<li>Regression checks cover binary changes, commits made during a task, reviewer errors, live progress, narrow layouts, error scrolling and draft preservation. No runtime dependency is added. Binary content changed during a task still requires manual review. A local QuickJS timeout also reproduces on unchanged 1.2.33. This release does not change Code Mode execution limits. See [Oracle mode](https://github.com/Babitdor/NovaCode/blob/v1.2.34/docs/oracle-mode.md) for controls and settings.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.34 uv tool upgrade novacode-cli <code>`</code> Restart NovaCode after upgrading. Preserve any optional extras you use: <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.34&quot; <code>`</code></li>
+</ul></div>
+</details>
 <details class="changelog-entry" id="v1-2-33" data-version="1.2.33" data-sha="f9e51bdf75bd6a4b056f0bdd67cb1e66077f9cbc">
 <summary class="entry-toggle"><h2 class="version">v1.2.33</h2><span class="release-summary">Show each reviewer's running, complete, failed, timed-out or cancelled status with elapsed time, refreshed once per second. Completed timers stop.</span></summary>
 <div class="release-content"><h3>Live Oracle reviewer progress</h3>
