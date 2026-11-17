@@ -181,7 +181,7 @@ For development, run `uv sync --group dev` and tests relevant to your change. Se
 | Project exploration and sessions | [Onboarding](docs/project-onboarding.md) · [Command Center](docs/command-center.md) |
 | Context and responses | [Context compression](docs/context-compression.md) · [Response modes](docs/response-modes.md) |
 | Tools and browser automation | [Code Mode](docs/mcp-code-mode.md) · [Essential tools](docs/essential-tools.md) · [Browser mode](docs/browser-mode.md) |
-| Advanced workflows | [Prime](docs/prime-factory.md) · [Council](docs/COUNCIL-SETTINGS.md) · [Session loops](docs/session-loops.md) |
+| Advanced workflows | [Prime](docs/prime-factory.md) · [Oracle mode](docs/oracle-mode.md) · [Council](docs/COUNCIL-SETTINGS.md) · [Session loops](docs/session-loops.md) |
 | Remote access and previews | [Discord](docs/discord-session-threads.md) · [Rootapp](docs/rootapp-remote.md) · [Sharing](docs/temporary-sharing.md) |
 | Releases | [Release notes](https://github.com/Babitdor/NovaCode/releases) · [Changelog](changelog/) |
 

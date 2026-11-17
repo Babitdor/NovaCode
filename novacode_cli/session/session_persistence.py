@@ -90,6 +90,7 @@ class SessionMeta:
         sandbox_type: Sandbox provider used ("docker", "modal", ...) or None
         goal: Conversation goal objective, lifecycle, and accumulated budget usage.
         prime: Opt-in Deep Work mode and its last thread-bound checkpoint record.
+        oracle_enabled: Conversation review toggle; scores are never restored as approvals.
         handoff: Opt-in handoff mode and IDs of selected project context.
         remote_connections: Opted-in Telegram/Discord destinations, without credentials.
     """
@@ -118,6 +119,7 @@ class SessionMeta:
     cleared: bool = False
     goal: dict[str, Any] | None = None
     prime: dict[str, Any] | None = None
+    oracle_enabled: bool | None = None
     handoff: dict[str, Any] | None = None
     remote_connections: list[dict[str, Any]] = field(default_factory=list)
 
@@ -314,6 +316,7 @@ class SessionManager:
         cleared: bool = False,
         goal: dict[str, Any] | None = None,
         prime: dict[str, Any] | None = None,
+        oracle_enabled: bool | None = None,
         handoff: dict[str, Any] | None = None,
         remote_connections: list[dict[str, Any]] | None = None,
         history: list[BaseMessage] | None = None,
@@ -334,6 +337,7 @@ class SessionManager:
             project_root: Path to project root (for repo hash)
             goal: Optional conversation goal and its lifecycle/budget state.
             prime: Optional Deep Work mode and observed checkpoint snapshot.
+            oracle_enabled: Optional conversation-scoped Oracle toggle, without cached grades.
             handoff: Optional handoff toggle and project record IDs.
             remote_connections: Enabled remote destinations to reconnect on resume.
             history: The full message list for the session tree, when
@@ -397,6 +401,7 @@ class SessionManager:
             cleared=cleared,
             goal=goal,
             prime=prime,
+            oracle_enabled=oracle_enabled,
             handoff=handoff,
             remote_connections=remote_connections or [],
         )

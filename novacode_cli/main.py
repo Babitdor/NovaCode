@@ -892,6 +892,7 @@ async def _run_agent_session(
                     sandbox_type=sandbox_type,
                     goal=goal_state_payload(session_state),
                     prime=prime_payload(session_state),
+                    oracle_enabled=getattr(session_state, "oracle_enabled", False),
                     handoff=handoff_payload(session_state),
                     remote_connections=remote_connections_payload(session_state),
                 )
@@ -1320,6 +1321,8 @@ async def main(
             from novacode_cli.handoff import restore_handoff
 
             restore_prime(session_state, getattr(session_data.meta, "prime", None))
+            session_state.oracle_enabled = getattr(session_data.meta, "oracle_enabled", None) is True
+            session_state.oracle_run = None
             restore_handoff(session_state, getattr(session_data.meta, "handoff", None))
             from novacode_cli.remote.session import connection_payload
 

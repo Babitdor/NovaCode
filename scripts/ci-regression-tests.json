@@ -150,6 +150,8 @@
   "tests/test_remote_approval_tui.py": 1,
   "tests/test_remote_plan_handoff.py": 8,
   "tests/test_tui_code_mode_panel.py": 5,
+  "tests/test_oracle.py": 12,
+  "tests/test_tui_oracle.py": 12,
   "tests/test_command_reports.py": 10,
   "tests/test_remote_approval_worker.py": 1,
   "tests/test_session_worker.py": 8.62,

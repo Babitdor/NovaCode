@@ -34,6 +34,7 @@ from novacode_cli.tui.home_scene import (
 from novacode_cli.tui.voice_downloads import VoiceDownloads, VoiceModelProgress
 from novacode_cli.tui.output_buffer import MAX_PENDING_CALLS, OutputTail
 from novacode_cli.tui.prime_panel import PrimePanel
+from novacode_cli.tui.oracle_panel import OraclePanel, OracleSettingsScreen
 
 import asyncio
 import contextlib
@@ -682,6 +683,7 @@ TUI_COMMANDS: dict[str, SlashCommand] = {
     "prime": SlashCommand(
         "_run_prime", "Deep Work: on / off / status / report / tasks / checks / resume / forget"
     ),
+    "oracle-mode": SlashCommand("_run_oracle_mode", "Oracle review mode: on / off / settings"),
     "passing": SlashCommand(
         "_run_passing", "project handoffs: browse / on / off / status / preview / resume / delete"
     ),
@@ -1670,6 +1672,12 @@ class NovaApp(App):
     Screen.narrow #composer-actions {
         grid-size: 2 3; grid-columns: 1fr 1fr; grid-rows: 1 1 1; height: 3;
     }
+    #oracle-toggle {
+        width: 14; min-width: 14; height: 1; min-height: 1; border: none;
+        padding: 0 1; background: $surface; color: $text-muted;
+    }
+    #oracle-toggle.enabled { color: $accent; text-style: bold; }
+    #oracle-toggle:focus, #oracle-toggle:hover { background: $accent 15%; color: $accent; }
     #prime-toggle, #passing-toggle, #plan-toggle, #browser-toggle, #caveman-toggle, #code-mode-toggle {
         width: 16;
         min-width: 16;
@@ -2628,6 +2636,7 @@ class NovaApp(App):
             # the input, which is where the eye already is.
             yield QuestionDock(id="question-dock")
             yield PrimePanel(id="prime-panel")
+            yield OraclePanel(id="oracle-panel")
             with Horizontal(id="prompt-row", classes="normal-mode"):
                 yield Static("> ", id="prompt-prefix", classes="normal-mode")
                 yield PromptInput(
@@ -2845,6 +2854,7 @@ class NovaApp(App):
         await asyncio.to_thread(self._load_ui_preferences)
         self._refresh_caveman_toggle()
         self._refresh_code_mode_toggle()
+        self.set_interval(2, self._check_oracle_freshness)
         self.screen_change_signal.subscribe(self, self._on_interface_screen_changed, immediate=True)
         self._thread_id = threading.get_ident()
         from novacode_cli.tui.presence import TerminalPresence
@@ -8169,6 +8179,7 @@ class NovaApp(App):
         classes (``bash-mode`` / ``plan-mode``) plus a per-mode pulse so each
         mode has a distinct look *and* a distinct animation.
         """
+        self._refresh_oracle()
         plan = getattr(self.session_state, "plan_mode_enabled", False)
         browser = getattr(self.session_state, "browser_mode_enabled", False)
         bash = input_value.startswith("!") and not browser
@@ -10193,6 +10204,7 @@ class NovaApp(App):
                 task_status=task_status,
                 goal=goal_state_payload(session_state),
                 prime=prime_payload(session_state),
+                oracle_enabled=getattr(session_state, "oracle_enabled", False),
                 handoff=handoff_payload(session_state),
                 remote_connections=remote_connections_payload(session_state),
                 history=history,
@@ -12594,6 +12606,96 @@ class NovaApp(App):
             "/lite-mode off" if self._compression_mode != "off" else "/lite-mode on"
         )
 
+    def _refresh_oracle(self) -> None:
+        from novacode_cli.core.oracle import initialize
+
+        initialize(self.session_state)
+        try:
+            toggle = self._w("#oracle-toggle", Button)
+            enabled = self.session_state.oracle_enabled
+            label = "Oracle: on" if enabled else "Oracle: off"
+            if str(toggle.label) != label:
+                toggle.label = label
+            toggle.set_class(enabled, "enabled")
+            self._w("#oracle-panel", OraclePanel).update_report(self.session_state)
+        except NoMatches:
+            pass
+
+    async def _check_oracle_freshness(self) -> None:
+        import subprocess
+
+        from novacode_cli.core.oracle import snapshot
+
+        self._refresh_oracle()
+        state = self.session_state
+        run = getattr(state, "oracle_run", None)
+        if (not getattr(state, "oracle_enabled", False) or run is None
+                or run.status not in {"passed", "waiting", "accepted"} or not run.revision):
+            return
+        try:
+            current = await asyncio.to_thread(snapshot, run.directory)
+            stale = current.revision != run.revision
+        except (OSError, ValueError, subprocess.SubprocessError):
+            stale = True
+        if stale and getattr(state, "oracle_run", None) is run:
+            run.status = "stale"
+            run.stale = True
+            if self.session_state is state:
+                self._refresh_oracle()
+
+    async def _run_oracle_mode(self, text: str = "/oracle-mode") -> None:
+        from novacode_cli.core.oracle import initialize
+
+        initialize(self.session_state)
+        action = text.partition(" ")[2].strip().lower()
+        if action == "settings":
+            state = self.session_state
+
+            async def save(settings) -> None:
+                if settings is None:
+                    return
+                from novacode_cli.config.nova_config import NovaConfig
+
+                try:
+                    await asyncio.to_thread(
+                        lambda: NovaConfig().set("oracle_settings", settings.model_dump())
+                    )
+                except OSError as exc:
+                    self.notify(f"Could not save Oracle settings: {exc}", severity="error")
+                    return
+                state.oracle_settings = settings
+                self._refresh_oracle()
+                self.notify("Oracle settings saved for subsequent runs and new threads")
+
+            self.push_screen(OracleSettingsScreen(state.oracle_settings), save)
+            return
+        if action not in {"", "on", "off", "status"}:
+            self.notify("Use /oracle-mode on, off, status or settings", severity="warning")
+            return
+        if action != "status":
+            state = self.session_state
+            state.oracle_enabled = (action == "on" if action else not state.oracle_enabled)
+            run = getattr(state, "oracle_run", None)
+            if not state.oracle_enabled and run and run.decision and not run.decision.done():
+                run.decision.set_result({"action": "pause"})
+        self._refresh_oracle()
+
+    @on(Button.Pressed, "#oracle-toggle")
+    async def _oracle_toggle_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self._run_oracle_mode()
+
+    @on(OraclePanel.Control)
+    async def _oracle_control(self, event: OraclePanel.Control) -> None:
+        event.stop()
+        if event.action == "settings":
+            await self._run_oracle_mode("/oracle-mode settings")
+            return
+        run = getattr(self.session_state, "oracle_run", None)
+        if run and run.decision and not run.decision.done():
+            run.decision.set_result({"action": event.action, "target": event.value})
+            self._refresh_oracle()
+
     @on(Button.Pressed, "#prime-toggle")
     async def _prime_toggle_pressed(self, event: Button.Pressed) -> None:
         """Share slash-command semantics without submitting the composer's draft."""
@@ -14252,6 +14354,8 @@ class NovaApp(App):
         from novacode_cli.handoff import restore_handoff
 
         restore_prime(self.session_state, getattr(session_data.meta, "prime", None))
+        self.session_state.oracle_enabled = getattr(session_data.meta, "oracle_enabled", None) is True
+        self.session_state.oracle_run = None
         restore_handoff(self.session_state, getattr(session_data.meta, "handoff", None))
         from novacode_cli.remote.session import connection_payload, reconnect_remote
 
@@ -19145,6 +19249,9 @@ class NovaApp(App):
                     pass
                 self._refresh_usage_metrics()
         elif isinstance(e, ev.ContextMessage):
+            if e.event_type == "nova_oracle_progress":
+                self._refresh_oracle()
+                return
             if e.event_type in {"nova_prime_progress", "nova_prime_receipt"}:
                 self._update_mode_badge(self.query_one("#prompt", PromptInput).text)
                 if (
@@ -19707,6 +19814,13 @@ class NovaApp(App):
         )
         backend = pane.state.get("backend") if pane is not None else getattr(self, "backend", None)
         origin = NovaApp._remote_approval_origin(self, pane)
+        if e.kind == "oracle":
+            run = getattr(state, "oracle_run", None)
+            if (run is not None and run.identity == e.payload.get("run_id")
+                    and self._remote_msg is None):
+                self._refresh_oracle()
+                await e.future
+            return
         if e.kind == "tool":
             req = e.payload
             from novacode_cli.ui.hitl_approval import check_plan_mode_blocked

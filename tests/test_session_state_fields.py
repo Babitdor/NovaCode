@@ -32,6 +32,7 @@ CONCRETE_FIELDS = [
     "verify_enabled",  # ui/execution.py
     "active_goal",  # commands/side_commands.py, core/agent_loop.py
     "prime_enabled", "prime_report", "cli_prime_override",
+    "oracle_enabled", "oracle_settings", "oracle_run",
     "handoff_enabled", "handoff_pending", "handoff_latest",
     "active_rubric",
     "browser_use_tasks",  # commands/browser_use_handler.py

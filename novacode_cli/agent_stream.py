@@ -7,6 +7,9 @@ Human-in-the-loop interrupts are surfaced as :class:`~novacode_cli.ui_events.Int
 events carrying an ``asyncio.Future`` that the consumer must resolve with the
 decision; the generator awaits it and resumes the graph.
 
+When Oracle mode is enabled, the existing goal stream is wrapped in independent
+review rounds and completion waits for current passing scores or an owner decision.
+
 When the learning loop is enabled, each completed turn is graded out-of-band and
 the verdict is logged — that verdict is the quality signal ``/prompt`` evolution
 (prompt-template A/B testing) and ``verification_log`` feed on. Historically only
@@ -24,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 from novacode_cli import ui_events as ev
 from novacode_cli.core.autonomous_loop import run_with_goal
+from novacode_cli.core.oracle import initialize, run_with_oracle
 from novacode_cli.sessions.lease import lease_holder, lease_session
 
 if TYPE_CHECKING:
@@ -151,7 +155,9 @@ async def run_agent_stream(
     _lease_cm = lease_session(thread_id, holder) if thread_id else _null_async_cm()
 
     async with _lease_cm:
-        async for event in run_with_goal(
+        initialize(session_state)
+        source = run_with_oracle if session_state.oracle_enabled else run_with_goal
+        async for event in source(
             user_input,
             agent,
             assistant_id,

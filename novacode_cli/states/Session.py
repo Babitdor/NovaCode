@@ -126,6 +126,12 @@ class SessionState:
         self.verify_enabled: bool = False  # ui/execution.py
         self.active_goal: str | None = None  # commands/side_commands.py, core/agent_loop.py, tui/app.py
         self.prime_enabled: bool = False
+        self.oracle_settings = None
+        self.oracle_enabled = False
+        self.oracle_run = None
+        from novacode_cli.core.oracle import initialize
+
+        initialize(self)
         self.cli_prime_override: bool | None = None
         self.prime_report: dict[str, Any] | None = None
         self.prime_pending: dict[str, Any] | None = None
@@ -505,6 +511,7 @@ class SessionState:
         "workspace_root", "verify_enabled", "active_goal", "active_rubric",
         "prime_enabled", "prime_report", "cli_prime_override", "prime_pending", "prime_forget_pending",
         "prime_factory", "prime_factory_resume",
+        "oracle_settings", "oracle_enabled", "oracle_run",
         "handoff_enabled", "handoff_pending", "handoff_latest", "handoff_delete_pending",
         "goal_status", "goal_turns_used", "goal_max_turns", "goal_thread_id",
         "goal_revision",
@@ -688,6 +695,13 @@ class SessionState:
             self._loop_scheduler.close()
             self._loop_scheduler = None
         self.prime_report = None
+        from novacode_cli.core.oracle import profile_settings
+
+        if self.oracle_run and self.oracle_run.decision and not self.oracle_run.decision.done():
+            self.oracle_run.decision.set_result({"action": "pause"})
+        self.oracle_settings = profile_settings()
+        self.oracle_enabled = self.oracle_settings.default_enabled
+        self.oracle_run = None
         self.prime_pending = None
         self.prime_forget_pending = None
         self.handoff_pending = None
