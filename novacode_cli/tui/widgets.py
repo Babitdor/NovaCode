@@ -1345,6 +1345,13 @@ class ChatMessage(Vertical):
 
 
 
+class ComposerActions(Horizontal):
+    """Wrap composer controls using their actual width, including centered layouts."""
+
+    def on_resize(self, event: events.Resize) -> None:
+        self.set_class(event.size.width < 106, "wrapped")
+
+
 class PromptInput(TextArea):
     """Main prompt input that collapses large pastes into a compact placeholder.
 

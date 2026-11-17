@@ -134,6 +134,7 @@ from novacode_cli.tui.output_buffer import MAX_PENDING_CALLS, OutputTail
 from novacode_cli.tui.widgets import CachedMarkdown as Markdown
 from novacode_cli.tui.widgets import OutputLog
 from novacode_cli.tui.widgets import (
+    ComposerActions,
     DEFAULT_THEME,
     NOVA_MATRIX,
     NOVA_TOKYO_NIGHT,
@@ -1666,15 +1667,20 @@ class NovaApp(App):
     #composer-actions {
         layout: grid;
         grid-size: 6 1;
-        grid-columns: 14 16 12 14 16 18;
+        grid-columns: 14 16 12 14 16 32;
         grid-rows: 1;
         height: 1;
         padding: 0 1;
         background: $surface;
     }
-    Screen.narrow #composer-actions {
-        grid-size: 2 3; grid-columns: 1fr 1fr; grid-rows: 1 1 1; height: 3;
+    #composer-actions.wrapped {
+        grid-size: 3 3; grid-columns: 1fr 1fr 1fr; grid-rows: 1 1 1; height: 3;
     }
+    #composer-actions.wrapped > Button { width: 1fr; min-width: 0; }
+    #composer-actions-spacer { display: none; height: 1; }
+    #composer-actions.wrapped #composer-actions-spacer { display: block; }
+    #code-oracle-actions { width: 32; height: 1; }
+    #composer-actions.wrapped #code-oracle-actions { column-span: 3; }
     #oracle-toggle {
         width: 14; min-width: 14; height: 1; min-height: 1; border: none;
         padding: 0 1; background: $surface; color: $text-muted;
@@ -2654,7 +2660,7 @@ class NovaApp(App):
             # Input-mode badge (normal / bash / plan / goal). Empty and 1 row
             # tall in normal mode, so it costs nothing until a mode is active.
             yield Static("", id="mode-badge")
-            with Horizontal(id="composer-actions"):
+            with ComposerActions(id="composer-actions"):
                 yield Button(
                     "Prime: off",
                     id="prime-toggle",
@@ -2690,15 +2696,21 @@ class NovaApp(App):
                         "saved across launches."
                     ),
                 )
-                yield Button(
-                    "Code Mode: on",
-                    id="code-mode-toggle",
-                    tooltip=(
-                        "Compose Nova and MCP tool calls with JavaScript. "
-                        "Applies to the next model call; saved across launches. "
-                        "Calls needing approval or graph controls use the direct tool path."
-                    ),
-                )
+                yield Static("", id="composer-actions-spacer")
+                with Horizontal(id="code-oracle-actions"):
+                    yield Button(
+                        "Code Mode: on",
+                        id="code-mode-toggle",
+                        tooltip=(
+                            "Compose Nova and MCP tool calls with JavaScript. "
+                            "Applies to the next model call; saved across launches. "
+                            "Calls needing approval or graph controls use the direct tool path."
+                        ),
+                    )
+                    yield Button(
+                        "Oracle: off", id="oracle-toggle",
+                        tooltip="Independent scored reviews for subsequent requests",
+                    )
             yield Static("", id="home-composer-meta")
             yield Static(
                 "/ commands   @ files   Shift+Enter new line   /settings styles",

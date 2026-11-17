@@ -127,8 +127,10 @@ class OraclePanel(Vertical):
         background: $surface; color: $text; min-width: 5;
     }
     OraclePanel Button:hover, OraclePanel Button:focus { background: $accent 20%; }
-    OraclePanel #oracle-strip { width: 1fr; content-align: left middle; color: $accent; }
-    OraclePanel #oracle-settings { width: 10; }
+    OraclePanel #oracle-strip {
+        width: 1fr; content-align: left middle; text-align: left; color: $accent;
+    }
+    OraclePanel #oracle-settings { width: 12; }
     OraclePanel #oracle-drawer { height: 10; display: none; border: solid $accent; }
     OraclePanel Collapsible { height: auto; padding: 0; border: none; }
     OraclePanel Static { height: auto; }
@@ -154,26 +156,21 @@ class OraclePanel(Vertical):
 
     def compose(self):
         with Horizontal(id="oracle-header"):
-            yield Button(
-                "Oracle: off",
-                id="oracle-toggle",
-                tooltip="Independent scored reviews for subsequent requests",
-            )
-            yield Button("Oracle · ready", id="oracle-strip")
-            yield Button("Settings", id="oracle-settings")
+            yield Button("Oracle · ready", id="oracle-strip", compact=True)
+            yield Button("Settings", id="oracle-settings", compact=True)
         yield Static("", id="oracle-error", markup=False)
         with VerticalScroll(id="oracle-drawer"):
             for slot in range(1, 6):
                 with Collapsible(title=f"Reviewer {slot}", id=f"oracle-row-{slot}"):
                     yield Static("", id=f"oracle-result-{slot}", markup=False)
-                    yield Button("Open reviewer thread", id=f"oracle-thread-{slot}")
+                    yield Button("Open reviewer thread", id=f"oracle-thread-{slot}", compact=True)
         with Grid(id="oracle-actions"):
-            yield Button("Keep fixing", id="oracle-fix")
-            yield Button("More rounds", id="oracle-extend")
-            yield Button("Accept and finish", id="oracle-accept")
+            yield Button("Keep fixing", id="oracle-fix", compact=True)
+            yield Button("More rounds", id="oracle-extend", compact=True)
+            yield Button("Accept and finish", id="oracle-accept", compact=True)
             yield Input("", placeholder="Lower target", id="oracle-lower-target")
-            yield Button("Lower target", id="oracle-lower")
-            yield Button("Pause", id="oracle-pause")
+            yield Button("Lower target", id="oracle-lower", compact=True)
+            yield Button("Pause", id="oracle-pause", compact=True)
 
     def update_report(self, session):
         enabled = getattr(session, "oracle_enabled", False)
@@ -237,7 +234,7 @@ class OraclePanel(Vertical):
     @on(Button.Pressed)
     def pressed(self, event: Button.Pressed):
         identity = event.button.id or ""
-        if not identity.startswith("oracle-") or identity == "oracle-toggle":
+        if not identity.startswith("oracle-"):
             return
         event.stop()
         action = identity.removeprefix("oracle-")

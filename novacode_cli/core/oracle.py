@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from novacode_cli import ui_events as ev
 from novacode_cli.core.autonomous_loop import run_with_goal
+from novacode_cli.core.verification_loop import _extract_test_evidence
 from novacode_cli.prime_memory import session_directory
 from novacode_cli.security.prompt_injection import _credential_values, _redact
 from novacode_cli.session.history_export import redact
@@ -116,14 +117,26 @@ def snapshot(directory: str) -> Snapshot:
     return Snapshot(root, digest.hexdigest(), files, diff)
 
 
-def review_input(before: Snapshot, after: Snapshot, request: str, answer: str) -> str:
+def review_input(
+    before: Snapshot,
+    after: Snapshot,
+    request: str,
+    answer: str,
+    test_evidence: list[str] | None = None,
+) -> str:
     """Include changed file bodies as well as diffs; never silently truncate evidence."""
     if any(
         line.startswith("Binary files ") and line.endswith(" differ")
         for line in after.diff.splitlines()
     ):
         raise ValueError("Oracle cannot inspect binary changes; review them manually")
-    blocks = [f"Request:\n{request}", f"Lead response:\n{answer}", f"Git diff:\n{after.diff}"]
+    blocks = [
+        f"Request:\n{request}",
+        f"Lead response:\n{answer}",
+        f"Git diff:\n{after.diff}",
+        "Observed test tool results:\n"
+        + ("\n\n".join(test_evidence) if test_evidence else "No test output was observed."),
+    ]
     for name, digest in after.files.items():
         if before.files.get(name) == digest:
             continue
@@ -296,6 +309,7 @@ async def run_with_oracle(
     snapshot_error = ""
     current_input = user_input
     answer = ""
+    test_evidence = []
     done = ev.Done()
     needs_lead = True
 
@@ -323,6 +337,7 @@ async def run_with_oracle(
                 run.stale = True
                 yield run.progress()
                 answers = []
+                test_evidence = []
                 completed = False
                 async for event in run_with_goal(
                     current_input, agent, assistant_id, session_state, **kwargs
@@ -333,6 +348,9 @@ async def run_with_oracle(
                     else:
                         if isinstance(event, ev.AssistantMessage):
                             answers.append(event.text)
+                        elif isinstance(event, ev.ToolResult):
+                            test_evidence.extend(_extract_test_evidence([event]))
+                            test_evidence = test_evidence[-6:]
                         yield event
                         if isinstance(event, (ev.Cancelled, ev.Error)):
                             run.status = "cancelled" if isinstance(event, ev.Cancelled) else "error"
@@ -363,7 +381,7 @@ async def run_with_oracle(
                     raise ValueError("Teammates are still active; wait for them before reviewing")
                 before = await asyncio.to_thread(snapshot, run.directory)
                 evidence = await asyncio.to_thread(
-                    review_input, original, before, user_input, answer
+                    review_input, original, before, user_input, answer, test_evidence
                 )
                 run.revision = before.revision
                 model = getattr(session_state, "_model", None)

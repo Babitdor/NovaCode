@@ -1,8 +1,8 @@
 # Oracle mode
 
-Click **Oracle: off** above the prompt to enable independent review rounds for
-subsequent requests. The toggle preserves your draft. Oracle works with normal
-tool calling and Code Mode; it also checks that local teammates are no longer
+Click **Oracle: off** beside **Code Mode** in the composer to enable independent
+review rounds for subsequent requests. The toggle preserves your draft. Oracle
+works with normal tool calling and Code Mode; it also checks that local teammates are no longer
 active before allowing a passing result. Planning requests remain read-only and
 do not enter the fix loop.
 
@@ -15,8 +15,9 @@ remain available for the current conversation while Nova is running.
 ## Review and fix rounds
 
 After the lead finishes, Oracle sends fresh, independent reviewer contexts the
-request, lead response, Git diff and changed text-file contents. Reviewers use
-the current session model with structured scores from 0 to 10. They have no
+request, lead response, Git diff, changed text-file contents and captured test
+tool results. Reviewers use the current session model with structured scores
+from 0 to 10. They have no
 executable tools and cannot edit files, approve tool calls, or see peer scores.
 The lowest score controls the result: every reviewer must meet the target.
 
