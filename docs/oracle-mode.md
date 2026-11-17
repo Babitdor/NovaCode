@@ -7,14 +7,15 @@ active before allowing a passing result. Planning requests remain read-only and
 do not enter the fix loop.
 
 The composer strip shows the round, lowest reviewer score, target and current
-state. Click it to expand reviewer rows. Each row shows its first and latest
-score; expand it for findings or choose **Open reviewer thread** to read that
+state. Click it to expand reviewer rows. Each row shows its assignment and its
+first and latest scores. Expand it for findings or choose **Open reviewer thread** to read that
 reviewer's inputs and results across rounds. Review threads are read-only and
 remain available for the current conversation while Nova is running.
 
 The reviewer panel opens when a new round starts. It refreshes once per second
-with each reviewer's status and elapsed time, a finished count and the
-two-minute timeout per reviewer. Results appear as individual calls finish;
+with each reviewer's status and elapsed time, a finished count and the timeout.
+Paged reviewers also show how many evidence pages they have read.
+Results appear as individual calls finish;
 completed timers stop. Reviewer threads also update while a call is running.
 Running means Oracle is waiting for the model response; it does not expose the
 model's private reasoning. You can collapse the panel while reviews continue.
@@ -24,9 +25,21 @@ model's private reasoning. You can collapse the panel while reviews continue.
 After the lead finishes, Oracle sends fresh, independent reviewer contexts the
 request, lead response, Git diff, changed text-file contents and captured test
 tool results. Reviewers use the current session model with structured scores
-from 0 to 10. They have no
-executable tools and cannot edit files, approve tool calls, or see peer scores.
+from 0 to 10. Reviewers cannot edit files, approve tool calls, or see peer scores.
 The lowest score controls the result: every reviewer must meet the target.
+
+Each reviewer scores one assigned aspect. The default three cover correctness,
+regressions, and security. Raising the reviewer count adds verification and
+maintainability, in that order. Explicitly saved reviewer counts still apply.
+Assignments stay with their reviewer slots
+across rounds, and any reviewer can flag a critical defect outside their
+assignment.
+
+Oracle sends evidence inline up to 64,000 characters. Larger reviews
+automatically use independent read-only reviewer agents. Each agent requests
+pages of the captured request, response, text diffs, changed files, and test
+output. The agent carries review notes between calls. Oracle accepts a score
+only after that reviewer has received every page.
 
 When a score falls below the target, the existing lead agent receives the
 findings as untrusted review data, fixes valid issues using its normal tools and
@@ -46,7 +59,7 @@ Choose **Settings** beside the Oracle toggle, or run `/oracle-mode settings`, to
 
 - Target score: greater than 0 and at most 10; default **8**.
 - Automatic round limit: **1–20**; default **3**.
-- Reviewer count: **1–5**; default **2**.
+- Reviewer count ranges from **1–5** and defaults to **3**.
 - Whether new threads start enabled; default **off**. `/clear` uses this default.
 
 Each saved conversation remembers its toggle. Resuming it does not restore old
@@ -70,15 +83,18 @@ or the normal stop controls cancel the current run, including pending reviews.
 
 ## Cost and boundaries
 
-Each round makes one model call per reviewer, concurrently, plus any lead fix
-turn. Oracle attributes reviewer calls to `oracle/reviewer-N` in usage tracking.
+Inline reviews make one model call per reviewer with a two-minute timeout.
+Paged reviews require model tool calling and make multiple calls with up to
+ten minutes per reviewer. Reviewers run concurrently in both modes. Oracle
+attributes reviewer calls to `oracle/reviewer-N` in usage tracking.
 Independent contexts avoid manual agent-to-agent coordination, but speed and
 token savings have not been benchmarked.
 
 Oracle currently requires a readable local Git workspace with an existing commit
-and a model supporting structured output. Evidence is limited to 64,000
-characters; oversized, binary or unreadable files changed during the task and submodules pause
-review rather than silently receiving a passing grade. Sandbox files that are
+and a model supporting structured output. The paged path accepts up to 512,000
+characters of evidence in 16,000-character pages. Evidence beyond that limit,
+changed binaries, unreadable files, submodules, and incomplete page coverage
+pause review. Sandbox files that are
 not mirrored into the local workspace are outside this review path. Split large
 tasks or explicitly accept the result when automated review cannot inspect it.
 Noninteractive consumers cannot grant an Oracle owner decision; they pause at
@@ -100,6 +116,5 @@ Snapshot reads handle UTF-8 characters spanning read buffers without classifying
 valid text as binary.
 
 Git diff output is spooled to temporary files and size-monitored while Git runs.
-Oracle stops oversized output, terminates unfinished Git processes, and rejects
-evidence that exceeds the shared 64,000-character budget across diff batches and
-file bodies. It never submits a truncated partial review to obtain a passing score.
+Oracle stops oversized output, terminates unfinished Git processes, and applies
+the active evidence budget across diff batches and file bodies.

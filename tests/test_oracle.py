@@ -1,13 +1,14 @@
 """Oracle completion requires independent, current grades or explicit owner acceptance."""
 
 import asyncio
+import json
 import subprocess
 import sys
 import tracemalloc
 from types import SimpleNamespace
 
 import pytest
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from novacode_cli import ui_events as ev
 from novacode_cli.core import oracle
@@ -85,26 +86,31 @@ async def collect(session, decisions=()):
 
 async def test_independent_rounds_fix_lowest_score_and_hold_done(workspace, monkeypatch):
     calls = lead(monkeypatch, workspace)
-    session = state(workspace, [5.0, 9.0, 9.0, 8.0])
+    session = state(workspace, [9.0, 9.0, 5.0, 9.0, 9.0, 8.0])
     events = await collect(session)
     run = session.oracle_run
     assert len(calls) == 2
     assert "ORACLE REVIEW FEEDBACK" in calls[1]
     assert run.round == 2 and run.lowest == 8 and run.status == "passed"
     assert sum(isinstance(e, ev.Done) for e in events) == 1
-    assert len({r.identity for r in run.reviewers}) == 4
-    assert len(session._model.messages) == 4
+    assert len({r.identity for r in run.reviewers}) == 6
+    assert len(session._model.messages) == 6
+    for messages, assignment in zip(
+        session._model.messages, ("Correctness", "Regressions", "Security") * 2, strict=True
+    ):
+        assert f"Your assignment is {assignment}." in messages[0].content
+        assert "Score your assigned aspect" in messages[0].content
     assert all(
         len(m) == 2 and isinstance(m[0], SystemMessage) and isinstance(m[1], HumanMessage)
         for m in session._model.messages
     )
     assert "value = 2" in session._model.messages[0][1].content
-    assert "value = 3" in session._model.messages[2][1].content
+    assert "value = 3" in session._model.messages[3][1].content
 
 
 async def test_changes_during_review_force_a_fresh_round_without_extra_lead(workspace, monkeypatch):
     calls = lead(monkeypatch, workspace)
-    session = state(workspace, [10.0, 10.0, 9.0, 9.0])
+    session = state(workspace, [10.0, 10.0, 9.0, 9.0], reviewers=2)
     edits = [True]
 
     def edit():
@@ -185,7 +191,7 @@ async def test_active_team_prevents_passing(workspace, monkeypatch):
 
 async def test_cancelled_reviews_cancel_all_children(workspace, monkeypatch):
     lead(monkeypatch, workspace)
-    session = state(workspace, [])
+    session = state(workspace, [], reviewers=2)
     started = asyncio.Event()
     cancelled = []
 
@@ -500,6 +506,7 @@ def test_bounded_git_reaps_stalled_or_noisy_processes(workspace, monkeypatch, ki
 
 async def test_oversized_existing_diff_never_requests_a_grade(workspace, monkeypatch):
     (workspace / "code.py").write_text("x" * 100_000)
+    monkeypatch.setattr(oracle, "MAX_AGENT_EVIDENCE_CHARS", 90_000)
 
     async def stream(*args, **kwargs):
         yield ev.Done(had_response=True)
@@ -508,9 +515,132 @@ async def test_oversized_existing_diff_never_requests_a_grade(workspace, monkeyp
     session = state(workspace, [9.0], reviewers=1)
     await collect(session)
     assert session.oracle_run.status == "paused"
-    assert "64,000" in session.oracle_run.error
+    assert "reviewer agent limit" in session.oracle_run.error
     assert session.oracle_run.lowest is None
     assert not session._model.messages
+
+
+@pytest.mark.parametrize("mode", ["complete", "incomplete", "stale", "unknown_tool", "repeat"])
+async def test_large_workspace_review_uses_read_only_agents(workspace, monkeypatch, mode):
+    path = workspace / "code.py"
+    secret = "sk-" + "secret" * 5
+    seen_by_reviewer = []
+    assignments = []
+
+    async def stream(*args, **kwargs):
+        path.write_text("x" * 70_000 + "\n# " + secret + "\nvalue = 2\n")
+        yield ev.Done(had_response=True)
+
+    monkeypatch.setattr(oracle, "run_with_goal", stream)
+
+    class PagedModel:
+        def bind_tools(self, tools):
+            assert tools == [oracle.ReadEvidence, oracle.Review]
+            received = []
+            seen_by_reviewer.append(received)
+
+            async def invoke(messages):
+                assert len(messages) in {2, 4}
+                if isinstance(messages[-1], ToolMessage):
+                    assert messages[-1].tool_call_id == messages[-2].tool_calls[0]["id"]
+                    assert secret not in messages[-1].content
+                    received.append(messages[-1].content)
+                header = messages[0].content
+                if len(messages) == 2:
+                    assignments.append(header.split("Your assignment is ", 1)[1].split(".", 1)[0])
+                total = int(header.split("available in ", 1)[1].split()[0])
+                if mode == "unknown_tool":
+                    name, args = "write_file", {"path": str(path), "content": "modified"}
+                elif mode != "repeat" and (
+                    len(received) == total or mode == "incomplete" and received
+                ):
+                    if mode == "stale" and len(seen_by_reviewer) == 1:
+                        path.write_text("value = 3\n")
+                    name = "Review"
+                    args = {"score": 9.0, "summary": "Checked evidence", "findings": []}
+                else:
+                    name = "ReadEvidence"
+                    args = {
+                        "page": 1 if mode == "repeat" else len(received) + 1,
+                        "notes": "prior findings" if received else "",
+                    }
+                return AIMessage(content="", tool_calls=[{"name": name, "args": args, "id": "read"}])
+
+            return SimpleNamespace(ainvoke=invoke)
+
+    reviewers = 5 if mode == "complete" else 1
+    session = state(workspace, [], reviewers=reviewers, max_rounds=1)
+    session._model = PagedModel()
+    await collect(session)
+    run = session.oracle_run
+    assert len(seen_by_reviewer) == reviewers
+    if mode == "complete":
+        assert run.status == "passed"
+        assert assignments == ["Correctness", "Regressions", "Security", "Verification", "Maintainability"]
+        assert all(pages == seen_by_reviewer[0] for pages in seen_by_reviewer)
+        for row, pages in zip(run.latest, seen_by_reviewer, strict=True):
+            assert row.pages_read == row.page_count == len(pages) > 1
+            evidence = "".join(page.split("\n\n", 1)[1] for page in pages)
+            assert "# [redacted]" in evidence
+            assert "value = 2" in evidence
+            assert "Git diff (text files)" in evidence and "File code.py:" in evidence
+    else:
+        assert run.status == "paused"
+        assert run.stale == (mode == "stale")
+        if mode == "incomplete":
+            assert "Incomplete evidence coverage" in run.error
+            assert run.lowest is None
+        elif mode == "unknown_tool":
+            assert "unavailable review tool" in run.error
+            assert run.lowest is None
+            assert path.read_text().endswith("value = 2\n")
+        elif mode == "repeat":
+            assert "ran out of evidence reads" in run.error
+            assert run.lowest is None
+            assert run.latest[0].pages_read == 1
+
+
+async def test_paged_review_round_uses_real_tool_message_serialization():
+    import httpx
+    from langchain_openai import ChatOpenAI
+
+    calls = []
+
+    def respond(request):
+        payload = json.loads(request.content)
+        assert {tool["function"]["name"] for tool in payload["tools"]} == {"ReadEvidence", "Review"}
+        turn = len(calls)
+        calls.append(payload["messages"])
+        if turn:
+            assert calls[-1][-1]["role"] == "tool"
+            assert calls[-1][-1]["tool_call_id"] == f"call_{turn - 1}"
+            assert calls[-1][-1]["content"].endswith(f"Fixture page {turn}")
+        if turn < 2:
+            name, args = "ReadEvidence", {"page": turn + 1, "notes": "Fixture findings"}
+        else:
+            name, args = "Review", {"score": 9, "summary": "Reviewed both pages", "findings": []}
+        return httpx.Response(200, json={
+            "id": f"completion_{turn}",
+            "object": "chat.completion",
+            "model": "review-fixture",
+            "choices": [{"index": 0, "finish_reason": "tool_calls", "message": {
+                "role": "assistant", "content": None, "tool_calls": [{
+                    "type": "function", "id": f"call_{turn}",
+                    "function": {"name": name, "arguments": json.dumps(args)},
+                }],
+            }}],
+        })
+
+    run = oracle.OracleRun(oracle.OracleSettings(reviewers=1), ".", "audit", round=1)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        model = ChatOpenAI(
+            model="review-fixture", api_key="fixture", base_url="https://fixture.invalid/v1",
+            http_async_client=client,
+        )
+        await oracle.review_round(run, model, ("Fixture page 1", "Fixture page 2"))
+    assert len(calls) == 3
+    assert run.lowest == 9
+    assert run.latest[0].pages_read == 2
 
 
 def test_file_body_budget_stops_before_reading_remaining_files(workspace, monkeypatch):
@@ -604,7 +734,7 @@ async def test_review_usage_scope_exists_and_does_not_leak(workspace, monkeypatc
     from novacode_cli.tracking.usage_tree import get_current_tree
 
     lead(monkeypatch, workspace)
-    session = state(workspace, [9.0, 9.0])
+    session = state(workspace, [9.0, 9.0], reviewers=2)
     seen = []
     session._model.on_review = lambda: seen.append(get_current_tree())
     assert get_current_tree() is None

@@ -13,13 +13,22 @@ from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, Collapsible, Input, Static, Switch
 
-from novacode_cli.core.oracle import MAX_ROUNDS, REVIEW_TIMEOUT, OracleRun, OracleSettings
+from novacode_cli.core.oracle import (
+    AGENT_REVIEW_TIMEOUT,
+    MAX_ROUNDS,
+    REVIEW_TIMEOUT,
+    OracleRun,
+    OracleSettings,
+)
 from novacode_cli.core.subagent_tasks import format_elapsed
 
 
 def _reviewer_status(row) -> str:
     icon = {"complete": "✓", "running": "◌", "queued": "○"}.get(row.status, "!")
-    return f"{icon} {row.status} · {format_elapsed(row.elapsed)}"
+    status = f"{icon} {row.status} · {format_elapsed(row.elapsed)}"
+    if row.page_count:
+        status += f" · {row.pages_read}/{row.page_count} pages"
+    return status
 
 
 class OracleSettingsScreen(ModalScreen[OracleSettings | None]):
@@ -45,7 +54,7 @@ class OracleSettingsScreen(ModalScreen[OracleSettings | None]):
     def compose(self):
         with VerticalScroll(id="oracle-settings-box"):
             yield Static("Oracle settings", classes="title")
-            yield Static("Uses your configured model. Each round makes one call per reviewer.")
+            yield Static("Uses your configured model. Large reviews use read-only reviewer agents.")
             yield Static("Target score (greater than 0, up to 10)")
             yield Input(str(self.settings.target), id="oracle-target")
             yield Static(f"Maximum automatic review rounds (1–{MAX_ROUNDS})")
@@ -105,7 +114,7 @@ class OracleThreadScreen(ModalScreen[None]):
                     if row.slot == self.slot:
                         yield Static(
                             Text(
-                                f"Round {row.round} · independent review\n\n"
+                                f"Round {row.round} · {row.assignment}\n\n"
                                 f"Review input\n{row.prompt}"
                             )
                         )
@@ -267,7 +276,8 @@ class OraclePanel(Vertical):
             elapsed = format_elapsed(max(0, end - min(started))) if started else "—"
             progress = f"{finished}/{len(rows)} finished · {elapsed}"
             if reviewing:
-                progress += f" · timeout {format_elapsed(REVIEW_TIMEOUT)} per reviewer"
+                timeout = AGENT_REVIEW_TIMEOUT if rows[0].page_count else REVIEW_TIMEOUT
+                progress += f" · timeout {format_elapsed(timeout)} per reviewer"
         elif reviewing:
             progress = "Preparing review evidence…"
         indicator = self.query_one("#oracle-progress", Static)
@@ -309,7 +319,7 @@ class OraclePanel(Vertical):
             first, final = rows[0], rows[-1]
             score = lambda row: f"{row.review.score:g}" if row.review else "—"
             title = (
-                f"Reviewer {slot} · {_reviewer_status(final)}"
+                f"Reviewer {slot} · {final.assignment} · {_reviewer_status(final)}"
                 f" · first {score(first)} → latest {score(final)}"
             )
             if run.stale and run.status != "reviewing":

@@ -95,6 +95,7 @@ async def test_toggle_strip_settings_and_threads_preserve_draft(size, design):
         await pilot.click("#oracle-strip")
         await pilot.pause()
         row = panel.query_one("#oracle-row-1")
+        assert "Correctness" in str(row.title)
         assert "first 5" in str(row.title) and "latest 9" in str(row.title)
         row.collapsed = False
         await pilot.pause()
@@ -105,7 +106,8 @@ async def test_toggle_strip_settings_and_threads_preserve_draft(size, design):
         await pilot.click(thread_button)
         await pilot.pause()
         assert isinstance(app.screen, OracleThreadScreen)
-        assert "fresh review input" in " ".join(str(w.content) for w in app.screen.query("Static"))
+        thread_text = " ".join(str(w.content) for w in app.screen.query("Static"))
+        assert "fresh review input" in thread_text and "Round 2 · Correctness" in thread_text
         await pilot.press("escape")
         await pilot.pause()
         await pilot.click("#oracle-accept")
@@ -287,7 +289,7 @@ async def test_reviewers_refresh_independently_with_live_and_frozen_timers(size)
     app = _app()
     async with app.run_test(size=size) as pilot:
         await app._run_oracle_mode("/oracle-mode on")
-        run = OracleRun(OracleSettings(), ".", "thread", round=1, status="reviewing")
+        run = OracleRun(OracleSettings(reviewers=2), ".", "thread", round=1, status="reviewing")
         app.session_state.oracle_run = run
         panel = app.query_one(OraclePanel)
         app._refresh_oracle()
@@ -429,7 +431,7 @@ async def test_real_code_mode_graph_and_oracle_fix_cycle(monkeypatch, tmp_path):
 
         async def ainvoke(self, messages):
             self.calls += 1
-            first = self.calls <= 2
+            first = self.calls <= state.oracle_settings.reviewers
             assert "Observed test tool results" in messages[-1].content
             assert ("1 failed" if first else "1 passed") in messages[-1].content
             return {
@@ -456,7 +458,7 @@ async def test_real_code_mode_graph_and_oracle_fix_cycle(monkeypatch, tmp_path):
         assert state.oracle_run.lowest == 9
         assert not state.oracle_run.stale
         assert "return max(value, 0)" in path.read_text()
-        assert state._model.calls == 4
+        assert state._model.calls == 6
         assert len(app.query(CodeModePanel)) == 2
         assert sum(isinstance(e, ev.ToolCall) and e.name == "MCPCode" for e in events) == 2
         assert sum(isinstance(e, ev.Done) for e in events) == 1
