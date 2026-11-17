@@ -320,7 +320,7 @@ html[data-view="agent"] .agent-cl-note p{color:var(--muted);font-size:.95rem;lin
       <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="c">cat changelog/CHANGELOG-v*.md</span></p>
       <h1>Changelog</h1>
       <!-- generated:changelog-summary -->
-<p class="lede">109 releases &middot; v1.0.0 &rarr; v1.2.1 &middot; from the repository's <code>changelog/</code> directory</p>
+<p class="lede">141 releases &middot; v1.0.0 &rarr; v1.2.33 &middot; from the repository's <code>changelog/</code> directory</p>
 <!-- /generated:changelog-summary -->
       <p class="body"><a class="gh" href="https://github.com/Babitdor/NovaCode/tree/main/changelog" rel="noopener">changelog/ on GitHub &#8599;</a></p>
     </div>
@@ -332,6 +332,733 @@ html[data-view="agent"] .agent-cl-note p{color:var(--muted);font-size:.95rem;lin
     </div>
     <div id="releases">
     <!-- generated:changelog-releases -->
+<details class="changelog-entry" id="v1-2-33" data-version="1.2.33" data-sha="f9e51bdf75bd6a4b056f0bdd67cb1e66077f9cbc">
+<summary class="entry-toggle"><h2 class="version">v1.2.33</h2><span class="release-summary">Show each reviewer's running, complete, failed, timed-out or cancelled status with elapsed time, refreshed once per second. Completed timers stop.</span></summary>
+<div class="release-content"><h3>Live Oracle reviewer progress</h3>
+<ul>
+<li>Show each reviewer's running, complete, failed, timed-out or cancelled status with elapsed time, refreshed once per second. Completed timers stop.</li>
+<li>Show the finished reviewer count, elapsed round time and the two-minute timeout per reviewer. Individual results appear while other reviewers are still running; open reviewer threads also update when their results arrive.</li>
+<li>Open the compact reviewer panel when a new round starts. Keep it collapsible, size it to its contents and avoid labelling pending reviews as stale.</li>
+<li>Move Oracle Settings beside the Oracle toggle in the composer, keeping Code Mode, Oracle and Settings together when controls wrap.</li>
+</ul>
+<h3>Validation</h3>
+<ul>
+<li>Oracle regressions cover reviewer timing, errors and cancellation, independent completion, live thread updates, narrow terminal layouts, composer placement and the real Code Mode graph's automatic fix/review cycle. No runtime dependency is added. These indicators improve visibility; model response speed is unchanged. See [Oracle mode](https://github.com/Babitdor/NovaCode/blob/v1.2.33/docs/oracle-mode.md) for controls and settings.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.33 uv tool upgrade novacode-cli <code>`</code> Restart NovaCode after upgrading. Preserve any optional extras you use: <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.33&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-32" data-version="1.2.32" data-sha="1c6ca5a9950e239abd90a77d5bf250ad39b4aebd">
+<summary class="entry-toggle"><h2 class="version">v1.2.32</h2><span class="release-summary">Move the Oracle toggle beside Code Mode in the composer. Keep the two toggles together when controls wrap, using the composer's actual width so centered layouts and narrow terminals retain access to both controls.</span></summary>
+<div class="release-content"><h3>Oracle beside Code Mode, with visible controls and test evidence</h3>
+<ul>
+<li>Move the Oracle toggle beside Code Mode in the composer. Keep the two toggles together when controls wrap, using the composer's actual width so centered layouts and narrow terminals retain access to both controls.</li>
+<li>Fix Oracle's compact button labels disappearing behind Textual's default borders. The status strip, Settings, reviewer-thread links and decision controls now use compact buttons, with enough room for the Settings label.</li>
+<li>Include captured test-tool output in each Oracle review. Reviewers receive bounded, redacted execution evidence along with the request, lead response, diff and changed file contents, instead of having to rely on the lead's claims.</li>
+<li>Add an end-to-end regression using the real agent graph, Code Mode JavaScript bridge, disposable Git workspace, Oracle fix loop and TUI renderer. The test checks that a low first-round score triggers a fix and fresh passing reviews.</li>
+</ul>
+<h3>Validation</h3>
+<ul>
+<li>A live OpenCode <code>deepseek-v4.1-flash</code> run completed three Code Mode calls and passed four checks in a disposable workspace. The independent reviewers scored the result 9/10 and 8/10, meeting the target of 8. A separate controlled test verified the automatic fix/review cycle from 5/10 to 9/10. Automated regressions cover Oracle controls, composer placement at multiple widths, captured test evidence, fresh scores and learning integration. Other providers and token/speed savings have not been benchmarked. No new runtime dependency is added. See [Oracle mode](../docs/oracle-mode.md) for controls and settings.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.32 uv tool upgrade novacode-cli <code>`</code> Restart NovaCode after upgrading. Preserve any optional extras you use: <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.32&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-31" data-version="1.2.31" data-sha="f8661a26271946f8b244837dc738a134d815a9f0">
+<summary class="entry-toggle"><h2 class="version">v1.2.31</h2><span class="release-summary">Toggle Oracle above the prompt composer without sending or changing your draft. The strip shows the review round, lowest score, target and current status. Short terminals keep the tab bar and composer visible by collapsing home hints and scrolling expanded Oracle details within the strip.</span></summary>
+<div class="release-content"><h3>Oracle review mode</h3>
+<ul>
+<li>Toggle Oracle above the prompt composer without sending or changing your draft. The strip shows the review round, lowest score, target and current status. Short terminals keep the tab bar and composer visible by collapsing home hints and scrolling expanded Oracle details within the strip.</li>
+<li>Run independent, read-only reviewer contexts using the configured session model. Every reviewer must meet the target. Low scores feed findings to the existing lead agent for fixes, followed by a fresh review round.</li>
+<li>Bind reviews to workspace content fingerprints. Changes invalidate previous scores, including changes during review or while the UI displays a result. Failed, missing or invalid grades cannot pass.</li>
+<li>Expand reviewer rows to inspect findings, first/latest scores and reviewer threads. Choose Keep fixing, More rounds, Lower target, Accept and finish or Pause when a run reaches a decision point. Explicit acceptance is not shown as a passing grade.</li>
+<li>Configure target score, round limit, reviewer count and the new-thread default with Settings or <code>/oracle-mode settings</code>. Saved conversations remember their toggle; resumed conversations never restore old scores as approvals.</li>
+<li>Attribute reviewer calls in usage tracking and retain the existing tool approvals, Code Mode, goal and learning workflows. No new dependency is added.</li>
+</ul>
+<h3>Defaults and boundaries</h3>
+<ul>
+<li>Oracle starts disabled. Defaults are a target of 8/10, three automatic rounds and two reviewers. Limits are 20 rounds and five reviewers per run. Review requires a readable local Git workspace with an existing commit and a model supporting structured output. Oversized, binary or unavailable evidence, remote sandbox files and active teammates pause review rather than silently passing. Evidence is capped at 64,000 characters. Automated checks cover grading, fix loops, freshness, cancellation, owner decisions, persisted toggles, usage attribution and composer controls across three designs and multiple terminal sizes. Live-provider behavior and token or speed savings have not been benchmarked. See [Oracle mode](../docs/oracle-mode.md) for controls and details.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.31 uv tool upgrade novacode-cli <code>`</code> Restart NovaCode after upgrading. Preserve any optional extras you use: <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.31&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-30" data-version="1.2.30" data-sha="f2d330ea090247db0392ca108af7e316e52149c8">
+<summary class="entry-toggle"><h2 class="version">v1.2.30</h2><span class="release-summary">Stop rescanning and validating MCP configuration every second on the TUI thread. Connection status reuses the shared discovery task, and discovery builds configuration in a worker thread to keep input responsive.</span></summary>
+<div class="release-content"><h3>Responsive MCP status and clickable Nova</h3>
+<ul>
+<li>Stop rescanning and validating MCP configuration every second on the TUI thread. Connection status reuses the shared discovery task, and discovery builds configuration in a worker thread to keep input responsive.</li>
+<li>Left-click Nova to play a four-second happy reaction, including during active work. Repeated clicks restart it, then the current activity animation resumes. Character and native-image rendering keep the same bottom-right position.</li>
+<li>Clarify Code Mode delegation prompts with a native <code>task(...)</code> example, self-contained agent instructions, parallel calls and background-result handling.</li>
+<li>Remove the obsolete Vixie desktop-pet WebSocket server and its execution callbacks. The terminal <code>/nova</code> avatar remains available independently. Remove any legacy <code>novacode_cli.vixie.hook_adapter</code> entry from your hooks config.</li>
+</ul>
+<h3>Validation</h3>
+<ul>
+<li>Regression checks cover MCP scan responsiveness, repeated status polling, native and character avatar clicks, resumed activity, shutdown and execution cleanup, and Code Mode delegation. A 240-call headless Code Mode simulation retained bounded transcript history and no completed-tool tracking entries. Physical terminal mouse behavior and long live model sessions have not been manually verified. No new dependency is required.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.30 uv tool upgrade novacode-cli <code>`</code> Restart NovaCode after upgrading. Preserve any optional extras you use: <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.30&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-29" data-version="1.2.29" data-sha="29f17b964ee9105a3717ea15a5b7191c44b29d43">
+<summary class="entry-toggle"><h2 class="version">v1.2.29</h2><span class="release-summary">Fix the inline Sixel avatar disappearing when a populated transcript splits its drawing rows. Preserve image data through Textual strip division and cropping.</span></summary>
+<div class="release-content"><h3>Keep the Nova avatar visible over chat</h3>
+<ul>
+<li>Fix the inline Sixel avatar disappearing when a populated transcript splits its drawing rows. Preserve image data through Textual strip division and cropping.</li>
+<li>Draw cached image bands per terminal row so partial chat redraws restore the affected avatar pixels instead of leaving blank areas.</li>
+<li>Include screen position in the rendering cache so resizing and a growing composer keep the image at its bottom-right anchor.</li>
+<li>Preserve the 16-column by 8-row size, high-resolution artwork, simple animations and hiding behind dialogs. No new dependency is required.</li>
+</ul>
+<h3>Validation</h3>
+<ul>
+<li>Regressions reproduce the missing image with a populated transcript, check single-cell partial redraws across every avatar row, and verify cursor placement through strip division/cropping, resizing and dialog visibility. The actual Sixel output was inspected in a browser terminal emulator with chat messages present. Live Windows Terminal rendering has not been visually verified. See [avatar sources and rebuilding](../assets/nova/README.md) for details.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.29 uv tool upgrade novacode-cli <code>`</code> Restart NovaCode after upgrading. Preserve any optional extras you use: <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.29&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-28" data-version="1.2.28" data-sha="9812b88e93c18cfc980320a4713efed88f19bb24">
+<summary class="entry-toggle"><h2 class="version">v1.2.28</h2><span class="release-summary">Keep the original illustrated Nova character, with simpler two-frame loops for all 12 activity and reaction states.</span></summary>
+<div class="release-content"><h3>Smaller, sharper Nova avatar</h3>
+<ul>
+<li>Keep the original illustrated Nova character, with simpler two-frame loops for all 12 activity and reaction states.</li>
+<li>Shrink <code>/nova</code> to 16 columns by 8 rows and keep it anchored at the bottom right, just above the composer, including after terminal resizing.</li>
+<li>Display source-resolution artwork inline on terminals reporting Sixel or supported Kitty graphics, preserving much more detail than character cells. Keep the existing character renderer for other terminals and redirected input.</li>
+<li>Probe graphics support before Textual takes ownership of keyboard input. Preserve hiding behind menus/dialogs, the avatar toggle and activity routing.</li>
+<li>Correct Sixel animation repainting and cursor restoration for the pinned image library. Fall back to character rendering if the image cannot be loaded.</li>
+<li>Improve the fallback with smoother asset downsampling and standard quadrant glyphs that retain left/right detail when octants are unavailable.</li>
+<li>Package both the compact atlas and high-resolution artwork. Retain the source sheet, generation prompt and reproducible build instructions. The new runtime dependency is <code>textual-image==0.12.0</code>, pinned for Python 3.11 compatibility and the tested Sixel adapter. Inline image support depends on the terminal's capability response. Unsupported terminals remain visibly pixelated.</li>
+</ul>
+<h3>Rooms refresh synchronization</h3>
+<ul>
+<li>Make explicit conversation refreshes wait behind an in-progress refresh instead of returning early with stale messages, channel names or task controls.</li>
+<li>Stabilize settings interactions by scrolling actions into view before simulated clicks. Add a regression for clearing messages during an in-progress refresh.</li>
+</ul>
+<h3>Validation</h3>
+<ul>
+<li>Avatar regressions cover both character rendering paths, native Sixel output, frame clearing, cursor placement, animation routing, bottom-right positioning, resizing, dialog visibility and image-load fallback. Package checks verify the high-resolution artwork and widget are included. The preview used actual Sixel output in a browser terminal emulator; live Windows Terminal rendering has not been visually verified. See [avatar sources and rebuilding](../assets/nova/README.md) for details.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.28 uv tool upgrade novacode-cli <code>`</code> Restart NovaCode after upgrading and use <code>/nova</code> to toggle the avatar. Preserve any optional extras you use: <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.28&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-27" data-version="1.2.27" data-sha="41af4b368ea6d921403b32bba9ce445966409bd3">
+<summary class="entry-toggle"><h2 class="version">v1.2.27</h2><span class="release-summary">Keep Command Center filter labels visible when interface presets add button borders. Wrap filters onto additional rows on narrow terminals.</span></summary>
+<div class="release-content"><h3>Command Center and Rooms layout</h3>
+<ul>
+<li>Keep Command Center filter labels visible when interface presets add button borders. Wrap filters onto additional rows on narrow terminals.</li>
+<li>Reflow the Rooms toolbar from the conversation's available width, including when navigation or member panels are open. Keep those panels mutually exclusive when space is limited.</li>
+<li>Compact Rooms headers, search and composing on short terminals so the transcript and multiline composer remain accessible.</li>
+<li>Remove message and message-action hover highlighting while retaining keyboard focus indicators and reaction state.</li>
+</ul>
+<h3>Rooms management</h3>
+<ul>
+<li>Add a channel settings menu for renaming channels, editing topics, marking all conversations read, clearing messages or threads, and deleting custom channels.</li>
+<li>Preserve channel identities, history and drafts during renames. Clearing a thread preserves its starter; clearing a conversation resets its agent sessions while preserving tasks, notes, drafts and files.</li>
+<li>Confirm destructive actions and prevent clearing or deletion while jobs are queued, working or cancelling, including jobs in another Nova session.</li>
+<li>Protect the default channel and agent DMs from deletion. Channel deletion removes associated local records but preserves project files and Git worktrees.</li>
+<li>Add message copying and allow the project owner to delete agent messages.</li>
+<li>Refresh open conversations after another session clears or deletes a channel. See [Project Rooms](../docs/project-rooms.md) for controls and deletion behavior. Deleting local messages does not undo completed agent work or erase provider-side history. No new runtime dependency is required.</li>
+</ul>
+<h3>Validation</h3>
+<ul>
+<li>Regression coverage checks all 14 interface presets with three representative color themes at four terminal sizes, down to 40 columns by 14 rows. Rooms checks cover transactional rollback, protected channels, worker cancellation, draft preservation and owner controls. Live provider calls were not exercised.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.27 uv tool upgrade novacode-cli <code>`</code> Restart NovaCode after upgrading. Preserve any optional extras you use: <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.27&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-26" data-version="1.2.26" data-sha="41306cfa5d5268de6ca5641f4c964760ec775864">
+<summary class="entry-toggle"><h2 class="version">v1.2.26</h2><span class="release-summary">Add grouped channel/DM navigation, unread counts, a searchable transcript, a member/activity panel and a responsive layout for narrow terminals.</span></summary>
+<div class="release-content"><h3>Discord-style project Rooms</h3>
+<ul>
+<li>Add grouped channel/DM navigation, unread counts, a searchable transcript, a member/activity panel and a responsive layout for narrow terminals.</li>
+<li>Render responses as Markdown, including headings, lists, quotes, tables and fenced code blocks. Attribution and reply previews remain literal text.</li>
+<li>Reuse the multiline prompt composer: Enter sends, Shift+Enter inserts a newline, and the existing Enter/Ctrl+Enter preference remains supported. Preserve channel and thread drafts independently, including while navigating or cancelling edits.</li>
+<li>Add quoted replies and separate threads with reply counts. Thread context, native agent sessions and agent responses stay bound to their thread.</li>
+<li>Add four toggleable reactions, message pins, combined search/pinned filters, editing of your own messages and confirmed deletion. Deleted content and reactions are removed locally while replies and threads remain available.</li>
+<li>Migrate existing SQLite room databases additively, preserving history, drafts and read positions. Older messages retain an unknown timestamp.</li>
+<li>Preserve the task board's scope review, isolated worktrees, worker/turn limits, cancellation, read-only reviews and separate integration approval. Browsing, searching, reacting and editing do not start agent work.</li>
+<li>Serialize transcript refreshes with navigation and protect newer drafts from delayed sends. Keep task controls accessible on narrower boards. Rooms remain a local project workspace for the owner and configured agents. Hosted multi-user servers, voice/video calls, screen sharing and file uploads are not included. Deleting a local message does not undo completed agent work or remove content from existing provider sessions. See [Project Rooms](../docs/project-rooms.md) for controls and behavior.</li>
+</ul>
+<h3>Consistent tool display</h3>
+<ul>
+<li>Apply Code Mode's borderless status rows, themed status dots and three-line previews to normal-mode tool calls, with keyboard-accessible arguments and full output.</li>
+<li>Retain live command logs, background-command hints, colored file diffs and correct attribution for parallel and legacy ID-less events.</li>
+<li>Preserve ordinary tool JSON as literal output rather than interpreting it as a Code Mode result envelope.</li>
+</ul>
+<h3>Mode-toggle contrast</h3>
+<ul>
+<li>Give Prime and the other composer mode toggles an accent-tinted background and explicit text color on hover and keyboard focus, in enabled and disabled states.</li>
+</ul>
+<h3>Validation</h3>
+<ul>
+<li>The Rooms, Markdown presentation, migration, thread routing, draft preservation, message controls and toggle regressions pass locally. Agent routing checks use simulated providers; live provider calls were not exercised. Desktop and narrow terminal previews were inspected. New regressions are included in platform CI. No new runtime dependency is required.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.26 uv tool upgrade novacode-cli <code>`</code> Restart NovaCode after upgrading. Preserve any optional extras you use: <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.26&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-25" data-version="1.2.25" data-sha="812b3f322be3549f0d922fe88a00dda87e310587">
+<summary class="entry-toggle"><h2 class="version">v1.2.25</h2><span class="release-summary">Add tools.search({query, limit}) over the current invocation's callable native and MCP tools, using existing ranking and discovery restrictions. Results name exact invocation targets; existing list, describe and call APIs remain available.</span></summary>
+<div class="release-content"><h3>Code Mode discovery and recovery</h3>
+<ul>
+<li>Add <code>tools.search({query, limit})</code> over the current invocation's callable native and MCP tools, using existing ranking and discovery restrictions. Results name exact invocation targets; existing list, describe and call APIs remain available.</li>
+<li>Describe verified core filesystem and shell results, explicitly identify unknown contracts, and preserve MCP servers' declared <code>outputSchema</code>. Tool return values are unchanged; command output must not be assumed to have a <code>.stdout</code> property.</li>
+<li>Save complete oversized selected results as UTF-8 JSON in the existing <code>/cleared/</code> store before truncating the preview. Atomic writes, existing workspace boundaries and seven-day retention apply. Failed saves are reported without a recovery path.</li>
+<li>Prefer focused discovery, temporary async-function locals and compact selected results. Parallel execution is for independent operations. Inspect recorded outcomes before retrying; completed side effects are never automatically replayed.</li>
+</ul>
+<h3>One advertised command tool</h3>
+<ul>
+<li>Advertise <code>execute</code> with an explicit <code>shell: &quot;native&quot;</code> or <code>shell: &quot;bash&quot;</code> choice. Native uses PowerShell on Windows and the platform shell elsewhere. Explicit selections never automatically retry a different shell dialect.</li>
+<li>Keep <code>shell</code>, <code>bash</code> and selector-free <code>execute</code> calls compatible. Old Windows <code>execute</code> calls retain their platform-default <code>cmd.exe</code> semantics. Subagents without Nova's shell middleware retain their backend executor.</li>
+<li>Preserve permissions for both <code>execute</code> and the selected shell alias; the stricter decision wins. Approval details show the shell, timeout and execution options. Existing permissions are not migrated or relaxed.</li>
+<li>Reuse existing interactive, background and cancellation paths. Local timeout overrides can shorten the configured foreground deadline without changing concurrent calls. Sandbox commands stay on their backend and retain backend timeout validation. Unsupported backend timeout/interactive combinations fail before execution.</li>
+</ul>
+<h3>Compact tool display</h3>
+<ul>
+<li>Replace Code Mode outlines with borderless status rows, theme-aware status dots, three-line selected-result previews and an omitted-line count.</li>
+<li>Keep exact JavaScript and full output behind keyboard-accessible disclosures. Failures and recovery paths stay visible without opening the raw envelope.</li>
+<li>Parse Code Mode envelopes before the generic 6,000-character error-preview cap, preserving recorded tool names, complete selected output and offload paths.</li>
+</ul>
+<h3>Response modes and benchmark evidence</h3>
+<ul>
+<li>Preserve exact code-only and JSON-only output formats in Ponytail mode rather than adding an optional prose footer.</li>
+<li>Include <code>eval</code> and <code>MCPCode</code> in existing execution-block capture and output compression. Recovering a recorded script does not execute it and still requires current authorization before any later execution.</li>
+<li>Extend offline Caveman/Ponytail benchmark checks and preserve raw Code Mode measurements. In 36 final trials, improved Code Mode passed 12/12 tasks, versus 10/12 each for original Code Mode and direct tools. Token changes were mixed; two repeats per task provide directional evidence, not a universal cost guarantee. The report separately accounts for 24 excluded preliminary trials and their usage.</li>
+</ul>
+<h3>Validation</h3>
+<ul>
+<li>Focused execution, permissions, cancellation, timeout, sandbox, discovery and Code Mode regressions passed, including 21 execution-surface checks and 257 surrounding checks. Tool display changes were checked at wide and narrow terminal sizes, with keyboard access and theme changes. New regressions are registered with platform CI. No new runtime dependency is required.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.25 uv tool upgrade novacode-cli <code>`</code> Restart NovaCode after upgrading. Retain optional extras used by your installation: <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.25&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-24" data-version="1.2.24" data-sha="82d09a2634bdecfe1e258d665286cf94b1a264d6">
+<summary class="entry-toggle"><h2 class="version">v1.2.24</h2><span class="release-summary">Show recorded tool names, such as read_file x4, inside an outline that follows the active theme. Remove the repeated Code Mode label, total call count and completion suffix from the disclosure title.</span></summary>
+<div class="release-content"><h3>Code Mode tool outlines</h3>
+<ul>
+<li>Show recorded tool names, such as <code>read_file x4</code>, inside an outline that follows the active theme. Remove the repeated Code Mode label, total call count and completion suffix from the disclosure title.</li>
+<li>Retain exact JavaScript, full selected output, keyboard disclosures and failure details. Failed runs expand and use the theme's error color; active and focused runs use a stronger accent outline. Omitted outcome records remain documented inside the disclosure.</li>
+</ul>
+<h3>Native command reports</h3>
+<ul>
+<li>Replace <code>/cache</code> JSON in the local TUI with readable metrics and controls for enable/disable, clear and refresh. Keep operations scoped to the invoking workspace and assistant, including workspace transitions, and prevent overlapping mutations. Errors remain visible and refresh can recover.</li>
+<li>Open <code>/ui inspect</code> and <code>/lite-mode audit|blocks</code> as keyboard-accessible diagnostic trees with full selected values. UI mutations show brief status notifications rather than adding configuration JSON to chat.</li>
+<li>Group <code>/cache</code> with knowledge commands in the command guide. Headless cache commands retain structured JSON output through the shared cache controller.</li>
+</ul>
+<h3>Knowledge cache usage</h3>
+<ul>
+<li>Explain when the knowledge cache has not been used: ordinary file reads and shell calls do not populate it. <code>/cache</code> counts <code>knowledge_lookup</code> activity; provider prompt-cache usage is reported separately in <code>/cost</code>.</li>
+<li>Add Code Mode guidance for checking existing summaries and supplying relevant workspace-relative paths when an overview is useful. Exact source remains required for edits, quotations and verification.</li>
+<li>Verify the complete tool-to-command path with a scripted graph: a miss, generated overview and exact reuse update the same stored counters shown by <code>/cache</code>. This is not automatic caching of every read. Creating an overview uses a model call; live adoption and net billing savings are not measured.</li>
+</ul>
+<h3>Validation</h3>
+<ul>
+<li>The final focused UI, cache, native Code Mode and version selection passed 58 tests. The broader related UI/cache selection passed 81 tests. Desktop and 40-column states were rendered headlessly and inspected, including theme changes, keyboard access, cache error recovery and namespace isolation. A Windows symlink test was skipped because this account cannot create symlinks. New command-report regressions are included in platform CI. No new runtime dependency is required. The updater interaction test waits for restart preparation to finish before closing the test app, avoiding a race with its thread-based blocker check. Cache interaction tests disable the button's visual click debounce for rapid synthetic presses; production button behavior is unchanged.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.24 uv tool upgrade novacode-cli <code>`</code> Restart NovaCode after upgrading. Retain optional extras required by your installation; for example: <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.24&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-23" data-version="1.2.23" data-sha="e6e7c20d894f36d5d23e27f8d497f6f0420bc9bf">
+<summary class="entry-toggle"><h2 class="version">v1.2.23</h2><span class="release-summary">Compact complete successful eval and MCPCode responses in model requests. Keep the selected result and ordered operation identities while removing redundant success counters, status fields and repeated recovery advice.</span></summary>
+<div class="release-content"><h3>Lower Code Mode context overhead</h3>
+<ul>
+<li>Compact complete successful <code>eval</code> and <code>MCPCode</code> responses in model requests. Keep the selected result and ordered operation identities while removing redundant success counters, status fields and repeated recovery advice.</li>
+<li>Preserve the complete checkpoint and UI audit trail. Failed operations, partial failures caught by JavaScript, omitted outcomes, truncated output, state warnings and unfamiliar response envelopes retain their full metadata. Tools still execute normally; approval policy and verification are unchanged.</li>
+<li>Guide the agent to batch independent reads and searches, select relevant output, use scoped JavaScript locals, use the current scratchpad host path, and inspect native return values instead of assuming an <code>execute.stdout</code> field.</li>
+</ul>
+<h3>Todo status reconciliation</h3>
+<ul>
+<li>Make the existing end-of-turn reminder explicitly request <code>write_todos</code> for verified completed work before the final reply. A prose summary alone does not update the checklist.</li>
+<li>When re-showing an old list, ask the agent to reconcile statuses before continuing so stale unchecked entries do not cause completed work to repeat.</li>
+<li>Keep blocked and unverified required items open with an explanation. Remove the old reminder's instruction to delete blocked tasks. The reminder remains bounded to once per user turn; statuses are never auto-completed.</li>
+</ul>
+<h3>Validation and limits</h3>
+<ul>
+<li>188 related Code Mode, context, snapshot and compaction tests passed locally. Add token-efficiency regression coverage to both platform CI suites.</li>
+<li>35 focused todo and task-discipline tests passed, including real graph state updates. Four legacy prompt-wording assertions fail on the unmodified source as well and remain unresolved; the new todo regression tests run in CI.</li>
+<li>An offline replay of one exported session compacted 239 results and removed 53,668 characters. The tool-result estimate fell from 185,629 to 168,230 tokens (9.4%) using the <code>cl100k_base</code> reference tokenizer. This measures tool-result text only, not total model input, provider billing or live task completion.</li>
+<li>Fewer retries from the revised guidance have not been measured in a live run. No new runtime dependency is required.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.23 uv tool upgrade novacode-cli <code>`</code> Restart NovaCode after upgrading. Retain any optional extras your installation needs; for example: <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.23&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-22" data-version="1.2.22" data-sha="a405ddf1bbd646d6096dc2fbef8bdabb2771ea3e">
+<summary class="entry-toggle"><h2 class="version">v1.2.22</h2><span class="release-summary">Replace truncated eval(code=...) rows with compact Code Mode disclosures. Completed runs show the recorded operation count and tool names; repeated operations are counted together. MCPCode uses the same presentation.</span></summary>
+<div class="release-content"><h3>Code Mode tool display</h3>
+<ul>
+<li>Replace truncated <code>eval(code=...)</code> rows with compact Code Mode disclosures. Completed runs show the recorded operation count and tool names; repeated operations are counted together. <code>MCPCode</code> uses the same presentation.</li>
+<li>Keep the exact JavaScript and formatted full output in separate, keyboard-accessible disclosures. Failed runs show a short error and recovery guidance without expanding a dense JSON dump into the transcript.</li>
+<li>Surface failed nested calls even when the script returns normally, and label omitted outcome records and truncated selected output. Execution, approval policy and the runtime's result envelope are unchanged.</li>
+</ul>
+<h3>Remote plan approval and implementation</h3>
+<ul>
+<li>Offer plan approval in both the originating Telegram/Discord chat and the terminal. The first decision settles the request and retracts the other surface; late remote replies cannot approve an already settled plan.</li>
+<li>Use the same approval flow for native plan mode and external planner handoffs. Remote approval remains bound to the requesting account, conversation and reviewed plan, and retains manual tool approval.</li>
+<li>Preserve the durable session identity and live bridge connections when an approved plan starts implementation. The model still receives a fresh thread containing the approved plan, without carrying over planning context.</li>
+<li>Read the implementation thread when sending the remote completion reply, rather than reading the old planning thread. Subsequent messages continue through the existing bridge queue and session topic/thread.</li>
+</ul>
+<h3>Long-running graph turns</h3>
+<ul>
+<li>Raise the default per-turn LangGraph step limit from 1,000 to 9,999 so longer Code Mode tasks are not stopped by the former fixed ceiling.</li>
+<li>Add the startup environment override <code>NOVA_RECURSION_LIMIT</code>. Invalid values fall back to the default; nonpositive values are clamped to one. Restart Nova after changing it. This controls graph steps, not JavaScript recursion.</li>
+<li>Keep the existing repeated-tool and policy-rejection loop guards. A higher ceiling does not repair a repeating task or roll back completed side effects.</li>
+</ul>
+<h3>Validation</h3>
+<ul>
+<li>The related remote approval, routing, planning, external-planner and Code Mode selection passed 133 tests. The final focused selection, including saved remote session reconnection, passed 70 tests. New component/test lint and whitespace checks passed, and desktop, narrow-terminal and expanded TUI states were rendered headlessly. Live Telegram/Discord services were not exercised. No new runtime dependency is required.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.22 uv tool upgrade novacode-cli <code>`</code> Optional extras (retain all extras needed by your installation): <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.22&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-21" data-version="1.2.21" data-sha="d57cae1310ea6c25b45b6464860a41a9f572da05">
+<summary class="entry-toggle"><h2 class="version">v1.2.21</h2><span class="release-summary">Fix chat failing after /reload-plugins with “This root already has a live coordinator owner.” Plugin and MCP reload now pass the conversation ID and reuse the model-switch rebuild path, preserving the existing coordinator, checkpoint, workspace, prompt, extra middleware and confinement settings.</span></summary>
+<div class="release-content"><h3>Plugin reload and session ownership</h3>
+<ul>
+<li>Fix chat failing after <code>/reload-plugins</code> with “This root already has a live coordinator owner.” Plugin and MCP reload now pass the conversation ID and reuse the model-switch rebuild path, preserving the existing coordinator, checkpoint, workspace, prompt, extra middleware and confinement settings.</li>
+<li>Preserve the current worktree when changing models, reloading plugins/MCP or refreshing agent definitions. Rebuilds use the active local file backend root.</li>
+<li>Keep the duplicate-owner guard: a different coordinator still cannot take ownership of a live conversation.</li>
+</ul>
+<h3>Code Mode and scratch files</h3>
+<ul>
+<li>Add local session scratchpads under the OS temporary directory, mounted at <code>/scratchpad/</code>. File write/edit approvals apply only to the calling session's scratchpad; explicit denies and normal shell approval remain enforced.</li>
+<li>Clean scratchpads on conversation clear, session exit and process shutdown. A retention sweep removes marked directories from dead processes after 24 hours. New conversations receive a fresh mount and prompt.</li>
+<li>Clarify the active workspace, virtual file paths and shell working directory, including remote sandbox roots.</li>
+<li>Detect todo updates that only reword an unchanged status sequence without intervening work. Keep deterministic coalescing of parallel todo snapshots.</li>
+<li>Return bounded, ordered nested-call outcomes from Code Mode, with operation names, completion/failure/cancellation states and concise error categories. Queued calls cancelled before starting are distinguished from running calls. Failed or cancelled operations can still have external side effects.</li>
+</ul>
+<h3>Validation</h3>
+<ul>
+<li>The combined Code Mode, approval and lifecycle selection passed 386 tests with two skips on Windows. The reload, ownership, worktree and related selection passed 78 tests, including a real graph/SQLite reproduction of the reload error. Focused lint, type and whitespace checks passed. The Windows symlink escape test requires privileges unavailable on the local test host. Existing unrelated repository lint findings remain. No new runtime dependency is required.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.21 uv tool upgrade novacode-cli <code>`</code> Optional extras: <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.21&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-20" data-version="1.2.20" data-sha="045c5594a808503b083bfb673b9f033bc7845049">
+<summary class="entry-toggle"><h2 class="version">v1.2.20</h2><span class="release-summary">Make the repeat guard see write_todos. State updates return a Command rather than a ToolMessage, so they were never recorded and the repeat counter stayed at zero — the threshold could not be reached. One traced session showed ten byte-identical todo snapshots in a row with no guard message, while the same guard stopped a read_file loop at the fourth call. State updates now count toward the window, hashed on their content so the per-call tool call ID does not make every update look unique.</span></summary>
+<div class="release-content"><h3>Agent loop</h3>
+<ul>
+<li>Make the repeat guard see <code>write_todos</code>. State updates return a <code>Command</code> rather than a <code>ToolMessage</code>, so they were never recorded and the repeat counter stayed at zero — the threshold could not be reached. One traced session showed ten byte-identical todo snapshots in a row with no guard message, while the same guard stopped a <code>read_file</code> loop at the fourth call. State updates now count toward the window, hashed on their content so the per-call tool call ID does not make every update look unique.</li>
+<li>Reword the Code Mode guidance for todo updates. &quot;Once per model response&quot; was read as an obligation for every response instead of &quot;not several in parallel&quot;; 25 of 26 calls in that trace were standalone snapshots with an empty text body.</li>
+</ul>
+<h3>CI and tests</h3>
+<ul>
+<li>Gate PyPI publishing on a successful CI run for the exact tagged commit, and split the offline regression suite into four shards driven by a manifest so a single slow test no longer decides the whole job.</li>
+<li>Keep the test process off Textual's Windows sleep thread pool. Textual's Windows sleep blocks a default-executor thread for the whole wait and <code>set_interval</code> uses it, so each armed timer pins a thread; with Nova's thirteen timers a 2-core runner pins all six workers and a 10 ms Textual sleep takes 0.54 s. That stalled Windows regression runs until they were killed with no failing assertion. The same measurement after the change: no pinned threads and 0.001 s. Runtime timing in installed builds is unchanged.</li>
+<li>Give the plan approval TUI tests the suite's TUI timeout, so a stall reports its own stack instead of a bare 10-second kill.</li>
+</ul>
+<h3>Documentation</h3>
+<ul>
+<li>Rewrite the README and add <code>docs/project-onboarding.md</code> and <code>docs/response-modes.md</code>.</li>
+<li>Add <code>CONTRIBUTING.md</code>, <code>CODE_OF_CONDUCT.md</code>, and a <code>SECURITY.md</code> policy.</li>
+</ul>
+<h3>Validation</h3>
+<ul>
+<li>The loop guard has regression tests covering state updates, content-only hashing, and the annotation path. All thirteen CI jobs pass on the release commit, with the Windows regression shard that previously stalled now green. Forty-four focused TUI tests pass locally, and a desktop probe of the sleep change measured zero pinned threads at a six-worker pool. Full cold-start performance was not re-benchmarked. No new runtime dependency is required.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.20 uv tool upgrade novacode-cli <code>`</code> Optional extras: <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.20&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-19" data-version="1.2.19" data-sha="1a6d755db744fd4e33da6870644c4301b25202d0">
+<summary class="entry-toggle"><h2 class="version">v1.2.19</h2><span class="release-summary">Remove live MCP discovery from agent construction. Nova loads matching cached schemas locally and starts connection discovery after the interface renders. Ordinary conversation turns can proceed while servers connect.</span></summary>
+<div class="release-content"><h3>Startup and MCP connections</h3>
+<ul>
+<li>Remove live MCP discovery from agent construction. Nova loads matching cached schemas locally and starts connection discovery after the interface renders. Ordinary conversation turns can proceed while servers connect.</li>
+<li>Add <strong>Retry</strong> to <code>/mcp</code>, with connection-state labels and failure notifications. A retry bypasses the selected server's schema cache without restarting healthy peers or rebuilding the conversation.</li>
+<li>Keep newly discovered tools available through the MCP router, Code Mode, skill aliases, and explicitly authorized subagents.</li>
+<li>Bound connection attempts, share discovery between consumers, and cancel discovery and schema refresh when shutting down or reloading MCP configuration. Background failures no longer print over the terminal interface.</li>
+</ul>
+<h3>CI</h3>
+<ul>
+<li>Update agent-stream tests for mandatory human plan approval. The obsolete auto-approval test waited forever for a decision it never supplied, causing both Linux and Windows CI to time out.</li>
+<li>Run approval, background MCP, and provider-cache checks early in CI so failures are reported before the longer offline regression suite.</li>
+</ul>
+<h3>Validation</h3>
+<ul>
+<li>Focused tests cover nonblocking startup and ordinary turns, late tool routing, server-specific retries, OAuth compatibility, shutdown, reloads, skill aliases, malformed cache recovery, and MCP dialog layouts. Full cold-launch speed has not been benchmarked. No new runtime dependency is required.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.19 uv tool upgrade novacode-cli <code>`</code> Optional extras: <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.19&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-18" data-version="1.2.18" data-sha="143c4c468caf40a3ba48589d5b2bec18c493e59c">
+<summary class="entry-toggle"><h2 class="version">v1.2.18</h2><span class="release-summary">Plan mode always requests explicit user approval before execution, including when auto-approve is enabled. The shared agent loop and command handlers use the existing approval flow; rejecting or refining a plan keeps planning active.</span></summary>
+<div class="release-content"><h3>Fixes</h3>
+<ul>
+<li>Plan mode always requests explicit user approval before execution, including when auto-approve is enabled. The shared agent loop and command handlers use the existing approval flow; rejecting or refining a plan keeps planning active.</li>
+<li>Preserve OpenRouter cache-write counts through both streaming and non-streaming OpenAI-compatible SDK responses. Preserve gateway cache-read aliases as well.</li>
+<li>Include Anthropic's separate 5-minute and 1-hour cache-write counters, and recognize raw Bedrock, Gemini, DeepSeek, and Ollama usage formats.</li>
+<li>Show missing cache counts as unavailable instead of zero. Mark partial reporting and preserve these distinctions across session serialization.</li>
+</ul>
+<h3>Validation</h3>
+<ul>
+<li>Offline regression coverage includes provider formats, streaming SDK conversion, reported zeros versus absent counts, persistence, and approval with auto-approve enabled. A two-request live probe using the configured OpenRouter <code>recursive/flint-v1.0:free</code> model returned 0 cached tokens initially and 2,304 of 2,394 input tokens on the repeat; Nova's parsed counts matched both responses. Both responses explicitly reported zero cache-write tokens. Other providers were checked offline, not against live services. No new dependency is required.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.18 uv tool upgrade novacode-cli <code>`</code> Optional extras: <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.18&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-17" data-version="1.2.17" data-sha="869cc05ad02272dea6398ae9714276c5b339d577">
+<summary class="entry-toggle"><h2 class="version">v1.2.17</h2><span class="release-summary">Show immediate feedback while preparing an update. Reject duplicate requests, reset stale install buttons after failed checks, and start the update worker after the dialog closes.</span></summary>
+<div class="release-content"><h3>Update and terminal reliability</h3>
+<ul>
+<li>Show immediate feedback while preparing an update. Reject duplicate requests, reset stale install buttons after failed checks, and start the update worker after the dialog closes.</li>
+<li>Keep Nova open if session saving fails or a running turn has not stopped. Preserve installation-lock checks for other terminal windows and the existing same-terminal update/resume handoff.</li>
+<li>Capture startup output in the worker thread that produces it, preventing Rich output from painting over the TUI during model switches, MCP/plugin reloads, initialization, resume, and auxiliary model setup.</li>
+<li>Press Left Arrow in an empty composer to open Command Center. With text in the composer, Left Arrow continues to move the cursor.</li>
+</ul>
+<h3>Images and compression</h3>
+<ul>
+<li>Determine image support from each explicit subagent model, and provide the VISION tool to text-only subagents. Recognize standard URL image blocks, preserve message metadata when stripping images, and extract only caption text from structured vision responses.</li>
+<li>Retry vision initialization after a short cooldown instead of disabling it for the rest of the session after one failure.</li>
+<li>Harden Ponytail and Caveman activation/deactivation, command-reference identity, argument copying, fenced-code preservation and multimodal routing. Compression modes retain full verification and correctness requirements.</li>
+</ul>
+<h3>Coding guidance</h3>
+<ul>
+<li>Improve shared coding, planning, delegation, agent-generation, refinement and verification prompts: state consequential assumptions, keep changes focused, justify added complexity and verify observable outcomes.</li>
+<li>Adapt guidance from [Karpathy-inspired coding guidelines](https://github.com/multica-ai/andrej-karpathy-skills) to Nova's tools and authorization model. The verifier no longer accepts a plausible completion claim in place of required evidence.</li>
+</ul>
+<h3>Validation and limits</h3>
+<ul>
+<li>Regression coverage includes real Textual button/key events, compiled subagent provider payloads with a mocked HTTP transport, update/save failures, duplicate requests, prompt rendering and verifier contracts. Live-provider image accuracy and improvements in coding quality have not been measured. No new runtime dependency is required.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.17 uv tool upgrade novacode-cli <code>`</code> Optional extras remain available, for example: <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.17&quot; <code>`</code> Exit Nova sessions sharing the installation in other terminal windows before updating. The terminal windows themselves can stay open. In Nova, use <code>/update</code>; if running an older version with an unresponsive button, exit Nova and run <code>nova update</code> in the same terminal, then resume with <code>nova --continue</code> if needed.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-16" data-version="1.2.16" data-sha="d36a12e9da331118a9c0cf1175675a54f7fd703f">
+<summary class="entry-toggle"><h2 class="version">v1.2.16</h2><span class="release-summary">Enable native compression adapted from billion-context/acp-kernel, with no Node.js proxy or new runtime dependencies. The active model chooses completed ranges and writes summaries through its normal tool loop.</span></summary>
+<div class="release-content"><h3>Model-controlled context compression</h3>
+<ul>
+<li>Enable native compression adapted from billion-context/acp-kernel, with no Node.js proxy or new runtime dependencies. The active model chooses completed ranges and writes summaries through its normal tool loop.</li>
+<li>Add <code>compress</code>, <code>decompress</code>, <code>search_context</code> and <code>acp_status</code>. Combine blocks into up to three summary tiers and recover exact archived message JSON in bounded pages. Search includes visible history, summaries and originals.</li>
+<li>Persist blocks and archives with the owning graph thread, including across SQLite checkpoint reopen and session resume. Preserve original user messages and complete tool exchanges. Reject partial overlaps and parallel compression.</li>
+<li>Retain existing automatic compaction, <code>/compact</code> and provider-overflow recovery. Keep folded summaries together with preserved user messages when choosing a fallback cutoff. Reused provider call IDs cannot overwrite archives.</li>
+<li>Keep context tools directly available in Code Mode. Set <code>context_hierarchical</code> to <code>false</code> in Nova configuration to disable new model-authored folds. Documentation: [Context compression](https://github.com/Babitdor/NovaCode/blob/main/docs/context-compression.md). Nova uses the [billion-context](https://github.com/ranxianglei/billion-context) and [acp-kernel](https://github.com/ranxianglei/acp-kernel) design; the upstream copyright, license and attribution terms ship with the package.</li>
+</ul>
+<h3>Verification and limits</h3>
+<ul>
+<li>135 compaction/UI regression checks passed, followed by 80 boundary checks and 16 final native integration checks. These groups overlap.</li>
+<li>Tests cover synchronous and asynchronous graphs, Deep Agents integration, SQLite reopen, exact recovery, nested summaries, thread isolation, fallback cutoffs and reused tool-call IDs. Focused Ruff and Mypy checks passed for the new module. The verification wheel contained the implementation and license.</li>
+<li>Tests use scripted models. Live-provider summary quality, cost reductions and billion-token scaling have not been established for Nova. Checkpoint archive storage continues to grow with history. Optional upstream proxy, CCR/absorb/crush and semantic-search features are not included.</li>
+</ul>
+<h3>Update</h3>
+<ul>
+<li>Use <code>/update</code> in Nova to update and resume in the same terminal. Finish other Nova sessions using the installation first. When upgrading from a version older than 1.2.15, exit those other Nova processes before starting the update. <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli==1.2.16&quot; uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice,agents-server,server,bedrock,computer]==1.2.16&quot; <code>`</code> For shell installation commands, exit all Nova processes using that installation.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-15" data-version="1.2.15" data-sha="fd6d99213520caafca9b8fa3722708a33a6e041b">
+<summary class="entry-toggle"><h2 class="version">v1.2.15</h2><span class="release-summary">Prevent Windows /update from modifying an installation whose native dependencies are still loaded by another Nova terminal. Check before stopping the current turn, and again before moving launchers or running uv/pip. Show the blocking processes so the user can finish those sessions and retry.</span></summary>
+<div class="release-content"><h3>Fixes</h3>
+<ul>
+<li>Prevent Windows <code>/update</code> from modifying an installation whose native dependencies are still loaded by another Nova terminal. Check before stopping the current turn, and again before moving launchers or running uv/pip. Show the blocking processes so the user can finish those sessions and retry.</li>
+<li>Running Nova processes share an installation lock. The updater requires exclusive ownership, preventing competing updates and new runtime launches while packages are being replaced. Windows Restart Manager also detects native files held by older Nova processes that do not take this lock.</li>
+<li>If a blocker appears after the current session exits, resume the unchanged installation in the same terminal. Never terminate other Nova windows.</li>
+<li>Refuse to start installation if the previous runtime has not exited before the update handoff times out.</li>
+</ul>
+<h3>Verification</h3>
+<ul>
+<li>All 93 focused updater checks passed, including native Windows console typing and scrolling after restart. Focused Ruff and Mypy checks passed.</li>
+<li>Regression tests cover a DLL actually loaded by a separate Windows process, installation-lock conflicts, refusal before any package mutation, session preservation, and handoff timeout. Windows CI includes these checks.</li>
+<li>No new runtime dependencies. Tests use isolated files; they do not upgrade the user's installed Nova environment.</li>
+</ul>
+<h3>Update</h3>
+<ul>
+<li>Before upgrading from an older version, exit Nova in the other terminal windows. Those windows can remain open. The older updater cannot gain this protection until the new version is installed. Then use <code>/update</code> in the remaining session, which continues in the same terminal, or install this version explicitly: <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli==1.2.15&quot; uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice,agents-server,server,bedrock,computer]==1.2.15&quot; <code>`</code> When installing from the shell, exit all Nova sessions using that installation first. External uv/pip commands do not participate in Nova's installation lock.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-14" data-version="1.2.14" data-sha="97d70f21f99e1d5850eec541193c617786813209">
+<summary class="entry-toggle"><h2 class="version">v1.2.14</h2><span class="release-summary">Keep progress, tool activity and enabled home animations moving when another window has focus. Animation preferences and low-resource mode still apply (#15).</span></summary>
+<div class="release-content"><h3>Fixes</h3>
+<ul>
+<li>Keep progress, tool activity and enabled home animations moving when another window has focus. Animation preferences and low-resource mode still apply (#15).</li>
+<li>Command Center and tab badges share live activity and attention state. Hidden child tabs no longer use stale render state. Nova terminals sharing a session directory publish status once a second, with ten-second crash expiry. Sessions open elsewhere stay in their owning terminal (#16).</li>
+<li>Coalesce accidental parallel direct <code>write_todos</code> calls before execution, preserving distinct tasks and using the last status for identical task text. Invalid batches still report validation errors. Planning remains a direct tool; use one full snapshot when removing tasks, and never call it inside <code>eval</code> (#17).</li>
+</ul>
+<h3>Learning, memory recall and Wiki</h3>
+<ul>
+<li>Use the active model to interpret recall intent before retrieval. It generates focused search phrases and can select relevant scoped topics directly, even without matching keywords. The existing LLM reranker then orders retrieved evidence. Planning and ranking each have a ten-second timeout and local fallback. Each explicit recall can make two model requests; no new provider is configured. The planner sees up to 128 topic summaries, while its queries search the entire authorized corpus. It cannot invent source IDs or broaden project visibility.</li>
+<li>Reuse identical pending learning proposals, including concurrent submissions, without duplicating review entries. Changed evidence, source versions, scope or provenance produces a separate proposal. Approval and rollback rules still apply.</li>
+<li>Recall short technical terms such as SQL, API, CLI, JWT and UI. Exclude generated memory-Wiki navigation from search evidence so related-page labels do not create false matches or contaminate excerpts.</li>
+<li><code>/ask</code> searches Wiki titles, summaries and page bodies using question terms. Relevant passages can come from deep in a page, include source paths, and fit a bounded context block. Reads run off the UI thread; stale or unsafe index entries do not prevent retrieval from valid pages.</li>
+</ul>
+<h3>Verification</h3>
+<ul>
+<li>Local checks passed: 114 focused UI/memory regressions, 49 LLM recall and memory-tool checks, 67 final learning/presence checks, and 43 updater/version checks. Focused Ruff and Mypy checks also passed.</li>
+<li>Regression coverage for focus-independent animation, cross-terminal status transitions and expiry, real Code Mode graphs, concurrent learning proposals, technical-term recall and Wiki evidence retrieval.</li>
+<li>LLM recall tests cover paraphrases with no lexical match, direct topic selection, project isolation, malformed output, timeouts and cancellation using fake models. Live provider behavior has not been exercised in this release verification.</li>
+<li>No new runtime dependencies. Same-terminal <code>/update</code> behavior is preserved.</li>
+<li>Three existing banner-width assertions also fail against v1.2.13; this release does not change banner geometry. Full repository test-suite coverage is not claimed.</li>
+</ul>
+<h3>Update</h3>
+<ul>
+<li>Use <code>/update</code> inside Nova, or install this version explicitly: <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli==1.2.14&quot; uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice,agents-server,server,bedrock,computer]==1.2.14&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-13" data-version="1.2.13" data-sha="07444ec13a3391bddf2bc3c30ec0e8ce0bfe2a38">
+<summary class="entry-toggle"><h2 class="version">v1.2.13</h2><span class="release-summary">Remove the legacy fallback that opened a new Windows console after updating. Nova's interactive launcher always uses the existing terminal.</span></summary>
+<div class="release-content"><h3>Keep `/update` in the same terminal</h3>
+<ul>
+<li>Remove the legacy fallback that opened a new Windows console after updating. Nova's interactive launcher always uses the existing terminal.</li>
+<li>Updates started from a launcher-enabled Nova session (normal launches of 1.2.12 or later) restart and resume automatically in that same terminal, preserving session identity and interrupted-turn continuation.</li>
+<li>If an older Windows launcher has already exited and released its console to the shell, finish the update and display the exact resume command in the existing terminal. That one-time migration needs manual resume; an exited launcher cannot be retrofitted. No new window is opened and no competing TUI is started in the released console.</li>
+</ul>
+<h3>Verification</h3>
+<ul>
+<li>Verified typing, mouse scrolling and shell ownership through two automatic update/restart cycles in the same Windows pseudo-console.</li>
+<li>Added a regression requiring legacy recovery to print its saved-session resume command without spawning a console.</li>
+<li>All 44 focused launcher, native console, updater/resume and release-version checks passed, along with Ruff and Mypy.</li>
+<li>No new runtime dependency is required.</li>
+</ul>
+<h3>Update</h3>
+<ul>
+<li>Use <code>/update</code> inside Nova. Launcher-enabled sessions continue automatically in the current terminal. If the one-time legacy recovery command is shown, run it at the prompt in that same terminal. For a pinned installation, optional integrations remain available: <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli==1.2.13&quot; uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice,agents-server,server,bedrock,computer]==1.2.13&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-12" data-version="1.2.12" data-sha="3a9d2b3f6911c8e964ca898c99c080fc69ee8e25">
+<summary class="entry-toggle"><h2 class="version">v1.2.12</h2><span class="release-summary">Keep a lightweight terminal launcher alive across update and session-resume handoffs. The invoking shell now waits until the resumed Nova exits, instead of competing with its composer and mouse input for the same console.</span></summary>
+<div class="release-content"><h3>Fix Windows input after `/update</h3>
+<ul>
+<li>Keep a lightweight terminal launcher alive across update and session-resume handoffs. The invoking shell now waits until the resumed Nova exits, instead of competing with its composer and mouse input for the same console.</li>
+<li>Continue exiting the heavy agent runtime before installation, releasing its native extension files for the updater. The waiting launcher uses only the Python standard library and does not load agent or third-party native modules.</li>
+<li>Preserve session identity, interrupted-turn continuation, repeated updates, Ctrl+C handling and exit statuses. Headless, pipe and session-worker commands bypass the interactive launcher; POSIX restart behavior is unchanged.</li>
+<li>For the first restart from an older Windows release that already returned its console to the shell, open the resumed Nova in a fresh interactive console. Later updates preserve that console through the launcher.</li>
+<li>Stop an updater if its handoff cannot be registered, avoiding an untracked update after reporting failure.</li>
+</ul>
+<h3>Verification</h3>
+<ul>
+<li>Reproduced early shell return with an isolated Windows pseudo-console.</li>
+<li>Verified composer typing, mouse scrolling and a clean shell return across two real Windows console restart chains, without installing updates or calling a model provider. Added this regression to Windows updater and cross-platform CI.</li>
+<li>Revalidated updater, release-note, session-continuation, team-handoff and startup behavior: <strong>111 focused tests passed</strong>, including the native console regression. Ruff and Mypy checks passed. No new runtime dependency is added.</li>
+</ul>
+<h3>Install or recover an affected session</h3>
+<ul>
+<li>Close the frozen terminal, open a fresh one, then run: <code>`</code>text uv tool upgrade novacode-cli nova --continue <code>`</code> For a pinned installation, or to select optional integrations: <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli==1.2.12&quot; uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice,agents-server,server,bedrock,computer]==1.2.12&quot; <code>`</code></li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-11" data-version="1.2.11" data-sha="c7d7a8459621cdb9412f3dcddd8cfff86672834b">
+<summary class="entry-toggle"><h2 class="version">v1.2.11</h2><span class="release-summary">Add /loop with duration intervals, quoted five-field cron schedules and model-selected wakeups through schedule_wakeup.</span></summary>
+<div class="release-content"><h3>Session loops (#10)</h3>
+<ul>
+<li>Add <code>/loop</code> with duration intervals, quoted five-field cron schedules and model-selected wakeups through <code>schedule_wakeup</code>.</li>
+<li>Reload project/user <code>loop.md</code> instructions on every file-driven iteration, with <code>.nova</code> taking precedence and <code>.agent</code> accepted as a compatibility alias.</li>
+<li>Run iterations through the normal session agent and approval paths. Wait while busy and coalesce missed ticks without overlapping turns or catch-up queues.</li>
+<li>Add <code>/loop list</code>, <code>/loop status</code>, <code>/loop stop [id|all]</code>, waiting-state Escape cancellation, and a default 72-hour TTL configurable up to seven days.</li>
+<li>Keep loops in memory, discard them on conversation reset/exit, and fence expired or stale-session work. Expiration produces one final notification.</li>
+<li>Support nested agent-driven skill invocations. Spawned-process/headless tabs do not host loops; switching away from a local owner tab pauses its dispatch.</li>
+<li>Include pending task descriptions when a natural-language cancellation must choose between multiple loops, including before their first iteration.</li>
+</ul>
+<h3>Tracing compatibility</h3>
+<ul>
+<li>Fix dropped LangGraph traces with the updated LangSmith SDK when optional agent metadata labels are configured alongside a project.</li>
+<li>Migrate Nova's labels to <code>NOVA_LANGSMITH_AGENT_ID</code> and <code>NOVA_LANGSMITH_AGENT_ENVIRONMENT</code>, preserving saved setup and legacy inputs while keeping them separate from the SDK's reserved destination variables.</li>
+</ul>
+<h3>Learning and memory reviews (#4, #8)</h3>
+<ul>
+<li>Revalidate retrieval relevance, fallback behavior, learning approval/activation, dream isolation, wiki maintenance, memory tiers and context properties/replay: <strong>218 passed, 2 skipped</strong>.</li>
+<li>The loop/session integration selection passed <strong>83 tests</strong>. Tracing runtime, setup, modal and TUI compatibility checks passed <strong>21 tests</strong> after reproducing the prior CI failure. The scheduler modules passed Ruff and Mypy.</li>
+<li>These are offline contract checks; live-model quality and long-running external deployments are not certified. No new runtime dependency is required.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli==1.2.11&quot; <code>`</code> Select optional extras as needed, for example: <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice,agents-server,server,bedrock,computer]==1.2.11&quot; <code>`</code> Existing PyPI installations can use <code>uv tool upgrade novacode-cli</code>.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-10" data-version="1.2.10" data-sha="8079e960e79cb6a20d532c82225d674022c0cdae">
+<summary class="entry-toggle"><h2 class="version">v1.2.10</h2><span class="release-summary">Add /command-center (/cc) with project and status grouping, status filters, search, session details and paginated saved conversations.</span></summary>
+<div class="release-content"><h3>Command Center</h3>
+<ul>
+<li>Add <code>/command-center</code> (<code>/cc</code>) with project and status grouping, status filters, search, session details and paginated saved conversations.</li>
+<li>Show live tab state and measured token usage when available; label missing metadata honestly and keep details accessible in narrow terminals.</li>
+<li>Switch to live tabs or open saved conversations through the existing tab-resume flow, preserving workspace approval and duplicate-session checks.</li>
+</ul>
+<h3>Reliability</h3>
+<ul>
+<li>Bound OS keychain discovery and credential reads so an unavailable backend cannot indefinitely block startup; preserve credential-file lock ownership.</li>
+<li>Record startup import boundaries and keep tracing failures from aborting startup.</li>
+<li>Preserve lexical topic matches during semantic memory search, reject nonfinite semantic scores and fall back when provider reranking fails.</li>
+<li>Preserve Code Mode warnings on errors and improve timeout diagnostics, including native QuickJS timeout exceptions.</li>
+<li>Migrate evaluation run queries to the current async LangSmith API and raise the LangSmith minimum to 0.14.17 in the application and evaluation environment.</li>
+<li>Clarify that learning auto-approval applies to generated skills; wiki lessons and prompt changes still require review.</li>
+</ul>
+<h3>Validation and limits</h3>
+<ul>
+<li>Command Center, help, tab-resume and session-launch checks: 43 passed. The new screen passed Ruff and Mypy; wide and narrow fixture renders were reviewed.</li>
+<li>Code Mode randomized tests: 127 passed with 91% coverage across the measured modules; all four negative controls failed the intended assertions.</li>
+<li>Factory review: 109 passed with extended test deadlines. Additional focused startup, memory, learning, SDK and async-agent checks are documented in <code>docs/github-issue-review.md</code>.</li>
+<li>The repository-wide test run and full Code Mode verifier did not finish cleanly because of test timeouts. Live provider, reboot and Docker behavior have not been verified. These results do not establish unconditional production readiness.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli==1.2.10&quot; <code>`</code> With optional integrations, select the extras you need, for example: <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice,agents-server,server,bedrock,computer]==1.2.10&quot; <code>`</code> Existing PyPI tool installations can also use <code>uv tool upgrade novacode-cli</code>.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-9" data-version="1.2.9" data-sha="35e604b4675a7a1132151f398647ef276062c12b">
+<summary class="entry-toggle"><h2 class="version">v1.2.9</h2><span class="release-summary">Stage LLM-authored lessons for explicit /learning approval instead of auto-activating them.</span></summary>
+<div class="release-content"><h3>Memory and learning</h3>
+<ul>
+<li>Stage LLM-authored lessons for explicit <code>/learning</code> approval instead of auto-activating them.</li>
+<li>Run <code>/dream</code> in an isolated read-only agent and tighten project/symlink scope checks during consolidation.</li>
+<li>Keep deterministic wiki maintenance responsible for navigation and backlink updates.</li>
+<li>Preserve manual-only recall behavior and related learning safety coverage.</li>
+</ul>
+<h3>Reliability and prompts</h3>
+<ul>
+<li>Update dream, memory-tier, activation, review, and refinement flows to align with the safer wiki/learning model.</li>
+<li>Refresh standing instructions and consolidation prompts for the approval-gated memory workflow.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-8" data-version="1.2.8" data-sha="6d8d2273cabed8dc33eaa4369c3149ad7242f3dc">
+<summary class="entry-toggle"><h2 class="version">v1.2.8</h2><span class="release-summary">Prune superseded checkpoints at startup to limit long-lived session database growth. Large databases are vacuumed only when stale checkpoints were removed.</span></summary>
+<div class="release-content"><h3>Reliability</h3>
+<ul>
+<li>Prune superseded checkpoints at startup to limit long-lived session database growth. Large databases are vacuumed only when stale checkpoints were removed.</li>
+<li>Clear buffered terminal input before an update handoff and relaunch, preventing mouse reports from appearing as text in the resumed composer.</li>
+<li>Keep summary-preview state consistent when streamed output is discarded.</li>
+</ul>
+<h3>Configuration and testing</h3>
+<ul>
+<li>Support <code>NOVA_HOME</code> as an override for Nova's configuration directory.</li>
+<li>Isolate the test home before collection-time imports cache user data paths.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-7" data-version="1.2.7" data-sha="ab042bac2b8f1344db4aa75d0e7a963cffea09fb">
+<summary class="entry-toggle"><h2 class="version">v1.2.7</h2><span class="release-summary">Keep learned topic memories out of automatic recall; search them only when memory_search is explicitly used.</span></summary>
+<div class="release-content"><h3>More relevant long-term memory search</h3>
+<ul>
+<li>Keep learned topic memories out of automatic recall; search them only when <code>memory_search</code> is explicitly used.</li>
+<li>Retrieve candidates locally with semantic matching, then use the currently selected model to rerank a bounded shortlist.</li>
+<li>Split corpus loading, retrieval, excerpts and reranking into focused modules.</li>
+<li>Keep reranking provider-neutral and restrict it to reordering retrieved candidate IDs; invalid rankings fall back to local relevance order.</li>
+</ul>
+<h3>Verification</h3>
+<ul>
+<li>Focused memory and model-router tests: 157 passed.</li>
+<li>Ruff and mypy checks passed for the extracted memory modules.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-6" data-version="1.2.6" data-sha="8b889593ba5bfa9f0f5c53b24db70292048a36fb">
+<summary class="entry-toggle"><h2 class="version">v1.2.6</h2><span class="release-summary">Show reasoning collapsed while streaming with a thinking... header.</span></summary>
+<div class="release-content"><h3>TUI reasoning display</h3>
+<ul>
+<li>Show reasoning collapsed while streaming with a <code>thinking...</code> header.</li>
+<li>On completion, keep the trace collapsed and retitle it to <code>Thought - &lt;seconds&gt;s</code> (elapsed reasoning time), while preserving the full trace in the expandable body.</li>
+<li>Update reasoning scroll test expectations to match the collapsed finalized header.</li>
+</ul>
+<h3>Verification</h3>
+<ul>
+<li><code>python -m py_compile novacode_cli/tui/app.py</code></li>
+<li><code>pytest tests/test_reasoning_scroll.py -q</code></li>
+<li><code>pytest tests/test_reasoning_visibility.py -q</code> (10 failed, 2 passed locally; failures assert core <code>ReasoningDelta</code> emission, not TUI header/collapse behavior)</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-5" data-version="1.2.5" data-sha="0dda844b70d725388773887329f7e1dc1d97690e">
+<summary class="entry-toggle"><h2 class="version">v1.2.5</h2><span class="release-summary">Require at least two shared words, weighted by how rare each word is across the memory corpus, before a lesson is supplied automatically. Words that appear in hundreds of unrelated lessons no longer count as evidence.</span></summary>
+<div class="release-content"><h3>More precise automatic memory recall</h3>
+<ul>
+<li>Require at least two shared words, weighted by how rare each word is across the memory corpus, before a lesson is supplied automatically. Words that appear in hundreds of unrelated lessons no longer count as evidence.</li>
+<li>Never treat markdown rules (<code>---</code>), blank lines or separators as lessons.</li>
+<li>Compare the request's meaning only for failures, using the error on screen. Ordinary requests and successful tool output no longer pull in weakly similar <code>0.45–0.59</code> neighbours.</li>
+<li>Cap automatic recall at three distinct topics and show only the single built-in symptom that matches the current error.</li>
+<li>Skip a lesson that is over the per-turn character budget instead of stopping retrieval before smaller, still-relevant lessons are considered.</li>
+<li>Keep the task behind a short follow-up (&quot;proceed&quot;, &quot;fix it&quot;) in the retrieval query, and ignore pinned-skill or summarization messages when choosing it.</li>
+<li>Honour an explicit request not to use a named memory for the turn.</li>
+</ul>
+<h3>Remote approvals</h3>
+<ul>
+<li>Stop sending a redundant &quot;Approval response recorded&quot; reply after a remote approval is accepted; the approval result is already delivered.</li>
+</ul>
+<h3>Verification</h3>
+<ul>
+<li>Cover the precision rules with focused tests: separators, corpus-wide words, request-only semantic recall, the three-topic cap, budget skipping and single-symptom built-in selection.</li>
+<li>Re-ran the memory retrieval, built-in lesson, learning recall, memory notice and prompt-cache ordering suites locally on Windows.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-4" data-version="1.2.4" data-sha="583ca9bdad21184d185774c4d8ed5cf7971cbaa6">
+<summary class="entry-toggle"><h2 class="version">v1.2.4</h2><span class="release-summary">Hand the update off to a fresh Python interpreter that waits for the running Nova process to exit before replacing the environment, instead of letting uv mutate a process that still has the old .pyd files mapped.</span></summary>
+<div class="release-content"><h3>Windows `/update` reliability</h3>
+<ul>
+<li>Hand the update off to a fresh Python interpreter that waits for the running Nova process to exit before replacing the environment, instead of letting <code>uv</code> mutate a process that still has the old <code>.pyd</code> files mapped.</li>
+<li>Stop auto-restarting after a failed hand-off, so a half-updated environment is never silently restarted.</li>
+<li>Launch updater and relaunch commands with the isolated interpreter flag so a source checkout cannot shadow installed code.</li>
+</ul>
+<h3>Stacked guardrails (opt-in)</h3>
+<ul>
+<li>Add LangChain-style PII middleware (<code>PIIMiddleware</code>) with <code>redact</code>/<code>mask</code>/<code>hash</code>/ <code>block</code> strategies across input, model output and tool results; enabled with <code>/guardrails on</code>, off by default.</li>
+<li>Default PII rules redact email addresses and mask credit card numbers; the <code>url</code> type is not enabled because redaction mangles expected links.</li>
+<li>Add deterministic blocked-term filtering through before/after-agent content filters with a preflight refusal and final-answer replacement.</li>
+<li>Add optional model-based output review; unavailable or malformed verdicts fail open and surface a skip notice, explicit denials withhold the response. Human-in-the-loop approval stays the sole approval layer; PII and content filters are additional opt-in layers and inherit to local subagents.</li>
+</ul>
+<h3>Verification</h3>
+<ul>
+<li>Focused guardrail tests, update-flow restart tests and regression suites for the agent loop, agent invocation and approval paths were run locally on Windows.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-3" data-version="1.2.3" data-sha="71fb297be87f83f4dd5173238de5a5fc4be30694">
+<summary class="entry-toggle"><h2 class="version">v1.2.3</h2><span class="release-summary">Show “Recalling memory” inline when relevant topic excerpts are automatically supplied to the model, with the source path when backed by a file.</span></summary>
+<div class="release-content"><h3>Visible, selective memory recall</h3>
+<ul>
+<li>Show “Recalling memory” inline when relevant topic excerpts are automatically supplied to the model, with the source path when backed by a file.</li>
+<li>Show “Reading memory” after a successful explicit memory-page read, including reads made through Code Mode. Failed reads and search results do not claim a page was read.</li>
+<li>Keep standing preferences and the compact index available automatically. Search summaries and read relevant full pages when more detail is needed, rather than loading the whole memory wiki.</li>
+<li>Suppress duplicate notices for the same source and action within a turn. Notice events carry source metadata, not memory bodies, and do not add messages to model history. Existing permissions and retrieval limits apply.</li>
+</ul>
+<h3>Memory sources</h3>
+<ul>
+<li>Return the actual project-scoped topic path from memory search and automatic recall. General and project topics with the same name remain distinct.</li>
+<li>Identify generated knowledge without inventing a file path to read.</li>
+</ul>
+<h3>Verification</h3>
+<ul>
+<li>Add model-boundary, normal-tool, Code Mode, shared-stream and TUI regression coverage for memory notices.</li>
+<li>Fix workspace-mock cleanup in resume tests so later async-agent tests use their own workspace correctly.</li>
+</ul></div>
+</details>
+<details class="changelog-entry" id="v1-2-2" data-version="1.2.2" data-sha="503106538e42a9512f9319f3eef0bcb8dfe1b390">
+<summary class="entry-toggle"><h2 class="version">v1.2.2</h2><span class="release-summary">Browse saved conversations across projects with /resume and nova --resume.</span></summary>
+<div class="release-content"><h3>Session resume</h3>
+<ul>
+<li>Browse saved conversations across projects with <code>/resume</code> and <code>nova --resume</code>.</li>
+<li>Choose the saved workspace or current workspace when resuming another project's session, with optional “Always use” preferences. Reset the choice with <code>nova config set resume_directory ask</code>.</li>
+<li>Open the saved workspace in an isolated session tab while preserving the current chat. Choosing the current workspace restores the conversation in place.</li>
+<li>Preserve workspace trust and tool approvals, context-mode choices and saved session identity. Switch to an already-open session instead of loading it twice.</li>
+<li>Keep the existing 200-session browser limit and exclude cleared sessions.</li>
+</ul>
+<h3>Fixes</h3>
+<ul>
+<li>Fix the Textual widget error when displaying a compacted conversation summary.</li>
+</ul>
+<h3>Packaging</h3>
+<ul>
+<li>Show the release summary and changelog link on PyPI, and attach this changelog to the GitHub release.</li>
+</ul></div>
+</details>
 <details class="changelog-entry" id="v1-2-1" data-version="1.2.1" data-sha="cd1466b45c6760b8e30afda76235ac5e4dcfa443">
 <summary class="entry-toggle"><h2 class="version">v1.2.1</h2><span class="release-summary">Publish tagged releases through GitHub Actions using PyPI Trusted Publishing, without a stored API token.</span></summary>
 <div class="release-content"><h3>PyPI releases</h3>
