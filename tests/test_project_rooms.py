@@ -637,7 +637,8 @@ async def test_task_card_start_and_review_are_wired_to_real_runtime(
         button = screen.query_one("#start-" + task["id"])
         button.scroll_visible(animate=False, top=True, immediate=True)
         await pilot.pause()
-        assert await pilot.click("#start-" + task["id"], offset=(2, 1))
+        # Board refreshes can replace the target widget; verify the runtime effects below.
+        await pilot.click("#start-" + task["id"], offset=(2, 1))
         await app.workers.wait_for_complete()
         for _ in range(25):
             if screen.runtime.store.task(task["id"])["status"] == "finished":

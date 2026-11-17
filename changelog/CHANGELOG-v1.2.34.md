@@ -17,6 +17,8 @@
   area, keeping the prompt accessible and preserving its draft.
 - Make the Code Mode integration test fail promptly on an unexpected Oracle
   decision instead of waiting indefinitely for a manual response.
+- Verify Rooms task-start clicks through their actual runtime effects, avoiding
+  a widget-identity assertion that can fail when a live card is replaced.
 
 ## Validation and limits
 
