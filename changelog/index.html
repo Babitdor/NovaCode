@@ -332,7 +332,7 @@ html[data-view="agent"] .agent-cl-note p{color:var(--muted);font-size:.95rem;lin
     </div>
     <div id="releases">
     <!-- generated:changelog-releases -->
-<details class="changelog-entry" id="v1-2-34" data-version="1.2.34" data-sha="98751b58e896e00e6d5d6e13abb99ff5dbd9c334">
+<details class="changelog-entry" id="v1-2-34" data-version="1.2.34" data-sha="cc681e5ecf11795b413baf4e4a560da7b139853f">
 <summary class="entry-toggle"><h2 class="version">v1.2.34</h2><span class="release-summary">Allow code review when pre-existing binary edits remain unchanged during the task. Reviewer evidence explicitly lists those assets as unreviewed.</span></summary>
 <div class="release-content"><h3>Oracle binary-change checks and blocked-review controls</h3>
 <ul>
@@ -342,6 +342,7 @@ html[data-view="agent"] .agent-cl-note p{color:var(--muted);font-size:.95rem;lin
 <li>Show blocked status and reviewer failure summaries in the Oracle panel. Blocked reviews offer <strong>Retry review</strong>, <strong>Accept and finish</strong> and <strong>Pause</strong>; accepting explicitly finishes without a passing review.</li>
 <li>Wrap controls in narrow terminals and scroll long errors within a bounded area, keeping the prompt accessible and preserving its draft.</li>
 <li>Make the Code Mode integration test fail promptly on an unexpected Oracle decision instead of waiting indefinitely for a manual response.</li>
+<li>Verify Rooms task-start clicks through their actual runtime effects, avoiding a widget-identity assertion that can fail when a live card is replaced.</li>
 </ul>
 <h3>Validation and limits</h3>
 <ul>
