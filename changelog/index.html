@@ -320,7 +320,7 @@ html[data-view="agent"] .agent-cl-note p{color:var(--muted);font-size:.95rem;lin
       <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="c">cat changelog/CHANGELOG-v*.md</span></p>
       <h1>Changelog</h1>
       <!-- generated:changelog-summary -->
-<p class="lede">143 releases &middot; v1.0.0 &rarr; v1.2.35 &middot; from the repository's <code>changelog/</code> directory</p>
+<p class="lede">144 releases &middot; v1.0.0 &rarr; v1.2.36 &middot; from the repository's <code>changelog/</code> directory</p>
 <!-- /generated:changelog-summary -->
       <p class="body"><a class="gh" href="https://github.com/Babitdor/NovaCode/tree/main/changelog" rel="noopener">changelog/ on GitHub &#8599;</a></p>
     </div>
@@ -332,6 +332,19 @@ html[data-view="agent"] .agent-cl-note p{color:var(--muted);font-size:.95rem;lin
     </div>
     <div id="releases">
     <!-- generated:changelog-releases -->
+<details class="changelog-entry" id="v1-2-36" data-version="1.2.36" data-sha="0bfc3eb3dd6295e8b7b5b3a9f4ee60cb3d48ab81">
+<summary class="entry-toggle"><h2 class="version">v1.2.36</h2><span class="release-summary">Oracle automatically switches to read-only reviewer agents for evidence above 64,000 characters. Each agent requests pages of the captured diffs, changed text files, and test output. The panel shows page coverage as each reviewer works.</span></summary>
+<div class="release-content"><h3>Oracle reviewer agents for larger changes</h3>
+<ul>
+<li>Oracle automatically switches to read-only reviewer agents for evidence above 64,000 characters. Each agent requests pages of the captured diffs, changed text files, and test output. The panel shows page coverage as each reviewer works.</li>
+<li>A reviewer must receive every page before Oracle accepts its score. Edits during review invalidate the scores. Paged reviews require a model with tool calling and support up to 512,000 characters of evidence.</li>
+<li>Reviewers score distinct aspects in both review paths. The new default lineup covers Correctness, Regressions, and Security. A fourth reviewer adds Verification, and a fifth adds Maintainability. Saved reviewer counts still apply. See [Oracle mode](https://github.com/Babitdor/NovaCode/blob/v1.2.36/docs/oracle-mode.md) for review controls and limits.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.36 uv tool upgrade novacode-cli <code>`</code> Restart NovaCode after upgrading. Include any optional extras you use. <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.36&quot; <code>`</code></li>
+</ul></div>
+</details>
 <details class="changelog-entry" id="v1-2-35" data-version="1.2.35" data-sha="03dcabee4139cfacc92d2528d1aea554ed247f33">
 <summary class="entry-toggle"><h2 class="version">v1.2.35</h2><span class="release-summary">Split long file lists across Git commands to prevent Windows error 206. Preserve literal filenames, including spaces, brackets and Unicode.</span></summary>
 <div class="release-content"><h3>Oracle reliability on large changes</h3>
