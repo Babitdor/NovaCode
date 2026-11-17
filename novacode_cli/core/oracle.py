@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 import hashlib
 import json
 import math
+import os
 import subprocess
+import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -22,6 +25,7 @@ from novacode_cli.core.verification_loop import _extract_test_evidence
 from novacode_cli.prime_memory import session_directory
 from novacode_cli.security.prompt_injection import _credential_values, _redact
 from novacode_cli.session.history_export import redact
+from novacode_cli.shell.processes import kill_process_tree, process_group_options
 from novacode_cli.tracking.usage_tree import (
     UsageTree,
     _current_tree,
@@ -32,7 +36,11 @@ from novacode_cli.tracking.usage_tree import (
 
 MAX_ROUNDS = 20
 MAX_REVIEW_CHARS = 64_000
+REVIEW_SIZE_ERROR = "Oracle review evidence exceeds 64,000 characters; split the task"
 REVIEW_TIMEOUT = 120
+# Leave headroom below Windows' 32,767 UTF-16-unit process command limit.
+MAX_GIT_COMMAND_UNITS = 30_000
+GIT_TIMEOUT = 20
 
 
 class OracleSettings(BaseModel):
@@ -73,10 +81,92 @@ def initialize(session: Any) -> None:
         session.oracle_run = None
 
 
-def _git(root: Path, *args: str) -> bytes:
-    return subprocess.run(
-        ["git", "-C", str(root), *args], capture_output=True, check=True, timeout=20
-    ).stdout
+def _git(root: Path, *args: str, max_output_chars: int | None = None) -> bytes:
+    command = ["git", "-C", str(root), *args]
+    if max_output_chars is None:
+        return subprocess.run(command, capture_output=True, check=True, timeout=GIT_TIMEOUT).stdout
+    if max_output_chars < 0:
+        raise ValueError(REVIEW_SIZE_ERROR)
+    # UTF-8 uses at most four bytes per character; spool output instead of buffering it in RAM.
+    byte_limit = max_output_chars * 4
+    options = process_group_options()
+    if os.name == "nt":
+        options["creationflags"] |= subprocess.CREATE_NO_WINDOW
+    with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+        with subprocess.Popen(command, stdout=stdout, stderr=stderr, **options) as process:
+            deadline = time.monotonic() + GIT_TIMEOUT
+            try:
+                while True:
+                    if any(os.fstat(stream.fileno()).st_size > byte_limit for stream in (stdout, stderr)):
+                        raise ValueError(REVIEW_SIZE_ERROR)
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise subprocess.TimeoutExpired(command, GIT_TIMEOUT)
+                    try:
+                        process.wait(timeout=min(0.02, remaining))
+                        break
+                    except subprocess.TimeoutExpired:
+                        continue
+                stdout.seek(0)
+                stderr.seek(0)
+                output = stdout.read(byte_limit + 1)
+                error = stderr.read(byte_limit + 1)
+                if (
+                    max(len(output), len(error)) > byte_limit
+                    or len(output.decode("utf-8", errors="replace")) > max_output_chars
+                ):
+                    raise ValueError(REVIEW_SIZE_ERROR)
+                if process.returncode:
+                    raise subprocess.CalledProcessError(
+                        process.returncode, command, output=output, stderr=error
+                    )
+                return output
+            finally:
+                if process.poll() is None:
+                    kill_process_tree(process.pid)
+                    if process.poll() is None:
+                        process.kill()
+                    process.wait()
+
+
+def _text_diff(root: Path, head: str, paths: list[str]) -> str:
+    """Collect every literal path without overflowing the Windows command line."""
+    args = (
+        "--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv",
+        "--no-renames", head, "--",
+    )
+    prefix = subprocess.list2cmdline(["git", "-C", str(root), *args])
+    prefix_units = len(prefix.encode("utf-16-le", errors="surrogatepass")) // 2
+    size = prefix_units
+    batch = []
+    diffs = []
+    collected = 0
+
+    def collect(selected):
+        nonlocal collected
+        remaining = MAX_REVIEW_CHARS - collected
+        text = _git(root, *args, *selected, max_output_chars=remaining).decode(
+            "utf-8", errors="replace"
+        )
+        if len(text) > remaining:
+            raise ValueError(REVIEW_SIZE_ERROR)
+        diffs.append(text)
+        collected += len(text)
+
+    for path in paths:
+        quoted = subprocess.list2cmdline([path])
+        units = 1 + len(quoted.encode("utf-16-le", errors="surrogatepass")) // 2
+        if prefix_units + units > MAX_GIT_COMMAND_UNITS:
+            raise ValueError(f"Oracle Git path is too long for review: {path}")
+        if batch and size + units > MAX_GIT_COMMAND_UNITS:
+            collect(batch)
+            batch = []
+            size = prefix_units
+        batch.append(path)
+        size += units
+    if batch:
+        collect(batch)
+    return "".join(diffs)
 
 
 @dataclass
@@ -85,6 +175,7 @@ class Snapshot:
     revision: str
     files: dict[str, str]
     head: str
+    binary_files: set[str] = field(default_factory=set)
 
 
 def snapshot(directory: str) -> Snapshot:
@@ -92,6 +183,7 @@ def snapshot(directory: str) -> Snapshot:
     root = Path(_git(Path(directory), "rev-parse", "--show-toplevel").decode().strip())
     names = _git(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
     files = {}
+    binary_files = set()
     head = _git(root, "rev-parse", "HEAD").decode().strip()
     digest = hashlib.sha256(head.encode())
     for raw in sorted(set(names.split(b"\0")) - {b""}):
@@ -101,9 +193,23 @@ def snapshot(directory: str) -> Snapshot:
         if path.is_symlink():
             value.update(str(path.readlink()).encode())
         elif path.is_file():
+            decoder = codecs.getincrementaldecoder("utf-8")()
             with path.open("rb") as stream:
                 for block in iter(lambda: stream.read(1024 * 1024), b""):
                     value.update(block)
+                    if name not in binary_files:
+                        try:
+                            if b"\0" in block:
+                                binary_files.add(name)
+                            else:
+                                decoder.decode(block)
+                        except UnicodeDecodeError:
+                            binary_files.add(name)
+            if name not in binary_files:
+                try:
+                    decoder.decode(b"", final=True)
+                except UnicodeDecodeError:
+                    binary_files.add(name)
         elif path.is_dir():
             # A superproject diff cannot establish the state of nested worktrees.
             raise ValueError("Oracle cannot certify submodules; review that workspace separately")
@@ -114,7 +220,7 @@ def snapshot(directory: str) -> Snapshot:
         files[name] = value.hexdigest()
         mode = str(path.lstat().st_mode).encode() if path.exists() else b"deleted"
         digest.update(raw + b"\0" + files[name].encode() + b"\0" + mode)
-    return Snapshot(root, digest.hexdigest(), files, head)
+    return Snapshot(root, digest.hexdigest(), files, head, binary_files)
 
 
 def review_input(
@@ -134,29 +240,31 @@ def review_input(
         after.root, "diff", "--numstat", "-z", "--no-ext-diff", "--no-textconv",
         "--no-renames", before.head, "--",
     )
-    text_paths, baseline_binaries, task_binaries = [], [], []
+    text_paths, baseline_binaries = [], []
+    task_binaries = changed & (before.binary_files | after.binary_files)
     for record in stats.split(b"\0"):
         if not record:
             continue
         added, removed, raw_name = record.split(b"\t", 2)
         name = raw_name.decode("utf-8", errors="surrogateescape")
         if added == removed == b"-":
-            (task_binaries if name in changed else baseline_binaries).append(name)
+            if name in changed:
+                task_binaries.add(name)
+            else:
+                baseline_binaries.append(name)
         else:
             text_paths.append(name)
     if task_binaries:
         raise ValueError(
             "Oracle cannot inspect binary changes made during this task: "
-            + ", ".join(task_binaries)
+            + ", ".join(sorted(task_binaries))
             + ". Review them manually."
         )
-    diff = (
-        _git(
-            after.root, "--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv",
-            "--no-renames", before.head, "--", *text_paths,
-        ).decode("utf-8", errors="replace")
-        if text_paths else ""
-    )
+    for name in changed:
+        path = after.root / name
+        if not path.is_symlink() and path.is_file() and path.stat().st_size > MAX_REVIEW_CHARS:
+            raise ValueError(f"Changed file too large for an Oracle review: {name}")
+    diff = _text_diff(after.root, before.head, text_paths)
     blocks = [
         f"Request:\n{request}",
         f"Lead response:\n{answer}",
@@ -169,23 +277,32 @@ def review_input(
             "Pre-existing binary changes unchanged during this task (not reviewed):\n"
             + "\n".join(baseline_binaries)
         )
+    text_size = sum(map(len, blocks)) + 2 * (len(blocks) - 1)
+    if text_size > MAX_REVIEW_CHARS:
+        raise ValueError(REVIEW_SIZE_ERROR)
     for name in sorted(changed):
         path = after.root / name
         if not path.is_file() or path.is_symlink():
-            blocks.append(f"{name}: deleted or symbolic link")
-            continue
-        if path.stat().st_size > MAX_REVIEW_CHARS:
-            raise ValueError(f"Changed file too large for an Oracle review: {name}")
-        try:
-            body = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError as exc:
-            raise ValueError(f"Oracle cannot inspect binary file: {name}") from exc
-        if "\0" in body:
-            raise ValueError(f"Oracle cannot inspect binary file: {name}")
-        blocks.append(f"File {name}:\n{body}")
+            block = f"{name}: deleted or symbolic link"
+        else:
+            with path.open("rb") as stream:
+                raw = stream.read(MAX_REVIEW_CHARS + 1)
+            if len(raw) > MAX_REVIEW_CHARS:
+                raise ValueError(f"Changed file too large for an Oracle review: {name}")
+            try:
+                body = raw.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise ValueError(f"Oracle cannot inspect binary file: {name}") from exc
+            if "\0" in body:
+                raise ValueError(f"Oracle cannot inspect binary file: {name}")
+            block = f"File {name}:\n{body}"
+        text_size += 2 + len(block)
+        if text_size > MAX_REVIEW_CHARS:
+            raise ValueError(REVIEW_SIZE_ERROR)
+        blocks.append(block)
     text = "\n\n".join(blocks)
     if len(text) > MAX_REVIEW_CHARS:
-        raise ValueError("Oracle review evidence exceeds 64,000 characters; split the task")
+        raise ValueError(REVIEW_SIZE_ERROR)
     return redact(_redact(text, _credential_values()))
 
 

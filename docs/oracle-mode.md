@@ -93,3 +93,13 @@ modified or deleted during the task still block approval, with their paths in
 the panel. **Retry review** retries without an extra lead edit; **Accept and
 finish** ends without claiming Oracle passed. A blocked review offers Retry,
 Accept and Pause; score-based controls return when review evidence is available.
+
+Snapshots retain binary-file information, including for untracked files. Deleting
+a binary or replacing it with text during a task still requires manual review.
+Snapshot reads handle UTF-8 characters spanning read buffers without classifying
+valid text as binary.
+
+Git diff output is spooled to temporary files and size-monitored while Git runs.
+Oracle stops oversized output, terminates unfinished Git processes, and rejects
+evidence that exceeds the shared 64,000-character budget across diff batches and
+file bodies. It never submits a truncated partial review to obtain a passing score.

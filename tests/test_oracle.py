@@ -2,6 +2,8 @@
 
 import asyncio
 import subprocess
+import sys
+import tracemalloc
 from types import SimpleNamespace
 
 import pytest
@@ -309,6 +311,68 @@ def test_review_of_existing_text_changes_keeps_the_diff(workspace):
     assert "+value = 2" in evidence
 
 
+def test_large_git_path_list_never_exceeds_windows_command_limit(monkeypatch, tmp_path):
+    paths = [f"src/{index:04d}-" + "x" * 110 + ".py" for index in range(1000)]
+    calls = []
+
+    def git(root, *args, **kwargs):
+        command = ["git", "-C", str(root), *args]
+        units = len(subprocess.list2cmdline(command).encode("utf-16-le")) // 2
+        if units >= 32767:
+            raise OSError(206, "The filename or extension is too long")
+        if "--numstat" in args:
+            return b"".join(f"1\t1\t{name}\0".encode() for name in paths)
+        selected = list(args[args.index("--") + 1:])
+        calls.append(selected)
+        return b"".join(f"diff --git a/{name} b/{name}\n+changed\n".encode() for name in selected)
+
+    monkeypatch.setattr(oracle, "_git", git)
+    unchanged = oracle.Snapshot(tmp_path, "revision", {}, "a" * 40)
+    # Complete evidence remains too large; the platform must not reject the process first.
+    with pytest.raises(ValueError, match="64,000"):
+        oracle.review_input(unchanged, unchanged, "review existing changes", "done")
+    seen = [name for batch in calls for name in batch]
+    assert seen == paths[:len(seen)]
+    assert 0 < len(seen) < len(paths)
+
+
+def test_batched_git_diff_preserves_literal_unicode_paths(workspace, monkeypatch):
+    before = oracle.snapshot(str(workspace))
+    contents = {"a [literal].txt": "alpha", "b ünicode😀.txt": "beta", "c space.txt": "gamma"}
+    for name, body in contents.items():
+        (workspace / name).write_text(body + "\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(workspace), "add", "--all"], check=True, capture_output=True)
+    calls = []
+    real_git = oracle._git
+
+    def git(root, *args, **kwargs):
+        if args[0] == "--literal-pathspecs":
+            calls.append(list(args[args.index("--") + 1:]))
+        return real_git(root, *args, **kwargs)
+
+    monkeypatch.setattr(oracle, "_git", git)
+    # Leave room for one quoted filename, including supplementary Unicode characters.
+    prefix = ["git", "-C", str(workspace), "--literal-pathspecs", "diff", "--no-ext-diff",
+              "--no-textconv", "--no-renames", before.head, "--"]
+    units = lambda args: len(subprocess.list2cmdline(args).encode("utf-16-le")) // 2
+    monkeypatch.setattr(oracle, "MAX_GIT_COMMAND_UNITS", max(units([*prefix, name]) for name in contents))
+    evidence = oracle.review_input(before, oracle.snapshot(str(workspace)), "task", "done")
+    assert len(calls) == len(contents)
+    assert sorted(name for batch in calls for name in batch) == sorted(contents)
+    for body in contents.values():
+        assert f"+{body}" in evidence
+
+
+@pytest.mark.parametrize("oversized", [False, True])
+def test_empty_or_individually_oversized_paths_never_launch_git(tmp_path, monkeypatch, oversized):
+    monkeypatch.setattr(oracle, "_git", lambda *args: pytest.fail("Git must not be launched"))
+    if oversized:
+        with pytest.raises(ValueError, match="Git path is too long"):
+            oracle._text_diff(tmp_path, "a" * 40, ["x" * oracle.MAX_GIT_COMMAND_UNITS])
+    else:
+        assert oracle._text_diff(tmp_path, "a" * 40, []) == ""
+
+
 def test_committing_during_task_does_not_hide_code_from_review(workspace):
     before = oracle.snapshot(str(workspace))
     (workspace / "code.py").write_text("value = 2\n")
@@ -333,6 +397,148 @@ async def test_task_binary_change_cannot_grant_a_passing_review(workspace, monke
     assert "image.png" in session.oracle_run.error
     assert session.oracle_run.lowest is None
     assert not session._model.messages
+
+
+@pytest.mark.parametrize("change", ["delete", "replace_with_text"])
+async def test_untracked_binary_history_blocks_review(workspace, monkeypatch, change):
+    asset = workspace / "draft.png"
+    asset.write_bytes(b"\x89PNG\0original")
+
+    async def stream(*args, **kwargs):
+        if change == "delete":
+            asset.unlink()
+        else:
+            asset.write_text("now plain text\n")
+        yield ev.Done(had_response=True)
+
+    monkeypatch.setattr(oracle, "run_with_goal", stream)
+    session = state(workspace, [9.0], reviewers=1)
+    await collect(session)
+    assert session.oracle_run.status == "paused"
+    assert "draft.png" in session.oracle_run.error
+    assert session.oracle_run.lowest is None
+    assert not session._model.messages
+
+
+def test_snapshot_classifies_binary_without_splitting_utf8_characters(workspace):
+    (workspace / "unicode.txt").write_bytes(b"a" * (1024 * 1024 - 1) + "😀".encode())
+    (workspace / "incomplete.txt").write_bytes(b"a" * (1024 * 1024 - 1) + b"\xf0\x9f")
+    (workspace / "nul.txt").write_bytes(b"abc\0def")
+    snapshot = oracle.snapshot(str(workspace))
+    assert snapshot.binary_files == {"incomplete.txt", "nul.txt"}
+
+
+def test_large_existing_patch_is_rejected_with_bounded_memory(workspace):
+    path = workspace / "code.py"
+    path.write_text("old line\n" * 200_000)
+    subprocess.run(["git", "-C", str(workspace), "add", "--all"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(workspace), "-c", "user.name=Test", "-c",
+         "user.email=test@example.test", "commit", "-m", "large fixture"],
+        check=True, capture_output=True,
+    )
+    path.write_text("new line\n" * 200_000)
+    before = oracle.snapshot(str(workspace))
+    tracemalloc.start()
+    try:
+        with pytest.raises(ValueError, match="64,000"):
+            oracle.review_input(before, before, "Review existing changes", "done")
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 1_000_000, f"Git output accumulated {peak:,} bytes before rejection"
+
+
+def test_review_budget_is_shared_across_git_batches(workspace, monkeypatch):
+    prefix = ["git", "-C", str(workspace), "--literal-pathspecs", "diff", "--no-ext-diff",
+              "--no-textconv", "--no-renames", "a" * 40, "--", "a.txt"]
+    monkeypatch.setattr(oracle, "MAX_GIT_COMMAND_UNITS", len(subprocess.list2cmdline(prefix)))
+    budgets = []
+
+    def git(root, *args, max_output_chars=None):
+        budgets.append(max_output_chars)
+        return b"x" * (60_000 if len(budgets) == 1 else 10_000)
+
+    monkeypatch.setattr(oracle, "_git", git)
+    with pytest.raises(ValueError, match="64,000"):
+        oracle._text_diff(workspace, "a" * 40, ["a.txt", "b.txt", "c.txt"])
+    assert budgets == [64_000, 4_000]
+
+
+@pytest.mark.parametrize("kind", ["timeout", "stdout", "stderr"])
+def test_bounded_git_reaps_stalled_or_noisy_processes(workspace, monkeypatch, kind):
+    original_popen = subprocess.Popen
+    processes = []
+    output = (
+        f"sys.{kind}.buffer.write(b'x' * 1_000_000);sys.{kind}.flush();"
+        if kind != "timeout" else ""
+    )
+
+    def popen(command, **kwargs):
+        if command[0] == "git":
+            command = [sys.executable, "-c", f"import sys,time;{output}time.sleep(30)"]
+            process = original_popen(command, **kwargs)
+            processes.append(process)
+            return process
+        return original_popen(command, **kwargs)
+
+    monkeypatch.setattr(oracle.subprocess, "Popen", popen)
+    if kind == "timeout":
+        monkeypatch.setattr(oracle, "GIT_TIMEOUT", 0.1)
+    try:
+        error = subprocess.TimeoutExpired if kind == "timeout" else ValueError
+        with pytest.raises(error):
+            oracle._git(workspace, "diff", max_output_chars=1_000)
+        assert len(processes) == 1
+        assert processes[0].poll() is not None
+    finally:
+        for process in processes:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+
+
+async def test_oversized_existing_diff_never_requests_a_grade(workspace, monkeypatch):
+    (workspace / "code.py").write_text("x" * 100_000)
+
+    async def stream(*args, **kwargs):
+        yield ev.Done(had_response=True)
+
+    monkeypatch.setattr(oracle, "run_with_goal", stream)
+    session = state(workspace, [9.0], reviewers=1)
+    await collect(session)
+    assert session.oracle_run.status == "paused"
+    assert "64,000" in session.oracle_run.error
+    assert session.oracle_run.lowest is None
+    assert not session._model.messages
+
+
+def test_file_body_budget_stops_before_reading_remaining_files(workspace, monkeypatch):
+    paths = [workspace / name for name in ("a.py", "b.py", "c.py")]
+    for path in paths:
+        path.write_text("unchanged\n" * 5000)
+    subprocess.run(["git", "-C", str(workspace), "add", "--all"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(workspace), "-c", "user.name=Test", "-c",
+         "user.email=test@example.test", "commit", "-m", "body fixtures"],
+        check=True, capture_output=True,
+    )
+    before = oracle.snapshot(str(workspace))
+    for path in paths:
+        path.write_text("changed\n" + "unchanged\n" * 4999)
+    after = oracle.snapshot(str(workspace))
+    original_open = type(workspace).open
+    reads = []
+
+    def open_file(path, *args, **kwargs):
+        if path.parent == workspace and args and args[0] == "rb":
+            reads.append(path.name)
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(type(workspace), "open", open_file)
+    with pytest.raises(ValueError, match="64,000"):
+        oracle.review_input(before, after, "review", "done")
+    assert reads == ["a.py", "b.py"]
 
 
 @pytest.mark.parametrize(
