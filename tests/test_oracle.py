@@ -167,6 +167,7 @@ async def test_invalid_or_failed_reviewer_never_passes(workspace, monkeypatch, s
     assert session.oracle_run.status == "paused"
     assert session.oracle_run.lowest is None
     assert session.oracle_run.reviewers[0].error
+    assert "Reviewer 1 failed" in session.oracle_run.error
 
 
 async def test_active_team_prevents_passing(workspace, monkeypatch):
@@ -255,6 +256,83 @@ def test_incomplete_evidence_fails_closed_and_keeps_assignments(workspace):
     path.write_text("x" * (oracle.MAX_REVIEW_CHARS + 1))
     with pytest.raises(ValueError, match="too large"):
         oracle.review_input(before, oracle.snapshot(str(workspace)), "task", "answer")
+
+
+def test_unchanged_preexisting_binary_edits_do_not_block_code_review(workspace):
+    image = workspace / "image.png"
+    image.write_bytes(b"\x89PNG\0original")
+    subprocess.run(["git", "-C", str(workspace), "add", "."], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(workspace), "-c", "user.name=Test", "-c",
+         "user.email=test@example.test", "commit", "-m", "asset"],
+        check=True, capture_output=True,
+    )
+    image.write_bytes(b"\x89PNG\0preexisting edit")
+    before = oracle.snapshot(str(workspace))
+    (workspace / "code.py").write_text("value = 2\n")
+    evidence = oracle.review_input(before, oracle.snapshot(str(workspace)), "task", "answer")
+    assert "value = 2" in evidence
+    assert "Binary files" not in evidence
+    assert "not reviewed):\nimage.png" in evidence
+
+
+@pytest.mark.parametrize("action", ["modify", "delete", "committed_delete", "untracked", "non_utf8"])
+def test_task_binary_changes_name_the_file_and_block_review(workspace, action):
+    image = workspace / "image.png"
+    if action in {"modify", "delete", "committed_delete"}:
+        image.write_bytes(b"\x89PNG\0original")
+        subprocess.run(["git", "-C", str(workspace), "add", "."], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "-C", str(workspace), "-c", "user.name=Test", "-c",
+             "user.email=test@example.test", "commit", "-m", "asset"],
+            check=True, capture_output=True,
+        )
+    before = oracle.snapshot(str(workspace))
+    if action in {"delete", "committed_delete"}:
+        image.unlink()
+        if action == "committed_delete":
+            subprocess.run(
+                ["git", "-C", str(workspace), "-c", "user.name=Test", "-c",
+                 "user.email=test@example.test", "commit", "-am", "remove asset"],
+                check=True, capture_output=True,
+            )
+    else:
+        image.write_bytes(b"\xff\xfe" if action == "non_utf8" else b"\x89PNG\0changed")
+    with pytest.raises(ValueError, match=r"binary.*image\.png"):
+        oracle.review_input(before, oracle.snapshot(str(workspace)), "task", "answer")
+
+
+def test_review_of_existing_text_changes_keeps_the_diff(workspace):
+    (workspace / "code.py").write_text("value = 2\n")
+    before = oracle.snapshot(str(workspace))
+    evidence = oracle.review_input(before, before, "Review my existing changes", "Reviewed")
+    assert "+value = 2" in evidence
+
+
+def test_committing_during_task_does_not_hide_code_from_review(workspace):
+    before = oracle.snapshot(str(workspace))
+    (workspace / "code.py").write_text("value = 2\n")
+    subprocess.run(
+        ["git", "-C", str(workspace), "-c", "user.name=Test", "-c",
+         "user.email=test@example.test", "commit", "-am", "change code"],
+        check=True, capture_output=True,
+    )
+    evidence = oracle.review_input(before, oracle.snapshot(str(workspace)), "task", "answer")
+    assert "+value = 2" in evidence
+
+
+async def test_task_binary_change_cannot_grant_a_passing_review(workspace, monkeypatch):
+    async def stream(*args, **kwargs):
+        (workspace / "image.png").write_bytes(b"\x89PNG\0new")
+        yield ev.Done(had_response=True)
+
+    monkeypatch.setattr(oracle, "run_with_goal", stream)
+    session = state(workspace, [10.0], reviewers=1)
+    await collect(session)
+    assert session.oracle_run.status == "paused"
+    assert "image.png" in session.oracle_run.error
+    assert session.oracle_run.lowest is None
+    assert not session._model.messages
 
 
 @pytest.mark.parametrize(

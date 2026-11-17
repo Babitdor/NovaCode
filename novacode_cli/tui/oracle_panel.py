@@ -8,6 +8,7 @@ import time
 from rich.text import Text
 from textual import on
 from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
+from textual.events import Resize
 from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, Collapsible, Input, Static, Switch
@@ -163,7 +164,8 @@ class OraclePanel(Vertical):
     OraclePanel Collapsible.review-complete > CollapsibleTitle { color: $success; }
     OraclePanel Collapsible.review-failed > CollapsibleTitle { color: $warning; }
     OraclePanel Static { height: auto; }
-    OraclePanel #oracle-error { color: $warning; }
+    OraclePanel #oracle-error-box { height: auto; max-height: 4; color: $warning; }
+    OraclePanel #oracle-guidance { color: $text-muted; }
     OraclePanel #oracle-actions {
         height: 4; grid-size: 3 2; grid-columns: 1fr 1fr 1fr; grid-rows: 2 2;
     }
@@ -171,6 +173,11 @@ class OraclePanel(Vertical):
         height: 1; min-height: 1; border: none; padding: 0; width: 100%;
     }
     OraclePanel #oracle-actions Button { width: 100%; }
+    OraclePanel.compact #oracle-actions {
+        height: 6; grid-size: 2 3; grid-columns: 1fr 1fr; grid-rows: 2 2 2;
+    }
+    OraclePanel.blocked #oracle-actions { height: 2; grid-size: 3 1; grid-rows: 2; }
+    OraclePanel.blocked.compact #oracle-actions { height: 4; grid-size: 2 2; grid-rows: 2 2; }
     """
 
     class Control(Message):
@@ -193,10 +200,15 @@ class OraclePanel(Vertical):
         if self._session is not None:
             self.update_report(self._session)
 
+    def on_resize(self, event: Resize):
+        self.set_class(event.size.width < 66, "compact")
+
     def compose(self):
         with Horizontal(id="oracle-header"):
             yield Button("Oracle · ready", id="oracle-strip", compact=True)
-        yield Static("", id="oracle-error", markup=False)
+        with VerticalScroll(id="oracle-error-box"):
+            yield Static("", id="oracle-error", markup=False)
+        yield Static("Accept finishes without a passing review.", id="oracle-guidance")
         yield Static("", id="oracle-progress", markup=False)
         with VerticalScroll(id="oracle-drawer"):
             for slot in range(1, 6):
@@ -231,9 +243,13 @@ class OraclePanel(Vertical):
             score = "—" if run.lowest is None else f"{run.lowest:g}/10"
             if run.lowest is not None and run.stale:
                 score += " stale"
+            status = (
+                "blocked" if run.error and run.status in {"waiting", "review_error"}
+                else run.status.replace("_", " ")
+            )
             text = (
-                f"Oracle · {run.round}/{run.settings.max_rounds} · low {score}"
-                f" · target {run.settings.target:g} · {run.status.replace('_', ' ')}"
+                f"Oracle · {status} · {run.round}/{run.settings.max_rounds} · low {score}"
+                f" · target {run.settings.target:g}"
             )
         strip = self.query_one("#oracle-strip", Button)
         strip.display = enabled
@@ -260,7 +276,9 @@ class OraclePanel(Vertical):
             self._shown["progress"] = progress
             indicator.update(progress)
         error = run.error if run else ""
-        self.query_one("#oracle-error", Static).display = enabled and bool(error)
+        self.set_class(bool(error), "blocked")
+        self.query_one("#oracle-error-box").display = enabled and bool(error)
+        self.query_one("#oracle-guidance").display = enabled and bool(error)
         if self._shown.get("error") != error:
             self._shown["error"] = error
             self.query_one("#oracle-error", Static).update(error)
@@ -270,6 +288,12 @@ class OraclePanel(Vertical):
         if not enabled:
             self.query_one("#oracle-drawer").display = False
         self.query_one("#oracle-actions").display = waiting
+        for identity in ("oracle-fix", "oracle-lower", "oracle-lower-target"):
+            self.query_one(f"#{identity}").display = not bool(error)
+        retry = self.query_one("#oracle-extend", Button)
+        retry_label = "Retry review" if error else "More rounds"
+        if str(retry.label) != retry_label:
+            retry.label = retry_label
         for action in ("fix", "extend", "lower"):
             self.query_one(f"#oracle-{action}", Button).disabled = bool(
                 not waiting

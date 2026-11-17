@@ -77,10 +77,19 @@ token savings have not been benchmarked.
 
 Oracle currently requires a readable local Git workspace with an existing commit
 and a model supporting structured output. Evidence is limited to 64,000
-characters; oversized, binary or unreadable changed files and submodules pause
+characters; oversized, binary or unreadable files changed during the task and submodules pause
 review rather than silently receiving a passing grade. Sandbox files that are
 not mirrored into the local workspace are outside this review path. Split large
 tasks or explicitly accept the result when automated review cannot inspect it.
 Noninteractive consumers cannot grant an Oracle owner decision; they pause at
 decision points. Scores are advisory model judgments, not a replacement for
 tests or your review.
+
+Binary edits already present when a task starts do not block unrelated code
+reviews if their contents stay unchanged. They are listed as pre-existing and
+unreviewed in the reviewer evidence. Text diffs already present in the workspace
+remain available for requests to review existing changes. Binary files added,
+modified or deleted during the task still block approval, with their paths in
+the panel. **Retry review** retries without an extra lead edit; **Accept and
+finish** ends without claiming Oracle passed. A blocked review offers Retry,
+Accept and Pause; score-based controls return when review evidence is available.

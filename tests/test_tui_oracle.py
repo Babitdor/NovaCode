@@ -186,6 +186,50 @@ async def test_live_staleness_and_oracle_interrupt_controls(monkeypatch):
         assert event.future.result()["action"] == "pause"
 
 
+@pytest.mark.parametrize("size", [(120, 42), (48, 32), (40, 28)])
+async def test_blocked_review_explains_file_and_keeps_decisions_readable(size):
+    app = _app()
+    async with app.run_test(size=size) as pilot:
+        await app._run_oracle_mode("/oracle-mode on")
+        app.query_one("#prompt").text = "unfinished draft"
+        run = OracleRun(
+            OracleSettings(), ".", app.session_state.thread_id, round=1, status="waiting",
+            error="Oracle cannot inspect binary changes made during this task: assets/nova.png. "
+                  "Review them manually.",
+        )
+        run.decision = asyncio.get_running_loop().create_future()
+        app.session_state.oracle_run = run
+        app._refresh_oracle()
+        await pilot.pause()
+        panel = app.query_one(OraclePanel)
+        assert "blocked" in str(panel.query_one("#oracle-strip", Button).label)
+        assert "assets/nova.png" in str(panel.query_one("#oracle-error", Static).content)
+        assert "without a passing review" in str(panel.query_one("#oracle-guidance", Static).content)
+        assert panel.query_one("#oracle-extend", Button).label.plain == "Retry review"
+        buttons = [button for button in panel.query_one("#oracle-actions").query(Button)
+                   if button.display]
+        assert {button.id for button in buttons} == {"oracle-extend", "oracle-accept", "oracle-pause"}
+        for index, button in enumerate(buttons):
+            assert button.content_region.width >= len(str(button.label))
+            assert panel.region.contains_region(button.region)
+            for other in buttons[index + 1:]:
+                assert not button.region.overlaps(other.region)
+        run.error = "Unreviewed assets: " + ", ".join(f"assets/image-{i}.png" for i in range(20))
+        app._refresh_oracle()
+        await pilot.pause()
+        assert panel.query_one("#oracle-error-box").region.height <= 4
+        assert app.screen.region.contains_region(app.query_one("#prompt").region)
+        await pilot.click("#oracle-extend")
+        await pilot.pause()
+        assert run.decision.result()["action"] == "extend"
+        assert app.query_one("#prompt").text == "unfinished draft"
+        run.error = ""
+        app._refresh_oracle()
+        await pilot.pause()
+        assert not panel.query_one("#oracle-error-box").display
+        assert panel.query_one("#oracle-fix").display
+
+
 def test_new_threads_and_clear_use_saved_default(monkeypatch):
     from novacode_cli.core import oracle
     from novacode_cli.states.Session import SessionState
@@ -402,6 +446,9 @@ async def test_real_code_mode_graph_and_oracle_fix_cycle(monkeypatch, tmp_path):
         app._refresh_oracle()
         async for event in run_agent_stream("Clamp negative values to zero", graph, "nova", state):
             events.append(event)
+            assert not isinstance(event, ev.InterruptRequest), (
+                "Unexpected Oracle decision: " + state.oracle_run.error
+            )
             await app._render(event)
         await pilot.pause()
         assert state.oracle_run.status == "passed"

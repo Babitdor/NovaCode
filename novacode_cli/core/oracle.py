@@ -84,7 +84,7 @@ class Snapshot:
     root: Path
     revision: str
     files: dict[str, str]
-    diff: str
+    head: str
 
 
 def snapshot(directory: str) -> Snapshot:
@@ -92,7 +92,8 @@ def snapshot(directory: str) -> Snapshot:
     root = Path(_git(Path(directory), "rev-parse", "--show-toplevel").decode().strip())
     names = _git(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
     files = {}
-    digest = hashlib.sha256(_git(root, "rev-parse", "HEAD"))
+    head = _git(root, "rev-parse", "HEAD").decode().strip()
+    digest = hashlib.sha256(head.encode())
     for raw in sorted(set(names.split(b"\0")) - {b""}):
         name = raw.decode("utf-8", errors="surrogateescape")
         path = root / name
@@ -113,10 +114,7 @@ def snapshot(directory: str) -> Snapshot:
         files[name] = value.hexdigest()
         mode = str(path.lstat().st_mode).encode() if path.exists() else b"deleted"
         digest.update(raw + b"\0" + files[name].encode() + b"\0" + mode)
-    diff = _git(root, "diff", "--no-ext-diff", "--no-textconv", "HEAD", "--").decode(
-        "utf-8", errors="replace"
-    )
-    return Snapshot(root, digest.hexdigest(), files, diff)
+    return Snapshot(root, digest.hexdigest(), files, head)
 
 
 def review_input(
@@ -127,28 +125,61 @@ def review_input(
     test_evidence: list[str] | None = None,
 ) -> str:
     """Include changed file bodies as well as diffs; never silently truncate evidence."""
-    if any(
-        line.startswith("Binary files ") and line.endswith(" differ")
-        for line in after.diff.splitlines()
-    ):
-        raise ValueError("Oracle cannot inspect binary changes; review them manually")
+    changed = {
+        name
+        for name in before.files.keys() | after.files.keys()
+        if before.files.get(name) != after.files.get(name)
+    }
+    stats = _git(
+        after.root, "diff", "--numstat", "-z", "--no-ext-diff", "--no-textconv",
+        "--no-renames", before.head, "--",
+    )
+    text_paths, baseline_binaries, task_binaries = [], [], []
+    for record in stats.split(b"\0"):
+        if not record:
+            continue
+        added, removed, raw_name = record.split(b"\t", 2)
+        name = raw_name.decode("utf-8", errors="surrogateescape")
+        if added == removed == b"-":
+            (task_binaries if name in changed else baseline_binaries).append(name)
+        else:
+            text_paths.append(name)
+    if task_binaries:
+        raise ValueError(
+            "Oracle cannot inspect binary changes made during this task: "
+            + ", ".join(task_binaries)
+            + ". Review them manually."
+        )
+    diff = (
+        _git(
+            after.root, "--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv",
+            "--no-renames", before.head, "--", *text_paths,
+        ).decode("utf-8", errors="replace")
+        if text_paths else ""
+    )
     blocks = [
         f"Request:\n{request}",
         f"Lead response:\n{answer}",
-        f"Git diff:\n{after.diff}",
+        f"Git diff (text files):\n{diff}",
         "Observed test tool results:\n"
         + ("\n\n".join(test_evidence) if test_evidence else "No test output was observed."),
     ]
-    for name, digest in after.files.items():
-        if before.files.get(name) == digest:
-            continue
+    if baseline_binaries:
+        blocks.append(
+            "Pre-existing binary changes unchanged during this task (not reviewed):\n"
+            + "\n".join(baseline_binaries)
+        )
+    for name in sorted(changed):
         path = after.root / name
         if not path.is_file() or path.is_symlink():
             blocks.append(f"{name}: deleted or symbolic link")
             continue
         if path.stat().st_size > MAX_REVIEW_CHARS:
             raise ValueError(f"Changed file too large for an Oracle review: {name}")
-        body = path.read_text(encoding="utf-8")
+        try:
+            body = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError(f"Oracle cannot inspect binary file: {name}") from exc
         if "\0" in body:
             raise ValueError(f"Oracle cannot inspect binary file: {name}")
         blocks.append(f"File {name}:\n{body}")
@@ -421,6 +452,10 @@ async def run_with_oracle(
                     run.status = "stale"
                 elif run.lowest is None:
                     run.status = "review_error"
+                    run.error = "; ".join(
+                        f"Reviewer {row.slot} {row.status}: {row.error}"
+                        for row in run.latest if row.error
+                    ) or "Reviewers did not return a valid score."
                 elif run.lowest >= run.settings.target:
                     run.status = "passed"
                 else:
