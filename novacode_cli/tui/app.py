@@ -1341,6 +1341,9 @@ class NovaApp(App):
         display: block; height: 1; margin-top: 1; padding: 0 1;
         color: $text-muted; overflow-x: hidden; text-overflow: ellipsis;
     }
+    Screen.styled-home.short #home-composer-meta,
+    Screen.styled-home.short #home-shortcuts { display: none; }
+    Screen.short #oracle-panel { max-height: 4; overflow-y: auto; }
     Screen.centered-home { align: center middle; }
     Screen.centered-home #home-style-header {
         width: 76; max-width: 94%; padding: 0 0 1 0;

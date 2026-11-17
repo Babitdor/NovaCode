@@ -4,6 +4,8 @@
 
 - Toggle Oracle above the prompt composer without sending or changing your draft.
   The strip shows the review round, lowest score, target and current status.
+  Short terminals keep the tab bar and composer visible by collapsing home
+  hints and scrolling expanded Oracle details within the strip.
 - Run independent, read-only reviewer contexts using the configured session model.
   Every reviewer must meet the target. Low scores feed findings to the existing
   lead agent for fixes, followed by a fresh review round.

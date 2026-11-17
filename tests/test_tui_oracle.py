@@ -176,3 +176,20 @@ def test_new_threads_and_clear_use_saved_default(monkeypatch):
     session.reset_conversation()
     assert session.oracle_enabled
     assert session.oracle_run is None
+
+
+async def test_expanded_oracle_keeps_tabs_and_composer_visible_on_short_home():
+    from tests.test_tui_home_preferences import _resize_terminal
+
+    app = _app()
+    async with app.run_test(size=(100, 40)) as pilot:
+        app._set_home_style("studio")
+        app._set_home_visible(visible=True)
+        await app._run_oracle_mode("/oracle-mode on")
+        panel = app.query_one(OraclePanel)
+        panel.query_one("#oracle-drawer").display = True
+        await _resize_terminal(pilot, 48, 18)
+        assert panel.region.height <= 4, (app.screen.classes, panel.styles.max_height)
+        assert app.query_one("#session-tab-bar").region.width == app.size.width
+        assert app.screen.region.contains_region(app.query_one("#prompt").region)
+        assert app.screen.virtual_size.height <= app.size.height
