@@ -442,9 +442,7 @@ async def test_slow_nested_mcp_cleanup_does_not_hold_the_cancelled_turn(tmp_path
             stopped.set()
 
     mcp = inventory(tmp_path, read)
-    turn = asyncio.create_task(
-        execute(graph(mcp, 'return await mcp.call("db","read",{value:1});'))
-    )
+    turn = asyncio.create_task(execute(graph(mcp, 'return await mcp.call("db","read",{value:1});')))
     try:
         await asyncio.wait_for(started.wait(), 5)
         turn.cancel()
