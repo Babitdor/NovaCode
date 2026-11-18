@@ -15,7 +15,7 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from textual.app import App
-from textual.widgets import Input, OptionList, TextArea
+from textual.widgets import Button, Input, OptionList, TextArea
 
 from novacode_cli.rooms import cli, workspace
 from novacode_cli.rooms.runtime import RoomRuntime
@@ -620,7 +620,7 @@ async def test_task_card_start_and_review_are_wired_to_real_runtime(
     app = App()
     async with app.run_test(size=(110, 42)) as pilot:
         screen = RoomsScreen(project, "owner")
-        # Drive polling explicitly so a timer cannot replace the card mid-click.
+        # Drive polling explicitly so a timer cannot replace the focused card.
         monkeypatch.setattr(screen, "set_interval", partial(screen.set_interval, pause=True))
         await app.push_screen(screen)
         await pilot.pause()
@@ -631,12 +631,10 @@ async def test_task_card_start_and_review_are_wired_to_real_runtime(
         task = json.loads(screen.runtime.store.rows("SELECT body FROM tasks")[0]["body"])
         assert calls == []
         await screen.poll()
-        # Lay out the new card before scrolling; its restored board scroll is deferred.
         await pilot.pause()
-        button = screen.query_one("#start-" + task["id"])
-        button.scroll_visible(animate=False, top=True, immediate=True)
+        screen.query_one("#start-" + task["id"], Button).focus()
         await pilot.pause()
-        assert await pilot.click("#start-" + task["id"], offset=(2, 1))
+        await pilot.press("enter")
         await app.workers.wait_for_complete()
         for _ in range(25):
             if screen.runtime.store.task(task["id"])["status"] == "finished":

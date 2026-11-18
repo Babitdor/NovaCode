@@ -106,8 +106,9 @@ async def test_rooms_headers_toolbar_and_settings_fit_presets_themes_and_sizes(t
                 assert screen.query_one("#room-transcript").region.height > 0
                 assert screen.query_one("#room-compose-row").region.bottom <= app.size.height
         screen.action_sidebar()
+        screen.query_one("#room-members-toggle", Button).focus()
         await pilot.pause()
-        await pilot.click("#room-members-toggle")
+        await pilot.press("enter")
         await app.workers.wait_for_complete()
         assert not screen.query_one("#room-sidebar").display
         assert screen.query_one("#room-main").region.width > 0
