@@ -320,7 +320,7 @@ html[data-view="agent"] .agent-cl-note p{color:var(--muted);font-size:.95rem;lin
       <p class="cmdline"><span class="ps" aria-hidden="true">&#10095;</span><span class="c">cat changelog/CHANGELOG-v*.md</span></p>
       <h1>Changelog</h1>
       <!-- generated:changelog-summary -->
-<p class="lede">144 releases &middot; v1.0.0 &rarr; v1.2.36 &middot; from the repository's <code>changelog/</code> directory</p>
+<p class="lede">145 releases &middot; v1.0.0 &rarr; v1.2.37 &middot; from the repository's <code>changelog/</code> directory</p>
 <!-- /generated:changelog-summary -->
       <p class="body"><a class="gh" href="https://github.com/Babitdor/NovaCode/tree/main/changelog" rel="noopener">changelog/ on GitHub &#8599;</a></p>
     </div>
@@ -332,6 +332,19 @@ html[data-view="agent"] .agent-cl-note p{color:var(--muted);font-size:.95rem;lin
     </div>
     <div id="releases">
     <!-- generated:changelog-releases -->
+<details class="changelog-entry" id="v1-2-37" data-version="1.2.37" data-sha="12f38aba6a838a5fe1795bad1e56d6c0189948f1">
+<summary class="entry-toggle"><h2 class="version">v1.2.37</h2><span class="release-summary">Create named agents with standing instructions, a workspace, and optional read access to committed Git files, GitHub Actions, and PyPI.</span></summary>
+<div class="release-content"><h3>Create reusable agents with /proactive</h3>
+<ul>
+<li>Create named agents with standing instructions, a workspace, and optional read access to committed Git files, GitHub Actions, and PyPI.</li>
+<li>Run an agent on demand with context such as a release or commit. Run reports are saved in the panel and NovaCode notifies you when a run finishes.</li>
+<li>Enable or pause cron and GitHub tag triggers independently of manual runs. Agents and reports persist across restarts. Triggers run while NovaCode is open. See the [Proactive agent guide](https://github.com/Babitdor/NovaCode/blob/v1.2.37/docs/proactive.md) for setup, supported tools, and trigger behavior.</li>
+</ul>
+<h3>Install or upgrade</h3>
+<ul>
+<li><code>`</code>text uv tool install --python 3.11 novacode-cli==1.2.37 uv tool upgrade novacode-cli <code>`</code> Restart NovaCode after upgrading. Include any optional extras you use. <code>`</code>text uv tool install --python 3.11 --force &quot;novacode-cli[browser,voice]==1.2.37&quot; <code>`</code></li>
+</ul></div>
+</details>
 <details class="changelog-entry" id="v1-2-36" data-version="1.2.36" data-sha="0bfc3eb3dd6295e8b7b5b3a9f4ee60cb3d48ab81">
 <summary class="entry-toggle"><h2 class="version">v1.2.36</h2><span class="release-summary">Oracle automatically switches to read-only reviewer agents for evidence above 64,000 characters. Each agent requests pages of the captured diffs, changed text files, and test output. The panel shows page coverage as each reviewer works.</span></summary>
 <div class="release-content"><h3>Oracle reviewer agents for larger changes</h3>
